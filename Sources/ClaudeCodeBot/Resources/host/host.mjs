@@ -8,6 +8,8 @@ var Host = class {
     this.write = write;
     this.importer = importer;
   }
+  write;
+  importer;
   plugins = /* @__PURE__ */ new Map();
   pending = /* @__PURE__ */ new Map();
   nextID = 1;
