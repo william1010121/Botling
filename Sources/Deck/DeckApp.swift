@@ -20,6 +20,7 @@ struct DeckApp: App {
 
 struct RootView: View {
     @ObservedObject var workspace: Workspace
+    @StateObject private var inputs = ChatInputs()
 
     var body: some View {
         let bot = workspace.selectedBot
@@ -28,13 +29,16 @@ struct RootView: View {
             if workspace.viewingComponents {
                 ComponentTeamView(library: workspace.components).frame(minWidth: 480)
                 ComponentsPanel(library: workspace.components).frame(width: 340)
-            } else if let result = workspace.openResult {
-                // Looking at a result: the page gets the room, the chat narrows.
-                ChatView(bot: bot, workspace: workspace).frame(minWidth: 360, maxWidth: 460).id(bot.id)
-                ResultViewer(result: result) { workspace.openResult = nil }
             } else {
-                ChatView(bot: bot, workspace: workspace).frame(minWidth: 480).id(bot.id)
-                DetailPanel(workspace: workspace, bot: bot).frame(width: 340).id(bot.id)
+                // One web view for every bot: switching bots redraws it instead of reloading.
+                ChatSurface(bot: bot, workspace: workspace, components: workspace.components, inputs: inputs)
+                    .frame(minWidth: workspace.openResult == nil ? 480 : 360, maxWidth: workspace.openResult == nil ? .infinity : 460)
+                if let result = workspace.openResult {
+                    // Looking at a result: the page gets the room, the chat narrows.
+                    ResultViewer(result: result) { workspace.openResult = nil }
+                } else {
+                    DetailPanel(workspace: workspace, bot: bot).frame(width: 340).id(bot.id)
+                }
             }
         }
         // Chips and result rows open pages here instead of in a browser.
@@ -63,9 +67,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if Snapshot.runIfRequested() {
-            exit(0)
-        }
-        if ComponentSnapshot.runIfRequested() {
             return
         }
         // Started with `swift run`, the app has no bundle; make it a normal foreground app.

@@ -2,6 +2,18 @@
 
 PRD: `../prd/PRD.md` · Design: https://claude.ai/artifact/2kmnVNyueZX2yMxH4gNqyX
 
+P1 (v2): the chat is a web page. Messages and the input box are drawn by `Web/` (TypeScript:
+markdown-it, KaTeX, CodeMirror 6) inside a WKWebView; the Swift side sends the chat as JSON
+(`ChatPayload`) and handles what the page sends back (send, choose, reply, files, component
+reports). LaTeX: `$…$`, `$$…$$`, `\(…\)`, `\[…\]` in bot replies and your own messages, with
+Pandoc's rule so `$5 和 $10` stays text. The built page is committed in
+`Sources/Deck/Resources/web`, so `swift build` needs no npm.
+
+```bash
+cd Web && npm install && npm run build   # rebuild the page after editing Web/src
+cd Web && npm test                       # web tests (vitest + jsdom)
+```
+
 Chat: bot replies render markdown (headings, lists, tables, code, quotes); `![說明](file://…)`
 shows an image or plays a video (mp4, mov) inline, click an image to see it large. Attach images
 or files with 「+」, drag-and-drop, or paste (screenshots too); they are copied into the bot's own
