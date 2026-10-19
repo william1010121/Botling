@@ -19,7 +19,7 @@ let package = Package(
             name: "Deck",
             dependencies: ["DeckCore"],
             path: "Sources/Deck",
-            resources: [.copy("Resources/web"), .copy("Resources/plugins")],
+            resources: [.copy("Resources/web"), .copy("Resources/plugins"), .copy("Resources/host")],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("WebKit"),

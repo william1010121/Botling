@@ -151,6 +151,7 @@ declare global {
       setState(state: ChatState): void;
       setPlugins(specs: PluginSpec[]): Promise<void>;
       runCommand(id: string): void;
+      hostReply(callID: number, ok: boolean, value: unknown): void;
       focus(): void;
     };
   }
@@ -161,6 +162,7 @@ window.deck = {
   setState: (state) => chat.setState(state),
   setPlugins: (specs) => chat.plugins.sync(specs),
   runCommand: (id) => chat.plugins.execute(id),
+  hostReply: (callID, ok, value) => chat.plugins.hostReply(callID, ok, value),
   focus: () => chat.focus(),
 };
 post({ type: "ready" });

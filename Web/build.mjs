@@ -1,6 +1,7 @@
 // Bundles the chat surface into the app's resources (chat.html, chat.js, chat.css), and each
 // built-in plugin in plugins/ into Resources/plugins/<name>/ (package.json, dist/web.js and the
-// files its manifest names). Output is committed so `swift build` needs no npm.
+// files its manifest names), and the Node plugin host into Resources/host/host.mjs. Output is
+// committed so `swift build` needs no npm.
 import { build } from "esbuild";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,6 +15,7 @@ const katex = join(here, "node_modules/katex/dist");
 
 rmSync(out, { recursive: true, force: true });
 rmSync(pluginsOut, { recursive: true, force: true });
+rmSync(join(resources, "host"), { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
 await build({
@@ -24,6 +26,15 @@ await build({
   minify: true,
   legalComments: "eof",
   outfile: join(out, "chat.js"),
+});
+await build({
+  entryPoints: [join(here, "host/src/host.ts")],
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  target: "node20",
+  legalComments: "eof",
+  outfile: join(resources, "host/host.mjs"),
 });
 cpSync(join(here, "src/chat.html"), join(out, "chat.html"));
 cpSync(join(here, "src/chat.css"), join(out, "chat.css"));
@@ -45,6 +56,16 @@ for (const name of readdirSync(join(here, "plugins"))) {
   const target = join(pluginsOut, name);
   mkdirSync(join(target, "dist"), { recursive: true });
   cpSync(join(source, "package.json"), join(target, "package.json"));
+  if (manifest.deck?.host) {
+    await build({
+      entryPoints: [join(source, "src/host.ts")],
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      target: "node20",
+      outfile: join(target, manifest.deck.host),
+    });
+  }
   if (manifest.deck?.web) {
     await build({
       entryPoints: [join(source, "src/web.ts")],

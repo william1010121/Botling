@@ -73,6 +73,9 @@ export class PluginHost {
   private readonly commandRuns = new Map<string, () => void>();
   private readonly keyHandlers: { plugin: string; handler: (event: KeyboardEvent) => boolean | void }[] = [];
   private markdownChanged = false;
+  /** host.call requests waiting for the plugin host's answer. */
+  private readonly hostCalls = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  private nextCall = 1;
 
   constructor(private readonly hooks: ChatHooks) {
     document.addEventListener("keydown", (event) => this.runShortcut(event), true);
@@ -182,10 +185,21 @@ export class PluginHost {
     }
   }
 
+  /** Runs a command: in the page if a web part registered it, otherwise in the plugin host. */
   execute(id: string): void {
     const run = this.commandRuns.get(id);
     const plugin = id.split(".")[0];
     if (run) this.guard(plugin, run);
+    else post({ type: "command", id });
+  }
+
+  /** The plugin host answered a `host.call`. */
+  hostReply(callID: number, ok: boolean, value: unknown): void {
+    const waiter = this.hostCalls.get(callID);
+    if (!waiter) return;
+    this.hostCalls.delete(callID);
+    if (ok) waiter.resolve(value);
+    else waiter.reject(new Error(String(value)));
   }
 
   /** Key presses offered to plugins before the input box handles them. */
@@ -266,7 +280,11 @@ export class PluginHost {
       },
       notify: (text) => post({ type: "pluginNotice", name, text }),
       host: {
-        call: () => Promise.reject(new Error("這個插件沒有程式部分，或插件主機還沒啟動。")),
+        call: (method, params) => new Promise((resolve, reject) => {
+          const callID = this.nextCall++;
+          this.hostCalls.set(callID, { resolve, reject });
+          post({ type: "hostCall", plugin: name, method, params: params ?? null, callID });
+        }),
       },
     };
   }

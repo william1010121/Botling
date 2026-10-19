@@ -115,3 +115,19 @@ describe("plugin host", () => {
     expect(matches("cmd+shift+l", new KeyboardEvent("keydown", { key: "l", metaKey: true }))).toBe(false);
   });
 });
+
+describe("plugin host calls from the page", () => {
+  it("host.call goes to Swift and resolves with the answer", async () => {
+    let call: Promise<unknown> | null = null;
+    await host.sync([spec("asker")], async () => (deck) => { call = deck.host.call("count", { n: 2 }); });
+    const request = sent.find((action) => action.type === "hostCall") as { callID: number; plugin: string; method: string; params: unknown };
+    expect(request).toMatchObject({ plugin: "asker", method: "count", params: { n: 2 } });
+    host.hostReply(request.callID, true, 3);
+    await expect(call).resolves.toBe(3);
+  });
+
+  it("a command no web part has goes to the plugin host", () => {
+    host.execute("other.run");
+    expect(sent).toContainEqual({ type: "command", id: "other.run" });
+  });
+});

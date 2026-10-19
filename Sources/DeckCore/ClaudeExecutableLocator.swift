@@ -1,19 +1,26 @@
 import Foundation
 
-/// Finds the `claude` CLI. A GUI app's PATH is minimal, so well-known install locations are
-/// checked directly before falling back to the user's login shell. Copied from NotchDo.
+/// Finds the `claude` CLI (or another command, such as `node`). A GUI app's PATH is minimal, so
+/// well-known install locations are checked directly before falling back to the user's login
+/// shell. Copied from NotchDo.
 public struct ClaudeExecutableLocator: Sendable {
+    public var command: String
     public var homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
     var isExecutable: @Sendable (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) }
-    var loginShellLookup: @Sendable () -> String? = ClaudeExecutableLocator.askLoginShell
+    var loginShellLookup: @Sendable () -> String?
 
-    public init() {}
+    public init(command: String = "claude") {
+        self.command = command
+        loginShellLookup = { ClaudeExecutableLocator.askLoginShell(for: command) }
+    }
 
     var candidatePaths: [String] {
         [
-            homeDirectory.appending(path: ".local/bin/claude").path,
-            "/opt/homebrew/bin/claude",
-            "/usr/local/bin/claude"
+            homeDirectory.appending(path: ".local/bin/\(command)").path,
+            "/opt/homebrew/bin/\(command)",
+            "/usr/local/bin/\(command)",
+            "/etc/profiles/per-user/\(NSUserName())/bin/\(command)",
+            "/run/current-system/sw/bin/\(command)"
         ]
     }
 
@@ -27,11 +34,10 @@ public struct ClaudeExecutableLocator: Sendable {
         return nil
     }
 
-    @Sendable
-    static func askLoginShell() -> String? {
+    static func askLoginShell(for command: String) -> String? {
         let process = Process()
         process.executableURL = URL(filePath: "/bin/zsh")
-        process.arguments = ["-lc", "command -v claude"]
+        process.arguments = ["-lc", "command -v \(command)"]
         let output = Pipe()
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice

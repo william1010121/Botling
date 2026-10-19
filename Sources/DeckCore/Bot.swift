@@ -37,6 +37,10 @@ public final class Bot: ObservableObject, Identifiable {
     /// Called after each reply the user sees, with whether it answers work the main bot handed
     /// over (rather than something the user said in this chat).
     public var onReply: ((ChatMessage, _ answersRelay: Bool) -> Void)?
+    /// Plugins' afterReply hooks, when any plugin has one: may change a reply before it shows.
+    public var replyFilter: (() -> ((String) async -> String)?)?
+    /// Every reply shown, for plugins listening with bots.onReply.
+    public var replyObserver: ((ChatMessage) -> Void)?
     /// Called with the tags a reply carried (pull up a team, ask the component team).
     public var onRequests: (([BotRequest]) -> Void)?
     /// Whether the running turn started from a relay.
@@ -288,6 +292,21 @@ public final class Bot: ObservableObject, Identifiable {
         return process
     }
 
+    private func show(reply text: String, isError: Bool) {
+        isWorking = false
+        let parsed = ReplyParser.parseAll(text)
+        var message = ChatMessage(role: isError ? .error : .bot, text: parsed.body, choices: parsed.choices)
+        message.display = parsed.display
+        append(message)
+        hasUnread = true
+        // It may have edited its routines.cron.
+        reloadRoutines()
+        onReply?(message, turnFromRelay)
+        replyObserver?(message)
+        if !parsed.requests.isEmpty { onRequests?(parsed.requests) }
+        afterTurn()
+    }
+
     private func handle(_ event: AgentEvent, from source: AgentProcess) {
         guard source === process else { return }
         switch event {
@@ -299,17 +318,14 @@ public final class Bot: ObservableObject, Identifiable {
                 waiter.resume(returning: text)
                 return
             }
-            isWorking = false
-            let parsed = ReplyParser.parseAll(text)
-            var message = ChatMessage(role: isError ? .error : .bot, text: parsed.body, choices: parsed.choices)
-            message.display = parsed.display
-            append(message)
-            hasUnread = true
-            // It may have edited its routines.cron.
-            reloadRoutines()
-            onReply?(message, turnFromRelay)
-            if !parsed.requests.isEmpty { onRequests?(parsed.requests) }
-            afterTurn()
+            if !isError, let filter = replyFilter?() {
+                Task { [weak self] in
+                    let changed = await filter(text)
+                    self?.show(reply: changed, isError: false)
+                }
+            } else {
+                show(reply: text, isError: isError)
+            }
         case let .exited(status, stderr):
             process = nil
             if let waiter = internalReply {
@@ -381,6 +397,16 @@ public final class Bot: ObservableObject, Identifiable {
         let task = instruction.isEmpty ? title : "\(title)：\(instruction)"
         routineFile.add(Routine(schedule: schedule, task: task))
         reloadRoutines()
+    }
+
+    /// Any crontab schedule, for plugins (`routines.add`). False if the schedule is not valid.
+    @discardableResult
+    public func addRoutine(cron: String, task: String) -> Bool {
+        let task = task.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let schedule = CronSchedule(cron), !task.isEmpty else { return false }
+        routineFile.add(Routine(schedule: schedule, task: task))
+        reloadRoutines()
+        return true
     }
 
     public func removeRoutine(_ id: String) {

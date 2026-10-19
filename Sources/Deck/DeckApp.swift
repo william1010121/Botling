@@ -109,7 +109,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let executable = locator.locate() else { throw DeckError.claudeNotFound }
             return try ClaudeAgentProcess.launcher(executable: executable)(launch)
         }
-        return Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins, launcher: launcher) { profile, store in
+        return Workspace(
+            root: root,
+            builtInPlugins: ChatSurface.builtInPlugins,
+            pluginHostScript: ChatSurface.pluginHostScript,
+            launcher: launcher
+        ) { profile, store in
             Bot(profile: profile, idleInterval: idle, launcher: launcher, store: store)
         }
     }

@@ -55,6 +55,8 @@ public final class Workspace: ObservableObject {
     public let components: ComponentLibrary
     /// Plugins for Deck itself: `~/.deck/plugins/` and the ones shipped with the app.
     public let plugins: PluginRegistry
+    /// Runs plugins' program parts (Node), when a script for it was given.
+    public let pluginHost: PluginHostClient?
     private let root: URL
     private let makeBot: BotFactory
     /// Starts processes that are not bots: temporary teams and the component team.
@@ -66,6 +68,8 @@ public final class Workspace: ObservableObject {
     public init(
         root: URL,
         builtInPlugins: URL? = nil,
+        pluginHostScript: URL? = nil,
+        locateNode: @escaping () -> URL? = { ClaudeExecutableLocator(command: "node").locate() },
         launcher: @escaping AgentLauncher = { _ in throw CocoaError(.featureUnsupported) },
         makeBot: @escaping BotFactory
     ) {
@@ -75,6 +79,7 @@ public final class Workspace: ObservableObject {
         let library = root.appending(path: "plugins")
         let componentFolder = Self.prepareComponentPlugin(in: library, movingFrom: root.appending(path: "components"))
         plugins = PluginRegistry(library: library, builtIns: builtInPlugins)
+        pluginHost = pluginHostScript.map { PluginHostClient(script: $0, locateNode: locateNode) }
         components = ComponentLibrary(folder: componentFolder, launcher: launcher)
         let mainHome = root.appending(path: "main")
         try? FileManager.default.createDirectory(at: mainHome, withIntermediateDirectories: true)
@@ -106,6 +111,8 @@ public final class Workspace: ObservableObject {
             self?.mainBot.notice("組件「\(name)」：\(summary)")
             if self?.selection == nil { self?.mainBot.markRead() }
         }
+        connectPlugins(to: mainBot)
+        startPluginHost()
         for project in loadProjects() {
             attach(project)
         }
@@ -441,6 +448,114 @@ public final class Workspace: ObservableObject {
         text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
     }
 
+    // MARK: Plugin host
+
+    /// What you type goes through plugins' beforeSend hooks first; one can change it or stop it.
+    public func send(_ text: String, files: [URL] = [], replyingTo replyID: UUID? = nil, to bot: Bot) async {
+        var text = text
+        if let pluginHost, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            switch await pluginHost.beforeSend(bot: info(for: bot), text: text) {
+            case let .send(changed):
+                text = changed
+            case let .stopped(by: plugin):
+                let title = plugins.plugin(plugin)?.manifest.title ?? plugin
+                bot.notice("插件「\(title)」攔下了這則訊息：\(text)")
+                return
+            }
+        }
+        bot.send(text, files: files, replyingTo: replyID)
+    }
+
+    /// Runs a plugin command in the plugin host.
+    public func runCommand(_ id: String) async {
+        guard let pluginHost else { return }
+        do {
+            _ = try await pluginHost.command(id)
+        } catch {
+            mainBot.notice("指令「\(id)」失敗：\(error.localizedDescription)")
+        }
+    }
+
+    /// The stable id plugins use for a bot: "main", or the project's id.
+    public func pluginID(for bot: Bot) -> String {
+        bot === mainBot ? "main" : managers.first { $0.value === bot }?.key.uuidString ?? bot.id.uuidString
+    }
+
+    private func bot(pluginID: String) -> Bot? {
+        pluginID == "main" ? mainBot : UUID(uuidString: pluginID).flatMap { managers[$0] }
+    }
+
+    private func info(for bot: Bot) -> JSONValue {
+        .object([
+            "id": .string(pluginID(for: bot)),
+            "name": .string(bot.name),
+            "role": .string(bot === mainBot ? "main" : "manager"),
+            "awake": .bool(bot.phase != .asleep)
+        ])
+    }
+
+    private func connectPlugins(to bot: Bot) {
+        guard pluginHost != nil else { return }
+        bot.replyFilter = { [weak self, weak bot] in
+            guard let self, let bot, let host = pluginHost, host.afterReplyHooks > 0, host.isRunning else { return nil }
+            let info = info(for: bot)
+            return { text in await host.afterReply(bot: info, text: text) }
+        }
+        bot.replyObserver = { [weak self, weak bot] message in
+            guard let self, let bot else { return }
+            pluginHost?.replied(bot: info(for: bot), text: message.text)
+        }
+    }
+
+    private func startPluginHost() {
+        guard let pluginHost else { return }
+        let dataRoot = root.appending(path: "plugin-data")
+        plugins.$revision
+            .sink { [weak self] _ in
+                // After the change is published, so the registry reads its new state.
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    pluginHost.update(plugins.hostSpecs(dataRoot: dataRoot))
+                }
+            }
+            .store(in: &subscriptions)
+        pluginHost.onPluginFailure = { [weak self] plugin, message, fatal in
+            guard let self, let plugin else { return }
+            plugins.recordHostFailure(plugin, message: message, fatal: fatal)
+        }
+        pluginHost.onNotification = { [weak self] method, params in
+            guard let self else { return }
+            let plugin = params["plugin"]?.string ?? ""
+            let title = plugins.plugin(plugin)?.manifest.title ?? plugin
+            switch method {
+            case "notify":
+                mainBot.notice("\(title)：\(params["text"]?.string ?? "")")
+                if selection == nil { mainBot.markRead() }
+            case "bots.send":
+                if let id = params["bot"]?.string, let text = params["text"]?.string { bot(pluginID: id)?.send(text) }
+            default:
+                break
+            }
+        }
+        pluginHost.onRequest = { [weak self] method, params in
+            guard let self else { return .null }
+            switch method {
+            case "bots.list":
+                return .array(([mainBot] + projects.compactMap { self.managers[$0.id] }).map(info(for:)))
+            case "routines.add":
+                guard let id = params["bot"]?.string, let bot = bot(pluginID: id) else {
+                    throw HostMessage.HostError(message: "沒有這個 bot。")
+                }
+                guard bot.addRoutine(cron: params["cron"]?.string ?? "", task: params["task"]?.string ?? "") else {
+                    throw HostMessage.HostError(message: "排程格式不對（要是 crontab 的 5 欄）。")
+                }
+                return .null
+            default:
+                throw HostMessage.HostError(message: "不認識的方法「\(method)」。")
+            }
+        }
+    }
+
     // MARK: Setup
 
     private func attach(_ project: Project) {
@@ -461,6 +576,7 @@ public final class Workspace: ObservableObject {
             .store(in: &subscriptions)
         managers[project.id] = bot
         projects.append(project)
+        connectPlugins(to: bot)
     }
 
     /// `<project>/.bot/` holds the manager's memory.md and inbox.md. Its own .gitignore keeps it

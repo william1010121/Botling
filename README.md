@@ -2,6 +2,16 @@
 
 PRD: `../prd/PRD.md` · Design: https://claude.ai/artifact/2kmnVNyueZX2yMxH4gNqyX
 
+P3 (v2): the plugin host. Plugins with a program part (`deck.host`, an ES module exporting
+`activate(deck)`) run in one Node process (`Web/host/` → `Resources/host/host.mjs`), started
+only when such a plugin is on. Deck and the host speak JSON-RPC, one message per line on
+stdin/stdout. A program part can hook `beforeSend` (change or stop what you send) and
+`afterReply`, list and message bots, listen to replies, add routines (crontab lines in a bot's
+routines.cron), keep data (`~/.deck/plugin-data/<name>/`), register commands, answer its web
+part's `host.call`, and post a line in the main bot's chat. If the host dies it is back within a
+second; a plugin that fails to load is turned off, and one that throws or crashes the host 3
+times in 10 minutes is turned off too. Without Node, program parts are off and Settings says so.
+
 P2 (v2): plugins for Deck itself. A plugin is a folder with an npm `package.json` plus a `deck`
 field (`web`, `styles`, `permissions`, `contributes.commands/settings/components`), in
 `~/.deck/plugins/<name>/` or shipped in the app (`Web/plugins/` → `Resources/plugins/`; a library

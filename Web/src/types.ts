@@ -72,4 +72,6 @@ export type Action =
   | { type: "componentReport"; name: string; text: string }
   | { type: "componentRevert"; name: string }
   | { type: "pluginError"; name: string; message: string }
-  | { type: "pluginNotice"; name: string; text: string };
+  | { type: "pluginNotice"; name: string; text: string }
+  | { type: "command"; id: string }
+  | { type: "hostCall"; plugin: string; method: string; params: unknown; callID: number };

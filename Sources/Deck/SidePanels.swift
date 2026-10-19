@@ -155,7 +155,7 @@ struct DetailPanel: View {
     var body: some View {
         Group {
             if showingSettings {
-                SettingsPage(bot: bot, plugins: bot.profile.role == .main ? workspace.plugins : nil) { showingSettings = false }
+                SettingsPage(bot: bot, plugins: bot.profile.role == .main ? workspace.plugins : nil, workspace: workspace) { showingSettings = false }
             } else {
                 overview
             }
@@ -299,6 +299,7 @@ private struct SettingsPage: View {
     @ObservedObject var bot: Bot
     /// Deck's plugins, on the main bot's settings only.
     var plugins: PluginRegistry?
+    var workspace: Workspace?
     var close: () -> Void
     @State private var adding = false
 
@@ -392,7 +393,7 @@ private struct SettingsPage: View {
             }
 
             if let plugins {
-                PluginsSection(registry: plugins)
+                PluginsSection(registry: plugins, host: workspace?.pluginHost)
             }
 
             Spacer()
@@ -508,6 +509,7 @@ private struct AddRoutineForm: View {
 /// Deck's plugins: on or off, why one broke, and the settings each declares.
 private struct PluginsSection: View {
     @ObservedObject var registry: PluginRegistry
+    var host: PluginHostClient?
     @State private var open: String?
 
     var body: some View {
@@ -524,6 +526,9 @@ private struct PluginsSection: View {
             }
             .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
             .clipShape(RoundedRectangle(cornerRadius: 14))
+            if let problem = host?.problem {
+                Text(problem).font(.system(size: 12)).foregroundStyle(Theme.errorText)
+            }
             ForEach(registry.problems.keys.sorted(), id: \.self) { folder in
                 Text("「\(folder)」讀不了：\(registry.problems[folder]?.joined(separator: "；") ?? "")")
                     .font(.system(size: 12))

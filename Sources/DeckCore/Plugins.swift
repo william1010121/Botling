@@ -203,10 +203,7 @@ public final class PluginRegistry: ObservableObject {
         plugins.compactMap { plugin in
             guard plugin.enabled, plugin.failure == nil, let web = plugin.manifest.deck?.web,
                   let source = try? String(contentsOf: plugin.url(web), encoding: .utf8) else { return nil }
-            var settings: [String: JSONValue] = [:]
-            for (key, setting) in plugin.manifest.deck?.contributes?.settings ?? [:] where setting.secret != true {
-                settings[key] = state.settings[plugin.name]?[key] ?? setting.default ?? .null
-            }
+            let settings = resolvedSettings(plugin)
             return WebPluginSpec(
                 name: plugin.name,
                 version: plugin.manifest.version,
@@ -215,6 +212,45 @@ public final class PluginRegistry: ObservableObject {
                 settings: settings,
                 commands: plugin.manifest.deck?.contributes?.commands ?? []
             )
+        }
+    }
+
+    /// Every enabled plugin's program part, for the plugin host. Each keeps data in
+    /// `<dataRoot>/<name>/`.
+    public func hostSpecs(dataRoot: URL) -> [PluginHostClient.Spec] {
+        plugins.compactMap { plugin in
+            guard plugin.enabled, plugin.failure == nil, let host = plugin.manifest.deck?.host else { return nil }
+            return PluginHostClient.Spec(
+                name: plugin.name,
+                version: plugin.manifest.version,
+                main: plugin.url(host).path,
+                fingerprint: fingerprints[plugin.name] ?? "",
+                settings: resolvedSettings(plugin),
+                storageDir: dataRoot.appending(path: plugin.name).path
+            )
+        }
+    }
+
+    private func resolvedSettings(_ plugin: InstalledPlugin) -> [String: JSONValue] {
+        var settings: [String: JSONValue] = [:]
+        for (key, setting) in plugin.manifest.deck?.contributes?.settings ?? [:] where setting.secret != true {
+            settings[key] = state.settings[plugin.name]?[key] ?? setting.default ?? .null
+        }
+        return settings
+    }
+
+    /// When the plugin host reported each plugin breaking, for 「3 times in 10 minutes」.
+    private var crashes: [String: [Date]] = [:]
+
+    /// A plugin's program part threw or brought the host down. The third time within 10
+    /// minutes it is turned off; a load failure turns it off at once.
+    public func recordHostFailure(_ name: String, message: String, fatal: Bool = false, now: Date = Date()) {
+        guard plugin(name) != nil else { return }
+        let recent = (crashes[name] ?? []).filter { now.timeIntervalSince($0) < 600 } + [now]
+        crashes[name] = recent
+        if fatal || recent.count >= 3 {
+            crashes[name] = nil
+            markFailed(name, message: message)
         }
     }
 
