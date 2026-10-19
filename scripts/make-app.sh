@@ -8,8 +8,8 @@ VERSION="${1:-$(tr -d '[:space:]' < VERSION)}"
 ARCHS=(--arch arm64 --arch x86_64)
 if [[ "${SINGLE_ARCH:-}" == "1" ]]; then ARCHS=(); fi
 
-swift build -c release "${ARCHS[@]}"
-BIN="$(swift build -c release "${ARCHS[@]}" --show-bin-path)"
+swift build -c release ${ARCHS[@]+"${ARCHS[@]}"}
+BIN="$(swift build -c release ${ARCHS[@]+"${ARCHS[@]}"} --show-bin-path)"
 
 APP="dist/ClaudeCodeBot.app"
 rm -rf dist
