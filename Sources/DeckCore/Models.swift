@@ -146,14 +146,17 @@ public struct BotProfile: Equatable, Sendable {
     /// memory.md, relative to `workingDirectory`.
     public var memoryPath: String
     public var tools: [String]
+    /// More of its system prompt, for a manager with a special job (Deck 維護).
+    public var instructions: String?
 
-    public init(name: String, role: Role, avatar: String, workingDirectory: URL, memoryPath: String, tools: [String]) {
+    public init(name: String, role: Role, avatar: String, workingDirectory: URL, memoryPath: String, tools: [String], instructions: String? = nil) {
         self.name = name
         self.role = role
         self.avatar = avatar
         self.workingDirectory = workingDirectory
         self.memoryPath = memoryPath
         self.tools = tools
+        self.instructions = instructions
     }
 
     public var memoryURL: URL { workingDirectory.appending(path: memoryPath) }
@@ -185,6 +188,19 @@ public struct BotProfile: Equatable, Sendable {
             workingDirectory: folder,
             memoryPath: ".bot/memory.md",
             tools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash"]
+        )
+    }
+
+    /// Deck 維護: the manager of the plugin library, which may also hand small jobs to agents.
+    public static func maintainer(folder: URL, instructions: String) -> BotProfile {
+        BotProfile(
+            name: "Deck 維護",
+            role: .manager,
+            avatar: "diamond",
+            workingDirectory: folder,
+            memoryPath: ".bot/memory.md",
+            tools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash", "Task", "Agent"],
+            instructions: instructions
         )
     }
 }

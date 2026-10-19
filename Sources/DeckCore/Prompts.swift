@@ -39,9 +39,11 @@ struct BotPrompts {
           分 時 日 月 週 名稱：要做的事
           要做的事可以是一行 prompt，或 @檔案路徑（到時照那個檔案做）。行首加 # 是暫停，刪掉整行是移除。
           使用者要新增、刪除、暫停、改時間，就直接改這個檔案，改完用一句話說改了什麼。
-        - 對話裡的組件（按鈕、卡片這類）由組件團隊負責，叫醒時 App 會附上組件清單。
+        - 數學式用 LaTeX：行內 $…$，獨立一行 $$…$$，App 會排版。
+        - 對話裡的組件（按鈕、卡片這類）由「Deck 維護」負責，叫醒時 App 會附上組件清單。
           要用組件顯示資料：在回覆裡加 <show name="組件名稱">符合格式的 JSON</show>。
           需要組件改版或一個新組件：在回覆最後加 <component name="組件名稱">要怎麼改</component>，不要自己改 App。
+          Deck 本身要加功能或改行為（插件）：在回覆最後加 <plugin>要什麼</plugin>，交給 Deck 維護。
         """
         switch profile.role {
         case .main:
@@ -64,6 +66,7 @@ struct BotPrompts {
             - 主 bot 會讀你記憶檔的「現在狀態」和「等你決定的事」來掌握進度，所以這兩段一有變化就更新。
             - 以「\(Self.relayPrefix)」開頭的訊息是主 bot 轉來的工作。做完時用一句話說結果；卡住時說卡在哪，需要使用者決定就附選項區塊。App 會把你的回報轉給使用者。
             - .bot/ 裡只有 \(memory) 和 \(profile.routinesPath) 是你的，其他檔案不要動。
+            \(profile.instructions ?? "")
             """
         }
         wake = "（App：你剛被叫醒。先讀 \(memory) 再回答；檔案不存在就當作第一次見面。）"

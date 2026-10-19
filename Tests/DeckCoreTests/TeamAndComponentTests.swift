@@ -117,9 +117,10 @@ struct ComponentTests {
         #expect(workspace.componentBriefing().contains("- choices："))
     }
 
-    @Test func reportGoesToTheComponentTeamWhichEditsAndLandsAsUpdated() async throws {
+    @Test func reportGoesToDeckMaintenanceWhichEditsAndLandsAsUpdated() async throws {
         let fake = FakeLauncher()
         let workspace = makeWorkspace(fake)
+        await workspace.pluginLibraryReady.value
         let library = workspace.components
         let template = library.templateURL("choices")
         let original = try String(contentsOf: template, encoding: .utf8)
@@ -128,31 +129,33 @@ struct ComponentTests {
                 try? (original + "\n<!-- row -->").write(to: template, atomically: true, encoding: .utf8)
                 return "改成橫排了。"
             }
-            return nil
+            return isAppOnly(text) ? "OK" : nil
         }
 
         workspace.requestComponentChange("choices", request: "選項改成橫排", from: "使用者")
         #expect(library.working["choices"] == "選項改成橫排")
-        let team = try #require(fake.agents.last)
-        #expect(team.launch.model == .haiku)
-        #expect(team.launch.workingDirectory.lastPathComponent == "choices")
-        #expect(team.launch.tools == ["Read", "Write", "Edit"])
+        let maintainer = try #require(fake.agents.last)
+        #expect(maintainer.launch.workingDirectory.standardizedFileURL == root.appending(path: "deck/plugins").standardizedFileURL)
+        #expect(maintainer.launch.tools.contains("Bash"))
+        #expect(maintainer.launch.systemPrompt.contains("DECK-PLUGINS.md"))
+        #expect(maintainer.sent.first?.contains("使用者 對組件「choices」的要求：選項改成橫排") == true)
 
         await eventually { library.working.isEmpty }
         #expect(library.updated.contains("choices"))
         #expect(library.template("choices")?.hasSuffix("<!-- row -->") == true)
-        #expect(library.hasPrevious("choices"))
-        #expect(workspace.mainBot.messages.last?.text == "組件「choices」：改成橫排了。")
+        await eventually { library.hasPrevious("choices") }
+        #expect(workspace.mainBot.messages.last?.text == "Deck 維護：改成橫排了。")
 
-        library.revert("choices")
+        #expect(await library.revert("choices") == nil)
         #expect(library.template("choices") == original)
-        #expect(!library.hasPrevious("choices"))
+        await workspace.putEveryoneToSleep()
     }
 
     @Test func aBotCanAskForAComponentWithATag() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
-            text.hasSuffix("做一個錯誤提示")
+            if isAppOnly(text) { return "OK" }
+            return text.hasSuffix("做一個錯誤提示")
                 ? "需要新組件。\n<component name=\"Error Toast\">錯誤提示：紅色、一行、可關閉</component>"
                 : nil
         }
@@ -160,9 +163,10 @@ struct ComponentTests {
 
         workspace.mainBot.send("做一個錯誤提示")
         await eventually { workspace.components.working["error-toast"] != nil }
-        let team = try #require(fake.agents.last)
-        #expect(team.launch.workingDirectory.lastPathComponent == "error-toast")
-        #expect(team.sent.first?.contains("新組件「error-toast」") == true)
+        await eventually { fake.agents.count == 2 }
+        let maintainer = try #require(fake.agents.last)
+        #expect(maintainer.sent.first?.contains("主 bot 要一個新組件「error-toast」") == true)
+        await workspace.putEveryoneToSleep()
     }
 
     @Test func editingATemplateByHandBumpsItsVersion() throws {

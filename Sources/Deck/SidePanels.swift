@@ -8,23 +8,28 @@ struct RailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            BotRow(bot: workspace.mainBot, selected: workspace.selection == nil && !workspace.viewingComponents, waiting: false) {
+            BotRow(bot: workspace.mainBot, selected: workspace.selection == nil, waiting: false) {
                 workspace.select(nil)
             }
 
             Rectangle().fill(Theme.line).frame(height: 1).padding(10)
 
-            ComponentWorkRow(library: workspace.components, selected: workspace.viewingComponents) {
-                workspace.viewComponents()
+            MaintainerRow(
+                bot: workspace.maintainer,
+                library: workspace.components,
+                selected: workspace.selection == Workspace.maintainerID,
+                waiting: workspace.waiting.contains { $0.projectID == Workspace.maintainerID }
+            ) {
+                workspace.select(Workspace.maintainerID)
             }
 
             ScrollView {
                 VStack(spacing: 2) {
-                    ForEach(workspace.projects) { project in
+                    ForEach(workspace.projects.filter { !$0.isMaintainer }) { project in
                         if let bot = workspace.bot(for: project) {
                             BotRow(
                                 bot: bot,
-                                selected: workspace.selection == project.id && !workspace.viewingComponents,
+                                selected: workspace.selection == project.id,
                                 waiting: workspace.waiting.contains { $0.projectID == project.id }
                             ) {
                                 workspace.select(project.id)
@@ -65,47 +70,52 @@ struct RailView: View {
     }
 }
 
-/// The component team: shown while it works, and after until you have looked at what it did.
-/// Click to see its requests, what it is doing, and its replies.
-private struct ComponentWorkRow: View {
+/// Deck 維護 (the plugin library's manager): shown while it is awake or working, and after
+/// until you have read what it said. Click to open its chat and work log.
+private struct MaintainerRow: View {
+    @ObservedObject var bot: Bot
     @ObservedObject var library: ComponentLibrary
     let selected: Bool
+    let waiting: Bool
     let open: () -> Void
 
+    private var busy: Bool { bot.isWorking || !library.working.isEmpty }
+
     var body: some View {
-        if selected || !library.working.isEmpty || library.hasUnseenWork {
+        if selected || busy || bot.phase != .asleep || bot.hasUnread || waiting {
             Button(action: open) {
                 HStack(spacing: 12) {
-                    AvatarView(kind: .diamond, size: 32, eyes: library.working.isEmpty ? .happy : .open)
+                    AvatarView(kind: .diamond, size: 32, eyes: bot.eyes)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text("組件").font(.system(size: 15))
+                        Text(bot.name).font(.system(size: 15))
                         Text(status)
                             .font(.system(size: 12))
                             .foregroundStyle(Color(hex: 0x8DB5FF))
                             .lineLimit(1)
                     }
                     Spacer(minLength: 0)
-                    if library.hasUnseenWork && !selected {
+                    if waiting {
+                        Circle().fill(Theme.orange).frame(width: 9, height: 9)
+                    } else if bot.hasUnread && !selected {
                         Circle().fill(Theme.blue).frame(width: 9, height: 9)
                     }
                 }
                 .padding(.horizontal, 10)
                 .frame(height: 52)
                 .background(RoundedRectangle(cornerRadius: 12).fill(selected ? Theme.selected : .clear))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.blue, style: StrokeStyle(lineWidth: 1, dash: [4, 3])).opacity(library.working.isEmpty ? 0 : 1))
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.blue, style: StrokeStyle(lineWidth: 1, dash: [4, 3])).opacity(busy ? 1 : 0))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .padding(.bottom, 4)
-            .accessibilityLabel("組件團隊，\(status)")
+            .accessibilityLabel("Deck 維護，\(status)")
         }
     }
 
     private var status: String {
-        if let job = library.jobs.last(where: \.isWorking) {
-            return job.activity ?? "\(job.name)：\(job.request)"
-        }
-        return library.hasUnseenWork ? "改好了，點開看" : "工作紀錄"
+        if let (name, change) = library.working.first { return "組件 \(name)：\(change)" }
+        if bot.isWorking { return "工作中" }
+        return bot.hasUnread ? "改好了，點開看" : bot.statusText
     }
 }
 
@@ -573,7 +583,7 @@ private struct PluginRow: View {
                 .accessibilityLabel("啟用 \(plugin.manifest.title)")
             }
             if let failure = plugin.failure {
-                Text("出錯停用了：\(failure)")
+                Text(plugin.usingPrevious ? "新版出錯，先用上一版：\(failure)" : "出錯停用了：\(failure)")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.errorText)
             }
@@ -590,6 +600,31 @@ private struct PluginRow: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .frame(minHeight: 48)
+        .contentShape(Rectangle())
+        .contextMenu {
+            if !plugin.builtIn {
+                Button("退回上一版") { Task { report(await registry.revert(plugin.name)) } }
+                    .disabled(!registry.hasPrevious(plugin.name))
+                Button("移除", role: .destructive) { confirmingRemove = true }
+            }
+        }
+        .confirmationDialog("移除「\(plugin.manifest.title)」？", isPresented: $confirmingRemove) {
+            Button("移除", role: .destructive) { Task { report(await registry.remove(plugin.name)) } }
+        } message: {
+            Text("插件庫的 git 紀錄會留著，之後還能找回來。")
+        }
+        .alert("沒辦法完成", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+            Button("好") { problem = nil }
+        } message: {
+            Text(problem ?? "")
+        }
+    }
+
+    @State private var confirmingRemove = false
+    @State private var problem: String?
+
+    private func report(_ result: String?) {
+        problem = result
     }
 }
 

@@ -96,6 +96,8 @@ public struct InstalledPlugin: Identifiable, Equatable, Sendable {
     public var enabled: Bool
     /// Why its web part was turned off, when it broke.
     public var failure: String?
+    /// Its newest version broke, so the last one that worked is still running.
+    public var usingPrevious = false
 
     public var id: String { manifest.name }
     public var name: String { manifest.name }
@@ -128,6 +130,16 @@ public final class PluginRegistry: ObservableObject {
     public let builtIns: URL?
     /// A plugin's web part broke or it said something: the main bot's chat shows it.
     public var onNotice: ((_ text: String) -> Void)?
+    /// A plugin broke (check failed, threw on load): Deck 維護 should fix it.
+    public var onBroken: ((_ plugin: String, _ problem: String) -> Void)?
+    /// A plugin's version changed on disk (hot reload), with the version it had.
+    public var onUpdated: ((_ plugin: InstalledPlugin, _ from: String) -> Void)?
+    public let git: PluginLibraryGit
+    /// Web parts that loaded fine: what a broken new version falls back to.
+    private var lastGood: [String: WebPluginSpec] = [:]
+    /// What was last handed to the page, to remember once it says it loaded.
+    private var lastSent: [String: WebPluginSpec] = [:]
+    private var reportedProblems: [String: [String]] = [:]
     private var state: State
     private var fingerprints: [String: String] = [:]
     private var watchTask: Task<Void, Never>?
@@ -145,8 +157,9 @@ public final class PluginRegistry: ObservableObject {
         var fingerprint: String
     }
 
-    public init(library: URL, builtIns: URL?, validateClaudePart: ((URL) async -> String?)? = nil) {
+    public init(library: URL, builtIns: URL?, validateClaudePart: ((URL) async -> String?)? = nil, git: PluginLibraryGit? = nil) {
         self.library = library
+        self.git = git ?? PluginLibraryGit(folder: library)
         self.builtIns = builtIns
         self.validateClaudePart = validateClaudePart
         try? FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
@@ -194,7 +207,65 @@ public final class PluginRegistry: ObservableObject {
         saveState()
         rescan(force: true)
         let title = plugin(name)?.manifest.title ?? name
-        onNotice?("插件「\(title)」出錯，先停用了：\(message)")
+        if plugin(name)?.usingPrevious == true {
+            onNotice?("插件「\(title)」新版出錯，先用上一版，已交給 Deck 維護：\(message)")
+        } else {
+            onNotice?("插件「\(title)」出錯，先停用了：\(message)")
+        }
+        onBroken?(name, message)
+    }
+
+    /// The page loaded this plugin's web part without trouble: remember it as the one to fall
+    /// back to.
+    public func markLoaded(_ name: String) {
+        guard let spec = lastSent[name] else { return }
+        lastGood[name] = spec
+    }
+
+    // MARK: Versions (git)
+
+    /// The library folder of a plugin that git keeps (not one shipped inside the app).
+    private func gitPath(_ name: String) -> String? {
+        guard let plugin = plugin(name), !plugin.builtIn else { return nil }
+        return plugin.folder.lastPathComponent
+    }
+
+    /// Whether git has an earlier version, asked in the background (false until it answers).
+    @Published private var history: [String: Bool] = [:]
+
+    public func hasPrevious(_ name: String) -> Bool {
+        if let known = history[name] { return known }
+        guard let path = gitPath(name) else { return false }
+        let git = git
+        Task { [weak self] in
+            let answer = await Task.detached { git.hasPrevious(path) }.value
+            self?.history[name] = answer
+        }
+        return false
+    }
+
+    /// Back to the version before its last change (a new commit); it then hot-reloads.
+    @discardableResult
+    public func revert(_ name: String) async -> String? {
+        guard let path = gitPath(name) else { return "內建插件沒有版本紀錄。" }
+        let git = git
+        let label = plugin(name)?.manifest.title ?? name
+        let problem = await Task.detached { git.revert(path, label: label) }.value
+        state.failures[name] = nil
+        saveState()
+        rescan(force: true)
+        return problem
+    }
+
+    /// Takes a plugin out of the library (git history keeps it).
+    @discardableResult
+    public func remove(_ name: String) async -> String? {
+        guard let path = gitPath(name) else { return "內建插件不能移除，可以關掉。" }
+        let git = git
+        let label = plugin(name)?.manifest.title ?? name
+        let problem = await Task.detached { git.remove(path, label: label) }.value
+        rescan(force: true)
+        return problem
     }
 
     // MARK: Reading
@@ -202,10 +273,17 @@ public final class PluginRegistry: ObservableObject {
     /// Every enabled plugin's web part, ready for `deck.setPlugins`.
     public func webSpecs() -> [WebPluginSpec] {
         plugins.compactMap { plugin in
-            guard plugin.enabled, plugin.failure == nil, let web = plugin.manifest.deck?.web,
+            guard plugin.enabled else { return nil }
+            if plugin.failure != nil {
+                // Broken new version: keep running the last one that worked.
+                guard var previous = lastGood[plugin.name] else { return nil }
+                previous.settings = resolvedSettings(plugin)
+                return previous
+            }
+            guard let web = plugin.manifest.deck?.web,
                   let source = try? String(contentsOf: plugin.url(web), encoding: .utf8) else { return nil }
             let settings = resolvedSettings(plugin)
-            return WebPluginSpec(
+            let spec = WebPluginSpec(
                 name: plugin.name,
                 version: plugin.manifest.version,
                 source: source,
@@ -213,6 +291,8 @@ public final class PluginRegistry: ObservableObject {
                 settings: settings,
                 commands: plugin.manifest.deck?.contributes?.commands ?? []
             )
+            lastSent[plugin.name] = spec
+            return spec
         }
     }
 
@@ -289,20 +369,40 @@ public final class PluginRegistry: ObservableObject {
                     let print = Self.fingerprint(folder, manifest)
                     prints[manifest.name] = print
                     let failure = state.failures[manifest.name].flatMap { $0.fingerprint == print ? $0.message : nil }
+                    let fallback = failure != nil && lastGood[manifest.name] != nil
                     found[manifest.name] = InstalledPlugin(
                         manifest: manifest,
                         folder: folder,
                         builtIn: builtIn,
-                        enabled: !state.disabled.contains(manifest.name) && failure == nil,
-                        failure: failure
+                        enabled: !state.disabled.contains(manifest.name) && (failure == nil || fallback),
+                        failure: failure,
+                        usingPrevious: fallback
                     )
+                    reportedProblems[folder.lastPathComponent] = nil
                 case let .failure(error):
                     problems[folder.lastPathComponent] = error.problems
+                    // A plugin that was fine before keeps running its last version.
+                    if let old = plugins.first(where: { $0.folder.standardizedFileURL == folder.standardizedFileURL }) {
+                        found[old.name] = old
+                        prints[old.name] = fingerprints[old.name]
+                    }
+                    if reportedProblems[folder.lastPathComponent] != error.problems {
+                        reportedProblems[folder.lastPathComponent] = error.problems
+                        if !fingerprints.isEmpty {
+                            onBroken?(folder.lastPathComponent, "檢查沒過：" + error.problems.joined(separator: "；"))
+                        }
+                    }
                 }
             }
         }
         let sorted = found.values.sorted { ($0.builtIn ? 0 : 1, $0.name) < ($1.builtIn ? 0 : 1, $1.name) }
         let changed = force || prints != fingerprints || sorted != plugins
+        for plugin in sorted {
+            if let old = plugins.first(where: { $0.name == plugin.name }), old.manifest.version != plugin.manifest.version {
+                onUpdated?(plugin, old.manifest.version)
+            }
+        }
+        if prints != fingerprints || force { history = [:] }
         fingerprints = prints
         if sorted != plugins { plugins = sorted }
         if problems != self.problems { self.problems = problems }

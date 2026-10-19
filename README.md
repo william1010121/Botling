@@ -2,6 +2,16 @@
 
 PRD: `../prd/PRD.md` · Design: https://claude.ai/artifact/2kmnVNyueZX2yMxH4gNqyX
 
+P5 (v2): Deck 維護. The plugin library (`~/.deck/plugins`) is a git repo, and 「Deck 維護」 is a
+built-in project whose folder is that library (its row in the left column shows up only while
+it is awake, working, or has news). Reports beside a component, `<component>` and `<plugin>`
+tags, and hot-reload failures go to its inbox. It edits, bumps the version, runs
+`Deck --check-plugin`, commits and tags `<name>--v<version>`; small template edits can go to the
+`deck-core:component-editor` agent (Haiku). The v1 component team is gone. Hot reload keeps
+the last version that worked when a new one breaks (or its package.json stops parsing) and
+hands the error to Deck 維護. Settings → 插件: right-click for 退回上一版 / 移除 (both as git
+commits). `DECK-PLUGINS.md` in the library documents the plugin API.
+
 P4 (v2): Claude parts. A plugin's `deck.claude` folder is a standard Claude Code plugin
 (skills, agents, MCP). Once it passes `claude plugin validate --strict` (re-run whenever its
 files change), every bot and temporary team starts with `--plugin-dir` for it. Temporary teams
@@ -98,9 +108,9 @@ and restarts on the new model.
 
 ```bash
 swift run Deck                                   # the app
+.build/debug/Deck --check-plugin <folder>        # deck plugin check
 DECK_IDLE_SECONDS=30 swift run Deck              # nap after 30 s instead of 50 min
 swift test                                       # unit tests (fake claude)
 DECK_LIVE=1 swift test --filter Live             # real claude, ~6 min
 DECK_SNAPSHOT=/tmp/deck.png swift run Deck       # render a PNG of the UI and quit
-DECK_COMPONENT_SNAPSHOT=/tmp/c.png swift run Deck # render the choices template in a web view
 ```

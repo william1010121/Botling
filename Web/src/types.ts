@@ -73,5 +73,6 @@ export type Action =
   | { type: "componentRevert"; name: string }
   | { type: "pluginError"; name: string; message: string }
   | { type: "pluginNotice"; name: string; text: string }
+  | { type: "pluginLoaded"; name: string; version: string }
   | { type: "command"; id: string }
   | { type: "hostCall"; plugin: string; method: string; params: unknown; callID: number };

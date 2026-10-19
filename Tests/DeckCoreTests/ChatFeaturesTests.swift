@@ -128,34 +128,4 @@ struct AttachmentAndReplyTests {
         #expect(bot.messages.first?.text == "")
         #expect(agent.sent.first?.1.count == 1)
     }
-
-    @Test func componentJobsShowActivityThenTheResult() async throws {
-        let fake = FakeLauncher()
-        let folder = root.appending(path: "components")
-        let library = ComponentLibrary(folder: folder, launcher: { launch in
-            let agent = try fake.launcher(launch) as! FakeAgent
-            return agent
-        })
-        fake.respond = { _ in nil }
-
-        library.request("choices", change: "加其他", from: "使用者")
-        let job = try #require(library.jobs.last)
-        #expect(job.isWorking)
-        #expect(!library.hasUnseenWork)
-
-        let agent = try #require(fake.agents.last)
-        agent.emit(.activity("改 template.html"))
-        await eventually { library.jobs.last?.activity == "改 template.html" }
-        agent.reply("加好了。")
-        await eventually { library.jobs.last?.isWorking == false }
-
-        #expect(library.jobs.last?.summary == "加好了。")
-        #expect(library.hasUnseenWork)
-        library.markJobsSeen()
-        #expect(!library.hasUnseenWork)
-
-        // The log survives a restart.
-        let reopened = ComponentLibrary(folder: folder, launcher: fake.launcher)
-        #expect(reopened.jobs.map(\.summary) == ["加好了。"])
-    }
 }

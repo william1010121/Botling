@@ -163,10 +163,19 @@ struct ChatSurface: NSViewRepresentable {
                 }
             case "componentReport":
                 if let name = body["name"] as? String, let text = body["text"] as? String {
-                    surface.components.request(name, change: text, from: "使用者")
+                    workspace.requestComponentChange(name, request: text, from: "使用者")
                 }
             case "componentRevert":
-                if let name = body["name"] as? String { surface.components.revert(name) }
+                if let name = body["name"] as? String {
+                    let components = surface.components
+                    Task {
+                        if let problem = await components.revert(name) {
+                            workspace.mainBot.notice("組件「\(name)」退不回去：\(problem)")
+                        }
+                    }
+                }
+            case "pluginLoaded":
+                if let name = body["name"] as? String { surface.plugins.markLoaded(name) }
             case "pluginError":
                 if let name = body["name"] as? String {
                     surface.plugins.markFailed(name, message: body["message"] as? String ?? "")

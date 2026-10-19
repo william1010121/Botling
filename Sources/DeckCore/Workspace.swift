@@ -14,7 +14,12 @@ public final class Workspace: ObservableObject {
 
         public var notesFolder: URL { folder.appending(path: ".bot") }
         public var inboxURL: URL { notesFolder.appending(path: "inbox.md") }
+        /// Deck 維護, the built-in project whose folder is the plugin library.
+        public var isMaintainer: Bool { id == Workspace.maintainerID }
     }
+
+    /// Deck 維護's fixed id: its chat survives restarts, and it is never saved in projects.json.
+    public static let maintainerID = UUID(uuidString: "DEC0DE00-0000-4000-8000-00000000DEC0")!
 
     /// Something a manager needs the user to decide: an open question in its chat, or else a
     /// line from its memory.md 「等你決定的事」.
@@ -44,13 +49,15 @@ public final class Workspace: ObservableObject {
     @Published public private(set) var waiting: [Waiting] = []
     /// A result page open in the widened right column.
     @Published public var openResult: Chip?
-    /// The component team's page is open in place of a chat.
-    @Published public private(set) var viewingComponents = false
     /// Temporary teams at work right now.
     @Published public private(set) var runningTeams: [TeamRun] = []
     public private(set) var teams: [TeamSpec] = []
 
     public let mainBot: Bot
+    /// Deck 維護's project (the plugin library); not in `projects`, which are the user's own.
+    public let maintainerProject: Project
+    /// The plugin library becomes a git repo in the background; done when this finishes.
+    public private(set) var pluginLibraryReady: Task<Void, Never>!
     public private(set) var managers: [UUID: Bot] = [:]
     public let components: ComponentLibrary
     /// Plugins for Deck itself: `~/.deck/plugins/` and the ones shipped with the app.
@@ -71,6 +78,8 @@ public final class Workspace: ObservableObject {
         pluginHostScript: URL? = nil,
         locateNode: @escaping () -> URL? = { ClaudeExecutableLocator(command: "node").locate() },
         validateClaudePart: ((URL) async -> String?)? = nil,
+        checkCommand: String? = nil,
+        gitForPlugins: PluginLibraryGit? = nil,
         launcher: @escaping AgentLauncher = { _ in throw CocoaError(.featureUnsupported) },
         makeBot: @escaping BotFactory
     ) {
@@ -80,14 +89,20 @@ public final class Workspace: ObservableObject {
         let library = root.appending(path: "plugins")
         let componentFolder = Self.prepareComponentPlugin(in: library, movingFrom: root.appending(path: "components"))
         Self.prepareTeamsPlugin(in: library, movingFrom: root.appending(path: "teams"))
-        plugins = PluginRegistry(library: library, builtIns: builtInPlugins, validateClaudePart: validateClaudePart)
+        Self.prepareCorePlugin(in: library)
+        Self.writeLibraryGuide(in: library, builtIns: builtInPlugins)
+        let git = gitForPlugins ?? PluginLibraryGit(folder: library)
+        maintainerProject = Project(id: Self.maintainerID, name: "Deck 維護", folder: library, avatar: "diamond")
+        plugins = PluginRegistry(library: library, builtIns: builtInPlugins, validateClaudePart: validateClaudePart, git: git)
         pluginHost = pluginHostScript.map { PluginHostClient(script: $0, locateNode: locateNode) }
-        components = ComponentLibrary(folder: componentFolder, launcher: launcher)
+        components = ComponentLibrary(folder: componentFolder)
+        components.git = git.isAvailable ? git : nil
+        self.checkCommand = checkCommand
         let mainHome = root.appending(path: "main")
         try? FileManager.default.createDirectory(at: mainHome, withIntermediateDirectories: true)
         mainBot = makeBot(.main(home: mainHome), BotStore(directory: mainHome))
         mainBot.wakeNote = { [weak self] in self?.projectBriefing() ?? "" }
-        mainBot.extraDirectories = { [weak self] in self?.projects.map(\.notesFolder) ?? [] }
+        mainBot.extraDirectories = { [weak self] in self?.everyProject.map(\.notesFolder) ?? [] }
         mainBot.pluginDirectories = { [weak self] in self?.plugins.claudeDirectories() ?? [] }
         mainBot.onReply = { [weak self] _, _ in
             guard let self else { return }
@@ -110,17 +125,45 @@ public final class Workspace: ObservableObject {
             self?.mainBot.notice(text)
             if self?.selection == nil { self?.mainBot.markRead() }
         }
-        components.onChanged = { [weak self] name, summary in
-            self?.mainBot.notice("組件「\(name)」：\(summary)")
-            if self?.selection == nil { self?.mainBot.markRead() }
+        plugins.onBroken = { [weak self] plugin, problem in
+            self?.handToMaintainer("（App：熱更新檢查）插件「\(plugin)」壞了，Deck 先用上一版或先停用。請修好：\(problem)")
+        }
+        plugins.onUpdated = { [weak self] plugin, old in
+            guard let self else { return }
+            mainBot.notice("插件「\(plugin.manifest.title)」更新了：\(old) → \(plugin.manifest.version)")
+            if selection == nil { mainBot.markRead() }
         }
         connectPlugins(to: mainBot)
         startPluginHost()
         followClaudeParts()
-        for project in loadProjects() {
+        prepareNotesFolder(for: maintainerProject)
+        attach(maintainerProject)
+        for project in loadProjects() where !project.isMaintainer {
             attach(project)
         }
         refreshWaiting()
+        // Everything Deck writes into the library at start is in the first commit.
+        let components = components
+        pluginLibraryReady = Task {
+            await Task.detached { git.prepare() }.value
+            components.forgetHistory()
+        }
+    }
+
+    /// The user's projects and Deck 維護.
+    var everyProject: [Project] { projects + [maintainerProject] }
+
+    /// How Deck 維護 runs `deck plugin check` (the Deck binary with --check-plugin).
+    private let checkCommand: String?
+
+    /// Deck 維護's bot.
+    public var maintainer: Bot {
+        managers[Self.maintainerID]!
+    }
+
+    /// Gives Deck 維護 a job, the way the main bot hands work to a manager.
+    public func handToMaintainer(_ text: String) {
+        maintainer.relay(text)
     }
 
     public var selectedBot: Bot {
@@ -132,20 +175,12 @@ public final class Workspace: ObservableObject {
     }
 
     public func project(_ id: UUID) -> Project? {
-        projects.first { $0.id == id }
+        everyProject.first { $0.id == id }
     }
 
     public func select(_ projectID: UUID?) {
         selection = projectID
-        viewingComponents = false
         selectedBot.markRead()
-    }
-
-    /// Opens what the component team was asked, is doing, and said.
-    public func viewComponents() {
-        viewingComponents = true
-        openResult = nil
-        components.markJobsSeen()
     }
 
     /// Makes `folder` a project with its own manager, or selects it if it already is one.
@@ -184,7 +219,7 @@ public final class Workspace: ObservableObject {
     }
 
     public func checkRoutines(now: Date = Date()) {
-        for bot in [mainBot] + projects.compactMap({ managers[$0.id] }) {
+        for bot in [mainBot] + everyProject.compactMap({ managers[$0.id] }) {
             bot.reloadRoutines()
             for routine in bot.routines where bot.isDue(routine, at: now) {
                 bot.run(routine, prompt: prompt(for: routine, of: bot), at: now)
@@ -218,10 +253,12 @@ public final class Workspace: ObservableObject {
             : projects.map { project in
                 "- \(project.name)：記憶檔 \(project.notesFolder.appending(path: "memory.md").path)；交辦檔 \(project.inboxURL.path)"
             }.joined(separator: "\n")
+        let maintainerLine = "- Deck 維護（負責 Deck 本身：插件、組件）：記憶檔 \(maintainerProject.notesFolder.appending(path: "memory.md").path)；交辦檔 \(maintainerProject.inboxURL.path)"
         let teamLines = teams.map { "- \($0.name)（\($0.title)）：\($0.description)" }.joined(separator: "\n")
         return """
         （App：專案清單。問進度就讀記憶檔，不要叫醒主管；要交辦就在交辦檔最後加一行。）
         \(projectLines)
+        \(maintainerLine)
         （App：可以拉起的臨時團隊，用 <team name="名稱">任務</team>。）
         \(teamLines)
         \(componentBriefing())
@@ -266,13 +303,19 @@ public final class Workspace: ObservableObject {
 
     /// The components a bot can draw or ask to change.
     func componentBriefing() -> String {
-        "（App：對話裡的組件。<show name=\"名稱\">JSON</show> 畫出來；<component name=\"名稱\">要求</component> 請組件團隊改。）\n" + components.catalog()
+        "（App：對話裡的組件。<show name=\"名稱\">JSON</show> 畫出來；<component name=\"名稱\">要求</component> 請 Deck 維護改。）\n" + components.catalog()
     }
 
-    /// Someone asked the component team for a change: the user beside a component, or a bot with
-    /// a <component> tag.
+    /// Someone asked for a component change: the user beside a component, or a bot with a
+    /// <component> tag. Deck 維護 does it (or hands it to its component-editor agent).
     public func requestComponentChange(_ name: String, request: String, from asker: String) {
-        components.request(name, change: request, from: asker)
+        let name = ComponentLibrary.safeName(name)
+        guard !name.isEmpty else { return }
+        components.markWorking(name, change: request)
+        let exists = components.names.contains(name)
+        handToMaintainer(exists
+            ? "\(asker) 對組件「\(name)」的要求：\(request)"
+            : "\(asker) 要一個新組件「\(name)」：\(request)")
     }
 
     // MARK: Temporary teams
@@ -286,6 +329,10 @@ public final class Workspace: ObservableObject {
                 if project == nil { startTeam(name, task: task) }
             case let .component(name, request):
                 requestComponentChange(name, request: request, from: project?.name ?? mainBot.name)
+            case let .plugin(request):
+                if project?.isMaintainer != true {
+                    handToMaintainer("\(project?.name ?? mainBot.name) 對 Deck 的要求：\(request)")
+                }
             }
         }
     }
@@ -351,12 +398,88 @@ public final class Workspace: ObservableObject {
     /// the `deck-teams` plugin. The first agent of a name wins.
     private func loadTeams() -> [TeamSpec] {
         var seen = Set<String>()
-        let specs = plugins.agentFiles().compactMap { file -> TeamSpec? in
+        // deck-core's agents (the component editor) work for Deck 維護; they are not teams.
+        let specs = plugins.agentFiles().filter { $0.plugin != "deck-core" }.compactMap { file -> TeamSpec? in
             guard let spec = (try? String(contentsOf: file.url, encoding: .utf8)).flatMap(TeamSpec.parse),
                   seen.insert(spec.name).inserted else { return nil }
             return spec
         }
         return specs.isEmpty ? TeamSpec.defaults : specs
+    }
+
+    /// What Deck 維護 is told on top of a manager's usual instructions.
+    func maintainerInstructions() -> String {
+        let library = root.appending(path: "plugins").path
+        let check = checkCommand.map { "\($0) <插件資料夾>" } ?? "（這次沒有檢查指令；至少確定 package.json 是合法 JSON、宣告的檔案都在）"
+        return """
+        - 你是「Deck 維護」：負責 Deck 這個 App 的插件庫。工作資料夾 \(library) 就是插件庫，是一個 git repo。
+        - 先讀 \(library)/DECK-PLUGINS.md：插件格式、網頁／程式／Claude 三個部分的 API、檢查和上線流程都在裡面。
+        - 每次改插件：
+          1. 改檔（有 src/ 的插件改 src，再用 esbuild 打包到 package.json 指定的位置）。
+          2. 把那個插件 package.json 的 version 升一版（修正升 patch、加功能升 minor）。
+          3. 跑檢查：\(check)。沒過就修，最多 3 輪；3 輪都沒過，用選項區塊問使用者卡在哪。
+          4. git add 那個插件資料夾，git commit -m "<插件名>: <做了什麼>"，再 git tag <插件名>--v<版本>。
+          5. 用一句話回報做了什麼。Deck 會自己熱更新，不用重開。
+        - 組件在 deck-components/components/<名稱>/（template.html、about.md）。改完一樣升 deck-components 的版本、檢查、commit。
+          只改組件樣板這種小事，可以交給 deck-core:component-editor 這個 agent（Haiku）做，你再檢查和 commit。
+        - App 內建的插件不在這裡，不能直接改：要改就把它整個資料夾複製進插件庫，同名的會蓋過內建的（路徑見 DECK-PLUGINS.md）。
+        - 讀插件庫以外的資料夾前，先用選項區塊問使用者。
+        - 「熱更新檢查」的訊息是 Deck 發現插件壞了：照上面流程修好。
+        """
+    }
+
+    /// `deck-core`: Deck's own agents, starting with the component editor (Haiku).
+    static func prepareCorePlugin(in library: URL) {
+        let files = FileManager.default
+        let plugin = library.appending(path: "deck-core")
+        guard !files.fileExists(atPath: plugin.path) else { return }
+        try? files.createDirectory(at: plugin.appending(path: "claude/.claude-plugin"), withIntermediateDirectories: true)
+        try? files.createDirectory(at: plugin.appending(path: "claude/agents"), withIntermediateDirectories: true)
+        let editor = """
+        ---
+        name: component-editor
+        description: 改 Deck 對話裡的一個組件（template.html 和 about.md）。給它組件資料夾的路徑和要怎麼改。
+        model: haiku
+        tools: Read, Write, Edit
+        ---
+        \(ComponentPrompts.system)
+
+        """
+        try? Data(editor.utf8).write(to: plugin.appending(path: "claude/agents/component-editor.md"))
+        try? Data("""
+        {
+          "name": "deck-core",
+          "version": "1.0.0",
+          "description": "Deck 自己用的 agents。",
+          "author": { "name": "Deck" }
+        }
+
+        """.utf8).write(to: plugin.appending(path: "claude/.claude-plugin/plugin.json"))
+        try? Data("""
+        {
+          "name": "deck-core",
+          "displayName": "Deck 核心",
+          "version": "1.0.0",
+          "description": "Deck 自己用的 agents：component-editor（Haiku）改組件樣板。",
+          "license": "MIT",
+          "engines": { "deck": "^2.0.0" },
+          "deck": {
+            "permissions": ["claude"],
+            "claude": "claude"
+          }
+        }
+
+        """.utf8).write(to: plugin.appending(path: "package.json"))
+    }
+
+    /// DECK-PLUGINS.md in the library: how plugins are written, for Deck 維護 and for people.
+    static func writeLibraryGuide(in library: URL, builtIns: URL?) {
+        try? FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        let url = library.appending(path: "DECK-PLUGINS.md")
+        let text = PluginGuide.text(builtIns: builtIns?.path ?? "（這次沒有內建插件）")
+        if (try? String(contentsOf: url, encoding: .utf8)) != text {
+            try? Data(text.utf8).write(to: url)
+        }
     }
 
     /// The `deck-teams` plugin holds the temporary teams as Claude Code agents. Team files from
@@ -431,7 +554,7 @@ public final class Workspace: ObservableObject {
 
     /// Hands whatever the main bot wrote into a project's inbox.md to that manager.
     public func deliverInboxes() {
-        for project in projects {
+        for project in everyProject {
             guard let text = try? String(contentsOf: project.inboxURL, encoding: .utf8),
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
             try? Data().write(to: project.inboxURL)
@@ -440,7 +563,7 @@ public final class Workspace: ObservableObject {
     }
 
     public func refreshWaiting() {
-        waiting = projects.flatMap { project -> [Waiting] in
+        waiting = everyProject.flatMap { project -> [Waiting] in
             if let question = managers[project.id]?.openQuestion {
                 return [Waiting(projectID: project.id, text: Self.firstLine(of: question.text), messageID: question.id)]
             }
@@ -609,7 +732,7 @@ public final class Workspace: ObservableObject {
             guard let self else { return .null }
             switch method {
             case "bots.list":
-                return .array(([mainBot] + projects.compactMap { self.managers[$0.id] }).map(info(for:)))
+                return .array(([mainBot] + everyProject.compactMap { self.managers[$0.id] }).map(info(for:)))
             case "routines.add":
                 guard let id = params["bot"]?.string, let bot = bot(pluginID: id) else {
                     throw HostMessage.HostError(message: "沒有這個 bot。")
@@ -628,13 +751,17 @@ public final class Workspace: ObservableObject {
 
     private func attach(_ project: Project) {
         let store = BotStore(directory: root.appending(path: "projects/\(project.id.uuidString)"))
-        let bot = makeBot(.manager(name: project.name, avatar: project.avatar, folder: project.folder), store)
+        let profile: BotProfile = project.isMaintainer
+            ? .maintainer(folder: project.folder, instructions: maintainerInstructions())
+            : .manager(name: project.name, avatar: project.avatar, folder: project.folder)
+        let bot = makeBot(profile, store)
         bot.onRequests = { [weak self] requests in self?.handle(requests, from: project) }
         bot.wakeNote = { [weak self] in self?.componentBriefing() ?? "" }
         bot.pluginDirectories = { [weak self] in self?.plugins.claudeDirectories() ?? [] }
         bot.onReply = { [weak self, weak bot] message, answersRelay in
             guard let self else { return }
             report(from: project, message, answersRelay: answersRelay)
+            if project.isMaintainer { components.finishWorking() }
             refreshWaiting()
             if selection == project.id { bot?.markRead() }
         }
@@ -644,7 +771,7 @@ public final class Workspace: ObservableObject {
             .sink { [weak self] _ in self?.refreshWaiting() }
             .store(in: &subscriptions)
         managers[project.id] = bot
-        projects.append(project)
+        if !project.isMaintainer { projects.append(project) }
         connectPlugins(to: bot)
     }
 
@@ -668,7 +795,7 @@ public final class Workspace: ObservableObject {
 
     private func saveProjects() {
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        guard let data = try? JSONEncoder().encode(projects) else { return }
+        guard let data = try? JSONEncoder().encode(projects.filter { !$0.isMaintainer }) else { return }
         try? data.write(to: projectsURL, options: .atomic)
     }
 }

@@ -44,8 +44,9 @@ struct ClaudePartTests {
             folder.path.contains("/broken/") ? "skills: bad frontmatter" : nil
         }
         let teams = root.appending(path: "deck/plugins/deck-teams/claude").standardizedFileURL.path
-        await eventually { workspace.plugins.claudeDirectories().count == 2 }
-        #expect(Set(workspace.plugins.claudeDirectories().map(\.standardizedFileURL.path)) == [good.standardizedFileURL.path, teams])
+        let core = root.appending(path: "deck/plugins/deck-core/claude").standardizedFileURL.path
+        await eventually { workspace.plugins.claudeDirectories().count == 3 }
+        #expect(Set(workspace.plugins.claudeDirectories().map(\.standardizedFileURL.path)) == [good.standardizedFileURL.path, teams, core])
         await eventually { workspace.mainBot.messages.contains { $0.text.contains("broken") && $0.text.contains("沒通過") } }
 
         workspace.mainBot.send("嗨")
@@ -54,7 +55,7 @@ struct ClaudePartTests {
 
         workspace.startTeam("research", task: "查一下")
         await eventually { fake.agents.count == 2 }
-        #expect(fake.agents[1].launch.pluginDirectories.count == 2)
+        #expect(fake.agents[1].launch.pluginDirectories.count == 3)
         await workspace.putEveryoneToSleep()
     }
 

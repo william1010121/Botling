@@ -14,9 +14,14 @@ struct DeckApp: App {
 
     var body: some Scene {
         WindowGroup("指揮台") {
-            RootView(workspace: delegate.workspace)
-                .frame(minWidth: 980, minHeight: 620)
-                .preferredColorScheme(.dark)
+            // Snapshot and plugin-check runs never open the real ~/.deck.
+            if AppDelegate.isHeadless {
+                Color.clear.frame(width: 1, height: 1)
+            } else {
+                RootView(workspace: delegate.workspace)
+                    .frame(minWidth: 980, minHeight: 620)
+                    .preferredColorScheme(.dark)
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
@@ -31,19 +36,14 @@ struct RootView: View {
         let bot = workspace.selectedBot
         HStack(spacing: 0) {
             RailView(workspace: workspace).frame(width: 240)
-            if workspace.viewingComponents {
-                ComponentTeamView(library: workspace.components).frame(minWidth: 480)
-                ComponentsPanel(library: workspace.components).frame(width: 340)
+            // One web view for every bot: switching bots redraws it instead of reloading.
+            ChatSurface(bot: bot, workspace: workspace, components: workspace.components, plugins: workspace.plugins, inputs: inputs)
+                .frame(minWidth: workspace.openResult == nil ? 480 : 360, maxWidth: workspace.openResult == nil ? .infinity : 460)
+            if let result = workspace.openResult {
+                // Looking at a result: the page gets the room, the chat narrows.
+                ResultViewer(result: result) { workspace.openResult = nil }
             } else {
-                // One web view for every bot: switching bots redraws it instead of reloading.
-                ChatSurface(bot: bot, workspace: workspace, components: workspace.components, plugins: workspace.plugins, inputs: inputs)
-                    .frame(minWidth: workspace.openResult == nil ? 480 : 360, maxWidth: workspace.openResult == nil ? .infinity : 460)
-                if let result = workspace.openResult {
-                    // Looking at a result: the page gets the room, the chat narrows.
-                    ResultViewer(result: result) { workspace.openResult = nil }
-                } else {
-                    DetailPanel(workspace: workspace, bot: bot).frame(width: 340).id(bot.id)
-                }
+                DetailPanel(workspace: workspace, bot: bot).frame(width: 340).id(bot.id)
             }
         }
         // Chips and result rows open pages here instead of in a browser.
@@ -70,7 +70,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var workspace = AppDelegate.makeWorkspace()
     private var badge: AnyCancellable?
 
+    /// A run that only draws a snapshot or checks a plugin, then quits.
+    static var isHeadless: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["DECK_SNAPSHOT"] != nil || environment["DECK_COMPONENT_SNAPSHOT"] != nil
+            || CommandLine.arguments.contains("--check-plugin")
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if Self.isHeadless {
+            for window in NSApp.windows { window.orderOut(nil) }
+        }
         if Snapshot.runIfRequested() || PluginCheck.runIfRequested() {
             return
         }
@@ -87,11 +97,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        !Self.isHeadless
     }
 
     /// Lets awake bots write memory.md before the app goes away.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard !Self.isHeadless else { return .terminateNow }
         Task {
             await workspace.putEveryoneToSleep()
             NSApp.reply(toApplicationShouldTerminate: true)
@@ -117,6 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let executable = locator.locate() else { return "找不到 claude。" }
                 return await ClaudePluginValidator.validate(folder, executable: executable)
             },
+            checkCommand: Bundle.main.executablePath.map { "'\($0)' --check-plugin" },
             launcher: launcher
         ) { profile, store in
             Bot(profile: profile, idleInterval: idle, launcher: launcher, store: store)

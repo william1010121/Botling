@@ -63,7 +63,7 @@ struct WorkspaceTests {
 
         #expect(fake.agents.count == 1)
         let launch = fake.agents[0].launch
-        #expect(launch.extraDirectories == [project.notesFolder])
+        #expect(launch.extraDirectories == [project.notesFolder, workspace.maintainerProject.notesFolder])
         let wake = try #require(fake.agents[0].sent.first)
         #expect(wake.contains(project.notesFolder.appending(path: "memory.md").path))
         #expect(wake.contains(project.inboxURL.path))

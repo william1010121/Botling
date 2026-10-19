@@ -7,6 +7,8 @@ public enum BotRequest: Equatable, Sendable {
     case team(name: String, task: String)
     /// `<component name="choices">request</component>`: ask the component team for a change.
     case component(name: String, request: String)
+    /// `<plugin>request</plugin>`: ask Deck 維護 for a change to Deck itself.
+    case plugin(request: String)
 }
 
 /// Splits a bot's reply into the text to show, the buttons to draw, and the requests to act on.
@@ -38,6 +40,8 @@ public enum ReplyParser {
         return (parsed.body, parsed.choices)
     }
 
+    private static let pluginTag = try! NSRegularExpression(pattern: #"<plugin>\s*(.*?)\s*</plugin>"#, options: .dotMatchesLineSeparators)
+
     private static let showTag = try! NSRegularExpression(
         pattern: #"<show\s+name\s*=\s*"([^"]+)"\s*>\s*(.*?)\s*</show>"#,
         options: .dotMatchesLineSeparators
@@ -61,6 +65,12 @@ public enum ReplyParser {
             let name = ns.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespaces)
             let content = ns.substring(with: match.range(at: 3))
             requests.insert(kind == "team" ? .team(name: name, task: content) : .component(name: name, request: content), at: 0)
+            text = ns.replacingCharacters(in: match.range, with: "")
+        }
+
+        for match in pluginTag.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+            let ns = text as NSString
+            requests.append(.plugin(request: ns.substring(with: match.range(at: 1))))
             text = ns.replacingCharacters(in: match.range, with: "")
         }
 

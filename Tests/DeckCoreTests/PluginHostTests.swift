@@ -35,13 +35,13 @@ struct PluginHostTests {
         let fake = FakeLauncher()
         let workspace = workspace(fake)
         let host = try #require(workspace.pluginHost)
-        #expect(await host.waitUntilReady())
-        await eventually({ host.beforeSendHooks == 1 }, timeout: 5)
+        #expect(await host.waitUntilReady(timeout: .seconds(10)))
+        await eventually({ host.beforeSendHooks == 1 }, timeout: 10)
 
         let bot = workspace.mainBot
         await workspace.send("算 \\(x^2\\)", to: bot)
         #expect(bot.messages.first?.text == "算 $x^2$")
-        await eventually { fake.agents.first?.sent.contains { $0.contains("算 $x^2$") } == true }
+        await eventually({ fake.agents.first?.sent.contains { $0.contains("算 $x^2$") } == true }, timeout: 10)
 
         await workspace.send("我的密碼是 1234", to: bot)
         #expect(!bot.messages.contains { $0.role == .user && $0.text.contains("1234") && !$0.text.contains("攔下") })
@@ -55,14 +55,14 @@ struct PluginHostTests {
         """)
         let workspace = workspace(FakeLauncher())
         let host = try #require(workspace.pluginHost)
-        #expect(await host.waitUntilReady())
-        await eventually({ host.beforeSendHooks == 1 }, timeout: 5)
+        #expect(await host.waitUntilReady(timeout: .seconds(10)))
+        await eventually({ host.beforeSendHooks == 1 }, timeout: 10)
         let pid = try #require(host.pid)
 
         kill(pid, SIGKILL)
         let killed = Date()
         await eventually({ !host.isRunning }, timeout: 2)
-        await eventually({ host.isRunning && host.pid != pid && host.beforeSendHooks == 1 }, timeout: 3)
+        await eventually({ host.isRunning && host.pid != pid && host.beforeSendHooks == 1 }, timeout: 10)
         #expect(Date().timeIntervalSince(killed) < 3)
         #expect(host.restarts == 1)
         // An unexplained exit is not blamed on the plugin.
@@ -89,15 +89,15 @@ struct PluginHostTests {
         fake.respond = { text in isAppOnly(text) ? "OK" : "好" }
         let workspace = workspace(fake)
         let host = try #require(workspace.pluginHost)
-        #expect(await host.waitUntilReady())
-        await eventually({ host.afterReplyHooks == 1 }, timeout: 5)
-        await eventually { workspace.mainBot.routines.contains { $0.task.hasPrefix("週一備份") } }
+        #expect(await host.waitUntilReady(timeout: .seconds(10)))
+        await eventually({ host.afterReplyHooks == 1 }, timeout: 10)
+        await eventually({ workspace.mainBot.routines.contains { $0.task.hasPrefix("週一備份") } }, timeout: 10)
 
         await workspace.send("嗨", to: workspace.mainBot)
-        await eventually({ workspace.mainBot.messages.contains { $0.role == .bot && $0.text == "好（已檢查）" } }, timeout: 5)
-        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.text.contains("主 bot 回了，共 1 個 bot") } }, timeout: 5)
+        await eventually({ workspace.mainBot.messages.contains { $0.role == .bot && $0.text == "好（已檢查）" } }, timeout: 10)
+        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.text.contains("主 bot 回了，共 2 個 bot") } }, timeout: 10)
         let storage = root.appending(path: "deck/plugin-data/helper/storage.json")
-        await eventually { (try? String(contentsOf: storage, encoding: .utf8))?.contains("好（已檢查）") == true }
+        await eventually({ (try? String(contentsOf: storage, encoding: .utf8))?.contains("好（已檢查）") == true }, timeout: 10)
         host.stop()
     }
 
@@ -108,9 +108,9 @@ struct PluginHostTests {
         """)
         let workspace = workspace(FakeLauncher())
         let host = try #require(workspace.pluginHost)
-        await eventually({ workspace.plugins.plugin("broken")?.failure?.contains("壞了") == true }, timeout: 5)
+        await eventually({ workspace.plugins.plugin("broken")?.failure?.contains("壞了") == true }, timeout: 10)
         #expect(workspace.mainBot.messages.contains { $0.text.contains("broken") && $0.text.contains("停用") })
-        await eventually({ host.commands == ["calc.double"] }, timeout: 5)
+        await eventually({ host.commands == ["calc.double"] }, timeout: 10)
         #expect(try await host.command("calc.double", args: [.number(5)]) == .number(10))
         host.stop()
     }

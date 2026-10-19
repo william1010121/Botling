@@ -197,8 +197,8 @@ extension LiveClaudeTests {
         await workspace.putEveryoneToSleep()
     }
 
-    /// M6 acceptance: a report beside a component reaches the component team, which edits the
-    /// template; Deck sees the new version without a restart.
+    /// M6 acceptance (P5: through Deck 維護): a report beside a component reaches Deck 維護,
+    /// which edits the template; Deck sees the new version without a restart.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["DECK_LIVE"] == "1"))
     func componentTeamEditsTheTemplateOnRequest() async throws {
         let executable = try #require(ClaudeExecutableLocator().locate())
@@ -216,7 +216,7 @@ extension LiveClaudeTests {
         let template = library.template("choices") ?? ""
         print("notice:", workspace.mainBot.messages.last?.text ?? "")
         #expect(template.contains("56px"))
-        #expect(library.hasPrevious("choices"))
+        await eventually { library.hasPrevious("choices") }
         #expect(library.updated.contains("choices"))
         #expect(library.versions["choices", default: 0] > version)
     }
@@ -247,21 +247,31 @@ extension LiveClaudeTests {
 }
 
 extension LiveClaudeTests {
-    /// The user's own report: 「至少都需要有一個其他吧？」 The component team alone adds an 「其他」
-    /// answer through deck.answer and updates the usage every bot reads, so no App change is needed.
+    /// The user's own report: 「至少都需要有一個其他吧？」 Deck 維護 alone adds an 「其他」 answer
+    /// through deck.answer, updates the usage every bot reads, and commits it (P5 acceptance).
     @Test(.enabled(if: ProcessInfo.processInfo.environment["DECK_LIVE"] == "1"))
     func componentTeamAddsOtherOnItsOwn() async throws {
         let executable = try #require(ClaudeExecutableLocator().locate())
         let root = FileManager.default.temporaryDirectory.appending(path: "deck-live-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let real = ClaudeAgentProcess.launcher(executable: executable)
-        let workspace = Workspace(root: root.appending(path: "deck"), launcher: real) { profile, store in
-            Bot(profile: profile, defaultModel: .haiku, launcher: real, store: store)
+        let deck = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../.build/debug/Deck").standardizedFileURL
+        let workspace = Workspace(
+            root: root.appending(path: "deck"),
+            builtInPlugins: URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../Sources/Deck/Resources/plugins").standardizedFileURL,
+            checkCommand: "env -u CLAUDECODE '\(deck.path)' --check-plugin",
+            launcher: real
+        ) { profile, store in
+            Bot(profile: profile, defaultModel: profile.name == "Deck 維護" ? .sonnet : .haiku, launcher: real, store: store)
         }
+        await workspace.pluginLibraryReady.value
         let library = workspace.components
 
+        let version = library.versions["choices", default: 0]
         workspace.requestComponentChange("choices", request: "至少都需要有一個其他吧？", from: "使用者")
-        await eventually({ library.working.isEmpty }, timeout: 300)
+        await eventually({ library.working.isEmpty }, timeout: 600)
+        print("maintainer:", workspace.maintainer.messages.map { "\($0.role): \($0.text)" }.joined(separator: "\n"))
+        #expect(library.versions["choices", default: 0] > version)
         library.rescan()
         let template = library.template("choices") ?? ""
         let about = (try? String(contentsOf: library.aboutURL("choices"), encoding: .utf8)) ?? ""
@@ -272,6 +282,10 @@ extension LiveClaudeTests {
         #expect(template.contains("input") || template.contains("textarea"))
         #expect(about.contains("其他"))
         #expect(workspace.componentBriefing().contains("其他"))
+        let log = workspace.plugins.git.commits("deck-components")
+        print("commits:", log.count, workspace.plugins.git.run(["log", "--oneline", "-3"]).output)
+        #expect(log.count >= 2)
+        #expect(!workspace.plugins.git.isDirty("deck-components"))
         if let path = ProcessInfo.processInfo.environment["DECK_LIVE_KEEP_TEMPLATE"] {
             try? template.write(toFile: path, atomically: true, encoding: .utf8)
         }

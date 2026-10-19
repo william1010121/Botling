@@ -120,7 +120,7 @@ struct AnswerAndUsageTests {
         try ComponentDefaults.olderChoicesAbouts[0].write(to: choices.appending(path: "about.md"), atomically: true, encoding: .utf8)
         try "<p>我自己改的</p>".write(to: choices.appending(path: "template.html"), atomically: true, encoding: .utf8)
 
-        let library = ComponentLibrary(folder: folder, launcher: FakeLauncher().launcher)
+        let library = ComponentLibrary(folder: folder)
         #expect(try String(contentsOf: library.aboutURL("choices"), encoding: .utf8) == ComponentDefaults.choicesAbout)
         #expect(library.template("choices") == "<p>我自己改的</p>")
     }
