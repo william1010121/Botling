@@ -29,7 +29,8 @@ describe("messages", () => {
   it("draw a bot reply as markdown with a reply button", () => {
     const row = messageElement(message({ text: "**好** $x$" }), {});
     expect(row.querySelector("strong")?.textContent).toBe("好");
-    expect(row.querySelector(".katex")).not.toBeNull();
+    // LaTeX is the deck-latex plugin's job, not the core's.
+    expect(row.querySelector(".katex")).toBeNull();
     row.querySelector<HTMLButtonElement>(".reply-button")!.click();
     expect(sent).toEqual([{ type: "reply", messageID: "m1" }]);
   });

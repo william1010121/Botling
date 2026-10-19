@@ -1,9 +1,9 @@
 import { defaultKeymap, history, historyKeymap, insertNewlineAndIndent } from "@codemirror/commands";
-import { EditorState, Prec } from "@codemirror/state";
+import { EditorState, Prec, StateEffect, type Extension } from "@codemirror/state";
 import { EditorView, keymap, placeholder as placeholderExtension } from "@codemirror/view";
 import { Compartment } from "@codemirror/state";
 import { post } from "./bridge";
-import { escapeHTML } from "./math";
+import { escapeHTML } from "./util";
 import type { ChatState } from "./types";
 
 /**
@@ -19,6 +19,9 @@ export class Composer {
   private readonly filesRow: HTMLElement;
   private readonly sendButton: HTMLButtonElement;
   private hasFiles = false;
+  /** Plugins see key presses first; returning true means a plugin handled it. */
+  onKey: (event: KeyboardEvent) => boolean = () => false;
+  private popover: HTMLElement | null = null;
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement("div");
@@ -66,7 +69,7 @@ export class Composer {
           // Ahead of every keymap: a key pressed while an input method is choosing (注音、拼音)
           // belongs to it, so Return commits the candidate instead of sending.
           Prec.highest(EditorView.domEventHandlers({
-            keydown: (event, view) => event.isComposing || event.keyCode === 229 || view.composing,
+            keydown: (event, view) => event.isComposing || event.keyCode === 229 || view.composing || this.onKey(event),
           })),
           EditorView.domEventHandlers({
             paste: (event) => this.takeFiles(event.clipboardData),
@@ -76,6 +79,37 @@ export class Composer {
       }),
     });
     this.refreshSend();
+  }
+
+  /** Adds a CodeMirror extension (from a plugin); the returned function takes it out again. */
+  addExtension(extension: Extension): () => void {
+    const slot = new Compartment();
+    this.view.dispatch({ effects: StateEffect.appendConfig.of(slot.of(extension)) });
+    return () => this.view.dispatch({ effects: slot.reconfigure([]) });
+  }
+
+  /** A small floating box above the input box, at the caret (a formula preview, say). */
+  showPopover(content: HTMLElement | string): () => void {
+    this.popover?.remove();
+    const box = document.createElement("div");
+    box.className = "composer-popover";
+    if (typeof content === "string") box.innerHTML = content;
+    else box.append(content);
+    document.body.append(box);
+    const caret = this.view.coordsAtPos(this.view.state.selection.main.head);
+    const top = this.root.getBoundingClientRect().top;
+    box.style.left = `${Math.max(12, Math.min((caret?.left ?? 24) - 16, window.innerWidth - box.offsetWidth - 12))}px`;
+    box.style.top = `${top - box.offsetHeight - 8}px`;
+    this.popover = box;
+    return () => {
+      box.remove();
+      if (this.popover === box) this.popover = null;
+    };
+  }
+
+  insert(text: string): void {
+    this.view.dispatch(this.view.state.replaceSelection(text));
+    this.view.focus();
   }
 
   get text(): string {

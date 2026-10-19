@@ -7,6 +7,11 @@ import SwiftUI
 struct DeckApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
+    init() {
+        // `Deck --check-plugin <folder>` checks a plugin and quits (see PluginCheck).
+        PluginCheck.exitIfRequested()
+    }
+
     var body: some Scene {
         WindowGroup("指揮台") {
             RootView(workspace: delegate.workspace)
@@ -31,7 +36,7 @@ struct RootView: View {
                 ComponentsPanel(library: workspace.components).frame(width: 340)
             } else {
                 // One web view for every bot: switching bots redraws it instead of reloading.
-                ChatSurface(bot: bot, workspace: workspace, components: workspace.components, inputs: inputs)
+                ChatSurface(bot: bot, workspace: workspace, components: workspace.components, plugins: workspace.plugins, inputs: inputs)
                     .frame(minWidth: workspace.openResult == nil ? 480 : 360, maxWidth: workspace.openResult == nil ? .infinity : 460)
                 if let result = workspace.openResult {
                     // Looking at a result: the page gets the room, the chat narrows.
@@ -62,11 +67,11 @@ extension RootView {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let workspace = AppDelegate.makeWorkspace()
+    lazy var workspace = AppDelegate.makeWorkspace()
     private var badge: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if Snapshot.runIfRequested() {
+        if Snapshot.runIfRequested() || PluginCheck.runIfRequested() {
             return
         }
         // Started with `swift run`, the app has no bundle; make it a normal foreground app.
@@ -74,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate()
         workspace.startRoutines()
         workspace.components.startWatching()
+        workspace.plugins.startWatching()
         // The Dock icon counts what is waiting for a decision.
         badge = workspace.$waiting.sink { waiting in
             NSApp.dockTile.badgeLabel = waiting.isEmpty ? nil : "\(waiting.count)"
@@ -103,7 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let executable = locator.locate() else { throw DeckError.claudeNotFound }
             return try ClaudeAgentProcess.launcher(executable: executable)(launch)
         }
-        return Workspace(root: root, launcher: launcher) { profile, store in
+        return Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins, launcher: launcher) { profile, store in
             Bot(profile: profile, idleInterval: idle, launcher: launcher, store: store)
         }
     }

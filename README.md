@@ -2,6 +2,18 @@
 
 PRD: `../prd/PRD.md` · Design: https://claude.ai/artifact/2kmnVNyueZX2yMxH4gNqyX
 
+P2 (v2): plugins for Deck itself. A plugin is a folder with an npm `package.json` plus a `deck`
+field (`web`, `styles`, `permissions`, `contributes.commands/settings/components`), in
+`~/.deck/plugins/<name>/` or shipped in the app (`Web/plugins/` → `Resources/plugins/`; a library
+plugin of the same name replaces a shipped one). A web part exports `activate(deck)` and can add
+markdown-it plugins, change drawn messages, register components and commands, and hook the input
+box (keys, CodeMirror extensions, a popover at the caret). One that throws is turned off and
+reported in the main bot's chat until its files change. Edits reload live. LaTeX is now the
+built-in `deck-latex` plugin; the component library is the `deck-components` plugin
+(`~/.deck/components` moves into it). Settings → 插件 turns plugins on/off and shows their
+settings. `Deck --check-plugin <folder>` checks the manifest, runs npm build/test, validates a
+Claude part, and loads the web part once offscreen.
+
 P1 (v2): the chat is a web page. Messages and the input box are drawn by `Web/` (TypeScript:
 markdown-it, KaTeX, CodeMirror 6) inside a WKWebView; the Swift side sends the chat as JSON
 (`ChatPayload`) and handles what the page sends back (send, choose, reply, files, component
@@ -21,7 +33,7 @@ or files with 「+」, drag-and-drop, or paste (screenshots too); they are copie
 it; the reply shows the quote and the bot gets it too. The component team's row in the left
 column opens its page: each request, what it is doing right now, and what it said.
 
-M6: components. Parts of the chat are HTML templates in `~/.deck/components/<name>/`
+M6: components. Parts of the chat are HTML templates in `~/.deck/components/<name>/` (since P2: `~/.deck/plugins/deck-components/components/<name>/`)
 (`template.html` + `about.md`), drawn in a small web view; 「choices」 ships built in. Hover a
 component for its report button: say what to change and the component team (Haiku) edits the
 template; Deck reloads it without a restart, marks it 「已更新」, and keeps the previous version

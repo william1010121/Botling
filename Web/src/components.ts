@@ -1,5 +1,5 @@
 import { post } from "./bridge";
-import { escapeHTML } from "./math";
+import { escapeHTML } from "./util";
 import type { ChoiceView, ComponentInfo } from "./types";
 
 /**

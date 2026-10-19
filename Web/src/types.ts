@@ -70,4 +70,6 @@ export type Action =
   | { type: "removeFile"; id: string }
   | { type: "addFileData"; name: string; base64: string }
   | { type: "componentReport"; name: string; text: string }
-  | { type: "componentRevert"; name: string };
+  | { type: "componentRevert"; name: string }
+  | { type: "pluginError"; name: string; message: string }
+  | { type: "pluginNotice"; name: string; text: string };

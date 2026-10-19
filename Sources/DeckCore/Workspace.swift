@@ -53,22 +53,29 @@ public final class Workspace: ObservableObject {
     public let mainBot: Bot
     public private(set) var managers: [UUID: Bot] = [:]
     public let components: ComponentLibrary
+    /// Plugins for Deck itself: `~/.deck/plugins/` and the ones shipped with the app.
+    public let plugins: PluginRegistry
     private let root: URL
     private let makeBot: BotFactory
     /// Starts processes that are not bots: temporary teams and the component team.
     private let launcher: AgentLauncher
     private var subscriptions: Set<AnyCancellable> = []
 
-    /// `root` is `~/.deck`: the main bot's home, each manager's chat, and the project list.
+    /// `root` is `~/.deck`: the main bot's home, each manager's chat, the project list and the
+    /// plugin library. `builtInPlugins` is the folder of plugins shipped inside the app.
     public init(
         root: URL,
+        builtInPlugins: URL? = nil,
         launcher: @escaping AgentLauncher = { _ in throw CocoaError(.featureUnsupported) },
         makeBot: @escaping BotFactory
     ) {
         self.root = root
         self.makeBot = makeBot
         self.launcher = launcher
-        components = ComponentLibrary(folder: root.appending(path: "components"), launcher: launcher)
+        let library = root.appending(path: "plugins")
+        let componentFolder = Self.prepareComponentPlugin(in: library, movingFrom: root.appending(path: "components"))
+        plugins = PluginRegistry(library: library, builtIns: builtInPlugins)
+        components = ComponentLibrary(folder: componentFolder, launcher: launcher)
         let mainHome = root.appending(path: "main")
         try? FileManager.default.createDirectory(at: mainHome, withIntermediateDirectories: true)
         mainBot = makeBot(.main(home: mainHome), BotStore(directory: mainHome))
@@ -82,10 +89,18 @@ public final class Workspace: ObservableObject {
         }
         mainBot.onRequests = { [weak self] requests in self?.handle(requests, from: nil) }
         teams = loadTeams()
+        components.otherFolders = { [weak self] in
+            (self?.plugins.componentFolders() ?? []).filter { $0.standardizedFileURL != componentFolder.standardizedFileURL }
+        }
+        components.rescan()
         components.onCatalogChanged = { [weak self] in
             guard let self else { return }
             let note = "（App：組件有更新，下面是最新的用法。）\n" + componentBriefing()
             for bot in [mainBot] + Array(managers.values) { bot.queueNote(note) }
+        }
+        plugins.onNotice = { [weak self] text in
+            self?.mainBot.notice(text)
+            if self?.selection == nil { self?.mainBot.markRead() }
         }
         components.onChanged = { [weak self] name, summary in
             self?.mainBot.notice("組件「\(name)」：\(summary)")
@@ -200,6 +215,42 @@ public final class Workspace: ObservableObject {
         \(teamLines)
         \(componentBriefing())
         """
+    }
+
+    /// The component library is the `deck-components` plugin. Components from before plugins
+    /// (`~/.deck/components`) move into it once.
+    static func prepareComponentPlugin(in library: URL, movingFrom old: URL) -> URL {
+        let plugin = library.appending(path: "deck-components")
+        let folder = plugin.appending(path: "components")
+        let files = FileManager.default
+        try? files.createDirectory(at: plugin, withIntermediateDirectories: true)
+        if !files.fileExists(atPath: folder.path) {
+            if files.fileExists(atPath: old.path) {
+                try? files.moveItem(at: old, to: folder)
+            } else {
+                try? files.createDirectory(at: folder, withIntermediateDirectories: true)
+            }
+        }
+        let manifest = plugin.appending(path: "package.json")
+        if !files.fileExists(atPath: manifest.path) {
+            let text = """
+            {
+              "name": "deck-components",
+              "displayName": "組件庫",
+              "version": "1.0.0",
+              "description": "對話裡的組件（選擇題等）。每個組件一個資料夾：template.html 和 about.md。",
+              "license": "MIT",
+              "engines": { "deck": "^2.0.0" },
+              "deck": {
+                "permissions": [],
+                "contributes": { "components": "components" }
+              }
+            }
+
+            """
+            try? Data(text.utf8).write(to: manifest)
+        }
+        return folder
     }
 
     /// The components a bot can draw or ask to change.

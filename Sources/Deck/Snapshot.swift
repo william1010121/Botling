@@ -45,7 +45,7 @@ enum Snapshot {
             ], sourceID: UUID(), sourceMessageID: UUID()),
             ChatMessage(role: .divider, text: "交接 → Opus", date: now.addingTimeInterval(-20))
         ])
-        let workspace = Workspace(root: root) { profile, store in
+        let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw DeckError.claudeNotFound }, store: store)
         }
         let json = ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil) { projectID in
@@ -55,7 +55,7 @@ enum Snapshot {
         let frame = NSRect(x: 0, y: 0, width: 760, height: 1300)
         let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
         let configuration = WKWebViewConfiguration()
-        let handler = Handler(path: path, json: json)
+        let handler = Handler(path: path, json: json, plugins: ChatSurface.setPluginsScript(workspace.plugins))
         configuration.userContentController.add(handler, name: "deck")
         configuration.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
         let view = WKWebView(frame: frame, configuration: configuration)
@@ -70,16 +70,18 @@ enum Snapshot {
     private final class Handler: NSObject, WKScriptMessageHandler {
         let path: String
         let json: String
+        let plugins: String
         weak var view: WKWebView?
 
-        init(path: String, json: String) {
+        init(path: String, json: String, plugins: String) {
             self.path = path
             self.json = json
+            self.plugins = plugins
         }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
             guard (message.body as? [String: Any])?["type"] as? String == "ready", let view else { return }
-            view.evaluateJavaScript("deck.setState(\(json))")
+            view.evaluateJavaScript("\(plugins); deck.setState(\(json))")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [path] in
                 view.takeSnapshot(with: nil) { image, _ in
                     if let tiff = image?.tiffRepresentation,

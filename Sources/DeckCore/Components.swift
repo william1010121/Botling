@@ -31,8 +31,9 @@ public struct ComponentJob: Identifiable, Codable, Equatable, Sendable {
     public var isWorking: Bool { finishedAt == nil }
 }
 
-/// The parts of Deck's chat that are HTML templates instead of fixed code: one folder each in
-/// `~/.deck/components/<name>/` holding `template.html` and `about.md` (what data it takes).
+/// The parts of Deck's chat that are HTML templates instead of fixed code: one folder each,
+/// holding `template.html` and `about.md` (what data it takes). They live in the `deck-components`
+/// plugin (`~/.deck/plugins/deck-components/components/<name>/`); other plugins can bring more.
 /// The component team (Haiku) changes them on request; Deck notices the file change and redraws
 /// without a restart. The version before each change is kept as `template.prev.html`.
 @MainActor
@@ -47,7 +48,10 @@ public final class ComponentLibrary: ObservableObject {
     /// Every request to the component team, oldest first.
     @Published public private(set) var jobs: [ComponentJob] = []
 
+    /// Where new components are made: the deck-components plugin.
     public let folder: URL
+    /// Component folders from other plugins, searched after `folder`.
+    var otherFolders: () -> [URL] = { [] }
     private let launcher: AgentLauncher
     /// Tells the main bot's chat when a change lands.
     var onChanged: ((_ name: String, _ summary: String) -> Void)?
@@ -103,8 +107,16 @@ public final class ComponentLibrary: ObservableObject {
 
     // MARK: Reading
 
+    /// The folder holding component `name`: the first that has it, or `folder` for a new one.
+    func home(of name: String) -> URL {
+        for root in [folder] + otherFolders() where FileManager.default.fileExists(atPath: root.appending(path: "\(name)/template.html").path) {
+            return root
+        }
+        return folder
+    }
+
     public func templateURL(_ name: String) -> URL {
-        folder.appending(path: "\(name)/template.html")
+        home(of: name).appending(path: "\(name)/template.html")
     }
 
     public func template(_ name: String) -> String? {
@@ -129,7 +141,7 @@ public final class ComponentLibrary: ObservableObject {
     }
 
     func aboutURL(_ name: String) -> URL {
-        folder.appending(path: "\(name)/about.md")
+        home(of: name).appending(path: "\(name)/about.md")
     }
 
     // MARK: Changing
@@ -138,7 +150,7 @@ public final class ComponentLibrary: ObservableObject {
     public func request(_ name: String, change: String, from asker: String) {
         let name = Self.safeName(name)
         guard !name.isEmpty, working[name] == nil else { return }
-        let componentFolder = folder.appending(path: name)
+        let componentFolder = home(of: name).appending(path: name)
         try? FileManager.default.createDirectory(at: componentFolder, withIntermediateDirectories: true)
         if FileManager.default.fileExists(atPath: templateURL(name).path) {
             try? FileManager.default.removeItem(at: previousURL(name))
@@ -218,10 +230,12 @@ public final class ComponentLibrary: ObservableObject {
     }
 
     public func rescan() {
-        let entries = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
-        let found = entries
+        let entries = ([folder] + otherFolders()).flatMap {
+            (try? FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)) ?? []
+        }
+        let found = Set(entries
             .filter { FileManager.default.fileExists(atPath: $0.appending(path: "template.html").path) }
-            .map(\.lastPathComponent)
+            .map(\.lastPathComponent))
             .sorted()
         var catalogChanged = false
         if found != names {
@@ -247,7 +261,7 @@ public final class ComponentLibrary: ObservableObject {
     // MARK: Setup
 
     private func previousURL(_ name: String) -> URL {
-        folder.appending(path: "\(name)/template.prev.html")
+        home(of: name).appending(path: "\(name)/template.prev.html")
     }
 
     private func seedDefaults() {

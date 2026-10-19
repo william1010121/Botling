@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { renderMarkdown } from "../src/markdown";
-import { closingDollar, renderPlainWithMath } from "../src/math";
+import { createMarkdown } from "../../../src/markdown";
+import { closingDollar, mathPlugin, renderPlainWithMath } from "../src/math";
+import { formulaAt } from "../src/web";
+
+const md = createMarkdown();
+mathPlugin(md);
+const renderMarkdown = (text: string) => md.render(text);
 
 const inlineCount = (html: string) => (html.match(/class="math-inline"/g) ?? []).length;
 const displayCount = (html: string) => (html.match(/class="math-display"/g) ?? []).length;
@@ -84,5 +89,24 @@ describe("closing dollar", () => {
     expect(closingDollar("$x $", 0)).toBe(-1);
     expect(closingDollar("$x$5", 0)).toBe(-1);
     expect(closingDollar("$$", 0)).toBe(-1);
+  });
+});
+
+describe("the formula preview finds the formula at the caret", () => {
+  it("inside $…$", () => {
+    const text = "看 $a^2+b$ 這個";
+    expect(formulaAt(text, text.indexOf("+"))).toEqual({ tex: "a^2+b", display: false });
+    expect(formulaAt(text, 1)).toBeNull();
+  });
+  it("while a formula is still being typed", () => {
+    expect(formulaAt("算 $\\frac{1", 11)).toEqual({ tex: "\\frac{1", display: false });
+  });
+  it("display formulas", () => {
+    const text = "$$x_1$$ 和 \\[y\\]";
+    expect(formulaAt(text, 3)).toEqual({ tex: "x_1", display: true });
+    expect(formulaAt(text, text.indexOf("y"))).toEqual({ tex: "y", display: true });
+  });
+  it("not around prices", () => {
+    expect(formulaAt("票價 $5 到 $10", 5)).toBeNull();
   });
 });

@@ -226,3 +226,11 @@ button.primary:disabled { opacity: 0.4; cursor: default; }
 .editor .cm-placeholder { color: var(--faint); }
 .editor .cm-cursor { border-left-color: var(--text); }
 .editor .cm-selectionBackground, .editor .cm-editor.cm-focused .cm-selectionBackground { background: #33415E !important; }
+
+/* A plugin's floating box above the input box (the formula preview) */
+.composer-popover {
+  position: fixed; z-index: 20; max-width: min(560px, calc(100vw - 24px));
+  padding: 10px 14px; background: #1F1F24; border: 1px solid #2E2E35; border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45); pointer-events: none; overflow: hidden;
+}
+.plugin-component { margin-top: 10px; }

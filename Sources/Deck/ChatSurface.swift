@@ -16,6 +16,7 @@ struct ChatSurface: NSViewRepresentable {
     @ObservedObject var bot: Bot
     @ObservedObject var workspace: Workspace
     @ObservedObject var components: ComponentLibrary
+    @ObservedObject var plugins: PluginRegistry
     @ObservedObject var inputs: ChatInputs
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -48,6 +49,17 @@ struct ChatSurface: NSViewRepresentable {
         Bundle.module.url(forResource: "chat", withExtension: "html", subdirectory: "web")
     }
 
+    /// The plugins shipped inside the app.
+    static var builtInPlugins: URL? {
+        Bundle.module.url(forResource: "plugins", withExtension: nil)
+    }
+
+    /// `deck.setPlugins(...)` for every enabled plugin's web part.
+    static func setPluginsScript(_ plugins: PluginRegistry) -> String {
+        let data = (try? JSONEncoder().encode(plugins.webSpecs())) ?? Data("[]".utf8)
+        return "deck.setPlugins(\(String(decoding: data, as: UTF8.self)))"
+    }
+
     var payload: ChatPayload {
         ChatPayload.make(
             bot: bot,
@@ -69,10 +81,15 @@ struct ChatSurface: NSViewRepresentable {
         weak var view: WKWebView?
         private var ready = false
         private var lastJSON = ""
+        private var pluginRevision = -1
 
-        /// Sends the latest state, when the page is ready and something changed.
+        /// Sends the latest plugins and state, when the page is ready and something changed.
         func push() {
             guard ready, let surface, let view else { return }
+            if surface.plugins.revision != pluginRevision {
+                pluginRevision = surface.plugins.revision
+                view.evaluateJavaScript(ChatSurface.setPluginsScript(surface.plugins))
+            }
             let json = surface.payload.json()
             guard json != lastJSON else { return }
             lastJSON = json
@@ -90,6 +107,7 @@ struct ChatSurface: NSViewRepresentable {
             case "ready":
                 ready = true
                 lastJSON = ""
+                pluginRevision = -1
                 push()
                 view?.evaluateJavaScript("deck.focus()")
             case "send":
@@ -143,6 +161,15 @@ struct ChatSurface: NSViewRepresentable {
                 }
             case "componentRevert":
                 if let name = body["name"] as? String { surface.components.revert(name) }
+            case "pluginError":
+                if let name = body["name"] as? String {
+                    surface.plugins.markFailed(name, message: body["message"] as? String ?? "")
+                }
+            case "pluginNotice":
+                if let name = body["name"] as? String, let text = body["text"] as? String {
+                    let title = surface.plugins.plugin(name)?.manifest.title ?? name
+                    workspace.mainBot.notice("\(title)：\(text)")
+                }
             default:
                 break
             }

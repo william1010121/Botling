@@ -1,35 +1,43 @@
 import MarkdownIt from "markdown-it";
-import { escapeHTML, mathPlugin } from "./math";
+import { escapeHTML } from "./util";
 
 const videoExtensions = /\.(mp4|mov|m4v|webm)$/i;
 
 /**
- * Bot replies: markdown with LaTeX. Raw HTML from the bot is shown as text, never run.
- * Links become chips; `![說明](網址)` becomes an image or a playing video.
+ * Bot replies: markdown. Raw HTML from the bot is shown as text, never run. Links become chips;
+ * `![說明](網址)` becomes an image or a playing video. Plugins add to it (LaTeX is the
+ * deck-latex plugin); since markdown-it plugins cannot be taken out, unloading one rebuilds it.
  */
-export const md: MarkdownIt = new MarkdownIt({ html: false, linkify: false, breaks: true, typographer: false });
-md.use(mathPlugin);
+export function createMarkdown(): MarkdownIt {
+  const md = new MarkdownIt({ html: false, linkify: false, breaks: true, typographer: false });
 
-// Results and pictures are local files, so file: is allowed; script and data URLs are not
-// (except data: images).
-md.validateLink = (url) => {
-  const value = url.trim().toLowerCase();
-  if (/^(javascript|vbscript):/.test(value)) return false;
-  if (value.startsWith("data:")) return /^data:image\/(png|jpe?g|gif|webp);/.test(value);
-  return true;
-};
+  // Results and pictures are local files, so file: is allowed; script and data URLs are not
+  // (except data: images).
+  md.validateLink = (url) => {
+    const value = url.trim().toLowerCase();
+    if (/^(javascript|vbscript):/.test(value)) return false;
+    if (value.startsWith("data:")) return /^data:image\/(png|jpe?g|gif|webp);/.test(value);
+    return true;
+  };
 
-md.renderer.rules.link_open = (tokens, index) => {
-  const href = tokens[index].attrGet("href") ?? "";
-  return `<a class="chip" href="#" data-url="${escapeHTML(href)}">`;
-};
+  md.renderer.rules.link_open = (tokens, index) => {
+    const href = tokens[index].attrGet("href") ?? "";
+    return `<a class="chip" href="#" data-url="${escapeHTML(href)}">`;
+  };
 
-md.renderer.rules.image = (tokens, index) => {
-  const token = tokens[index];
-  const src = token.attrGet("src") ?? "";
-  const alt = token.content;
-  return mediaHTML(src, alt);
-};
+  md.renderer.rules.image = (tokens, index) => {
+    const token = tokens[index];
+    return mediaHTML(token.attrGet("src") ?? "", token.content);
+  };
+  return md;
+}
+
+export let md: MarkdownIt = createMarkdown();
+
+export function resetMarkdown(): MarkdownIt {
+  md = createMarkdown();
+  return md;
+}
 
 export function mediaHTML(src: string, label: string): string {
   const url = escapeHTML(src);

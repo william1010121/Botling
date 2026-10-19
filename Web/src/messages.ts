@@ -1,8 +1,19 @@
 import { post } from "./bridge";
 import { choicesData, componentElement, fallbackChoices } from "./components";
 import { mediaHTML, renderMarkdown } from "./markdown";
-import { escapeHTML, renderPlainWithMath } from "./math";
+import type { ComponentRender } from "./plugins";
 import type { ComponentInfo, FileView, MessageView } from "./types";
+import { escapeHTML } from "./util";
+
+/** What plugins add to how messages are drawn. */
+export const extensions = {
+  /** Components drawn by plugins in the page, ahead of template components. */
+  components: new Map<string, { plugin: string; render: ComponentRender }>(),
+  /** Called with each drawn message, so a plugin can change it (LaTeX in your own messages). */
+  afterRender: [] as { plugin: string; handler: (element: HTMLElement, message: { id: string; role: string; text: string }) => void }[],
+  /** Runs a plugin's code, unloading the plugin if it throws. */
+  guard: <T>(_plugin: string, run: () => T): T | undefined => run(),
+};
 
 const replyIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>`;
 
@@ -12,6 +23,14 @@ export function messageElement(message: MessageView, components: Record<string, 
   row.className = `row ${message.role}`;
   row.dataset.id = message.id;
 
+  drawRole(row, message, components);
+  for (const { plugin, handler } of extensions.afterRender) {
+    extensions.guard(plugin, () => handler(row, { id: message.id, role: message.role, text: message.text }));
+  }
+  return row;
+}
+
+function drawRole(row: HTMLElement, message: MessageView, components: Record<string, ComponentInfo>): void {
   switch (message.role) {
     case "user":
       row.append(userBody(message), replyButton(message));
@@ -35,7 +54,6 @@ export function messageElement(message: MessageView, components: Record<string, 
       row.innerHTML = `<div class="error-text">${escapeHTML(message.text)}</div>`;
       break;
   }
-  return row;
 }
 
 function avatar(src: string | null): HTMLElement {
@@ -70,7 +88,7 @@ function userBody(message: MessageView): HTMLElement {
   if (message.text) {
     const bubble = document.createElement("div");
     bubble.className = "bubble user-bubble";
-    bubble.innerHTML = renderPlainWithMath(message.text);
+    bubble.innerHTML = escapeHTML(message.text).replace(/\n/g, "<br>");
     body.append(bubble);
   }
   return body;
@@ -96,11 +114,25 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     bubble.append(component ?? fallbackChoices(message.choices, message.chosen, message.answer, onAnswer ? (index) => onAnswer({ index }) : null));
   }
   if (message.display) {
-    const component = componentElement(message.display.name, components[message.display.name], message.display.data, (answer) => {
-      if (answer.index !== undefined) post({ type: "choose", messageID: message.id, index: answer.index });
-      else if (answer.text !== undefined) post({ type: "answer", messageID: message.id, text: answer.text });
-    });
-    if (component) bubble.append(component);
+    const answer = (value: number | string) =>
+      post(typeof value === "number"
+        ? { type: "choose", messageID: message.id, index: value }
+        : { type: "answer", messageID: message.id, text: value });
+    const pluginComponent = extensions.components.get(message.display.name);
+    if (pluginComponent) {
+      const root = document.createElement("div");
+      root.className = "plugin-component";
+      let data: unknown = null;
+      try { data = JSON.parse(message.display.data); } catch { /* left null */ }
+      extensions.guard(pluginComponent.plugin, () => pluginComponent.render(root, data, answer));
+      bubble.append(root);
+    } else {
+      const component = componentElement(message.display.name, components[message.display.name], message.display.data, (value) => {
+        if (value.index !== undefined) answer(value.index);
+        else if (value.text !== undefined) answer(value.text);
+      });
+      if (component) bubble.append(component);
+    }
   }
   if (message.openable) {
     const open = document.createElement("button");

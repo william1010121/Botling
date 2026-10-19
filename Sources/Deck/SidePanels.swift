@@ -155,7 +155,7 @@ struct DetailPanel: View {
     var body: some View {
         Group {
             if showingSettings {
-                SettingsPage(bot: bot) { showingSettings = false }
+                SettingsPage(bot: bot, plugins: bot.profile.role == .main ? workspace.plugins : nil) { showingSettings = false }
             } else {
                 overview
             }
@@ -297,10 +297,19 @@ private struct SleepCountdown: View {
 
 private struct SettingsPage: View {
     @ObservedObject var bot: Bot
+    /// Deck's plugins, on the main bot's settings only.
+    var plugins: PluginRegistry?
     var close: () -> Void
     @State private var adding = false
 
     var body: some View {
+        ScrollView {
+            content
+        }
+        .scrollIndicators(.never)
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 28) {
             HStack(spacing: 4) {
                 Button(action: close) {
@@ -380,6 +389,10 @@ private struct SettingsPage: View {
                         .buttonStyle(.plain)
                     }
                 }
+            }
+
+            if let plugins {
+                PluginsSection(registry: plugins)
             }
 
             Spacer()
@@ -489,6 +502,123 @@ private struct AddRoutineForm: View {
 
     private var canAdd: Bool {
         !title.trimmingCharacters(in: .whitespaces).isEmpty && !instruction.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+}
+
+/// Deck's plugins: on or off, why one broke, and the settings each declares.
+private struct PluginsSection: View {
+    @ObservedObject var registry: PluginRegistry
+    @State private var open: String?
+
+    var body: some View {
+        PanelSection("插件") {
+            VStack(spacing: 0) {
+                ForEach(registry.plugins) { plugin in
+                    PluginRow(registry: registry, plugin: plugin, open: open == plugin.name) {
+                        open = open == plugin.name ? nil : plugin.name
+                    }
+                    if plugin.id != registry.plugins.last?.id {
+                        Rectangle().fill(Theme.line).frame(height: 1)
+                    }
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            ForEach(registry.problems.keys.sorted(), id: \.self) { folder in
+                Text("「\(folder)」讀不了：\(registry.problems[folder]?.joined(separator: "；") ?? "")")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.errorText)
+            }
+        }
+    }
+}
+
+private struct PluginRow: View {
+    @ObservedObject var registry: PluginRegistry
+    let plugin: InstalledPlugin
+    let open: Bool
+    let toggleOpen: () -> Void
+
+    private var settings: [(key: String, value: PluginManifest.Setting)] {
+        (plugin.manifest.deck?.contributes?.settings ?? [:]).sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Button(action: toggleOpen) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(plugin.manifest.title).foregroundStyle(plugin.enabled ? Theme.text : Theme.muted)
+                        Text(plugin.builtIn ? "內建 · \(plugin.manifest.version)" : plugin.manifest.version)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.faint)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(plugin.manifest.description ?? "")
+                Toggle("", isOn: Binding(
+                    get: { plugin.enabled },
+                    set: { registry.setEnabled(plugin.name, $0) }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .accessibilityLabel("啟用 \(plugin.manifest.title)")
+            }
+            if let failure = plugin.failure {
+                Text("出錯停用了：\(failure)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.errorText)
+            }
+            if open {
+                if let description = plugin.manifest.description {
+                    Text(description).font(.system(size: 12)).foregroundStyle(Theme.muted)
+                }
+                ForEach(settings, id: \.key) { key, setting in
+                    SettingControl(registry: registry, plugin: plugin.name, key: key, setting: setting)
+                }
+            }
+        }
+        .font(.system(size: 14))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .frame(minHeight: 48)
+    }
+}
+
+/// One declared setting, drawn from its type.
+private struct SettingControl: View {
+    @ObservedObject var registry: PluginRegistry
+    let plugin: String
+    let key: String
+    let setting: PluginManifest.Setting
+
+    var body: some View {
+        let value = registry.setting(plugin, key)
+        HStack {
+            Text(setting.title).foregroundStyle(Theme.muted)
+            Spacer()
+            switch setting.type {
+            case "boolean":
+                Toggle("", isOn: Binding(get: { value?.bool ?? false }, set: { registry.set(plugin, key, to: .bool($0)) }))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+            case "enum":
+                Picker("", selection: Binding(get: { value?.string ?? "" }, set: { registry.set(plugin, key, to: .string($0)) })) {
+                    ForEach(setting.options ?? [], id: \.self) { Text($0).tag($0) }
+                }
+                .labelsHidden().pickerStyle(.menu).fixedSize()
+            case "number":
+                TextField("", value: Binding(get: { value?.number ?? 0 }, set: { registry.set(plugin, key, to: .number($0)) }), format: .number)
+                    .textFieldStyle(.roundedBorder).frame(width: 70)
+            default:
+                TextField("", text: Binding(get: { value?.string ?? "" }, set: { registry.set(plugin, key, to: .string($0)) }))
+                    .textFieldStyle(.roundedBorder).frame(width: 140)
+            }
+        }
+        .font(.system(size: 13))
+        .accessibilityLabel(setting.title)
     }
 }
 
