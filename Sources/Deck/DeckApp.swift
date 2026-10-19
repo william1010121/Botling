@@ -87,6 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Started with `swift run`, the app has no bundle; make it a normal foreground app.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
+        workspace.prepareLibrary()
         workspace.startRoutines()
         workspace.components.startWatching()
         workspace.plugins.startWatching()

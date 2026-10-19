@@ -37,6 +37,10 @@ public struct AgentLaunch: Equatable, Sendable {
     public var extraDirectories: [URL] = []
     /// Claude Code plugins it loads: skills, agents, MCP servers (`--plugin-dir`).
     public var pluginDirectories: [URL] = []
+    /// Plugin tools it may use without asking (their MCP servers: `mcp__plugin_<p>_<server>`).
+    public var pluginTools: [String] = []
+    /// Extra environment: plugins' secrets, for MCP servers that read them.
+    public var environment: [String: String] = [:]
 }
 
 public typealias AgentLauncher = @Sendable (AgentLaunch) throws -> AgentProcess
@@ -69,7 +73,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
             "--model", launch.model.rawValue,
             "--permission-mode", "acceptEdits",
             // Plugins' skills are used through the Skill tool.
-            "--allowedTools", (launch.tools + (launch.pluginDirectories.isEmpty || launch.tools.contains("Skill") ? [] : ["Skill"])).joined(separator: ","),
+            "--allowedTools", (launch.tools + (launch.pluginDirectories.isEmpty || launch.tools.contains("Skill") ? [] : ["Skill"]) + launch.pluginTools).joined(separator: ","),
             "--append-system-prompt", launch.systemPrompt
         ]
         for directory in launch.extraDirectories {
@@ -87,7 +91,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         process.executableURL = executable
         process.arguments = Self.arguments(for: launch)
         process.currentDirectoryURL = launch.workingDirectory
-        process.environment = Self.environment()
+        process.environment = Self.environment().merging(launch.environment) { _, plugin in plugin }
 
         let input = Pipe()
         let output = Pipe()

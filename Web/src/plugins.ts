@@ -48,6 +48,8 @@ export interface DeckWeb {
     afterRender(handler: (element: HTMLElement, message: { id: string; role: string; text: string }) => void): Dispose;
   };
   components: { register(name: string, render: ComponentRender): Dispose };
+  /** A page in the right column, declared in contributes.panels; drawn when you open it. */
+  panels: { register(id: string, render: (root: HTMLElement) => void | Dispose): Dispose };
   commands: { register(id: string, run: () => void): Dispose; execute(id: string): void };
   settings: { get<T>(key: string): T; onChange(key: string, handler: (value: unknown) => void): Dispose };
   notify(text: string): void;
@@ -73,6 +75,8 @@ export class PluginHost {
   private readonly commandRuns = new Map<string, () => void>();
   private readonly keyHandlers: { plugin: string; handler: (event: KeyboardEvent) => boolean | void }[] = [];
   private markdownChanged = false;
+  /** Called when a plugin registers a panel (the panel page waits for its own). */
+  onPanels: (() => void) | null = null;
   /** host.call requests waiting for the plugin host's answer. */
   private readonly hostCalls = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
   private nextCall = 1;
@@ -261,6 +265,14 @@ export class PluginHost {
           extensions.components.set(component, { plugin: name, render });
           this.markdownChanged = true;
           return own(() => { extensions.components.delete(component); });
+        },
+      },
+      panels: {
+        register: (id, render) => {
+          const key = `${name}/${id}`;
+          extensions.panels.set(key, { plugin: name, render });
+          this.onPanels?.();
+          return own(() => { extensions.panels.delete(key); });
         },
       },
       commands: {

@@ -158,3 +158,48 @@ struct LivePortTests {
         await workspace.putEveryoneToSleep()
     }
 }
+
+/// P7 acceptance: a plugin with an MCP server, installed only after the user says yes; then a
+/// project's manager uses its tool (with a secret from the keychain store).
+@MainActor
+struct LiveInstallTests {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["DECK_LIVE"] == "1"))
+    func managerUsesAnInstalledPluginsMCPTool() async throws {
+        let executable = try #require(ClaudeExecutableLocator().locate())
+        let helper = InstallTests()
+        let repo = try await helper.numberPluginRepo()
+        let root = helper.root.appending(path: "deck")
+        defer { try? FileManager.default.removeItem(at: helper.root) }
+        let launcher = ClaudeAgentProcess.launcher(executable: executable)
+        let secrets = MemorySecretStore()
+        let workspace = Workspace(
+            root: root,
+            validateClaudePart: { await ClaudePluginValidator.validate($0, executable: executable) },
+            secrets: secrets,
+            launcher: launcher
+        ) { profile, store in
+            Bot(profile: profile, defaultModel: .haiku, launcher: launcher, store: store)
+        }
+        await workspace.pluginLibraryReady.value
+
+        workspace.mainBot.send("幫我裝這個插件：file://\(repo.path)")
+        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion } }, timeout: 180)
+        let card = try #require(workspace.mainBot.messages.last { $0.role == .notice && $0.isOpenQuestion })
+        print("card:\n" + card.text)
+        #expect(workspace.plugins.plugin("deck-number") == nil)
+        #expect(workspace.choose(0, in: card.id, of: workspace.mainBot))
+        await eventually({ workspace.plugins.claudeTools() == ["mcp__plugin_deck-number_numbers"] }, timeout: 60)
+        workspace.plugins.setSecret("deck-number", "number.salt", to: "1")
+
+        let folder = helper.root.appending(path: "garden")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let project = workspace.addProject(folder: folder)
+        let manager = try #require(workspace.bot(for: project))
+        manager.send("用 secret_number 工具查 Deck 的秘密數字，只回那個數字。")
+        await eventually({ manager.messages.contains { $0.role == .bot } }, timeout: 180)
+        let reply = manager.messages.last { $0.role == .bot }?.text ?? ""
+        print("manager:", reply)
+        #expect(reply.contains("4243"))
+        await workspace.putEveryoneToSleep()
+    }
+}

@@ -11,6 +11,8 @@ public enum BotRequest: Equatable, Sendable {
     case plugin(request: String)
     /// `<need-folder>/path</need-folder>`: Deck 維護 asks to read a folder outside the library.
     case folder(path: String)
+    /// `<install>source</install>`: install a plugin from outside (Deck asks the user first).
+    case install(source: String)
 }
 
 /// Splits a bot's reply into the text to show, the buttons to draw, and the requests to act on.
@@ -44,6 +46,7 @@ public enum ReplyParser {
 
     private static let pluginTag = try! NSRegularExpression(pattern: #"<plugin>\s*(.*?)\s*</plugin>"#, options: .dotMatchesLineSeparators)
     private static let folderTag = try! NSRegularExpression(pattern: #"<need-folder>\s*(.*?)\s*</need-folder>"#, options: .dotMatchesLineSeparators)
+    private static let installTag = try! NSRegularExpression(pattern: #"<install>\s*(.*?)\s*</install>"#, options: .dotMatchesLineSeparators)
 
     private static let showTag = try! NSRegularExpression(
         pattern: #"<show\s+name\s*=\s*"([^"]+)"\s*>\s*(.*?)\s*</show>"#,
@@ -77,6 +80,11 @@ public enum ReplyParser {
             text = ns.replacingCharacters(in: match.range, with: "")
         }
 
+        for match in installTag.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+            let ns = text as NSString
+            requests.append(.install(source: ns.substring(with: match.range(at: 1))))
+            text = ns.replacingCharacters(in: match.range, with: "")
+        }
         for match in folderTag.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
             let ns = text as NSString
             requests.append(.folder(path: ns.substring(with: match.range(at: 1))))

@@ -56,8 +56,27 @@ public final class Workspace: ObservableObject {
     public let mainBot: Bot
     /// Deck 維護's project (the plugin library); not in `projects`, which are the user's own.
     public let maintainerProject: Project
-    /// The plugin library becomes a git repo in the background; done when this finishes.
-    public private(set) var pluginLibraryReady: Task<Void, Never>!
+    /// The plugin library's git (made a repo on first need, see `prepareLibrary`).
+    private let libraryGit: PluginLibraryGit
+    private var libraryTask: Task<Void, Never>?
+
+    /// The plugin library as a git repo with everything committed; done when this finishes.
+    public var pluginLibraryReady: Task<Void, Never> { prepareLibrary() }
+
+    /// Makes the plugin library a git repo, once, in the background. The app does it at launch;
+    /// handing work to Deck 維護 and installing a plugin do it first too.
+    @discardableResult
+    public func prepareLibrary() -> Task<Void, Never> {
+        if let libraryTask { return libraryTask }
+        let git = libraryGit
+        let components = components
+        let task = Task {
+            await blocking { git.prepare() }
+            components.forgetHistory()
+        }
+        libraryTask = task
+        return task
+    }
     public private(set) var managers: [UUID: Bot] = [:]
     public let components: ComponentLibrary
     /// Plugins for Deck itself: `~/.deck/plugins/` and the ones shipped with the app.
@@ -80,6 +99,7 @@ public final class Workspace: ObservableObject {
         validateClaudePart: ((URL) async -> String?)? = nil,
         checkCommand: String? = nil,
         gitForPlugins: PluginLibraryGit? = nil,
+        secrets: SecretStore = KeychainSecretStore(),
         launcher: @escaping AgentLauncher = { _ in throw CocoaError(.featureUnsupported) },
         makeBot: @escaping BotFactory
     ) {
@@ -92,8 +112,9 @@ public final class Workspace: ObservableObject {
         Self.prepareCorePlugin(in: library)
         Self.writeLibraryGuide(in: library, builtIns: builtInPlugins)
         let git = gitForPlugins ?? PluginLibraryGit(folder: library)
+        libraryGit = git
         maintainerProject = Project(id: Self.maintainerID, name: "Deck 維護", folder: library, avatar: "diamond")
-        plugins = PluginRegistry(library: library, builtIns: builtInPlugins, validateClaudePart: validateClaudePart, git: git)
+        plugins = PluginRegistry(library: library, builtIns: builtInPlugins, validateClaudePart: validateClaudePart, git: git, secrets: secrets)
         pluginHost = pluginHostScript.map { PluginHostClient(script: $0, locateNode: locateNode) }
         components = ComponentLibrary(folder: componentFolder)
         components.git = git.isAvailable ? git : nil
@@ -103,7 +124,7 @@ public final class Workspace: ObservableObject {
         mainBot = makeBot(.main(home: mainHome), BotStore(directory: mainHome))
         mainBot.wakeNote = { [weak self] in self?.projectBriefing() ?? "" }
         mainBot.extraDirectories = { [weak self] in self?.everyProject.map(\.notesFolder) ?? [] }
-        mainBot.pluginDirectories = { [weak self] in self?.plugins.claudeDirectories() ?? [] }
+        giveClaudeParts(to: mainBot)
         mainBot.onReply = { [weak self] _, _ in
             guard let self else { return }
             deliverInboxes()
@@ -144,12 +165,6 @@ public final class Workspace: ObservableObject {
             attach(project)
         }
         refreshWaiting()
-        // Everything Deck writes into the library at start is in the first commit.
-        let components = components
-        pluginLibraryReady = Task {
-            await Task.detached { git.prepare() }.value
-            components.forgetHistory()
-        }
     }
 
     /// The user's projects and Deck 維護.
@@ -157,6 +172,58 @@ public final class Workspace: ObservableObject {
 
     /// How Deck 維護 runs `deck plugin check` (the Deck binary with --check-plugin).
     private let checkCommand: String?
+
+    // MARK: Installing plugins from outside
+
+    /// Fetched plugins waiting for your 「安裝」, by the question's message id.
+    private var installQuestions: [UUID: InstallProposal] = [:]
+    /// Sources being fetched right now (Settings shows them).
+    @Published public private(set) var fetching: [String] = []
+
+    /// Fetches a plugin, checks it, and asks you before installing it. A folder you picked
+    /// yourself (`trusted`) is installed without asking. Returns what went wrong, if anything.
+    @discardableResult
+    public func proposeInstall(_ source: String, trusted: Bool = false) async -> String? {
+        let source = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        fetching.append(source)
+        defer { fetching.removeAll { $0 == source } }
+        let proposal: InstallProposal
+        do {
+            proposal = try await PluginInstaller.fetch(source, scratch: root.appending(path: "install-staging"))
+        } catch {
+            mainBot.notice("裝不了「\(source)」：\(error.localizedDescription)")
+            return error.localizedDescription
+        }
+        guard proposal.problems.isEmpty else {
+            let problem = proposal.problems.joined(separator: "；")
+            mainBot.notice("「\(proposal.manifest.title)」沒通過檢查，沒有裝：\(problem)")
+            return problem
+        }
+        if trusted {
+            return await finishInstall(proposal)
+        }
+        mainBot.notice(
+            proposal.summary,
+            choices: [Choice(label: "安裝", detail: nil, recommended: false), Choice(label: "不要", detail: nil, recommended: false)]
+        )
+        if let question = mainBot.messages.last { installQuestions[question.id] = proposal }
+        if selection == nil { mainBot.markRead() }
+        return nil
+    }
+
+    @discardableResult
+    private func finishInstall(_ proposal: InstallProposal) async -> String? {
+        await prepareLibrary().value
+        let problem = await plugins.install(proposal)
+        try? FileManager.default.removeItem(at: proposal.folder)
+        if let problem {
+            mainBot.notice("「\(proposal.manifest.title)」沒裝成：\(problem)")
+        } else {
+            mainBot.notice("裝好了：\(proposal.manifest.title) \(proposal.manifest.version)。設定頁的插件區可以關掉或移除。")
+        }
+        if selection == nil { mainBot.markRead() }
+        return problem
+    }
 
     // MARK: Folders outside the library
 
@@ -214,6 +281,7 @@ public final class Workspace: ObservableObject {
 
     /// Gives Deck 維護 a job, the way the main bot hands work to a manager.
     public func handToMaintainer(_ text: String) {
+        prepareLibrary()
         maintainer.relay(text)
     }
 
@@ -380,6 +448,8 @@ public final class Workspace: ObservableObject {
                 if project == nil { startTeam(name, task: task) }
             case let .component(name, request):
                 requestComponentChange(name, request: request, from: project?.name ?? mainBot.name)
+            case let .install(source):
+                Task { await proposeInstall(source) }
             case let .folder(path):
                 if project?.isMaintainer == true { requestFolder(path) }
             case let .plugin(request):
@@ -411,7 +481,9 @@ public final class Workspace: ObservableObject {
                 workingDirectory: folder,
                 systemPrompt: TeamPrompts.system(spec, folder: folder),
                 tools: spec.tools,
-                pluginDirectories: plugins.claudeDirectories()
+                pluginDirectories: plugins.claudeDirectories(),
+                pluginTools: plugins.claudeTools(),
+                environment: plugins.secretEnvironment()
             ))
         } catch {
             mainBot.notice("\(spec.title)拉不起來：\(error.localizedDescription)")
@@ -588,6 +660,14 @@ public final class Workspace: ObservableObject {
         try? Data(manifest.utf8).write(to: plugin.appending(path: "package.json"))
     }
 
+    /// Every bot starts with the plugins' Claude parts, their MCP tools allowed, and the secrets
+    /// those servers read.
+    private func giveClaudeParts(to bot: Bot) {
+        bot.pluginDirectories = { [weak self] in self?.plugins.claudeDirectories() ?? [] }
+        bot.pluginTools = { [weak self] in self?.plugins.claudeTools() ?? [] }
+        bot.pluginEnvironment = { [weak self] in self?.plugins.secretEnvironment() ?? [:] }
+    }
+
     /// Plugins' Claude parts changed: refresh the team list, and restart awake bots (once they
     /// are free) so they get the new skills, agents and MCP servers.
     private func followClaudeParts() {
@@ -634,6 +714,17 @@ public final class Workspace: ObservableObject {
     @discardableResult
     public func choose(_ index: Int, in messageID: UUID, of bot: Bot) -> Bool {
         defer { refreshWaiting() }
+        if bot === mainBot, let proposal = installQuestions[messageID] {
+            guard let notice = mainBot.messages.first(where: { $0.id == messageID }), notice.isOpenQuestion else { return false }
+            installQuestions[messageID] = nil
+            mainBot.markChosen(index, in: messageID)
+            if index == 0 {
+                Task { await finishInstall(proposal) }
+            } else {
+                try? FileManager.default.removeItem(at: proposal.folder)
+            }
+            return true
+        }
         if bot === mainBot, let folder = folderQuestions[messageID] {
             guard let notice = mainBot.messages.first(where: { $0.id == messageID }), notice.isOpenQuestion else { return false }
             folderQuestions[messageID] = nil
@@ -821,7 +912,7 @@ public final class Workspace: ObservableObject {
         let bot = makeBot(profile, store)
         bot.onRequests = { [weak self] requests in self?.handle(requests, from: project) }
         bot.wakeNote = { [weak self] in self?.componentBriefing() ?? "" }
-        bot.pluginDirectories = { [weak self] in self?.plugins.claudeDirectories() ?? [] }
+        giveClaudeParts(to: bot)
         bot.onReply = { [weak self, weak bot] message, answersRelay in
             guard let self else { return }
             report(from: project, message, answersRelay: answersRelay)

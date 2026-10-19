@@ -262,7 +262,7 @@ public final class PluginRegistry: ObservableObject {
         guard let path = gitPath(name) else { return false }
         let git = git
         Task { [weak self] in
-            let answer = await Task.detached { git.hasPrevious(path) }.value
+            let answer = await blocking { git.hasPrevious(path) }
             self?.history[name] = answer
         }
         return false
@@ -274,7 +274,7 @@ public final class PluginRegistry: ObservableObject {
         guard let path = gitPath(name) else { return "內建插件沒有版本紀錄。" }
         let git = git
         let label = plugin(name)?.manifest.title ?? name
-        let problem = await Task.detached { git.revert(path, label: label) }.value
+        let problem = await blocking { git.revert(path, label: label) }
         state.failures[name] = nil
         saveState()
         rescan(force: true)
@@ -287,7 +287,7 @@ public final class PluginRegistry: ObservableObject {
         guard let path = gitPath(name) else { return "內建插件不能移除，可以關掉。" }
         let git = git
         let label = plugin(name)?.manifest.title ?? name
-        let problem = await Task.detached { git.remove(path, label: label) }.value
+        let problem = await blocking { git.remove(path, label: label) }
         rescan(force: true)
         return problem
     }
@@ -528,7 +528,7 @@ public final class PluginRegistry: ObservableObject {
         let git = git
         let label = "\(proposal.manifest.name) \(proposal.manifest.version)"
         let source = proposal.source
-        let problem: String? = await Task.detached {
+        let problem: String? = await blocking {
             let files = FileManager.default
             try? files.removeItem(at: target)
             do {
@@ -539,7 +539,7 @@ public final class PluginRegistry: ObservableObject {
             git.run(["add", "-A", "--", proposal.manifest.name])
             git.run(["commit", "-q", "-m", "安裝 \(label)（\(source)）", "--", proposal.manifest.name])
             return nil
-        }.value
+        }
         guard problem == nil else { return problem }
         if state.installed == nil { state.installed = [:] }
         state.installed?[proposal.manifest.name] = proposal.source

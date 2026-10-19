@@ -162,7 +162,7 @@ public enum PluginInstaller {
     }
 
     private static func run(_ executable: String, _ arguments: [String], in folder: URL) async throws {
-        try await Task.detached {
+        try await blocking {
             let process = Process()
             process.executableURL = URL(filePath: executable)
             process.arguments = arguments
@@ -179,7 +179,7 @@ public enum PluginInstaller {
             guard process.terminationStatus == 0 else {
                 throw InstallError(message: "\(arguments.first ?? executable) 失敗：\(text.trimmingCharacters(in: .whitespacesAndNewlines).suffix(300))")
             }
-        }.value
+        }
     }
 }
 

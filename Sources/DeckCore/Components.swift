@@ -72,7 +72,7 @@ public final class ComponentLibrary: ObservableObject {
         previous[name] = false
         if let git, let path = gitPath(name) {
             Task { [weak self] in
-                let answer = await Task.detached { git.hasPrevious(path) }.value
+                let answer = await blocking { git.hasPrevious(path) }
                 guard let self, previous[name] != nil else { return }
                 if previous[name] != answer {
                     previous[name] = answer
@@ -132,7 +132,7 @@ public final class ComponentLibrary: ObservableObject {
     @discardableResult
     public func revert(_ name: String) async -> String? {
         guard let git, let path = gitPath(name) else { return "這個組件沒有版本紀錄。" }
-        let problem = await Task.detached { git.revert(path, label: "組件 \(name)") }.value
+        let problem = await blocking { git.revert(path, label: "組件 \(name)") }
         updated.remove(name)
         previous[name] = nil
         rescan()

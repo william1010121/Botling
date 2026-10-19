@@ -1,6 +1,6 @@
 import { post } from "./bridge";
 import { Composer, sendFile } from "./composer";
-import { messageElement, typingElement } from "./messages";
+import { extensions, messageElement, typingElement } from "./messages";
 import { PluginHost, type PluginSpec } from "./plugins";
 import type { ChatState, MessageView } from "./types";
 
@@ -151,6 +151,7 @@ declare global {
       setState(state: ChatState): void;
       setPlugins(specs: PluginSpec[]): Promise<void>;
       runCommand(id: string): void;
+      showPanel(key: string): void;
       hostReply(callID: number, ok: boolean, value: unknown): void;
       focus(): void;
     };
@@ -158,11 +159,45 @@ declare global {
 }
 
 const chat = new Chat();
+
+/**
+ * Panel mode (`chat.html?panel=plugin/id`): the same page in the right column, showing one
+ * plugin's panel instead of the chat. The panel is drawn as soon as its plugin registers it.
+ */
+let panelWanted: string | null = new URLSearchParams(location.search).get("panel");
+let panelDispose: (() => void) | null = null;
+if (panelWanted) document.body.classList.add("panel-mode");
+
+function showPanel(key: string): void {
+  panelWanted = key;
+  drawPanel();
+}
+
+function drawPanel(): void {
+  if (!panelWanted) return;
+  const entry = extensions.panels.get(panelWanted);
+  let root = document.getElementById("panel-root");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "panel-root";
+    document.body.append(root);
+  }
+  if (!entry) {
+    root.innerHTML = `<p class="panel-empty">這個面板還沒準備好。</p>`;
+    return;
+  }
+  panelDispose?.();
+  root.innerHTML = "";
+  const result = extensions.guard(entry.plugin, () => entry.render(root!));
+  panelDispose = typeof result === "function" ? result : null;
+}
+chat.plugins.onPanels = () => drawPanel();
 window.deck = {
   setState: (state) => chat.setState(state),
   setPlugins: (specs) => chat.plugins.sync(specs),
   runCommand: (id) => chat.plugins.execute(id),
   hostReply: (callID, ok, value) => chat.plugins.hostReply(callID, ok, value),
+  showPanel: (key) => showPanel(key),
   focus: () => chat.focus(),
 };
 post({ type: "ready" });

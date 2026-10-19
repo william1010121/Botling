@@ -176,38 +176,8 @@ struct ChatSurface: NSViewRepresentable {
                 }
             case "pluginLoaded":
                 if let name = body["name"] as? String { surface.plugins.markLoaded(name) }
-            case "pluginError":
-                if let name = body["name"] as? String {
-                    surface.plugins.markFailed(name, message: body["message"] as? String ?? "")
-                }
-            case "command":
-                if let id = body["id"] as? String { Task { await workspace.runCommand(id) } }
-            case "hostCall":
-                guard let plugin = body["plugin"] as? String, let method = body["method"] as? String,
-                      let callID = body["callID"] as? Int else { break }
-                let params = (try? JSONSerialization.data(withJSONObject: body["params"] ?? NSNull(), options: .fragmentsAllowed))
-                    .flatMap { try? JSONDecoder().decode(JSONValue.self, from: $0) } ?? .null
-                Task { [weak view] in
-                    let ok: Bool
-                    let value: JSONValue
-                    do {
-                        guard let host = workspace.pluginHost else { throw HostReplyError.noHost }
-                        value = try await host.webCall(plugin: plugin, method: method, params: params)
-                        ok = true
-                    } catch {
-                        value = .string(error.localizedDescription)
-                        ok = false
-                    }
-                    let json = (try? JSONEncoder().encode(value)).map { String(decoding: $0, as: UTF8.self) } ?? "null"
-                    _ = try? await view?.evaluateJavaScript("deck.hostReply(\(callID), \(ok), \(json))")
-                }
-            case "pluginNotice":
-                if let name = body["name"] as? String, let text = body["text"] as? String {
-                    let title = surface.plugins.plugin(name)?.manifest.title ?? name
-                    workspace.mainBot.notice("\(title)：\(text)")
-                }
             default:
-                break
+                PluginBridge.handle(type, body, workspace: workspace, view: view)
             }
         }
 
@@ -226,11 +196,6 @@ struct ChatSurface: NSViewRepresentable {
             return (try? data.write(to: url)) == nil ? nil : url
         }
     }
-}
-
-enum HostReplyError: LocalizedError {
-    case noHost
-    var errorDescription: String? { "插件主機沒有在跑。" }
 }
 
 /// The shape avatars as PNG data URLs, for the web page.

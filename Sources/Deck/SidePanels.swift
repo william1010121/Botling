@@ -154,17 +154,23 @@ private struct BotRow: View {
 struct DetailPanel: View {
     @ObservedObject var workspace: Workspace
     @ObservedObject var bot: Bot
+    @ObservedObject var plugins: PluginRegistry
     @State private var showingSettings: Bool
+    /// A plugin's panel ("plugin/id") shown instead of the overview.
+    @State private var openPanel: String?
 
     init(workspace: Workspace, bot: Bot, showingSettings: Bool = false) {
         self.workspace = workspace
         self.bot = bot
+        self.plugins = workspace.plugins
         _showingSettings = State(initialValue: showingSettings)
     }
 
     var body: some View {
         Group {
-            if showingSettings {
+            if let key = openPanel {
+                panelPage(key)
+            } else if showingSettings {
                 SettingsPage(bot: bot, plugins: bot.profile.role == .main ? workspace.plugins : nil, workspace: workspace) { showingSettings = false }
             } else {
                 overview
@@ -176,12 +182,62 @@ struct DetailPanel: View {
         .background(Theme.side)
     }
 
+    /// Plugins' panels: up to 3 buttons, the rest under 「更多」.
+    @ViewBuilder private var panelButtons: some View {
+        let panels = plugins.panels()
+        ForEach(Array(panels.prefix(3)), id: \.panel.id) { entry in
+            Button { openPanel = "\(entry.plugin.name)/\(entry.panel.id)" } label: {
+                Image(systemName: entry.panel.icon ?? "square.grid.2x2")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.muted)
+                    .frame(width: 32, height: 40)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(entry.panel.title)
+            .accessibilityLabel(entry.panel.title)
+        }
+        if panels.count > 3 {
+            Menu {
+                ForEach(Array(panels.dropFirst(3)), id: \.panel.id) { entry in
+                    Button(entry.panel.title) { openPanel = "\(entry.plugin.name)/\(entry.panel.id)" }
+                }
+            } label: {
+                Image(systemName: "ellipsis").foregroundStyle(Theme.muted)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 32, height: 40)
+            .accessibilityLabel("更多面板")
+        }
+    }
+
+    private func panelPage(_ key: String) -> some View {
+        let title = plugins.panels().first { "\($0.plugin.name)/\($0.panel.id)" == key }?.panel.title ?? "面板"
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 4) {
+                Button { openPanel = nil } label: {
+                    Image(systemName: "chevron.left")
+                        .foregroundStyle(Theme.muted)
+                        .frame(width: 40, height: 40)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("返回")
+                Text(title).font(.system(size: 15, weight: .semibold))
+            }
+            PanelView(key: key, workspace: workspace, plugins: plugins)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
     private var overview: some View {
         VStack(alignment: .leading, spacing: 28) {
             HStack(spacing: 10) {
                 AvatarView(kind: bot.avatarKind, size: 28, eyes: bot.eyes)
                 Text(bot.name).font(.system(size: 15, weight: .semibold)).lineLimit(1)
                 Spacer()
+                panelButtons
                 Button { showingSettings = true } label: {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 15))
@@ -403,7 +459,7 @@ private struct SettingsPage: View {
             }
 
             if let plugins {
-                PluginsSection(registry: plugins, host: workspace?.pluginHost)
+                PluginsSection(registry: plugins, host: workspace?.pluginHost, workspace: workspace)
             }
 
             Spacer()
@@ -520,7 +576,9 @@ private struct AddRoutineForm: View {
 private struct PluginsSection: View {
     @ObservedObject var registry: PluginRegistry
     var host: PluginHostClient?
+    var workspace: Workspace?
     @State private var open: String?
+    @State private var source = ""
 
     var body: some View {
         PanelSection("插件") {
@@ -538,6 +596,9 @@ private struct PluginsSection: View {
             .clipShape(RoundedRectangle(cornerRadius: 14))
             if let problem = host?.problem {
                 Text(problem).font(.system(size: 12)).foregroundStyle(Theme.errorText)
+            }
+            if let workspace {
+                AddPluginRow(workspace: workspace, source: $source)
             }
             ForEach(registry.problems.keys.sorted(), id: \.self) { folder in
                 Text("「\(folder)」讀不了：\(registry.problems[folder]?.joined(separator: "；") ?? "")")
@@ -564,7 +625,10 @@ private struct PluginRow: View {
                 Button(action: toggleOpen) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(plugin.manifest.title).foregroundStyle(plugin.enabled ? Theme.text : Theme.muted)
-                        Text(plugin.builtIn ? "內建 · \(plugin.manifest.version)" : plugin.manifest.version)
+                        Text(plugin.builtIn ? "內建 · \(plugin.manifest.version)"
+                             : plugin.installedFrom.map { "外部 · \(plugin.manifest.version) · \($0)" } ?? plugin.manifest.version)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.faint)
                     }
@@ -628,18 +692,75 @@ private struct PluginRow: View {
     }
 }
 
+/// 「加插件」: paste a git URL, npm name or archive URL (Deck asks before installing), or pick
+/// a folder of your own (installed right away).
+private struct AddPluginRow: View {
+    @ObservedObject var workspace: Workspace
+    @Binding var source: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                TextField("加插件：git 網址、npm 名稱或 .zip 網址", text: $source)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(add)
+                Button("加", action: add).disabled(source.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button {
+                    let panel = NSOpenPanel()
+                    panel.canChooseDirectories = true
+                    panel.canChooseFiles = false
+                    panel.prompt = "加為插件"
+                    panel.message = "選一個插件資料夾（裡面有 package.json）。"
+                    if panel.runModal() == .OK, let folder = panel.url {
+                        Task { await workspace.proposeInstall(folder.path, trusted: true) }
+                    }
+                } label: {
+                    Image(systemName: "folder")
+                }
+                .help("從資料夾加")
+                .accessibilityLabel("從資料夾加插件")
+            }
+            .font(.system(size: 13))
+            ForEach(workspace.fetching, id: \.self) { item in
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("正在取得 \(item)…").font(.system(size: 12)).foregroundStyle(Theme.faint).lineLimit(1)
+                }
+            }
+        }
+    }
+
+    private func add() {
+        let text = source.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        source = ""
+        Task { await workspace.proposeInstall(text) }
+    }
+}
+
 /// One declared setting, drawn from its type.
 private struct SettingControl: View {
     @ObservedObject var registry: PluginRegistry
     let plugin: String
     let key: String
     let setting: PluginManifest.Setting
+    @State private var secret = ""
 
     var body: some View {
         let value = registry.setting(plugin, key)
         HStack {
             Text(setting.title).foregroundStyle(Theme.muted)
             Spacer()
+            if setting.secret == true {
+                // Kept in the keychain; Deck never shows it again.
+                SecureField(registry.secret(plugin, key) == nil ? "還沒設定" : "已存在鑰匙圈", text: $secret)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 140)
+                    .onSubmit {
+                        registry.setSecret(plugin, key, to: secret)
+                        secret = ""
+                    }
+            } else {
             switch setting.type {
             case "boolean":
                 Toggle("", isOn: Binding(get: { value?.bool ?? false }, set: { registry.set(plugin, key, to: .bool($0)) }))
@@ -655,6 +776,7 @@ private struct SettingControl: View {
             default:
                 TextField("", text: Binding(get: { value?.string ?? "" }, set: { registry.set(plugin, key, to: .string($0)) }))
                     .textFieldStyle(.roundedBorder).frame(width: 140)
+            }
             }
         }
         .font(.system(size: 13))

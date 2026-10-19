@@ -2,6 +2,14 @@
 
 PRD: `../prd/PRD.md` · Design: https://claude.ai/artifact/2kmnVNyueZX2yMxH4gNqyX
 
+P7 (v2): external plugins. Settings → 插件 → 加插件 takes a git URL, npm name or .zip/.tgz URL
+(or a folder you pick, trusted as is); bots can ask with `<install>來源</install>`. Deck fetches
+and checks it, then shows a card (source, author, license, permissions, MCP servers) and installs
+only after 「安裝」 (committed to the library). Plugin MCP tools are allowed for every bot;
+`secret` settings live in the keychain and reach bots as environment variables (`env`).
+`contributes.panels` + `deck.panels.register` add pages to the right column. Subprocess work
+runs on GCD threads, never on Swift's cooperative pool.
+
 P6 (v2): plugins from your own projects. Deck 維護 asks before reading a folder outside the
 plugin library (`<need-folder>`): a question in the main chat, remembered in
 `~/.deck/folders.json`; once allowed it restarts with read access and carries on. Live

@@ -36,6 +36,9 @@ public final class Bot: ObservableObject, Identifiable {
     public var extraDirectories: (() -> [URL])?
     /// Plugins' Claude parts (skills, agents, MCP) it starts with.
     public var pluginDirectories: (() -> [URL])?
+    /// Plugins' MCP tools it may use, and the secrets their servers read.
+    public var pluginTools: (() -> [String])?
+    public var pluginEnvironment: (() -> [String: String])?
     /// Called after each reply the user sees, with whether it answers work the main bot handed
     /// over (rather than something the user said in this chat).
     public var onReply: ((ChatMessage, _ answersRelay: Bool) -> Void)?
@@ -286,7 +289,9 @@ public final class Bot: ObservableObject, Identifiable {
             systemPrompt: prompts.system,
             tools: profile.tools,
             extraDirectories: extraDirectories?() ?? [],
-            pluginDirectories: pluginDirectories?() ?? []
+            pluginDirectories: pluginDirectories?() ?? [],
+            pluginTools: pluginTools?() ?? [],
+            environment: pluginEnvironment?() ?? [:]
         ))
         self.process = process
         Task { [weak self] in

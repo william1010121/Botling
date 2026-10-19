@@ -44,6 +44,7 @@ struct BotPrompts {
           要用組件顯示資料：在回覆裡加 <show name="組件名稱">符合格式的 JSON</show>。
           需要組件改版或一個新組件：在回覆最後加 <component name="組件名稱">要怎麼改</component>，不要自己改 App。
           Deck 本身要加功能或改行為（插件）：在回覆最後加 <plugin>要什麼</plugin>，交給 Deck 維護。
+          使用者要裝外部的插件（git 網址、npm 套件、zip 網址）：在回覆最後加 <install>來源</install>，Deck 會檢查並先問使用者。不要自己下載或安裝。
         """
         switch profile.role {
         case .main:

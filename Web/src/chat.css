@@ -234,3 +234,8 @@ button.primary:disabled { opacity: 0.4; cursor: default; }
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45); pointer-events: none; overflow: hidden;
 }
 .plugin-component { margin-top: 10px; }
+
+/* Panel mode: one plugin's page in the right column instead of the chat */
+body.panel-mode #scroller, body.panel-mode #composer-slot { display: none; }
+#panel-root { position: fixed; inset: 0; overflow: auto; padding: 16px 20px; color: #EDEDF0; }
+.panel-empty { color: #8E8E96; font-size: 13px; }

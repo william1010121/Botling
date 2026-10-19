@@ -131,3 +131,18 @@ describe("plugin host calls from the page", () => {
     expect(sent).toContainEqual({ type: "command", id: "other.run" });
   });
 });
+
+describe("panels", () => {
+  it("a plugin registers a panel and it can be drawn", async () => {
+    const { extensions } = await import("../src/messages");
+    await host.sync([spec("charts")], async () => (deck) => {
+      deck.panels.register("today", (root) => { root.textContent = "今天 3 件事"; });
+    });
+    const panel = extensions.panels.get("charts/today");
+    const root = document.createElement("div");
+    panel?.render(root);
+    expect(root.textContent).toBe("今天 3 件事");
+    await host.sync([], async () => () => {});
+    expect(extensions.panels.has("charts/today")).toBe(false);
+  });
+});

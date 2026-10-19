@@ -11,6 +11,8 @@ export const extensions = {
   components: new Map<string, { plugin: string; render: ComponentRender }>(),
   /** Called with each drawn message, so a plugin can change it (LaTeX in your own messages). */
   afterRender: [] as { plugin: string; handler: (element: HTMLElement, message: { id: string; role: string; text: string }) => void }[],
+  /** Right-column pages from plugins, by "plugin/id". */
+  panels: new Map<string, { plugin: string; render: (root: HTMLElement) => void | (() => void) }>(),
   /** Runs a plugin's code, unloading the plugin if it throws. */
   guard: <T>(_plugin: string, run: () => T): T | undefined => run(),
 };

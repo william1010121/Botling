@@ -71,7 +71,8 @@ func isAppOnly(_ text: String) -> Bool {
 }
 
 @MainActor
-func eventually(_ condition: @MainActor () -> Bool, timeout: TimeInterval = 2) async {
+/// Waits for `condition`. Generous by default: the whole suite runs in parallel on the main actor.
+func eventually(_ condition: @MainActor () -> Bool, timeout: TimeInterval = 5) async {
     let deadline = Date().addingTimeInterval(timeout)
     while !condition(), Date() < deadline {
         try? await Task.sleep(for: .milliseconds(20))

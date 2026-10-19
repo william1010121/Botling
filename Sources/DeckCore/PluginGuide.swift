@@ -41,9 +41,11 @@ enum PluginGuide {
               "commands": [{ "id": "example.run", "title": "跑一下", "key": "cmd+shift+e" }],
               "settings": {
                 "example.on": { "type": "boolean", "default": true, "title": "開" },
-                "example.mode": { "type": "enum", "options": ["a", "b"], "default": "a", "title": "模式" }
+                "example.mode": { "type": "enum", "options": ["a", "b"], "default": "a", "title": "模式" },
+                "example.token": { "type": "string", "title": "API token", "secret": true, "env": "EXAMPLE_TOKEN" }
               },
-              "components": "components"
+              "components": "components",
+              "panels": [{ "id": "today", "title": "今天", "icon": "calendar" }]
             }
           }
         }
@@ -52,6 +54,9 @@ enum PluginGuide {
         - name：小寫英文、數字、- . _。version：semver。
         - 權限：composer、messages、network、files、exec、bots、claude。
         - 設定型別：boolean、enum（要有 options）、string、number。Deck 會在設定頁自動生出控制項。
+        - `secret: true` 的設定（密碼、token）存在 macOS 鑰匙圈，網頁部分拿不到；程式部分用 settings.get 拿得到；
+          有 `env` 的會變成 bot 行程的環境變數，MCP 伺服器在 .mcp.json 裡用 `${EXAMPLE_TOKEN}` 讀。
+        - panels：右欄的面板（最多顯示 3 個圖示，其他收進「更多」）。icon 是 SF Symbol 名稱。
         - 路徑都是插件資料夾裡的相對路徑。
 
         ## 網頁部分（dist/web.js）
@@ -69,6 +74,7 @@ enum PluginGuide {
         - `deck.codemirror`：`{ state, view, commands }`，用這份，不要自己打包 CodeMirror（版本要一致）。
         - `deck.messages.use(markdownItPlugin)`：加 markdown-it 外掛。`deck.messages.afterRender((element, message) => …)`：訊息畫好後改 DOM。
         - `deck.components.register(name, (root, data, answer) => …)`：bot 用 `<show name="name">JSON</show>` 叫出來的組件。
+        - `deck.panels.register(id, (root) => …)`：畫 contributes.panels 宣告的面板（在右欄另一個頁面裡跑，只載入這個插件）。
         - `deck.commands.register(id, run)`、`deck.commands.execute(id)`；manifest 裡有 key 的指令會綁快捷鍵。
         - `deck.settings.get(key)`、`deck.settings.onChange(key, fn)`。
         - `deck.host.call(method, params)`：呼叫自己的程式部分（它用 `deck.web.handle` 回應）。
@@ -111,6 +117,12 @@ enum PluginGuide {
         4. Deck 熱更新；主 bot 對話裡會出現「插件更新了」。
 
         退回：設定頁的插件列表右鍵「退回上一版」，Deck 會用 git 把那個插件放回上一個版本。
+
+        ## 外部插件
+
+        從 git 網址、npm 套件、.zip／.tgz 網址安裝：設定頁「加插件」，或 bot 在回覆加 `<install>來源</install>`。
+        Deck 會先取下來、檢查，再用卡片列出來源、作者、授權、權限和 MCP 伺服器問使用者；按「安裝」才會放進插件庫並 commit。
+        使用者自己選的資料夾直接信任。MCP 工具（`mcp__plugin_<名稱>_<伺服器>`）會自動允許給 bot 用。
 
         """#
     }
