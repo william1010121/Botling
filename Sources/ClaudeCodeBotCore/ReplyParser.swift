@@ -13,6 +13,8 @@ public enum BotRequest: Equatable, Sendable {
     case folder(path: String)
     /// `<install>source</install>`: install a plugin from outside (ClaudeCodeBot asks the user first).
     case install(source: String)
+    /// `<new-bot name="Morning news">job</new-bot>`: a bot of its own, added to the left column.
+    case newBot(name: String, job: String)
 }
 
 /// Splits a bot's reply into the text to show, the buttons to draw, and the requests to act on.
@@ -35,7 +37,7 @@ public enum ReplyParser {
 
     private static let choicesBlock = try! NSRegularExpression(pattern: #"<choices>\s*(.*?)\s*</choices>"#, options: .dotMatchesLineSeparators)
     private static let requestTag = try! NSRegularExpression(
-        pattern: #"<(team|component)\s+name\s*=\s*"([^"]+)"\s*>\s*(.*?)\s*</\1>"#,
+        pattern: #"<(team|component|new-bot)\s+name\s*=\s*"([^"]+)"\s*>\s*(.*?)\s*</\1>"#,
         options: .dotMatchesLineSeparators
     )
 
@@ -53,54 +55,63 @@ public enum ReplyParser {
         options: .dotMatchesLineSeparators
     )
 
+    /// Code in a reply (```fenced``` or `inline`): tags in it are examples, not requests.
+    private static let codeRegion = try! NSRegularExpression(pattern: #"(?s)(`{3,}|~{3,}).*?(?:\1|\z)|`[^`\n]+`"#)
+
+    /// The reply with every code character replaced by a space, same length, so tags are looked
+    /// for only outside code while ranges still match the reply itself.
+    private static func masked(_ text: String) -> NSMutableString {
+        let mask = NSMutableString(string: text)
+        for match in codeRegion.matches(in: text, range: NSRange(location: 0, length: mask.length)).reversed() {
+            mask.replaceCharacters(in: match.range, with: String(repeating: " ", count: match.range.length))
+        }
+        return mask
+    }
+
     public static func parseAll(_ reply: String) -> Parsed {
-        var text = reply
+        let text = NSMutableString(string: reply)
+        let mask = masked(reply)
         var requests: [BotRequest] = []
         var display: ComponentInstance?
-        if let match = showTag.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) {
-            let ns = text as NSString
-            let json = ns.substring(with: match.range(at: 2))
-            if (try? JSONSerialization.jsonObject(with: Data(json.utf8))) != nil {
-                display = ComponentInstance(name: ns.substring(with: match.range(at: 1)), data: json)
+
+        /// Matches of `pattern` outside code, last first; each is taken out of the reply.
+        func take(_ pattern: NSRegularExpression, first only: Bool = false, _ found: ([String]) -> Void) {
+            var matches = pattern.matches(in: mask as String, range: NSRange(location: 0, length: mask.length))
+            if only { matches = Array(matches.prefix(1)) }
+            for match in matches.reversed() {
+                found((1..<match.numberOfRanges).map { text.substring(with: match.range(at: $0)) })
+                text.replaceCharacters(in: match.range, with: "")
+                mask.replaceCharacters(in: match.range, with: "")
             }
-            text = ns.replacingCharacters(in: match.range, with: "")
-        }
-        for match in requestTag.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
-            let ns = text as NSString
-            let kind = ns.substring(with: match.range(at: 1))
-            let name = ns.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespaces)
-            let content = ns.substring(with: match.range(at: 3))
-            requests.insert(kind == "team" ? .team(name: name, task: content) : .component(name: name, request: content), at: 0)
-            text = ns.replacingCharacters(in: match.range, with: "")
         }
 
-        for match in pluginTag.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
-            let ns = text as NSString
-            requests.append(.plugin(request: ns.substring(with: match.range(at: 1))))
-            text = ns.replacingCharacters(in: match.range, with: "")
+        take(showTag, first: true) { groups in
+            if (try? JSONSerialization.jsonObject(with: Data(groups[1].utf8))) != nil {
+                display = ComponentInstance(name: groups[0], data: groups[1])
+            }
         }
-
-        for match in installTag.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
-            let ns = text as NSString
-            requests.append(.install(source: ns.substring(with: match.range(at: 1))))
-            text = ns.replacingCharacters(in: match.range, with: "")
+        var tagged: [BotRequest] = []
+        take(requestTag) { groups in
+            let name = groups[1].trimmingCharacters(in: .whitespaces)
+            let content = groups[2]
+            let request: BotRequest = switch groups[0] {
+            case "team": .team(name: name, task: content)
+            case "new-bot": .newBot(name: name, job: content)
+            default: .component(name: name, request: content)
+            }
+            tagged.insert(request, at: 0)
         }
-        for match in folderTag.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
-            let ns = text as NSString
-            requests.append(.folder(path: ns.substring(with: match.range(at: 1))))
-            text = ns.replacingCharacters(in: match.range, with: "")
-        }
+        requests += tagged
+        take(pluginTag) { requests.append(.plugin(request: $0[0])) }
+        take(installTag) { requests.append(.install(source: $0[0])) }
+        take(folderTag) { requests.append(.folder(path: $0[0])) }
 
         var choices: [Choice]?
-        let ns = text as NSString
-        if let match = choicesBlock.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) {
-            let parsedChoices = ns.substring(with: match.range(at: 1))
-                .split(separator: "\n")
-                .compactMap(choice(from:))
-            choices = parsedChoices.isEmpty ? nil : parsedChoices
-            text = ns.replacingCharacters(in: match.range, with: "")
+        take(choicesBlock, first: true) { groups in
+            let parsed = groups[0].split(separator: "\n").compactMap(choice(from:))
+            choices = parsed.isEmpty ? nil : parsed
         }
-        return Parsed(body: text.trimmingCharacters(in: .whitespacesAndNewlines), choices: choices, requests: requests, display: display)
+        return Parsed(body: (text as String).trimmingCharacters(in: .whitespacesAndNewlines), choices: choices, requests: requests, display: display)
     }
 
     private static func choice(from line: Substring) -> Choice? {

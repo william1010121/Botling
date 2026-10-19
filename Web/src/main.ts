@@ -4,10 +4,14 @@ import { extensions, messageElement, typingElement } from "./messages";
 import { PluginHost, type PluginSpec } from "./plugins";
 import type { ChatState, MessageView } from "./types";
 
+/** How close to the bottom (px) still counts as being at the bottom. */
+const bottomSlack = 80;
+
 /**
  * The chat surface: messages and the input box, drawn from state the Swift side sends with
  * `ccb.setState(...)`. Only messages that changed are redrawn, and the view stays at the bottom
- * unless you have scrolled up to read.
+ * unless you have scrolled up to read: whatever grows or shrinks later (a component's frame
+ * sizing itself, an image loading, the input box) keeps it there too.
  */
 class Chat {
   private readonly scroller: HTMLElement;
@@ -17,6 +21,12 @@ class Chat {
   private typing: HTMLElement | null = null;
   private botID: string | null = null;
   private last: ChatState | null = null;
+  /** Following the bottom of the chat; false once you scroll up to read. */
+  private stuck = true;
+  /** Where the view last was, to tell your scrolling from content changing size under it. */
+  private lastTop = 0;
+  /** The last message of the state drawn before, to notice one you just sent. */
+  private newestID: string | null = null;
   readonly plugins: PluginHost;
 
   constructor() {
@@ -36,6 +46,7 @@ class Chat {
       redraw: () => this.redraw(),
     });
     composer.onKey = (event) => this.plugins.handleKey(event);
+    this.followBottom();
     this.handleClicks();
     this.handleDrops();
   }
@@ -49,8 +60,9 @@ class Chat {
 
   setState(state: ChatState, redrawing = false): void {
     this.last = state;
-    const atBottom = redrawing || this.scroller.scrollHeight - this.scroller.scrollTop - this.scroller.clientHeight < 80;
     const switched = state.botID !== this.botID;
+    const newestBefore = this.newestID;
+    this.newestID = state.messages[state.messages.length - 1]?.id ?? null;
     if (switched) {
       this.botID = state.botID;
       this.list.innerHTML = "";
@@ -58,10 +70,16 @@ class Chat {
       this.composer.setText("");
     }
 
-    const keep = new Set<string>();
+    // Gone ones first, so they do not make the rest move (a moved frame reloads).
+    const keep = new Set(state.messages.map((message) => message.id));
+    for (const [id, entry] of this.drawn) {
+      if (!keep.has(id)) {
+        entry.element.remove();
+        this.drawn.delete(id);
+      }
+    }
     let previous: Element | null = null;
     for (const message of state.messages) {
-      keep.add(message.id);
       // A stamp is part of the row it heads.
       const key = JSON.stringify([message, message.choices || message.display ? state.components : null]);
       let entry = this.drawn.get(message.id);
@@ -78,19 +96,17 @@ class Chat {
       }
       previous = entry.element;
     }
-    for (const [id, entry] of this.drawn) {
-      if (!keep.has(id)) {
-        entry.element.remove();
-        this.drawn.delete(id);
-      }
-    }
 
     this.typing?.remove();
     this.typing = state.working ? typingElement(state.avatar) : null;
     if (this.typing) this.list.append(this.typing);
 
     this.composer.update(state);
-    if (switched || atBottom) this.scrollToBottom();
+    // Something you just sent always shows, even if you had scrolled up.
+    const newest = state.messages[state.messages.length - 1];
+    const sentNow = !switched && !redrawing && newest?.role === "user" && newest.id !== newestBefore;
+    if (switched || sentNow) this.stuck = true;
+    if (this.stuck) this.scrollToBottom();
   }
 
   focus(): void {
@@ -109,9 +125,36 @@ class Chat {
   }
 
   private scrollToBottom(): void {
-    requestAnimationFrame(() => {
-      this.scroller.scrollTop = this.scroller.scrollHeight;
+    this.scroller.scrollTop = this.scroller.scrollHeight;
+    this.lastTop = this.scroller.scrollTop;
+  }
+
+  /**
+   * Keeps the view on the bottom while it is stuck there. WebKit has no scroll anchoring, so
+   * sizes are watched: when the messages or the scroller change size, a stuck view goes back to
+   * the bottom; only scrolling up yourself unsticks it (even a little, so it does not pull you
+   * back while you start to read).
+   */
+  private followBottom(): void {
+    const readBack = () => { this.stuck = false; };
+    this.scroller.addEventListener("wheel", (event) => { if (event.deltaY < 0) readBack(); }, { passive: true });
+    this.scroller.addEventListener("keydown", (event) => {
+      if (["PageUp", "Home", "ArrowUp"].includes(event.key)) readBack();
     });
+    document.addEventListener("ccb-read-back", readBack);
+    this.scroller.addEventListener("scroll", () => {
+      const top = this.scroller.scrollTop;
+      const distance = this.scroller.scrollHeight - top - this.scroller.clientHeight;
+      // Back at the very bottom: follow it again. Dragging the scrollbar up far enough: stop.
+      if (distance < 4) this.stuck = true;
+      else if (top < this.lastTop && distance >= bottomSlack) this.stuck = false;
+      this.lastTop = top;
+    }, { passive: true });
+    const observer = new ResizeObserver(() => {
+      if (this.stuck) this.scrollToBottom();
+    });
+    observer.observe(this.list);
+    observer.observe(this.scroller);
   }
 
   /** Chips, images and file chips open in ClaudeCodeBot (the right column), not in the page. */

@@ -155,7 +155,7 @@ public enum PluginInstaller {
         case "network": "connect to the internet"
         case "files": "read and write files on your computer"
         case "exec": "run programs on your computer"
-        case "bots": "talk to bots on your behalf"
+        case "bots": "talk to bots on your behalf and make new ones"
         case "claude": "give the bots new tools"
         default: "\"\(permission)\""
         }

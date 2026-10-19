@@ -19,6 +19,8 @@ public struct BotStore: Sendable {
         var routines: [LegacyRoutine]?
         /// When each routines.cron job last ran, by job id.
         var routineRuns: [String: Date]?
+        /// Tools you said it may always use.
+        var alwaysAllowed: [String]?
     }
 
     private struct LegacyRoutine: Codable {
@@ -60,6 +62,16 @@ public struct BotStore: Sendable {
             let task = routine.instruction.isEmpty ? routine.title : "\(routine.title): \(routine.instruction)"
             return pause + "\(routine.minute) \(routine.hour) * * * \(task)"
         }
+    }
+
+    public func loadAlwaysAllowed() -> [String] {
+        loadSettings().alwaysAllowed ?? []
+    }
+
+    public func save(alwaysAllowed: [String]) {
+        var settings = loadSettings()
+        settings.alwaysAllowed = alwaysAllowed
+        write(settings, to: settingsURL)
     }
 
     public func loadRoutineRuns() -> [String: Date] {

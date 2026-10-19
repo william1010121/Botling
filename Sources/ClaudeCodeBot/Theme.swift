@@ -35,7 +35,7 @@ extension Bot {
         case .asleep: "Asleep"
         case .tidying: "Tidying notes"
         case .switching: "Handing off"
-        case .awake: isWorking ? "Working" : "Awake"
+        case .awake: waitingForPermission ? "Waiting for your OK" : isWorking ? "Working" : "Awake"
         }
     }
 

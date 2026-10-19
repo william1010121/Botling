@@ -1,10 +1,10 @@
 #!/bin/bash
 # Builds ClaudeCodeBot.app (universal: Apple silicon + Intel) and a zip of it in dist/.
-#   scripts/make-app.sh 1.0.0
+#   scripts/make-app.sh 1.1.0     (without a version, the one in VERSION)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VERSION="${1:-0.0.0}"
+VERSION="${1:-$(tr -d '[:space:]' < VERSION)}"
 ARCHS=(--arch arm64 --arch x86_64)
 if [[ "${SINGLE_ARCH:-}" == "1" ]]; then ARCHS=(); fi
 

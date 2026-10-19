@@ -45,6 +45,14 @@ final class FakeAgent: AgentProcess, @unchecked Sendable {
     func stop() {
         finish()
     }
+
+    /// Answers to permission requests: (request id, allowed, message).
+    private var _answers: [(String, Bool, String?)] = []
+    var answers: [(String, Bool, String?)] { lock.withLock { _answers } }
+
+    func answer(_ request: PermissionRequest, allow: Bool, message: String?) {
+        lock.withLock { _answers.append((request.id, allow, message)) }
+    }
 }
 
 final class FakeLauncher: @unchecked Sendable {
@@ -83,7 +91,7 @@ func eventually(_ condition: @MainActor () -> Bool, timeout: TimeInterval = 5) a
 @MainActor
 func makeBot(_ fake: FakeLauncher, idle: TimeInterval = 60) -> Bot {
     Bot(
-        profile: .main(home: FileManager.default.temporaryDirectory),
+        profile: .main(home: FileManager.default.temporaryDirectory.appending(path: "ccb-bot-\(UUID().uuidString)")),
         idleInterval: idle,
         launcher: fake.launcher
     )

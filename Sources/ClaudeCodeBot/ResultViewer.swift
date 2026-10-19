@@ -48,22 +48,49 @@ struct ResultViewer: View {
 struct PageView: NSViewRepresentable {
     let url: URL
 
+    final class Coordinator {
+        var loaded: URL?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> WKWebView {
         let view = WKWebView()
         view.setValue(false, forKey: "drawsBackground")
-        load(url, in: view)
+        load(url, in: view, context.coordinator)
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
-        if view.url != url { load(url, in: view) }
+        // Opening the result again also brings it back from a page it linked to.
+        if context.coordinator.loaded != url || view.url != url { load(url, in: view, context.coordinator) }
     }
 
-    private func load(_ url: URL, in view: WKWebView) {
-        if url.isFileURL {
+    /// Text files WebKit would read as Latin-1 when nothing in them names an encoding.
+    private static let textTypes = ["html": "text/html", "htm": "text/html", "txt": "text/plain", "md": "text/plain",
+                                    "csv": "text/plain", "json": "text/plain", "log": "text/plain"]
+
+    private func load(_ url: URL, in view: WKWebView, _ coordinator: Coordinator) {
+        coordinator.loaded = url
+        if url.isFileURL, let mime = Self.textTypes[url.pathExtension.lowercased()],
+           let data = try? Data(contentsOf: url), Self.isPlainUTF8(data) {
+            // Pages bots write often have no <meta charset>, and such a file is read as Latin-1
+            // (Chinese turns to mojibake). Valid UTF-8 that names no other encoding is read as
+            // UTF-8; pictures beside it still load. Anything else loads as before.
+            view.load(data, mimeType: mime, characterEncodingName: "utf-8", baseURL: url)
+        } else if url.isFileURL {
             view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         } else {
             view.load(URLRequest(url: url))
         }
+    }
+
+    /// Valid UTF-8 that does not declare some other charset near the top (Big5, GBK…).
+    static func isPlainUTF8(_ data: Data) -> Bool {
+        guard String(data: data, encoding: .utf8) != nil else { return false }
+        let head = String(decoding: data.prefix(4096), as: UTF8.self).lowercased()
+        guard let range = head.range(of: #"charset\s*=\s*["']?\s*([a-z0-9_\-]+)"#, options: .regularExpression) else { return true }
+        let declared = head[range].split(whereSeparator: { "=\"' ".contains($0) }).last.map(String.init) ?? ""
+        return declared == "utf-8" || declared == "utf8"
     }
 }

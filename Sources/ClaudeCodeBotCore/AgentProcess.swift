@@ -11,11 +11,34 @@ public protocol AgentProcess: AnyObject, Sendable {
     func finish()
     /// Ends the process now.
     func stop()
+    /// Answers a `.permission` request: let the tool run, or not (`message` says why to Claude).
+    func answer(_ request: PermissionRequest, allow: Bool, message: String?)
 }
 
 extension AgentProcess {
     public func send(_ text: String, images: [Attachment]) {
         send(text)
+    }
+
+    public func answer(_ request: PermissionRequest, allow: Bool, message: String?) {}
+}
+
+/// Claude wants to use a tool it is not allowed to use without asking (with
+/// `--permission-prompt-tool stdio` it asks on stdout and waits for the answer on stdin).
+public struct PermissionRequest: Equatable, Sendable {
+    /// The control request's id, to answer it.
+    public var id: String
+    public var tool: String
+    /// What it wants to do, in one line: the command, the file, the page.
+    public var summary: String
+    /// The tool's input as JSON, handed back unchanged when allowed.
+    public var input: String
+
+    public init(id: String, tool: String, summary: String, input: String) {
+        self.id = id
+        self.tool = tool
+        self.summary = summary
+        self.input = input
     }
 }
 
@@ -24,6 +47,10 @@ public enum AgentEvent: Equatable, Sendable {
     case reply(String, isError: Bool)
     /// What it is doing right now, from a tool call: "Edit template.html".
     case activity(String)
+    /// It is waiting for the user to allow a tool.
+    case permission(PermissionRequest)
+    /// It no longer needs the answer to that permission request (its id).
+    case permissionCancelled(String)
     case exited(status: Int32, stderr: String)
 }
 
@@ -41,6 +68,9 @@ public struct AgentLaunch: Equatable, Sendable {
     public var pluginTools: [String] = []
     /// Extra environment: plugins' secrets, for MCP servers that read them.
     public var environment: [String: String] = [:]
+    /// Ask (a `.permission` event) before using a tool that is not allowed, instead of being
+    /// refused. Only bots, which have a chat to ask in; temporary teams are not.
+    public var asksPermission = false
 }
 
 public typealias AgentLauncher = @Sendable (AgentLaunch) throws -> AgentProcess
@@ -76,6 +106,11 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
             "--allowedTools", (launch.tools + (launch.pluginDirectories.isEmpty || launch.tools.contains("Skill") ? [] : ["Skill"]) + launch.pluginTools).joined(separator: ","),
             "--append-system-prompt", launch.systemPrompt
         ]
+        if launch.asksPermission {
+            // Bots ask in the chat with <choices>; AskUserQuestion would arrive as a permission
+            // request that cannot carry the user's answer.
+            arguments += ["--permission-prompt-tool", "stdio", "--disallowedTools", "AskUserQuestion"]
+        }
         for directory in launch.extraDirectories {
             arguments += ["--add-dir", directory.path]
         }
@@ -105,6 +140,8 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         events = stream
         let lines = LineBuffer()
         let stderrTail = Tail()
+        let responder = Responder()
+        let respond: (([String: Any]) -> Void)? = { response in responder.send?(response) }
 
         output.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
@@ -113,6 +150,11 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
                 return
             }
             for line in lines.append(data) {
+                if let id = StreamEvent.unsupportedRequest(in: line) {
+                    // A request the app does not handle gets an error at once, so claude does not wait.
+                    respond?(["subtype": "error", "request_id": id, "error": "Not supported by ClaudeCodeBot."])
+                    continue
+                }
                 for event in StreamEvent.events(in: line) { continuation.yield(event) }
             }
         }
@@ -137,6 +179,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
             }
         }
         try process.run()
+        responder.send = { [weak self] response in self?.writeControlResponse(response) }
     }
 
     public func send(_ text: String) {
@@ -161,6 +204,33 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
             "message": ["role": "user", "content": content.count == 1 ? text as Any : content as Any]
         ]
         guard var data = try? JSONSerialization.data(withJSONObject: message) else { return }
+        data.append(0x0A)
+        lock.withLock {
+            guard !closed else { return }
+            try? stdin.write(contentsOf: data)
+        }
+    }
+
+    public func answer(_ request: PermissionRequest, allow: Bool, message: String?) {
+        let decision: [String: Any] = allow
+            ? ["behavior": "allow", "updatedInput": (try? JSONSerialization.jsonObject(with: Data(request.input.utf8))) ?? [String: Any]()]
+            : ["behavior": "deny", "message": message ?? "The user did not allow this."]
+        let line: [String: Any] = [
+            "type": "control_response",
+            "response": ["subtype": "success", "request_id": request.id, "response": decision]
+        ]
+        guard var data = try? JSONSerialization.data(withJSONObject: line) else { return }
+        data.append(0x0A)
+        lock.withLock {
+            guard !closed else { return }
+            try? stdin.write(contentsOf: data)
+        }
+    }
+
+    /// Writes a control_response with this body.
+    private func writeControlResponse(_ response: [String: Any]) {
+        let line: [String: Any] = ["type": "control_response", "response": response]
+        guard var data = try? JSONSerialization.data(withJSONObject: line) else { return }
         data.append(0x0A)
         lock.withLock {
             guard !closed else { return }
@@ -198,6 +268,11 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         environment["PATH"] = (extra + existing.filter { !extra.contains($0) }).joined(separator: ":")
         return environment
     }
+}
+
+/// Lets the output reader answer claude before `self` exists.
+private final class Responder: @unchecked Sendable {
+    var send: (([String: Any]) -> Void)?
 }
 
 private final class Tail: @unchecked Sendable {

@@ -15,6 +15,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Check the tag matches VERSION
+        run: |
+          test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"
+          grep -q "^## ${GITHUB_REF_NAME#v}$" CHANGELOG.md
       - name: Test
         run: |
           (cd Web && npm ci && npm test)

@@ -57,11 +57,75 @@ describe("messages", () => {
     expect(sent).toEqual([{ type: "choose", messageID: "m1", index: 1 }]);
   });
 
-  it("draw answered choices disabled", () => {
+  it("fold answered choices to what was picked, and open them again disabled", () => {
     const row = messageElement(message({
       choices: [{ label: "A", detail: null, recommended: false }], chosen: null, answer: "Something else", open: false,
     }), {});
+    expect(row.querySelector(".choice")).toBeNull();
+    const folded = row.querySelector<HTMLButtonElement>(".folded-choice")!;
+    expect(folded.textContent).toContain("Something else");
+    folded.click();
+    expect(row.querySelector(".folded-choice")).toBeNull();
     expect(row.querySelector<HTMLButtonElement>(".choice")!.disabled).toBe(true);
+    // Folding it back, and a redraw of the opened one stays open.
+    row.querySelector<HTMLButtonElement>(".fold")!.click();
+    expect(row.querySelector(".folded-choice")?.textContent).toContain("Something else");
+    expect(sent).toEqual([]);
+  });
+
+  it("fold a picked option to its label, and keep it open across a redraw once opened", () => {
+    const answered = message({
+      id: "m7", choices: [{ label: "Wait for the app", detail: null, recommended: true }, { label: "Do it now", detail: "today", recommended: false }],
+      chosen: 0, open: false,
+    });
+    const row = messageElement(answered, {});
+    expect(row.querySelector(".folded-choice .picked-label")?.textContent).toBe("Wait for the app");
+    row.querySelector<HTMLButtonElement>(".folded-choice")!.click();
+    const redrawn = messageElement(answered, {});
+    expect(redrawn.querySelectorAll(".choice")).toHaveLength(2);
+    expect(redrawn.querySelector(".fold")).not.toBeNull();
+  });
+
+  it("fold without a tick, fall back to a word, and keep focus on the toggle", () => {
+    const row = messageElement(message({
+      id: "m8", choices: [{ label: "Allow once", detail: null, recommended: true }, { label: "Don't allow", detail: null, recommended: false }], chosen: 1,
+    }), {});
+    document.body.append(row);
+    const folded = row.querySelector<HTMLButtonElement>(".folded-choice")!;
+    expect(folded.textContent).toBe("Don't allow");
+    expect(folded.title).toBe("Don't allow");
+    folded.focus();
+    folded.click();
+    expect(document.activeElement?.className).toBe("fold");
+    (document.activeElement as HTMLButtonElement).click();
+    expect(document.activeElement?.className).toBe("folded-choice");
+    const odd = messageElement(message({ id: "m10", choices: [{ label: "A", detail: null, recommended: false }], chosen: 5 }), {});
+    expect(odd.querySelector(".folded-choice")?.textContent).toBe("Answered");
+  });
+
+  it("keep data from closing the component's script", async () => {
+    const { componentPage } = await import("../src/components");
+    const page = componentPage("<p></p>", JSON.stringify({ name: "</script><script>parent.postMessage(1,'*')</script>" }));
+    expect(page).not.toContain("</script><script>parent");
+    expect(page).toContain("\\u003c/script>");
+  });
+
+  it("keep open choices unfolded", () => {
+    const row = messageElement(message({ open: true, choices: [{ label: "A", detail: null, recommended: false }] }), {});
+    expect(row.querySelector(".folded-choice")).toBeNull();
+    expect(row.querySelector(".fold")).toBeNull();
+  });
+
+  it("start a redrawn component frame at the height it had", () => {
+    const components = { choices: { template: "<p>hi</p>", version: 0, working: false, updated: false, hasPrevious: false } };
+    const open = message({ id: "m9", open: true, choices: [{ label: "A", detail: null, recommended: false }] });
+    const row = messageElement(open, components);
+    document.body.append(row);
+    const frame = row.querySelector("iframe")!;
+    window.dispatchEvent(new MessageEvent("message", { data: { ccb: "size", height: 214 }, source: frame.contentWindow }));
+    expect(frame.style.height).toBe("214px");
+    const again = messageElement(open, components);
+    expect(again.querySelector("iframe")!.style.height).toBe("214px");
   });
 
   it("put a template component in a sandboxed frame with its flag", () => {

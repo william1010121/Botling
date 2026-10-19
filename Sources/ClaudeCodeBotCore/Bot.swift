@@ -48,6 +48,26 @@ public final class Bot: ObservableObject, Identifiable {
     public var replyObserver: ((ChatMessage) -> Void)?
     /// Called with the tags a reply carried (pull up a team, ask the component team).
     public var onRequests: (([BotRequest]) -> Void)?
+    /// It asked you something outside a reply (may it use a tool?), so a manager's question can
+    /// go up to the main bot's chat too.
+    public var onQuestion: ((ChatMessage) -> Void)?
+    /// Tools you said it may always use; it starts with them allowed.
+    @Published public private(set) var alwaysAllowed: [String]
+    /// "May I use this tool?" questions waiting in the chat, by message id, with the process
+    /// that is waiting for the answer.
+    private var permissionAsks: [UUID: (request: PermissionRequest, process: AgentProcess)] = [:] {
+        didSet { if waitingForPermission != !permissionAsks.isEmpty { waitingForPermission = !permissionAsks.isEmpty } }
+    }
+    /// A tool question waits for you (the row says so instead of "Working").
+    @Published public private(set) var waitingForPermission = false
+    /// A tool question was settled without you answering it here (it timed out, claude went
+    /// away, "always" covered it), so a copy of it elsewhere can be closed too.
+    public var onQuestionSettled: ((ChatMessage) -> Void)?
+    /// How long a tool question waits before it counts as "don't allow", so a routine at night
+    /// does not hold the bot awake forever.
+    public var permissionTimeout: TimeInterval = 10 * 60
+    /// Removed from ClaudeCodeBot: it never starts again.
+    private var removed = false
     /// Whether the running turn started from a relay.
     private var turnFromRelay = false
     /// Something the App needs this awake bot to know, sent ahead of its next message.
@@ -84,7 +104,13 @@ public final class Bot: ObservableObject, Identifiable {
         self.exitTimeout = exitTimeout
         self.launcher = launcher
         self.store = store
-        messages = store?.loadMessages() ?? []
+        var loaded = store?.loadMessages() ?? []
+        // A tool question from before a restart has nobody waiting for it any more.
+        for index in loaded.indices where loaded[index].permissionTool != nil && loaded[index].isOpenQuestion {
+            loaded[index].answer = Self.noLongerNeeded
+        }
+        messages = loaded
+        alwaysAllowed = store?.loadAlwaysAllowed() ?? []
         model = store?.loadModel() ?? defaultModel
         routineFile = RoutineFile(url: profile.routinesURL)
         // The main bot starts with a daily summary; managers with none. Routines saved the old way
@@ -195,6 +221,7 @@ public final class Bot: ObservableObject, Identifiable {
         guard let message = messages.first(where: { $0.id == messageID }),
               message.isOpenQuestion,
               let choice = message.choices?[safe: index] else { return false }
+        if message.permissionTool != nil { return decide(index, in: message) }
         markChosen(index, in: messageID)
         let wasRelay = message.role == .bot && turnFromRelay
         send(choice.label)
@@ -211,6 +238,16 @@ public final class Bot: ObservableObject, Identifiable {
         guard !text.isEmpty,
               let message = messages.first(where: { $0.id == messageID }),
               message.isOpenQuestion else { return false }
+        if message.permissionTool != nil {
+            // Words instead of a button: not allowed, and Claude hears why.
+            guard let ask = permissionAsks.removeValue(forKey: messageID), ask.process === process else {
+                markAnswered(Self.noLongerNeeded, in: messageID)
+                return false
+            }
+            markAnswered(text, in: messageID)
+            ask.process.answer(ask.request, allow: false, message: "The user did not allow it and said: \(text)")
+            return true
+        }
         markAnswered(text, in: messageID)
         let wasRelay = message.role == .bot && turnFromRelay
         send(text)
@@ -282,16 +319,18 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     private func start() throws -> AgentProcess {
+        guard !removed else { throw CocoaError(.userCancelled) }
         let process = try launcher(AgentLaunch(
             model: model,
             sessionID: UUID(),
             workingDirectory: profile.workingDirectory,
             systemPrompt: prompts.system,
-            tools: profile.tools,
+            tools: profile.tools + alwaysAllowed.filter { !profile.tools.contains($0) },
             extraDirectories: extraDirectories?() ?? [],
             pluginDirectories: pluginDirectories?() ?? [],
             pluginTools: pluginTools?() ?? [],
-            environment: pluginEnvironment?() ?? [:]
+            environment: pluginEnvironment?() ?? [:],
+            asksPermission: true
         ))
         self.process = process
         Task { [weak self] in
@@ -317,11 +356,126 @@ public final class Bot: ObservableObject, Identifiable {
         afterTurn()
     }
 
+    // MARK: Asking to use a tool
+
+    static let noLongerNeeded = "No longer needed"
+    static let allowOnce = 0
+
+    /// Claude wants a tool it may not use without asking: allowed already if you said always,
+    /// otherwise a question in the chat while it waits.
+    private func ask(permission request: PermissionRequest, from source: AgentProcess) {
+        if alwaysAllowed.contains(request.tool) {
+            source.answer(request, allow: true, message: nil)
+            return
+        }
+        // Tidying, handing off: nobody is reading these turns, and they only touch memory.md.
+        if internalReply != nil {
+            source.answer(request, allow: false, message: "Not now: this turn only updates your memory file.")
+            return
+        }
+        var choices = [Choice(label: "Allow once", detail: nil, recommended: true)]
+        // "Always" by tool name would mean any command or any file on the disk for these.
+        if !Self.neverAlways.contains(request.tool) {
+            choices.append(Choice(label: "Always allow \(request.tool)", detail: "For \(name), from now on", recommended: false))
+        }
+        choices.append(Choice(label: "Don't allow", detail: nil, recommended: false))
+        var message = ChatMessage(role: .bot, text: Self.permissionText(request), choices: choices)
+        message.permissionTool = request.tool
+        append(message)
+        permissionAsks[message.id] = (request, source)
+        hasUnread = true
+        onQuestion?(message)
+        let id = message.id
+        let timeout = permissionTimeout
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(timeout))
+            self?.expire(id)
+        }
+    }
+
+    /// Tools whose "always" would be far broader than it sounds; they are asked every time.
+    static let neverAlways: Set<String> = ["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"]
+
+    /// The question, with what would run shown as code so nothing in it renders as a link,
+    /// a picture or formatting.
+    static func permissionText(_ request: PermissionRequest) -> String {
+        let fence = String(repeating: "~", count: max(3, longestRun(of: "~", in: request.summary) + 1))
+        return "Wants to use `\(request.tool.replacingOccurrences(of: "`", with: "'"))`:\n\n\(fence)\n\(request.summary)\n\(fence)"
+    }
+
+    private static func longestRun(of character: Character, in text: String) -> Int {
+        var longest = 0, current = 0
+        for c in text {
+            current = c == character ? current + 1 : 0
+            longest = max(longest, current)
+        }
+        return longest
+    }
+
+    /// Nobody answered in time: it counts as not allowed.
+    private func expire(_ id: UUID) {
+        guard let ask = permissionAsks.removeValue(forKey: id) else { return }
+        settle(id, answer: "No answer in time")
+        ask.process.answer(ask.request, allow: false, message: "The user did not answer in time; carry on without it, or ask again later.")
+    }
+
+    /// Marks a tool question answered by the app (not by your pick here) and tells the copy.
+    private func settle(_ id: UUID, answer: String? = nil, chosen: Int? = nil) {
+        if let chosen { markChosen(chosen, in: id) } else { markAnswered(answer ?? Self.noLongerNeeded, in: id) }
+        if let message = messages.first(where: { $0.id == id }) { onQuestionSettled?(message) }
+    }
+
+    /// Your pick on a tool question goes to the `claude` waiting for it.
+    private func decide(_ index: Int, in message: ChatMessage) -> Bool {
+        guard let ask = permissionAsks.removeValue(forKey: message.id), ask.process === process else {
+            markAnswered(Self.noLongerNeeded, in: message.id)
+            return false
+        }
+        markChosen(index, in: message.id)
+        let label = message.choices?[safe: index]?.label ?? ""
+        let always = label.hasPrefix("Always allow")
+        if always, !alwaysAllowed.contains(ask.request.tool) {
+            alwaysAllowed.append(ask.request.tool)
+            store?.save(alwaysAllowed: alwaysAllowed)
+        }
+        let allowed = index == Self.allowOnce || always
+        ask.process.answer(ask.request, allow: allowed, message: allowed ? nil : "The user did not allow it.")
+        // Other questions for the same tool from this turn are settled by "always".
+        if always {
+            for (id, other) in permissionAsks where other.request.tool == ask.request.tool {
+                permissionAsks[id] = nil
+                settle(id, chosen: index)
+                other.process.answer(other.request, allow: true, message: nil)
+            }
+        }
+        return true
+    }
+
+    /// Lets it ask for this tool again (Settings).
+    public func forget(alwaysAllowed tool: String) {
+        alwaysAllowed.removeAll { $0 == tool }
+        store?.save(alwaysAllowed: alwaysAllowed)
+    }
+
+    /// The process went away: its questions can no longer be answered.
+    private func dropPermissionAsks() {
+        let ids = Array(permissionAsks.keys)
+        permissionAsks.removeAll()
+        for id in ids { settle(id) }
+    }
+
     private func handle(_ event: AgentEvent, from source: AgentProcess) {
         guard source === process else { return }
         switch event {
         case .activity:
             break
+        case let .permission(request):
+            ask(permission: request, from: source)
+        case let .permissionCancelled(requestID):
+            if let id = permissionAsks.first(where: { $0.value.request.id == requestID })?.key {
+                permissionAsks[id] = nil
+                settle(id)
+            }
         case let .reply(text, isError):
             if let waiter = internalReply {
                 internalReply = nil
@@ -338,6 +492,7 @@ public final class Bot: ObservableObject, Identifiable {
             }
         case let .exited(status, stderr):
             process = nil
+            dropPermissionAsks()
             if let waiter = internalReply {
                 internalReply = nil
                 waiter.resume(returning: "")
@@ -414,10 +569,13 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     /// Any crontab schedule, for plugins (`routines.add`). False if the schedule is not valid.
+    /// The same job twice is kept once, so a plugin may add it every time it starts.
     @discardableResult
     public func addRoutine(cron: String, task: String) -> Bool {
         let task = task.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let schedule = CronSchedule(cron), !task.isEmpty else { return false }
+        reloadRoutines()
+        if routines.contains(where: { $0.schedule.text == schedule.text && $0.task == task }) { return true }
         routineFile.add(Routine(schedule: schedule, task: task))
         reloadRoutines()
         return true
@@ -462,9 +620,34 @@ public final class Bot: ObservableObject, Identifiable {
         cancelIdle()
         phase = .tidying
         _ = await ask(prompts.tidy)
+        guard !removed else { return }
         await finishProcess()
         phase = .asleep
         await flushQueue()
+    }
+
+    /// Ends the process at once without tidying (the bot is being removed).
+    public func stop() {
+        removed = true
+        cancelIdle()
+        queued.removeAll()
+        pendingModel = nil
+        pendingRestart = nil
+        let running = process
+        process = nil
+        running?.stop()
+        dropPermissionAsks()
+        isWorking = false
+        phase = .asleep
+        // Anything waiting on that process (a tidy, a handoff) carries on instead of hanging.
+        if let waiter = internalReply {
+            internalReply = nil
+            waiter.resume(returning: "")
+        }
+        if let waiter = exitWaiter {
+            exitWaiter = nil
+            waiter.resume()
+        }
     }
 
     // MARK: Switching model
@@ -517,6 +700,7 @@ public final class Bot: ObservableObject, Identifiable {
         switchTarget = newModel
         phase = .switching(.writing)
         _ = await ask(prompts.handoff)
+        guard !removed else { return }
         phase = .switching(.stopping)
         await finishProcess()
         phase = .switching(.starting)
@@ -526,6 +710,7 @@ public final class Bot: ObservableObject, Identifiable {
         do {
             _ = try start()
             let reply = await ask(prompts.resume)
+            guard !removed else { return }
             phase = process == nil ? .asleep : .awake
             if !BotPrompts.isPlainOK(reply) {
                 append(ChatMessage(role: .bot, text: reply))

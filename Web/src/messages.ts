@@ -106,14 +106,8 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     bubble.append(text);
   }
   if (message.choices) {
-    const onAnswer = message.open
-      ? (answer: { index?: number; text?: string }) => {
-          if (answer.index !== undefined) post({ type: "choose", messageID: message.id, index: answer.index });
-          else if (answer.text !== undefined) post({ type: "answer", messageID: message.id, text: answer.text });
-        }
-      : null;
-    const component = componentElement("choices", components.choices, choicesData(message.choices, message.chosen, message.answer), onAnswer);
-    bubble.append(component ?? fallbackChoices(message.choices, message.chosen, message.answer, onAnswer ? (index) => onAnswer({ index }) : null));
+    const answered = message.chosen !== null || message.answer !== null;
+    bubble.append(answered && !unfolded.has(message.id) ? foldedChoices(message, components) : choicesElement(message, components));
   }
   if (message.display) {
     const answer = (value: number | string) =>
@@ -132,7 +126,7 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
       const component = componentElement(message.display.name, components[message.display.name], message.display.data, (value) => {
         if (value.index !== undefined) answer(value.index);
         else if (value.text !== undefined) answer(value.text);
-      });
+      }, message.id);
       if (component) bubble.append(component);
     }
   }
@@ -144,6 +138,63 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     bubble.append(open);
   }
   return bubble;
+}
+
+/** Answered questions you opened again, by message id; the rest stay folded to one line. */
+const unfolded = new Set<string>();
+
+const chevron = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`;
+
+/** The question's options: the 「choices」 component, or plain buttons without one. */
+function choicesElement(message: MessageView, components: Record<string, ComponentInfo>): HTMLElement {
+  const choices = message.choices!;
+  const onAnswer = message.open
+    ? (answer: { index?: number; text?: string }) => {
+        if (answer.index !== undefined) post({ type: "choose", messageID: message.id, index: answer.index });
+        else if (answer.text !== undefined) post({ type: "answer", messageID: message.id, text: answer.text });
+      }
+    : null;
+  const component = componentElement("choices", components.choices, choicesData(choices, message.chosen, message.answer), onAnswer, message.id);
+  const options = component ?? fallbackChoices(choices, message.chosen, message.answer, onAnswer ? (index) => onAnswer({ index }) : null);
+  if (message.open) return options;
+  // Opened again after answering: a way to fold it back.
+  const wrap = document.createElement("div");
+  wrap.className = "unfolded";
+  const fold = document.createElement("button");
+  fold.className = "fold";
+  fold.innerHTML = `<span>Fold</span>${chevron}`;
+  fold.setAttribute("aria-expanded", "true");
+  fold.addEventListener("click", () => {
+    unfolded.delete(message.id);
+    const folded = foldedChoices(message, components);
+    wrap.replaceWith(folded);
+    folded.focus();
+  });
+  wrap.append(options, fold);
+  return wrap;
+}
+
+/**
+ * An answered question as one line, what you picked; click to see every option again. No tick:
+ * the answer may as well be "Don't allow" or "No longer needed".
+ */
+export function foldedChoices(message: MessageView, components: Record<string, ComponentInfo>): HTMLElement {
+  const picked = message.chosen !== null ? message.choices?.[message.chosen]?.label : null;
+  const label = picked ?? message.answer ?? "Answered";
+  const button = document.createElement("button");
+  button.className = "folded-choice";
+  button.setAttribute("aria-expanded", "false");
+  button.innerHTML = `<span class="picked-label"></span>${chevron}`;
+  button.querySelector(".picked-label")!.textContent = label;
+  button.title = label;
+  button.setAttribute("aria-label", `Answered: ${label}. Show the options`);
+  button.addEventListener("click", () => {
+    unfolded.add(message.id);
+    const options = choicesElement(message, components);
+    button.replaceWith(options);
+    options.querySelector<HTMLElement>(".fold")?.focus();
+  });
+  return button;
 }
 
 export function attachmentStrip(files: FileView[]): HTMLElement {
@@ -165,6 +216,8 @@ export function attachmentStrip(files: FileView[]): HTMLElement {
 export function jumpTo(id: string): void {
   const target = document.querySelector<HTMLElement>(`.row[data-id="${CSS.escape(id)}"]`);
   if (!target) return;
+  // Reading back: the chat stops following the bottom.
+  document.dispatchEvent(new CustomEvent("ccb-read-back"));
   target.scrollIntoView({ behavior: "smooth", block: "center" });
   target.classList.add("flash");
   setTimeout(() => target.classList.remove("flash"), 1200);

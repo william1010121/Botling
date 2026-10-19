@@ -55,6 +55,8 @@ public struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     /// The message this one replies to, and a short quote of it for showing.
     public var replyTo: UUID?
     public var replyPreview: String?
+    /// It asks to let the bot use this tool; answered by the running `claude`, not as a message.
+    public var permissionTool: String?
 
     public init(
         id: UUID = UUID(),
@@ -148,8 +150,10 @@ public struct BotProfile: Equatable, Sendable {
     public var tools: [String]
     /// More of its system prompt, for a manager with a special job (Maintainer).
     public var instructions: String?
+    /// A bot of its own rather than a project's manager (a morning news bot): what it is for.
+    public var job: String?
 
-    public init(name: String, role: Role, avatar: String, workingDirectory: URL, memoryPath: String, tools: [String], instructions: String? = nil) {
+    public init(name: String, role: Role, avatar: String, workingDirectory: URL, memoryPath: String, tools: [String], instructions: String? = nil, job: String? = nil) {
         self.name = name
         self.role = role
         self.avatar = avatar
@@ -157,7 +161,11 @@ public struct BotProfile: Equatable, Sendable {
         self.memoryPath = memoryPath
         self.tools = tools
         self.instructions = instructions
+        self.job = job
     }
+
+    /// A bot of its own, not a project's manager.
+    public var isStandalone: Bool { job != nil }
 
     public var memoryURL: URL { workingDirectory.appending(path: memoryPath) }
 
@@ -188,6 +196,21 @@ public struct BotProfile: Equatable, Sendable {
             workingDirectory: folder,
             memoryPath: ".bot/memory.md",
             tools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash"]
+        )
+    }
+
+    /// A bot of its own: it lives in its own folder under `~/.claudecodebot/bots/`, works like a
+    /// manager (memory, inbox, routines in `.bot/`) and may also look things up on the web. As it
+    /// reads the web, running commands (Bash) is not allowed up front; it asks each time.
+    public static func standalone(name: String, avatar: String, folder: URL, job: String) -> BotProfile {
+        BotProfile(
+            name: name,
+            role: .manager,
+            avatar: avatar,
+            workingDirectory: folder,
+            memoryPath: ".bot/memory.md",
+            tools: ["Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch"],
+            job: job
         )
     }
 

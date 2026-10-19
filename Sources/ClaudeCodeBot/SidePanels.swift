@@ -5,6 +5,8 @@ import SwiftUI
 /// Left column: who. One row per bot; the face shows its state, a dot shows what is new.
 struct RailView: View {
     @ObservedObject var workspace: Workspace
+    @State private var makingBot = false
+    @State private var removing: Workspace.Project?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -34,27 +36,68 @@ struct RailView: View {
                             ) {
                                 workspace.select(project.id)
                             }
+                            .contextMenu {
+                                if project.isBot {
+                                    Button("Remove bot…", role: .destructive) { removing = project }
+                                }
+                            }
                         }
                     }
                 }
             }
             .scrollIndicators(.never)
 
-            Button(action: addProject) {
-                Label("Add project", systemImage: "plus")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.faint)
-                    .padding(.horizontal, 10)
-                    .frame(height: 44)
-                    .contentShape(Rectangle())
+            if makingBot {
+                NewBotForm { name, job in
+                    if let name, let job {
+                        guard let bot = workspace.createBot(name: name, job: job, setUp: true) else { return }
+                        workspace.select(bot.id)
+                    }
+                    makingBot = false
+                }
             }
-            .buttonStyle(.plain)
+
+            HStack(spacing: 0) {
+                Button(action: addProject) {
+                    Label("Add project", systemImage: "plus")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.faint)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 8)
+                        .frame(height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                Spacer(minLength: 0)
+                Button { makingBot.toggle() } label: {
+                    Label("New bot", systemImage: "sparkles")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.faint)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .padding(.horizontal, 8)
+                        .frame(height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("A bot of its own, with its own memory and routines (a morning news bot, say)")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.top, 36)
         .padding(.bottom, 12)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.side)
+        .confirmationDialog(
+            "Remove \"\(removing?.name ?? "")\"?",
+            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+            presenting: removing
+        ) { project in
+            Button("Remove bot", role: .destructive) { workspace.removeBot(project.id) }
+        } message: { project in
+            Text("It stops at once. Its notes stay in \(project.folder.path).")
+        }
     }
 
     private func addProject() {
@@ -67,6 +110,35 @@ struct RailView: View {
         if panel.runModal() == .OK, let folder = panel.url {
             workspace.addProject(folder: folder)
         }
+    }
+}
+
+/// A bot of its own: a name and what it is for. It then sets up its own routines.
+private struct NewBotForm: View {
+    /// Nil, nil when cancelled.
+    var done: (_ name: String?, _ job: String?) -> Void
+    @State private var name = ""
+    @State private var job = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            TextField("Name, e.g. Morning news", text: $name)
+            TextField("Its job, e.g. every day at 08:00, the top 5 tech stories", text: $job, axis: .vertical)
+                .lineLimit(2...4)
+            HStack {
+                Spacer()
+                Button("Cancel") { done(nil, nil) }.buttonStyle(.plain).foregroundStyle(Theme.muted)
+                Button("Create") { done(name, job) }.disabled(!canCreate)
+            }
+        }
+        .textFieldStyle(.roundedBorder)
+        .font(.system(size: 13))
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+    }
+
+    private var canCreate: Bool {
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !job.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -295,7 +367,7 @@ struct DetailPanel: View {
                 PanelSection("Waiting on you") {
                     VStack(spacing: 6) {
                         ForEach(workspace.waiting) { item in
-                            if let project = workspace.projects.first(where: { $0.id == item.projectID }) {
+                            if let project = workspace.project(item.projectID) {
                                 Button { workspace.select(project.id) } label: {
                                     HStack(spacing: 12) {
                                         AvatarView(kind: AvatarKind(rawValue: project.avatar) ?? .square, size: 26)
@@ -455,6 +527,27 @@ private struct SettingsPage: View {
                         }
                         .buttonStyle(.plain)
                     }
+                }
+            }
+
+            if !bot.alwaysAllowed.isEmpty {
+                PanelSection("Always allowed") {
+                    VStack(spacing: 0) {
+                        ForEach(bot.alwaysAllowed, id: \.self) { tool in
+                            HStack {
+                                Text(tool).font(.system(size: 14))
+                                Spacer()
+                                Button("Ask again") { bot.forget(alwaysAllowed: tool) }
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(Theme.muted)
+                            }
+                            .padding(.horizontal, 16)
+                            .frame(height: 44)
+                        }
+                    }
+                    .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
+                    .help("Tools you let this bot use without asking. Takes effect the next time it wakes.")
                 }
             }
 

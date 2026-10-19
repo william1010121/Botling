@@ -99,6 +99,22 @@ describe("plugin host (in process)", () => {
   });
 });
 
+describe("making bots", () => {
+  it("asks ClaudeCodeBot to make a bot, naming the plugin, and returns it", async () => {
+    let made: unknown;
+    const { host, written } = makeHost({
+      maker: async (ccb) => { made = await ccb.bots.create({ name: "Morning news", job: "Tech news at 08:00" }); },
+    });
+    const loading = host.sync([spec("maker")]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = written.find((m) => m.method === "bots.create");
+    expect(request.params).toEqual({ plugin: "maker", name: "Morning news", job: "Tech news at 08:00" });
+    await host.receive({ id: request.id, result: { id: "B1", name: "Morning news", role: "bot", awake: false } });
+    await loading;
+    expect(made).toEqual({ id: "B1", name: "Morning news", role: "bot", awake: false });
+  });
+});
+
 describe("plugin host (the real Node process)", () => {
   const script = join(scratch, "host.mjs");
   let child: ChildProcessWithoutNullStreams | null = null;

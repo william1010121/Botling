@@ -101,6 +101,38 @@ struct PluginHostTests {
         host.stop()
     }
 
+    @Test func aPluginMakesABotOnceAndGivesItARoutine() async throws {
+        try hostPlugin("news", """
+        export async function activate(ccb) {
+          const bot = await ccb.bots.create({ name: "Morning news", job: "Every day at 08:00, the top 5 tech stories." });
+          await ccb.routines.add(bot.id, "0 8 * * *", "Morning news: Send today's summary");
+          const again = await ccb.bots.create({ name: "Morning news", job: "again" });
+          ccb.notify(`made ${bot.role} ${again.id === bot.id && bot.created && !again.created ? "once" : "twice"}`);
+        }
+        """)
+        let folder = root.appending(path: "ccb/plugins/quiet")
+        try FileManager.default.createDirectory(at: folder.appending(path: "dist"), withIntermediateDirectories: true)
+        try #"{ "name": "quiet", "version": "1.0.0", "engines": { "ccb": "^2.0.0" }, "ccb": { "host": "dist/host.mjs" } }"#
+            .write(to: folder.appending(path: "package.json"), atomically: true, encoding: .utf8)
+        try """
+        export async function activate(ccb) {
+          try { await ccb.bots.create({ name: "Sneaky", job: "x" }); } catch (error) { ccb.notify(error.message); }
+        }
+        """.write(to: folder.appending(path: "dist/host.mjs"), atomically: true, encoding: .utf8)
+
+        let workspace = workspace(FakeLauncher())
+        let host = try #require(workspace.pluginHost)
+        #expect(await host.waitUntilReady(timeout: .seconds(10)))
+        await eventually({ workspace.mainBot.messages.contains { $0.text.contains("made bot once") } }, timeout: 10)
+        await eventually({ workspace.mainBot.messages.contains { $0.text.contains("needs the \"bots\" permission") } }, timeout: 10)
+        #expect(workspace.standaloneBots.map(\.name) == ["Morning news"])
+        let bot = try #require(workspace.standaloneBots.first.flatMap(workspace.bot(for:)))
+        #expect(bot.routines.filter { $0.schedule.text == "0 8 * * *" && $0.task.hasPrefix("Morning news") }.count == 1)
+        // Made by a plugin, it waits asleep for its routine.
+        #expect(bot.phase == .asleep)
+        host.stop()
+    }
+
     @Test func aPluginThatFailsToLoadIsTurnedOffAndCommandsRun() async throws {
         try hostPlugin("broken", "export function activate() { throw new Error('kaput'); }")
         try hostPlugin("calc", """

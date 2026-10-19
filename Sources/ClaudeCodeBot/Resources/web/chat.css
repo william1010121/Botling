@@ -162,6 +162,23 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 .choice:disabled { cursor: default; }
 .choice .detail { font-size: 12px; color: var(--muted); white-space: nowrap; }
 
+/* An answered question, folded to what was picked */
+.folded-choice {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%; margin-top: 10px;
+  min-height: 34px; padding: 6px 12px; border-radius: 10px; border: 1px solid #2B3B5C;
+  background: #1A2233; color: var(--text); font-size: 14px; text-align: left; cursor: pointer;
+}
+.folded-choice .picked-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folded-choice svg { flex-shrink: 0; color: var(--muted); }
+.folded-choice:hover { border-color: var(--blue); }
+.unfolded { display: flex; flex-direction: column; }
+.fold {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;
+  min-height: 28px; padding: 0 4px; border: none; background: transparent; color: var(--muted);
+  font-size: 12px; cursor: pointer;
+}
+.fold svg { transform: rotate(180deg); }
+
 .report {
   position: fixed; z-index: 10; width: 300px; padding: 16px;
   background: #1F1F24; border: 1px solid #2E2E35; border-radius: 14px;

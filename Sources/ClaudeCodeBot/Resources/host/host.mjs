@@ -239,6 +239,7 @@ var Host = class {
       name,
       bots: {
         list: async () => await this.request("bots.list", {}),
+        create: async (bot) => await this.request("bots.create", { plugin: name, name: bot?.name, job: bot?.job, avatar: bot?.avatar }),
         send: (botId, text) => this.notify("bots.send", { plugin: name, bot: botId, text }),
         onReply: (fn) => {
           plugin.replyListeners.push(fn);

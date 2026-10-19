@@ -52,7 +52,7 @@ enum PluginGuide {
         ```
 
         - name: lowercase letters, digits, - . _. version: semver.
-        - Permissions: composer, messages, network, files, exec, bots, claude.
+        - Permissions: composer, messages, network, files, exec, bots (talk to bots, make new ones), claude.
         - Setting types: boolean, enum (needs options), string, number. ClaudeCodeBot generates the controls in Settings.
         - Settings with `secret: true` (passwords, tokens) are stored in the macOS Keychain; the web part cannot read them, the program part can with settings.get;
           those with `env` become environment variables of the bot processes, and MCP servers read them in .mcp.json as `${EXAMPLE_TOKEN}`.
@@ -91,7 +91,12 @@ enum PluginGuide {
         - `ccb.hooks.beforeSend(m => …)`: before sending; return new text, `{...m, text}`, or `false` to stop it.
         - `ccb.hooks.afterReply(m => …)`: before a bot reply is shown; return new text.
         - `ccb.bots.list()` (Promise), `ccb.bots.send(botId, text)`, `ccb.bots.onReply((bot, reply) => …)`. The main bot's id is "main".
-        - `ccb.routines.add(botId, "minute hour day month weekday", "Name: what to do")`.
+        - `ccb.bots.create({ name, job, avatar? })` (Promise of the bot, with `created: true` the first time): makes a bot of its own (its own row in the left column, memory, inbox and routines.cron, in a folder under ~/.claudecodebot/bots/); `job` is what it is for, in a few sentences. Needs the "bots" permission.
+          Calling it again with the same name returns the bot this plugin made (`created: false`; its job is not changed), so it is safe in `activate`. It throws if another plugin or the user already has a bot by that name, or if the user removed this plugin's bot (it is not made again).
+          A bot that needs no code of its own does not need a plugin: the main bot or Maintainer makes one with a <new-bot> tag. Example, a morning news bot from a plugin:
+          `const bot = await ccb.bots.create({ name: "Morning news", job: "Every morning, collect the top 5 tech news stories and summarize each in one line." }); if (bot.created) await ccb.routines.add(bot.id, "0 8 * * *", "Morning news: Send today's summary");`
+          (Add routines only when `created`, so a time the user changed or a job they deleted is not put back.)
+        - `ccb.routines.add(botId, "minute hour day month weekday", "Name: what to do")`. Adding exactly the same job again does nothing.
         - `ccb.storage.dir`, `ccb.storage.get(key)`, `ccb.storage.set(key, value)`.
         - `ccb.commands.register(id, run)`, `ccb.web.handle(method, fn)`, `ccb.settings.get/onChange`, `ccb.notify(text)`.
         - console.log goes to stderr and does not disturb ClaudeCodeBot. A plugin that fails 3 times within 10 minutes is disabled.

@@ -31,7 +31,10 @@ export interface HostPluginSpec {
   storageDir: string;
 }
 
-export interface BotInfo { id: string; name: string; role: "main" | "manager"; awake: boolean }
+/** "bot" is a bot of its own (made with `bots.create`), not a project's manager. */
+export interface BotInfo { id: string; name: string; role: "main" | "manager" | "bot"; awake: boolean; created?: boolean }
+/** A new bot: its name in the left column, what it is for, and optionally its shape. */
+export interface NewBot { name: string; job: string; avatar?: string }
 export interface Outgoing { bot: BotInfo; text: string }
 export interface Incoming { bot: BotInfo; text: string }
 
@@ -40,6 +43,12 @@ export interface CcbHost {
   name: string;
   bots: {
     list(): Promise<BotInfo[]>;
+    /**
+     * Makes a bot of its own (`created: true`), or returns the one this plugin made by that name
+     * (`created: false`). Throws if the name is someone else's or the user removed it. Needs the
+     * "bots" permission.
+     */
+    create(bot: NewBot): Promise<BotInfo>;
     send(botId: string, text: string): void;
     onReply(fn: (bot: BotInfo, reply: string) => void): Dispose;
   };
@@ -313,6 +322,7 @@ export class Host {
       name,
       bots: {
         list: async () => (await this.request("bots.list", {})) as BotInfo[],
+        create: async (bot) => (await this.request("bots.create", { plugin: name, name: bot?.name, job: bot?.job, avatar: bot?.avatar })) as BotInfo,
         send: (botId, text) => this.notify("bots.send", { plugin: name, bot: botId, text }),
         onReply: (fn) => {
           plugin.replyListeners.push(fn);

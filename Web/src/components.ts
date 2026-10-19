@@ -12,7 +12,7 @@ export function componentPage(template: string, data: string): string {
 <style>:root{color-scheme:dark}html,body{margin:0;padding:0;background:transparent;color:#EDEDF0;font:14px -apple-system,"PingFang TC",sans-serif;overflow:hidden}</style>
 <script>
 window.ccb = {
-  data: ${data},
+  data: ${data.replace(/</g, "\\u003c")},
   answer(value) {
     if (typeof value === 'number') parent.postMessage({ccb: 'answer', index: value}, '*');
     else parent.postMessage({ccb: 'answer', text: String(value)}, '*');
@@ -38,7 +38,13 @@ export function choicesData(choices: ChoiceView[], chosen: number | null, answer
 }
 
 type AnswerHandler = (answer: { index?: number; text?: string }) => void;
-type ComponentFrame = HTMLIFrameElement & { ccbAnswer?: AnswerHandler | null };
+type ComponentFrame = HTMLIFrameElement & { ccbAnswer?: AnswerHandler | null; ccbKey?: string };
+
+/**
+ * The height each component last had, by message and component. A redrawn frame starts at it
+ * instead of collapsing to its default and growing again once loaded, which made the chat jump.
+ */
+const frameHeights = new Map<string, number>();
 
 // Frames are found by their window when they speak, so a message sent before the frame's own
 // load event is not lost.
@@ -50,18 +56,23 @@ window.addEventListener("message", (event) => {
   if (!frame) return;
   if (message.ccb === "size" && typeof message.height === "number" && message.height > 0) {
     frame.style.height = `${message.height}px`;
+    if (frame.ccbKey) frameHeights.set(frame.ccbKey, message.height);
   } else if (message.ccb === "answer" && frame.ccbAnswer) {
     if (typeof message.index === "number") frame.ccbAnswer({ index: message.index });
     else if (typeof message.text === "string" && message.text.trim() !== "") frame.ccbAnswer({ text: message.text });
   }
 });
 
-/** A component with its report flag beside it (shown on hover), or nothing if no template. */
+/**
+ * A component with its report flag beside it (shown on hover), or nothing if no template.
+ * `key` names this use of it (the message it is in), so a redraw keeps its height.
+ */
 export function componentElement(
   name: string,
   info: ComponentInfo | undefined,
   data: string,
   onAnswer: AnswerHandler | null,
+  key?: string,
 ): HTMLElement | null {
   if (!info) return null;
   const wrap = document.createElement("div");
@@ -71,6 +82,11 @@ export function componentElement(
   frame.setAttribute("sandbox", "allow-scripts");
   frame.title = name;
   frame.ccbAnswer = onAnswer;
+  if (key) {
+    frame.ccbKey = `${key}/${name}`;
+    const height = frameHeights.get(frame.ccbKey);
+    if (height) frame.style.height = `${height}px`;
+  }
   frame.srcdoc = componentPage(info.template, data);
   wrap.append(frame, reportControl(name, info));
   return wrap;

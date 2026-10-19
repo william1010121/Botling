@@ -23,6 +23,9 @@ a link to the result. Bots sleep when idle, write down what matters, and wake up
   hands back a one-page result.
 - **Only interrupts when it should**: managers report when they finish or get stuck; when you need to
   decide, buttons appear (with a recommended option and what each one costs).
+- **Bots of their own**: a morning news bot or a reading coach, with its own memory and routines
+  (New bot in the left column, ask the main bot, or `ccb.bots.create` from a plugin).
+- **Asks before using a tool it may not use**: Allow once / Always allow / Don't allow, in the chat.
 - **Routines**: each bot has a crontab-style `routines.cron` (bots edit it themselves when you ask).
 - **Chat**: Markdown, LaTeX (KaTeX), images and videos, attachments, replies to a message, and an
   input box that works with Chinese and Japanese input methods.
@@ -59,7 +62,7 @@ project's own notes live in `<project>/.bot/`, which is git-ignored.
 git clone https://github.com/william1010121/ClaudeCodeBot.git
 cd ClaudeCodeBot
 swift run ClaudeCodeBot          # run it
-scripts/make-app.sh 1.0.0        # or build dist/ClaudeCodeBot.app
+scripts/make-app.sh              # or build dist/ClaudeCodeBot.app (version from VERSION)
 ```
 
 Swift 6.2 (Xcode 26) is needed. The web chat is prebuilt and committed in
@@ -79,6 +82,8 @@ Swift 6.2 (Xcode 26) is needed. The web chat is prebuilt and committed in
 - **Memory** is plain markdown: `memory.md` with four sections, an `inbox.md` per project, and
   `routines.cron`. Bots stay inside the one-hour prompt-cache window while awake and write their
   memory before they sleep.
+
+What changed in each version: [CHANGELOG.md](CHANGELOG.md).
 
 More detail: [docs/PRD.md](docs/PRD.md) (the app) and [docs/PRD-v2.md](docs/PRD-v2.md) (plugins).
 

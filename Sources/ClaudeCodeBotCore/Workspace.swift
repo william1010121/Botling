@@ -11,6 +11,22 @@ public final class Workspace: ObservableObject {
         public var folder: URL
         /// An `AvatarKind` raw value.
         public var avatar: String
+        /// Set for a bot of its own (its folder is under `~/.claudecodebot/bots/`): what it is for.
+        public var job: String?
+        /// The plugin that made it, for a bot a plugin made.
+        public var plugin: String?
+
+        public init(id: UUID, name: String, folder: URL, avatar: String, job: String? = nil, plugin: String? = nil) {
+            self.id = id
+            self.name = name
+            self.folder = folder
+            self.avatar = avatar
+            self.job = job
+            self.plugin = plugin
+        }
+
+        /// A bot of its own rather than a project folder's manager.
+        public var isBot: Bool { job != nil }
 
         public var notesFolder: URL { folder.appending(path: ".bot") }
         public var inboxURL: URL { notesFolder.appending(path: "inbox.md") }
@@ -133,6 +149,8 @@ public final class Workspace: ObservableObject {
             if selection == nil { mainBot.markRead() }
         }
         mainBot.onRequests = { [weak self] requests in self?.handle(requests, from: nil) }
+        mainBot.onQuestion = { [weak self] _ in self?.refreshWaiting() }
+        mainBot.onQuestionSettled = { [weak self] _ in self?.refreshWaiting() }
         teams = loadTeams()
         components.otherFolders = { [weak self] in
             (self?.plugins.componentFolders() ?? []).filter { $0.standardizedFileURL != componentFolder.standardizedFileURL }
@@ -160,6 +178,8 @@ public final class Workspace: ObservableObject {
         followClaudeParts()
         prepareNotesFolder(for: maintainerProject)
         approvedFolders = loadApprovedFolders()
+        removedPluginBots = Set((try? Data(contentsOf: root.appending(path: "removed-bots.json")))
+            .flatMap { try? JSONDecoder().decode([String].self, from: $0) } ?? [])
         attach(maintainerProject)
         maintainer.extraDirectories = { [weak self] in self?.approvedFolders ?? [] }
         for project in loadProjects() where !project.isMaintainer {
@@ -311,14 +331,115 @@ public final class Workspace: ObservableObject {
             select(existing.id)
             return existing
         }
-        let used = Set(projects.map(\.avatar))
-        let avatar = Self.avatars.first { !used.contains($0) } ?? Self.avatars[projects.count % Self.avatars.count]
-        let project = Project(id: UUID(), name: folder.lastPathComponent, folder: folder, avatar: avatar)
+        let project = Project(id: UUID(), name: folder.lastPathComponent, folder: folder, avatar: nextAvatar())
         prepareNotesFolder(for: project)
         attach(project)
         saveProjects()
         select(project.id)
         return project
+    }
+
+    /// The first shape no project or bot has yet.
+    private func nextAvatar() -> String {
+        let used = Set(projects.map(\.avatar))
+        return Self.avatars.first { !used.contains($0) } ?? Self.avatars[projects.count % Self.avatars.count]
+    }
+
+    // MARK: Bots of their own
+
+    /// Bots of their own (not project managers), in the order they were made.
+    public var standaloneBots: [Project] { projects.filter(\.isBot) }
+
+    /// Makes a bot of its own: a folder under `~/.claudecodebot/bots/`, a row in the left column, and
+    /// its own memory, inbox and routines like a manager. A bot with the same name (ignoring case)
+    /// is returned as it is, so asking twice does not make two. `setUp` sends it its job at once,
+    /// so it introduces itself and writes its routines; a plugin that adds the routines itself
+    /// leaves it asleep. Nil when the name or the job is empty.
+    @discardableResult
+    public func createBot(name: String, job: String, avatar: String? = nil, setUp: Bool = false, by creator: String? = nil) -> Project? {
+        switch makeBot(name: name, job: job, avatar: avatar, setUp: setUp, by: creator) {
+        case let .made(project), let .existing(project): project
+        case .empty, .taken, .removedByUser: nil
+        }
+    }
+
+    /// What asking for a bot came to.
+    public enum BotMaking: Equatable {
+        case made(Project)
+        /// One by that name was there already (for a plugin: one it made itself).
+        case existing(Project)
+        /// Its name or job is empty.
+        case empty
+        /// A plugin asked for a name another plugin or you already use.
+        case taken
+        /// You removed the bot this plugin made before; it is not made again.
+        case removedByUser
+    }
+
+    /// `plugin` is the plugin asking, nil for you or a bot. A plugin gets back only a bot it made
+    /// itself, and never one you removed.
+    func makeBot(name: String, job: String, avatar: String? = nil, setUp: Bool = false, by creator: String? = nil, plugin: String? = nil) -> BotMaking {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let job = job.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !job.isEmpty else { return .empty }
+        if let existing = standaloneBots.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
+            return plugin == nil || existing.plugin == plugin ? .existing(existing) : .taken
+        }
+        if let plugin, removedPluginBots.contains(Self.removalKey(plugin: plugin, name: name)) { return .removedByUser }
+        let id = UUID()
+        let folder = root.appending(path: "bots/\(id.uuidString)")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let shape = avatar.flatMap { Self.avatars.contains($0) ? $0 : nil } ?? nextAvatar()
+        let project = Project(id: id, name: name, folder: folder, avatar: shape, job: job, plugin: plugin)
+        prepareNotesFolder(for: project)
+        attach(project)
+        saveProjects()
+        mainBot.notice("New bot \"\(name)\"\(creator.map { " (made by \($0))" } ?? ""): \(Self.firstLine(of: job))", sourceID: id)
+        if selection == nil { mainBot.markRead() }
+        briefAwakeMainBot()
+        if setUp {
+            managers[id]?.relay("""
+            (App) You were just created. Your job: \(job)
+            If it should happen at fixed times, add those jobs to your routines file now; if it is a report, also do the first one now. Then introduce yourself to the user in one sentence.
+            """)
+        }
+        return .made(project)
+    }
+
+    /// An awake main bot hears about bots made or removed with its next message.
+    private func briefAwakeMainBot() {
+        mainBot.queueNote("(App: The list of projects and bots changed.)\n" + projectBriefing())
+    }
+
+    /// Bots plugins made that you removed (`plugin/name`, lowercased), kept so they stay removed.
+    private var removedPluginBots: Set<String> = []
+    private var removedBotsURL: URL { root.appending(path: "removed-bots.json") }
+
+    static func removalKey(plugin: String, name: String) -> String {
+        "\(plugin)/\(name)".lowercased()
+    }
+
+    /// Takes a bot of its own out of the left column and stops it. Its folder (memory, results)
+    /// stays on disk under `~/.claudecodebot/bots/`.
+    public func removeBot(_ id: UUID) {
+        guard let project = projects.first(where: { $0.id == id && $0.isBot }) else { return }
+        managers[id]?.stop()
+        managers[id] = nil
+        projects.removeAll { $0.id == id }
+        if selection == id { select(nil) }
+        saveProjects()
+        if let plugin = project.plugin {
+            removedPluginBots.insert(Self.removalKey(plugin: plugin, name: project.name))
+            try? JSONEncoder().encode(removedPluginBots.sorted()).write(to: removedBotsURL, options: .atomic)
+        }
+        // Its questions in the main chat can no longer be answered.
+        for notice in mainBot.messages where notice.role == .notice && notice.sourceID == id && notice.isOpenQuestion {
+            mainBot.markAnswered(Bot.noLongerNeeded, in: notice.id)
+        }
+        briefAwakeMainBot()
+        refreshWaiting()
+        mainBot.notice("Removed the bot \"\(project.name)\". Its folder stays at \(project.folder.path).")
+        if selection == nil { mainBot.markRead() }
     }
 
     // MARK: Routines
@@ -368,16 +489,21 @@ public final class Workspace: ObservableObject {
 
     /// The project list and the teams the main bot gets each time it wakes.
     func projectBriefing() -> String {
-        let projectLines = projects.isEmpty
+        let folders = projects.filter { !$0.isBot }
+        let projectLines = folders.isEmpty
             ? "(No projects yet.)"
-            : projects.map { project in
+            : folders.map { project in
                 "- \(project.name): memory file \(project.notesFolder.appending(path: "memory.md").path); inbox file \(project.inboxURL.path)"
             }.joined(separator: "\n")
+        let bots = standaloneBots
+        let botLines = bots.isEmpty ? "" : "\n(App: Bots of their own, which you reach the same way.)\n" + bots.map { bot in
+            "- \(bot.name) (\(Self.firstLine(of: bot.job ?? ""))): memory file \(bot.notesFolder.appending(path: "memory.md").path); inbox file \(bot.inboxURL.path)"
+        }.joined(separator: "\n")
         let maintainerLine = "- Maintainer (looks after ClaudeCodeBot itself: plugins, components): memory file \(maintainerProject.notesFolder.appending(path: "memory.md").path); inbox file \(maintainerProject.inboxURL.path)"
         let teamLines = teams.map { "- \($0.name) (\($0.title)): \($0.description)" }.joined(separator: "\n")
         return """
         (App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file.)
-        \(projectLines)
+        \(projectLines)\(botLines)
         \(maintainerLine)
         (App: Temporary teams you can start, with <team name="name">task</team>.)
         \(teamLines)
@@ -496,6 +622,12 @@ public final class Workspace: ObservableObject {
                 Task { await proposeInstall(source) }
             case let .folder(path):
                 if project?.isMaintainer == true { requestFolder(path) }
+            case let .newBot(name, job):
+                // The main bot makes bots when you ask it; Maintainer may too (while building one).
+                if project == nil || project?.isMaintainer == true,
+                   case let .existing(old) = makeBot(name: name, job: job, setUp: true, by: project?.name) {
+                    mainBot.notice("There is already a bot called \"\(old.name)\"; nothing new was made. To change its job, tell it, or remove it from its menu first.", sourceID: old.id)
+                }
             case let .plugin(request):
                 if project?.isMaintainer != true {
                     handToMaintainer("\(project?.name ?? mainBot.name)'s request for ClaudeCodeBot: \(request)")
@@ -539,7 +671,8 @@ public final class Workspace: ObservableObject {
             var reported = false
             for await event in process.events {
                 switch event {
-                case .activity:
+                case .activity, .permission, .permissionCancelled:
+                    // Teams are started without asking (asksPermission is off), so nothing waits.
                     break
                 case let .reply(text, _):
                     guard !reported else { continue }
@@ -598,6 +731,7 @@ public final class Workspace: ObservableObject {
           Bundle it with esbuild into a single ES module (use the esbuild in the original project's node_modules, or npx --yes esbuild@0.25.11).
           Copy the original project's license into the plugin (the license in package.json and the LICENSE file); GPL code may only go into a separate plugin.
         - A "Hot-update check" message means ClaudeCodeBot found a broken plugin: fix it with the steps above.
+        - A bot that only needs instructions and a schedule (a morning news bot, a reading coach) is not a plugin: end your reply with <new-bot name="short name, no quotes">its job in a few sentences, including when it should work</new-bot>; ClaudeCodeBot adds it to the left column and it writes its own routines. Build a plugin with ccb.bots.create (see PLUGINS.md) only when the bot needs code of its own. Never write that tag inside code or examples.
         """
     }
 
@@ -779,11 +913,15 @@ public final class Workspace: ObservableObject {
         if bot === mainBot,
            let notice = mainBot.messages.first(where: { $0.id == messageID }),
            notice.role == .notice {
-            guard notice.isOpenQuestion,
-                  let projectID = notice.sourceID,
+            guard notice.isOpenQuestion else { return false }
+            guard let projectID = notice.sourceID,
                   let questionID = notice.sourceMessageID,
                   let manager = managers[projectID],
-                  manager.choose(index, in: questionID) else { return false }
+                  manager.choose(index, in: questionID) else {
+                // The manager's question was settled or is gone: so is this copy.
+                closeCopy(of: notice)
+                return false
+            }
             mainBot.markChosen(index, in: messageID)
             return true
         }
@@ -810,7 +948,10 @@ public final class Workspace: ObservableObject {
             guard let projectID = message.sourceID,
                   let questionID = message.sourceMessageID,
                   let manager = managers[projectID],
-                  manager.answer(text, in: questionID) else { return false }
+                  manager.answer(text, in: questionID) else {
+                closeCopy(of: message)
+                return false
+            }
             mainBot.markAnswered(text, in: messageID)
             return true
         }
@@ -832,6 +973,16 @@ public final class Workspace: ObservableObject {
             sourceMessageID: message.id
         )
         if selection == nil { mainBot.markRead() }
+    }
+
+    /// A notice whose question can no longer be answered: show what became of it.
+    private func closeCopy(of notice: ChatMessage) {
+        let original = notice.sourceID.flatMap { managers[$0] }?.messages.first { $0.id == notice.sourceMessageID }
+        if let chosen = original?.chosen {
+            mainBot.markChosen(chosen, in: notice.id)
+        } else {
+            mainBot.markAnswered(original?.answer ?? Bot.noLongerNeeded, in: notice.id)
+        }
     }
 
     static func firstLine(of text: String) -> String {
@@ -879,7 +1030,7 @@ public final class Workspace: ObservableObject {
         .object([
             "id": .string(pluginID(for: bot)),
             "name": .string(bot.name),
-            "role": .string(bot === mainBot ? "main" : "manager"),
+            "role": .string(bot === mainBot ? "main" : bot.profile.isStandalone ? "bot" : "manager"),
             "awake": .bool(bot.phase != .asleep)
         ])
     }
@@ -932,6 +1083,27 @@ public final class Workspace: ObservableObject {
             switch method {
             case "bots.list":
                 return .array(([mainBot] + everyProject.compactMap { self.managers[$0.id] }).map(info(for:)))
+            case "bots.create":
+                let plugin = params["plugin"]?.string ?? ""
+                guard plugins.plugin(plugin)?.manifest.ccb?.permissions?.contains("bots") == true else {
+                    throw HostMessage.HostError(message: "Creating bots needs the \"bots\" permission in package.json.")
+                }
+                let title = plugins.plugin(plugin)?.manifest.title ?? plugin
+                let name = params["name"]?.string ?? ""
+                let made = makeBot(name: name, job: params["job"]?.string ?? "", avatar: params["avatar"]?.string, by: "plugin \"\(title)\"", plugin: plugin)
+                let project: Project, created: Bool
+                switch made {
+                case let .made(new): (project, created) = (new, true)
+                case let .existing(old): (project, created) = (old, false)
+                case .empty: throw HostMessage.HostError(message: "A bot needs a name and a job.")
+                case .taken: throw HostMessage.HostError(message: "There is already a bot called \"\(name)\" that this plugin did not make.")
+                case .removedByUser: throw HostMessage.HostError(message: "The user removed the bot \"\(name)\"; it is not made again.")
+                }
+                guard let bot = managers[project.id], case var .object(fields) = info(for: bot) else {
+                    throw HostMessage.HostError(message: "The bot could not be started.")
+                }
+                fields["created"] = .bool(created)
+                return .object(fields)
             case "routines.add":
                 guard let id = params["bot"]?.string, let bot = bot(pluginID: id) else {
                     throw HostMessage.HostError(message: "No such bot.")
@@ -950,9 +1122,13 @@ public final class Workspace: ObservableObject {
 
     private func attach(_ project: Project) {
         let store = BotStore(directory: root.appending(path: "projects/\(project.id.uuidString)"))
-        let profile: BotProfile = project.isMaintainer
-            ? .maintainer(folder: project.folder, instructions: maintainerInstructions())
-            : .manager(name: project.name, avatar: project.avatar, folder: project.folder)
+        let profile: BotProfile = if project.isMaintainer {
+            .maintainer(folder: project.folder, instructions: maintainerInstructions())
+        } else if let job = project.job {
+            .standalone(name: project.name, avatar: project.avatar, folder: project.folder, job: job)
+        } else {
+            .manager(name: project.name, avatar: project.avatar, folder: project.folder)
+        }
         let bot = makeBot(profile, store)
         bot.onRequests = { [weak self] requests in self?.handle(requests, from: project) }
         bot.wakeNote = { [weak self] in self?.componentBriefing() ?? "" }
@@ -963,6 +1139,19 @@ public final class Workspace: ObservableObject {
             if project.isMaintainer { components.finishWorking() }
             refreshWaiting()
             if selection == project.id { bot?.markRead() }
+        }
+        // A question outside a reply (may it use a tool?) goes up like a reported question.
+        bot.onQuestion = { [weak self] message in
+            guard let self else { return }
+            report(from: project, message, answersRelay: true)
+            refreshWaiting()
+        }
+        bot.onQuestionSettled = { [weak self] message in
+            guard let self else { return }
+            if let notice = mainBot.messages.first(where: { $0.role == .notice && $0.sourceMessageID == message.id && $0.isOpenQuestion }) {
+                closeCopy(of: notice)
+            }
+            refreshWaiting()
         }
         // Memory changes most when a manager tidies before sleeping.
         bot.$phase
