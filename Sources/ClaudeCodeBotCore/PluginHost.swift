@@ -160,13 +160,13 @@ public final class PluginHostClient: ObservableObject {
     }
 
     public func request(_ method: String, _ params: JSONValue, plugin: String? = nil, timeout: Duration = .seconds(5)) async throws -> JSONValue {
-        guard input != nil else { throw HostMessage.HostError(message: "插件主機沒有在跑。") }
+        guard input != nil else { throw HostMessage.HostError(message: "The plugin host is not running.") }
         let id = nextID
         nextID += 1
         if let plugin { running[id] = plugin }
         Task { [weak self] in
             try? await Task.sleep(for: timeout)
-            self?.finish(id, with: .failure(HostMessage.HostError(message: "插件主機 \(timeout) 內沒有回應。")))
+            self?.finish(id, with: .failure(HostMessage.HostError(message: "The plugin host did not answer within \(timeout).")))
         }
         return try await withCheckedThrowingContinuation { continuation in
             pending[id] = continuation
@@ -184,7 +184,7 @@ public final class PluginHostClient: ObservableObject {
 
     private func start() {
         guard let node = locateNode() else {
-            problem = "找不到 Node，插件的程式部分不能跑（網頁部分照常）。"
+            problem = "Node not found, so plugin program parts can't run (web parts work as usual)."
             return
         }
         problem = nil
@@ -219,7 +219,7 @@ public final class PluginHostClient: ObservableObject {
         do {
             try process.run()
         } catch {
-            problem = "插件主機啟動失敗：\(error.localizedDescription)"
+            problem = "The plugin host failed to start: \(error.localizedDescription)"
             return
         }
         self.process = process
@@ -233,13 +233,13 @@ public final class PluginHostClient: ObservableObject {
         input = nil
         isRunning = false
         for id in Array(pending.keys) {
-            finish(id, with: .failure(HostMessage.HostError(message: "插件主機結束了。")))
+            finish(id, with: .failure(HostMessage.HostError(message: "The plugin host exited.")))
         }
         guard !stopping else { return }
         if blamed.isEmpty {
-            onPluginFailure?(nil, "插件主機結束了（\(status)）", false)
+            onPluginFailure?(nil, "The plugin host exited (\(status))", false)
         } else {
-            for plugin in blamed { onPluginFailure?(plugin, "插件主機在執行它的時候當掉了（\(status)）", false) }
+            for plugin in blamed { onPluginFailure?(plugin, "The plugin host crashed while running it (\(status))", false) }
         }
         restarts += 1
         // Back right away; the plugins load again when it says it is ready.
@@ -301,7 +301,7 @@ public final class PluginHostClient: ObservableObject {
         let specs = specs
         guard let result = try? await request("load", .object(["plugins": JSONValue(encoding: specs)]), timeout: .seconds(30)) else { return }
         for failure in result["failed"]?.decode([[String: String]].self) ?? [] {
-            onPluginFailure?(failure["name"], "程式部分載入失敗：\(failure["message"] ?? "")", true)
+            onPluginFailure?(failure["name"], "The program part failed to load: \(failure["message"] ?? "")", true)
         }
         isRunning = true
     }

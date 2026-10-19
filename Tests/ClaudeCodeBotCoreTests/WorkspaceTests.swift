@@ -58,7 +58,7 @@ struct WorkspaceTests {
         let project = workspace.addProject(folder: try makeFolder("NotchDo"))
         workspace.select(nil)
 
-        workspace.mainBot.send("NotchDo 怎樣了？")
+        workspace.mainBot.send("How is NotchDo doing?")
         await eventually { workspace.mainBot.messages.count == 2 }
 
         #expect(fake.agents.count == 1)
@@ -67,7 +67,7 @@ struct WorkspaceTests {
         let wake = try #require(fake.agents[0].sent.first)
         #expect(wake.contains(project.notesFolder.appending(path: "memory.md").path))
         #expect(wake.contains(project.inboxURL.path))
-        #expect(wake.hasSuffix("NotchDo 怎樣了？"))
+        #expect(wake.hasSuffix("How is NotchDo doing?"))
     }
 
     @Test func inboxWrittenByTheMainBotIsRelayedToTheManager() async throws {
@@ -76,22 +76,22 @@ struct WorkspaceTests {
         let project = workspace.addProject(folder: try makeFolder("blog"))
         // The main bot "writes" the inbox while answering.
         fake.respond = { text in
-            if text.contains("作品集") && !text.contains(BotPrompts.relayPrefix) {
-                try? "首頁加一個作品集區塊。\n".write(to: project.inboxURL, atomically: true, encoding: .utf8)
-                return "交給 blog。"
+            if text.contains("portfolio") && !text.contains(BotPrompts.relayPrefix) {
+                try? "Add a portfolio section to the home page.\n".write(to: project.inboxURL, atomically: true, encoding: .utf8)
+                return "Handed to blog."
             }
-            return "收到"
+            return "Got it"
         }
 
-        workspace.mainBot.send("blog 首頁加一個作品集區塊")
+        workspace.mainBot.send("Add a portfolio section to the blog home page")
         let manager = try #require(workspace.bot(for: project))
         await eventually { manager.messages.count == 2 }
 
         #expect(manager.messages.map(\.role) == [.relay, .bot])
-        #expect(manager.messages[0].text == "首頁加一個作品集區塊。")
+        #expect(manager.messages[0].text == "Add a portfolio section to the home page.")
         #expect(fake.agents.count == 2)
         #expect(fake.agents[1].launch.workingDirectory == project.folder)
-        #expect(fake.agents[1].sent.first?.contains(BotPrompts.relayPrefix + "首頁加一個作品集區塊。") == true)
+        #expect(fake.agents[1].sent.first?.contains(BotPrompts.relayPrefix + "Add a portfolio section to the home page.") == true)
         let inbox = try String(contentsOf: project.inboxURL, encoding: .utf8)
         #expect(inbox.isEmpty)
     }
@@ -101,33 +101,33 @@ struct WorkspaceTests {
         let workspace = makeWorkspace(fake)
         let project = workspace.addProject(folder: try makeFolder("blog"))
         try """
-        ## 現在狀態
-        等你選封面圖。
-        ## 等你決定的事
-        - 40 篇舊文章沒有封面圖，怎麼處理？
-        ## 決定過的事
-        - 2026-10-18 用 Astro
+        ## Current status
+        Waiting on you to pick cover images.
+        ## Waiting on you
+        - 40 old posts have no cover image. What should we do?
+        ## Decided
+        - 2026-10-18 Use Astro
         """.write(to: project.notesFolder.appending(path: "memory.md"), atomically: true, encoding: .utf8)
 
         workspace.refreshWaiting()
 
-        #expect(workspace.waiting == [Workspace.Waiting(projectID: project.id, text: "40 篇舊文章沒有封面圖，怎麼處理？")])
+        #expect(workspace.waiting == [Workspace.Waiting(projectID: project.id, text: "40 old posts have no cover image. What should we do?")])
         #expect(fake.agents.isEmpty)
     }
 
     @Test func memorySectionsSkipPlaceholders() {
         let text = """
-        ## 現在狀態（3 句以內）
-        在做錯誤狀態。
-        ## 等你決定的事
-        （無）
-        ## 進行中
-        1. 錯誤狀態
-        * 排程
+        ## Current status (3 sentences max)
+        Working on the error states.
+        ## Waiting on you
+        (none)
+        ## In progress
+        1. Error states
+        * Scheduling
         """
-        #expect(MemoryFile.items(in: text, section: "等你決定的事").isEmpty)
-        #expect(MemoryFile.items(in: text, section: "進行中") == ["錯誤狀態", "排程"])
-        #expect(MemoryFile.items(in: text, section: "現在狀態") == ["在做錯誤狀態。"])
+        #expect(MemoryFile.items(in: text, section: "Waiting on you").isEmpty)
+        #expect(MemoryFile.items(in: text, section: "In progress") == ["Error states", "Scheduling"])
+        #expect(MemoryFile.items(in: text, section: "Current status") == ["Working on the error states."])
     }
 
     @Test func managersGetCodingToolsAndTheMainBotDoesNot() {

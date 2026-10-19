@@ -57,13 +57,13 @@ var Host = class {
         return null;
       case "command": {
         const owner = [...this.plugins.values()].find((plugin) => plugin.commands.has(params.id));
-        if (!owner) throw new Error(`\u6C92\u6709\u6307\u4EE4\u300C${params.id}\u300D\u3002`);
+        if (!owner) throw new Error(`No command "${params.id}".`);
         return this.runAsync(owner.spec.name, () => owner.commands.get(params.id)(...params.args ?? []));
       }
       case "web": {
         const plugin = this.plugins.get(params.plugin);
         const handler = plugin?.web.get(params.method);
-        if (!plugin || !handler) throw new Error(`\u63D2\u4EF6\u300C${params.plugin}\u300D\u6C92\u6709\u8655\u7406\u300C${params.method}\u300D\u3002`);
+        if (!plugin || !handler) throw new Error(`Plugin "${params.plugin}" does not handle "${params.method}".`);
         return this.runAsync(plugin.spec.name, () => handler(params.params));
       }
       case "shutdown":
@@ -71,7 +71,7 @@ var Host = class {
         setTimeout(() => process.exit(0), 10);
         return null;
       default:
-        throw new Error(`\u4E0D\u8A8D\u8B58\u7684\u65B9\u6CD5\u300C${method}\u300D\u3002`);
+        throw new Error(`Unknown method "${method}".`);
     }
   }
   // MARK: Plugins
@@ -298,7 +298,7 @@ async function importPlugin(spec) {
   const url = `${pathToFileURL(spec.main).href}?v=${encodeURIComponent(spec.fingerprint)}`;
   const module = await import(url);
   const activate = module.activate ?? module.default?.activate;
-  if (typeof activate !== "function") throw new Error("\u7A0B\u5F0F\u90E8\u5206\u6C92\u6709\u532F\u51FA activate(ccb)\u3002");
+  if (typeof activate !== "function") throw new Error("The program part does not export activate(ccb).");
   return activate;
 }
 function errorText(error) {

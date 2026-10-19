@@ -93,9 +93,9 @@ describe("plugin host (in process)", () => {
     const loading = host.sync([spec("lister")]);
     await new Promise((resolve) => setTimeout(resolve, 0));
     const request = written.find((m) => m.method === "bots.list");
-    await host.receive({ id: request.id, result: [{ id: "main", name: "主 bot", role: "main", awake: false }] });
+    await host.receive({ id: request.id, result: [{ id: "main", name: "Main bot", role: "main", awake: false }] });
     await loading;
-    expect(list).toEqual([{ id: "main", name: "主 bot", role: "main", awake: false }]);
+    expect(list).toEqual([{ id: "main", name: "Main bot", role: "main", awake: false }]);
   });
 });
 
@@ -113,7 +113,7 @@ describe("plugin host (the real Node process)", () => {
     const plugin = join(scratch, "shout.mjs");
     writeFileSync(plugin, `export function activate(ccb) {
       console.log("this goes to stderr");
-      ccb.hooks.beforeSend((m) => m.text.replace("貓", "🐈"));
+      ccb.hooks.beforeSend((m) => m.text.replace("cat", "🐈"));
       ccb.notify("ready to shout");
     }`);
     child = spawn(process.execPath, [script], { env: { ...process.env, CCB_PLUGIN_HOST: "1" } });
@@ -133,7 +133,7 @@ describe("plugin host (the real Node process)", () => {
     send({ id: 1, method: "load", params: { plugins: [spec("shout", { main: plugin })] } });
     expect((await next((m) => m.id === 1)).result).toEqual({ loaded: ["shout"], failed: [] });
     expect((await next((m) => m.method === "notify")).params).toEqual({ plugin: "shout", text: "ready to shout" });
-    send({ id: 2, method: "beforeSend", params: { bot: { id: "main" }, text: "一隻貓" } });
-    expect((await next((m) => m.id === 2)).result).toEqual({ text: "一隻🐈" });
+    send({ id: 2, method: "beforeSend", params: { bot: { id: "main" }, text: "one cat" } });
+    expect((await next((m) => m.id === 2)).result).toEqual({ text: "one 🐈" });
   });
 });

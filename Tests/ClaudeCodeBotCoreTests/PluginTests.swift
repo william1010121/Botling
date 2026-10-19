@@ -13,7 +13,7 @@ struct PluginTests {
         in parent: URL? = nil,
         version: String = "1.0.0",
         engines: String = "^2.0.0",
-        ccb: String = #"{ "web": "dist/web.js", "contributes": { "settings": { "x.on": { "type": "boolean", "default": true, "title": "開" } } } }"#,
+        ccb: String = #"{ "web": "dist/web.js", "contributes": { "settings": { "x.on": { "type": "boolean", "default": true, "title": "On" } } } }"#,
         web: String? = "export function activate() {}"
     ) throws -> URL {
         let folder = (parent ?? root.appending(path: "library")).appending(path: name)
@@ -33,13 +33,13 @@ struct PluginTests {
         #expect(PluginRegistry.check(missing).contains { $0.contains("dist/web.js") })
 
         let old = try plugin("old", engines: "^1.0.0")
-        #expect(PluginRegistry.check(old).contains { $0.contains("不相容") })
+        #expect(PluginRegistry.check(old).contains { $0.contains("not compatible") })
 
         let badSetting = try plugin("bad-setting", ccb: #"{ "contributes": { "settings": { "a": { "type": "enum", "options": ["x"], "default": "y", "title": "A" } } } }"#)
         #expect(PluginRegistry.check(badSetting).contains { $0.contains("options") })
 
         let escape = try plugin("escape", ccb: #"{ "web": "../../etc/passwd" }"#)
-        #expect(PluginRegistry.check(escape).contains { $0.contains("相對路徑") })
+        #expect(PluginRegistry.check(escape).contains { $0.contains("relative path") })
 
         let permission = try plugin("permission", ccb: #"{ "permissions": ["root"] }"#)
         #expect(PluginRegistry.check(permission).contains { $0.contains("root") })
@@ -47,7 +47,7 @@ struct PluginTests {
         let broken = root.appending(path: "library/broken")
         try FileManager.default.createDirectory(at: broken, withIntermediateDirectories: true)
         try "{ nope".write(to: broken.appending(path: "package.json"), atomically: true, encoding: .utf8)
-        #expect(PluginRegistry.check(broken).first?.contains("格式不對") == true)
+        #expect(PluginRegistry.check(broken).first?.contains("malformed") == true)
     }
 
     @Test func enginesRanges() {
@@ -119,7 +119,7 @@ struct PluginTests {
         let old = ccb.appending(path: "components/meter")
         try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
         try "<div>meter</div>".write(to: old.appending(path: "template.html"), atomically: true, encoding: .utf8)
-        try "進度條".write(to: old.appending(path: "about.md"), atomically: true, encoding: .utf8)
+        try "Progress bar".write(to: old.appending(path: "about.md"), atomically: true, encoding: .utf8)
         // Another plugin brings a component of its own.
         try plugin("charts", in: ccb.appending(path: "plugins"), ccb: #"{ "contributes": { "components": "components" } }"#, web: nil)
         let chart = ccb.appending(path: "plugins/charts/components/bar")
@@ -136,6 +136,6 @@ struct PluginTests {
         #expect(workspace.plugins.plugin("ccb-components") != nil)
         #expect(workspace.components.names == ["bar", "choices", "meter"])
         #expect(workspace.components.template("bar") == "<div>bar</div>")
-        #expect(workspace.components.catalog().contains("meter：進度條"))
+        #expect(workspace.components.catalog().contains("meter: Progress bar"))
     }
 }

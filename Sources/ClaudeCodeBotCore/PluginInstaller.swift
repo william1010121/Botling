@@ -21,14 +21,14 @@ public struct InstallProposal: Identifiable, Sendable {
 
     /// The text of the permission card.
     public var summary: String {
-        var lines = ["要安裝插件「\(manifest.title)」\(manifest.version)嗎？"]
+        var lines = ["Install the plugin \"\(manifest.title)\" \(manifest.version)?"]
         if let description = manifest.description { lines.append(description) }
-        lines.append("來源：\(source)")
-        lines.append("作者：\(author ?? "沒寫")；授權：\(manifest.license ?? "沒寫")")
+        lines.append("Source: \(source)")
+        lines.append("Author: \(author ?? "not given"); license: \(manifest.license ?? "not given")")
         let permissions = permissionLines
-        lines.append(permissions.isEmpty ? "它不要求任何權限。" : "它會：" + permissions.joined(separator: "、"))
-        if !mcpServers.isEmpty { lines.append("會給 bot 新的工具（MCP）：" + mcpServers.joined(separator: "、")) }
-        if manifest.ccb?.host != nil { lines.append("它有程式部分，會在你的電腦上執行（權限只是宣告，不是沙盒）。") }
+        lines.append(permissions.isEmpty ? "It asks for no permissions." : "It will: " + permissions.joined(separator: ", "))
+        if !mcpServers.isEmpty { lines.append("It gives the bots new tools (MCP): " + mcpServers.joined(separator: ", ")) }
+        if manifest.ccb?.host != nil { lines.append("It has a program part that runs on your computer (permissions are only declared, not sandboxed).") }
         return lines.joined(separator: "\n")
     }
 }
@@ -74,7 +74,7 @@ public enum PluginInstaller {
     /// Fetches `source` into a new folder under `scratch` and reads it.
     public static func fetch(_ source: String, scratch: URL) async throws -> InstallProposal {
         guard let kind = classify(source) else {
-            throw InstallError(message: "看不懂「\(source)」：要是資料夾、git 網址、npm 套件名稱，或 .zip／.tgz 網址。")
+            throw InstallError(message: "Can't tell what \"\(source)\" is: it must be a folder, a git URL, an npm package name, or a .zip/.tgz URL.")
         }
         let work = scratch.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
@@ -91,7 +91,7 @@ public enum PluginInstaller {
         case let .npm(name):
             try await run("/usr/bin/env", ["npm", "pack", name, "--silent", "--pack-destination", work.path], in: work)
             guard let tarball = try FileManager.default.contentsOfDirectory(at: work, includingPropertiesForKeys: nil)
-                .first(where: { $0.pathExtension == "tgz" }) else { throw InstallError(message: "npm 沒有給出套件。") }
+                .first(where: { $0.pathExtension == "tgz" }) else { throw InstallError(message: "npm did not return a package.") }
             try await run("/usr/bin/tar", ["xzf", tarball.path, "-C", work.path], in: work)
             fetched = work.appending(path: "package")
         case let .archive(url):
@@ -118,7 +118,7 @@ public enum PluginInstaller {
         if children.count == 1, FileManager.default.fileExists(atPath: children[0].appending(path: "package.json").path) {
             return children[0]
         }
-        throw InstallError(message: "裡面找不到 package.json。")
+        throw InstallError(message: "No package.json inside.")
     }
 
     /// Reads and checks a fetched plugin.
@@ -150,14 +150,14 @@ public enum PluginInstaller {
 
     static func describe(permission: String) -> String {
         switch permission {
-        case "composer": "讀和修改你在輸入框打的字"
-        case "messages": "讀對話內容"
-        case "network": "連上網路"
-        case "files": "讀寫你電腦上的檔案"
-        case "exec": "在你的電腦上執行程式"
-        case "bots": "代你對 bot 說話"
-        case "claude": "給 bot 新的工具"
-        default: "「\(permission)」"
+        case "composer": "read and change what you type in the input box"
+        case "messages": "read the conversation"
+        case "network": "connect to the internet"
+        case "files": "read and write files on your computer"
+        case "exec": "run programs on your computer"
+        case "bots": "talk to bots on your behalf"
+        case "claude": "give the bots new tools"
+        default: "\"\(permission)\""
         }
     }
 
@@ -177,7 +177,7 @@ public enum PluginInstaller {
             let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             process.waitUntilExit()
             guard process.terminationStatus == 0 else {
-                throw InstallError(message: "\(arguments.first ?? executable) 失敗：\(text.trimmingCharacters(in: .whitespacesAndNewlines).suffix(300))")
+                throw InstallError(message: "\(arguments.first ?? executable) failed: \(text.trimmingCharacters(in: .whitespacesAndNewlines).suffix(300))")
             }
         }
     }

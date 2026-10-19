@@ -183,7 +183,7 @@ function drawPanel(): void {
     document.body.append(root);
   }
   if (!entry) {
-    root.innerHTML = `<p class="panel-empty">這個面板還沒準備好。</p>`;
+    root.innerHTML = `<p class="panel-empty">This panel is not ready yet.</p>`;
     return;
   }
   panelDispose?.();

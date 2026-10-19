@@ -19,7 +19,7 @@ export interface MessageView {
   id: string;
   role: Role;
   text: string;
-  /** 「今天 08:15」 above this message, when it starts a new stretch of time. */
+  /** "Today 08:15" above this message, when it starts a new stretch of time. */
   stamp: string | null;
   /** The face beside a bot line or a notice, as a data URL. */
   avatar: string | null;

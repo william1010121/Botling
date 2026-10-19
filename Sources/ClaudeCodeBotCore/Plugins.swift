@@ -232,9 +232,9 @@ public final class PluginRegistry: ObservableObject {
         rescan(force: true)
         let title = plugin(name)?.manifest.title ?? name
         if plugin(name)?.usingPrevious == true {
-            onNotice?("插件「\(title)」新版出錯，先用上一版，已交給 Maintainer：\(message)")
+            onNotice?("Plugin \"\(title)\": the new version failed; using the previous version and handed it to Maintainer: \(message)")
         } else {
-            onNotice?("插件「\(title)」出錯，先停用了：\(message)")
+            onNotice?("Plugin \"\(title)\" failed and was disabled for now: \(message)")
         }
         onBroken?(name, message)
     }
@@ -271,7 +271,7 @@ public final class PluginRegistry: ObservableObject {
     /// Back to the version before its last change (a new commit); it then hot-reloads.
     @discardableResult
     public func revert(_ name: String) async -> String? {
-        guard let path = gitPath(name) else { return "內建插件沒有版本紀錄。" }
+        guard let path = gitPath(name) else { return "Built-in plugins have no version history." }
         let git = git
         let label = plugin(name)?.manifest.title ?? name
         let problem = await blocking { git.revert(path, label: label) }
@@ -284,7 +284,7 @@ public final class PluginRegistry: ObservableObject {
     /// Takes a plugin out of the library (git history keeps it).
     @discardableResult
     public func remove(_ name: String) async -> String? {
-        guard let path = gitPath(name) else { return "內建插件不能移除，可以關掉。" }
+        guard let path = gitPath(name) else { return "Built-in plugins can't be removed, only turned off." }
         let git = git
         let label = plugin(name)?.manifest.title ?? name
         let problem = await blocking { git.remove(path, label: label) }
@@ -349,7 +349,7 @@ public final class PluginRegistry: ObservableObject {
         return settings
     }
 
-    /// When the plugin host reported each plugin breaking, for 「3 times in 10 minutes」.
+    /// When the plugin host reported each plugin breaking, for "3 times in 10 minutes".
     private var crashes: [String: [Date]] = [:]
 
     /// A plugin's program part threw or brought the host down. The third time within 10
@@ -419,7 +419,7 @@ public final class PluginRegistry: ObservableObject {
                     if reportedProblems[folder.lastPathComponent] != error.problems {
                         reportedProblems[folder.lastPathComponent] = error.problems
                         if !fingerprints.isEmpty {
-                            onBroken?(folder.lastPathComponent, "檢查沒過：" + error.problems.joined(separator: "；"))
+                            onBroken?(folder.lastPathComponent, "Check failed: " + error.problems.joined(separator: "; "))
                         }
                     }
                 }
@@ -520,9 +520,9 @@ public final class PluginRegistry: ObservableObject {
     /// Puts a fetched plugin into the library (replacing one of the same name) and commits it.
     @discardableResult
     public func install(_ proposal: InstallProposal) async -> String? {
-        guard proposal.problems.isEmpty else { return proposal.problems.joined(separator: "；") }
+        guard proposal.problems.isEmpty else { return proposal.problems.joined(separator: "; ") }
         if let existing = plugin(proposal.manifest.name), existing.builtIn == false, state.installed?[existing.name] == nil {
-            return "插件庫裡已經有自己做的「\(existing.name)」，不會用外部的蓋掉。"
+            return "The plugin library already has its own \"\(existing.name)\"; it won't be replaced by an outside one."
         }
         let target = library.appending(path: proposal.manifest.name)
         let git = git
@@ -534,10 +534,10 @@ public final class PluginRegistry: ObservableObject {
             do {
                 try files.copyItem(at: proposal.folder, to: target)
             } catch {
-                return "放不進插件庫：\(error.localizedDescription)"
+                return "Couldn't put it into the plugin library: \(error.localizedDescription)"
             }
             git.run(["add", "-A", "--", proposal.manifest.name])
-            git.run(["commit", "-q", "-m", "安裝 \(label)（\(source)）", "--", proposal.manifest.name])
+            git.run(["commit", "-q", "-m", "Install \(label) (\(source))", "--", proposal.manifest.name])
             return nil
         }
         guard problem == nil else { return problem }
@@ -585,7 +585,7 @@ public final class PluginRegistry: ObservableObject {
                 guard let self else { return }
                 claudeChecking.remove(name)
                 claudeChecks[name] = (print, problem)
-                if let problem { onNotice?("插件「\(title)」的 Claude 部分沒通過檢查，先不載入：\(problem)") }
+                if let problem { onNotice?("The Claude part of plugin \"\(title)\" failed the check and is not loaded for now: \(problem)") }
                 revision += 1
                 // The files may have changed again while it was checked.
                 checkClaudeParts()
@@ -605,7 +605,7 @@ public final class PluginRegistry: ObservableObject {
         guard problems.isEmpty,
               let data = try? Data(contentsOf: folder.appending(path: "package.json")),
               let manifest = try? JSONDecoder().decode(PluginManifest.self, from: data) else {
-            return .failure(CheckError(problems: problems.isEmpty ? ["package.json 讀不懂。"] : problems))
+            return .failure(CheckError(problems: problems.isEmpty ? ["package.json could not be read."] : problems))
         }
         return .success(manifest)
     }
@@ -615,76 +615,76 @@ public final class PluginRegistry: ObservableObject {
 
     nonisolated public static func check(_ folder: URL) -> [String] {
         let packageURL = folder.appending(path: "package.json")
-        guard let data = try? Data(contentsOf: packageURL) else { return ["找不到 package.json。"] }
+        guard let data = try? Data(contentsOf: packageURL) else { return ["package.json not found."] }
         let manifest: PluginManifest
         do {
             manifest = try JSONDecoder().decode(PluginManifest.self, from: data)
         } catch {
-            return ["package.json 格式不對：\(Self.describe(error))"]
+            return ["package.json is malformed: \(Self.describe(error))"]
         }
         var problems: [String] = []
         if manifest.name.range(of: #"^[a-z0-9][a-z0-9._-]*$"#, options: .regularExpression) == nil {
-            problems.append("name「\(manifest.name)」只能用小寫英文、數字、- . _。")
+            problems.append("name \"\(manifest.name)\" may only use lowercase letters, digits, - . _.")
         }
         if manifest.version.range(of: #"^\d+\.\d+\.\d+"#, options: .regularExpression) == nil {
-            problems.append("version「\(manifest.version)」要是 semver，例如 1.0.0。")
+            problems.append("version \"\(manifest.version)\" must be semver, for example 1.0.0.")
         }
         guard let range = manifest.engines?["ccb"] else {
-            problems.append("缺少 engines.ccb（例如 \"^2.0.0\"）。")
+            problems.append("engines.ccb is missing (for example \"^2.0.0\").")
             return problems
         }
-        if !compatible(range) { problems.append("engines.ccb「\(range)」和這版 ClaudeCodeBot（2.\(apiVersion.minor)）不相容。") }
+        if !compatible(range) { problems.append("engines.ccb \"\(range)\" is not compatible with this ClaudeCodeBot (2.\(apiVersion.minor)).") }
         guard let ccb = manifest.ccb else {
-            problems.append("缺少 ccb 欄位。")
+            problems.append("The ccb field is missing.")
             return problems
         }
         for (label, path) in [("web", ccb.web), ("host", ccb.host), ("claude", ccb.claude), ("contributes.components", ccb.contributes?.components)] {
             guard let path else { continue }
             if path.hasPrefix("/") || path.split(separator: "/").contains("..") {
-                problems.append("\(label)「\(path)」要是插件資料夾裡的相對路徑。")
+                problems.append("\(label) \"\(path)\" must be a relative path inside the plugin folder.")
             } else if !FileManager.default.fileExists(atPath: folder.appending(path: path).path) {
-                problems.append("\(label) 指到的「\(path)」不存在。")
+                problems.append("\(label) points to \"\(path)\", which does not exist.")
             }
         }
         if let claude = ccb.claude, !FileManager.default.fileExists(atPath: folder.appending(path: "\(claude)/.claude-plugin/plugin.json").path) {
-            problems.append("Claude 部分「\(claude)」裡要有 .claude-plugin/plugin.json。")
+            problems.append("The Claude part \"\(claude)\" must contain .claude-plugin/plugin.json.")
         }
         for style in ccb.styles ?? [] where !FileManager.default.fileExists(atPath: folder.appending(path: style).path) {
-            problems.append("styles 裡的「\(style)」不存在。")
+            problems.append("\"\(style)\" in styles does not exist.")
         }
         let known = ["composer", "messages", "network", "files", "exec", "bots", "claude"]
         for permission in ccb.permissions ?? [] where !known.contains(permission) {
-            problems.append("不認識的權限「\(permission)」（可以用：\(known.joined(separator: "、"))）。")
+            problems.append("Unknown permission \"\(permission)\" (allowed: \(known.joined(separator: ", "))).")
         }
         var ids = Set<String>()
         for command in ccb.contributes?.commands ?? [] {
-            if !ids.insert(command.id).inserted { problems.append("指令「\(command.id)」重複了。") }
+            if !ids.insert(command.id).inserted { problems.append("Command \"\(command.id)\" is declared twice.") }
             if let key = command.key, key.range(of: #"^((cmd|ctrl|alt|option|shift)\+)*[^+]+$"#, options: .regularExpression) == nil {
-                problems.append("指令「\(command.id)」的快捷鍵「\(key)」看不懂（例如 cmd+shift+l）。")
+                problems.append("Command \"\(command.id)\" has an unreadable shortcut \"\(key)\" (for example cmd+shift+l).")
             }
         }
         for panel in ccb.contributes?.panels ?? [] where ccb.web == nil {
-            problems.append("面板「\(panel.id)」要有網頁部分（ccb.web）來畫。")
+            problems.append("Panel \"\(panel.id)\" needs a web part (ccb.web) to draw it.")
         }
         for (key, setting) in ccb.contributes?.settings ?? [:] {
             if let env = setting.env, env.range(of: #"^[A-Z_][A-Z0-9_]*$"#, options: .regularExpression) == nil {
-                problems.append("設定「\(key)」的 env「\(env)」要是大寫英文、數字和底線。")
+                problems.append("Setting \"\(key)\": env \"\(env)\" must use uppercase letters, digits and underscores.")
             }
             switch setting.type {
             case "boolean":
-                if let value = setting.default, value.bool == nil { problems.append("設定「\(key)」的預設值要是 true 或 false。") }
+                if let value = setting.default, value.bool == nil { problems.append("Setting \"\(key)\": the default must be true or false.") }
             case "enum":
                 let options = setting.options ?? []
-                if options.isEmpty { problems.append("設定「\(key)」是 enum，要有 options。") }
+                if options.isEmpty { problems.append("Setting \"\(key)\" is an enum and needs options.") }
                 if let value = setting.default, !(value.string.map(options.contains) ?? false) {
-                    problems.append("設定「\(key)」的預設值不在 options 裡。")
+                    problems.append("Setting \"\(key)\": the default is not one of the options.")
                 }
             case "string":
-                if let value = setting.default, value.string == nil { problems.append("設定「\(key)」的預設值要是文字。") }
+                if let value = setting.default, value.string == nil { problems.append("Setting \"\(key)\": the default must be text.") }
             case "number":
-                if let value = setting.default, value.number == nil { problems.append("設定「\(key)」的預設值要是數字。") }
+                if let value = setting.default, value.number == nil { problems.append("Setting \"\(key)\": the default must be a number.") }
             default:
-                problems.append("設定「\(key)」的 type「\(setting.type)」要是 boolean、enum、string 或 number。")
+                problems.append("Setting \"\(key)\": type \"\(setting.type)\" must be boolean, enum, string or number.")
             }
         }
         return problems
@@ -705,9 +705,9 @@ public final class PluginRegistry: ObservableObject {
     nonisolated private static func describe(_ error: Error) -> String {
         switch error {
         case let DecodingError.keyNotFound(key, context):
-            return "缺少 \((context.codingPath.map(\.stringValue) + [key.stringValue]).joined(separator: "."))"
+            return "missing \((context.codingPath.map(\.stringValue) + [key.stringValue]).joined(separator: "."))"
         case let DecodingError.typeMismatch(_, context), let DecodingError.valueNotFound(_, context):
-            return "\(context.codingPath.map(\.stringValue).joined(separator: ".")) 的型別不對"
+            return "\(context.codingPath.map(\.stringValue).joined(separator: ".")) has the wrong type"
         case let DecodingError.dataCorrupted(context):
             return context.debugDescription
         default:

@@ -92,25 +92,28 @@ struct LiveClaudePartTests {
         print("reply:", reply)
         #expect(reply.contains("MANGOSTEEN-42"))
 
-        let run = try #require(workspace.startTeam("research", task: "只要回一句「研究小組到」，不用做成果頁。"))
-        #expect(run.spec.title == "研究小組")
+        let run = try #require(workspace.startTeam("research", task: "Just reply with one sentence, \"Research team here\"; no result page needed."))
+        #expect(run.spec.title == "Research team")
         await eventually({ workspace.runningTeams.isEmpty }, timeout: 180)
         let notice = bot.messages.last { $0.role == .notice }?.text ?? ""
         print("team:", notice)
-        #expect(notice.hasPrefix("研究小組："))
+        #expect(notice.hasPrefix("Research team: "))
         await workspace.putEveryoneToSleep()
     }
 }
 
-/// P6 acceptance: 「把 laas-copy 做成 ClaudeCodeBot 插件」. The only thing done for the user is allowing
+/// P6 acceptance: "Turn laas-copy into a ClaudeCodeBot plugin". The only thing done for the user is allowing
 /// Maintainer to read the folder; it then makes ccb-laas, checks and commits it.
+/// Needs `CCB_LAAS_SOURCE=<path to a laas-copy checkout>`; skipped when it is unset.
 /// `CCB_LIVE_KEEP=<dir>` copies the plugin library there afterwards.
 @MainActor
 struct LivePortTests {
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"
+                       && ProcessInfo.processInfo.environment["CCB_LAAS_SOURCE"]?.isEmpty == false))
     func maintenancePortsLaasCopyIntoAPlugin() async throws {
         let executable = try #require(ClaudeExecutableLocator().locate())
-        let source = URL(filePath: "/Users/guoshengwei/tool/extension/laas-copy")
+        let path = try #require(ProcessInfo.processInfo.environment["CCB_LAAS_SOURCE"])
+        let source = URL(filePath: (path as NSString).expandingTildeInPath)
         try #require(FileManager.default.fileExists(atPath: source.path))
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-live-port-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -129,9 +132,9 @@ struct LivePortTests {
         await workspace.pluginLibraryReady.value
         let maintainer = workspace.maintainer
 
-        workspace.mainBot.send("把 \(source.path) 做成 ClaudeCodeBot 插件，讓我在輸入框打 ;a 就變成 \\alpha。")
+        workspace.mainBot.send("Turn \(source.path) into a ClaudeCodeBot plugin, so that typing ;a in the input box becomes \\alpha.")
         // The user's one click: allow reading the folder.
-        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion && $0.text.contains("laas-copy") } }, timeout: 600)
+        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion && $0.text.contains(source.lastPathComponent) } }, timeout: 600)
         let question = try #require(workspace.mainBot.messages.last { $0.role == .notice && $0.isOpenQuestion })
         print("question:", question.text)
         #expect(workspace.choose(0, in: question.id, of: workspace.mainBot))
@@ -139,7 +142,7 @@ struct LivePortTests {
         // Done when Maintainer has said something after being allowed and is idle again.
         await eventually({
             !maintainer.isWorking && maintainer.phase == .awake
-                && maintainer.messages.last(where: { $0.role == .relay })?.text.contains("使用者同意了") == true
+                && maintainer.messages.last(where: { $0.role == .relay })?.text.contains("The user agreed") == true
                 && maintainer.messages.last?.role == .bot
         }, timeout: 1800)
         print("maintainer:\n" + maintainer.messages.map { "[\($0.role)] \($0.text)" }.joined(separator: "\n"))
@@ -182,7 +185,7 @@ struct LiveInstallTests {
         }
         await workspace.pluginLibraryReady.value
 
-        workspace.mainBot.send("幫我裝這個插件：file://\(repo.path)")
+        workspace.mainBot.send("Install this plugin for me: file://\(repo.path)")
         await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion } }, timeout: 180)
         let card = try #require(workspace.mainBot.messages.last { $0.role == .notice && $0.isOpenQuestion })
         print("card:\n" + card.text)
@@ -195,7 +198,7 @@ struct LiveInstallTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let project = workspace.addProject(folder: folder)
         let manager = try #require(workspace.bot(for: project))
-        manager.send("用 secret_number 工具查 ClaudeCodeBot 的秘密數字，只回那個數字。")
+        manager.send("Use the secret_number tool to look up ClaudeCodeBot's secret number. Reply with only the number.")
         await eventually({ manager.messages.contains { $0.role == .bot } }, timeout: 180)
         let reply = manager.messages.last { $0.role == .bot }?.text ?? ""
         print("manager:", reply)

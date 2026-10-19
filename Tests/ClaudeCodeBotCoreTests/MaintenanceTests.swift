@@ -40,9 +40,9 @@ struct MaintenanceTests {
 
         // Maintainer is a project of its own that never lands in projects.json.
         let maintainer = workspace.maintainer
-        #expect(maintainer.profile.instructions?.contains("ccb-check <插件資料夾>") == true)
+        #expect(maintainer.profile.instructions?.contains("ccb-check <plugin folder>") == true)
         #expect(!workspace.projects.contains { $0.isMaintainer })
-        #expect(workspace.projectBriefing().contains("Maintainer（負責 ClaudeCodeBot 本身"))
+        #expect(workspace.projectBriefing().contains("Maintainer (looks after ClaudeCodeBot itself"))
         workspace.addProject(folder: root.appending(path: "garden"))
         let saved = try String(contentsOf: root.appending(path: "ccb/projects.json"), encoding: .utf8)
         #expect(saved.contains("garden") && !saved.contains("Maintainer"))
@@ -69,7 +69,7 @@ struct MaintenanceTests {
         let plugin = try #require(registry.plugin("shout"))
         #expect(plugin.enabled && plugin.usingPrevious)
         #expect(registry.webSpecs().first { $0.name == "shout" }?.source.contains("v1") == true)
-        #expect(workspace.mainBot.messages.last?.text.contains("先用上一版") == true)
+        #expect(workspace.mainBot.messages.last?.text.contains("using the previous version") == true)
         await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text.contains("v2 broke") } }
 
         // Fixed: the new files get a try again.
@@ -90,7 +90,7 @@ struct MaintenanceTests {
         workspace.plugins.rescan()
         #expect(workspace.plugins.plugin("shout") != nil)
         #expect(workspace.plugins.problems["shout"]?.isEmpty == false)
-        await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text.contains("shout") && $0.text.contains("檢查沒過") } }
+        await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text.contains("shout") && $0.text.contains("Check failed") } }
         await workspace.putEveryoneToSleep()
     }
 
@@ -106,13 +106,13 @@ struct MaintenanceTests {
         registry.git.run(["add", "-A"])
         registry.git.run(["commit", "-q", "-m", "shout: louder"])
         registry.rescan()
-        #expect(workspace.mainBot.messages.last?.text == "插件「shout」更新了：1.0.0 → 1.1.0")
+        #expect(workspace.mainBot.messages.last?.text == "Plugin \"shout\" updated: 1.0.0 → 1.1.0")
         await eventually { registry.hasPrevious("shout") }
 
         #expect(await registry.revert("shout") == nil)
         #expect(registry.plugin("shout")?.manifest.version == "1.0.0")
         #expect(registry.webSpecs().first { $0.name == "shout" }?.source.contains("v1 ") == true)
-        #expect(registry.git.run(["log", "-1", "--format=%s"]).output == "退回 shout 到上一版")
+        #expect(registry.git.run(["log", "-1", "--format=%s"]).output == "Revert shout to the previous version")
 
         #expect(await registry.remove("shout") == nil)
         #expect(registry.plugin("shout") == nil)
@@ -124,12 +124,12 @@ struct MaintenanceTests {
         let fake = FakeLauncher()
         fake.respond = { text in
             if isAppOnly(text) { return "OK" }
-            return text.hasSuffix("輸入框能打 laas 嗎") ? "交給 Maintainer。\n<plugin>輸入框支援 laas 快打</plugin>" : nil
+            return text.hasSuffix("Can the input box do laas?") ? "Handed to Maintainer.\n<plugin>laas quick typing in the input box</plugin>" : nil
         }
         let workspace = workspace(fake)
-        workspace.mainBot.send("輸入框能打 laas 嗎")
-        await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text == "主 bot 對 ClaudeCodeBot 的要求：輸入框支援 laas 快打" } }
-        #expect(workspace.mainBot.messages.last?.text == "交給 Maintainer。")
+        workspace.mainBot.send("Can the input box do laas?")
+        await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text == "Main bot's request for ClaudeCodeBot: laas quick typing in the input box" } }
+        #expect(workspace.mainBot.messages.last?.text == "Handed to Maintainer.")
         await workspace.putEveryoneToSleep()
     }
 }
@@ -145,26 +145,26 @@ struct FolderConsentTests {
         let fake = FakeLauncher()
         fake.respond = { text in
             if isAppOnly(text) { return "OK" }
-            if text.contains("做成 ClaudeCodeBot 插件") { return "要先讀原專案。\n<need-folder>\(source.path)</need-folder>" }
-            if text.contains("使用者同意了") { return "讀到了，開始做。" }
-            if text.contains("不讓你讀") { return "那我做不了。" }
-            return "收到"
+            if text.contains("into a ClaudeCodeBot plugin") { return "I need to read the original project first.\n<need-folder>\(source.path)</need-folder>" }
+            if text.contains("The user agreed") { return "Read it, starting now." }
+            if text.contains("did not allow you to read") { return "Then I can't do it." }
+            return "Got it"
         }
         let ccb = root.appending(path: "ccb")
         let workspace = Workspace(root: ccb, launcher: fake.launcher) { profile, store in
             Bot(profile: profile, launcher: fake.launcher, store: store)
         }
         let maintainer = workspace.maintainer
-        workspace.handToMaintainer("把 laas-copy 做成 ClaudeCodeBot 插件")
+        workspace.handToMaintainer("Turn laas-copy into a ClaudeCodeBot plugin")
         await eventually { workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
         let question = try #require(workspace.mainBot.messages.last { $0.role == .notice })
         #expect(question.text.contains(source.path))
-        #expect(question.choices?.map(\.label) == ["可以讀", "不要"])
-        #expect(maintainer.messages.last?.text == "要先讀原專案。")
+        #expect(question.choices?.map(\.label) == ["Allow", "Don't allow"])
+        #expect(maintainer.messages.last?.text == "I need to read the original project first.")
 
         #expect(workspace.choose(0, in: question.id, of: workspace.mainBot))
-        await eventually { maintainer.messages.contains { $0.role == .bot && $0.text == "讀到了，開始做。" } }
-        #expect(maintainer.messages.contains { $0.role == .divider && $0.text == "交接 → 可以讀 laas-copy" })
+        await eventually { maintainer.messages.contains { $0.role == .bot && $0.text == "Read it, starting now." } }
+        #expect(maintainer.messages.contains { $0.role == .divider && $0.text == "Handoff → may read laas-copy" })
         let restarted = try #require(fake.agents.last)
         #expect(restarted.launch.extraDirectories.map(\.standardizedFileURL.path).contains(source.standardizedFileURL.path))
         #expect(!workspace.choose(0, in: question.id, of: workspace.mainBot))
@@ -177,7 +177,7 @@ struct FolderConsentTests {
         #expect(again.approvedFolders.map(\.path) == [source.standardizedFileURL.path])
         let count = again.mainBot.messages.count
         again.requestFolder(source.appending(path: "packages").path)
-        await eventually { again.maintainer.messages.contains { $0.role == .relay && $0.text.contains("之前已經同意過") } }
+        await eventually { again.maintainer.messages.contains { $0.role == .relay && $0.text.contains("was already allowed before") } }
         #expect(again.mainBot.messages.count == count)
         await again.putEveryoneToSleep()
     }
@@ -186,17 +186,17 @@ struct FolderConsentTests {
         let fake = FakeLauncher()
         fake.respond = { text in
             if isAppOnly(text) { return "OK" }
-            if text.contains("看一下") { return "<need-folder>/tmp/elsewhere</need-folder>" }
-            return "那我做不了。"
+            if text.contains("Take a look") { return "<need-folder>/tmp/elsewhere</need-folder>" }
+            return "Then I can't do it."
         }
         let workspace = Workspace(root: root.appending(path: "ccb"), launcher: fake.launcher) { profile, store in
             Bot(profile: profile, launcher: fake.launcher, store: store)
         }
-        workspace.handToMaintainer("看一下")
+        workspace.handToMaintainer("Take a look")
         await eventually { workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
         let question = try #require(workspace.mainBot.messages.last { $0.role == .notice })
         #expect(workspace.choose(1, in: question.id, of: workspace.mainBot))
-        await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text.contains("不讓你讀") } }
+        await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text.contains("did not allow you to read") } }
         #expect(workspace.approvedFolders.isEmpty)
         await workspace.putEveryoneToSleep()
     }

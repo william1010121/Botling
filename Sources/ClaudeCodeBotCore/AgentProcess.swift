@@ -22,7 +22,7 @@ extension AgentProcess {
 public enum AgentEvent: Equatable, Sendable {
     /// The final text of one turn.
     case reply(String, isError: Bool)
-    /// What it is doing right now, from a tool call: 「改 template.html」.
+    /// What it is doing right now, from a tool call: "Edit template.html".
     case activity(String)
     case exited(status: Int32, stderr: String)
 }

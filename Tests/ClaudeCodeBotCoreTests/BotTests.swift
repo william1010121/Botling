@@ -51,7 +51,7 @@ final class FakeLauncher: @unchecked Sendable {
     private let lock = NSLock()
     private var _agents: [FakeAgent] = []
     var respond: @Sendable (String) -> String? = { text in
-        isAppOnly(text) ? "OK" : "收到"
+        isAppOnly(text) ? "OK" : "Got it"
     }
 
     var agents: [FakeAgent] { lock.withLock { _agents } }
@@ -67,7 +67,7 @@ final class FakeLauncher: @unchecked Sendable {
 
 /// The prompts whose replies the chat never shows.
 func isAppOnly(_ text: String) -> Bool {
-    text.hasPrefix("（App：") && !text.hasPrefix("（App：你剛被叫醒")
+    text.hasPrefix("(App: ") && !text.hasPrefix("(App: You were just woken up")
 }
 
 @MainActor
@@ -96,7 +96,7 @@ struct BotTests {
         let bot = makeBot(fake)
         #expect(bot.phase == .asleep)
 
-        bot.send("NotchDo 怎樣了？")
+        bot.send("How is NotchDo doing?")
         await eventually { bot.messages.last?.role == .bot }
 
         #expect(bot.phase == .awake)
@@ -104,7 +104,7 @@ struct BotTests {
         #expect(fake.agents.count == 1)
         #expect(fake.agents[0].launch.model == .sonnet)
         #expect(fake.agents[0].sent.first?.hasPrefix(bot.prompts.wake) == true)
-        #expect(fake.agents[0].sent.first?.hasSuffix("NotchDo 怎樣了？") == true)
+        #expect(fake.agents[0].sent.first?.hasSuffix("How is NotchDo doing?") == true)
         #expect(bot.messages.map(\.role) == [.user, .bot])
     }
 
@@ -121,7 +121,7 @@ struct BotTests {
 
         // A new message stops the clock until the reply.
         fake.respond = { _ in nil }
-        bot.send("再一句")
+        bot.send("One more thing")
         #expect(bot.sleepsAt == nil)
     }
 
@@ -142,7 +142,7 @@ struct BotTests {
 
         bot.send("hi")
         await eventually { bot.phase == .asleep && fake.agents.count == 1 }
-        bot.send("還記得嗎？")
+        bot.send("Do you remember?")
         await eventually { bot.messages.count == 4 }
 
         #expect(fake.agents.count == 2)
@@ -186,12 +186,12 @@ struct BotTests {
         fake.respond = { text in isAppOnly(text) ? "OK" : nil }
         let bot = makeBot(fake)
 
-        bot.send("做一件長的事")
+        bot.send("Do something long")
         await eventually { fake.agents.count == 1 }
         await bot.switchModel(to: .opus)
         #expect(bot.model == .sonnet)
 
-        fake.agents[0].reply("做完了")
+        fake.agents[0].reply("All done")
         await eventually { bot.model == .opus && bot.phase == .awake }
         #expect(bot.messages.map(\.role) == [.user, .bot, .divider])
     }
@@ -199,17 +199,17 @@ struct BotTests {
     @Test func messageDuringTidyIsSentAfterSleeping() async {
         let fake = FakeLauncher()
         // Hold the tidy reply so a message can arrive mid-tidy.
-        fake.respond = { text in text.hasPrefix("（App：你閒置") ? nil : "收到" }
+        fake.respond = { text in text.hasPrefix("(App: You have been idle") ? nil : "Got it" }
         let bot = makeBot(fake, idle: 0.05)
 
         bot.send("hi")
         await eventually { bot.phase == .tidying }
-        bot.send("還有一件事")
+        bot.send("Another thing")
         #expect(fake.agents[0].sent.count == 2)
 
         fake.agents[0].reply("OK")
         await eventually { fake.agents.count == 2 && bot.messages.last?.role == .bot }
-        #expect(fake.agents[1].sent.first?.hasSuffix("還有一件事") == true)
+        #expect(fake.agents[1].sent.first?.hasSuffix("Another thing") == true)
     }
 
     @Test func unexpectedExitPutsTheBotToSleepWithAnError() async {
@@ -235,7 +235,7 @@ struct BotTests {
         await bot.switchModel(to: .haiku)
 
         let reopened = Bot(profile: .main(home: directory), launcher: fake.launcher, store: BotStore(directory: directory))
-        #expect(reopened.messages.map(\.text).prefix(2) == ["hi", "收到"])
+        #expect(reopened.messages.map(\.text).prefix(2) == ["hi", "Got it"])
         #expect(reopened.model == .haiku)
         #expect(reopened.phase == .asleep)
     }

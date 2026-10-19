@@ -17,10 +17,10 @@ enum StreamEvent {
         }
     }
 
-    /// 「改 template.html」「執行 swift build」「查 GitHub API」: the verb, then what.
+    /// "Edit template.html", "Run swift build", "Search GitHub API": the verb, then what.
     static func activity(tool: String, input: [String: Any]) -> String {
-        let verb = ["Read": "讀", "Write": "寫", "Edit": "改", "Bash": "執行", "Glob": "找檔案", "Grep": "搜尋",
-                    "WebSearch": "查", "WebFetch": "看網頁", "Task": "派人做", "Agent": "派人做"][tool] ?? tool
+        let verb = ["Read": "Read", "Write": "Write", "Edit": "Edit", "Bash": "Run", "Glob": "Find files", "Grep": "Search",
+                    "WebSearch": "Search", "WebFetch": "Open page", "Task": "Delegate", "Agent": "Delegate"][tool] ?? tool
         let target: String? = {
             if let path = input["file_path"] as? String { return (path as NSString).lastPathComponent }
             for key in ["command", "pattern", "query", "url", "description"] {

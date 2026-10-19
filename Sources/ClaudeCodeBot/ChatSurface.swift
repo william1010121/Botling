@@ -46,17 +46,17 @@ struct ChatSurface: NSViewRepresentable {
     }
 
     static var pageURL: URL? {
-        Bundle.module.url(forResource: "chat", withExtension: "html", subdirectory: "web")
+        AppResources.bundle.url(forResource: "chat", withExtension: "html", subdirectory: "web")
     }
 
     /// The Node plugin host script.
     static var pluginHostScript: URL? {
-        Bundle.module.url(forResource: "host", withExtension: "mjs", subdirectory: "host")
+        AppResources.bundle.url(forResource: "host", withExtension: "mjs", subdirectory: "host")
     }
 
     /// The plugins shipped inside the app.
     static var builtInPlugins: URL? {
-        Bundle.module.url(forResource: "plugins", withExtension: nil)
+        AppResources.bundle.url(forResource: "plugins", withExtension: nil)
     }
 
     /// `ccb.setPlugins(...)` for every enabled plugin's web part.
@@ -150,7 +150,7 @@ struct ChatSurface: NSViewRepresentable {
                 panel.canChooseFiles = true
                 panel.canChooseDirectories = false
                 panel.allowsMultipleSelection = true
-                panel.prompt = "加入"
+                panel.prompt = "Add"
                 if panel.runModal() == .OK {
                     inputs.files[bot.id, default: []] += panel.urls.map { ChatPayload.Pending(url: $0) }
                 }
@@ -163,14 +163,14 @@ struct ChatSurface: NSViewRepresentable {
                 }
             case "componentReport":
                 if let name = body["name"] as? String, let text = body["text"] as? String {
-                    workspace.requestComponentChange(name, request: text, from: "使用者")
+                    workspace.requestComponentChange(name, request: text, from: "The user")
                 }
             case "componentRevert":
                 if let name = body["name"] as? String {
                     let components = surface.components
                     Task {
                         if let problem = await components.revert(name) {
-                            workspace.mainBot.notice("組件「\(name)」退不回去：\(problem)")
+                            workspace.mainBot.notice("Couldn't revert component \"\(name)\": \(problem)")
                         }
                     }
                 }
@@ -215,4 +215,17 @@ enum AvatarImages {
         cache[key] = url
         return url
     }
+}
+
+/// Where the web chat, built-in plugins and plugin host are. In ClaudeCodeBot.app SwiftPM's
+/// resource bundle sits in Contents/Resources (its own lookup only checks beside the .app, which a
+/// signed app cannot have); under `swift run` it is SwiftPM's usual place.
+enum AppResources {
+    static let bundle: Bundle = {
+        if let url = Bundle.main.resourceURL?.appending(path: "ClaudeCodeBot_ClaudeCodeBot.bundle"),
+           let bundle = Bundle(url: url) {
+            return bundle
+        }
+        return Bundle.module
+    }()
 }

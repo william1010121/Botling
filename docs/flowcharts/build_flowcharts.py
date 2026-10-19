@@ -107,13 +107,13 @@ def report():
 
 def lifecycle():
     d = Diagram()
-    d.node("sleep", 0, 20, 300, 80, "Asleep\navatar in the sidebar closes its eyes", "blue")
-    d.node("msg", 370, 20, 300, 80, "A message arrives\nfrom you, the main bot, or a Routine")
-    d.node("wake", 740, 20, 300, 80, "Wake: start a new session\nread memory.md + inbox.md", "gray")
-    d.node("work", 1110, 20, 300, 80, "Working\nmid-task corrections via stdin", "gray")
-    d.node("idle", 1110, 200, 300, 80, "Idle for 50 minutes\nbefore the 1-hour cache expires", "gray")
-    d.node("tidy", 740, 200, 300, 80, "Tidy up: update memory.md\ncompress if over the limit", "gray")
-    d.node("exit", 370, 200, 300, 80, "Process exits", "gray")
+    d.node("sleep", 0, 20, 340, 80, "Asleep\navatar in the sidebar closes its eyes", "blue")
+    d.node("msg", 410, 20, 340, 80, "A message arrives\nfrom you, the main bot, or a Routine")
+    d.node("wake", 820, 20, 340, 80, "Wake: start a new session\nread memory.md + inbox.md", "gray")
+    d.node("work", 1230, 20, 340, 80, "Working\nmid-task corrections via stdin", "gray")
+    d.node("idle", 1230, 200, 340, 80, "Idle for 50 minutes\nbefore the 1-hour cache expires", "gray")
+    d.node("tidy", 820, 200, 340, 80, "Tidy up: update memory.md\ncompress if over the limit", "gray")
+    d.node("exit", 410, 200, 340, 80, "Process exits", "gray")
 
     d.edge(("sleep", "right"), ("msg", "left"))
     d.edge(("msg", "right"), ("wake", "left"))

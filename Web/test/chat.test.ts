@@ -15,7 +15,7 @@ function message(overrides: Partial<MessageView>): MessageView {
 
 function state(overrides: Partial<ChatState> = {}): ChatState {
   return {
-    botID: "b1", botName: "主 bot", messages: [], working: false, avatar: "", placeholder: "許個願…",
+    botID: "b1", botName: "Main bot", messages: [], working: false, avatar: "", placeholder: "Make a wish…",
     replyingTo: null, pendingFiles: [], components: {}, ...overrides,
   };
 }
@@ -27,8 +27,8 @@ beforeEach(() => {
 
 describe("messages", () => {
   it("draw a bot reply as markdown with a reply button", () => {
-    const row = messageElement(message({ text: "**好** $x$" }), {});
-    expect(row.querySelector("strong")?.textContent).toBe("好");
+    const row = messageElement(message({ text: "**OK** $x$" }), {});
+    expect(row.querySelector("strong")?.textContent).toBe("OK");
     // LaTeX is the ccb-latex plugin's job, not the core's.
     expect(row.querySelector(".katex")).toBeNull();
     row.querySelector<HTMLButtonElement>(".reply-button")!.click();
@@ -37,46 +37,46 @@ describe("messages", () => {
 
   it("draw your message with its quote and files", () => {
     const row = messageElement(message({
-      role: "user", text: "這是什麼？", replyTo: "m0", replyPreview: "右側面板 7 成",
+      role: "user", text: "What is this?", replyTo: "m0", replyPreview: "Right panel 70% done",
       attachments: [{ name: "a.png", kind: "image", url: "file:///tmp/a.png" }, { name: "b.pdf", kind: "file", url: "file:///tmp/b.pdf" }],
     }), {});
-    expect(row.querySelector(".quote")?.textContent).toContain("右側面板 7 成");
+    expect(row.querySelector(".quote")?.textContent).toContain("Right panel 70% done");
     expect(row.querySelector(".thumb")?.getAttribute("src")).toBe("file:///tmp/a.png");
     expect(row.querySelector(".file-chip")?.textContent).toContain("b.pdf");
   });
 
   it("draw open choices as buttons that answer, without a template", () => {
     const row = messageElement(message({
-      text: "要哪個？", open: true,
-      choices: [{ label: "甲", detail: "快", recommended: true }, { label: "乙", detail: null, recommended: false }],
+      text: "Which one?", open: true,
+      choices: [{ label: "A", detail: "fast", recommended: true }, { label: "B", detail: null, recommended: false }],
     }), {});
     const buttons = row.querySelectorAll<HTMLButtonElement>(".choice");
     expect(buttons).toHaveLength(2);
-    expect(buttons[0].textContent).toContain("建議 · 快");
+    expect(buttons[0].textContent).toContain("Recommended · fast");
     buttons[1].click();
     expect(sent).toEqual([{ type: "choose", messageID: "m1", index: 1 }]);
   });
 
   it("draw answered choices disabled", () => {
     const row = messageElement(message({
-      choices: [{ label: "甲", detail: null, recommended: false }], chosen: null, answer: "其他想法", open: false,
+      choices: [{ label: "A", detail: null, recommended: false }], chosen: null, answer: "Something else", open: false,
     }), {});
     expect(row.querySelector<HTMLButtonElement>(".choice")!.disabled).toBe(true);
   });
 
   it("put a template component in a sandboxed frame with its flag", () => {
     const row = messageElement(message({
-      open: true, choices: [{ label: "甲", detail: null, recommended: false }],
-    }), { choices: { template: "<button onclick=\"ccb.answer(0)\">甲</button>", version: 0, working: false, updated: true, hasPrevious: true } });
+      open: true, choices: [{ label: "A", detail: null, recommended: false }],
+    }), { choices: { template: "<button onclick=\"ccb.answer(0)\">A</button>", version: 0, working: false, updated: true, hasPrevious: true } });
     const frame = row.querySelector("iframe")!;
     expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
     expect(frame.srcdoc).toContain('"options"');
     expect(row.querySelector(".flag")).not.toBeNull();
-    expect(row.querySelector(".updated")?.textContent).toBe("已更新");
+    expect(row.querySelector(".updated")?.textContent).toBe("Updated");
   });
 
   it("let a notice open its project", () => {
-    const row = messageElement(message({ role: "notice", text: "garden：好了", openable: true }), {});
+    const row = messageElement(message({ role: "notice", text: "garden: done", openable: true }), {});
     row.querySelector<HTMLButtonElement>(".open-source")!.click();
     expect(sent).toEqual([{ type: "openSource", messageID: "m1" }]);
   });
@@ -86,9 +86,9 @@ describe("composer", () => {
   it("sends on Return and clears", () => {
     const composer = new Composer(document.body);
     composer.update(state());
-    composer.setText("你好");
+    composer.setText("Hello");
     expect(composer.submit()).toBe(true);
-    expect(sent).toEqual([{ type: "send", text: "你好" }]);
+    expect(sent).toEqual([{ type: "send", text: "Hello" }]);
     expect(composer.text).toBe("");
   });
 
@@ -105,10 +105,10 @@ describe("composer", () => {
   it("shows the reply bar and pending files", () => {
     const composer = new Composer(document.body);
     composer.update(state({
-      replyingTo: { id: "m1", who: "回覆 主 bot", preview: "右側面板 7 成" },
+      replyingTo: { id: "m1", who: "Reply to Main bot", preview: "Right panel 70% done" },
       pendingFiles: [{ id: "f1", name: "a.png", kind: "image", url: "file:///tmp/a.png" }],
     }));
-    expect(document.querySelector(".reply-preview")?.textContent).toBe("右側面板 7 成");
+    expect(document.querySelector(".reply-preview")?.textContent).toBe("Right panel 70% done");
     document.querySelector<HTMLButtonElement>(".pending .remove")!.click();
     document.querySelector<HTMLButtonElement>(".reply-bar .close")!.click();
     expect(sent).toEqual([{ type: "removeFile", id: "f1" }, { type: "cancelReply" }]);

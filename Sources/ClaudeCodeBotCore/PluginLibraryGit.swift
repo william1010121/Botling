@@ -1,7 +1,7 @@
 import Foundation
 
 /// The plugin library (`~/.claudecodebot/plugins`) is a git repo, so every change Maintainer makes can be
-/// undone. ClaudeCodeBot's own commits (the first one, 退回, 移除) are signed 「ClaudeCodeBot」.
+/// undone. ClaudeCodeBot's own commits (the first one, reverts, removals) are signed "ClaudeCodeBot".
 public struct PluginLibraryGit: Sendable {
     public let folder: URL
     let git: URL?
@@ -32,7 +32,7 @@ public struct PluginLibraryGit: Sendable {
 
     @discardableResult
     func run(_ arguments: [String]) -> (ok: Bool, output: String) {
-        guard let git else { return (false, "找不到 git。") }
+        guard let git else { return (false, "git not found.") }
         let process = Process()
         process.executableURL = git
         process.arguments = ["-c", "user.name=ClaudeCodeBot", "-c", "user.email=ccb@localhost", "-c", "commit.gpgsign=false"] + arguments
@@ -60,7 +60,7 @@ public struct PluginLibraryGit: Sendable {
         }
         run(["init", "-q"])
         run(["add", "-A"])
-        run(["commit", "-q", "-m", "ClaudeCodeBot 插件庫"])
+        run(["commit", "-q", "-m", "ClaudeCodeBot plugin library"])
     }
 
     /// Changes under `path` not committed yet.
@@ -83,39 +83,39 @@ public struct PluginLibraryGit: Sendable {
     /// Puts `path` back the way it was before its last change, as a new commit. Changes not
     /// committed yet are committed first, so nothing is lost. nil when done, else why not.
     public func revert(_ path: String, label: String) -> String? {
-        guard isAvailable else { return "找不到 git，不能退回。" }
+        guard isAvailable else { return "git not found, so it can't be reverted." }
         if isDirty(path) {
             run(["add", "-A", "--", path])
-            run(["commit", "-q", "-m", "\(label)：未提交的修改（退回前自動存）", "--", path])
+            run(["commit", "-q", "-m", "\(label): uncommitted changes (saved automatically before reverting)", "--", path])
         }
         let history = commits(path)
-        guard let last = history.first else { return "「\(label)」還沒有任何版本紀錄。" }
+        guard let last = history.first else { return "\"\(label)\" has no version history yet." }
         guard history.count >= 2 || run(["rev-parse", "--verify", "-q", "\(last)^"]).ok else {
-            return "「\(label)」沒有上一版。"
+            return "\"\(label)\" has no previous version."
         }
         if run(["cat-file", "-e", "\(last)^:\(path)"]).ok {
             run(["rm", "-r", "-q", "--cached", "--", path])
             try? FileManager.default.removeItem(at: folder.appending(path: path))
-            guard run(["checkout", "\(last)^", "--", path]).ok else { return "取回上一版失敗。" }
+            guard run(["checkout", "\(last)^", "--", path]).ok else { return "Couldn't restore the previous version." }
         } else {
             // It did not exist before that change.
-            guard run(["rm", "-r", "-q", "--", path]).ok else { return "取回上一版失敗。" }
+            guard run(["rm", "-r", "-q", "--", path]).ok else { return "Couldn't restore the previous version." }
         }
         run(["add", "-A", "--", path])
-        let commit = run(["commit", "-q", "-m", "退回 \(label) 到上一版", "--", path])
+        let commit = run(["commit", "-q", "-m", "Revert \(label) to the previous version", "--", path])
         return commit.ok ? nil : commit.output
     }
 
     /// Takes a plugin out of the library, as a commit (git history keeps it).
     public func remove(_ path: String, label: String) -> String? {
-        guard isAvailable else { return "找不到 git，不能移除。" }
+        guard isAvailable else { return "git not found, so it can't be removed." }
         if isDirty(path) {
             run(["add", "-A", "--", path])
-            run(["commit", "-q", "-m", "\(label)：未提交的修改（移除前自動存）", "--", path])
+            run(["commit", "-q", "-m", "\(label): uncommitted changes (saved automatically before removing)", "--", path])
         }
-        guard run(["rm", "-r", "-q", "--", path]).ok else { return "移除失敗。" }
+        guard run(["rm", "-r", "-q", "--", path]).ok else { return "Couldn't remove it." }
         try? FileManager.default.removeItem(at: folder.appending(path: path))
-        let commit = run(["commit", "-q", "-m", "移除 \(label)"])
+        let commit = run(["commit", "-q", "-m", "Remove \(label)"])
         return commit.ok ? nil : commit.output
     }
 }

@@ -37,8 +37,8 @@ struct ClaudePartTests {
         _ = try claudePlugin("broken")
         let fake = FakeLauncher()
         fake.respond = { text in
-            if text.hasPrefix("（App：主 bot 交給你的任務）") { return "好了" }
-            return isAppOnly(text) ? "OK" : "收到"
+            if text.hasPrefix("(App: A task from the main bot)") { return "Done" }
+            return isAppOnly(text) ? "OK" : "Got it"
         }
         let workspace = workspace(fake) { folder in
             folder.path.contains("/broken/") ? "skills: bad frontmatter" : nil
@@ -47,13 +47,13 @@ struct ClaudePartTests {
         let core = root.appending(path: "ccb/plugins/ccb-core/claude").standardizedFileURL.path
         await eventually { workspace.plugins.claudeDirectories().count == 3 }
         #expect(Set(workspace.plugins.claudeDirectories().map(\.standardizedFileURL.path)) == [good.standardizedFileURL.path, teams, core])
-        await eventually { workspace.mainBot.messages.contains { $0.text.contains("broken") && $0.text.contains("沒通過") } }
+        await eventually { workspace.mainBot.messages.contains { $0.text.contains("broken") && $0.text.contains("failed") } }
 
-        workspace.mainBot.send("嗨")
+        workspace.mainBot.send("Hi")
         await eventually { fake.agents.count == 1 }
         #expect(fake.agents[0].launch.pluginDirectories.map(\.standardizedFileURL.path).contains(good.standardizedFileURL.path))
 
-        workspace.startTeam("research", task: "查一下")
+        workspace.startTeam("research", task: "Look it up")
         await eventually { fake.agents.count == 2 }
         #expect(fake.agents[1].launch.pluginDirectories.count == 3)
         await workspace.putEveryoneToSleep()
@@ -62,7 +62,7 @@ struct ClaudePartTests {
     @Test func oldTeamFilesMoveIntoTheTeamsPlugin() throws {
         let old = root.appending(path: "ccb/teams")
         try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
-        try "---\nname: writers\ntitle: 寫作小組\nmodel: haiku\ntools: Read, Write\ndescription: 寫文章。\n---\n你是寫作小組。"
+        try "---\nname: writers\ntitle: Writing team\nmodel: haiku\ntools: Read, Write\ndescription: Writes articles.\n---\nYou are the writing team."
             .write(to: old.appending(path: "writers.md"), atomically: true, encoding: .utf8)
         let workspace = workspace(FakeLauncher())
         #expect(workspace.teams.map(\.name) == ["writers"])
@@ -76,14 +76,14 @@ struct ClaudePartTests {
         let fake = FakeLauncher()
         let workspace = workspace(fake)
         let bot = workspace.mainBot
-        bot.send("嗨")
+        bot.send("Hi")
         await eventually { bot.phase == .awake && !bot.isWorking }
         #expect(fake.agents.count == 1)
 
         // A new plugin with a Claude part arrives (Maintainer made one).
         _ = try claudePlugin("fresh", skill: "new-skill")
         workspace.plugins.rescan()
-        await eventually({ bot.messages.contains { $0.role == .divider && $0.text == "交接 → 載入新插件" } }, timeout: 3)
+        await eventually({ bot.messages.contains { $0.role == .divider && $0.text == "Handoff → loading new plugins" } }, timeout: 3)
         await eventually { fake.agents.count == 2 && bot.phase == .awake }
         #expect(fake.agents[1].launch.pluginDirectories.contains { $0.path.contains("/fresh/") })
         await workspace.putEveryoneToSleep()

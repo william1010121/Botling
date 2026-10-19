@@ -18,7 +18,7 @@ enum PluginBridge {
         case "pluginNotice":
             if let name = body["name"] as? String, let text = body["text"] as? String {
                 let title = plugins.plugin(name)?.manifest.title ?? name
-                workspace.mainBot.notice("\(title)：\(text)")
+                workspace.mainBot.notice("\(title): \(text)")
             }
         case "command":
             if let id = body["id"] as? String { Task { await workspace.runCommand(id) } }
@@ -39,7 +39,7 @@ enum PluginBridge {
                         ok = false
                     }
                 } else {
-                    value = .string("插件主機沒有在跑。")
+                    value = .string("The plugin host is not running.")
                     ok = false
                 }
                 let json = (try? JSONEncoder().encode(value)).map { String(decoding: $0, as: UTF8.self) } ?? "null"

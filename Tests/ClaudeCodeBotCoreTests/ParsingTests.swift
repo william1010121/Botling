@@ -4,8 +4,8 @@ import Testing
 
 struct ParsingTests {
     @Test func resultLineBecomesAReply() {
-        let line = #"{"type":"result","subtype":"success","is_error":false,"result":"好。","num_turns":1}"#
-        #expect(StreamEvent.reply(in: line) == .reply("好。", isError: false))
+        let line = #"{"type":"result","subtype":"success","is_error":false,"result":"Fine.","num_turns":1}"#
+        #expect(StreamEvent.reply(in: line) == .reply("Fine.", isError: false))
     }
 
     @Test func otherLinesAreIgnored() {
@@ -14,16 +14,16 @@ struct ParsingTests {
     }
 
     @Test func markdownLinksBecomeChips() {
-        let segments = RichText.segments(in: "做好了 [作品集](https://example.com/a) 你看看")
+        let segments = RichText.segments(in: "Done: [Portfolio](https://example.com/a) take a look")
         #expect(segments == [
-            .text("做好了 "),
-            .chip(Chip(label: "作品集", url: URL(string: "https://example.com/a")!)),
-            .text(" 你看看")
+            .text("Done: "),
+            .chip(Chip(label: "Portfolio", url: URL(string: "https://example.com/a")!)),
+            .text(" take a look")
         ])
     }
 
     @Test func textWithoutLinksIsOneSegment() {
-        #expect(RichText.segments(in: "早安。") == [.text("早安。")])
+        #expect(RichText.segments(in: "Good morning.") == [.text("Good morning.")])
     }
 
     @Test func launchArgumentsKeepStdinOpenForStreaming() {
@@ -42,6 +42,14 @@ struct ParsingTests {
     @Test func okRepliesCountAsSilent() {
         #expect(BotPrompts.isPlainOK("OK"))
         #expect(BotPrompts.isPlainOK(" ok。\n"))
-        #expect(!BotPrompts.isPlainOK("接著做錯誤狀態。"))
+        #expect(!BotPrompts.isPlainOK("Moving on to the error states."))
+    }
+}
+
+struct LegacyMemoryTests {
+    @Test func memoryFilesWithTheOldHeadingsAreStillRead() {
+        let text = "## 進行中\n- 右側面板\n## 等你決定的事\n- 封面圖\n"
+        #expect(MemoryFile.items(in: text, section: "In progress") == ["右側面板"])
+        #expect(MemoryFile.items(in: text, section: "Waiting on you") == ["封面圖"])
     }
 }

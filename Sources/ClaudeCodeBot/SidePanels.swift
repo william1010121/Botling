@@ -41,7 +41,7 @@ struct RailView: View {
             .scrollIndicators(.never)
 
             Button(action: addProject) {
-                Label("加專案", systemImage: "plus")
+                Label("Add project", systemImage: "plus")
                     .font(.system(size: 14))
                     .foregroundStyle(Theme.faint)
                     .padding(.horizontal, 10)
@@ -62,8 +62,8 @@ struct RailView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.prompt = "加為專案"
-        panel.message = "選一個專案資料夾，ClaudeCodeBot 會為它配一位主管。"
+        panel.prompt = "Add as project"
+        panel.message = "Pick a project folder; ClaudeCodeBot will give it a manager."
         if panel.runModal() == .OK, let folder = panel.url {
             workspace.addProject(folder: folder)
         }
@@ -108,14 +108,14 @@ private struct MaintainerRow: View {
             }
             .buttonStyle(.plain)
             .padding(.bottom, 4)
-            .accessibilityLabel("Maintainer，\(status)")
+            .accessibilityLabel("Maintainer, \(status)")
         }
     }
 
     private var status: String {
-        if let (name, change) = library.working.first { return "組件 \(name)：\(change)" }
-        if bot.isWorking { return "工作中" }
-        return bot.hasUnread ? "改好了，點開看" : bot.statusText
+        if let (name, change) = library.working.first { return "Component \(name): \(change)" }
+        if bot.isWorking { return "Working" }
+        return bot.hasUnread ? "Done, click to see" : bot.statusText
     }
 }
 
@@ -146,7 +146,7 @@ private struct BotRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(bot.name)，\(bot.statusText)\(waiting ? "，等你決定" : "")")
+        .accessibilityLabel("\(bot.name), \(bot.statusText)\(waiting ? ", waiting on you" : "")")
     }
 }
 
@@ -182,7 +182,7 @@ struct DetailPanel: View {
         .background(Theme.side)
     }
 
-    /// Plugins' panels: up to 3 buttons, the rest under 「更多」.
+    /// Plugins' panels: up to 3 buttons, the rest under "More".
     @ViewBuilder private var panelButtons: some View {
         let panels = plugins.panels()
         ForEach(Array(panels.prefix(3)), id: \.panel.id) { entry in
@@ -208,12 +208,12 @@ struct DetailPanel: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .frame(width: 32, height: 40)
-            .accessibilityLabel("更多面板")
+            .accessibilityLabel("More panels")
         }
     }
 
     private func panelPage(_ key: String) -> some View {
-        let title = plugins.panels().first { "\($0.plugin.name)/\($0.panel.id)" == key }?.panel.title ?? "面板"
+        let title = plugins.panels().first { "\($0.plugin.name)/\($0.panel.id)" == key }?.panel.title ?? "Panel"
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 4) {
                 Button { openPanel = nil } label: {
@@ -223,7 +223,7 @@ struct DetailPanel: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("返回")
+                .accessibilityLabel("Back")
                 Text(title).font(.system(size: 15, weight: .semibold))
             }
             PanelView(key: key, workspace: workspace, plugins: plugins)
@@ -246,10 +246,10 @@ struct DetailPanel: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("設定")
+                .accessibilityLabel("Settings")
             }
 
-            PanelSection("現在") {
+            PanelSection("Now") {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 10) {
                         Circle().fill(bot.statusColor).frame(width: 8, height: 8)
@@ -260,9 +260,9 @@ struct DetailPanel: View {
                         }
                     }
                     .frame(minHeight: 24)
-                    // A manager: the first thing under 「進行中」 in its memory.md.
+                    // A manager: the first thing under "In progress" in its memory.md.
                     if bot.profile.role == .manager,
-                       let doing = MemoryFile.items(at: bot.profile.memoryURL, section: "進行中").first {
+                       let doing = MemoryFile.items(at: bot.profile.memoryURL, section: "In progress").first {
                         Text(doing)
                             .font(.system(size: 13))
                             .foregroundStyle(Theme.muted)
@@ -276,7 +276,7 @@ struct DetailPanel: View {
                                 Text(run.spec.title).font(.system(size: 13))
                                 Spacer()
                                 TimelineView(.periodic(from: .now, by: 30)) { context in
-                                    Text("\(max(1, Int(context.date.timeIntervalSince(run.startedAt) / 60))) 分")
+                                    Text("\(max(1, Int(context.date.timeIntervalSince(run.startedAt) / 60))) min")
                                         .font(.system(size: 12))
                                         .monospacedDigit()
                                         .foregroundStyle(Theme.faint)
@@ -292,7 +292,7 @@ struct DetailPanel: View {
             }
 
             if bot.profile.role == .main, !workspace.waiting.isEmpty {
-                PanelSection("等你") {
+                PanelSection("Waiting on you") {
                     VStack(spacing: 6) {
                         ForEach(workspace.waiting) { item in
                             if let project = workspace.projects.first(where: { $0.id == item.projectID }) {
@@ -319,7 +319,7 @@ struct DetailPanel: View {
 
             let results = Array(bot.results.prefix(3))
             if !results.isEmpty {
-                PanelSection(bot.profile.role == .main ? "剛做好" : "成果") {
+                PanelSection(bot.profile.role == .main ? "Just done" : "Results") {
                     VStack(spacing: 6) {
                         ForEach(results, id: \.self) { chip in
                             Button { workspace.openResult = chip } label: {
@@ -356,7 +356,7 @@ private struct SleepCountdown: View {
             .font(.system(size: 13))
             .foregroundStyle(Theme.faint)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("\(seconds / 60) 分 \(seconds % 60) 秒後睡著")
+            .accessibilityLabel("Falls asleep in \(seconds / 60) min \(seconds % 60) s")
         }
     }
 }
@@ -386,11 +386,11 @@ private struct SettingsPage: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("返回")
-                Text("設定").font(.system(size: 15, weight: .semibold))
+                .accessibilityLabel("Back")
+                Text("Settings").font(.system(size: 15, weight: .semibold))
             }
 
-            PanelSection("模型") {
+            PanelSection("Model") {
                 VStack(spacing: 0) {
                     ForEach(BotModel.allCases, id: \.self) { model in
                         let chosen = (bot.switchTarget ?? bot.model) == model
@@ -447,7 +447,7 @@ private struct SettingsPage: View {
                         AddRoutineForm(bot: bot) { adding = false }
                     } else {
                         Button { adding = true } label: {
-                            Label("加一個", systemImage: "plus")
+                            Label("Add one", systemImage: "plus")
                                 .font(.system(size: 14))
                                 .foregroundStyle(Theme.faint)
                                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -472,9 +472,9 @@ private struct SettingsPage: View {
 
     private func label(for step: HandoffStep) -> String {
         switch step {
-        case .writing: "寫交接"
-        case .stopping: "停下 \(bot.model.displayName)"
-        case .starting: "開 \((bot.switchTarget ?? bot.model).displayName)"
+        case .writing: "Writing handoff"
+        case .stopping: "Stopping \(bot.model.displayName)"
+        case .starting: "Starting \((bot.switchTarget ?? bot.model).displayName)"
         }
     }
 }
@@ -489,8 +489,8 @@ private struct RoutineRow: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(routine.title).foregroundStyle(routine.enabled ? Theme.text : Theme.muted)
-                if let time = routine.schedule.dailyTime, routine.schedule.description.hasPrefix("每天") {
-                    DatePicker("時間", selection: binding(hour: time.hour, minute: time.minute), displayedComponents: .hourAndMinute)
+                if let time = routine.schedule.dailyTime, routine.schedule.description.hasPrefix("Every day") {
+                    DatePicker("Time", selection: binding(hour: time.hour, minute: time.minute), displayedComponents: .hourAndMinute)
                         .labelsHidden()
                         .datePickerStyle(.field)
                         .font(.system(size: 13))
@@ -515,7 +515,7 @@ private struct RoutineRow: View {
         .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
         .help(routine.instruction)
         .contextMenu {
-            Button("刪除", role: .destructive) { bot.removeRoutine(routine.id) }
+            Button("Delete", role: .destructive) { bot.removeRoutine(routine.id) }
         }
     }
 
@@ -539,16 +539,16 @@ private struct AddRoutineForm: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TextField("名稱，例如：看進度", text: $title)
-            TextField("要做什麼（一句話，或 @檔案）", text: $instruction, axis: .vertical)
+            TextField("Name, e.g. Check progress", text: $title)
+            TextField("What to do (one sentence, or @file)", text: $instruction, axis: .vertical)
                 .lineLimit(1...3)
             HStack {
-                DatePicker("每天", selection: $time, displayedComponents: .hourAndMinute)
+                DatePicker("Every day", selection: $time, displayedComponents: .hourAndMinute)
                     .datePickerStyle(.field)
                     .fixedSize()
                 Spacer()
-                Button("取消", action: done).buttonStyle(.plain).foregroundStyle(Theme.muted)
-                Button("加入") {
+                Button("Cancel", action: done).buttonStyle(.plain).foregroundStyle(Theme.muted)
+                Button("Add") {
                     let parts = Calendar.current.dateComponents([.hour, .minute], from: time)
                     bot.addRoutine(
                         title: title.trimmingCharacters(in: .whitespaces),
@@ -581,7 +581,7 @@ private struct PluginsSection: View {
     @State private var source = ""
 
     var body: some View {
-        PanelSection("插件") {
+        PanelSection("Plugins") {
             VStack(spacing: 0) {
                 ForEach(registry.plugins) { plugin in
                     PluginRow(registry: registry, plugin: plugin, open: open == plugin.name) {
@@ -601,7 +601,7 @@ private struct PluginsSection: View {
                 AddPluginRow(workspace: workspace, source: $source)
             }
             ForEach(registry.problems.keys.sorted(), id: \.self) { folder in
-                Text("「\(folder)」讀不了：\(registry.problems[folder]?.joined(separator: "；") ?? "")")
+                Text("Couldn't read \"\(folder)\": \(registry.problems[folder]?.joined(separator: "; ") ?? "")")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.errorText)
             }
@@ -625,8 +625,8 @@ private struct PluginRow: View {
                 Button(action: toggleOpen) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(plugin.manifest.title).foregroundStyle(plugin.enabled ? Theme.text : Theme.muted)
-                        Text(plugin.builtIn ? "內建 · \(plugin.manifest.version)"
-                             : plugin.installedFrom.map { "外部 · \(plugin.manifest.version) · \($0)" } ?? plugin.manifest.version)
+                        Text(plugin.builtIn ? "Built-in · \(plugin.manifest.version)"
+                             : plugin.installedFrom.map { "External · \(plugin.manifest.version) · \($0)" } ?? plugin.manifest.version)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .font(.system(size: 12))
@@ -644,10 +644,10 @@ private struct PluginRow: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.small)
-                .accessibilityLabel("啟用 \(plugin.manifest.title)")
+                .accessibilityLabel("Enable \(plugin.manifest.title)")
             }
             if let failure = plugin.failure {
-                Text(plugin.usingPrevious ? "新版出錯，先用上一版：\(failure)" : "出錯停用了：\(failure)")
+                Text(plugin.usingPrevious ? "New version failed, using the previous one: \(failure)" : "Failed and disabled: \(failure)")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.errorText)
             }
@@ -667,18 +667,18 @@ private struct PluginRow: View {
         .contentShape(Rectangle())
         .contextMenu {
             if !plugin.builtIn {
-                Button("退回上一版") { Task { report(await registry.revert(plugin.name)) } }
+                Button("Revert to previous version") { Task { report(await registry.revert(plugin.name)) } }
                     .disabled(!registry.hasPrevious(plugin.name))
-                Button("移除", role: .destructive) { confirmingRemove = true }
+                Button("Remove", role: .destructive) { confirmingRemove = true }
             }
         }
-        .confirmationDialog("移除「\(plugin.manifest.title)」？", isPresented: $confirmingRemove) {
-            Button("移除", role: .destructive) { Task { report(await registry.remove(plugin.name)) } }
+        .confirmationDialog("Remove \"\(plugin.manifest.title)\"?", isPresented: $confirmingRemove) {
+            Button("Remove", role: .destructive) { Task { report(await registry.remove(plugin.name)) } }
         } message: {
-            Text("插件庫的 git 紀錄會留著，之後還能找回來。")
+            Text("The plugin library's git history is kept, so it can be recovered later.")
         }
-        .alert("沒辦法完成", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
-            Button("好") { problem = nil }
+        .alert("Couldn't finish", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+            Button("OK") { problem = nil }
         } message: {
             Text(problem ?? "")
         }
@@ -692,7 +692,7 @@ private struct PluginRow: View {
     }
 }
 
-/// 「加插件」: paste a git URL, npm name or archive URL (ClaudeCodeBot asks before installing), or pick
+/// "Add plugin": paste a git URL, npm name or archive URL (ClaudeCodeBot asks before installing), or pick
 /// a folder of your own (installed right away).
 private struct AddPluginRow: View {
     @ObservedObject var workspace: Workspace
@@ -701,30 +701,30 @@ private struct AddPluginRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                TextField("加插件：git 網址、npm 名稱或 .zip 網址", text: $source)
+                TextField("Add plugin: git URL, npm name or .zip URL", text: $source)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit(add)
-                Button("加", action: add).disabled(source.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button("Add", action: add).disabled(source.trimmingCharacters(in: .whitespaces).isEmpty)
                 Button {
                     let panel = NSOpenPanel()
                     panel.canChooseDirectories = true
                     panel.canChooseFiles = false
-                    panel.prompt = "加為插件"
-                    panel.message = "選一個插件資料夾（裡面有 package.json）。"
+                    panel.prompt = "Add as plugin"
+                    panel.message = "Pick a plugin folder (one with a package.json)."
                     if panel.runModal() == .OK, let folder = panel.url {
                         Task { await workspace.proposeInstall(folder.path, trusted: true) }
                     }
                 } label: {
                     Image(systemName: "folder")
                 }
-                .help("從資料夾加")
-                .accessibilityLabel("從資料夾加插件")
+                .help("Add from folder")
+                .accessibilityLabel("Add plugin from folder")
             }
             .font(.system(size: 13))
             ForEach(workspace.fetching, id: \.self) { item in
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text("正在取得 \(item)…").font(.system(size: 12)).foregroundStyle(Theme.faint).lineLimit(1)
+                    Text("Fetching \(item)…").font(.system(size: 12)).foregroundStyle(Theme.faint).lineLimit(1)
                 }
             }
         }
@@ -753,7 +753,7 @@ private struct SettingControl: View {
             Spacer()
             if setting.secret == true {
                 // Kept in the keychain; ClaudeCodeBot never shows it again.
-                SecureField(registry.secret(plugin, key) == nil ? "還沒設定" : "已存在鑰匙圈", text: $secret)
+                SecureField(registry.secret(plugin, key) == nil ? "Not set" : "Saved in Keychain", text: $secret)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 140)
                     .onSubmit {

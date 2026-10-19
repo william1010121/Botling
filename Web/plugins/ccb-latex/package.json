@@ -1,8 +1,8 @@
 {
   "name": "ccb-latex",
-  "displayName": "LaTeX 公式",
+  "displayName": "LaTeX",
   "version": "1.0.0",
-  "description": "訊息裡的 $…$、$$…$$、\\(…\\)、\\[…\\] 用 KaTeX 排版；輸入框打公式時即時預覽；複製公式時複製回 TeX。",
+  "description": "Typesets $…$, $$…$$, \\(…\\) and \\[…\\] in messages with KaTeX, previews formulas while you type, and copies formulas as TeX.",
   "license": "MIT",
   "engines": { "ccb": "^2.0.0" },
   "ccb": {
@@ -11,11 +11,11 @@
     "styles": ["dist/katex.min.css"],
     "contributes": {
       "commands": [
-        { "id": "ccb-latex.insert", "title": "插入行內公式", "key": "cmd+shift+m" }
+        { "id": "ccb-latex.insert", "title": "Insert inline formula", "key": "cmd+shift+m" }
       ],
       "settings": {
-        "ccb-latex.preview": { "type": "boolean", "default": true, "title": "輸入時預覽公式" },
-        "ccb-latex.copyTeX": { "type": "boolean", "default": true, "title": "複製公式時複製 TeX" }
+        "ccb-latex.preview": { "type": "boolean", "default": true, "title": "Preview formulas while typing" },
+        "ccb-latex.copyTeX": { "type": "boolean", "default": true, "title": "Copy formulas as TeX" }
       }
     }
   }

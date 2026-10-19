@@ -12,45 +12,45 @@ const displayCount = (html: string) => (html.match(/class="math-display"/g) ?? [
 
 describe("LaTeX in bot replies", () => {
   it("typesets inline and display math", () => {
-    const html = renderMarkdown("梯度是 $\\frac{\\partial L}{\\partial z_i} = p_i - y_i$，其中\n\n$$\n\\sum_i p_i = 1\n$$");
+    const html = renderMarkdown("The gradient is $\\frac{\\partial L}{\\partial z_i} = p_i - y_i$, where\n\n$$\n\\sum_i p_i = 1\n$$");
     expect(inlineCount(html)).toBe(1);
     expect(displayCount(html)).toBe(1);
     expect(html).toContain("katex");
   });
 
   it("supports \\( \\) and \\[ \\]", () => {
-    const html = renderMarkdown("行內 \\(a^2\\) 和 \\[b^2\\]");
+    const html = renderMarkdown("inline \\(a^2\\) and \\[b^2\\]");
     expect(inlineCount(html)).toBe(1);
     expect(displayCount(html)).toBe(1);
   });
 
   it("leaves prices alone", () => {
-    const html = renderMarkdown("票價 $5 到 $10 之間");
+    const html = renderMarkdown("tickets between $5 and $10");
     expect(inlineCount(html)).toBe(0);
-    expect(html).toContain("$5 到 $10");
+    expect(html).toContain("$5 and $10");
   });
 
   it("treats \\$ as a dollar sign", () => {
-    const html = renderMarkdown("花了 \\$3 買 $x$");
+    const html = renderMarkdown("spent \\$3 on $x$");
     expect(inlineCount(html)).toBe(1);
     expect(html).toContain("$3");
   });
 
   it("does not touch code", () => {
-    const html = renderMarkdown("`$x$` 和\n\n```\necho $HOME$\n```");
+    const html = renderMarkdown("`$x$` and\n\n```\necho $HOME$\n```");
     expect(inlineCount(html)).toBe(0);
     expect(html).toContain("$x$");
   });
 
   it("shows a broken formula without breaking the message", () => {
-    const html = renderMarkdown("錯的 $\\frac{1}{$ 後面還有字");
-    expect(html).toContain("後面還有字");
+    const html = renderMarkdown("broken $\\frac{1}{$ and more text");
+    expect(html).toContain("and more text");
   });
 
   it("keeps tables, lists and links", () => {
-    const html = renderMarkdown("| 專案 | 狀態 |\n|---|---|\n| blog | 等你 |\n\n- 一\n- 二\n\n[作品集](file:///tmp/a.html)");
+    const html = renderMarkdown("| Project | Status |\n|---|---|\n| blog | waiting |\n\n- one\n- two\n\n[Portfolio](file:///tmp/a.html)");
     expect(html).toContain("<table>");
-    expect(html).toContain("<li>一</li>");
+    expect(html).toContain("<li>one</li>");
     expect(html).toContain('class="chip"');
     expect(html).toContain('data-url="file:///tmp/a.html"');
   });
@@ -62,7 +62,7 @@ describe("LaTeX in bot replies", () => {
   });
 
   it("shows images and plays videos", () => {
-    const html = renderMarkdown("![面板](file:///tmp/p.png)\n\n![示範](file:///tmp/d.mp4)");
+    const html = renderMarkdown("![panel](file:///tmp/p.png)\n\n![demo](file:///tmp/d.mp4)");
     expect(html).toContain('<img class="media" src="file:///tmp/p.png"');
     expect(html).toContain('<video class="media" src="file:///tmp/d.mp4"');
   });
@@ -70,15 +70,15 @@ describe("LaTeX in bot replies", () => {
 
 describe("your own messages", () => {
   it("are plain text with math typeset", () => {
-    const html = renderPlainWithMath("**不是粗體** 但 $x^2$ 是公式\n<b>也不是標籤</b>");
-    expect(html).toContain("**不是粗體**");
+    const html = renderPlainWithMath("**not bold** but $x^2$ is math\n<b>not a tag</b>");
+    expect(html).toContain("**not bold**");
     expect(html).toContain("&lt;b&gt;");
     expect(html).toContain("<br>");
     expect(inlineCount(html)).toBe(1);
   });
 
   it("leave prices alone too", () => {
-    expect(inlineCount(renderPlainWithMath("$5 和 $10"))).toBe(0);
+    expect(inlineCount(renderPlainWithMath("$5 and $10"))).toBe(0);
   });
 });
 
@@ -94,19 +94,19 @@ describe("closing dollar", () => {
 
 describe("the formula preview finds the formula at the caret", () => {
   it("inside $…$", () => {
-    const text = "看 $a^2+b$ 這個";
+    const text = "a $a^2+b$ here";
     expect(formulaAt(text, text.indexOf("+"))).toEqual({ tex: "a^2+b", display: false });
     expect(formulaAt(text, 1)).toBeNull();
   });
   it("while a formula is still being typed", () => {
-    expect(formulaAt("算 $\\frac{1", 11)).toEqual({ tex: "\\frac{1", display: false });
+    expect(formulaAt("x $\\frac{1", 11)).toEqual({ tex: "\\frac{1", display: false });
   });
   it("display formulas", () => {
-    const text = "$$x_1$$ 和 \\[y\\]";
+    const text = "$$x_1$$ & \\[y\\]";
     expect(formulaAt(text, 3)).toEqual({ tex: "x_1", display: true });
     expect(formulaAt(text, text.indexOf("y"))).toEqual({ tex: "y", display: true });
   });
   it("not around prices", () => {
-    expect(formulaAt("票價 $5 到 $10", 5)).toBeNull();
+    expect(formulaAt("Fa $5 to $10", 5)).toBeNull();
   });
 });

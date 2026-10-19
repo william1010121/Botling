@@ -5,22 +5,22 @@ import Testing
 struct TagParsingTests {
     @Test func teamComponentAndShowTagsAreActedOnAndHidden() {
         let reply = """
-        交給研究小組。
-        <team name="research">比較三個筆記 app 的同步方式</team>
-        <component name="choices">選項改成橫排</component>
+        Handed to the Research team.
+        <team name="research">Compare how three note apps sync</team>
+        <component name="choices">Lay the options out in a row</component>
         <show name="progress">{"done": 7, "total": 10}</show>
         """
         let parsed = ReplyParser.parseAll(reply)
-        #expect(parsed.body == "交給研究小組。")
+        #expect(parsed.body == "Handed to the Research team.")
         #expect(parsed.requests == [
-            .team(name: "research", task: "比較三個筆記 app 的同步方式"),
-            .component(name: "choices", request: "選項改成橫排")
+            .team(name: "research", task: "Compare how three note apps sync"),
+            .component(name: "choices", request: "Lay the options out in a row")
         ])
         #expect(parsed.display == ComponentInstance(name: "progress", data: #"{"done": 7, "total": 10}"#))
     }
 
     @Test func showWithBrokenJSONIsDropped() {
-        #expect(ReplyParser.parseAll(#"<show name="x">{oops</show>好"#).display == nil)
+        #expect(ReplyParser.parseAll(#"<show name="x">{oops</show>OK"#).display == nil)
     }
 
     @Test func teamFilesRoundTrip() throws {
@@ -44,36 +44,36 @@ struct TeamTests {
         #expect(workspace.teams.map(\.name) == ["prototype", "research"])
         let file = root.appending(path: "ccb/plugins/ccb-teams/claude/agents/research.md")
         #expect(FileManager.default.fileExists(atPath: file.path))
-        #expect(workspace.projectBriefing().contains("research（研究小組）"))
+        #expect(workspace.projectBriefing().contains("research (Research team)"))
     }
 
     @Test func wishOutsideProjectsPullsUpATeamThatReportsBack() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
-            if text.contains("比較筆記 app") && !text.hasPrefix("（App：主 bot 交給你的任務）") {
-                return "交給研究小組。\n<team name=\"research\">比較三個筆記 app 的同步方式，交回一頁報告</team>"
+            if text.contains("compare note apps") && !text.hasPrefix("(App: A task from the main bot)") {
+                return "Handed to the Research team.\n<team name=\"research\">Compare how three note apps sync and hand back a one-page report</team>"
             }
-            if text.hasPrefix("（App：主 bot 交給你的任務）") {
-                return "比完了，Obsidian 最適合你。[筆記 app 比較](file:///tmp/report.html)"
+            if text.hasPrefix("(App: A task from the main bot)") {
+                return "Compared them; Obsidian suits you best. [Note app comparison](file:///tmp/report.html)"
             }
-            return "收到"
+            return "Got it"
         }
         let workspace = makeWorkspace(fake)
 
-        workspace.mainBot.send("幫我比較筆記 app")
+        workspace.mainBot.send("Help me compare note apps")
         await eventually { workspace.mainBot.messages.contains { $0.role == .notice } }
 
         #expect(workspace.mainBot.messages.map(\.role) == [.user, .bot, .notice])
-        #expect(workspace.mainBot.messages[1].text == "交給研究小組。")
+        #expect(workspace.mainBot.messages[1].text == "Handed to the Research team.")
         let team = try #require(fake.agents.last)
         #expect(team.launch.model == .sonnet)
         #expect(team.launch.tools.contains("WebSearch"))
         #expect(team.launch.workingDirectory.path.contains("/runs/"))
         #expect(team.launch.workingDirectory.lastPathComponent.hasSuffix("research"))
-        #expect(team.sent.first?.contains("比較三個筆記 app 的同步方式") == true)
+        #expect(team.sent.first?.contains("Compare how three note apps sync") == true)
         let notice = try #require(workspace.mainBot.messages.last)
-        #expect(notice.text.hasPrefix("研究小組："))
-        #expect(workspace.mainBot.results.first?.label == "筆記 app 比較")
+        #expect(notice.text.hasPrefix("Research team: "))
+        #expect(workspace.mainBot.results.first?.label == "Note app comparison")
         await eventually { workspace.runningTeams.isEmpty }
         #expect(team.finished)
     }
@@ -113,8 +113,8 @@ struct ComponentTests {
         let library = workspace.components
         #expect(library.names == ["choices"])
         #expect(library.template("choices")?.contains("ccb.answer(index)") == true)
-        #expect(library.catalog().hasPrefix("- choices：選擇題"))
-        #expect(workspace.componentBriefing().contains("- choices："))
+        #expect(library.catalog().hasPrefix("- choices: Choices"))
+        #expect(workspace.componentBriefing().contains("- choices: "))
     }
 
     @Test func reportGoesToMaintainerWhichEditsAndLandsAsUpdated() async throws {
@@ -125,26 +125,26 @@ struct ComponentTests {
         let template = library.templateURL("choices")
         let original = try String(contentsOf: template, encoding: .utf8)
         fake.respond = { text in
-            if text.contains("選項改成橫排") {
+            if text.contains("Lay the options out in a row") {
                 try? (original + "\n<!-- row -->").write(to: template, atomically: true, encoding: .utf8)
-                return "改成橫排了。"
+                return "The options are in a row now."
             }
             return isAppOnly(text) ? "OK" : nil
         }
 
-        workspace.requestComponentChange("choices", request: "選項改成橫排", from: "使用者")
-        #expect(library.working["choices"] == "選項改成橫排")
+        workspace.requestComponentChange("choices", request: "Lay the options out in a row", from: "The user")
+        #expect(library.working["choices"] == "Lay the options out in a row")
         let maintainer = try #require(fake.agents.last)
         #expect(maintainer.launch.workingDirectory.standardizedFileURL == root.appending(path: "ccb/plugins").standardizedFileURL)
         #expect(maintainer.launch.tools.contains("Bash"))
         #expect(maintainer.launch.systemPrompt.contains("PLUGINS.md"))
-        #expect(maintainer.sent.first?.contains("使用者 對組件「choices」的要求：選項改成橫排") == true)
+        #expect(maintainer.sent.first?.contains("The user's request for the component \"choices\": Lay the options out in a row") == true)
 
         await eventually { library.working.isEmpty }
         #expect(library.updated.contains("choices"))
         #expect(library.template("choices")?.hasSuffix("<!-- row -->") == true)
         await eventually { library.hasPrevious("choices") }
-        #expect(workspace.mainBot.messages.last?.text == "Maintainer：改成橫排了。")
+        #expect(workspace.mainBot.messages.last?.text == "Maintainer: The options are in a row now.")
 
         #expect(await library.revert("choices") == nil)
         #expect(library.template("choices") == original)
@@ -155,17 +155,17 @@ struct ComponentTests {
         let fake = FakeLauncher()
         fake.respond = { text in
             if isAppOnly(text) { return "OK" }
-            return text.hasSuffix("做一個錯誤提示")
-                ? "需要新組件。\n<component name=\"Error Toast\">錯誤提示：紅色、一行、可關閉</component>"
+            return text.hasSuffix("Make an error toast")
+                ? "This needs a new component.\n<component name=\"Error Toast\">Error toast: red, one line, dismissible</component>"
                 : nil
         }
         let workspace = makeWorkspace(fake)
 
-        workspace.mainBot.send("做一個錯誤提示")
+        workspace.mainBot.send("Make an error toast")
         await eventually { workspace.components.working["error-toast"] != nil }
         await eventually { fake.agents.count == 2 }
         let maintainer = try #require(fake.agents.last)
-        #expect(maintainer.sent.first?.contains("主 bot 要一個新組件「error-toast」") == true)
+        #expect(maintainer.sent.first?.contains("Main bot wants a new component \"error-toast\"") == true)
         await workspace.putEveryoneToSleep()
     }
 

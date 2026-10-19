@@ -22,18 +22,18 @@ enum PluginCheck {
     /// Steps 1–4, before the app starts; quits if any fails. Step 5 needs the app running.
     static func exitIfRequested() {
         guard let folder else { return }
-        print("檢查 \(folder.path)")
+        print("Checking \(folder.path)")
         let problems = PluginRegistry.check(folder)
         guard problems.isEmpty, case let .success(manifest) = PluginRegistry.load(folder) else {
             fail(problems)
         }
-        print("✓ package.json（\(manifest.name) \(manifest.version)）")
+        print("✓ package.json (\(manifest.name) \(manifest.version))")
         for script in ["build", "test"] where manifest.scripts?[script] != nil {
-            guard run("/usr/bin/env", ["npm", "run", script], in: folder) else { fail(["npm run \(script) 沒過。"]) }
+            guard run("/usr/bin/env", ["npm", "run", script], in: folder) else { fail(["npm run \(script) failed."]) }
             print("✓ npm run \(script)")
         }
         if let claude = manifest.ccb?.claude {
-            guard let executable = ClaudeExecutableLocator().locate() else { fail(["找不到 claude，不能檢查 Claude 部分。"]) }
+            guard let executable = ClaudeExecutableLocator().locate() else { fail(["claude not found, so the Claude part can't be checked."]) }
             let semaphore = DispatchSemaphore(value: 0)
             nonisolated(unsafe) var problem: String?
             Task.detached {
@@ -41,11 +41,11 @@ enum PluginCheck {
                 semaphore.signal()
             }
             semaphore.wait()
-            if let problem { fail(["Claude 部分沒通過 claude plugin validate --strict：\(problem)"]) }
-            print("✓ Claude 部分")
+            if let problem { fail(["The Claude part failed claude plugin validate --strict: \(problem)"]) }
+            print("✓ Claude part")
         }
         if manifest.ccb?.web == nil {
-            print("通過")
+            print("Passed")
             exit(0)
         }
     }
@@ -53,14 +53,14 @@ enum PluginCheck {
     /// Step 5: loads the web part in an offscreen chat page and waits for it to finish.
     static func runIfRequested() -> Bool {
         guard let folder else { return false }
-        guard let page = ChatSurface.pageURL else { fail(["找不到對話頁。"]) }
+        guard let page = ChatSurface.pageURL else { fail(["Chat page not found."]) }
         // A throwaway library, so what plugins.json says (on, off, broken) does not matter here.
         let scratch = FileManager.default.temporaryDirectory.appending(path: "ccb-check-\(UUID().uuidString)/plugins")
         let registry = PluginRegistry(library: scratch, builtIns: folder.deletingLastPathComponent())
         guard let manifest = try? PluginRegistry.load(folder).get(),
               let spec = registry.webSpecs().first(where: { $0.name == manifest.name }),
               let data = try? JSONEncoder().encode([spec]) else {
-            fail(["網頁部分讀不到。"])
+            fail(["Couldn't read the web part."])
         }
         let configuration = WKWebViewConfiguration()
         let handler = Handler(specs: String(decoding: data, as: UTF8.self), name: manifest.name)
@@ -74,7 +74,7 @@ enum PluginCheck {
         view.loadFileURL(page, allowingReadAccessTo: URL(filePath: "/"))
         self.window = window
         self.handler = handler
-        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { fail(["網頁部分 20 秒內沒載入完。"]) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { fail(["The web part did not finish loading within 20 seconds."]) }
         return true
     }
 
@@ -102,11 +102,11 @@ enum PluginCheck {
                     MainActor.assumeIsolated {
                         if case let .failure(error) = result { errors.append(error.localizedDescription) }
                         if errors.isEmpty {
-                            print("✓ 網頁部分載入成功")
-                            print("通過")
+                            print("✓ Web part loaded")
+                            print("Passed")
                             exit(0)
                         }
-                        PluginCheck.fail(errors.map { "網頁部分出錯：\($0)" })
+                        PluginCheck.fail(errors.map { "Web part error: \($0)" })
                     }
                 }
             case "pluginError":
@@ -132,7 +132,7 @@ enum PluginCheck {
     }
 
     static func fail(_ problems: [String]) -> Never {
-        print("沒通過：")
+        print("Failed:")
         for problem in problems { print("- \(problem)") }
         exit(1)
     }

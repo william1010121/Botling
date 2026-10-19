@@ -20,10 +20,10 @@ struct InstallTests {
             .write(to: claude.appending(path: ".mcp.json"), atomically: true, encoding: .utf8)
         try Self.server.write(to: claude.appending(path: "server/server.mjs"), atomically: true, encoding: .utf8)
         try """
-        { "name": "ccb-number", "displayName": "秘密數字", "version": "1.0.0", "description": "給 bot 一個查秘密數字的工具。",
+        { "name": "ccb-number", "displayName": "Secret number", "version": "1.0.0", "description": "Gives bots a tool that looks up a secret number.",
           "license": "MIT", "author": "Tester", "engines": { "ccb": "^2.0.0" },
           "ccb": { "permissions": ["claude", "network"], "claude": "claude",
-            "contributes": { "settings": { "number.salt": { "type": "string", "title": "鹽", "secret": true, "env": "CCB_NUMBER_SALT" } } } } }
+            "contributes": { "settings": { "number.salt": { "type": "string", "title": "Salt", "secret": true, "env": "CCB_NUMBER_SALT" } } } } }
         """.write(to: repo.appending(path: "package.json"), atomically: true, encoding: .utf8)
         let git = PluginLibraryGit(folder: repo)
         await blocking {
@@ -74,19 +74,19 @@ struct InstallTests {
         #expect(await workspace.proposeInstall(source) == nil)
         let card = try #require(workspace.mainBot.messages.last { $0.role == .notice && $0.isOpenQuestion })
         print(card.text)
-        #expect(card.text.contains("秘密數字"))
-        #expect(card.text.contains("來源：\(source)"))
-        #expect(card.text.contains("作者：Tester；授權：MIT"))
-        #expect(card.text.contains("給 bot 新的工具") && card.text.contains("連上網路"))
-        #expect(card.text.contains("MCP）：numbers"))
+        #expect(card.text.contains("Secret number"))
+        #expect(card.text.contains("Source: \(source)"))
+        #expect(card.text.contains("Author: Tester; license: MIT"))
+        #expect(card.text.contains("give the bots new tools") && card.text.contains("connect to the internet"))
+        #expect(card.text.contains("(MCP): numbers"))
         #expect(workspace.plugins.plugin("ccb-number") == nil)
 
         #expect(workspace.choose(0, in: card.id, of: workspace.mainBot))
         await eventually { workspace.plugins.plugin("ccb-number") != nil }
         let plugin = try #require(workspace.plugins.plugin("ccb-number"))
         #expect(plugin.installedFrom == source)
-        #expect(workspace.mainBot.messages.last?.text.hasPrefix("裝好了：秘密數字 1.0.0") == true)
-        #expect(workspace.plugins.git.run(["log", "-1", "--format=%s"]).output.hasPrefix("安裝 ccb-number 1.0.0"))
+        #expect(workspace.mainBot.messages.last?.text.hasPrefix("Installed: Secret number 1.0.0") == true)
+        #expect(workspace.plugins.git.run(["log", "-1", "--format=%s"]).output.hasPrefix("Install ccb-number 1.0.0"))
         #expect(!FileManager.default.fileExists(atPath: plugin.folder.appending(path: ".git").path))
 
         // Its MCP tools are allowed and its secret reaches bots as an environment variable.
@@ -96,7 +96,7 @@ struct InstallTests {
         let saved = try String(contentsOf: root.appending(path: "ccb/plugins.json"), encoding: .utf8)
         #expect(!saved.contains("number.salt"))
         let project = workspace.addProject(folder: root.appending(path: "garden"))
-        workspace.bot(for: project)?.send("用工具")
+        workspace.bot(for: project)?.send("Use the tool")
         await eventually { fake.agents.count == 1 }
         let launch = fake.agents[0].launch
         #expect(launch.pluginTools == ["mcp__plugin_ccb-number_numbers"])
@@ -110,11 +110,11 @@ struct InstallTests {
         let fake = FakeLauncher()
         fake.respond = { text in
             if isAppOnly(text) { return "OK" }
-            return text.hasSuffix("幫我裝那個插件") ? "好，先給你看。\n<install>file://\(repo.path)</install>" : "收到"
+            return text.hasSuffix("Install that plugin for me") ? "Sure, here it is first.\n<install>file://\(repo.path)</install>" : "Got it"
         }
         let workspace = workspace(fake)
         await workspace.pluginLibraryReady.value
-        workspace.mainBot.send("幫我裝那個插件")
+        workspace.mainBot.send("Install that plugin for me")
         await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion } }, timeout: 10)
         let card = try #require(workspace.mainBot.messages.last { $0.role == .notice && $0.isOpenQuestion })
         #expect(workspace.choose(1, in: card.id, of: workspace.mainBot))
@@ -137,7 +137,7 @@ struct InstallTests {
         try #"{ "name": "broken", "version": "1.0.0", "engines": { "ccb": "^9.0.0" } }"#
             .write(to: broken.appending(path: "package.json"), atomically: true, encoding: .utf8)
         #expect(await workspace.proposeInstall(broken.path) != nil)
-        #expect(workspace.mainBot.messages.last?.text.contains("沒通過檢查") == true)
+        #expect(workspace.mainBot.messages.last?.text.contains("failed the checks") == true)
         #expect(workspace.plugins.plugin("broken") == nil)
     }
 }

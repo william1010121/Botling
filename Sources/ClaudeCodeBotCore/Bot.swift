@@ -144,11 +144,11 @@ public final class Bot: ObservableObject, Identifiable {
 
         var lines: [String] = []
         if let quoted {
-            lines.append("（回覆\(quoted.role == .user ? "我" : "你")之前說的：「\(Self.preview(of: quoted))」）")
+            lines.append("(Replying to what \(quoted.role == .user ? "I" : "you") said earlier: \"\(Self.preview(of: quoted))\")")
         }
         if !text.isEmpty { lines.append(text) }
         if !attachments.isEmpty {
-            lines.append("（附件：\n" + attachments.map { "- " + $0.url.path }.joined(separator: "\n") + "）")
+            lines.append("(Attachments:\n" + attachments.map { "- " + $0.url.path }.joined(separator: "\n") + ")")
         }
         route(Outgoing(text: lines.joined(separator: "\n\n"), images: attachments.filter { $0.kind == .image }))
     }
@@ -277,7 +277,7 @@ public final class Bot: ObservableObject, Identifiable {
             let note = wakeNote?() ?? ""
             process.send([prompts.wake, note, outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n"), images: outgoing.images)
         } catch {
-            append(ChatMessage(role: .error, text: "叫不醒：\(error.localizedDescription)"))
+            append(ChatMessage(role: .error, text: "Couldn't wake up: \(error.localizedDescription)"))
         }
     }
 
@@ -352,7 +352,7 @@ public final class Bot: ObservableObject, Identifiable {
             isWorking = false
             phase = .asleep
             if status != 0 {
-                append(ChatMessage(role: .error, text: stderr.isEmpty ? "claude 意外結束（\(status)）" : stderr))
+                append(ChatMessage(role: .error, text: stderr.isEmpty ? "claude exited unexpectedly (\(status))" : stderr))
             }
         }
     }
@@ -404,11 +404,11 @@ public final class Bot: ObservableObject, Identifiable {
         route(Outgoing(text: prompt))
     }
 
-    /// A once-a-day job, written to routines.cron as 「名稱：要做的事」.
+    /// A once-a-day job, written to routines.cron as "Name: what to do".
     public func addRoutine(title: String, instruction: String, hour: Int, minute: Int) {
         guard let schedule = CronSchedule("\(minute) \(hour) * * *") else { return }
         let instruction = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
-        let task = instruction.isEmpty ? title : "\(title)：\(instruction)"
+        let task = instruction.isEmpty ? title : "\(title): \(instruction)"
         routineFile.add(Routine(schedule: schedule, task: task))
         reloadRoutines()
     }
@@ -483,17 +483,17 @@ public final class Bot: ObservableObject, Identifiable {
         guard phase == .awake else {
             model = newModel
             store?.save(model: newModel)
-            append(ChatMessage(role: .divider, text: "換成 \(newModel.displayName)"))
+            append(ChatMessage(role: .divider, text: "Switched to \(newModel.displayName)"))
             return
         }
 
-        await handOver(to: newModel, divider: "交接 → \(newModel.displayName)")
+        await handOver(to: newModel, divider: "Handoff → \(newModel.displayName)")
     }
 
     /// Plugins' Claude parts changed. Asleep: the next wake loads them. Awake: hand over and
     /// restart once it is free, so the new skills and agents are there.
     public func reloadPlugins() async {
-        await restart(divider: "交接 → 載入新插件")
+        await restart(divider: "Handoff → loading new plugins")
     }
 
     /// Hands over and starts a fresh session (same model) so it picks up what it starts with
@@ -533,7 +533,7 @@ public final class Bot: ObservableObject, Identifiable {
             if phase == .awake { scheduleIdle() }
         } catch {
             phase = .asleep
-            append(ChatMessage(role: .error, text: "交接後重開失敗：\(error.localizedDescription)"))
+            append(ChatMessage(role: .error, text: "Restart after handoff failed: \(error.localizedDescription)"))
         }
         switchTarget = nil
         await flushQueue()

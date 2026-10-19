@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Web/package-lock.json
+      - name: Web (chat surface, plugins, plugin host)
+        working-directory: Web
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Built web output is committed
+        run: git diff --exit-code -- Sources/ClaudeCodeBot/Resources
+      - name: Swift build and tests
+        run: |
+          swift --version
+          swift build --build-tests
+          swift test

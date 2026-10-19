@@ -48,13 +48,13 @@ describe("plugin host", () => {
   it("ccb-latex typesets bot replies and your own messages, and stops when unloaded", async () => {
     await host.sync([spec("ccb-latex")], async () => latex);
     expect(redraws).toBe(1);
-    expect(messageElement(message({ text: "看 $x^2$" }), {}).querySelector(".katex")).not.toBeNull();
-    expect(messageElement(message({ role: "user", text: "我的 $y$" }), {}).querySelector(".user-bubble .katex")).not.toBeNull();
+    expect(messageElement(message({ text: "See $x^2$" }), {}).querySelector(".katex")).not.toBeNull();
+    expect(messageElement(message({ role: "user", text: "Mine $y$" }), {}).querySelector(".user-bubble .katex")).not.toBeNull();
 
     await host.sync([], async () => latex);
     expect(host.isLoaded("ccb-latex")).toBe(false);
     expect(redraws).toBe(2);
-    expect(messageElement(message({ text: "看 $x^2$" }), {}).querySelector(".katex")).toBeNull();
+    expect(messageElement(message({ text: "See $x^2$" }), {}).querySelector(".katex")).toBeNull();
   });
 
   it("a plugin that throws on load is reported, and the chat keeps working", async () => {
@@ -67,8 +67,8 @@ describe("plugin host", () => {
     await host.sync([spec("bad-render")], async () => (ccb) => {
       ccb.messages.afterRender(() => { throw new Error("render failed"); });
     });
-    const row = messageElement(message({ text: "**還在**" }), {});
-    expect(row.querySelector("strong")?.textContent).toBe("還在");
+    const row = messageElement(message({ text: "**Still here**" }), {});
+    expect(row.querySelector("strong")?.textContent).toBe("Still here");
     expect(host.isLoaded("bad-render")).toBe(false);
     expect(sent).toContainEqual({ type: "pluginError", name: "bad-render", message: "render failed" });
   });
@@ -90,7 +90,7 @@ describe("plugin host", () => {
     await host.sync([spec("meter")], async () => (ccb) => {
       ccb.components.register("meter", (root, data) => { root.textContent = `${(data as { value: number }).value}%`; });
     });
-    const row = messageElement(message({ text: "進度", display: { name: "meter", data: '{"value":40}' } }), {});
+    const row = messageElement(message({ text: "Progress", display: { name: "meter", data: '{"value":40}' } }), {});
     expect(row.querySelector(".plugin-component")?.textContent).toBe("40%");
   });
 
@@ -101,7 +101,7 @@ describe("plugin host", () => {
       ccb.commands.register("tool.run", () => { ran += 1; });
       ccb.settings.onChange("tool.mode", (value) => seen.push(value));
     };
-    const commands = [{ id: "tool.run", title: "跑", key: "cmd+shift+l" }];
+    const commands = [{ id: "tool.run", title: "Run", key: "cmd+shift+l" }];
     await host.sync([spec("tool", { commands, settings: { "tool.mode": "a" } })], activate);
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "L", metaKey: true, shiftKey: true }));
     expect(ran).toBe(1);
@@ -136,12 +136,12 @@ describe("panels", () => {
   it("a plugin registers a panel and it can be drawn", async () => {
     const { extensions } = await import("../src/messages");
     await host.sync([spec("charts")], async () => (ccb) => {
-      ccb.panels.register("today", (root) => { root.textContent = "今天 3 件事"; });
+      ccb.panels.register("today", (root) => { root.textContent = "3 things today"; });
     });
     const panel = extensions.panels.get("charts/today");
     const root = document.createElement("div");
     panel?.render(root);
-    expect(root.textContent).toBe("今天 3 件事");
+    expect(root.textContent).toBe("3 things today");
     await host.sync([], async () => () => {});
     expect(extensions.panels.has("charts/today")).toBe(false);
   });

@@ -24,7 +24,7 @@ public final class ComponentLibrary: ObservableObject {
     @Published public private(set) var versions: [String: Int] = [:]
     /// Components being changed now, with what was asked.
     @Published public private(set) var working: [String: String] = [:]
-    /// Changed since ClaudeCodeBot started (shows 「已更新」 beside them).
+    /// Changed since ClaudeCodeBot started (shows "Updated" beside them).
     @Published public private(set) var updated: Set<String> = []
     @Published public private(set) var names: [String] = []
 
@@ -100,7 +100,7 @@ public final class ComponentLibrary: ObservableObject {
             let lines = about.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
             let first = lines.first ?? ""
             let rest = lines.dropFirst().map { "  " + $0 }.joined(separator: "\n")
-            return "- \(name)：\(first)" + (rest.isEmpty ? "" : "\n" + rest)
+            return "- \(name): \(first)" + (rest.isEmpty ? "" : "\n" + rest)
         }.joined(separator: "\n")
     }
 
@@ -131,8 +131,8 @@ public final class ComponentLibrary: ObservableObject {
     /// Puts back the version from before the last change (git), then redraws.
     @discardableResult
     public func revert(_ name: String) async -> String? {
-        guard let git, let path = gitPath(name) else { return "這個組件沒有版本紀錄。" }
-        let problem = await blocking { git.revert(path, label: "組件 \(name)") }
+        guard let git, let path = gitPath(name) else { return "This component has no version history." }
+        let problem = await blocking { git.revert(path, label: "component \(name)") }
         updated.remove(name)
         previous[name] = nil
         rescan()
@@ -215,39 +215,50 @@ public final class ComponentLibrary: ObservableObject {
 /// How a component is written; the ccb-core:component-editor agent's instructions.
 enum ComponentPrompts {
     static let system = """
-    你是 ClaudeCodeBot 的組件編輯（component-editor）。你負責對話裡的一個組件：它的資料夾裡有 template.html，用法寫在 about.md。
-    - template.html 是一段 HTML（可以有 <style> 和 <script>），畫在深色背景 #1B1B1F 上，寬度跟著外框，高度跟著內容。
-    - 資料在 window.ccb.data。使用者回答一律呼叫 ccb.answer(...)：給數字是選第幾個選項（從 0 開始），給文字是使用者自己打的回答（例如「其他」輸入框）。App 兩種都會當成已回答，並把答案轉給問問題的 bot。
-    - 選擇題類的資料裡，chosen 是已選的第幾個、answer 是自己打的回答；任一個不是 null 就代表答過了，要顯示答案並停用按鈕。
-    - 文字顏色 #EDEDF0、次要文字 #A0A0A8、強調藍 #4C8DFF、建議橘 #F7C27F；字型用 -apple-system, "PingFang TC", sans-serif。
-    - 不要載入任何外部資源。用真的 <button> 和 <input>，按鈕高度至少 44px，對比要夠。
-    - 使用者用中文輸入法打字：按 Enter 送出前一定要檢查 event.isComposing，選字時的 Enter 不能送出。
-    - about.md 是給所有 bot 看的使用說明，它們只靠這份檔案學怎麼用你的組件：第一行一句話說這是什麼，接著寫資料格式（附一個範例 JSON）和使用者回答時 bot 會收到什麼。只要格式或回答方式有變，就一定要更新 about.md。
-    - 只改那個組件資料夾裡的檔案，不要 commit（交給你的人會檢查和 commit）。改完只回一句話，說你改了什麼。
+    You are ClaudeCodeBot's component editor (component-editor). You look after one component in the chat: its folder holds template.html, and how to use it is written in about.md.
+    - template.html is a piece of HTML (it may include <style> and <script>), drawn on the dark background #1B1B1F; its width follows the frame and its height follows the content.
+    - The data is in window.ccb.data. The user's answer always calls ccb.answer(...): a number picks an option by index (from 0), text is an answer the user typed (for example an "Other" input box). The app treats both as answered and passes the answer to the bot that asked.
+    - In choice-style data, chosen is the index already picked and answer is a typed answer; if either is not null the question is answered, so show the answer and disable the buttons.
+    - Text color #EDEDF0, secondary text #A0A0A8, accent blue #4C8DFF, recommended orange #F7C27F; font -apple-system, "PingFang TC", sans-serif.
+    - Do not load any outside resources. Use real <button> and <input> elements, buttons at least 44px tall, with enough contrast.
+    - The user may type with an input method (IME, e.g. for Chinese): always check event.isComposing before sending on Enter; an Enter that picks a candidate must not send.
+    - about.md is the usage guide every bot reads; it is the only way they learn to use your component: the first line says in one sentence what it is, then the data format (with an example JSON) and what the bot receives when the user answers. Whenever the format or the way of answering changes, you must update about.md.
+    - Only change files in that component's folder and do not commit (whoever handed you the job checks and commits). When done, reply with one sentence saying what you changed.
     """
 }
 
 /// The templates ClaudeCodeBot ships with; written to `~/.claudecodebot/components/` the first time.
 enum ComponentDefaults {
-    /// Earlier shipped versions, replaced on launch only if still unedited.
+    /// Earlier shipped versions, replaced on launch only if still unedited. Older builds shipped
+    /// them in Chinese; the Chinese text below is kept on purpose, as data, so that an unedited
+    /// file from an older build is recognised and brought up to date. Do not translate it.
     static let olderChoicesAbouts = ["""
     選擇題：一排按鈕讓使用者選一個，建議的那個會標出來。
     資料：{"options":[{"label":"用預設圖補上","detail":"今天做完","recommended":true},{"label":"先留白","detail":null,"recommended":false}],"chosen":null}
     chosen 是已選的第幾個（從 0 開始），還沒選是 null。按下第 i 個時呼叫 ccb.choose(i)。
+    """, """
+    選擇題：一排按鈕讓使用者選一個，建議的那個會標出來。bot 不用直接畫它：在回覆最後寫 <choices> 區塊，App 就會用這個組件。
+    資料：{"options":[{"label":"用預設圖補上","detail":"今天做完","recommended":true},{"label":"先留白","detail":null,"recommended":false}],"chosen":null,"answer":null}
+    chosen 是已選的第幾個（從 0 開始），answer 是使用者自己打的回答，都還沒有就是 null。
+    使用者回答時，bot 會收到他選的那一項文字，或他自己打的字。
     """]
 
     static var olderChoicesTemplates: [String] {
-        [choicesTemplate
+        // Older builds shipped the same markup with Chinese labels (kept as data, see above).
+        let chinese = choicesTemplate
+            .replacingOccurrences(of: "'Recommended · '", with: "'建議 · '")
+            .replacingOccurrences(of: ": 'Recommended')", with: ": '建議')")
+        return [chinese, chinese
             .replacingOccurrences(of: "button.addEventListener('click', () => ccb.answer(index));", with: "button.addEventListener('click', () => ccb.choose(index));")
             .replacingOccurrences(of: "button.disabled = data.chosen != null || data.answer != null;", with: "button.disabled = data.chosen != null;")
             .replacingOccurrences(of: "+ ((data.chosen != null || data.answer != null) && !picked ? ' faded' : '');", with: "+ (data.chosen != null && !picked ? ' faded' : '');")]
     }
 
     static let choicesAbout = """
-    選擇題：一排按鈕讓使用者選一個，建議的那個會標出來。bot 不用直接畫它：在回覆最後寫 <choices> 區塊，App 就會用這個組件。
-    資料：{"options":[{"label":"用預設圖補上","detail":"今天做完","recommended":true},{"label":"先留白","detail":null,"recommended":false}],"chosen":null,"answer":null}
-    chosen 是已選的第幾個（從 0 開始），answer 是使用者自己打的回答，都還沒有就是 null。
-    使用者回答時，bot 會收到他選的那一項文字，或他自己打的字。
+    Choices: a row of buttons for the user to pick one; the recommended one is marked. Bots do not draw it directly: end the reply with a <choices> block and the app uses this component.
+    Data: {"options":[{"label":"Fill in with a placeholder image","detail":"Done today","recommended":true},{"label":"Leave it blank for now","detail":null,"recommended":false}],"chosen":null,"answer":null}
+    chosen is the index picked (from 0), answer is an answer the user typed; both are null until answered.
+    When the user answers, the bot receives the text of the option picked, or what the user typed.
     """
 
     static let choicesTemplate = """
@@ -288,7 +299,7 @@ enum ComponentDefaults {
         } else {
           side.className = 'detail';
           side.textContent = option.recommended
-            ? (option.detail ? '建議 · ' + option.detail : '建議')
+            ? (option.detail ? 'Recommended · ' + option.detail : 'Recommended')
             : (option.detail || '');
         }
         button.append(label, side);

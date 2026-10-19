@@ -3,3 +3,4 @@
 Web/node_modules/
 *.xcodeproj/
 .DS_Store
+dist/

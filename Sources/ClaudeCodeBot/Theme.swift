@@ -32,10 +32,10 @@ extension Bot {
 
     var statusText: String {
         switch phase {
-        case .asleep: "睡著"
-        case .tidying: "整理筆記"
-        case .switching: "交接中"
-        case .awake: isWorking ? "工作中" : "醒著"
+        case .asleep: "Asleep"
+        case .tidying: "Tidying notes"
+        case .switching: "Handing off"
+        case .awake: isWorking ? "Working" : "Awake"
         }
     }
 

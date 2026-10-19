@@ -5,35 +5,35 @@ import Testing
 struct MarkdownTests {
     @Test func blocks() {
         let text = """
-        # 今天
-        **NotchDo** 做到 7 成。
+        # Today
+        **NotchDo** is 70% done.
 
-        - 右側面板
-        - 排程
-        1. 先做錯誤狀態
-        2. 再接排程
-        > 卡在多肉植物
+        - Right panel
+        - Scheduling
+        1. Error states first
+        2. Then scheduling
+        > Stuck on succulents
         ```
         swift build
         ```
-        | 專案 | 狀態 |
+        | Project | Status |
         |---|---|
-        | blog | 等你 |
+        | blog | Waiting on you |
         ---
-        看這張：![面板截圖](file:///tmp/panel.png) 和影片 ![示範](file:///tmp/demo.mp4)
+        Look at this:![Panel screenshot](file:///tmp/panel.png) and the video ![Demo](file:///tmp/demo.mp4)
         """
         #expect(MarkdownBlock.parse(text) == [
-            .heading(level: 1, text: "今天"),
-            .paragraph("**NotchDo** 做到 7 成。"),
-            .bullets(["右側面板", "排程"]),
-            .numbered(["先做錯誤狀態", "再接排程"]),
-            .quote("卡在多肉植物"),
+            .heading(level: 1, text: "Today"),
+            .paragraph("**NotchDo** is 70% done."),
+            .bullets(["Right panel", "Scheduling"]),
+            .numbered(["Error states first", "Then scheduling"]),
+            .quote("Stuck on succulents"),
             .code("swift build"),
-            .table(header: ["專案", "狀態"], rows: [["blog", "等你"]]),
+            .table(header: ["Project", "Status"], rows: [["blog", "Waiting on you"]]),
             .rule,
-            .paragraph("看這張： 和影片"),
-            .media(alt: "面板截圖", url: URL(string: "file:///tmp/panel.png")!),
-            .media(alt: "示範", url: URL(string: "file:///tmp/demo.mp4")!)
+            .paragraph("Look at this: and the video"),
+            .media(alt: "Panel screenshot", url: URL(string: "file:///tmp/panel.png")!),
+            .media(alt: "Demo", url: URL(string: "file:///tmp/demo.mp4")!)
         ])
     }
 
@@ -45,9 +45,9 @@ struct MarkdownTests {
 
     @Test func toolCallsBecomeActivityLines() {
         let line = #"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"/x/choices/template.html"}}]}}"#
-        #expect(StreamEvent.events(in: line) == [.activity("改 template.html")])
+        #expect(StreamEvent.events(in: line) == [.activity("Edit template.html")])
         let bash = #"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"swift build\nswift test"}}]}}"#
-        #expect(StreamEvent.events(in: bash) == [.activity("執行 swift build")])
+        #expect(StreamEvent.events(in: bash) == [.activity("Run swift build")])
     }
 }
 
@@ -67,7 +67,7 @@ final class ImageAgent: AgentProcess, @unchecked Sendable {
     func send(_ text: String) { send(text, images: []) }
     func send(_ text: String, images: [ClaudeCodeBotCore.Attachment]) {
         lock.withLock { _sent.append((text, images)) }
-        continuation.yield(.reply("看到了。", isError: false))
+        continuation.yield(.reply("I see it.", isError: false))
     }
     func finish() { continuation.finish() }
     func stop() { continuation.finish() }
@@ -87,7 +87,7 @@ struct AttachmentAndReplyTests {
         try Data([0x89, 0x50, 0x4E, 0x47]).write(to: picture)
         try Data("pdf".utf8).write(to: notes)
 
-        bot.send("這是什麼？", files: [picture, notes], replyingTo: nil)
+        bot.send("What is this?", files: [picture, notes], replyingTo: nil)
         await eventually { bot.messages.last?.role == .bot }
 
         let message = try #require(bot.messages.first)
@@ -96,7 +96,7 @@ struct AttachmentAndReplyTests {
         #expect(kept.allSatisfy { $0.url.path.hasPrefix(home.appending(path: "attachments").path) })
         #expect(kept.allSatisfy { FileManager.default.fileExists(atPath: $0.url.path) })
         let (text, images) = try #require(agent.sent.first)
-        #expect(text.contains("這是什麼？"))
+        #expect(text.contains("What is this?"))
         #expect(text.contains(kept[1].url.path))
         #expect(images.map(\.url) == [kept[0].url])
     }
@@ -104,17 +104,17 @@ struct AttachmentAndReplyTests {
     @Test func aReplyQuotesTheLineItAnswers() async throws {
         let agent = ImageAgent()
         let bot = Bot(profile: .main(home: root.appending(path: "main2")), launcher: { _ in agent })
-        bot.send("第一句")
+        bot.send("First line")
         await eventually { bot.messages.count == 2 }
         let answer = try #require(bot.messages.last)
 
-        bot.send("這句是什麼意思？", files: [], replyingTo: answer.id)
+        bot.send("What does this mean?", files: [], replyingTo: answer.id)
         await eventually { bot.messages.count == 4 }
 
         let reply = bot.messages[2]
         #expect(reply.replyTo == answer.id)
-        #expect(reply.replyPreview == "看到了。")
-        #expect(agent.sent.last?.0.hasPrefix("（回覆你之前說的：「看到了。」）") == true)
+        #expect(reply.replyPreview == "I see it.")
+        #expect(agent.sent.last?.0.hasPrefix("(Replying to what you said earlier: \"I see it.\")") == true)
     }
 
     @Test func aPhotoAloneCanBeSent() async throws {

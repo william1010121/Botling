@@ -5,7 +5,7 @@ const videoExtensions = /\.(mp4|mov|m4v|webm)$/i;
 
 /**
  * Bot replies: markdown. Raw HTML from the bot is shown as text, never run. Links become chips;
- * `![說明](網址)` becomes an image or a playing video. Plugins add to it (LaTeX is the
+ * `![caption](url)` becomes an image or a playing video. Plugins add to it (LaTeX is the
  * ccb-latex plugin); since markdown-it plugins cannot be taken out, unloading one rebuilds it.
  */
 export function createMarkdown(): MarkdownIt {
@@ -43,7 +43,7 @@ export function mediaHTML(src: string, label: string): string {
   const url = escapeHTML(src);
   const name = escapeHTML(label);
   if (videoExtensions.test(src.split("?")[0])) {
-    return `<video class="media" src="${url}" controls preload="metadata" aria-label="${name || "影片"}"></video>`;
+    return `<video class="media" src="${url}" controls preload="metadata" aria-label="${name || "Video"}"></video>`;
   }
   return `<img class="media" src="${url}" alt="${name}" data-url="${url}" data-label="${name}" loading="lazy">`;
 }

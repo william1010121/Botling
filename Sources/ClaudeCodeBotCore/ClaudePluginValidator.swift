@@ -21,7 +21,7 @@ public enum ClaudePluginValidator {
             do {
                 try process.run()
             } catch {
-                continuation.resume(returning: "claude 跑不起來：\(error.localizedDescription)")
+                continuation.resume(returning: "claude could not run: \(error.localizedDescription)")
             }
         }
     }
@@ -32,6 +32,6 @@ public enum ClaudePluginValidator {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { $0.hasPrefix("❯") || $0.hasPrefix("✘") }
             .map { $0.drop { $0 == "❯" || $0 == "✘" || $0 == " " } }
-        return lines.isEmpty ? "沒通過（\(status)）" : lines.joined(separator: "；")
+        return lines.isEmpty ? "Failed (\(status))" : lines.joined(separator: "; ")
     }
 }

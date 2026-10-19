@@ -22,7 +22,7 @@ public final class Workspace: ObservableObject {
     public static let maintainerID = UUID(uuidString: "DEC0DE00-0000-4000-8000-00000000DEC0")!
 
     /// Something a manager needs the user to decide: an open question in its chat, or else a
-    /// line from its memory.md 「等你決定的事」.
+    /// line from its memory.md "Waiting on you" section.
     public struct Waiting: Identifiable, Equatable, Sendable {
         public var id: String { "\(projectID)-\(text)" }
         public var projectID: UUID
@@ -140,7 +140,7 @@ public final class Workspace: ObservableObject {
         components.rescan()
         components.onCatalogChanged = { [weak self] in
             guard let self else { return }
-            let note = "（App：組件有更新，下面是最新的用法。）\n" + componentBriefing()
+            let note = "(App: Components were updated; here is how to use them now.)\n" + componentBriefing()
             for bot in [mainBot] + Array(managers.values) { bot.queueNote(note) }
         }
         plugins.onNotice = { [weak self] text in
@@ -148,11 +148,11 @@ public final class Workspace: ObservableObject {
             if self?.selection == nil { self?.mainBot.markRead() }
         }
         plugins.onBroken = { [weak self] plugin, problem in
-            self?.handToMaintainer("（App：熱更新檢查）插件「\(plugin)」壞了，ClaudeCodeBot 先用上一版或先停用。請修好：\(problem)")
+            self?.handToMaintainer("(App: Hot-update check) The plugin \"\(plugin)\" is broken; ClaudeCodeBot fell back to the previous version or disabled it for now. Please fix it: \(problem)")
         }
         plugins.onUpdated = { [weak self] plugin, old in
             guard let self else { return }
-            mainBot.notice("插件「\(plugin.manifest.title)」更新了：\(old) → \(plugin.manifest.version)")
+            mainBot.notice("Plugin \"\(plugin.manifest.title)\" updated: \(old) → \(plugin.manifest.version)")
             if selection == nil { mainBot.markRead() }
         }
         connectPlugins(to: mainBot)
@@ -176,7 +176,7 @@ public final class Workspace: ObservableObject {
 
     // MARK: Installing plugins from outside
 
-    /// Fetched plugins waiting for your 「安裝」, by the question's message id.
+    /// Fetched plugins waiting for your "Install", by the question's message id.
     private var installQuestions: [UUID: InstallProposal] = [:]
     /// Sources being fetched right now (Settings shows them).
     @Published public private(set) var fetching: [String] = []
@@ -192,12 +192,12 @@ public final class Workspace: ObservableObject {
         do {
             proposal = try await PluginInstaller.fetch(source, scratch: root.appending(path: "install-staging"))
         } catch {
-            mainBot.notice("裝不了「\(source)」：\(error.localizedDescription)")
+            mainBot.notice("Couldn't install \"\(source)\": \(error.localizedDescription)")
             return error.localizedDescription
         }
         guard proposal.problems.isEmpty else {
-            let problem = proposal.problems.joined(separator: "；")
-            mainBot.notice("「\(proposal.manifest.title)」沒通過檢查，沒有裝：\(problem)")
+            let problem = proposal.problems.joined(separator: "; ")
+            mainBot.notice("\"\(proposal.manifest.title)\" failed the checks and was not installed: \(problem)")
             return problem
         }
         if trusted {
@@ -205,7 +205,7 @@ public final class Workspace: ObservableObject {
         }
         mainBot.notice(
             proposal.summary,
-            choices: [Choice(label: "安裝", detail: nil, recommended: false), Choice(label: "不要", detail: nil, recommended: false)]
+            choices: [Choice(label: "Install", detail: nil, recommended: false), Choice(label: "Don't install", detail: nil, recommended: false)]
         )
         if let question = mainBot.messages.last { installQuestions[question.id] = proposal }
         if selection == nil { mainBot.markRead() }
@@ -218,9 +218,9 @@ public final class Workspace: ObservableObject {
         let problem = await plugins.install(proposal)
         try? FileManager.default.removeItem(at: proposal.folder)
         if let problem {
-            mainBot.notice("「\(proposal.manifest.title)」沒裝成：\(problem)")
+            mainBot.notice("\"\(proposal.manifest.title)\" could not be installed: \(problem)")
         } else {
-            mainBot.notice("裝好了：\(proposal.manifest.title) \(proposal.manifest.version)。設定頁的插件區可以關掉或移除。")
+            mainBot.notice("Installed: \(proposal.manifest.title) \(proposal.manifest.version). You can turn it off or remove it under Plugins in Settings.")
         }
         if selection == nil { mainBot.markRead() }
         return problem
@@ -230,7 +230,7 @@ public final class Workspace: ObservableObject {
 
     /// Folders you let Maintainer read (kept in `~/.claudecodebot/folders.json`).
     public private(set) var approvedFolders: [URL] = []
-    /// Open 「may it read this folder?」 questions in the main chat, by message id.
+    /// Open "may it read this folder?" questions in the main chat, by message id.
     private var folderQuestions: [UUID: URL] = [:]
     private var foldersURL: URL { root.appending(path: "folders.json") }
 
@@ -245,12 +245,12 @@ public final class Workspace: ObservableObject {
     func requestFolder(_ path: String) {
         let folder = URL(filePath: (path as NSString).expandingTildeInPath).standardizedFileURL
         if approvedFolders.contains(where: { folder.path == $0.path || folder.path.hasPrefix($0.path + "/") }) {
-            maintainer.relay("（App）\(folder.path) 之前已經同意過，可以直接讀。")
+            maintainer.relay("(App) \(folder.path) was already allowed before; you can read it directly.")
             return
         }
         mainBot.notice(
-            "Maintainer想讀「\(folder.path)」。只會讀，不會改那裡的檔案。可以嗎？",
-            choices: [Choice(label: "可以讀", detail: "之後不用再問", recommended: false), Choice(label: "不要", detail: nil, recommended: false)],
+            "Maintainer wants to read \"\(folder.path)\". It will only read, never change files there. Allow it?",
+            choices: [Choice(label: "Allow", detail: "Won't ask again", recommended: false), Choice(label: "Don't allow", detail: nil, recommended: false)],
             sourceID: Self.maintainerID
         )
         if let question = mainBot.messages.last { folderQuestions[question.id] = folder }
@@ -261,7 +261,7 @@ public final class Workspace: ObservableObject {
     /// Your answer to a folder question.
     private func answerFolder(_ folder: URL, allowed: Bool) {
         guard allowed else {
-            maintainer.relay("（App）使用者不讓你讀 \(folder.path)。換個做法，或說明做不了。")
+            maintainer.relay("(App) The user did not allow you to read \(folder.path). Find another way, or explain that it can't be done.")
             return
         }
         approvedFolders.append(folder)
@@ -270,8 +270,8 @@ public final class Workspace: ObservableObject {
         let maintainer = maintainer
         Task {
             // A new session that can open it (--add-dir), then carry on.
-            await maintainer.restart(divider: "交接 → 可以讀 \(folder.lastPathComponent)")
-            maintainer.relay("（App）使用者同意了，你現在可以讀 \(folder.path)（只讀，不要改那裡的檔案）。繼續剛才的工作。")
+            await maintainer.restart(divider: "Handoff → may read \(folder.lastPathComponent)")
+            maintainer.relay("(App) The user agreed: you can now read \(folder.path) (read only, do not change files there). Carry on with what you were doing.")
         }
     }
 
@@ -348,12 +348,12 @@ public final class Workspace: ObservableObject {
     }
 
     func prompt(for routine: Routine, of bot: Bot) -> String {
-        let ask = routine.file.map { "打開 \($0)（相對於你的工作資料夾），照裡面寫的做。" } ?? routine.instruction
+        let ask = routine.file.map { "Open \($0) (relative to your working folder) and do what it says." } ?? routine.instruction
         switch bot.profile.role {
         case .main:
-            return "（App：Routine「\(routine.title)」時間到了。\(ask)）\n" + projectBriefing()
+            return "(App: Time for the routine \"\(routine.title)\". \(ask))\n" + projectBriefing()
         case .manager:
-            return "（App：Routine「\(routine.title)」時間到了：\(ask)。做完用一句話回報結果；需要使用者決定就附選項區塊。）"
+            return "(App: Time for the routine \"\(routine.title)\": \(ask). When done, report the result in one sentence; if the user needs to decide something, attach a choices block.)"
         }
     }
 
@@ -369,17 +369,17 @@ public final class Workspace: ObservableObject {
     /// The project list and the teams the main bot gets each time it wakes.
     func projectBriefing() -> String {
         let projectLines = projects.isEmpty
-            ? "（目前還沒有專案。）"
+            ? "(No projects yet.)"
             : projects.map { project in
-                "- \(project.name)：記憶檔 \(project.notesFolder.appending(path: "memory.md").path)；交辦檔 \(project.inboxURL.path)"
+                "- \(project.name): memory file \(project.notesFolder.appending(path: "memory.md").path); inbox file \(project.inboxURL.path)"
             }.joined(separator: "\n")
-        let maintainerLine = "- Maintainer（負責 ClaudeCodeBot 本身：插件、組件）：記憶檔 \(maintainerProject.notesFolder.appending(path: "memory.md").path)；交辦檔 \(maintainerProject.inboxURL.path)"
-        let teamLines = teams.map { "- \($0.name)（\($0.title)）：\($0.description)" }.joined(separator: "\n")
+        let maintainerLine = "- Maintainer (looks after ClaudeCodeBot itself: plugins, components): memory file \(maintainerProject.notesFolder.appending(path: "memory.md").path); inbox file \(maintainerProject.inboxURL.path)"
+        let teamLines = teams.map { "- \($0.name) (\($0.title)): \($0.description)" }.joined(separator: "\n")
         return """
-        （App：專案清單。問進度就讀記憶檔，不要叫醒主管；要交辦就在交辦檔最後加一行。）
+        (App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file.)
         \(projectLines)
         \(maintainerLine)
-        （App：可以拉起的臨時團隊，用 <team name="名稱">任務</team>。）
+        (App: Temporary teams you can start, with <team name="name">task</team>.)
         \(teamLines)
         \(componentBriefing())
         """
@@ -447,9 +447,9 @@ public final class Workspace: ObservableObject {
             let text = """
             {
               "name": "ccb-components",
-              "displayName": "組件庫",
+              "displayName": "Component library",
               "version": "1.0.0",
-              "description": "對話裡的組件（選擇題等）。每個組件一個資料夾：template.html 和 about.md。",
+              "description": "Components shown in the chat (choices and so on). One folder per component: template.html and about.md.",
               "license": "MIT",
               "engines": { "ccb": "^2.0.0" },
               "ccb": {
@@ -466,7 +466,7 @@ public final class Workspace: ObservableObject {
 
     /// The components a bot can draw or ask to change.
     func componentBriefing() -> String {
-        "（App：對話裡的組件。<show name=\"名稱\">JSON</show> 畫出來；<component name=\"名稱\">要求</component> 請 Maintainer改。）\n" + components.catalog()
+        "(App: Components in the chat. <show name=\"name\">JSON</show> draws one; <component name=\"name\">request</component> asks Maintainer to change one.)\n" + components.catalog()
     }
 
     /// Someone asked for a component change: the user beside a component, or a bot with a
@@ -477,8 +477,8 @@ public final class Workspace: ObservableObject {
         components.markWorking(name, change: request)
         let exists = components.names.contains(name)
         handToMaintainer(exists
-            ? "\(asker) 對組件「\(name)」的要求：\(request)"
-            : "\(asker) 要一個新組件「\(name)」：\(request)")
+            ? "\(asker)'s request for the component \"\(name)\": \(request)"
+            : "\(asker) wants a new component \"\(name)\": \(request)")
     }
 
     // MARK: Temporary teams
@@ -498,7 +498,7 @@ public final class Workspace: ObservableObject {
                 if project?.isMaintainer == true { requestFolder(path) }
             case let .plugin(request):
                 if project?.isMaintainer != true {
-                    handToMaintainer("\(project?.name ?? mainBot.name) 對 ClaudeCodeBot 的要求：\(request)")
+                    handToMaintainer("\(project?.name ?? mainBot.name)'s request for ClaudeCodeBot: \(request)")
                 }
             }
         }
@@ -530,7 +530,7 @@ public final class Workspace: ObservableObject {
                 environment: plugins.secretEnvironment()
             ))
         } catch {
-            mainBot.notice("\(spec.title)拉不起來：\(error.localizedDescription)")
+            mainBot.notice("\(spec.title) could not start: \(error.localizedDescription)")
             return nil
         }
         runningTeams.append(run)
@@ -544,12 +544,12 @@ public final class Workspace: ObservableObject {
                 case let .reply(text, _):
                     guard !reported else { continue }
                     reported = true
-                    self?.mainBot.notice("\(spec.title)：\(ReplyParser.parseAll(text).body)")
+                    self?.mainBot.notice("\(spec.title): \(ReplyParser.parseAll(text).body)")
                     if self?.selection == nil { self?.mainBot.markRead() }
                     process.finish()
                 case let .exited(status, stderr):
                     if !reported {
-                        self?.mainBot.notice("\(spec.title)沒做完：\(stderr.isEmpty ? "結束碼 \(status)" : stderr)")
+                        self?.mainBot.notice("\(spec.title) did not finish: \(stderr.isEmpty ? "exit code \(status)" : stderr)")
                     }
                 }
             }
@@ -579,25 +579,25 @@ public final class Workspace: ObservableObject {
     /// What Maintainer is told on top of a manager's usual instructions.
     func maintainerInstructions() -> String {
         let library = root.appending(path: "plugins").path
-        let check = checkCommand.map { "\($0) <插件資料夾>" } ?? "（這次沒有檢查指令；至少確定 package.json 是合法 JSON、宣告的檔案都在）"
+        let check = checkCommand.map { "\($0) <plugin folder>" } ?? "(no check command this time; at least make sure package.json is valid JSON and every declared file exists)"
         return """
-        - 你是「Maintainer」：負責 ClaudeCodeBot 這個 App 的插件庫。工作資料夾 \(library) 就是插件庫，是一個 git repo。
-        - 先讀 \(library)/PLUGINS.md：插件格式、網頁／程式／Claude 三個部分的 API、檢查和上線流程都在裡面。
-        - 每次改插件：
-          1. 改檔（有 src/ 的插件改 src，再用 esbuild 打包到 package.json 指定的位置）。
-          2. 把那個插件 package.json 的 version 升一版（修正升 patch、加功能升 minor）。
-          3. 跑檢查：\(check)。沒過就修，最多 3 輪；3 輪都沒過，用選項區塊問使用者卡在哪。
-          4. git add 那個插件資料夾，git commit -m "<插件名>: <做了什麼>"，再 git tag <插件名>--v<版本>。
-          5. 用一句話回報做了什麼。ClaudeCodeBot 會自己熱更新，不用重開。
-        - 組件在 ccb-components/components/<名稱>/（template.html、about.md）。改完一樣升 ccb-components 的版本、檢查、commit。
-          只改組件樣板這種小事，可以交給 ccb-core:component-editor 這個 agent（Haiku）做，你再檢查和 commit。
-        - App 內建的插件不在這裡，不能直接改：要改就把它整個資料夾複製進插件庫，同名的會蓋過內建的（路徑見 PLUGINS.md）。
-        - 要讀插件庫以外的資料夾（例如把現有專案做成插件）：在回覆最後加 <need-folder>完整路徑</need-folder>，用一句話說為什麼要讀，然後停下來等。
-          使用者同意後你會收到「（App）使用者同意了…」，那時才讀；不同意就換個做法。只讀不改那裡的檔案。同意過的資料夾不用再問。
-        - 把現有專案做成插件：先找出能重用的核心（沒有依賴的程式庫最好），網頁部分只做接線（接上 ccb.composer、設定、指令）。
-          用 esbuild 打包成單一 ES module（可以用原專案 node_modules 裡的 esbuild，或 npx --yes esbuild@0.25.11）。
-          原專案的授權照抄進插件（package.json 的 license 和 LICENSE 檔）；GPL 的程式只能放在獨立插件裡。
-        - 「熱更新檢查」的訊息是 ClaudeCodeBot 發現插件壞了：照上面流程修好。
+        - You are "Maintainer": you look after the plugin library of the ClaudeCodeBot app. Your working folder \(library) is the plugin library, a git repo.
+        - Read \(library)/PLUGINS.md first: the plugin format, the APIs of the three parts (web, program, Claude), and the check and release steps are all there.
+        - Every time you change a plugin:
+          1. Edit the files (for a plugin with src/, edit src, then bundle with esbuild to the location package.json names).
+          2. Bump the version in that plugin's package.json (patch for fixes, minor for new features).
+          3. Run the check: \(check). If it fails, fix it, at most 3 rounds; if all 3 fail, use a choices block to tell the user where you are stuck.
+          4. git add that plugin folder, git commit -m "<plugin name>: <what you did>", then git tag <plugin name>--v<version>.
+          5. Report what you did in one sentence. ClaudeCodeBot hot-updates on its own; no restart needed.
+        - Components live in ccb-components/components/<name>/ (template.html, about.md). After changing one, likewise bump the ccb-components version, check, and commit.
+          Small jobs that only touch a component template can go to the ccb-core:component-editor agent (Haiku); you then check and commit.
+        - Plugins built into the app are not here and cannot be edited directly: to change one, copy its whole folder into the plugin library; a plugin with the same name overrides the built-in one (paths in PLUGINS.md).
+        - To read a folder outside the plugin library (for example to turn an existing project into a plugin): end your reply with <need-folder>full path</need-folder>, say in one sentence why you need it, then stop and wait.
+          Once the user agrees you will receive "(App) The user agreed…"; only then read it. If they refuse, find another way. Only read, never change files there. Folders already allowed need no new request.
+        - Turning an existing project into a plugin: first find the reusable core (a library without dependencies is best); the web part should only do the wiring (hook up ccb.composer, settings, commands).
+          Bundle it with esbuild into a single ES module (use the esbuild in the original project's node_modules, or npx --yes esbuild@0.25.11).
+          Copy the original project's license into the plugin (the license in package.json and the LICENSE file); GPL code may only go into a separate plugin.
+        - A "Hot-update check" message means ClaudeCodeBot found a broken plugin: fix it with the steps above.
         """
     }
 
@@ -611,7 +611,7 @@ public final class Workspace: ObservableObject {
         let editor = """
         ---
         name: component-editor
-        description: 改 ClaudeCodeBot 對話裡的一個組件（template.html 和 about.md）。給它組件資料夾的路徑和要怎麼改。
+        description: Edits one component in the ClaudeCodeBot chat (template.html and about.md). Give it the component folder's path and what to change.
         model: haiku
         tools: Read, Write, Edit
         ---
@@ -623,7 +623,7 @@ public final class Workspace: ObservableObject {
         {
           "name": "ccb-core",
           "version": "1.0.0",
-          "description": "ClaudeCodeBot 自己用的 agents。",
+          "description": "Agents ClaudeCodeBot uses itself.",
           "author": { "name": "ClaudeCodeBot" }
         }
 
@@ -631,9 +631,9 @@ public final class Workspace: ObservableObject {
         try? Data("""
         {
           "name": "ccb-core",
-          "displayName": "ClaudeCodeBot 核心",
+          "displayName": "ClaudeCodeBot core",
           "version": "1.0.0",
-          "description": "ClaudeCodeBot 自己用的 agents：component-editor（Haiku）改組件樣板。",
+          "description": "Agents ClaudeCodeBot uses itself: component-editor (Haiku) edits component templates.",
           "license": "MIT",
           "engines": { "ccb": "^2.0.0" },
           "ccb": {
@@ -649,7 +649,7 @@ public final class Workspace: ObservableObject {
     static func writeLibraryGuide(in library: URL, builtIns: URL?) {
         try? FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
         let url = library.appending(path: "PLUGINS.md")
-        let text = PluginGuide.text(builtIns: builtIns?.path ?? "（這次沒有內建插件）")
+        let text = PluginGuide.text(builtIns: builtIns?.path ?? "(no built-in plugins this time)")
         if (try? String(contentsOf: url, encoding: .utf8)) != text {
             try? Data(text.utf8).write(to: url)
         }
@@ -680,7 +680,7 @@ public final class Workspace: ObservableObject {
         {
           "name": "ccb-teams",
           "version": "1.0.0",
-          "description": "ClaudeCodeBot 的臨時團隊：研究小組、原型小組。",
+          "description": "ClaudeCodeBot's temporary teams: Research team, Prototype team.",
           "author": { "name": "ClaudeCodeBot" }
         }
 
@@ -689,9 +689,9 @@ public final class Workspace: ObservableObject {
         let manifest = """
         {
           "name": "ccb-teams",
-          "displayName": "臨時團隊",
+          "displayName": "Temporary teams",
           "version": "1.0.0",
-          "description": "主 bot 可以拉起的臨時團隊。每個團隊是 claude/agents/ 裡的一個 agent 檔。",
+          "description": "Temporary teams the main bot can start. Each team is one agent file in claude/agents/.",
           "license": "MIT",
           "engines": { "ccb": "^2.0.0" },
           "ccb": {
@@ -748,7 +748,7 @@ public final class Workspace: ObservableObject {
             if let question = managers[project.id]?.openQuestion {
                 return [Waiting(projectID: project.id, text: Self.firstLine(of: question.text), messageID: question.id)]
             }
-            return MemoryFile.items(at: project.notesFolder.appending(path: "memory.md"), section: "等你決定的事")
+            return MemoryFile.items(at: project.notesFolder.appending(path: "memory.md"), section: "Waiting on you")
                 .map { Waiting(projectID: project.id, text: $0) }
         }
     }
@@ -826,7 +826,7 @@ public final class Workspace: ObservableObject {
     private func report(from project: Project, _ message: ChatMessage, answersRelay: Bool) {
         guard message.role == .bot, message.isOpenQuestion || answersRelay else { return }
         mainBot.notice(
-            "\(project.name)：\(message.text)",
+            "\(project.name): \(message.text)",
             choices: message.choices,
             sourceID: project.id,
             sourceMessageID: message.id
@@ -849,7 +849,7 @@ public final class Workspace: ObservableObject {
                 text = changed
             case let .stopped(by: plugin):
                 let title = plugins.plugin(plugin)?.manifest.title ?? plugin
-                bot.notice("插件「\(title)」攔下了這則訊息：\(text)")
+                bot.notice("Plugin \"\(title)\" stopped this message: \(text)")
                 return
             }
         }
@@ -862,7 +862,7 @@ public final class Workspace: ObservableObject {
         do {
             _ = try await pluginHost.command(id)
         } catch {
-            mainBot.notice("指令「\(id)」失敗：\(error.localizedDescription)")
+            mainBot.notice("Command \"\(id)\" failed: \(error.localizedDescription)")
         }
     }
 
@@ -919,7 +919,7 @@ public final class Workspace: ObservableObject {
             let title = plugins.plugin(plugin)?.manifest.title ?? plugin
             switch method {
             case "notify":
-                mainBot.notice("\(title)：\(params["text"]?.string ?? "")")
+                mainBot.notice("\(title): \(params["text"]?.string ?? "")")
                 if selection == nil { mainBot.markRead() }
             case "bots.send":
                 if let id = params["bot"]?.string, let text = params["text"]?.string { bot(pluginID: id)?.send(text) }
@@ -934,14 +934,14 @@ public final class Workspace: ObservableObject {
                 return .array(([mainBot] + everyProject.compactMap { self.managers[$0.id] }).map(info(for:)))
             case "routines.add":
                 guard let id = params["bot"]?.string, let bot = bot(pluginID: id) else {
-                    throw HostMessage.HostError(message: "沒有這個 bot。")
+                    throw HostMessage.HostError(message: "No such bot.")
                 }
                 guard bot.addRoutine(cron: params["cron"]?.string ?? "", task: params["task"]?.string ?? "") else {
-                    throw HostMessage.HostError(message: "排程格式不對（要是 crontab 的 5 欄）。")
+                    throw HostMessage.HostError(message: "Invalid schedule (it must be the 5 crontab fields).")
                 }
                 return .null
             default:
-                throw HostMessage.HostError(message: "不認識的方法「\(method)」。")
+                throw HostMessage.HostError(message: "Unknown method \"\(method)\".")
             }
         }
     }

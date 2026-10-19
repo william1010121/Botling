@@ -319,7 +319,7 @@ async function importOnce(spec: PluginSpec): Promise<Activate> {
   try {
     const module = (await import(/* @vite-ignore */ url)) as { activate?: Activate; default?: { activate?: Activate } };
     const activate = module.activate ?? module.default?.activate;
-    if (typeof activate !== "function") throw new Error("網頁部分沒有匯出 activate(ccb)。");
+    if (typeof activate !== "function") throw new Error("The web part does not export activate(ccb).");
     return activate;
   } finally {
     URL.revokeObjectURL(url);

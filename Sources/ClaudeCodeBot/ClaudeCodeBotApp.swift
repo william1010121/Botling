@@ -13,7 +13,7 @@ struct ClaudeCodeBotApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("指揮台") {
+        WindowGroup("ClaudeCodeBot") {
             // Snapshot and plugin-check runs never open the real ~/.claudecodebot.
             if AppDelegate.isHeadless {
                 Color.clear.frame(width: 1, height: 1)
@@ -73,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A run that only draws a snapshot or checks a plugin, then quits.
     static var isHeadless: Bool {
         let environment = ProcessInfo.processInfo.environment
-        return environment["CCB_SNAPSHOT"] != nil || environment["CCB_COMPONENT_SNAPSHOT"] != nil
+        return environment["CCB_SNAPSHOT"] != nil || environment["CCB_ICON"] != nil
             || CommandLine.arguments.contains("--check-plugin")
     }
 
@@ -131,7 +131,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             builtInPlugins: ChatSurface.builtInPlugins,
             pluginHostScript: ChatSurface.pluginHostScript,
             validateClaudePart: { folder in
-                guard let executable = locator.locate() else { return "找不到 claude。" }
+                guard let executable = locator.locate() else { return "claude not found." }
                 return await ClaudePluginValidator.validate(folder, executable: executable)
             },
             checkCommand: Bundle.main.executablePath.map { "'\($0)' --check-plugin" },
@@ -147,7 +147,7 @@ enum AppError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .claudeNotFound: "找不到 claude 指令，請先安裝 Claude Code。"
+        case .claudeNotFound: "The claude command was not found. Please install Claude Code first."
         }
     }
 }

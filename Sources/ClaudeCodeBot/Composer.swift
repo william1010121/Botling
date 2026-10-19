@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// The chat input. A native text view, so Return while an input method is still composing
-/// (choosing 注音 or 拼音 candidates) commits the text instead of sending it. Return sends;
+/// (choosing Zhuyin or Pinyin candidates) commits the text instead of sending it. Return sends;
 /// Shift-Return adds a line. Grows up to six lines.
 struct ComposerField: NSViewRepresentable {
     @Binding var text: String
@@ -128,7 +128,7 @@ private final class PlaceholderTextView: NSTextView {
               let image = NSImage(pasteboard: pasteboard),
               let tiff = image.tiffRepresentation,
               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return nil }
-        let url = FileManager.default.temporaryDirectory.appending(path: "貼上的圖片-\(UUID().uuidString.prefix(6)).png")
+        let url = FileManager.default.temporaryDirectory.appending(path: "pasted-image-\(UUID().uuidString.prefix(6)).png")
         guard (try? png.write(to: url)) != nil else { return nil }
         return [url]
     }

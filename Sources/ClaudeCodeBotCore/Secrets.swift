@@ -8,7 +8,7 @@ public protocol SecretStore: Sendable {
     func set(plugin: String, key: String, value: String?)
 }
 
-/// The macOS keychain: one generic password per plugin setting, service 「ClaudeCodeBot plugin <name>」.
+/// The macOS keychain: one generic password per plugin setting, service "ClaudeCodeBot plugin <name>".
 public struct KeychainSecretStore: SecretStore {
     public init() {}
 
@@ -36,7 +36,7 @@ public struct KeychainSecretStore: SecretStore {
         guard let value, !value.isEmpty else { return }
         var add = item
         add[kSecValueData as String] = Data(value.utf8)
-        add[kSecAttrLabel as String] = "ClaudeCodeBot 插件 \(plugin)：\(key)"
+        add[kSecAttrLabel as String] = "ClaudeCodeBot plugin \(plugin): \(key)"
         SecItemAdd(add as CFDictionary, nil)
     }
 }

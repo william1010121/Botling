@@ -19,8 +19,8 @@ public enum BotRequest: Equatable, Sendable {
 /// A bot asks for a decision by ending its reply with:
 ///
 ///     <choices>
-///     * 用預設圖補上 | 今天做完
-///     - 先留白 | 之後再說
+///     * Fill in with a placeholder image | Done today
+///     - Leave it blank for now | Decide later
 ///     </choices>
 ///
 /// `*` marks the one it recommends; the part after `|` is what picking it costs.

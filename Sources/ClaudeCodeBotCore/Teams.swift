@@ -5,10 +5,10 @@ import Foundation
 ///
 ///     ---
 ///     name: research
-///     title: 研究小組
+///     title: Research team
 ///     model: sonnet
 ///     tools: Read, Write, WebSearch, WebFetch
-///     description: 查資料、比較選項，交回一頁報告。
+///     description: Looks things up, compares options, hands back a one-page report.
 ///     ---
 ///     (the team's role, as its system prompt)
 public struct TeamSpec: Equatable, Sendable {
@@ -64,19 +64,19 @@ public struct TeamSpec: Equatable, Sendable {
     public static let defaults: [TeamSpec] = [
         TeamSpec(
             name: "research",
-            title: "研究小組",
+            title: "Research team",
             model: .sonnet,
             tools: ["Read", "Write", "Edit", "WebSearch", "WebFetch"],
-            description: "查資料、比較選項，交回一頁報告。",
-            role: "你是臨時拉起的研究小組。查清楚事實、比較選項、給出建議。來源要附連結；查不到的就寫查不到，不要猜。"
+            description: "Looks things up, compares options, hands back a one-page report.",
+            role: "You are a research team started for one job. Get the facts straight, compare the options, give a recommendation. Link your sources; if you cannot find something, say so instead of guessing."
         ),
         TeamSpec(
             name: "prototype",
-            title: "原型小組",
+            title: "Prototype team",
             model: .sonnet,
             tools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash"],
-            description: "在自己的資料夾做一個能跑的小原型或小工具，交回預覽頁。",
-            role: "你是臨時拉起的原型小組。在工作資料夾裡做出能跑的最小版本，先求能用再求好看。做完確認它真的能跑。"
+            description: "Builds a small working prototype or tool in its own folder, hands back a preview page.",
+            role: "You are a prototype team started for one job. Build the smallest version that runs in your working folder: working first, pretty later. When done, make sure it really runs."
         )
     ]
 }
@@ -94,14 +94,14 @@ enum TeamPrompts {
     static func system(_ spec: TeamSpec, folder: URL) -> String {
         """
         \(spec.role)
-        - 一律用繁體中文。工作資料夾是 \(folder.path)，只在這裡讀寫。
-        - 成果做成一頁 HTML：單一檔案、樣式寫在裡面，存到 \(folder.appending(path: "artifacts").path)/<英文檔名>.html。
-        - 不要問問題：遇到不確定就做合理的假設，並把假設寫在成果頁裡。
-        - 最後的回覆最多 3 句：做了什麼、結論，再附上 [成果名稱](file://成果檔的完整路徑)。
+        - Reply in the user's language (match the language of their latest message; the task below is written in it). Your working folder is \(folder.path); read and write only there.
+        - Make the result a one-page HTML file: a single file with its styles inline, saved to \(folder.appending(path: "artifacts").path)/<english-file-name>.html.
+        - Do not ask questions: when unsure, make reasonable assumptions and write them down in the result page.
+        - Your final reply is at most 3 sentences: what you did, the conclusion, then [result name](file://full path of the result file).
         """
     }
 
     static func task(_ task: String) -> String {
-        "（App：主 bot 交給你的任務）\n\(task)"
+        "(App: A task from the main bot)\n\(task)"
     }
 }

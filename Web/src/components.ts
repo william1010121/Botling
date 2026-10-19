@@ -85,7 +85,7 @@ export function fallbackChoices(choices: ChoiceView[], chosen: number | null, an
     const button = document.createElement("button");
     button.className = "choice" + (choice.recommended && !answered ? " recommended" : "") + (chosen === index ? " picked" : "") + (answered && chosen !== index ? " faded" : "");
     button.disabled = answered || !onPick;
-    const side = chosen === index ? "✓" : choice.recommended ? (choice.detail ? `建議 · ${choice.detail}` : "建議") : (choice.detail ?? "");
+    const side = chosen === index ? "✓" : choice.recommended ? (choice.detail ? `Recommended · ${choice.detail}` : "Recommended") : (choice.detail ?? "");
     button.innerHTML = `<span>${escapeHTML(choice.label)}</span><span class="detail">${escapeHTML(side)}</span>`;
     button.addEventListener("click", () => onPick?.(index));
     list.append(button);
@@ -98,11 +98,11 @@ function reportControl(name: string, info: ComponentInfo): HTMLElement {
   const side = document.createElement("div");
   side.className = "component-side";
   if (info.working) {
-    side.innerHTML = `<span class="spinner" role="img" aria-label="組件改版中"></span>`;
+    side.innerHTML = `<span class="spinner" role="img" aria-label="Component being updated"></span>`;
   } else {
     const flag = document.createElement("button");
     flag.className = "flag";
-    flag.setAttribute("aria-label", "回報這個組件");
+    flag.setAttribute("aria-label", "Report this component");
     flag.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4h11l-2 4 2 4H5"/></svg>`;
     flag.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -113,7 +113,7 @@ function reportControl(name: string, info: ComponentInfo): HTMLElement {
   if (info.updated) {
     const label = document.createElement("span");
     label.className = "updated";
-    label.textContent = "已更新";
+    label.textContent = "Updated";
     side.append(label);
   }
   return side;
@@ -123,9 +123,9 @@ function openReport(anchor: HTMLElement, name: string, info: ComponentInfo): voi
   document.querySelector(".report")?.remove();
   const box = document.createElement("div");
   box.className = "report";
-  box.innerHTML = `<div class="report-title">要怎麼改這個組件？</div>
-<textarea rows="3" placeholder="例如：選項改成橫排"></textarea>
-<div class="report-actions">${info.hasPrevious ? `<button class="plain revert">退回上一版</button>` : ""}<span></span><button class="primary send">送出</button></div>`;
+  box.innerHTML = `<div class="report-title">How should this component change?</div>
+<textarea rows="3" placeholder="e.g. put the options in a row"></textarea>
+<div class="report-actions">${info.hasPrevious ? `<button class="plain revert">Revert to previous version</button>` : ""}<span></span><button class="primary send">Send</button></div>`;
   const textarea = box.querySelector("textarea")!;
   const send = box.querySelector<HTMLButtonElement>(".send")!;
   send.disabled = true;

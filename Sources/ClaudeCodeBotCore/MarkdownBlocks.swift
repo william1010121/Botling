@@ -1,7 +1,7 @@
 import Foundation
 
 /// The blocks of a bot's markdown reply. Inline styling (bold, italic, code, links) is left to
-/// `AttributedString(markdown:)`; images and videos (`![說明](網址)`) become media blocks.
+/// `AttributedString(markdown:)`; images and videos (`![caption](url)`) become media blocks.
 public enum MarkdownBlock: Equatable, Sendable {
     case heading(level: Int, text: String)
     case paragraph(String)

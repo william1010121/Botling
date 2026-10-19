@@ -29,7 +29,7 @@ struct PluginHostTests {
     @Test func beforeSendChangesWhatIsSentAndCanStopIt() async throws {
         try hostPlugin("tidy", """
         export function activate(ccb) {
-          ccb.hooks.beforeSend((m) => m.text.includes("密碼") ? false : m.text.replaceAll("\\\\(", "$").replaceAll("\\\\)", "$"));
+          ccb.hooks.beforeSend((m) => m.text.includes("password") ? false : m.text.replaceAll("\\\\(", "$").replaceAll("\\\\)", "$"));
         }
         """)
         let fake = FakeLauncher()
@@ -39,13 +39,13 @@ struct PluginHostTests {
         await eventually({ host.beforeSendHooks == 1 }, timeout: 10)
 
         let bot = workspace.mainBot
-        await workspace.send("算 \\(x^2\\)", to: bot)
-        #expect(bot.messages.first?.text == "算 $x^2$")
-        await eventually({ fake.agents.first?.sent.contains { $0.contains("算 $x^2$") } == true }, timeout: 10)
+        await workspace.send("Compute \\(x^2\\)", to: bot)
+        #expect(bot.messages.first?.text == "Compute $x^2$")
+        await eventually({ fake.agents.first?.sent.contains { $0.contains("Compute $x^2$") } == true }, timeout: 10)
 
-        await workspace.send("我的密碼是 1234", to: bot)
-        #expect(!bot.messages.contains { $0.role == .user && $0.text.contains("1234") && !$0.text.contains("攔下") })
-        #expect(bot.messages.last?.text.contains("攔下") == true)
+        await workspace.send("My password is 1234", to: bot)
+        #expect(!bot.messages.contains { $0.role == .user && $0.text.contains("1234") && !$0.text.contains("stopped") })
+        #expect(bot.messages.last?.text.contains("stopped") == true)
         host.stop()
     }
 
@@ -76,40 +76,40 @@ struct PluginHostTests {
     @Test func afterReplyNotifyRoutinesAndReplyListeners() async throws {
         try hostPlugin("helper", """
         export function activate(ccb) {
-          ccb.hooks.afterReply((m) => m.text + "（已檢查）");
+          ccb.hooks.afterReply((m) => m.text + " (checked)");
           ccb.bots.onReply(async (bot, reply) => {
             const bots = await ccb.bots.list();
-            ccb.notify(`${bot.name} 回了，共 ${bots.length} 個 bot`);
+            ccb.notify(`${bot.name} replied, ${bots.length} bots in all`);
             ccb.storage.set("last", reply);
           });
-          ccb.routines.add("main", "0 9 * * 1", "週一備份：把插件庫推到備份資料夾");
+          ccb.routines.add("main", "0 9 * * 1", "Monday backup: Push the plugin library to the backup folder");
         }
         """)
         let fake = FakeLauncher()
-        fake.respond = { text in isAppOnly(text) ? "OK" : "好" }
+        fake.respond = { text in isAppOnly(text) ? "OK" : "Fine" }
         let workspace = workspace(fake)
         let host = try #require(workspace.pluginHost)
         #expect(await host.waitUntilReady(timeout: .seconds(10)))
         await eventually({ host.afterReplyHooks == 1 }, timeout: 10)
-        await eventually({ workspace.mainBot.routines.contains { $0.task.hasPrefix("週一備份") } }, timeout: 10)
+        await eventually({ workspace.mainBot.routines.contains { $0.task.hasPrefix("Monday backup") } }, timeout: 10)
 
-        await workspace.send("嗨", to: workspace.mainBot)
-        await eventually({ workspace.mainBot.messages.contains { $0.role == .bot && $0.text == "好（已檢查）" } }, timeout: 10)
-        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.text.contains("主 bot 回了，共 2 個 bot") } }, timeout: 10)
+        await workspace.send("Hi", to: workspace.mainBot)
+        await eventually({ workspace.mainBot.messages.contains { $0.role == .bot && $0.text == "Fine (checked)" } }, timeout: 10)
+        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.text.contains("Main bot replied, 2 bots in all") } }, timeout: 10)
         let storage = root.appending(path: "ccb/plugin-data/helper/storage.json")
-        await eventually({ (try? String(contentsOf: storage, encoding: .utf8))?.contains("好（已檢查）") == true }, timeout: 10)
+        await eventually({ (try? String(contentsOf: storage, encoding: .utf8))?.contains("Fine (checked)") == true }, timeout: 10)
         host.stop()
     }
 
     @Test func aPluginThatFailsToLoadIsTurnedOffAndCommandsRun() async throws {
-        try hostPlugin("broken", "export function activate() { throw new Error('壞了'); }")
+        try hostPlugin("broken", "export function activate() { throw new Error('kaput'); }")
         try hostPlugin("calc", """
         export function activate(ccb) { ccb.commands.register("calc.double", (n) => (n ?? 21) * 2); }
         """)
         let workspace = workspace(FakeLauncher())
         let host = try #require(workspace.pluginHost)
-        await eventually({ workspace.plugins.plugin("broken")?.failure?.contains("壞了") == true }, timeout: 10)
-        #expect(workspace.mainBot.messages.contains { $0.text.contains("broken") && $0.text.contains("停用") })
+        await eventually({ workspace.plugins.plugin("broken")?.failure?.contains("kaput") == true }, timeout: 10)
+        #expect(workspace.mainBot.messages.contains { $0.text.contains("broken") && $0.text.contains("disabled") })
         await eventually({ host.commands == ["calc.double"] }, timeout: 10)
         #expect(try await host.command("calc.double", args: [.number(5)]) == .number(10))
         host.stop()

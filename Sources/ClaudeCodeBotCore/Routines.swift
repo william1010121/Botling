@@ -64,19 +64,19 @@ public struct CronSchedule: Equatable, Sendable {
         return (hour, minute)
     }
 
-    /// 「每天 08:15」「週一到週五 09:00」, or the cron fields when it is not that simple.
+    /// "Every day 08:15", "Weekdays 09:00", or the cron fields when it is not that simple.
     public var description: String {
         let fields = text.split(separator: " ").map(String.init)
         guard let time = dailyTime, fields[2] == "*", fields[3] == "*" else { return text }
         let clock = String(format: "%02d:%02d", time.hour, time.minute)
         switch fields[4] {
-        case "*": return "每天 \(clock)"
-        case "1-5": return "週一到週五 \(clock)"
-        case "0,6", "6,0", "6-7": return "週末 \(clock)"
+        case "*": return "Every day \(clock)"
+        case "1-5": return "Weekdays \(clock)"
+        case "0,6", "6,0", "6-7": return "Weekends \(clock)"
         default:
-            let names = ["日", "一", "二", "三", "四", "五", "六"]
-            let days = weekdays.subtracting([7]).sorted().map { "週" + names[$0] }
-            return days.joined(separator: "、") + " \(clock)"
+            let names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+            let days = weekdays.subtracting([7]).sorted().map { names[$0] }
+            return days.joined(separator: ", ") + " \(clock)"
         }
     }
 
@@ -108,7 +108,7 @@ public struct Routine: Identifiable, Equatable, Sendable {
     /// The schedule and task, which is what makes it the same job across edits elsewhere.
     public var id: String { "\(schedule.text) \(task)" }
     public var schedule: CronSchedule
-    /// The task as written: 「名稱：要做的事」, or 「名稱：@檔案」.
+    /// The task as written: "Name: what to do", or "Name: @file".
     public var task: String
     /// A line starting with `#` is paused.
     public var enabled: Bool
@@ -119,7 +119,7 @@ public struct Routine: Identifiable, Equatable, Sendable {
         self.enabled = enabled
     }
 
-    /// The part before 「：」, or the start of the task.
+    /// The part before the colon (":" or the full-width "："), or the start of the task.
     public var title: String {
         if let colon = task.firstIndex(where: { $0 == "：" || $0 == ":" }) {
             let name = task[..<colon].trimmingCharacters(in: .whitespaces)
@@ -128,7 +128,7 @@ public struct Routine: Identifiable, Equatable, Sendable {
         return task.count > 16 ? String(task.prefix(16)) + "…" : task
     }
 
-    /// What to do: the part after 「：」, or the whole task.
+    /// What to do: the part after the colon, or the whole task.
     public var instruction: String {
         guard let colon = task.firstIndex(where: { $0 == "：" || $0 == ":" }),
               task[..<colon].trimmingCharacters(in: .whitespaces).count <= 20 else { return task }
@@ -145,7 +145,7 @@ public struct Routine: Identifiable, Equatable, Sendable {
 
     var line: String { (enabled ? "" : "#") + "\(schedule.text) \(task)" }
 
-    /// Parses `15 8 * * * 每日摘要：…`, with an optional leading `#` for paused. Plain comments
+    /// Parses `15 8 * * * Daily summary: …`, with an optional leading `#` for paused. Plain comments
     /// (whose text is not a cron line) are not jobs.
     static func parse(_ line: String) -> Routine? {
         var text = line.trimmingCharacters(in: .whitespaces)
@@ -173,12 +173,12 @@ public struct RoutineFile: Sendable {
     }
 
     static let header = """
-    # Routines：每行一個 job，crontab 格式。
-    # 分 時 日 月 週  名稱：要做的事（一行 prompt，或 @檔案路徑 照那個檔案做）
-    # 行首加 # 就是暫停，刪掉整行就是移除。
+    # Routines: one job per line, crontab format.
+    # minute hour day month weekday  Name: what to do (a one-line prompt, or @file-path to follow that file)
+    # A leading # pauses a job; deleting the whole line removes it.
     """
 
-    public static let dailySummary = "15 8 * * * 每日摘要：讀各專案的記憶檔，先列等你決定的事，再每個專案一行現在狀態，最多 5 行。不要叫醒主管。"
+    public static let dailySummary = "15 8 * * * Daily summary: Read each project's memory file; list what is waiting on the user first, then one line of current status per project, 5 lines at most. Do not wake the managers."
 
     public var exists: Bool { FileManager.default.fileExists(atPath: url.path) }
 

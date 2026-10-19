@@ -53,10 +53,11 @@ public struct BotStore: Sendable {
         loadSettings().routines?.map { routine in
             let pause = routine.enabled ? "" : "#"
             // The old daily summary had no written task; give it the one the new file uses.
+            // Older builds saved its title in Chinese; the literal below matches that saved data.
             if routine.title == "每日摘要", routine.instruction.isEmpty, routine.hour == 8, routine.minute == 15 {
                 return pause + RoutineFile.dailySummary
             }
-            let task = routine.instruction.isEmpty ? routine.title : "\(routine.title)：\(routine.instruction)"
+            let task = routine.instruction.isEmpty ? routine.title : "\(routine.title): \(routine.instruction)"
             return pause + "\(routine.minute) \(routine.hour) * * * \(task)"
         }
     }

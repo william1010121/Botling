@@ -43,7 +43,7 @@ public struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var choices: [Choice]?
     /// Which of `choices` the user picked.
     public var chosen: Int?
-    /// What the user typed instead of picking one (a component's 「其他」).
+    /// What the user typed instead of picking one (a component's "Other").
     public var answer: String?
     /// For a notice: the project, and the manager's message it points at.
     public var sourceID: UUID?
@@ -176,7 +176,7 @@ public struct BotProfile: Equatable, Sendable {
     }
 
     public static func main(home: URL) -> BotProfile {
-        BotProfile(name: "主 bot", role: .main, avatar: "circle", workingDirectory: home, memoryPath: "memory.md", tools: ["Read", "Write", "Edit"])
+        BotProfile(name: "Main bot", role: .main, avatar: "circle", workingDirectory: home, memoryPath: "memory.md", tools: ["Read", "Write", "Edit"])
     }
 
     /// A manager keeps its notes in `<project>/.bot/` and may use the usual coding tools.

@@ -4,21 +4,21 @@ import Foundation
 enum PluginGuide {
     static func text(builtIns: String) -> String {
         #"""
-        # ClaudeCodeBot 插件
+        # ClaudeCodeBot plugins
 
-        這個資料夾是 ClaudeCodeBot 的插件庫（git repo）。一個插件一個資料夾。ClaudeCodeBot 會監看這裡，檔案一變就重新檢查、熱更新。
-        App 內建插件的原始檔在：\#(builtIns)（唯讀；要改就整個複製過來，同名的會蓋過內建的）。
+        This folder is ClaudeCodeBot's plugin library (a git repo). One folder per plugin. ClaudeCodeBot watches it; whenever a file changes it re-checks and hot-updates.
+        The sources of the plugins built into the app are in: \#(builtIns) (read-only; to change one, copy the whole folder here; a plugin with the same name overrides the built-in one).
 
-        ## 資料夾
+        ## Folder
 
         ```
-        <名稱>/
-        ├── package.json        npm 格式＋ccb 欄位（必要）
-        ├── src/                原始碼（建議：TypeScript，用 esbuild 打包）
-        ├── dist/web.js         網頁部分：在對話畫面裡跑（ES module）
-        ├── dist/host.mjs       程式部分：在插件主機（Node）裡跑（ES module）
-        ├── claude/             Claude 部分：標準 Claude Code 插件（.claude-plugin/plugin.json、skills/、agents/、.mcp.json）
-        ├── components/         組件：<組件名>/template.html＋about.md
+        <name>/
+        ├── package.json        npm format + a ccb field (required)
+        ├── src/                source (recommended: TypeScript, bundled with esbuild)
+        ├── dist/web.js         web part: runs in the chat view (ES module)
+        ├── dist/host.mjs       program part: runs in the plugin host (Node) (ES module)
+        ├── claude/             Claude part: a standard Claude Code plugin (.claude-plugin/plugin.json, skills/, agents/, .mcp.json)
+        ├── components/         components: <component name>/template.html + about.md
         └── test/
         ```
 
@@ -27,9 +27,9 @@ enum PluginGuide {
         ```json
         {
           "name": "ccb-example",
-          "displayName": "範例",
+          "displayName": "Example",
           "version": "1.0.0",
-          "description": "一句話說它做什麼。",
+          "description": "One sentence on what it does.",
           "engines": { "ccb": "^2.0.0" },
           "ccb": {
             "permissions": ["composer", "messages"],
@@ -38,91 +38,91 @@ enum PluginGuide {
             "styles": ["dist/style.css"],
             "claude": "claude",
             "contributes": {
-              "commands": [{ "id": "example.run", "title": "跑一下", "key": "cmd+shift+e" }],
+              "commands": [{ "id": "example.run", "title": "Run it", "key": "cmd+shift+e" }],
               "settings": {
-                "example.on": { "type": "boolean", "default": true, "title": "開" },
-                "example.mode": { "type": "enum", "options": ["a", "b"], "default": "a", "title": "模式" },
+                "example.on": { "type": "boolean", "default": true, "title": "On" },
+                "example.mode": { "type": "enum", "options": ["a", "b"], "default": "a", "title": "Mode" },
                 "example.token": { "type": "string", "title": "API token", "secret": true, "env": "EXAMPLE_TOKEN" }
               },
               "components": "components",
-              "panels": [{ "id": "today", "title": "今天", "icon": "calendar" }]
+              "panels": [{ "id": "today", "title": "Today", "icon": "calendar" }]
             }
           }
         }
         ```
 
-        - name：小寫英文、數字、- . _。version：semver。
-        - 權限：composer、messages、network、files、exec、bots、claude。
-        - 設定型別：boolean、enum（要有 options）、string、number。ClaudeCodeBot 會在設定頁自動生出控制項。
-        - `secret: true` 的設定（密碼、token）存在 macOS 鑰匙圈，網頁部分拿不到；程式部分用 settings.get 拿得到；
-          有 `env` 的會變成 bot 行程的環境變數，MCP 伺服器在 .mcp.json 裡用 `${EXAMPLE_TOKEN}` 讀。
-        - panels：右欄的面板（最多顯示 3 個圖示，其他收進「更多」）。icon 是 SF Symbol 名稱。
-        - 路徑都是插件資料夾裡的相對路徑。
+        - name: lowercase letters, digits, - . _. version: semver.
+        - Permissions: composer, messages, network, files, exec, bots, claude.
+        - Setting types: boolean, enum (needs options), string, number. ClaudeCodeBot generates the controls in Settings.
+        - Settings with `secret: true` (passwords, tokens) are stored in the macOS Keychain; the web part cannot read them, the program part can with settings.get;
+          those with `env` become environment variables of the bot processes, and MCP servers read them in .mcp.json as `${EXAMPLE_TOKEN}`.
+        - panels: panels in the right column (at most 3 icons are shown; the rest go under "More"). icon is an SF Symbol name.
+        - All paths are relative to the plugin folder.
 
-        ## 網頁部分（dist/web.js）
+        ## Web part (dist/web.js)
 
         ```ts
         export function activate(ccb) {
-          // 回傳的函式在停用時呼叫（可以不回傳）
+          // a returned function is called on deactivation (returning one is optional)
         }
         ```
 
-        `ccb` 有：
-        - `ccb.composer`：`element`、`view`（CodeMirror 6 的 EditorView）、`getText()`、`insert(text)`、
-          `addExtension(ext)`（掛 CodeMirror extension）、`showPopover(htmlOrElement)`（游標旁的浮動框）、
-          `onKeyDown(handler)`（回傳 true 表示吃掉這個鍵）。以上都回傳 dispose 函式。
-        - `ccb.codemirror`：`{ state, view, commands }`，用這份，不要自己打包 CodeMirror（版本要一致）。
-        - `ccb.messages.use(markdownItPlugin)`：加 markdown-it 外掛。`ccb.messages.afterRender((element, message) => …)`：訊息畫好後改 DOM。
-        - `ccb.components.register(name, (root, data, answer) => …)`：bot 用 `<show name="name">JSON</show>` 叫出來的組件。
-        - `ccb.panels.register(id, (root) => …)`：畫 contributes.panels 宣告的面板（在右欄另一個頁面裡跑，只載入這個插件）。
-        - `ccb.commands.register(id, run)`、`ccb.commands.execute(id)`；manifest 裡有 key 的指令會綁快捷鍵。
-        - `ccb.settings.get(key)`、`ccb.settings.onChange(key, fn)`。
-        - `ccb.host.call(method, params)`：呼叫自己的程式部分（它用 `ccb.web.handle` 回應）。
-        - `ccb.notify(text)`：在主 bot 對話裡加一行。
+        `ccb` has:
+        - `ccb.composer`: `element`, `view` (CodeMirror 6 EditorView), `getText()`, `insert(text)`,
+          `addExtension(ext)` (adds a CodeMirror extension), `showPopover(htmlOrElement)` (a floating box by the cursor),
+          `onKeyDown(handler)` (return true to swallow the key). All of these return a dispose function.
+        - `ccb.codemirror`: `{ state, view, commands }`; use this one and do not bundle your own CodeMirror (versions must match).
+        - `ccb.messages.use(markdownItPlugin)`: adds a markdown-it plugin. `ccb.messages.afterRender((element, message) => …)`: changes the DOM after a message is drawn.
+        - `ccb.components.register(name, (root, data, answer) => …)`: a component the bot calls up with `<show name="name">JSON</show>`.
+        - `ccb.panels.register(id, (root) => …)`: draws a panel declared in contributes.panels (runs in a separate page in the right column that loads only this plugin).
+        - `ccb.commands.register(id, run)`, `ccb.commands.execute(id)`; commands with a key in the manifest get a keyboard shortcut.
+        - `ccb.settings.get(key)`, `ccb.settings.onChange(key, fn)`.
+        - `ccb.host.call(method, params)`: calls your own program part (which answers with `ccb.web.handle`).
+        - `ccb.notify(text)`: adds a line to the main bot's chat.
 
-        網頁部分要打包成單一 ES module（esbuild --bundle --format=esm）。出錯會被停用；如果之前有能用的版本，ClaudeCodeBot 會繼續用那一版。
+        The web part must be bundled into a single ES module (esbuild --bundle --format=esm). On errors it is disabled; if an earlier version worked, ClaudeCodeBot keeps using that one.
 
-        ## 程式部分（dist/host.mjs，Node）
+        ## Program part (dist/host.mjs, Node)
 
         ```ts
         export function activate(ccb) { … }
         ```
 
-        - `ccb.hooks.beforeSend(m => …)`：送出前，回傳新文字、`{...m, text}`，或 `false` 攔下。
-        - `ccb.hooks.afterReply(m => …)`：bot 回覆顯示前，回傳新文字。
-        - `ccb.bots.list()`（Promise）、`ccb.bots.send(botId, text)`、`ccb.bots.onReply((bot, reply) => …)`。主 bot 的 id 是 "main"。
-        - `ccb.routines.add(botId, "分 時 日 月 週", "名稱：要做的事")`。
-        - `ccb.storage.dir`、`ccb.storage.get(key)`、`ccb.storage.set(key, value)`。
-        - `ccb.commands.register(id, run)`、`ccb.web.handle(method, fn)`、`ccb.settings.get/onChange`、`ccb.notify(text)`。
-        - console.log 會進 stderr，不會干擾 ClaudeCodeBot。一個插件 10 分鐘內出錯 3 次會被停用。
+        - `ccb.hooks.beforeSend(m => …)`: before sending; return new text, `{...m, text}`, or `false` to stop it.
+        - `ccb.hooks.afterReply(m => …)`: before a bot reply is shown; return new text.
+        - `ccb.bots.list()` (Promise), `ccb.bots.send(botId, text)`, `ccb.bots.onReply((bot, reply) => …)`. The main bot's id is "main".
+        - `ccb.routines.add(botId, "minute hour day month weekday", "Name: what to do")`.
+        - `ccb.storage.dir`, `ccb.storage.get(key)`, `ccb.storage.set(key, value)`.
+        - `ccb.commands.register(id, run)`, `ccb.web.handle(method, fn)`, `ccb.settings.get/onChange`, `ccb.notify(text)`.
+        - console.log goes to stderr and does not disturb ClaudeCodeBot. A plugin that fails 3 times within 10 minutes is disabled.
 
-        ## Claude 部分（claude/）
+        ## Claude part (claude/)
 
-        標準 Claude Code 插件。`.claude-plugin/plugin.json` 要有 name、version、description、author。
-        過了 `claude plugin validate --strict` 才會用 `--plugin-dir` 交給每個 bot 和臨時團隊。
-        - skills/<名稱>/SKILL.md：bot 用得到的技能。
-        - agents/<名稱>.md：臨時團隊（frontmatter：name、title、model、tools、description；內文是它的角色說明）。
+        A standard Claude Code plugin. `.claude-plugin/plugin.json` needs name, version, description, author.
+        Only after it passes `claude plugin validate --strict` is it given to every bot and temporary team with `--plugin-dir`.
+        - skills/<name>/SKILL.md: skills the bots can use.
+        - agents/<name>.md: temporary teams (frontmatter: name, title, model, tools, description; the body is its role description).
 
-        ## 組件（components/<名稱>/）
+        ## Components (components/<name>/)
 
-        - template.html：一段 HTML（可以有 style 和 script），畫在深色背景 #1B1B1F 上。資料在 `window.ccb.data`；
-          使用者回答呼叫 `ccb.answer(數字或文字)`。不要載入外部資源。按 Enter 送出前檢查 `event.isComposing`。
-        - about.md：給 bot 看的用法。第一行一句話說這是什麼，接著是資料格式（附範例 JSON）和回答時 bot 會收到什麼。
+        - template.html: a piece of HTML (may include style and script), drawn on the dark background #1B1B1F. The data is in `window.ccb.data`;
+          the user's answer calls `ccb.answer(number or text)`. Do not load outside resources. Check `event.isComposing` before sending on Enter.
+        - about.md: usage notes for the bots. The first line says in one sentence what it is, followed by the data format (with an example JSON) and what the bot receives when the user answers.
 
-        ## 檢查和上線
+        ## Check and release
 
-        1. 改檔，升 version。
-        2. 跑 `ccb plugin check`（Maintainer的說明裡有實際指令）：檢查 package.json、跑 npm build／test、驗 Claude 部分、在看不見的對話畫面裡載入一次網頁部分。
-        3. `git add <插件>`、`git commit -m "<插件>: <做了什麼>"`、`git tag <插件>--v<版本>`。
-        4. ClaudeCodeBot 熱更新；主 bot 對話裡會出現「插件更新了」。
+        1. Edit the files, bump version.
+        2. Run `ccb plugin check` (Maintainer's instructions have the actual command): checks package.json, runs npm build/test, validates the Claude part, and loads the web part once in an invisible chat view.
+        3. `git add <plugin>`, `git commit -m "<plugin>: <what you did>"`, `git tag <plugin>--v<version>`.
+        4. ClaudeCodeBot hot-updates; a "Plugin … updated" line appears in the main bot's chat.
 
-        退回：設定頁的插件列表右鍵「退回上一版」，ClaudeCodeBot 會用 git 把那個插件放回上一個版本。
+        Reverting: right-click the plugin in the plugin list in Settings and choose "Revert to previous version"; ClaudeCodeBot uses git to put that plugin back to its previous version.
 
-        ## 外部插件
+        ## Outside plugins
 
-        從 git 網址、npm 套件、.zip／.tgz 網址安裝：設定頁「加插件」，或 bot 在回覆加 `<install>來源</install>`。
-        ClaudeCodeBot 會先取下來、檢查，再用卡片列出來源、作者、授權、權限和 MCP 伺服器問使用者；按「安裝」才會放進插件庫並 commit。
-        使用者自己選的資料夾直接信任。MCP 工具（`mcp__plugin_<名稱>_<伺服器>`）會自動允許給 bot 用。
+        Install from a git URL, an npm package, or a .zip/.tgz URL: "Add plugin" in Settings, or a bot adds `<install>source</install>` to its reply.
+        ClaudeCodeBot fetches and checks it first, then asks the user with a card listing the source, author, license, permissions and MCP servers; only "Install" puts it into the plugin library and commits it.
+        Folders the user picked themselves are trusted directly. MCP tools (`mcp__plugin_<name>_<server>`) are automatically allowed for the bots.
 
         """#
     }

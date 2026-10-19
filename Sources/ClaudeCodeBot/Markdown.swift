@@ -117,7 +117,7 @@ struct MediaView: View {
                 .frame(maxWidth: 480)
                 .frame(height: 270)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
-                .accessibilityLabel(label.isEmpty ? "影片" : label)
+                .accessibilityLabel(label.isEmpty ? "Video" : label)
         default:
             Button { onOpen?(url, label.isEmpty ? url.lastPathComponent : label) } label: {
                 image
@@ -126,7 +126,7 @@ struct MediaView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(label.isEmpty ? "圖片" : label)
+            .accessibilityLabel(label.isEmpty ? "Image" : label)
         }
     }
 
@@ -152,7 +152,7 @@ struct MediaView: View {
     }
 
     private var missing: some View {
-        Label("找不到圖片：\(url.lastPathComponent)", systemImage: "photo")
+        Label("Image not found: \(url.lastPathComponent)", systemImage: "photo")
             .font(.system(size: 13))
             .foregroundStyle(Theme.muted)
             .padding(12)

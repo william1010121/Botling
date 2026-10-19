@@ -12,38 +12,41 @@ enum Snapshot {
     private static var handler: Handler?
 
     static func runIfRequested() -> Bool {
+        if let icon = ProcessInfo.processInfo.environment["CCB_ICON"] {
+            drawIcon(to: icon)
+        }
         guard let path = ProcessInfo.processInfo.environment["CCB_SNAPSHOT"],
               let page = ChatSurface.pageURL else { return false }
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         let now = Date()
         let picture = URL(filePath: #filePath).deletingLastPathComponent()
-            .appending(path: "../../../prd/flow-4-lifecycle.png").standardizedFileURL
+            .appending(path: "../../docs/flowcharts/flow-4-lifecycle.png").standardizedFileURL
         let answered = UUID()
-        var mine = ChatMessage(role: .user, text: "這張是什麼？順便算 $\\int_0^1 x^2\\,dx$", date: now.addingTimeInterval(-50))
+        var mine = ChatMessage(role: .user, text: "What is this? And work out $\\int_0^1 x^2\\,dx$", date: now.addingTimeInterval(-50))
         mine.attachments = [Attachment(url: picture)]
         mine.replyTo = answered
-        mine.replyPreview = "右側面板 7 成，下午接排程。"
+        mine.replyPreview = "Right panel 70% done, scheduling this afternoon."
         BotStore(directory: root.appending(path: "main")).save(messages: [
-            ChatMessage(id: answered, role: .bot, text: "右側面板 7 成，下午接排程。", date: now.addingTimeInterval(-3600 * 3)),
+            ChatMessage(id: answered, role: .bot, text: "Right panel 70% done, scheduling this afternoon.", date: now.addingTimeInterval(-3600 * 3)),
             mine,
             ChatMessage(role: .bot, text: """
-            ## 算一下
+            ## Working it out
             $$\\int_0^1 x^2\\,dx = \\frac{1}{3}$$
-            softmax 的梯度是 $\\frac{\\partial L}{\\partial z_i} = p_i - y_i$；票價 $5 到 $10 不是公式。
-            - **NotchDo**：右側面板好了
-            - `排程`：做中
+            The softmax gradient is $\\frac{\\partial L}{\\partial z_i} = p_i - y_i$; ticket prices of $5 to $10 are not math.
+            - **NotchDo**: right panel done
+            - `scheduling`: in progress
 
-            | 專案 | 狀態 |
+            | Project | Status |
             |---|---|
-            | blog-site | 等你 |
+            | blog-site | Waiting on you |
 
-            成果：[作品集區塊](file:///tmp/portfolio.html)
+            Result: [Portfolio section](file:///tmp/portfolio.html)
             """, date: now.addingTimeInterval(-40)),
-            ChatMessage(role: .notice, text: "blog-site：40 篇舊文章沒有封面圖，怎麼處理？", date: now.addingTimeInterval(-30), choices: [
-                Choice(label: "用預設圖補上", detail: "今天做完", recommended: true),
-                Choice(label: "先留白", detail: "之後再說")
+            ChatMessage(role: .notice, text: "blog-site: 40 old posts have no cover image. What should we do?", date: now.addingTimeInterval(-30), choices: [
+                Choice(label: "Fill in with a placeholder image", detail: "Done today", recommended: true),
+                Choice(label: "Leave it blank for now", detail: "Decide later")
             ], sourceID: UUID(), sourceMessageID: UUID()),
-            ChatMessage(role: .divider, text: "交接 → Opus", date: now.addingTimeInterval(-20))
+            ChatMessage(role: .divider, text: "Handoff → Opus", date: now.addingTimeInterval(-20))
         ])
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
@@ -65,6 +68,24 @@ enum Snapshot {
         self.window = window
         self.handler = handler
         return true
+    }
+
+    /// `CCB_ICON=/path/icon.png`: the app icon (the main bot's face on a dark tile), 1024 px.
+    private static func drawIcon(to path: String) -> Never {
+        let tile = ZStack {
+            RoundedRectangle(cornerRadius: 186, style: .continuous)
+                .fill(LinearGradient(colors: [Color(hex: 0x24242B), Color(hex: 0x111114)], startPoint: .top, endPoint: .bottom))
+                .frame(width: 824, height: 824)
+            AvatarView(kind: .circle, size: 500, eyes: .open)
+        }
+        .frame(width: 1024, height: 1024)
+        let renderer = ImageRenderer(content: tile)
+        renderer.scale = 1
+        if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+           let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(filePath: path))
+        }
+        exit(0)
     }
 
     private final class Handler: NSObject, WKScriptMessageHandler {

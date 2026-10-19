@@ -127,13 +127,13 @@ export class Host {
         return null;
       case "command": {
         const owner = [...this.plugins.values()].find((plugin) => plugin.commands.has(params.id));
-        if (!owner) throw new Error(`沒有指令「${params.id}」。`);
+        if (!owner) throw new Error(`No command "${params.id}".`);
         return this.runAsync(owner.spec.name, () => owner.commands.get(params.id)!(...(params.args ?? [])));
       }
       case "web": {
         const plugin = this.plugins.get(params.plugin);
         const handler = plugin?.web.get(params.method);
-        if (!plugin || !handler) throw new Error(`插件「${params.plugin}」沒有處理「${params.method}」。`);
+        if (!plugin || !handler) throw new Error(`Plugin "${params.plugin}" does not handle "${params.method}".`);
         return this.runAsync(plugin.spec.name, () => handler(params.params));
       }
       case "shutdown":
@@ -141,7 +141,7 @@ export class Host {
         setTimeout(() => process.exit(0), 10);
         return null;
       default:
-        throw new Error(`不認識的方法「${method}」。`);
+        throw new Error(`Unknown method "${method}".`);
     }
   }
 
@@ -374,7 +374,7 @@ async function importPlugin(spec: HostPluginSpec): Promise<Activate> {
   const url = `${pathToFileURL(spec.main).href}?v=${encodeURIComponent(spec.fingerprint)}`;
   const module = (await import(url)) as { activate?: Activate; default?: { activate?: Activate } };
   const activate = module.activate ?? module.default?.activate;
-  if (typeof activate !== "function") throw new Error("程式部分沒有匯出 activate(ccb)。");
+  if (typeof activate !== "function") throw new Error("The program part does not export activate(ccb).");
   return activate;
 }
 

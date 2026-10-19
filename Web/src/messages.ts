@@ -45,7 +45,7 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
       const relay = document.createElement("div");
       relay.className = "relay";
       relay.innerHTML = `${message.avatar ? `<img class="mini-avatar" src="${message.avatar}" alt="">` : ""}<span>${escapeHTML(message.text)}</span>`;
-      relay.setAttribute("aria-label", `主 bot 交辦：${message.text}`);
+      relay.setAttribute("aria-label", `From the main bot: ${message.text}`);
       row.append(relay);
       break;
     }
@@ -69,7 +69,7 @@ function avatar(src: string | null): HTMLElement {
 function replyButton(message: MessageView): HTMLElement {
   const button = document.createElement("button");
   button.className = "reply-button";
-  button.setAttribute("aria-label", "回覆");
+  button.setAttribute("aria-label", "Reply");
   button.innerHTML = replyIcon;
   button.addEventListener("click", () => post({ type: "reply", messageID: message.id }));
   return button;
@@ -139,7 +139,7 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
   if (message.openable) {
     const open = document.createElement("button");
     open.className = "open-source";
-    open.textContent = "打開 ›";
+    open.textContent = "Open ›";
     open.addEventListener("click", () => post({ type: "openSource", messageID: message.id }));
     bubble.append(open);
   }
@@ -176,7 +176,7 @@ export function typingElement(avatarSrc: string): HTMLElement {
   row.append(avatar(avatarSrc));
   const bubble = document.createElement("div");
   bubble.className = "bubble bot-bubble dots";
-  bubble.setAttribute("aria-label", "工作中");
+  bubble.setAttribute("aria-label", "Working");
   bubble.innerHTML = "<span></span><span></span><span></span>";
   row.append(bubble);
   return row;

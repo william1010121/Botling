@@ -35,7 +35,7 @@ export class Composer {
     row.className = "composer-row";
     const plus = document.createElement("button");
     plus.className = "plus";
-    plus.setAttribute("aria-label", "加入圖片或檔案");
+    plus.setAttribute("aria-label", "Add images or files");
     plus.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`;
     plus.addEventListener("click", () => post({ type: "pickFiles" }));
 
@@ -43,7 +43,7 @@ export class Composer {
     editorHost.className = "editor";
     this.sendButton = document.createElement("button");
     this.sendButton.className = "send";
-    this.sendButton.setAttribute("aria-label", "送出");
+    this.sendButton.setAttribute("aria-label", "Send");
     this.sendButton.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>`;
     this.sendButton.addEventListener("click", () => this.submit());
     row.append(plus, editorHost, this.sendButton);
@@ -66,7 +66,7 @@ export class Composer {
           EditorView.updateListener.of((update) => {
             if (update.docChanged) this.refreshSend();
           }),
-          // Ahead of every keymap: a key pressed while an input method is choosing (注音、拼音)
+          // Ahead of every keymap: a key pressed while an input method is choosing (Zhuyin, Pinyin)
           // belongs to it, so Return commits the candidate instead of sending.
           Prec.highest(EditorView.domEventHandlers({
             keydown: (event, view) => event.isComposing || event.keyCode === 229 || view.composing || this.onKey(event),
@@ -74,7 +74,7 @@ export class Composer {
           EditorView.domEventHandlers({
             paste: (event) => this.takeFiles(event.clipboardData),
           }),
-          EditorView.contentAttributes.of({ "aria-label": "訊息" }),
+          EditorView.contentAttributes.of({ "aria-label": "Message" }),
         ],
       }),
     });
@@ -129,7 +129,7 @@ export class Composer {
 
     if (state.replyingTo) {
       this.replyBar.hidden = false;
-      this.replyBar.innerHTML = `<span class="reply-line"></span><span class="reply-text"><span class="reply-who">${escapeHTML(state.replyingTo.who)}</span><span class="reply-preview">${escapeHTML(state.replyingTo.preview)}</span></span><button class="close" aria-label="取消回覆">×</button>`;
+      this.replyBar.innerHTML = `<span class="reply-line"></span><span class="reply-text"><span class="reply-who">${escapeHTML(state.replyingTo.who)}</span><span class="reply-preview">${escapeHTML(state.replyingTo.preview)}</span></span><button class="close" aria-label="Cancel reply">×</button>`;
       this.replyBar.querySelector(".close")!.addEventListener("click", () => post({ type: "cancelReply" }));
     } else {
       this.replyBar.hidden = true;
@@ -147,7 +147,7 @@ export class Composer {
         : `<span class="pending-name">${escapeHTML(file.name)}</span>`;
       const remove = document.createElement("button");
       remove.className = "remove";
-      remove.setAttribute("aria-label", `移除 ${file.name}`);
+      remove.setAttribute("aria-label", `Remove ${file.name}`);
       remove.textContent = "×";
       remove.addEventListener("click", () => post({ type: "removeFile", id: file.id }));
       item.append(remove);
@@ -184,7 +184,7 @@ export function sendFile(file: File): void {
   reader.onload = () => {
     const result = String(reader.result ?? "");
     const base64 = result.slice(result.indexOf(",") + 1);
-    const name = file.name || `貼上的圖片.${file.type.split("/")[1] ?? "png"}`;
+    const name = file.name || `Pasted image.${file.type.split("/")[1] ?? "png"}`;
     post({ type: "addFileData", name, base64 });
   };
   reader.readAsDataURL(file);

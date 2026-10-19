@@ -21,7 +21,7 @@ struct LiveClaudeTests {
             launcher: ClaudeAgentProcess.launcher(executable: executable)
         )
 
-        bot.send("請記住：我最喜歡的顏色是藍綠色。回一句「好」就好。")
+        bot.send("Please remember: my favorite color is teal. Just reply \"OK\".")
         await eventually({ bot.messages.count == 2 }, timeout: 120)
         print("reply 1:", bot.messages.last?.text ?? "")
         #expect(bot.messages.last?.role == .bot)
@@ -29,13 +29,13 @@ struct LiveClaudeTests {
         await eventually({ bot.phase == .asleep }, timeout: 180)
         let memory = try String(contentsOf: home.appending(path: "memory.md"), encoding: .utf8)
         print("memory.md:\n\(memory)")
-        #expect(memory.contains("藍綠"))
+        #expect(memory.lowercased().contains("teal"))
 
-        bot.send("我最喜歡什麼顏色？")
+        bot.send("What is my favorite color?")
         await eventually({ bot.messages.count == 4 }, timeout: 120)
         let answer = bot.messages.last?.text ?? ""
         print("reply 2:", answer)
-        #expect(answer.contains("藍綠"))
+        #expect(answer.lowercased().contains("teal"))
     }
 
     /// M2 acceptance: the main bot answers from a sleeping manager's memory.md without waking it,
@@ -58,25 +58,25 @@ struct LiveClaudeTests {
         }
         let project = workspace.addProject(folder: folder)
         try """
-        ## 現在狀態
-        澆水排程做到一半，卡在要不要支援多肉植物。
-        ## 進行中
-        - 澆水排程
-        ## 等你決定的事
-        - 要不要支援多肉植物？
-        ## 決定過的事
-        - 2026-10-18 用 SQLite 存資料
+        ## Current status
+        The watering schedule is half done, stuck on whether to support succulents.
+        ## In progress
+        - Watering schedule
+        ## Waiting on you
+        - Should we support succulents?
+        ## Decided
+        - 2026-10-18 Store data in SQLite
         """.write(to: project.notesFolder.appending(path: "memory.md"), atomically: true, encoding: .utf8)
         workspace.select(nil)
 
-        workspace.mainBot.send("garden 現在怎樣？")
+        workspace.mainBot.send("How is garden doing?")
         await eventually({ workspace.mainBot.messages.count == 2 }, timeout: 120)
         let status = workspace.mainBot.messages.last?.text ?? ""
         print("status:", status)
-        #expect(status.contains("澆水") || status.contains("多肉"))
+        #expect(status.lowercased().contains("watering") || status.lowercased().contains("succulent"))
         #expect(!launches.directories.contains { $0.lastPathComponent == "garden" })
 
-        workspace.mainBot.send("請 garden 在 README.md 寫一行「Hello garden」。交給它就好。")
+        workspace.mainBot.send("Have garden write one line, \"Hello garden\", in README.md. Just hand it over.")
         let manager = try #require(workspace.bot(for: project))
         await eventually({ manager.messages.contains { $0.role == .bot } }, timeout: 180)
         print("relay:", manager.messages.first?.text ?? "")
@@ -109,20 +109,20 @@ extension LiveClaudeTests {
         let manager = try #require(workspace.bot(for: project))
         workspace.select(nil)
 
-        manager.relay("在 README.md 寫一行介紹這個專案。標題要用「Garden」還是「植物日記」由使用者決定，先問他，等他選了再寫。")
+        manager.relay("Write one line introducing this project in README.md. Whether the title is \"Garden\" or \"Plant Diary\" is the user's call: ask first, and write it once they pick.")
         await eventually({ workspace.mainBot.messages.contains { $0.role == .notice } }, timeout: 180)
         let notice = try #require(workspace.mainBot.messages.last { $0.role == .notice })
         print("notice:", notice.text, notice.choices?.map(\.label) ?? [])
         #expect(notice.isOpenQuestion)
         #expect(workspace.waiting.count == 1)
 
-        let pick = try #require(notice.choices?.firstIndex { $0.label.contains("植物日記") })
+        let pick = try #require(notice.choices?.firstIndex { $0.label.contains("Plant Diary") })
         #expect(workspace.choose(pick, in: notice.id, of: workspace.mainBot))
         await eventually({ manager.messages.last?.role == .bot && manager.openQuestion == nil && !manager.isWorking }, timeout: 180)
         print("manager:", manager.messages.last?.text ?? "")
         let readme = (try? String(contentsOf: folder.appending(path: "README.md"), encoding: .utf8)) ?? ""
         print("README:", readme)
-        #expect(readme.contains("植物日記"))
+        #expect(readme.contains("Plant Diary"))
         #expect(workspace.waiting.isEmpty)
         await workspace.putEveryoneToSleep()
     }
@@ -148,10 +148,10 @@ extension LiveClaudeTests {
         }
         let project = workspace.addProject(folder: folder)
         try """
-        ## 現在狀態
-        澆水排程做完了，正在寫提醒通知。
-        ## 等你決定的事
-        - 提醒要用 macOS 通知還是寄信？
+        ## Current status
+        The watering schedule is done; now writing reminder notifications.
+        ## Waiting on you
+        - Should reminders be macOS notifications or emails?
         """.write(to: project.notesFolder.appending(path: "memory.md"), atomically: true, encoding: .utf8)
         workspace.select(nil)
 
@@ -161,8 +161,8 @@ extension LiveClaudeTests {
         await eventually({ workspace.mainBot.messages.last?.role == .bot }, timeout: 120)
         let summary = workspace.mainBot.messages.last?.text ?? ""
         print("summary:", summary)
-        #expect(workspace.mainBot.messages.first?.text == "每日摘要 · 08:15")
-        #expect(summary.contains("通知") || summary.contains("寄信"))
+        #expect(workspace.mainBot.messages.first?.text == "Daily summary · 08:15")
+        #expect(summary.lowercased().contains("notification") || summary.lowercased().contains("email"))
         #expect(!launches.directories.contains { $0.lastPathComponent == "garden" })
         await workspace.putEveryoneToSleep()
     }
@@ -181,7 +181,7 @@ extension LiveClaudeTests {
             Bot(profile: profile, defaultModel: .haiku, launcher: real, store: store)
         }
 
-        workspace.mainBot.send("幫我做一頁簡短比較：番茄鐘和 52/17 工作法各適合什麼人。這不屬於任何專案，不用上網，用你已知的寫就好。")
+        workspace.mainBot.send("Make me a short one-page comparison: who the Pomodoro technique and the 52/17 method each suit. This belongs to no project; no need to go online, just write what you already know.")
         await eventually({ !workspace.runningTeams.isEmpty || workspace.mainBot.messages.contains { $0.role == .notice } }, timeout: 120)
         print("main:", workspace.mainBot.messages.first { $0.role == .bot }?.text ?? "")
         await eventually({ workspace.mainBot.messages.contains { $0.role == .notice } }, timeout: 600)
@@ -192,7 +192,7 @@ extension LiveClaudeTests {
         #expect(result.url.isFileURL)
         #expect(FileManager.default.fileExists(atPath: result.url.path))
         let page = (try? String(contentsOf: result.url, encoding: .utf8)) ?? ""
-        #expect(page.contains("番茄"))
+        #expect(page.contains("Pomodoro"))
         #expect(result.url.path.contains("/runs/"))
         await workspace.putEveryoneToSleep()
     }
@@ -211,7 +211,7 @@ extension LiveClaudeTests {
         let library = workspace.components
         let version = library.versions["choices", default: 0]
 
-        workspace.requestComponentChange("choices", request: "每個選項按鈕的最小高度改成 56px。", from: "使用者")
+        workspace.requestComponentChange("choices", request: "Make the minimum height of each option button 56px.", from: "The user")
         await eventually({ library.working.isEmpty }, timeout: 300)
         let template = library.template("choices") ?? ""
         print("notice:", workspace.mainBot.messages.last?.text ?? "")
@@ -233,21 +233,21 @@ extension LiveClaudeTests {
         let workspace = Workspace(root: root.appending(path: "ccb"), launcher: real) { profile, store in
             Bot(profile: profile, defaultModel: .haiku, launcher: real, store: store)
         }
-        #expect(workspace.mainBot.routines.map(\.title) == ["每日摘要"])
+        #expect(workspace.mainBot.routines.map(\.title) == ["Daily summary"])
 
-        workspace.mainBot.send("幫我把每日摘要的那一個移除。另外加一個每週五 18:00 的「週五回顧」：整理這週各專案做完的事。")
+        workspace.mainBot.send("Remove the daily summary one. Also add a \"Friday review\" every Friday at 18:00: sum up what each project got done this week.")
         await eventually({ workspace.mainBot.messages.last?.role == .bot }, timeout: 120)
         print("reply:", workspace.mainBot.messages.last?.text ?? "")
         print("file:\n" + ((try? String(contentsOf: root.appending(path: "ccb/main/routines.cron"), encoding: .utf8)) ?? ""))
-        #expect(!workspace.mainBot.routines.contains { $0.title == "每日摘要" && $0.enabled })
-        let review = try #require(workspace.mainBot.routines.first { $0.title.contains("週五回顧") })
+        #expect(!workspace.mainBot.routines.contains { $0.title == "Daily summary" && $0.enabled })
+        let review = try #require(workspace.mainBot.routines.first { $0.title.contains("Friday review") })
         #expect(review.schedule.matches(Calendar.current.date(from: DateComponents(year: 2026, month: 10, day: 23, hour: 18, minute: 0))!))
         await workspace.putEveryoneToSleep()
     }
 }
 
 extension LiveClaudeTests {
-    /// The user's own report: 「至少都需要有一個其他吧？」 Maintainer alone adds an 「其他」 answer
+    /// The user's own report: "Shouldn't there at least be an Other?" Maintainer alone adds an "Other" answer
     /// through ccb.answer, updates the usage every bot reads, and commits it (P5 acceptance).
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
     func componentTeamAddsOtherOnItsOwn() async throws {
@@ -268,7 +268,7 @@ extension LiveClaudeTests {
         let library = workspace.components
 
         let version = library.versions["choices", default: 0]
-        workspace.requestComponentChange("choices", request: "至少都需要有一個其他吧？", from: "使用者")
+        workspace.requestComponentChange("choices", request: "Shouldn't there at least be an Other option?", from: "The user")
         await eventually({ library.working.isEmpty }, timeout: 600)
         print("maintainer:", workspace.maintainer.messages.map { "\($0.role): \($0.text)" }.joined(separator: "\n"))
         #expect(library.versions["choices", default: 0] > version)
@@ -277,11 +277,11 @@ extension LiveClaudeTests {
         let about = (try? String(contentsOf: library.aboutURL("choices"), encoding: .utf8)) ?? ""
         print("notice:", workspace.mainBot.messages.last?.text ?? "")
         print("about:\n" + about)
-        #expect(template.contains("其他"))
+        #expect(template.contains("Other"))
         #expect(template.contains("ccb.answer("))
         #expect(template.contains("input") || template.contains("textarea"))
-        #expect(about.contains("其他"))
-        #expect(workspace.componentBriefing().contains("其他"))
+        #expect(about.contains("Other"))
+        #expect(workspace.componentBriefing().contains("Other"))
         let log = workspace.plugins.git.commits("ccb-components")
         print("commits:", log.count, workspace.plugins.git.run(["log", "--oneline", "-3"]).output)
         #expect(log.count >= 2)
@@ -300,14 +300,14 @@ extension LiveClaudeTests {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let picture = URL(filePath: #filePath).deletingLastPathComponent()
-            .appending(path: "../../../prd/flow-4-lifecycle.png").standardizedFileURL
+            .appending(path: "../../docs/flowcharts/flow-4-lifecycle.png").standardizedFileURL
         let bot = Bot(profile: .main(home: root), defaultModel: .haiku, launcher: ClaudeAgentProcess.launcher(executable: executable))
 
-        bot.send("這張圖左上角第一個方塊寫什麼？只回那個方塊的第一行。", files: [picture], replyingTo: nil)
+        bot.send("What does the first box in the top-left corner of this picture say? Reply with only the first line of that box.", files: [picture], replyingTo: nil)
         await eventually({ bot.messages.last?.role == .bot }, timeout: 120)
         let answer = bot.messages.last?.text ?? ""
         print("answer:", answer)
-        #expect(answer.contains("睡著"))
+        #expect(answer.contains("Asleep"))
         #expect(FileManager.default.fileExists(atPath: root.appending(path: "attachments").path))
         await bot.goToSleep()
     }

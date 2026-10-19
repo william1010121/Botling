@@ -111,7 +111,7 @@ public struct ChatPayload: Encodable, Equatable {
             )
         }
         let reply = replyingTo.flatMap { id in bot.messages.first { $0.id == id } }.map {
-            Reply(id: $0.id.uuidString, who: $0.role == .user ? "回覆你自己" : "回覆 \(bot.name)", preview: Bot.preview(of: $0))
+            Reply(id: $0.id.uuidString, who: $0.role == .user ? "Reply to yourself" : "Reply to \(bot.name)", preview: Bot.preview(of: $0))
         }
         var components: [String: Component] = [:]
         for name in library?.names ?? [] {
@@ -130,7 +130,7 @@ public struct ChatPayload: Encodable, Equatable {
             messages: messages,
             working: bot.isWorking,
             avatar: own,
-            placeholder: bot.profile.role == .main ? "許個願，或問進度…" : "對 \(bot.name) 說…",
+            placeholder: bot.profile.role == .main ? "Make a wish, or ask how things are going…" : "Message \(bot.name)…",
             replyingTo: reply,
             pendingFiles: pending.map { pending in
                 var entry = file(Attachment(url: pending.url))
@@ -152,15 +152,15 @@ public struct ChatPayload: Encodable, Equatable {
         File(id: nil, name: attachment.name, kind: attachment.kind.rawValue, url: attachment.url.absoluteString)
     }
 
-    /// 「今天 08:15」 above a message that comes 30+ minutes after the one before it.
+    /// "Today 08:15" above a message that comes 30+ minutes after the one before it.
     static func stamp(for messages: [ChatMessage], at index: Int, now: Date) -> String? {
         let date = messages[index].date
         if index > 0, date.timeIntervalSince(messages[index - 1].date) < 30 * 60 { return nil }
         let calendar = Calendar.current
         let time = date.formatted(date: .omitted, time: .shortened)
-        if calendar.isDate(date, inSameDayAs: now) { return "今天 \(time)" }
+        if calendar.isDate(date, inSameDayAs: now) { return "Today \(time)" }
         if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
-            return "昨天 \(time)"
+            return "Yesterday \(time)"
         }
         return date.formatted(.dateTime.month().day().hour().minute())
     }
