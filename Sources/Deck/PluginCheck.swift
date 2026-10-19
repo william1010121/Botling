@@ -34,9 +34,14 @@ enum PluginCheck {
         }
         if let claude = manifest.deck?.claude {
             guard let executable = ClaudeExecutableLocator().locate() else { fail(["找不到 claude，不能檢查 Claude 部分。"]) }
-            guard run(executable.path, ["plugin", "validate", "--strict", folder.appending(path: claude).path], in: folder) else {
-                fail(["Claude 部分沒通過 claude plugin validate --strict。"])
+            let semaphore = DispatchSemaphore(value: 0)
+            nonisolated(unsafe) var problem: String?
+            Task.detached {
+                problem = await ClaudePluginValidator.validate(folder.appending(path: claude), executable: executable)
+                semaphore.signal()
             }
+            semaphore.wait()
+            if let problem { fail(["Claude 部分沒通過 claude plugin validate --strict：\(problem)"]) }
             print("✓ Claude 部分")
         }
         if manifest.deck?.web == nil {

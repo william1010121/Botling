@@ -34,6 +34,8 @@ public final class Bot: ObservableObject, Identifiable {
     public var wakeNote: (() -> String)?
     /// Folders outside its own it may read and edit, read at each wake.
     public var extraDirectories: (() -> [URL])?
+    /// Plugins' Claude parts (skills, agents, MCP) it starts with.
+    public var pluginDirectories: (() -> [URL])?
     /// Called after each reply the user sees, with whether it answers work the main bot handed
     /// over (rather than something the user said in this chat).
     public var onReply: ((ChatMessage, _ answersRelay: Bool) -> Void)?
@@ -62,6 +64,8 @@ public final class Bot: ObservableObject, Identifiable {
         var images: [Attachment] = []
     }
     private var pendingModel: BotModel?
+    /// Plugins' Claude parts changed while it was busy: restart when it is free.
+    private var pendingPluginReload = false
 
     public init(
         profile: BotProfile,
@@ -281,7 +285,8 @@ public final class Bot: ObservableObject, Identifiable {
             workingDirectory: profile.workingDirectory,
             systemPrompt: prompts.system,
             tools: profile.tools,
-            extraDirectories: extraDirectories?() ?? []
+            extraDirectories: extraDirectories?() ?? [],
+            pluginDirectories: pluginDirectories?() ?? []
         ))
         self.process = process
         Task { [weak self] in
@@ -351,6 +356,10 @@ public final class Bot: ObservableObject, Identifiable {
         if let next = pendingModel {
             pendingModel = nil
             Task { await switchModel(to: next) }
+            return
+        }
+        if pendingPluginReload {
+            Task { await reloadPlugins() }
             return
         }
         scheduleIdle()
@@ -473,6 +482,26 @@ public final class Bot: ObservableObject, Identifiable {
             return
         }
 
+        await handOver(to: newModel, divider: "交接 → \(newModel.displayName)")
+    }
+
+    /// Plugins' Claude parts changed. Asleep: the next wake loads them. Awake: hand over and
+    /// restart once it is free, so the new skills and agents are there.
+    public func reloadPlugins() async {
+        guard phase != .asleep else {
+            pendingPluginReload = false
+            return
+        }
+        if isWorking || phase == .tidying || isSwitching || phase != .awake {
+            pendingPluginReload = true
+            return
+        }
+        pendingPluginReload = false
+        await handOver(to: model, divider: "交接 → 載入新插件")
+    }
+
+    /// Writes a handoff, stops, and starts again on `newModel` reading it.
+    private func handOver(to newModel: BotModel, divider: String) async {
         cancelIdle()
         switchTarget = newModel
         phase = .switching(.writing)
@@ -482,7 +511,7 @@ public final class Bot: ObservableObject, Identifiable {
         phase = .switching(.starting)
         model = newModel
         store?.save(model: newModel)
-        append(ChatMessage(role: .divider, text: "交接 → \(newModel.displayName)"))
+        append(ChatMessage(role: .divider, text: divider))
         do {
             _ = try start()
             let reply = await ask(prompts.resume)
@@ -493,7 +522,7 @@ public final class Bot: ObservableObject, Identifiable {
             if phase == .awake { scheduleIdle() }
         } catch {
             phase = .asleep
-            append(ChatMessage(role: .error, text: "換不了模型：\(error.localizedDescription)"))
+            append(ChatMessage(role: .error, text: "交接後重開失敗：\(error.localizedDescription)"))
         }
         switchTarget = nil
         await flushQueue()
@@ -527,6 +556,9 @@ public final class Bot: ObservableObject, Identifiable {
         if let next = pendingModel {
             pendingModel = nil
             await switchModel(to: next)
+        }
+        if pendingPluginReload, phase == .awake {
+            await reloadPlugins()
         }
         guard !queued.isEmpty else { return }
         let waiting = queued

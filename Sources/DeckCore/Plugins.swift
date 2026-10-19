@@ -145,9 +145,10 @@ public final class PluginRegistry: ObservableObject {
         var fingerprint: String
     }
 
-    public init(library: URL, builtIns: URL?) {
+    public init(library: URL, builtIns: URL?, validateClaudePart: ((URL) async -> String?)? = nil) {
         self.library = library
         self.builtIns = builtIns
+        self.validateClaudePart = validateClaudePart
         try? FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
         state = (try? JSONDecoder().decode(State.self, from: Data(contentsOf: library.deletingLastPathComponent().appending(path: "plugins.json")))) ?? State()
         rescan()
@@ -306,17 +307,84 @@ public final class PluginRegistry: ObservableObject {
         if sorted != plugins { plugins = sorted }
         if problems != self.problems { self.problems = problems }
         if changed { revision += 1 }
+        checkClaudeParts()
     }
 
     /// What decides whether a plugin reloads: its manifest and the files it names.
     static func fingerprint(_ folder: URL, _ manifest: PluginManifest) -> String {
-        let files = ["package.json", manifest.deck?.web, manifest.deck?.host].compactMap { $0 } + (manifest.deck?.styles ?? [])
+        var files = ["package.json", manifest.deck?.web, manifest.deck?.host].compactMap { $0 } + (manifest.deck?.styles ?? [])
+        files += claudeFiles(folder, manifest)
         return files.map { file -> String in
             let attributes = try? FileManager.default.attributesOfItem(atPath: folder.appending(path: file).path)
             let date = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
             let size = (attributes?[.size] as? Int) ?? -1
             return "\(file):\(date):\(size)"
         }.joined(separator: "|")
+    }
+
+    /// Every file in a plugin's Claude part, relative to the plugin folder.
+    static func claudeFiles(_ folder: URL, _ manifest: PluginManifest) -> [String] {
+        guard let claude = manifest.deck?.claude,
+              let walker = FileManager.default.enumerator(at: folder.appending(path: claude), includingPropertiesForKeys: [.isRegularFileKey]) else { return [] }
+        let base = folder.standardizedFileURL.path + "/"
+        return walker.compactMap { item -> String? in
+            guard let url = item as? URL, (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { return nil }
+            return url.standardizedFileURL.path.replacingOccurrences(of: base, with: "")
+        }.sorted()
+    }
+
+    // MARK: Claude parts
+
+    /// Runs `claude plugin validate --strict` on a Claude part: nil when it passes, else why not.
+    /// Unset (tests), every Claude part counts as valid.
+    public var validateClaudePart: ((URL) async -> String?)?
+    /// Results by plugin, for the files they were run on.
+    private var claudeChecks: [String: (fingerprint: String, problem: String?)] = [:]
+    private var claudeChecking: Set<String> = []
+
+    /// Claude parts of enabled plugins that passed the check, for `--plugin-dir`.
+    public func claudeDirectories() -> [URL] {
+        plugins.compactMap { plugin in
+            guard plugin.enabled, let claude = plugin.manifest.deck?.claude,
+                  let check = claudeChecks[plugin.name], check.fingerprint == fingerprints[plugin.name], check.problem == nil else { return nil }
+            return plugin.url(claude)
+        }
+    }
+
+    /// Agent files (`claude/agents/*.md`) of enabled plugins: the temporary teams.
+    public func agentFiles() -> [(plugin: String, url: URL)] {
+        plugins.flatMap { plugin -> [(plugin: String, url: URL)] in
+            guard plugin.enabled, let claude = plugin.manifest.deck?.claude else { return [] }
+            let folder = plugin.url(claude).appending(path: "agents")
+            let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+            return files.filter { $0.pathExtension == "md" }.sorted { $0.lastPathComponent < $1.lastPathComponent }.map { (plugin.name, $0) }
+        }
+    }
+
+    /// Checks Claude parts that are new or changed since their last check.
+    private func checkClaudeParts() {
+        for plugin in plugins where plugin.enabled {
+            guard let claude = plugin.manifest.deck?.claude, let print = fingerprints[plugin.name],
+                  claudeChecks[plugin.name]?.fingerprint != print, !claudeChecking.contains(plugin.name) else { continue }
+            guard let validate = validateClaudePart else {
+                claudeChecks[plugin.name] = (print, nil)
+                continue
+            }
+            claudeChecking.insert(plugin.name)
+            let name = plugin.name
+            let title = plugin.manifest.title
+            let folder = plugin.url(claude)
+            Task { [weak self] in
+                let problem = await validate(folder)
+                guard let self else { return }
+                claudeChecking.remove(name)
+                claudeChecks[name] = (print, problem)
+                if let problem { onNotice?("插件「\(title)」的 Claude 部分沒通過檢查，先不載入：\(problem)") }
+                revision += 1
+                // The files may have changed again while it was checked.
+                checkClaudeParts()
+            }
+        }
     }
 
     // MARK: Checking
@@ -371,6 +439,9 @@ public final class PluginRegistry: ObservableObject {
             } else if !FileManager.default.fileExists(atPath: folder.appending(path: path).path) {
                 problems.append("\(label) 指到的「\(path)」不存在。")
             }
+        }
+        if let claude = deck.claude, !FileManager.default.fileExists(atPath: folder.appending(path: "\(claude)/.claude-plugin/plugin.json").path) {
+            problems.append("Claude 部分「\(claude)」裡要有 .claude-plugin/plugin.json。")
         }
         for style in deck.styles ?? [] where !FileManager.default.fileExists(atPath: folder.appending(path: style).path) {
             problems.append("styles 裡的「\(style)」不存在。")

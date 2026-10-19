@@ -35,6 +35,8 @@ public struct AgentLaunch: Equatable, Sendable {
     public var tools: [String] = ["Read", "Write", "Edit"]
     /// Folders outside `workingDirectory` it may read and edit (`--add-dir`).
     public var extraDirectories: [URL] = []
+    /// Claude Code plugins it loads: skills, agents, MCP servers (`--plugin-dir`).
+    public var pluginDirectories: [URL] = []
 }
 
 public typealias AgentLauncher = @Sendable (AgentLaunch) throws -> AgentProcess
@@ -66,11 +68,15 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
             "--session-id", launch.sessionID.uuidString.lowercased(),
             "--model", launch.model.rawValue,
             "--permission-mode", "acceptEdits",
-            "--allowedTools", launch.tools.joined(separator: ","),
+            // Plugins' skills are used through the Skill tool.
+            "--allowedTools", (launch.tools + (launch.pluginDirectories.isEmpty || launch.tools.contains("Skill") ? [] : ["Skill"])).joined(separator: ","),
             "--append-system-prompt", launch.systemPrompt
         ]
         for directory in launch.extraDirectories {
             arguments += ["--add-dir", directory.path]
+        }
+        for directory in launch.pluginDirectories {
+            arguments += ["--plugin-dir", directory.path]
         }
         return arguments
     }

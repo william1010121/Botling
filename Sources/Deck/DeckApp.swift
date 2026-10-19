@@ -113,6 +113,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             root: root,
             builtInPlugins: ChatSurface.builtInPlugins,
             pluginHostScript: ChatSurface.pluginHostScript,
+            validateClaudePart: { folder in
+                guard let executable = locator.locate() else { return "找不到 claude。" }
+                return await ClaudePluginValidator.validate(folder, executable: executable)
+            },
             launcher: launcher
         ) { profile, store in
             Bot(profile: profile, idleInterval: idle, launcher: launcher, store: store)

@@ -2,6 +2,14 @@
 
 PRD: `../prd/PRD.md` · Design: https://claude.ai/artifact/2kmnVNyueZX2yMxH4gNqyX
 
+P4 (v2): Claude parts. A plugin's `deck.claude` folder is a standard Claude Code plugin
+(skills, agents, MCP). Once it passes `claude plugin validate --strict` (re-run whenever its
+files change), every bot and temporary team starts with `--plugin-dir` for it. Temporary teams
+are now the agents in plugins' `claude/agents/*.md`; the defaults live in the `deck-teams`
+plugin (`~/.deck/teams` moves there; the old folder is kept as `teams.v1-backup`). When Claude
+parts change, awake bots hand over and restart once free (「交接 → 載入新插件」); sleeping bots
+get them on their next wake.
+
 P3 (v2): the plugin host. Plugins with a program part (`deck.host`, an ES module exporting
 `activate(deck)`) run in one Node process (`Web/host/` → `Resources/host/host.mjs`), started
 only when such a plugin is on. Deck and the host speak JSON-RPC, one message per line on

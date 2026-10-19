@@ -70,6 +70,7 @@ public final class Workspace: ObservableObject {
         builtInPlugins: URL? = nil,
         pluginHostScript: URL? = nil,
         locateNode: @escaping () -> URL? = { ClaudeExecutableLocator(command: "node").locate() },
+        validateClaudePart: ((URL) async -> String?)? = nil,
         launcher: @escaping AgentLauncher = { _ in throw CocoaError(.featureUnsupported) },
         makeBot: @escaping BotFactory
     ) {
@@ -78,7 +79,8 @@ public final class Workspace: ObservableObject {
         self.launcher = launcher
         let library = root.appending(path: "plugins")
         let componentFolder = Self.prepareComponentPlugin(in: library, movingFrom: root.appending(path: "components"))
-        plugins = PluginRegistry(library: library, builtIns: builtInPlugins)
+        Self.prepareTeamsPlugin(in: library, movingFrom: root.appending(path: "teams"))
+        plugins = PluginRegistry(library: library, builtIns: builtInPlugins, validateClaudePart: validateClaudePart)
         pluginHost = pluginHostScript.map { PluginHostClient(script: $0, locateNode: locateNode) }
         components = ComponentLibrary(folder: componentFolder, launcher: launcher)
         let mainHome = root.appending(path: "main")
@@ -86,6 +88,7 @@ public final class Workspace: ObservableObject {
         mainBot = makeBot(.main(home: mainHome), BotStore(directory: mainHome))
         mainBot.wakeNote = { [weak self] in self?.projectBriefing() ?? "" }
         mainBot.extraDirectories = { [weak self] in self?.projects.map(\.notesFolder) ?? [] }
+        mainBot.pluginDirectories = { [weak self] in self?.plugins.claudeDirectories() ?? [] }
         mainBot.onReply = { [weak self] _, _ in
             guard let self else { return }
             deliverInboxes()
@@ -113,6 +116,7 @@ public final class Workspace: ObservableObject {
         }
         connectPlugins(to: mainBot)
         startPluginHost()
+        followClaudeParts()
         for project in loadProjects() {
             attach(project)
         }
@@ -306,7 +310,8 @@ public final class Workspace: ObservableObject {
                 sessionID: run.id,
                 workingDirectory: folder,
                 systemPrompt: TeamPrompts.system(spec, folder: folder),
-                tools: spec.tools
+                tools: spec.tools,
+                pluginDirectories: plugins.claudeDirectories()
             ))
         } catch {
             mainBot.notice("\(spec.title)拉不起來：\(error.localizedDescription)")
@@ -342,23 +347,86 @@ public final class Workspace: ObservableObject {
         return run
     }
 
-    private var teamsFolder: URL { root.appending(path: "teams") }
-
-    /// Team files in `~/.deck/teams/`; the defaults are written there the first time.
+    /// Teams are the agents in plugins' Claude parts (`claude/agents/*.md`); the built-in ones are
+    /// the `deck-teams` plugin. The first agent of a name wins.
     private func loadTeams() -> [TeamSpec] {
-        let manager = FileManager.default
-        if !manager.fileExists(atPath: teamsFolder.path) {
-            try? manager.createDirectory(at: teamsFolder, withIntermediateDirectories: true)
-            for spec in TeamSpec.defaults {
-                try? Data(spec.fileText.utf8).write(to: teamsFolder.appending(path: "\(spec.name).md"))
-            }
+        var seen = Set<String>()
+        let specs = plugins.agentFiles().compactMap { file -> TeamSpec? in
+            guard let spec = (try? String(contentsOf: file.url, encoding: .utf8)).flatMap(TeamSpec.parse),
+                  seen.insert(spec.name).inserted else { return nil }
+            return spec
         }
-        let files = (try? manager.contentsOfDirectory(at: teamsFolder, includingPropertiesForKeys: nil)) ?? []
-        let specs = files
-            .filter { $0.pathExtension == "md" }
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-            .compactMap { (try? String(contentsOf: $0, encoding: .utf8)).flatMap(TeamSpec.parse) }
         return specs.isEmpty ? TeamSpec.defaults : specs
+    }
+
+    /// The `deck-teams` plugin holds the temporary teams as Claude Code agents. Team files from
+    /// before plugins (`~/.deck/teams`) move into it once; the old folder is kept as
+    /// `teams.v1-backup`.
+    static func prepareTeamsPlugin(in library: URL, movingFrom old: URL) {
+        let files = FileManager.default
+        let plugin = library.appending(path: "deck-teams")
+        let agents = plugin.appending(path: "claude/agents")
+        guard !files.fileExists(atPath: plugin.path) else { return }
+        try? files.createDirectory(at: agents, withIntermediateDirectories: true)
+        try? files.createDirectory(at: plugin.appending(path: "claude/.claude-plugin"), withIntermediateDirectories: true)
+        let oldFiles = ((try? files.contentsOfDirectory(at: old, includingPropertiesForKeys: nil)) ?? []).filter { $0.pathExtension == "md" }
+        if oldFiles.isEmpty {
+            for spec in TeamSpec.defaults {
+                try? Data(spec.fileText.utf8).write(to: agents.appending(path: "\(spec.name).md"))
+            }
+        } else {
+            for file in oldFiles { try? files.copyItem(at: file, to: agents.appending(path: file.lastPathComponent)) }
+        }
+        if files.fileExists(atPath: old.path) {
+            try? files.moveItem(at: old, to: old.deletingLastPathComponent().appending(path: "teams.v1-backup"))
+        }
+        let claudeManifest = """
+        {
+          "name": "deck-teams",
+          "version": "1.0.0",
+          "description": "Deck 的臨時團隊：研究小組、原型小組。",
+          "author": { "name": "Deck" }
+        }
+
+        """
+        try? Data(claudeManifest.utf8).write(to: plugin.appending(path: "claude/.claude-plugin/plugin.json"))
+        let manifest = """
+        {
+          "name": "deck-teams",
+          "displayName": "臨時團隊",
+          "version": "1.0.0",
+          "description": "主 bot 可以拉起的臨時團隊。每個團隊是 claude/agents/ 裡的一個 agent 檔。",
+          "license": "MIT",
+          "engines": { "deck": "^2.0.0" },
+          "deck": {
+            "permissions": ["claude"],
+            "claude": "claude"
+          }
+        }
+
+        """
+        try? Data(manifest.utf8).write(to: plugin.appending(path: "package.json"))
+    }
+
+    /// Plugins' Claude parts changed: refresh the team list, and restart awake bots (once they
+    /// are free) so they get the new skills, agents and MCP servers.
+    private func followClaudeParts() {
+        var loaded = plugins.claudeDirectories()
+        plugins.$revision
+            .dropFirst()
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    teams = loadTeams()
+                    let now = plugins.claudeDirectories()
+                    guard now != loaded else { return }
+                    loaded = now
+                    for bot in [mainBot] + Array(managers.values) where bot.phase != .asleep {
+                        await bot.reloadPlugins()
+                    }
+                }
+            }
+            .store(in: &subscriptions)
     }
 
     /// Hands whatever the main bot wrote into a project's inbox.md to that manager.
@@ -563,6 +631,7 @@ public final class Workspace: ObservableObject {
         let bot = makeBot(.manager(name: project.name, avatar: project.avatar, folder: project.folder), store)
         bot.onRequests = { [weak self] requests in self?.handle(requests, from: project) }
         bot.wakeNote = { [weak self] in self?.componentBriefing() ?? "" }
+        bot.pluginDirectories = { [weak self] in self?.plugins.claudeDirectories() ?? [] }
         bot.onReply = { [weak self, weak bot] message, answersRelay in
             guard let self else { return }
             report(from: project, message, answersRelay: answersRelay)

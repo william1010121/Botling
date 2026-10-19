@@ -42,7 +42,7 @@ struct TeamTests {
     @Test func defaultTeamsAreWrittenAsEditableFiles() {
         let workspace = makeWorkspace(FakeLauncher())
         #expect(workspace.teams.map(\.name) == ["prototype", "research"])
-        let file = root.appending(path: "deck/teams/research.md")
+        let file = root.appending(path: "deck/plugins/deck-teams/claude/agents/research.md")
         #expect(FileManager.default.fileExists(atPath: file.path))
         #expect(workspace.projectBriefing().contains("research（研究小組）"))
     }
