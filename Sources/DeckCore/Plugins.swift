@@ -66,6 +66,15 @@ public struct PluginManifest: Codable, Equatable, Sendable {
         public var settings: [String: Setting]?
         /// A folder of components (`<name>/template.html` and `about.md`).
         public var components: String?
+        /// Pages in the right column, drawn by the web part (`deck.panels.register`).
+        public var panels: [Panel]?
+    }
+
+    public struct Panel: Codable, Equatable, Sendable {
+        public var id: String
+        public var title: String
+        /// An SF Symbol name for its button.
+        public var icon: String?
     }
 
     public struct Command: Codable, Equatable, Sendable {
@@ -80,8 +89,10 @@ public struct PluginManifest: Codable, Equatable, Sendable {
         public var `default`: JSONValue?
         public var title: String
         public var options: [String]?
-        /// Kept in the keychain, never shown or sent (P7).
+        /// Kept in the keychain, never shown in Deck or sent to the chat page.
         public var secret: Bool?
+        /// For a secret: the environment variable bots get it in (for MCP servers' .mcp.json).
+        public var env: String?
     }
 
     public var title: String { displayName ?? name }
@@ -98,6 +109,8 @@ public struct InstalledPlugin: Identifiable, Equatable, Sendable {
     public var failure: String?
     /// Its newest version broke, so the last one that worked is still running.
     public var usingPrevious = false
+    /// Installed from outside (git, npm, an archive, a folder): where from.
+    public var installedFrom: String?
 
     public var id: String { manifest.name }
     public var name: String { manifest.name }
@@ -150,6 +163,8 @@ public final class PluginRegistry: ObservableObject {
         /// Broken plugins, with the fingerprint of the files that broke, so a fixed version is
         /// tried again.
         var failures: [String: Failure] = [:]
+        /// Plugins installed from outside, with their source.
+        var installed: [String: String]? = [:]
     }
 
     struct Failure: Codable {
@@ -157,8 +172,17 @@ public final class PluginRegistry: ObservableObject {
         var fingerprint: String
     }
 
-    public init(library: URL, builtIns: URL?, validateClaudePart: ((URL) async -> String?)? = nil, git: PluginLibraryGit? = nil) {
+    public let secrets: SecretStore
+
+    public init(
+        library: URL,
+        builtIns: URL?,
+        validateClaudePart: ((URL) async -> String?)? = nil,
+        git: PluginLibraryGit? = nil,
+        secrets: SecretStore = KeychainSecretStore()
+    ) {
         self.library = library
+        self.secrets = secrets
         self.git = git ?? PluginLibraryGit(folder: library)
         self.builtIns = builtIns
         self.validateClaudePart = validateClaudePart
@@ -301,12 +325,17 @@ public final class PluginRegistry: ObservableObject {
     public func hostSpecs(dataRoot: URL) -> [PluginHostClient.Spec] {
         plugins.compactMap { plugin in
             guard plugin.enabled, plugin.failure == nil, let host = plugin.manifest.deck?.host else { return nil }
+            var settings = resolvedSettings(plugin)
+            // The program part (not the chat page) gets secrets too.
+            for (key, setting) in plugin.manifest.deck?.contributes?.settings ?? [:] where setting.secret == true {
+                settings[key] = secrets.get(plugin: plugin.name, key: key).map(JSONValue.string) ?? .null
+            }
             return PluginHostClient.Spec(
                 name: plugin.name,
                 version: plugin.manifest.version,
                 main: plugin.url(host).path,
                 fingerprint: fingerprints[plugin.name] ?? "",
-                settings: resolvedSettings(plugin),
+                settings: settings,
                 storageDir: dataRoot.appending(path: plugin.name).path
             )
         }
@@ -376,7 +405,8 @@ public final class PluginRegistry: ObservableObject {
                         builtIn: builtIn,
                         enabled: !state.disabled.contains(manifest.name) && (failure == nil || fallback),
                         failure: failure,
-                        usingPrevious: fallback
+                        usingPrevious: fallback,
+                        installedFrom: builtIn ? nil : state.installed?[manifest.name]
                     )
                     reportedProblems[folder.lastPathComponent] = nil
                 case let .failure(error):
@@ -411,7 +441,7 @@ public final class PluginRegistry: ObservableObject {
     }
 
     /// What decides whether a plugin reloads: its manifest and the files it names.
-    static func fingerprint(_ folder: URL, _ manifest: PluginManifest) -> String {
+    nonisolated static func fingerprint(_ folder: URL, _ manifest: PluginManifest) -> String {
         var files = ["package.json", manifest.deck?.web, manifest.deck?.host].compactMap { $0 } + (manifest.deck?.styles ?? [])
         files += claudeFiles(folder, manifest)
         return files.map { file -> String in
@@ -423,7 +453,7 @@ public final class PluginRegistry: ObservableObject {
     }
 
     /// Every file in a plugin's Claude part, relative to the plugin folder.
-    static func claudeFiles(_ folder: URL, _ manifest: PluginManifest) -> [String] {
+    nonisolated static func claudeFiles(_ folder: URL, _ manifest: PluginManifest) -> [String] {
         guard let claude = manifest.deck?.claude,
               let walker = FileManager.default.enumerator(at: folder.appending(path: claude), includingPropertiesForKeys: [.isRegularFileKey]) else { return [] }
         let base = folder.standardizedFileURL.path + "/"
@@ -448,6 +478,82 @@ public final class PluginRegistry: ObservableObject {
             guard plugin.enabled, let claude = plugin.manifest.deck?.claude,
                   let check = claudeChecks[plugin.name], check.fingerprint == fingerprints[plugin.name], check.problem == nil else { return nil }
             return plugin.url(claude)
+        }
+    }
+
+    /// Tools bots may use from plugins' MCP servers (`mcp__plugin_<plugin>_<server>`), for the
+    /// Claude parts that passed their check.
+    public func claudeTools() -> [String] {
+        plugins.flatMap { plugin -> [String] in
+            guard let claude = plugin.manifest.deck?.claude,
+                  claudeDirectories().contains(where: { $0.standardizedFileURL == plugin.url(claude).standardizedFileURL }) else { return [] }
+            let manifest = plugin.url("\(claude)/.claude-plugin/plugin.json")
+            let name = ((try? JSONSerialization.jsonObject(with: Data(contentsOf: manifest))) as? [String: Any])?["name"] as? String ?? plugin.name
+            return PluginInstaller.mcpServers(of: plugin.folder, plugin.manifest).map { "mcp__plugin_\(name)_\($0)" }
+        }
+    }
+
+    // MARK: Secrets
+
+    public func secret(_ plugin: String, _ key: String) -> String? {
+        secrets.get(plugin: plugin, key: key)
+    }
+
+    public func setSecret(_ plugin: String, _ key: String, to value: String?) {
+        secrets.set(plugin: plugin, key: key, value: value)
+        revision += 1
+    }
+
+    /// Secrets that declare an `env` name, for bots' processes (MCP servers read them).
+    public func secretEnvironment() -> [String: String] {
+        var environment: [String: String] = [:]
+        for plugin in plugins where plugin.enabled {
+            for (key, setting) in plugin.manifest.deck?.contributes?.settings ?? [:] where setting.secret == true {
+                if let name = setting.env, let value = secrets.get(plugin: plugin.name, key: key) { environment[name] = value }
+            }
+        }
+        return environment
+    }
+
+    // MARK: Installing
+
+    /// Puts a fetched plugin into the library (replacing one of the same name) and commits it.
+    @discardableResult
+    public func install(_ proposal: InstallProposal) async -> String? {
+        guard proposal.problems.isEmpty else { return proposal.problems.joined(separator: "；") }
+        if let existing = plugin(proposal.manifest.name), existing.builtIn == false, state.installed?[existing.name] == nil {
+            return "插件庫裡已經有自己做的「\(existing.name)」，不會用外部的蓋掉。"
+        }
+        let target = library.appending(path: proposal.manifest.name)
+        let git = git
+        let label = "\(proposal.manifest.name) \(proposal.manifest.version)"
+        let source = proposal.source
+        let problem: String? = await Task.detached {
+            let files = FileManager.default
+            try? files.removeItem(at: target)
+            do {
+                try files.copyItem(at: proposal.folder, to: target)
+            } catch {
+                return "放不進插件庫：\(error.localizedDescription)"
+            }
+            git.run(["add", "-A", "--", proposal.manifest.name])
+            git.run(["commit", "-q", "-m", "安裝 \(label)（\(source)）", "--", proposal.manifest.name])
+            return nil
+        }.value
+        guard problem == nil else { return problem }
+        if state.installed == nil { state.installed = [:] }
+        state.installed?[proposal.manifest.name] = proposal.source
+        state.failures[proposal.manifest.name] = nil
+        saveState()
+        rescan(force: true)
+        return nil
+    }
+
+    /// Panels from enabled plugins with a web part, in order.
+    public func panels() -> [(plugin: InstalledPlugin, panel: PluginManifest.Panel)] {
+        plugins.flatMap { plugin in
+            plugin.enabled && plugin.manifest.deck?.web != nil
+                ? (plugin.manifest.deck?.contributes?.panels ?? []).map { (plugin, $0) } : []
         }
     }
 
@@ -494,7 +600,7 @@ public final class PluginRegistry: ObservableObject {
     }
 
     /// Reads and checks a plugin folder (`deck plugin check`, the parts that need no browser).
-    public static func load(_ folder: URL) -> Result<PluginManifest, CheckError> {
+    nonisolated public static func load(_ folder: URL) -> Result<PluginManifest, CheckError> {
         let problems = check(folder)
         guard problems.isEmpty,
               let data = try? Data(contentsOf: folder.appending(path: "package.json")),
@@ -505,9 +611,9 @@ public final class PluginRegistry: ObservableObject {
     }
 
     /// The Deck version plugins are written against.
-    public static let apiVersion = (major: 2, minor: 0)
+    nonisolated public static let apiVersion = (major: 2, minor: 0)
 
-    public static func check(_ folder: URL) -> [String] {
+    nonisolated public static func check(_ folder: URL) -> [String] {
         let packageURL = folder.appending(path: "package.json")
         guard let data = try? Data(contentsOf: packageURL) else { return ["找不到 package.json。"] }
         let manifest: PluginManifest
@@ -557,7 +663,13 @@ public final class PluginRegistry: ObservableObject {
                 problems.append("指令「\(command.id)」的快捷鍵「\(key)」看不懂（例如 cmd+shift+l）。")
             }
         }
+        for panel in deck.contributes?.panels ?? [] where deck.web == nil {
+            problems.append("面板「\(panel.id)」要有網頁部分（deck.web）來畫。")
+        }
         for (key, setting) in deck.contributes?.settings ?? [:] {
+            if let env = setting.env, env.range(of: #"^[A-Z_][A-Z0-9_]*$"#, options: .regularExpression) == nil {
+                problems.append("設定「\(key)」的 env「\(env)」要是大寫英文、數字和底線。")
+            }
             switch setting.type {
             case "boolean":
                 if let value = setting.default, value.bool == nil { problems.append("設定「\(key)」的預設值要是 true 或 false。") }
@@ -579,7 +691,7 @@ public final class PluginRegistry: ObservableObject {
     }
 
     /// `^2.0.0`, `~2.0.0`, `>=2.0.0`, `2.x`, `*`.
-    static func compatible(_ range: String) -> Bool {
+    nonisolated static func compatible(_ range: String) -> Bool {
         let range = range.trimmingCharacters(in: .whitespaces)
         if range == "*" { return true }
         let digits = range.drop { !$0.isNumber }
@@ -590,7 +702,7 @@ public final class PluginRegistry: ObservableObject {
         return major == apiVersion.major && minor <= apiVersion.minor
     }
 
-    private static func describe(_ error: Error) -> String {
+    nonisolated private static func describe(_ error: Error) -> String {
         switch error {
         case let DecodingError.keyNotFound(key, context):
             return "缺少 \((context.codingPath.map(\.stringValue) + [key.stringValue]).joined(separator: "."))"

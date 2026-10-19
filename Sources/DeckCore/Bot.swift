@@ -64,8 +64,8 @@ public final class Bot: ObservableObject, Identifiable {
         var images: [Attachment] = []
     }
     private var pendingModel: BotModel?
-    /// Plugins' Claude parts changed while it was busy: restart when it is free.
-    private var pendingPluginReload = false
+    /// It should restart (new plugins, a new folder) once free, with this divider.
+    private var pendingRestart: String?
 
     public init(
         profile: BotProfile,
@@ -358,8 +358,8 @@ public final class Bot: ObservableObject, Identifiable {
             Task { await switchModel(to: next) }
             return
         }
-        if pendingPluginReload {
-            Task { await reloadPlugins() }
+        if let divider = pendingRestart {
+            Task { await restart(divider: divider) }
             return
         }
         scheduleIdle()
@@ -488,16 +488,22 @@ public final class Bot: ObservableObject, Identifiable {
     /// Plugins' Claude parts changed. Asleep: the next wake loads them. Awake: hand over and
     /// restart once it is free, so the new skills and agents are there.
     public func reloadPlugins() async {
+        await restart(divider: "交接 → 載入新插件")
+    }
+
+    /// Hands over and starts a fresh session (same model) so it picks up what it starts with
+    /// (plugins, folders). Asleep: nothing to do, the next wake has it. Busy: once it is free.
+    public func restart(divider: String) async {
         guard phase != .asleep else {
-            pendingPluginReload = false
+            pendingRestart = nil
             return
         }
         if isWorking || phase == .tidying || isSwitching || phase != .awake {
-            pendingPluginReload = true
+            pendingRestart = divider
             return
         }
-        pendingPluginReload = false
-        await handOver(to: model, divider: "交接 → 載入新插件")
+        pendingRestart = nil
+        await handOver(to: model, divider: divider)
     }
 
     /// Writes a handoff, stops, and starts again on `newModel` reading it.
@@ -557,8 +563,8 @@ public final class Bot: ObservableObject, Identifiable {
             pendingModel = nil
             await switchModel(to: next)
         }
-        if pendingPluginReload, phase == .awake {
-            await reloadPlugins()
+        if let divider = pendingRestart, phase == .awake {
+            await restart(divider: divider)
         }
         guard !queued.isEmpty else { return }
         let waiting = queued

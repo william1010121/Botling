@@ -101,3 +101,60 @@ struct LiveClaudePartTests {
         await workspace.putEveryoneToSleep()
     }
 }
+
+/// P6 acceptance: 「把 laas-copy 做成 Deck 插件」. The only thing done for the user is allowing
+/// Deck 維護 to read the folder; it then makes deck-laas, checks and commits it.
+/// `DECK_LIVE_KEEP=<dir>` copies the plugin library there afterwards.
+@MainActor
+struct LivePortTests {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["DECK_LIVE"] == "1"))
+    func maintenancePortsLaasCopyIntoAPlugin() async throws {
+        let executable = try #require(ClaudeExecutableLocator().locate())
+        let source = URL(filePath: "/Users/guoshengwei/tool/extension/laas-copy")
+        try #require(FileManager.default.fileExists(atPath: source.path))
+        let root = FileManager.default.temporaryDirectory.appending(path: "deck-live-port-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let here = URL(filePath: #filePath).deletingLastPathComponent()
+        let deckBinary = here.appending(path: "../../.build/debug/Deck").standardizedFileURL
+        let launcher = ClaudeAgentProcess.launcher(executable: executable)
+        let workspace = Workspace(
+            root: root,
+            builtInPlugins: here.appending(path: "../../Sources/Deck/Resources/plugins").standardizedFileURL,
+            validateClaudePart: { await ClaudePluginValidator.validate($0, executable: executable) },
+            checkCommand: "env -u CLAUDECODE '\(deckBinary.path)' --check-plugin",
+            launcher: launcher
+        ) { profile, store in
+            Bot(profile: profile, defaultModel: profile.name == "Deck 維護" ? .sonnet : .haiku, idleInterval: 3600, launcher: launcher, store: store)
+        }
+        await workspace.pluginLibraryReady.value
+        let maintainer = workspace.maintainer
+
+        workspace.mainBot.send("把 \(source.path) 做成 Deck 插件，讓我在輸入框打 ;a 就變成 \\alpha。")
+        // The user's one click: allow reading the folder.
+        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion && $0.text.contains("laas-copy") } }, timeout: 600)
+        let question = try #require(workspace.mainBot.messages.last { $0.role == .notice && $0.isOpenQuestion })
+        print("question:", question.text)
+        #expect(workspace.choose(0, in: question.id, of: workspace.mainBot))
+
+        // Done when Deck 維護 has said something after being allowed and is idle again.
+        await eventually({
+            !maintainer.isWorking && maintainer.phase == .awake
+                && maintainer.messages.last(where: { $0.role == .relay })?.text.contains("使用者同意了") == true
+                && maintainer.messages.last?.role == .bot
+        }, timeout: 1800)
+        print("maintainer:\n" + maintainer.messages.map { "[\($0.role)] \($0.text)" }.joined(separator: "\n"))
+        workspace.plugins.rescan()
+        let plugin = try #require(workspace.plugins.plugins.first { $0.name.contains("laas") })
+        print("plugin:", plugin.name, plugin.manifest.version, plugin.folder.path)
+        #expect(PluginRegistry.check(plugin.folder).isEmpty)
+        #expect(plugin.manifest.deck?.web != nil)
+        #expect(!workspace.plugins.git.isDirty(plugin.folder.lastPathComponent))
+        print(workspace.plugins.git.run(["log", "--oneline", "-5"]).output)
+        print(workspace.plugins.git.run(["tag"]).output)
+        if let keep = ProcessInfo.processInfo.environment["DECK_LIVE_KEEP"] {
+            try? FileManager.default.removeItem(atPath: keep)
+            try FileManager.default.copyItem(at: root.appending(path: "plugins"), to: URL(filePath: keep))
+        }
+        await workspace.putEveryoneToSleep()
+    }
+}

@@ -133,3 +133,71 @@ struct MaintenanceTests {
         await workspace.putEveryoneToSleep()
     }
 }
+
+/// P6: Deck 維護 asks before reading a folder outside the plugin library, once per folder.
+@MainActor
+struct FolderConsentTests {
+    let root = FileManager.default.temporaryDirectory.appending(path: "deck-folder-\(UUID().uuidString)")
+
+    @Test func maintenanceAsksOnceAndRestartsWithTheFolder() async throws {
+        let source = root.appending(path: "laas-copy")
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let fake = FakeLauncher()
+        fake.respond = { text in
+            if isAppOnly(text) { return "OK" }
+            if text.contains("做成 Deck 插件") { return "要先讀原專案。\n<need-folder>\(source.path)</need-folder>" }
+            if text.contains("使用者同意了") { return "讀到了，開始做。" }
+            if text.contains("不讓你讀") { return "那我做不了。" }
+            return "收到"
+        }
+        let deck = root.appending(path: "deck")
+        let workspace = Workspace(root: deck, launcher: fake.launcher) { profile, store in
+            Bot(profile: profile, launcher: fake.launcher, store: store)
+        }
+        let maintainer = workspace.maintainer
+        workspace.handToMaintainer("把 laas-copy 做成 Deck 插件")
+        await eventually { workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
+        let question = try #require(workspace.mainBot.messages.last { $0.role == .notice })
+        #expect(question.text.contains(source.path))
+        #expect(question.choices?.map(\.label) == ["可以讀", "不要"])
+        #expect(maintainer.messages.last?.text == "要先讀原專案。")
+
+        #expect(workspace.choose(0, in: question.id, of: workspace.mainBot))
+        await eventually { maintainer.messages.contains { $0.role == .bot && $0.text == "讀到了，開始做。" } }
+        #expect(maintainer.messages.contains { $0.role == .divider && $0.text == "交接 → 可以讀 laas-copy" })
+        let restarted = try #require(fake.agents.last)
+        #expect(restarted.launch.extraDirectories.map(\.standardizedFileURL.path).contains(source.standardizedFileURL.path))
+        #expect(!workspace.choose(0, in: question.id, of: workspace.mainBot))
+
+        // Remembered across restarts; a folder inside it needs no question.
+        await workspace.putEveryoneToSleep()
+        let again = Workspace(root: deck, launcher: fake.launcher) { profile, store in
+            Bot(profile: profile, launcher: fake.launcher, store: store)
+        }
+        #expect(again.approvedFolders.map(\.path) == [source.standardizedFileURL.path])
+        let count = again.mainBot.messages.count
+        again.requestFolder(source.appending(path: "packages").path)
+        await eventually { again.maintainer.messages.contains { $0.role == .relay && $0.text.contains("之前已經同意過") } }
+        #expect(again.mainBot.messages.count == count)
+        await again.putEveryoneToSleep()
+    }
+
+    @Test func sayingNoIsPassedOn() async throws {
+        let fake = FakeLauncher()
+        fake.respond = { text in
+            if isAppOnly(text) { return "OK" }
+            if text.contains("看一下") { return "<need-folder>/tmp/elsewhere</need-folder>" }
+            return "那我做不了。"
+        }
+        let workspace = Workspace(root: root.appending(path: "deck"), launcher: fake.launcher) { profile, store in
+            Bot(profile: profile, launcher: fake.launcher, store: store)
+        }
+        workspace.handToMaintainer("看一下")
+        await eventually { workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
+        let question = try #require(workspace.mainBot.messages.last { $0.role == .notice })
+        #expect(workspace.choose(1, in: question.id, of: workspace.mainBot))
+        await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text.contains("不讓你讀") } }
+        #expect(workspace.approvedFolders.isEmpty)
+        await workspace.putEveryoneToSleep()
+    }
+}

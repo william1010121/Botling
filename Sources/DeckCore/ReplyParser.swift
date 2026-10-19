@@ -9,6 +9,8 @@ public enum BotRequest: Equatable, Sendable {
     case component(name: String, request: String)
     /// `<plugin>request</plugin>`: ask Deck 維護 for a change to Deck itself.
     case plugin(request: String)
+    /// `<need-folder>/path</need-folder>`: Deck 維護 asks to read a folder outside the library.
+    case folder(path: String)
 }
 
 /// Splits a bot's reply into the text to show, the buttons to draw, and the requests to act on.
@@ -41,6 +43,7 @@ public enum ReplyParser {
     }
 
     private static let pluginTag = try! NSRegularExpression(pattern: #"<plugin>\s*(.*?)\s*</plugin>"#, options: .dotMatchesLineSeparators)
+    private static let folderTag = try! NSRegularExpression(pattern: #"<need-folder>\s*(.*?)\s*</need-folder>"#, options: .dotMatchesLineSeparators)
 
     private static let showTag = try! NSRegularExpression(
         pattern: #"<show\s+name\s*=\s*"([^"]+)"\s*>\s*(.*?)\s*</show>"#,
@@ -71,6 +74,12 @@ public enum ReplyParser {
         for match in pluginTag.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
             let ns = text as NSString
             requests.append(.plugin(request: ns.substring(with: match.range(at: 1))))
+            text = ns.replacingCharacters(in: match.range, with: "")
+        }
+
+        for match in folderTag.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+            let ns = text as NSString
+            requests.append(.folder(path: ns.substring(with: match.range(at: 1))))
             text = ns.replacingCharacters(in: match.range, with: "")
         }
 

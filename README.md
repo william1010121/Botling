@@ -2,6 +2,12 @@
 
 PRD: `../prd/PRD.md` · Design: https://claude.ai/artifact/2kmnVNyueZX2yMxH4gNqyX
 
+P6 (v2): plugins from your own projects. Deck 維護 asks before reading a folder outside the
+plugin library (`<need-folder>`): a question in the main chat, remembered in
+`~/.deck/folders.json`; once allowed it restarts with read access and carries on. Live
+acceptance: 「把 laas-copy 做成 Deck 插件」 → Deck 維護 made `deck-laas` (GPL, kept as its own
+plugin), checked, committed and tagged it; typing `;a` in the input box gives `\alpha`.
+
 P5 (v2): Deck 維護. The plugin library (`~/.deck/plugins`) is a git repo, and 「Deck 維護」 is a
 built-in project whose folder is that library (its row in the left column shows up only while
 it is awake, working, or has news). Reports beside a component, `<component>` and `<plugin>`

@@ -137,7 +137,9 @@ public final class Workspace: ObservableObject {
         startPluginHost()
         followClaudeParts()
         prepareNotesFolder(for: maintainerProject)
+        approvedFolders = loadApprovedFolders()
         attach(maintainerProject)
+        maintainer.extraDirectories = { [weak self] in self?.approvedFolders ?? [] }
         for project in loadProjects() where !project.isMaintainer {
             attach(project)
         }
@@ -155,6 +157,55 @@ public final class Workspace: ObservableObject {
 
     /// How Deck 維護 runs `deck plugin check` (the Deck binary with --check-plugin).
     private let checkCommand: String?
+
+    // MARK: Folders outside the library
+
+    /// Folders you let Deck 維護 read (kept in `~/.deck/folders.json`).
+    public private(set) var approvedFolders: [URL] = []
+    /// Open 「may it read this folder?」 questions in the main chat, by message id.
+    private var folderQuestions: [UUID: URL] = [:]
+    private var foldersURL: URL { root.appending(path: "folders.json") }
+
+    private func loadApprovedFolders() -> [URL] {
+        guard let data = try? Data(contentsOf: foldersURL),
+              let paths = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return paths.map { URL(filePath: $0) }
+    }
+
+    /// Deck 維護 asked to read `path`: ask you once (in the main chat); a folder you allowed
+    /// before, or one inside it, is allowed at once.
+    func requestFolder(_ path: String) {
+        let folder = URL(filePath: (path as NSString).expandingTildeInPath).standardizedFileURL
+        if approvedFolders.contains(where: { folder.path == $0.path || folder.path.hasPrefix($0.path + "/") }) {
+            maintainer.relay("（App）\(folder.path) 之前已經同意過，可以直接讀。")
+            return
+        }
+        mainBot.notice(
+            "Deck 維護想讀「\(folder.path)」。只會讀，不會改那裡的檔案。可以嗎？",
+            choices: [Choice(label: "可以讀", detail: "之後不用再問", recommended: false), Choice(label: "不要", detail: nil, recommended: false)],
+            sourceID: Self.maintainerID
+        )
+        if let question = mainBot.messages.last { folderQuestions[question.id] = folder }
+        if selection == nil { mainBot.markRead() }
+        refreshWaiting()
+    }
+
+    /// Your answer to a folder question.
+    private func answerFolder(_ folder: URL, allowed: Bool) {
+        guard allowed else {
+            maintainer.relay("（App）使用者不讓你讀 \(folder.path)。換個做法，或說明做不了。")
+            return
+        }
+        approvedFolders.append(folder)
+        let data = try? JSONEncoder().encode(approvedFolders.map(\.path))
+        try? data?.write(to: foldersURL, options: .atomic)
+        let maintainer = maintainer
+        Task {
+            // A new session that can open it (--add-dir), then carry on.
+            await maintainer.restart(divider: "交接 → 可以讀 \(folder.lastPathComponent)")
+            maintainer.relay("（App）使用者同意了，你現在可以讀 \(folder.path)（只讀，不要改那裡的檔案）。繼續剛才的工作。")
+        }
+    }
 
     /// Deck 維護's bot.
     public var maintainer: Bot {
@@ -329,6 +380,8 @@ public final class Workspace: ObservableObject {
                 if project == nil { startTeam(name, task: task) }
             case let .component(name, request):
                 requestComponentChange(name, request: request, from: project?.name ?? mainBot.name)
+            case let .folder(path):
+                if project?.isMaintainer == true { requestFolder(path) }
             case let .plugin(request):
                 if project?.isMaintainer != true {
                     handToMaintainer("\(project?.name ?? mainBot.name) 對 Deck 的要求：\(request)")
@@ -423,7 +476,11 @@ public final class Workspace: ObservableObject {
         - 組件在 deck-components/components/<名稱>/（template.html、about.md）。改完一樣升 deck-components 的版本、檢查、commit。
           只改組件樣板這種小事，可以交給 deck-core:component-editor 這個 agent（Haiku）做，你再檢查和 commit。
         - App 內建的插件不在這裡，不能直接改：要改就把它整個資料夾複製進插件庫，同名的會蓋過內建的（路徑見 DECK-PLUGINS.md）。
-        - 讀插件庫以外的資料夾前，先用選項區塊問使用者。
+        - 要讀插件庫以外的資料夾（例如把現有專案做成插件）：在回覆最後加 <need-folder>完整路徑</need-folder>，用一句話說為什麼要讀，然後停下來等。
+          使用者同意後你會收到「（App）使用者同意了…」，那時才讀；不同意就換個做法。只讀不改那裡的檔案。同意過的資料夾不用再問。
+        - 把現有專案做成插件：先找出能重用的核心（沒有依賴的程式庫最好），網頁部分只做接線（接上 deck.composer、設定、指令）。
+          用 esbuild 打包成單一 ES module（可以用原專案 node_modules 裡的 esbuild，或 npx --yes esbuild@0.25.11）。
+          原專案的授權照抄進插件（package.json 的 license 和 LICENSE 檔）；GPL 的程式只能放在獨立插件裡。
         - 「熱更新檢查」的訊息是 Deck 發現插件壞了：照上面流程修好。
         """
     }
@@ -577,6 +634,13 @@ public final class Workspace: ObservableObject {
     @discardableResult
     public func choose(_ index: Int, in messageID: UUID, of bot: Bot) -> Bool {
         defer { refreshWaiting() }
+        if bot === mainBot, let folder = folderQuestions[messageID] {
+            guard let notice = mainBot.messages.first(where: { $0.id == messageID }), notice.isOpenQuestion else { return false }
+            folderQuestions[messageID] = nil
+            mainBot.markChosen(index, in: messageID)
+            answerFolder(folder, allowed: index == 0)
+            return true
+        }
         if bot === mainBot,
            let notice = mainBot.messages.first(where: { $0.id == messageID }),
            notice.role == .notice {
