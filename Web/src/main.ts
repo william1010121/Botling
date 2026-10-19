@@ -6,7 +6,7 @@ import type { ChatState, MessageView } from "./types";
 
 /**
  * The chat surface: messages and the input box, drawn from state the Swift side sends with
- * `deck.setState(...)`. Only messages that changed are redrawn, and the view stays at the bottom
+ * `ccb.setState(...)`. Only messages that changed are redrawn, and the view stays at the bottom
  * unless you have scrolled up to read.
  */
 class Chat {
@@ -114,7 +114,7 @@ class Chat {
     });
   }
 
-  /** Chips, images and file chips open in Deck (the right column), not in the page. */
+  /** Chips, images and file chips open in ClaudeCodeBot (the right column), not in the page. */
   private handleClicks(): void {
     document.addEventListener("click", (event) => {
       const target = (event.target as HTMLElement).closest<HTMLElement>("[data-url]");
@@ -147,7 +147,7 @@ class Chat {
 
 declare global {
   interface Window {
-    deck: {
+    ccb: {
       setState(state: ChatState): void;
       setPlugins(specs: PluginSpec[]): Promise<void>;
       runCommand(id: string): void;
@@ -192,7 +192,7 @@ function drawPanel(): void {
   panelDispose = typeof result === "function" ? result : null;
 }
 chat.plugins.onPanels = () => drawPanel();
-window.deck = {
+window.ccb = {
   setState: (state) => chat.setState(state),
   setPlugins: (specs) => chat.plugins.sync(specs),
   runCommand: (id) => chat.plugins.execute(id),

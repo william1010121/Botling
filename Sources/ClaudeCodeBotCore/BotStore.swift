@@ -1,0 +1,84 @@
+import Foundation
+
+/// The chat history and settings (model, routines), kept per bot under `~/.claudecodebot`. The bot's own
+/// memory lives only in memory.md; this is just what the app shows and schedules.
+public struct BotStore: Sendable {
+    private static let historyLimit = 500
+    public let directory: URL
+
+    public init(directory: URL) {
+        self.directory = directory
+    }
+
+    private var chatURL: URL { directory.appending(path: "chat.json") }
+    private var settingsURL: URL { directory.appending(path: "bot.json") }
+
+    private struct Settings: Codable {
+        var model: BotModel?
+        /// Routines from before they moved to routines.cron; read once to carry them over.
+        var routines: [LegacyRoutine]?
+        /// When each routines.cron job last ran, by job id.
+        var routineRuns: [String: Date]?
+    }
+
+    private struct LegacyRoutine: Codable {
+        var title: String
+        var instruction: String
+        var hour: Int
+        var minute: Int
+        var enabled: Bool
+    }
+
+    public func loadMessages() -> [ChatMessage] {
+        guard let data = try? Data(contentsOf: chatURL) else { return [] }
+        return (try? JSONDecoder().decode([ChatMessage].self, from: data)) ?? []
+    }
+
+    public func save(messages: [ChatMessage]) {
+        write(Array(messages.suffix(Self.historyLimit)), to: chatURL)
+    }
+
+    public func loadModel() -> BotModel? {
+        loadSettings().model
+    }
+
+    public func save(model: BotModel) {
+        var settings = loadSettings()
+        settings.model = model
+        write(settings, to: settingsURL)
+    }
+
+    /// Routines saved the old way, as routines.cron lines; nil if there were none.
+    public func legacyRoutineLines() -> [String]? {
+        loadSettings().routines?.map { routine in
+            let pause = routine.enabled ? "" : "#"
+            // The old daily summary had no written task; give it the one the new file uses.
+            if routine.title == "每日摘要", routine.instruction.isEmpty, routine.hour == 8, routine.minute == 15 {
+                return pause + RoutineFile.dailySummary
+            }
+            let task = routine.instruction.isEmpty ? routine.title : "\(routine.title)：\(routine.instruction)"
+            return pause + "\(routine.minute) \(routine.hour) * * * \(task)"
+        }
+    }
+
+    public func loadRoutineRuns() -> [String: Date] {
+        loadSettings().routineRuns ?? [:]
+    }
+
+    public func save(routineRuns: [String: Date]) {
+        var settings = loadSettings()
+        settings.routineRuns = routineRuns
+        write(settings, to: settingsURL)
+    }
+
+    private func loadSettings() -> Settings {
+        guard let data = try? Data(contentsOf: settingsURL) else { return Settings() }
+        return (try? JSONDecoder().decode(Settings.self, from: data)) ?? Settings()
+    }
+
+    private func write(_ value: some Encodable, to url: URL) {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        guard let data = try? JSONEncoder().encode(value) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+}

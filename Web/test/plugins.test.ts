@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { activate as latex } from "../plugins/deck-latex/src/web";
+import { activate as latex } from "../plugins/ccb-latex/src/web";
 import { sent } from "../src/bridge";
 import { Composer } from "../src/composer";
 import { messageElement } from "../src/messages";
@@ -45,14 +45,14 @@ beforeEach(() => {
 });
 
 describe("plugin host", () => {
-  it("deck-latex typesets bot replies and your own messages, and stops when unloaded", async () => {
-    await host.sync([spec("deck-latex")], async () => latex);
+  it("ccb-latex typesets bot replies and your own messages, and stops when unloaded", async () => {
+    await host.sync([spec("ccb-latex")], async () => latex);
     expect(redraws).toBe(1);
     expect(messageElement(message({ text: "看 $x^2$" }), {}).querySelector(".katex")).not.toBeNull();
     expect(messageElement(message({ role: "user", text: "我的 $y$" }), {}).querySelector(".user-bubble .katex")).not.toBeNull();
 
     await host.sync([], async () => latex);
-    expect(host.isLoaded("deck-latex")).toBe(false);
+    expect(host.isLoaded("ccb-latex")).toBe(false);
     expect(redraws).toBe(2);
     expect(messageElement(message({ text: "看 $x^2$" }), {}).querySelector(".katex")).toBeNull();
   });
@@ -64,8 +64,8 @@ describe("plugin host", () => {
   });
 
   it("a renderer that throws unloads its plugin but the message is still drawn", async () => {
-    await host.sync([spec("bad-render")], async () => (deck) => {
-      deck.messages.afterRender(() => { throw new Error("render failed"); });
+    await host.sync([spec("bad-render")], async () => (ccb) => {
+      ccb.messages.afterRender(() => { throw new Error("render failed"); });
     });
     const row = messageElement(message({ text: "**還在**" }), {});
     expect(row.querySelector("strong")?.textContent).toBe("還在");
@@ -75,10 +75,10 @@ describe("plugin host", () => {
 
   it("plugins change the input box: key presses, insert, extensions", async () => {
     const keys: string[] = [];
-    await host.sync([spec("keys")], async () => (deck) => {
-      deck.composer.onKeyDown((event) => {
+    await host.sync([spec("keys")], async () => (ccb) => {
+      ccb.composer.onKeyDown((event) => {
         keys.push(event.key);
-        if (event.key === ";") { deck.composer.insert("\\alpha"); return true; }
+        if (event.key === ";") { ccb.composer.insert("\\alpha"); return true; }
       });
     });
     composer.view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: ";", bubbles: true }));
@@ -87,8 +87,8 @@ describe("plugin host", () => {
   });
 
   it("registers components that bots show", async () => {
-    await host.sync([spec("meter")], async () => (deck) => {
-      deck.components.register("meter", (root, data) => { root.textContent = `${(data as { value: number }).value}%`; });
+    await host.sync([spec("meter")], async () => (ccb) => {
+      ccb.components.register("meter", (root, data) => { root.textContent = `${(data as { value: number }).value}%`; });
     });
     const row = messageElement(message({ text: "進度", display: { name: "meter", data: '{"value":40}' } }), {});
     expect(row.querySelector(".plugin-component")?.textContent).toBe("40%");
@@ -97,9 +97,9 @@ describe("plugin host", () => {
   it("runs commands from their shortcut and tells plugins when settings change", async () => {
     const seen: unknown[] = [];
     let ran = 0;
-    const activate = async () => (deck: Parameters<typeof latex>[0]) => {
-      deck.commands.register("tool.run", () => { ran += 1; });
-      deck.settings.onChange("tool.mode", (value) => seen.push(value));
+    const activate = async () => (ccb: Parameters<typeof latex>[0]) => {
+      ccb.commands.register("tool.run", () => { ran += 1; });
+      ccb.settings.onChange("tool.mode", (value) => seen.push(value));
     };
     const commands = [{ id: "tool.run", title: "跑", key: "cmd+shift+l" }];
     await host.sync([spec("tool", { commands, settings: { "tool.mode": "a" } })], activate);
@@ -119,7 +119,7 @@ describe("plugin host", () => {
 describe("plugin host calls from the page", () => {
   it("host.call goes to Swift and resolves with the answer", async () => {
     let call: Promise<unknown> | null = null;
-    await host.sync([spec("asker")], async () => (deck) => { call = deck.host.call("count", { n: 2 }); });
+    await host.sync([spec("asker")], async () => (ccb) => { call = ccb.host.call("count", { n: 2 }); });
     const request = sent.find((action) => action.type === "hostCall") as { callID: number; plugin: string; method: string; params: unknown };
     expect(request).toMatchObject({ plugin: "asker", method: "count", params: { n: 2 } });
     host.hostReply(request.callID, true, 3);
@@ -135,8 +135,8 @@ describe("plugin host calls from the page", () => {
 describe("panels", () => {
   it("a plugin registers a panel and it can be drawn", async () => {
     const { extensions } = await import("../src/messages");
-    await host.sync([spec("charts")], async () => (deck) => {
-      deck.panels.register("today", (root) => { root.textContent = "今天 3 件事"; });
+    await host.sync([spec("charts")], async () => (ccb) => {
+      ccb.panels.register("today", (root) => { root.textContent = "今天 3 件事"; });
     });
     const panel = extensions.panels.get("charts/today");
     const root = document.createElement("div");

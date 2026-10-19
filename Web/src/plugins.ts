@@ -10,12 +10,12 @@ import { extensions } from "./messages";
 export interface PluginSpec {
   name: string;
   version: string;
-  /** The bundled ES module text of `deck.web`; it must export `activate(deck)`. */
+  /** The bundled ES module text of `ccb.web`; it must export `activate(ccb)`. */
   source: string;
   /** file:// URLs of stylesheets the plugin ships (fonts next to them load relative to them). */
   styles: string[];
   settings: Record<string, unknown>;
-  /** `deck.contributes.commands`: id, title and an optional key like "cmd+shift+l". */
+  /** `ccb.contributes.commands`: id, title and an optional key like "cmd+shift+l". */
   commands: { id: string; title: string; key?: string }[];
 }
 
@@ -38,8 +38,8 @@ export interface ChatHooks {
   redraw(): void;
 }
 
-/** The `deck` object a plugin's `activate` receives. */
-export interface DeckWeb {
+/** The `ccb` object a plugin's `activate` receives. */
+export interface CcbWeb {
   name: string;
   codemirror: { state: typeof state; view: typeof view; commands: typeof commands };
   composer: ChatHooks["composer"] & { onKeyDown(handler: (event: KeyboardEvent) => boolean | void): Dispose };
@@ -56,7 +56,7 @@ export interface DeckWeb {
   host: { call(method: string, params?: unknown): Promise<unknown> };
 }
 
-type Activate = (deck: DeckWeb) => void | Dispose | Promise<void | Dispose>;
+type Activate = (ccb: CcbWeb) => void | Dispose | Promise<void | Dispose>;
 
 interface Loaded {
   spec: PluginSpec;
@@ -130,7 +130,7 @@ export class PluginHost {
     try {
       const result = await activate(this.api(spec.name, entry));
       if (typeof result === "function") entry.disposers.push(result);
-      // Deck keeps this version as the one to fall back to if a later one breaks.
+      // ClaudeCodeBot keeps this version as the one to fall back to if a later one breaks.
       if (this.loaded.get(spec.name) === entry) post({ type: "pluginLoaded", name: spec.name, version: spec.version });
     } catch (error) {
       this.fail(spec.name, error);
@@ -225,7 +225,7 @@ export class PluginHost {
     }
   }
 
-  private api(name: string, entry: Loaded): DeckWeb {
+  private api(name: string, entry: Loaded): CcbWeb {
     const own = (dispose: Dispose): Dispose => {
       entry.disposers.push(dispose);
       return dispose;
@@ -319,7 +319,7 @@ async function importOnce(spec: PluginSpec): Promise<Activate> {
   try {
     const module = (await import(/* @vite-ignore */ url)) as { activate?: Activate; default?: { activate?: Activate } };
     const activate = module.activate ?? module.default?.activate;
-    if (typeof activate !== "function") throw new Error("網頁部分沒有匯出 activate(deck)。");
+    if (typeof activate !== "function") throw new Error("網頁部分沒有匯出 activate(ccb)。");
     return activate;
   } finally {
     URL.revokeObjectURL(url);

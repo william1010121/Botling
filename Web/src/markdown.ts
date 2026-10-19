@@ -6,7 +6,7 @@ const videoExtensions = /\.(mp4|mov|m4v|webm)$/i;
 /**
  * Bot replies: markdown. Raw HTML from the bot is shown as text, never run. Links become chips;
  * `![說明](網址)` becomes an image or a playing video. Plugins add to it (LaTeX is the
- * deck-latex plugin); since markdown-it plugins cannot be taken out, unloading one rebuilds it.
+ * ccb-latex plugin); since markdown-it plugins cannot be taken out, unloading one rebuilds it.
  */
 export function createMarkdown(): MarkdownIt {
   const md = new MarkdownIt({ html: false, linkify: false, breaks: true, typographer: false });

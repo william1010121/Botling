@@ -7,17 +7,17 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { Host, type DeckHost, type HostPluginSpec } from "../src/host";
+import { Host, type CcbHost, type HostPluginSpec } from "../src/host";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const scratch = mkdtempSync(join(tmpdir(), "deck-host-"));
+const scratch = mkdtempSync(join(tmpdir(), "ccb-host-"));
 
 function spec(name: string, overrides: Partial<HostPluginSpec> = {}): HostPluginSpec {
   return { name, version: "1.0.0", main: "", fingerprint: "1", settings: {}, storageDir: join(scratch, "data", name), ...overrides };
 }
 
 /** A host whose plugins are given as functions, and what it wrote. */
-function makeHost(plugins: Record<string, (deck: DeckHost) => unknown>) {
+function makeHost(plugins: Record<string, (ccb: CcbHost) => unknown>) {
   const written: any[] = [];
   const host = new Host((message) => written.push(message), async (s) => plugins[s.name] as any);
   return { host, written };
@@ -26,9 +26,9 @@ function makeHost(plugins: Record<string, (deck: DeckHost) => unknown>) {
 describe("plugin host (in process)", () => {
   it("beforeSend hooks change or stop what is sent, in order", async () => {
     const { host, written } = makeHost({
-      upper: (deck) => { deck.hooks.beforeSend((m) => m.text.toUpperCase()); },
-      tag: (deck) => { deck.hooks.beforeSend((m) => ({ ...m, text: `${m.text}!` })); },
-      stop: (deck) => { deck.hooks.beforeSend((m) => (m.text.includes("SECRET") ? false : undefined)); },
+      upper: (ccb) => { ccb.hooks.beforeSend((m) => m.text.toUpperCase()); },
+      tag: (ccb) => { ccb.hooks.beforeSend((m) => ({ ...m, text: `${m.text}!` })); },
+      stop: (ccb) => { ccb.hooks.beforeSend((m) => (m.text.includes("SECRET") ? false : undefined)); },
     });
     await host.sync([spec("upper"), spec("tag"), spec("stop")]);
     await host.receive({ id: 1, method: "beforeSend", params: { bot: { id: "b" }, text: "hi" } });
@@ -41,8 +41,8 @@ describe("plugin host (in process)", () => {
 
   it("a hook that throws is reported and skipped", async () => {
     const { host, written } = makeHost({
-      bad: (deck) => { deck.hooks.beforeSend(() => { throw new Error("boom"); }); },
-      good: (deck) => { deck.hooks.beforeSend((m) => `${m.text}.`); },
+      bad: (ccb) => { ccb.hooks.beforeSend(() => { throw new Error("boom"); }); },
+      good: (ccb) => { ccb.hooks.beforeSend((m) => `${m.text}.`); },
     });
     await host.sync([spec("bad"), spec("good")]);
     await host.receive({ id: 1, method: "beforeSend", params: { bot: {}, text: "a" } });
@@ -61,11 +61,11 @@ describe("plugin host (in process)", () => {
     const changes: unknown[] = [];
     const disposed: string[] = [];
     const { host, written } = makeHost({
-      tool: (deck) => {
-        deck.commands.register("tool.add", (a, b) => (a as number) + (b as number));
-        deck.web.handle("echo", (params) => ({ got: params }));
-        deck.storage.set("count", (deck.storage.get("count") as number ?? 0) + 1);
-        deck.settings.onChange("tool.mode", (value) => changes.push(value));
+      tool: (ccb) => {
+        ccb.commands.register("tool.add", (a, b) => (a as number) + (b as number));
+        ccb.web.handle("echo", (params) => ({ got: params }));
+        ccb.storage.set("count", (ccb.storage.get("count") as number ?? 0) + 1);
+        ccb.settings.onChange("tool.mode", (value) => changes.push(value));
         return () => disposed.push("tool");
       },
     });
@@ -85,10 +85,10 @@ describe("plugin host (in process)", () => {
     expect(JSON.parse(readFileSync(join(scratch, "data/tool/storage.json"), "utf8"))).toEqual({ count: 2 });
   });
 
-  it("asks Deck for bots and routines, and answers when Deck replies", async () => {
+  it("asks ClaudeCodeBot for bots and routines, and answers when ClaudeCodeBot replies", async () => {
     let list: unknown;
     const { host, written } = makeHost({
-      lister: async (deck) => { list = await deck.bots.list(); },
+      lister: async (ccb) => { list = await ccb.bots.list(); },
     });
     const loading = host.sync([spec("lister")]);
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -111,12 +111,12 @@ describe("plugin host (the real Node process)", () => {
 
   it("speaks JSON-RPC on stdin/stdout and keeps plugin logs off stdout", async () => {
     const plugin = join(scratch, "shout.mjs");
-    writeFileSync(plugin, `export function activate(deck) {
+    writeFileSync(plugin, `export function activate(ccb) {
       console.log("this goes to stderr");
-      deck.hooks.beforeSend((m) => m.text.replace("貓", "🐈"));
-      deck.notify("ready to shout");
+      ccb.hooks.beforeSend((m) => m.text.replace("貓", "🐈"));
+      ccb.notify("ready to shout");
     }`);
-    child = spawn(process.execPath, [script], { env: { ...process.env, DECK_PLUGIN_HOST: "1" } });
+    child = spawn(process.execPath, [script], { env: { ...process.env, CCB_PLUGIN_HOST: "1" } });
     const messages: any[] = [];
     const waiters: (() => void)[] = [];
     createInterface({ input: child.stdout }).on("line", (line) => {

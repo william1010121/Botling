@@ -1,5 +1,5 @@
-// Deck's plugin host: one Node process that runs every plugin's program part (`deck.host`).
-// It talks to Deck over stdin/stdout, one JSON-RPC message per line (like LSP, without headers).
+// ClaudeCodeBot's plugin host: one Node process that runs every plugin's program part (`ccb.host`).
+// It talks to ClaudeCodeBot over stdin/stdout, one JSON-RPC message per line (like LSP, without headers).
 // Plugins' own console output goes to stderr so it cannot break the protocol.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -18,11 +18,11 @@ interface Message {
   error?: { message: string };
 }
 
-/** What Deck sends for each plugin with a program part. */
+/** What ClaudeCodeBot sends for each plugin with a program part. */
 export interface HostPluginSpec {
   name: string;
   version: string;
-  /** Absolute path of the bundled ES module that exports `activate(deck)`. */
+  /** Absolute path of the bundled ES module that exports `activate(ccb)`. */
   main: string;
   /** Changes whenever the plugin's files change, so a new version is imported fresh. */
   fingerprint: string;
@@ -35,8 +35,8 @@ export interface BotInfo { id: string; name: string; role: "main" | "manager"; a
 export interface Outgoing { bot: BotInfo; text: string }
 export interface Incoming { bot: BotInfo; text: string }
 
-/** The `deck` object a program part's `activate` receives. */
-export interface DeckHost {
+/** The `ccb` object a program part's `activate` receives. */
+export interface CcbHost {
   name: string;
   bots: {
     list(): Promise<BotInfo[]>;
@@ -56,7 +56,7 @@ export interface DeckHost {
   notify(text: string): void;
 }
 
-type Activate = (deck: DeckHost) => void | Dispose | Promise<void | Dispose>;
+type Activate = (ccb: CcbHost) => void | Dispose | Promise<void | Dispose>;
 
 interface Loaded {
   spec: HostPluginSpec;
@@ -212,7 +212,7 @@ export class Host {
     return this.plugins.has(name);
   }
 
-  /** Tells Deck which hooks and commands exist, so it only asks when someone is listening. */
+  /** Tells ClaudeCodeBot which hooks and commands exist, so it only asks when someone is listening. */
   private announce(): void {
     const plugins = [...this.plugins.values()];
     this.notify("registered", {
@@ -284,12 +284,12 @@ export class Host {
     }
   }
 
-  /** A plugin threw: Deck counts it, and turns the plugin off if it keeps happening. */
+  /** A plugin threw: ClaudeCodeBot counts it, and turns the plugin off if it keeps happening. */
   report(plugin: string | null, error: unknown): void {
     this.notify("pluginError", { plugin: plugin ?? this.current, message: errorText(error) });
   }
 
-  private api(plugin: Loaded): DeckHost {
+  private api(plugin: Loaded): CcbHost {
     const name = plugin.spec.name;
     const own = (dispose: Dispose): Dispose => {
       plugin.disposers.push(dispose);
@@ -374,7 +374,7 @@ async function importPlugin(spec: HostPluginSpec): Promise<Activate> {
   const url = `${pathToFileURL(spec.main).href}?v=${encodeURIComponent(spec.fingerprint)}`;
   const module = (await import(url)) as { activate?: Activate; default?: { activate?: Activate } };
   const activate = module.activate ?? module.default?.activate;
-  if (typeof activate !== "function") throw new Error("程式部分沒有匯出 activate(deck)。");
+  if (typeof activate !== "function") throw new Error("程式部分沒有匯出 activate(ccb)。");
   return activate;
 }
 
@@ -405,9 +405,9 @@ export function main(): void {
     }
     void host.receive(message);
   });
-  // Deck went away: so does the host.
+  // ClaudeCodeBot went away: so does the host.
   lines.on("close", () => process.exit(0));
   host.notify("ready", { pid: process.pid });
 }
 
-if (process.env.DECK_PLUGIN_HOST === "1") main();
+if (process.env.CCB_PLUGIN_HOST === "1") main();

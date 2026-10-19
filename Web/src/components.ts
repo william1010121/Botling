@@ -4,29 +4,31 @@ import type { ChoiceView, ComponentInfo } from "./types";
 
 /**
  * A component template inside its own iframe, so one template cannot break another or the chat.
- * The template sees `window.deck` (data, answer, choose, send) as before; the frame reports its
+ * The template sees `window.ccb` (data, answer, choose, send) as before; the frame reports its
  * height and answers to this page, which passes answers on to Swift.
  */
 export function componentPage(template: string, data: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
 <style>:root{color-scheme:dark}html,body{margin:0;padding:0;background:transparent;color:#EDEDF0;font:14px -apple-system,"PingFang TC",sans-serif;overflow:hidden}</style>
 <script>
-window.deck = {
+window.ccb = {
   data: ${data},
   answer(value) {
-    if (typeof value === 'number') parent.postMessage({deck: 'answer', index: value}, '*');
-    else parent.postMessage({deck: 'answer', text: String(value)}, '*');
+    if (typeof value === 'number') parent.postMessage({ccb: 'answer', index: value}, '*');
+    else parent.postMessage({ccb: 'answer', text: String(value)}, '*');
   },
   choose(index) { this.answer(Number(index)); },
   send(text) { this.answer(String(text)); }
 };
-</script></head><body><div id="deck-root">
+// Templates written while the app was called Deck call deck.answer(...).
+window.deck = window.ccb;
+</script></head><body><div id="ccb-root">
 ${template}
 </div><script>
-const deckRoot = document.getElementById('deck-root');
-const deckSize = () => parent.postMessage({deck: 'size', height: Math.ceil(deckRoot.getBoundingClientRect().height)}, '*');
-new ResizeObserver(deckSize).observe(deckRoot);
-window.addEventListener('load', deckSize);
+const ccbRoot = document.getElementById('ccb-root');
+const ccbSize = () => parent.postMessage({ccb: 'size', height: Math.ceil(ccbRoot.getBoundingClientRect().height)}, '*');
+new ResizeObserver(ccbSize).observe(ccbRoot);
+window.addEventListener('load', ccbSize);
 </script></body></html>`;
 }
 
@@ -36,21 +38,21 @@ export function choicesData(choices: ChoiceView[], chosen: number | null, answer
 }
 
 type AnswerHandler = (answer: { index?: number; text?: string }) => void;
-type ComponentFrame = HTMLIFrameElement & { deckAnswer?: AnswerHandler | null };
+type ComponentFrame = HTMLIFrameElement & { ccbAnswer?: AnswerHandler | null };
 
 // Frames are found by their window when they speak, so a message sent before the frame's own
 // load event is not lost.
 window.addEventListener("message", (event) => {
-  const message = event.data as { deck?: string; height?: number; index?: number; text?: string };
-  if (!message?.deck) return;
+  const message = event.data as { ccb?: string; height?: number; index?: number; text?: string };
+  if (!message?.ccb) return;
   const frame = [...document.querySelectorAll<ComponentFrame>("iframe.component-frame")]
     .find((candidate) => candidate.contentWindow === event.source);
   if (!frame) return;
-  if (message.deck === "size" && typeof message.height === "number" && message.height > 0) {
+  if (message.ccb === "size" && typeof message.height === "number" && message.height > 0) {
     frame.style.height = `${message.height}px`;
-  } else if (message.deck === "answer" && frame.deckAnswer) {
-    if (typeof message.index === "number") frame.deckAnswer({ index: message.index });
-    else if (typeof message.text === "string" && message.text.trim() !== "") frame.deckAnswer({ text: message.text });
+  } else if (message.ccb === "answer" && frame.ccbAnswer) {
+    if (typeof message.index === "number") frame.ccbAnswer({ index: message.index });
+    else if (typeof message.text === "string" && message.text.trim() !== "") frame.ccbAnswer({ text: message.text });
   }
 });
 
@@ -68,7 +70,7 @@ export function componentElement(
   frame.className = "component-frame";
   frame.setAttribute("sandbox", "allow-scripts");
   frame.title = name;
-  frame.deckAnswer = onAnswer;
+  frame.ccbAnswer = onAnswer;
   frame.srcdoc = componentPage(info.template, data);
   wrap.append(frame, reportControl(name, info));
   return wrap;

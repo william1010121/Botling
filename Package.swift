@@ -3,22 +3,22 @@
 import PackageDescription
 
 let package = Package(
-    name: "Deck",
+    name: "ClaudeCodeBot",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "Deck", targets: ["Deck"])
+        .executable(name: "ClaudeCodeBot", targets: ["ClaudeCodeBot"])
     ],
     targets: [
         .target(
-            name: "DeckCore",
-            path: "Sources/DeckCore"
+            name: "ClaudeCodeBotCore",
+            path: "Sources/ClaudeCodeBotCore"
         ),
         .executableTarget(
-            name: "Deck",
-            dependencies: ["DeckCore"],
-            path: "Sources/Deck",
+            name: "ClaudeCodeBot",
+            dependencies: ["ClaudeCodeBotCore"],
+            path: "Sources/ClaudeCodeBot",
             resources: [.copy("Resources/web"), .copy("Resources/plugins"), .copy("Resources/host")],
             linkerSettings: [
                 .linkedFramework("AppKit"),
@@ -27,9 +27,9 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "DeckCoreTests",
-            dependencies: ["DeckCore"],
-            path: "Tests/DeckCoreTests"
+            name: "ClaudeCodeBotCoreTests",
+            dependencies: ["ClaudeCodeBotCore"],
+            path: "Tests/ClaudeCodeBotCoreTests"
         )
     ],
     swiftLanguageModes: [.v5]

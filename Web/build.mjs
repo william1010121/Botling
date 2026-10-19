@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const resources = join(here, "../Sources/Deck/Resources");
+const resources = join(here, "../Sources/ClaudeCodeBot/Resources");
 const out = join(resources, "web");
 const pluginsOut = join(resources, "plugins");
 const katex = join(here, "node_modules/katex/dist");
@@ -41,7 +41,7 @@ cpSync(join(here, "src/chat.css"), join(out, "chat.css"));
 
 /** Extra files a built-in plugin needs beside its bundle. */
 const assets = {
-  "deck-latex": (dist) => {
+  "ccb-latex": (dist) => {
     cpSync(join(katex, "katex.min.css"), join(dist, "katex.min.css"));
     mkdirSync(join(dist, "fonts"), { recursive: true });
     for (const font of readdirSync(join(katex, "fonts")).filter((name) => name.endsWith(".woff2"))) {
@@ -56,17 +56,17 @@ for (const name of readdirSync(join(here, "plugins"))) {
   const target = join(pluginsOut, name);
   mkdirSync(join(target, "dist"), { recursive: true });
   cpSync(join(source, "package.json"), join(target, "package.json"));
-  if (manifest.deck?.host) {
+  if (manifest.ccb?.host) {
     await build({
       entryPoints: [join(source, "src/host.ts")],
       bundle: true,
       platform: "node",
       format: "esm",
       target: "node20",
-      outfile: join(target, manifest.deck.host),
+      outfile: join(target, manifest.ccb.host),
     });
   }
-  if (manifest.deck?.web) {
+  if (manifest.ccb?.web) {
     await build({
       entryPoints: [join(source, "src/web.ts")],
       bundle: true,
@@ -74,7 +74,7 @@ for (const name of readdirSync(join(here, "plugins"))) {
       target: "safari17",
       minify: true,
       legalComments: "eof",
-      outfile: join(target, manifest.deck.web),
+      outfile: join(target, manifest.ccb.web),
     });
   }
   assets[name]?.(join(target, "dist"));

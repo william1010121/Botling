@@ -1,0 +1,22 @@
+{
+  "name": "ccb-latex",
+  "displayName": "LaTeX 公式",
+  "version": "1.0.0",
+  "description": "訊息裡的 $…$、$$…$$、\\(…\\)、\\[…\\] 用 KaTeX 排版；輸入框打公式時即時預覽；複製公式時複製回 TeX。",
+  "license": "MIT",
+  "engines": { "ccb": "^2.0.0" },
+  "ccb": {
+    "permissions": ["composer", "messages"],
+    "web": "dist/web.js",
+    "styles": ["dist/katex.min.css"],
+    "contributes": {
+      "commands": [
+        { "id": "ccb-latex.insert", "title": "插入行內公式", "key": "cmd+shift+m" }
+      ],
+      "settings": {
+        "ccb-latex.preview": { "type": "boolean", "default": true, "title": "輸入時預覽公式" },
+        "ccb-latex.copyTeX": { "type": "boolean", "default": true, "title": "複製公式時複製 TeX" }
+      }
+    }
+  }
+}
