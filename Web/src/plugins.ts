@@ -272,8 +272,17 @@ export class PluginHost {
   }
 }
 
-/** Loads a bundled ES module from its text. */
+/** Loads a bundled ES module from its text. A failed import is tried once more before it counts. */
 async function importModule(spec: PluginSpec): Promise<Activate> {
+  try {
+    return await importOnce(spec);
+  } catch {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return importOnce(spec);
+  }
+}
+
+async function importOnce(spec: PluginSpec): Promise<Activate> {
   const url = URL.createObjectURL(new Blob([spec.source], { type: "text/javascript" }));
   try {
     const module = (await import(/* @vite-ignore */ url)) as { activate?: Activate; default?: { activate?: Activate } };
