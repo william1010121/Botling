@@ -117,6 +117,26 @@ struct ComponentTests {
         #expect(workspace.componentBriefing().contains("- choices: "))
     }
 
+    /// "Make me five kinds of component to pick from, use /design": the main bot hands it to
+    /// Maintainer (the component library) instead of drawing its own page, and a /design
+    /// request comes back as a Claude Design link, not a local HTML file.
+    @Test func componentDesignsGoToTheLibraryAndDesignMeansAClaudeDesignLink() {
+        let main = BotPrompts(profile: .main(home: root)).system
+        #expect(main.contains("Designing chat components (new looks, several kinds to choose from) is Maintainer's"))
+        #expect(main.contains("one <component> tag per design"))
+        #expect(main.contains("never draw design pages of your own"))
+        let manager = BotPrompts(profile: .manager(name: "g", avatar: "square", folder: root)).system
+        for system in [main, manager] {
+            #expect(system.contains("\"/design\""))
+            #expect(system.contains("Claude Design"))
+            #expect(system.contains("not a local HTML file"))
+        }
+        let maintainer = makeWorkspace(FakeLauncher()).maintainerInstructions()
+        #expect(maintainer.contains(#"quickstart with intent "design""#))
+        #expect(maintainer.contains("the look of ccb-components"))
+        #expect(maintainer.contains("claude.ai link"))
+    }
+
     @Test func aReportMayBeJustAPicture() async throws {
         let fake = FakeLauncher()
         let workspace = makeWorkspace(fake)

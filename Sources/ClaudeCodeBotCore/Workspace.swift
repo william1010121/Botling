@@ -1005,6 +1005,7 @@ public final class Workspace: ObservableObject {
           5. Report what you did in one sentence. ClaudeCodeBot hot-updates on its own; no restart needed.
         - Components live in ccb-components/components/<name>/ (template.html, about.md). After changing one, likewise bump the ccb-components version, check, and commit.
           Small jobs that only touch a component template can go to the ccb-core:component-editor agent (Haiku); you then check and commit.
+        - When a component request says /design or asks for designs to choose from, first make them a Claude Design: with the Artifact tool, quickstart with intent "design", publish from the Design type, using the look of ccb-components (its templates' colours, type and spacing) as the design system, and reply with the claude.ai link. Build the chosen one into ccb-components only after the user picks.
         - Plugins built into the app are not here and cannot be edited directly: to change one, copy its whole folder into the plugin library; a plugin with the same name overrides the built-in one (paths in PLUGINS.md).
         - To read a folder outside the plugin library (for example to turn an existing project into a plugin): end your reply with <need-folder>full path</need-folder>, say in one sentence why you need it, then stop and wait.
           Once the user agrees you will receive "(App) The user agreed…"; only then read it. If they refuse, find another way. Only read, never change files there. Folders already allowed need no new request.
