@@ -71,9 +71,18 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable {
     public var result: String?
     /// The subagent that sent this one off, for one started by a subagent.
     public var parentID: String?
-    /// When you took its row out of the left column. It only hides the row: the subagent
-    /// itself runs on. Nil while it is listed.
-    public var dismissedAt: Date?
+    /// When you settled it: its row left the left column for the "Settled" list in the right
+    /// column. It does not stop it: the subagent itself runs on. Nil while it is listed.
+    /// (Saved as "dismissedAt", its name in 1.6.)
+    public var settledAt: Date?
+    /// When you brought it back from "Settled": an ended one is listed again for a while from
+    /// then, as if it had just ended.
+    public var unsettledAt: Date?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, description, type, prompt, status, background, startedAt, endedAt, steps, result, parentID, unsettledAt
+        case settledAt = "dismissedAt"
+    }
 
     public init(id: String, description: String, type: String? = nil, prompt: String, status: Status = .running, background: Bool = false, startedAt: Date = Date(), steps: [Step] = [], parentID: String? = nil) {
         self.id = id
@@ -89,8 +98,8 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable {
 
     public var isRunning: Bool { status == .running }
 
-    /// You took its row out of the left column.
-    public var isDismissed: Bool { dismissedAt != nil }
+    /// You settled it: its row is under "Settled" in the right column, not in the left one.
+    public var isSettled: Bool { settledAt != nil }
 
     /// How the left column marks it. Only one still at work gets a live dot; a finished one
     /// gets a check, so it never looks like a bot that is awake (green).
@@ -249,24 +258,20 @@ public struct TraceBook: Equatable, Sendable {
     public static let listedAtMost = 4
 
     /// The subagents the left column lists under the bot at `date`: the ones the bot itself
-    /// sent off that still run, or ended a short while ago, and whose row you did not take
-    /// away. Running ones come first, then the rest, newest first within each; the cap keeps
-    /// the first `limit` rows of that order (nil lists them all, for "Show more").
+    /// sent off that still run, or ended a short while ago (or were brought back from
+    /// "Settled" a short while ago), and that you did not settle. Running ones come first,
+    /// then the rest, newest first within each; the cap keeps the first `limit` rows of that
+    /// order (nil lists them all, for "Show more").
     public func listed(at date: Date = Date(), limit: Int? = Self.listedAtMost) -> [Subagent] {
-        let shown = subagents.enumerated().filter { _, subagent in
-            guard subagent.parentID == nil, !subagent.isDismissed else { return false }
+        let shown = Self.ordered(subagents.enumerated().filter { _, subagent in
+            guard subagent.parentID == nil, !subagent.isSettled else { return false }
             if subagent.isRunning { return true }
             guard let ended = subagent.endedAt else { return false }
-            return date.timeIntervalSince(ended) < Self.listedAfterEnding
-        }
-        // Later in the book counts as newer when two started at the same moment.
-        let ordered = shown.sorted { a, b in
-            if a.element.isRunning != b.element.isRunning { return a.element.isRunning }
-            if a.element.startedAt != b.element.startedAt { return a.element.startedAt > b.element.startedAt }
-            return a.offset > b.offset
-        }
-        guard let limit else { return ordered.map(\.element) }
-        return ordered.prefix(limit).map(\.element)
+            let since = max(ended, subagent.unsettledAt ?? ended)
+            return date.timeIntervalSince(since) < Self.listedAfterEnding
+        })
+        guard let limit else { return shown }
+        return Array(shown.prefix(limit))
     }
 
     /// How many rows the capped list leaves out at `date`.
@@ -274,12 +279,41 @@ public struct TraceBook: Equatable, Sendable {
         max(0, listed(at: date, limit: nil).count - Self.listedAtMost)
     }
 
-    /// Takes its row out of the left column. It does not stop it: a running one works on and
-    /// still reports back. True if it was listed until now (worth saving).
+    /// The subagents you settled, for the right column's "Settled": running ones first, then
+    /// the rest, newest first within each (the same order as the left column).
+    public var settled: [Subagent] {
+        Self.ordered(subagents.enumerated().filter { _, subagent in
+            subagent.parentID == nil && subagent.isSettled
+        })
+    }
+
+    /// Running first, then newest first; later in the book counts as newer when two started
+    /// at the same moment.
+    private static func ordered(_ shown: [EnumeratedSequence<[Subagent]>.Element]) -> [Subagent] {
+        shown.sorted { a, b in
+            if a.element.isRunning != b.element.isRunning { return a.element.isRunning }
+            if a.element.startedAt != b.element.startedAt { return a.element.startedAt > b.element.startedAt }
+            return a.offset > b.offset
+        }.map(\.element)
+    }
+
+    /// Settles it: its row leaves the left column for "Settled" in the right one. It does not
+    /// stop it: a running one works on and still reports back. True if it was listed until
+    /// now (worth saving).
     @discardableResult
-    public mutating func dismiss(_ id: String, at date: Date = Date()) -> Bool {
-        guard let index = subagentIndex(id), subagents[index].dismissedAt == nil else { return false }
-        subagents[index].dismissedAt = date
+    public mutating func settle(_ id: String, at date: Date = Date()) -> Bool {
+        guard let index = subagentIndex(id), subagents[index].settledAt == nil else { return false }
+        subagents[index].settledAt = date
+        return true
+    }
+
+    /// Brings a settled one back to the left column; one that has ended stays listed for
+    /// `listedAfterEnding` from `date`. True if it was settled until now (worth saving).
+    @discardableResult
+    public mutating func unsettle(_ id: String, at date: Date = Date()) -> Bool {
+        guard let index = subagentIndex(id), subagents[index].settledAt != nil else { return false }
+        subagents[index].settledAt = nil
+        subagents[index].unsettledAt = date
         return true
     }
 

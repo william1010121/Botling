@@ -90,17 +90,17 @@ struct TraceTests {
         #expect(book.listed(at: end.addingTimeInterval(TraceBook.listedAfterEnding + 1)).isEmpty)
     }
 
-    /// The cross on a subagent's row takes it out of the left column without stopping it.
-    @Test func aDismissedSubagentLeavesTheListButKeepsRunning() {
+    /// Settling a subagent's row takes it out of the left column without stopping it.
+    @Test func aSettledSubagentLeavesTheListButKeepsRunning() {
         var book = TraceBook()
         let start = Date(timeIntervalSinceReferenceDate: 1_000_000)
         for line in SubagentRun.lines.dropLast() {
             for case let .trace(event) in StreamEvent.events(in: line) { book.apply(event, at: start) }
         }
         #expect(book.listed(at: start).map(\.id) == ["toolu_A"])
-        let first = book.dismiss("toolu_A", at: start)
-        let twice = book.dismiss("toolu_A", at: start)
-        let unknown = book.dismiss("nobody", at: start)
+        let first = book.settle("toolu_A", at: start)
+        let twice = book.settle("toolu_A", at: start)
+        let unknown = book.settle("nobody", at: start)
         #expect(first)
         #expect(!twice)
         #expect(!unknown)
@@ -113,15 +113,15 @@ struct TraceTests {
         #expect(book.listed(at: start).isEmpty)
     }
 
-    /// A hidden row frees its place for an older one still within the list's limit.
-    @Test func aDismissedSubagentMakesRoomInTheList() {
+    /// A settled row frees its place for an older one still within the list's limit.
+    @Test func aSettledSubagentMakesRoomInTheList() {
         var book = TraceBook()
         let ids = (0...TraceBook.listedAtMost).map { "S\($0)" }
         for id in ids {
             book.apply(.subagentStarted(id: id, description: id, type: "general-purpose", prompt: "Do \(id)", background: true))
         }
         #expect(book.listed().map(\.id) == Array(ids.reversed().prefix(TraceBook.listedAtMost)))
-        book.dismiss(ids.last!)
+        book.settle(ids.last!)
         #expect(book.listed().map(\.id) == Array(ids.dropLast().reversed()))
     }
 
@@ -142,7 +142,7 @@ struct TraceTests {
     }
 
     /// Past the cap, "Show more" lists every row in the same order; `beyondCap` counts the
-    /// rows the capped list leaves out, and dismissed ones do not count.
+    /// rows the capped list leaves out, and settled ones do not count.
     @Test func theFullListGoesPastTheCap() {
         var book = TraceBook()
         let start = Date(timeIntervalSinceReferenceDate: 1_000_000)
@@ -155,16 +155,16 @@ struct TraceTests {
         #expect(book.listed(at: now).map(\.id) == Array(all.prefix(TraceBook.listedAtMost)))
         #expect(book.listed(at: now, limit: nil).map(\.id) == all)
         #expect(book.beyondCap(at: now) == 2)
-        book.dismiss(ids.last!)
+        book.settle(ids.last!)
         #expect(book.listed(at: now, limit: nil).map(\.id) == Array(all.dropFirst()))
         #expect(book.beyondCap(at: now) == 1)
-        book.dismiss(ids[ids.count - 2])
+        book.settle(ids[ids.count - 2])
         #expect(book.beyondCap(at: now) == 0)
         #expect(book.listed(at: now, limit: nil).count == TraceBook.listedAtMost)
     }
 
-    @Test func aDismissalOutlivesARestart() {
-        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-dismiss-\(UUID().uuidString)")
+    @Test func aSettlingOutlivesARestart() {
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-settle-\(UUID().uuidString)")
         let store = BotStore(directory: home.appending(path: "store"))
         var kept = Subagent(id: "A", description: "Keep me", type: "general-purpose", prompt: "Keep")
         kept.status = .completed
@@ -176,20 +176,90 @@ struct TraceTests {
 
         let bot = Bot(profile: .main(home: home), launcher: FakeLauncher().launcher, store: store)
         #expect(bot.trace.listed().map(\.id) == ["B", "A"])
-        bot.dismissSubagent("B")
+        bot.settleSubagent("B")
         #expect(bot.trace.listed().map(\.id) == ["A"])
         #expect(bot.subagents.map(\.id) == ["A", "B"])
-        #expect(store.loadSubagents().first { $0.id == "B" }?.isDismissed == true)
+        #expect(store.loadSubagents().first { $0.id == "B" }?.isSettled == true)
 
         let again = Bot(profile: .main(home: home), launcher: FakeLauncher().launcher, store: store)
         #expect(again.trace.listed().map(\.id) == ["A"])
     }
 
-    /// subagents.json written before rows could be hidden still loads, every row listed.
-    @Test func subagentsSavedBeforeDismissingStillLoad() throws {
+    /// subagents.json written before rows could be settled still loads, every row listed.
+    @Test func subagentsSavedBeforeSettlingStillLoad() throws {
         let json = #"[{"id":"A","description":"Old","prompt":"p","status":"completed","background":false,"startedAt":0,"steps":[]}]"#
         let loaded = try JSONDecoder().decode([Subagent].self, from: Data(json.utf8))
-        #expect(loaded.map(\.isDismissed) == [false])
+        #expect(loaded.map(\.isSettled) == [false])
+    }
+
+    /// A settled subagent moves to "Settled": running ones first, then newest first, and
+    /// only the bot's own subagents (not ones a subagent sent off).
+    @Test func settledSubagentsAreListedForTheRightColumn() {
+        var book = TraceBook()
+        let start = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        for (offset, id) in ["A", "B", "C"].enumerated() {
+            book.apply(.subagentStarted(id: id, description: id, type: "general-purpose", prompt: "Do \(id)", background: true), at: start.addingTimeInterval(Double(offset)))
+        }
+        book.apply(.subagentEnded(id: "C", status: "completed", summary: nil), at: start.addingTimeInterval(5))
+        #expect(book.settled.isEmpty)
+        book.settle("A", at: start.addingTimeInterval(6))
+        book.settle("C", at: start.addingTimeInterval(6))
+        #expect(book.settled.map(\.id) == ["A", "C"])
+        #expect(book.listed(at: start.addingTimeInterval(7)).map(\.id) == ["B"])
+        // Settled long after it ended, it stays under "Settled" (it never times out there).
+        #expect(book.settled.map(\.id) == ["A", "C"])
+        // A settled one still runs: its end arrives and it stays settled.
+        book.apply(.subagentEnded(id: "A", status: "completed", summary: nil), at: start.addingTimeInterval(8))
+        #expect(book.subagent("A")?.status == .completed)
+        #expect(book.settled.map(\.id) == ["C", "A"])
+    }
+
+    /// Bringing one back from "Settled" lists it again, and an ended one stays listed for a
+    /// while from then even if it ended long ago.
+    @Test func anUnsettledSubagentComesBackToTheLeftColumn() {
+        var book = TraceBook()
+        let start = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        book.apply(.subagentStarted(id: "A", description: "A", type: "general-purpose", prompt: "Do A", background: true), at: start)
+        book.apply(.subagentEnded(id: "A", status: "completed", summary: nil), at: start.addingTimeInterval(1))
+        book.settle("A", at: start.addingTimeInterval(2))
+        let later = start.addingTimeInterval(TraceBook.listedAfterEnding * 3)
+        #expect(book.listed(at: later).isEmpty)
+        let first = book.unsettle("A", at: later)
+        let twice = book.unsettle("A", at: later)
+        let unknown = book.unsettle("nobody", at: later)
+        #expect(first)
+        #expect(!twice)
+        #expect(!unknown)
+        #expect(book.settled.isEmpty)
+        #expect(book.listed(at: later.addingTimeInterval(60)).map(\.id) == ["A"])
+        #expect(book.listed(at: later.addingTimeInterval(TraceBook.listedAfterEnding + 1)).isEmpty)
+        // It can be settled again.
+        let again = book.settle("A", at: later)
+        #expect(again)
+        #expect(book.settled.map(\.id) == ["A"])
+    }
+
+    /// Settling and bringing back are saved, and the 1.6 "dismissedAt" reads as settled.
+    @Test func settlingIsSavedAndReadsTheOldName() throws {
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-unsettle-\(UUID().uuidString)")
+        let store = BotStore(directory: home.appending(path: "store"))
+        var one = Subagent(id: "A", description: "One", type: "general-purpose", prompt: "One")
+        one.status = .completed
+        one.endedAt = Date()
+        store.save(subagents: [one])
+        let bot = Bot(profile: .main(home: home), launcher: FakeLauncher().launcher, store: store)
+        bot.settleSubagent("A")
+        #expect(bot.trace.settled.map(\.id) == ["A"])
+        bot.unsettleSubagent("A")
+        #expect(bot.trace.settled.isEmpty)
+        #expect(store.loadSubagents().first?.isSettled == false)
+        #expect(store.loadSubagents().first?.unsettledAt != nil)
+
+        let json = #"[{"id":"A","description":"Old","prompt":"p","status":"completed","background":false,"startedAt":0,"steps":[],"dismissedAt":10}]"#
+        let loaded = try JSONDecoder().decode([Subagent].self, from: Data(json.utf8))
+        #expect(loaded.map(\.isSettled) == [true])
+        let saved = String(decoding: try JSONEncoder().encode(loaded), as: UTF8.self)
+        #expect(saved.contains("\"dismissedAt\""))
     }
 
     @Test func aSubagentSavedAsRunningIsNotRunningAfterARestart() {

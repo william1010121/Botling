@@ -607,7 +607,7 @@ private struct BotRow: View {
 
 /// Under a bot: the subagents it sent off that are running or ended a few minutes ago, the
 /// way Claude Code lists a session's subagents. Click one to watch its conversation; the
-/// cross on the right takes its row away (it does not stop the subagent).
+/// clock on the right settles it into the right column's "Settled" (it does not stop it).
 private struct SubagentRows: View {
     @ObservedObject var bot: Bot
     @ObservedObject var workspace: Workspace
@@ -652,8 +652,9 @@ private struct SubagentRows: View {
     }
 }
 
-/// One subagent's row. The cross shows while the pointer is on the row, and always once the
-/// subagent has ended.
+/// One subagent's row. It has one icon on the right: a blue dot while the subagent works,
+/// and once it has ended (or while the pointer is on a running one) the settle button, a
+/// clock badged with how it ended. Settling moves the row to "Settled" in the right column.
 private struct SubagentRow: View {
     let subagent: Subagent
     @ObservedObject var bot: Bot
@@ -661,7 +662,7 @@ private struct SubagentRow: View {
     @State private var hovering = false
 
     private var selected: Bool { workspace.selectedBot === bot && workspace.viewingSubagent == subagent.id }
-    private var showsDismiss: Bool { hovering || !subagent.isRunning }
+    private var showsSettle: Bool { hovering || !subagent.isRunning }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -675,7 +676,6 @@ private struct SubagentRow: View {
                         .foregroundStyle(subagent.isRunning ? Theme.text : Theme.muted)
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    SubagentRows.mark(subagent.mark).frame(width: 10)
                 }
                 .padding(.leading, 26)
                 .padding(.trailing, 4)
@@ -685,31 +685,115 @@ private struct SubagentRow: View {
             .buttonStyle(.plain)
             .help(subagent.prompt)
             .accessibilityLabel("Subagent of \(bot.name): \(subagent.description), \(subagent.status.rawValue)")
-            Button(action: dismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(Theme.faint)
-                    .frame(width: 22, height: 30)
-                    .contentShape(Rectangle())
+            Button(action: settle) {
+                Group {
+                    if showsSettle {
+                        Self.settleIcon(subagent.mark)
+                    } else {
+                        SubagentRows.mark(subagent.mark)
+                    }
+                }
+                .frame(width: 24, height: 30)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .opacity(showsDismiss ? 1 : 0)
-            .allowsHitTesting(showsDismiss)
-            .help(subagent.isRunning ? "Hide this row (the subagent keeps working)" : "Hide this row")
-            .accessibilityLabel("Hide subagent \(subagent.description)")
-            .padding(.trailing, 4)
+            .allowsHitTesting(showsSettle)
+            .help(subagent.isRunning ? "Settle: move to Settled in the right column (it keeps working)" : "Settle: move to Settled in the right column")
+            .accessibilityLabel("Settle subagent \(subagent.description)")
+            .padding(.trailing, 6)
         }
         .background(RoundedRectangle(cornerRadius: 10).fill(selected ? Theme.selected : .clear))
         .onHover { hovering = $0 }
         .contextMenu {
-            Button("Hide") { dismiss() }
+            Button("Settle") { settle() }
         }
     }
 
-    /// Takes the row away; if you were watching it, back to the bot's chat.
-    private func dismiss() {
-        if selected { workspace.view(subagent: nil, of: bot) }
-        bot.dismissSubagent(subagent.id)
+    /// The settle button: a clock with how it ended (a check once done).
+    @ViewBuilder
+    static func settleIcon(_ mark: Subagent.Mark) -> some View {
+        switch mark {
+        case .live, .done:
+            Image(systemName: "clock.badge.checkmark").font(.system(size: 12)).foregroundStyle(Theme.muted)
+        case .failed:
+            Image(systemName: "clock.badge.exclamationmark").font(.system(size: 12)).foregroundStyle(Theme.orange)
+        case .stopped:
+            Image(systemName: "clock.badge.xmark").font(.system(size: 12)).foregroundStyle(Theme.faint)
+        }
+    }
+
+    /// Moves the row to "Settled"; you keep watching it if you were (it is opened from there).
+    private func settle() {
+        bot.settleSubagent(subagent.id)
+    }
+}
+
+/// Right column, "Settled": the subagents you settled out of the left column. Click one to
+/// watch its conversation; the arrow brings it back to the left column.
+private struct SettledList: View {
+    @ObservedObject var bot: Bot
+    @ObservedObject var workspace: Workspace
+    @State private var showsAll = false
+    static let shownAtMost = 5
+
+    var body: some View {
+        let settled = bot.trace.settled
+        let more = max(0, settled.count - Self.shownAtMost)
+        VStack(spacing: 4) {
+            ForEach(showsAll ? settled : Array(settled.prefix(Self.shownAtMost))) { subagent in
+                row(subagent)
+            }
+            if more > 0 {
+                Button { showsAll.toggle() } label: {
+                    Text(showsAll ? "Show less" : "Show \(more) more")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.faint)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 14)
+                        .frame(height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(showsAll ? "Show fewer settled subagents" : "Show \(more) more settled subagents")
+            }
+        }
+    }
+
+    private func row(_ subagent: Subagent) -> some View {
+        let selected = workspace.selectedBot === bot && workspace.viewingSubagent == subagent.id
+        return HStack(spacing: 0) {
+            Button { workspace.view(subagent: subagent.id, of: bot) } label: {
+                HStack(spacing: 10) {
+                    SubagentRows.mark(subagent.mark).frame(width: 10)
+                    Text(subagent.description.isEmpty ? "Subagent" : subagent.description)
+                        .font(.system(size: 13))
+                        .foregroundStyle(subagent.isRunning ? Theme.text : Theme.muted)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                }
+                .padding(.leading, 14)
+                .frame(height: 36)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(subagent.prompt)
+            .accessibilityLabel("Settled subagent: \(subagent.description), \(subagent.status.rawValue)")
+            Button { bot.unsettleSubagent(subagent.id) } label: {
+                Image(systemName: "arrow.uturn.backward")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.faint)
+                    .frame(width: 32, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Back to the left column")
+            .accessibilityLabel("Bring \(subagent.description) back to the left column")
+            .padding(.trailing, 4)
+        }
+        .background(RoundedRectangle(cornerRadius: 12).fill(selected ? Theme.selected : Theme.bubble))
+        .contextMenu {
+            Button("Back to the Left Column") { bot.unsettleSubagent(subagent.id) }
+        }
     }
 }
 
@@ -879,6 +963,12 @@ struct DetailPanel: View {
                             .buttonStyle(.plain)
                         }
                     }
+                }
+            }
+
+            if !bot.trace.settled.isEmpty {
+                PanelSection("Settled") {
+                    SettledList(bot: bot, workspace: workspace)
                 }
             }
         }
@@ -1225,3 +1315,4 @@ struct PanelSection<Content: View>: View {
         }
     }
 }
+

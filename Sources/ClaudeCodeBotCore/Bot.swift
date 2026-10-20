@@ -194,10 +194,15 @@ public final class Bot: ObservableObject, Identifiable {
     /// The subagents it sent off, newest last.
     public var subagents: [Subagent] { trace.subagents }
 
-    /// Takes a subagent's row out of the left column, for good (it is saved). A running one
-    /// is left alone: it works on and reports back as before.
-    public func dismissSubagent(_ id: String) {
-        if trace.dismiss(id) { store?.save(subagents: trace.subagents) }
+    /// Settles a subagent: its row moves from the left column to "Settled" in the right one
+    /// (saved, so it lasts). A running one is left alone: it works on and reports back.
+    public func settleSubagent(_ id: String) {
+        if trace.settle(id) { store?.save(subagents: trace.subagents) }
+    }
+
+    /// Brings a settled subagent back to the left column.
+    public func unsettleSubagent(_ id: String) {
+        if trace.unsettle(id) { store?.save(subagents: trace.subagents) }
     }
 
     public var name: String { profile.name }
