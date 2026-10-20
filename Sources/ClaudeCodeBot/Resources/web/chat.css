@@ -759,6 +759,7 @@ body.viewer { display: block; overflow-y: auto; height: auto; min-height: 100%; 
 .bubble.wide { flex: 1 1 auto; max-width: none; }
 .bot-column.wide, .speaker-column.wide { flex: 1 1 auto; max-width: none; align-items: flex-start; }
 .bot-column.wide > .bubble.wide, .speaker-column.wide > .bubble.wide, .bot-column.wide > .spec-chips { align-self: stretch; }
+.bot-column.tiled > .bubble, .speaker-column.tiled > .bubble { align-self: stretch; max-width: none; }
 .row.wide { position: relative; }
 .row.wide > .message-actions, .row.wide > .reply-button { position: absolute; top: 6px; right: 6px; z-index: 4; }
 .row.wide > .message-actions { flex-direction: row; padding: 2px; border-radius: 9px; border: 1px solid transparent; }

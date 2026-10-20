@@ -142,6 +142,13 @@ describe("make into component, in the chat", () => {
       expect(getComputedStyle(shown).paddingRight).toBe("16px");
       expect(row.classList.contains("wide")).toBe(true);
       expect(shown.querySelector<HTMLIFrameElement>("iframe")!.srcdoc).toContain('<html data-size="4x2" data-surface="chat">');
+      // The reply's bubble spans the column too, so it and the tile under it are one width
+      // (a short reply's bubble no longer stops short of the tile's right edge).
+      const bubble = row.querySelector<HTMLElement>(".bot-bubble")!;
+      expect(getComputedStyle(bubble).maxWidth).toBe("none");
+      expect(getComputedStyle(bubble).alignSelf).toBe("stretch");
+      // The component fills its tile: nothing (the report flag, a spinner) takes a column beside it.
+      expect(getComputedStyle(shown.querySelector<HTMLElement>(".component-side")!).position).toBe("absolute");
     } finally {
       style.remove();
     }

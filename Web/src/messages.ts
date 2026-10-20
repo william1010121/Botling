@@ -73,6 +73,8 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
           column.classList.add("wide");
           row.classList.add("wide");
         }
+        // The reply's bubble is as wide as the tile under it, so the two line up on the right.
+        if (column.querySelector(".spec-built")) column.classList.add("tiled");
         row.append(avatar(message.avatar), column, actions);
       } else {
         if (body.classList.contains("wide")) row.classList.add("wide");

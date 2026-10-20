@@ -192,6 +192,7 @@ extension Workspace {
         } else if spec.name != before.name, let build = specBuilds.removeValue(forKey: before.name) {
             // Built under another name: that one is waited for (a new one, or a change to it).
             specBuilds[spec.name] = (build.chat, build.spec, components.names.contains(spec.name) ? components.versions[spec.name, default: 0] : nil)
+            components.doneWorking(before.name)
             components.markWorking(spec.name, change: "built from a reply")
         }
     }
@@ -308,6 +309,10 @@ extension Workspace {
     /// went. Nothing runs: its command, if any, waits for the user on the card.
     private func finish(_ id: UUID, component name: String, in chat: Bot) {
         guard let spec = chat.specs.first(where: { $0.id == id }) else { return }
+        // Built: its preview under the reply stops spinning now, not when Maintainer's turn ends
+        // (a build handed to a background agent lands while that turn still goes on).
+        components.doneWorking(name)
+        components.doneWorking(spec.name)
         var added: [String] = []
         var full: [String] = []
         for botName in spec.bots {
