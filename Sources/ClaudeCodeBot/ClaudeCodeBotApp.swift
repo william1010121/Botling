@@ -105,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         workspace.prepareLibrary()
         connectSelfUpdate()
         workspace.startRoutines()
+        workspace.startWatching()
         workspace.components.startWatching()
         workspace.plugins.startWatching()
         // The Dock icon counts what is waiting for a decision.

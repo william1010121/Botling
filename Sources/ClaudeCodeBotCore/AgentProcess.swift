@@ -58,12 +58,16 @@ public enum AgentEvent: Equatable, Sendable {
     /// What this session has cost so far, in US dollars (sent with each turn's result).
     /// With the tokens this turn used.
     case usage(totalCost: Double, tokens: TokenUsage = TokenUsage())
+    /// Claude could not reach the API (no HTTP answer at all) and is retrying (`api_retry`).
+    case connectionTrouble(attempt: Int, maxRetries: Int)
     case exited(status: Int32, stderr: String)
 }
 
 public struct AgentLaunch: Equatable, Sendable {
     public var model: BotModel
     public var sessionID: UUID
+    /// Go on with the session `sessionID` names (`--resume`) instead of starting it.
+    public var resume = false
     public var workingDirectory: URL
     public var systemPrompt: String
     public var tools: [String] = ["Read", "Write", "Edit"]
@@ -118,7 +122,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
             "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--verbose",
-            "--session-id", launch.sessionID.uuidString.lowercased(),
+            launch.resume ? "--resume" : "--session-id", launch.sessionID.uuidString.lowercased(),
             "--model", launch.model.rawValue,
             "--permission-mode", launch.autoMode ? "auto" : "acceptEdits",
             // Plugins' skills are used through the Skill tool.

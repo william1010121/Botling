@@ -32,15 +32,17 @@ extension Bot {
 
     var statusText: String {
         switch phase {
+        case .asleep where outage != nil, .awake where outage != nil: NetworkResume.label
         case .asleep: "Asleep"
         case .tidying: "Tidying notes"
         case .switching: "Handing off"
-        case .awake: waitingForPermission ? "Waiting for your OK" : isWorking ? "Working" : "Awake"
+        case .awake: waitingForPermission ? "Waiting for your OK" : retryingConnection ? NetworkResume.label + "，重試中…" : isWorking ? "Working" : "Awake"
         }
     }
 
     var statusColor: Color {
-        switch phase {
+        if outage != nil || retryingConnection { return Theme.orange }
+        return switch phase {
         case .asleep: Theme.faint
         case .tidying, .switching: Theme.blue
         case .awake: isWorking ? Theme.blue : Theme.green

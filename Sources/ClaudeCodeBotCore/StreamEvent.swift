@@ -48,6 +48,15 @@ enum StreamEvent {
                     prompt: object["prompt"] as? String ?? "",
                     background: object["is_backgrounded"] as? Bool ?? false
                 ))]
+            case "api_retry":
+                // An HTTP status means the API answered (overloaded, rate limit): not the network.
+                guard object["error_status"] == nil || object["error_status"] is NSNull else { return [] }
+                let error = object["error"] as? String
+                guard error == nil || error == "unknown" || error == "connection_error" else { return [] }
+                return [.connectionTrouble(
+                    attempt: (object["attempt"] as? NSNumber)?.intValue ?? 0,
+                    maxRetries: (object["max_retries"] as? NSNumber)?.intValue ?? 0
+                )]
             case "task_notification":
                 guard let id = object["tool_use_id"] as? String else { return [] }
                 return [.trace(.subagentEnded(id: id, status: object["status"] as? String ?? "completed", summary: object["summary"] as? String))]
