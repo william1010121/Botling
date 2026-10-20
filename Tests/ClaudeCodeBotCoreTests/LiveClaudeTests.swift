@@ -110,14 +110,14 @@ extension LiveClaudeTests {
         workspace.select(nil)
 
         manager.relay("Write one line introducing this project in README.md. Whether the title is \"Garden\" or \"Plant Diary\" is the user's call: ask first, and write it once they pick.")
-        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice } }, timeout: 180)
-        let notice = try #require(workspace.mainBot.messages.last { $0.role == .notice })
+        await eventually({ workspace.group.messages.contains { $0.role == .notice } }, timeout: 180)
+        let notice = try #require(workspace.group.messages.last { $0.role == .notice })
         print("notice:", notice.text, notice.choices?.map(\.label) ?? [])
         #expect(notice.isOpenQuestion)
         #expect(workspace.waiting.count == 1)
 
         let pick = try #require(notice.choices?.firstIndex { $0.label.contains("Plant Diary") })
-        #expect(workspace.choose(pick, in: notice.id, of: workspace.mainBot))
+        #expect(workspace.choose(pick, in: notice.id, of: workspace.group))
         await eventually({ manager.messages.last?.role == .bot && manager.openQuestion == nil && !manager.isWorking }, timeout: 180)
         print("manager:", manager.messages.last?.text ?? "")
         let readme = (try? String(contentsOf: folder.appending(path: "README.md"), encoding: .utf8)) ?? ""
@@ -182,12 +182,12 @@ extension LiveClaudeTests {
         }
 
         workspace.mainBot.send("Make me a short one-page comparison: who the Pomodoro technique and the 52/17 method each suit. This belongs to no project; no need to go online, just write what you already know.")
-        await eventually({ !workspace.runningTeams.isEmpty || workspace.mainBot.messages.contains { $0.role == .notice } }, timeout: 120)
+        await eventually({ !workspace.runningTeams.isEmpty || workspace.group.messages.contains { $0.role == .notice } }, timeout: 120)
         print("main:", workspace.mainBot.messages.first { $0.role == .bot }?.text ?? "")
-        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice } }, timeout: 600)
-        let notice = workspace.mainBot.messages.last { $0.role == .notice }?.text ?? ""
+        await eventually({ workspace.group.messages.contains { $0.role == .notice } }, timeout: 600)
+        let notice = workspace.group.messages.last { $0.role == .notice }?.text ?? ""
         print("notice:", notice)
-        let result = try #require(workspace.mainBot.results.first)
+        let result = try #require(workspace.group.results.first)
         print("result:", result.url.path)
         #expect(result.url.isFileURL)
         #expect(FileManager.default.fileExists(atPath: result.url.path))
@@ -214,7 +214,7 @@ extension LiveClaudeTests {
         workspace.requestComponentChange("choices", request: "Make the minimum height of each option button 56px.", from: "The user")
         await eventually({ library.working.isEmpty }, timeout: 300)
         let template = library.template("choices") ?? ""
-        print("notice:", workspace.mainBot.messages.last?.text ?? "")
+        print("notice:", workspace.group.messages.last?.text ?? "")
         #expect(template.contains("56px"))
         await eventually { library.hasPrevious("choices") }
         #expect(library.updated.contains("choices"))
@@ -275,7 +275,7 @@ extension LiveClaudeTests {
         library.rescan()
         let template = library.template("choices") ?? ""
         let about = (try? String(contentsOf: library.aboutURL("choices"), encoding: .utf8)) ?? ""
-        print("notice:", workspace.mainBot.messages.last?.text ?? "")
+        print("notice:", workspace.group.messages.last?.text ?? "")
         print("about:\n" + about)
         #expect(template.contains("Other"))
         #expect(template.contains("ccb.answer("))

@@ -157,7 +157,7 @@ class Chat {
     observer.observe(this.scroller);
   }
 
-  /** Chips, images and file chips open in ClaudeCodeBot (the right column), not in the page. */
+  /** Chips, images and file chips open outside the page: web links in the browser, files in a window. */
   private handleClicks(): void {
     document.addEventListener("click", (event) => {
       const target = (event.target as HTMLElement).closest<HTMLElement>("[data-url]");

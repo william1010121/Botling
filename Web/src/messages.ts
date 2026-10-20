@@ -38,9 +38,22 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
       row.append(userBody(message), replyButton(message));
       break;
     case "bot":
-    case "notice":
-      row.append(avatar(message.avatar), botBody(message, components), replyButton(message));
+    case "notice": {
+      const body = botBody(message, components);
+      if (message.speaker) {
+        // The group chat: who said it, above what they said.
+        const column = document.createElement("div");
+        column.className = "speaker-column";
+        const name = document.createElement("div");
+        name.className = "speaker";
+        name.textContent = message.speaker;
+        column.append(name, body);
+        row.append(avatar(message.avatar), column, replyButton(message));
+      } else {
+        row.append(avatar(message.avatar), body, replyButton(message));
+      }
       break;
+    }
     case "relay": {
       const relay = document.createElement("div");
       relay.className = "relay";

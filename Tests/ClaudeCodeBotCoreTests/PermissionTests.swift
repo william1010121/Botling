@@ -119,12 +119,12 @@ struct PermissionTests {
         manager.send("Publish it")
         await eventually { fake.agents.count == 1 }
         fake.agents[0].emit(.permission(request("r1")))
-        await eventually { workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
+        await eventually { workspace.group.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
         #expect(workspace.waiting.first?.projectID == project.id)
 
         // Picking in the main chat answers the manager's claude.
-        let notice = try #require(workspace.mainBot.messages.last { $0.role == .notice && $0.isOpenQuestion })
-        #expect(workspace.choose(0, in: notice.id, of: workspace.mainBot))
+        let notice = try #require(workspace.group.messages.last { $0.role == .notice && $0.isOpenQuestion })
+        #expect(workspace.choose(0, in: notice.id, of: workspace.group))
         #expect(fake.agents[0].answers.first?.1 == true)
         #expect(manager.openQuestion == nil)
     }
@@ -199,11 +199,11 @@ struct PermissionTests {
         manager.send("Publish it")
         await eventually { fake.agents.count == 1 }
         fake.agents[0].emit(.permission(request("r1")))
-        await eventually { workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
+        await eventually { workspace.group.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
         // claude goes away: both copies close.
         fake.agents[0].finish()
-        await eventually { !workspace.mainBot.messages.contains { $0.isOpenQuestion } }
-        #expect(workspace.mainBot.messages.last { $0.role == .notice }?.answer == Bot.noLongerNeeded)
+        await eventually { !workspace.group.messages.contains { $0.isOpenQuestion } }
+        #expect(workspace.group.messages.last { $0.role == .notice }?.answer == Bot.noLongerNeeded)
         #expect(workspace.waiting.isEmpty)
     }
 

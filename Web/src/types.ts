@@ -34,6 +34,8 @@ export interface MessageView {
   replyPreview: string | null;
   /** A notice that can open the project it came from. */
   openable: boolean;
+  /** Who said it, shown above the bubble (the group chat). */
+  speaker?: string | null;
 }
 
 export interface ComponentInfo {
@@ -55,6 +57,8 @@ export interface ChatState {
   replyingTo: { id: string; who: string; preview: string } | null;
   pendingFiles: (FileView & { id: string })[];
   components: Record<string, ComponentInfo>;
+  /** Names you can @ in this chat (the group chat), to complete as you type. */
+  mentions?: string[];
 }
 
 export type Action =

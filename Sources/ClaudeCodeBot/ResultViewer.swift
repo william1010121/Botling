@@ -3,7 +3,64 @@ import ClaudeCodeBotCore
 import SwiftUI
 import WebKit
 
-/// The right column widened to show one result page: what was made, at a size worth looking at.
+/// Opens what a link points at: web pages in the default browser, local files (result pages,
+/// pictures) in a window of their own, one per file.
+@MainActor
+enum ResultWindows {
+    private static var windows: [URL: NSWindow] = [:]
+
+    static func open(_ result: Chip) {
+        let url = result.url
+        guard url.isFileURL else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        if let window = windows[url] {
+            // Again: show it fresh (the file may have changed).
+            window.title = result.label
+            window.contentView = NSHostingView(rootView: viewer(result, in: window))
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate()
+            return
+        }
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 960, height: 760),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = result.label
+        window.titlebarAppearsTransparent = true
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: viewer(result, in: window))
+        window.center()
+        // Each new one a little down and right of the last.
+        if let last = lastTopLeft { lastTopLeft = window.cascadeTopLeft(from: last) } else { lastTopLeft = window.cascadeTopLeft(from: .zero) }
+        windows[url] = window
+        var token: NSObjectProtocol?
+        token = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                _ = windows.removeValue(forKey: url)
+                if windows.isEmpty { lastTopLeft = nil }
+                if let token { NotificationCenter.default.removeObserver(token) }
+            }
+        }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
+    private static var lastTopLeft: NSPoint?
+
+    private static func viewer(_ result: Chip, in window: NSWindow) -> some View {
+        ResultViewer(result: result) { [weak window] in window?.close() }
+            .frame(minWidth: 480, minHeight: 360)
+            .preferredColorScheme(.dark)
+            .id(UUID())
+    }
+}
+
+/// One result page in its own window: what was made, at a size worth looking at.
 struct ResultViewer: View {
     let result: Chip
     let close: () -> Void

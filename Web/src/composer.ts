@@ -22,6 +22,13 @@ export class Composer {
   /** Plugins see key presses first; returning true means a plugin handled it. */
   onKey: (event: KeyboardEvent) => boolean = () => false;
   private popover: HTMLElement | null = null;
+  /** Names that can be @-mentioned here, and the list offering them as you type. */
+  private mentions: string[] = [];
+  private readonly mentionList: HTMLElement;
+  private mentionMatches: string[] = [];
+  private mentionActive = 0;
+  /** Where the "@…" being typed starts. */
+  private mentionFrom = -1;
 
   constructor(parent: HTMLElement) {
     this.root = document.createElement("div");
@@ -47,7 +54,11 @@ export class Composer {
     this.sendButton.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>`;
     this.sendButton.addEventListener("click", () => this.submit());
     row.append(plus, editorHost, this.sendButton);
-    this.root.append(this.replyBar, this.filesRow, row);
+    this.mentionList = document.createElement("div");
+    this.mentionList.className = "mention-list";
+    this.mentionList.setAttribute("role", "listbox");
+    this.mentionList.hidden = true;
+    this.root.append(this.mentionList, this.replyBar, this.filesRow, row);
     parent.append(this.root);
 
     this.view = new EditorView({
@@ -65,11 +76,12 @@ export class Composer {
           ]),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) this.refreshSend();
+            if (update.docChanged || update.selectionSet) this.refreshMentions();
           }),
           // Ahead of every keymap: a key pressed while an input method is choosing (Zhuyin, Pinyin)
           // belongs to it, so Return commits the candidate instead of sending.
           Prec.highest(EditorView.domEventHandlers({
-            keydown: (event, view) => event.isComposing || event.keyCode === 229 || view.composing || this.onKey(event),
+            keydown: (event, view) => event.isComposing || event.keyCode === 229 || view.composing || this.mentionKey(event) || this.onKey(event),
           })),
           EditorView.domEventHandlers({
             paste: (event) => this.takeFiles(event.clipboardData),
@@ -124,7 +136,75 @@ export class Composer {
     this.view.focus();
   }
 
+  /** Offers the names that start with what follows the "@" before the caret. */
+  private refreshMentions(): void {
+    const head = this.view.state.selection.main.head;
+    const line = this.view.state.doc.lineAt(head);
+    const before = line.text.slice(0, head - line.from);
+    // Like the app: an @ right after Chinese text counts; one inside a word (a@b) does not.
+    const match = this.mentions.length ? /(?:^|[^A-Za-z0-9_])@([^@\n]{0,40})$/.exec(before) : null;
+    const query = match ? match[1].toLowerCase() : null;
+    const names = [...new Set(this.mentions)];
+    // A name typed in full needs no list (Return then sends).
+    const complete = query !== null && names.some((name) => name.toLowerCase() === query);
+    this.mentionMatches = query === null || complete ? [] : names.filter((name) => name.toLowerCase().startsWith(query)).slice(0, 6);
+    this.mentionFrom = match ? head - match[1].length - 1 : -1;
+    this.mentionActive = Math.min(this.mentionActive, Math.max(0, this.mentionMatches.length - 1));
+    this.mentionList.hidden = this.mentionMatches.length === 0;
+    this.mentionList.innerHTML = "";
+    this.mentionMatches.forEach((name, index) => {
+      const option = document.createElement("button");
+      option.setAttribute("role", "option");
+      option.className = index === this.mentionActive ? "active" : "";
+      option.textContent = "@" + name;
+      option.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        this.pickMention(name);
+      });
+      this.mentionList.append(option);
+    });
+  }
+
+  /** Up/Down choose, Return or Tab put the name in, Escape closes the list. */
+  private mentionKey(event: KeyboardEvent): boolean {
+    if (this.mentionMatches.length === 0) return false;
+    // Shift-Return is a new line, Cmd-… a shortcut: not for the list.
+    if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return false;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      this.mentionActive = (this.mentionActive + step + this.mentionMatches.length) % this.mentionMatches.length;
+      this.refreshMentions();
+    } else if (event.key === "Enter" || event.key === "Tab") {
+      this.pickMention(this.mentionMatches[this.mentionActive]);
+    } else if (event.key === "Escape") {
+      this.mentionMatches = [];
+      this.mentionList.hidden = true;
+    } else {
+      return false;
+    }
+    event.preventDefault();
+    return true;
+  }
+
+  private pickMention(name: string): void {
+    const head = this.view.state.selection.main.head;
+    if (this.mentionFrom < 0) return;
+    // Picked in the middle of a word: the rest of the word goes too.
+    const line = this.view.state.doc.lineAt(head);
+    const rest = /^[A-Za-z0-9_\-]*/.exec(line.text.slice(head - line.from))?.[0].length ?? 0;
+    const insert = `@${name} `;
+    this.view.dispatch({ changes: { from: this.mentionFrom, to: head + rest, insert }, selection: { anchor: this.mentionFrom + insert.length } });
+    this.mentionMatches = [];
+    this.mentionList.hidden = true;
+    this.view.focus();
+  }
+
   update(state: ChatState): void {
+    const mentions = state.mentions ?? [];
+    if (mentions.join("\n") !== this.mentions.join("\n")) {
+      this.mentions = mentions;
+      this.refreshMentions();
+    }
     this.view.dispatch({ effects: this.placeholder.reconfigure(placeholderExtension(state.placeholder)) });
 
     if (state.replyingTo) {

@@ -47,7 +47,7 @@ struct ClaudePartTests {
         let core = root.appending(path: "ccb/plugins/ccb-core/claude").standardizedFileURL.path
         await eventually { workspace.plugins.claudeDirectories().count == 3 }
         #expect(Set(workspace.plugins.claudeDirectories().map(\.standardizedFileURL.path)) == [good.standardizedFileURL.path, teams, core])
-        await eventually { workspace.mainBot.messages.contains { $0.text.contains("broken") && $0.text.contains("failed") } }
+        await eventually { workspace.group.messages.contains { $0.text.contains("broken") && $0.text.contains("failed") } }
 
         workspace.mainBot.send("Hi")
         await eventually { fake.agents.count == 1 }

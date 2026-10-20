@@ -45,14 +45,14 @@ struct AnswerAndUsageTests {
         let (workspace, _, manager) = try setUp(fake)
 
         manager.relay("Should we support succulents? Let the user decide")
-        await eventually { workspace.mainBot.messages.contains { $0.role == .notice } }
-        let notice = try #require(workspace.mainBot.messages.last { $0.role == .notice })
+        await eventually { workspace.group.messages.contains { $0.role == .notice } }
+        let notice = try #require(workspace.group.messages.last { $0.role == .notice })
 
-        #expect(workspace.answer("It depends; do one kind first", in: notice.id, of: workspace.mainBot))
+        #expect(workspace.answer("It depends; do one kind first", in: notice.id, of: workspace.group))
         await eventually { manager.messages.last?.text == "OK." }
 
         #expect(fake.agents[0].sent.last == "It depends; do one kind first")
-        #expect(workspace.mainBot.messages.first { $0.id == notice.id }?.answer == "It depends; do one kind first")
+        #expect(workspace.group.messages.first { $0.id == notice.id }?.answer == "It depends; do one kind first")
         #expect(manager.messages.first { $0.id == notice.sourceMessageID }?.answer == "It depends; do one kind first")
         #expect(workspace.waiting.isEmpty)
     }

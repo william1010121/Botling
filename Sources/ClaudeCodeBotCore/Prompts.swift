@@ -15,7 +15,7 @@ struct BotPrompts {
         let artifacts = profile.artifactsURL.path
         let results = profile.role == .main
             ? "- You are the single point of contact and never make results yourself: anything to be built (pages, reports, code, comparisons) goes to a project or a temporary team, and they hand the result page back."
-            : "- Results meant for the user (reports, comparisons, screenshots, previews) go into one HTML page: a single file with its styles inline, starting with <!doctype html><meta charset=\"utf-8\">, saved to \(artifacts)/<english-file-name>.html; link it in your reply as [name](file://full path of that file). The app opens it in the right column. Do not paste long text."
+            : "- Results meant for the user (reports, comparisons, screenshots, previews) go into one HTML page: a single file with its styles inline, starting with <!doctype html><meta charset=\"utf-8\">, saved to \(artifacts)/<english-file-name>.html; link it in your reply as [name](file://full path of that file). The app opens it in a window of its own. Do not paste long text."
         let style = """
         - The user is like a CEO with very little attention. Reply in the user's language (match the language of their latest message). At most 3 sentences, only the conclusion and the next step.
         - Replies may use markdown (bold, lists, tables, code blocks); the app renders it. When you mention a result or a link, write [name](url) and the app draws it as a clickable chip.

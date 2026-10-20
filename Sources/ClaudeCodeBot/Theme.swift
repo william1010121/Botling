@@ -50,6 +50,7 @@ extension Bot {
 
 extension Workspace {
     func avatar(for projectID: UUID) -> AvatarKind? {
-        project(projectID).flatMap { AvatarKind(rawValue: $0.avatar) }
+        if projectID == Workspace.mainBotID { return .circle }
+        return project(projectID).flatMap { AvatarKind(rawValue: $0.avatar) }
     }
 }

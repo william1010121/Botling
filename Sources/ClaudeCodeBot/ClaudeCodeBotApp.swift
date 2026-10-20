@@ -38,17 +38,20 @@ struct RootView: View {
             RailView(workspace: workspace).frame(width: 240)
             // One web view for every bot: switching bots redraws it instead of reloading.
             ChatSurface(bot: bot, workspace: workspace, components: workspace.components, plugins: workspace.plugins, inputs: inputs)
-                .frame(minWidth: workspace.openResult == nil ? 480 : 360, maxWidth: workspace.openResult == nil ? .infinity : 460)
-            if let result = workspace.openResult {
-                // Looking at a result: the page gets the room, the chat narrows.
-                ResultViewer(result: result) { workspace.openResult = nil }
-            } else {
-                DetailPanel(workspace: workspace, bot: bot).frame(width: 340).id(bot.id)
+                .frame(minWidth: 480, maxWidth: .infinity)
+            Group {
+                if bot === workspace.group {
+                    GroupPanel(workspace: workspace, group: workspace.group)
+                } else {
+                    DetailPanel(workspace: workspace, bot: bot)
+                }
             }
+            .frame(width: 340)
+            .id(bot.id)
         }
-        // Chips and result rows open pages here instead of in a browser.
+        // Chips and result rows: web links in the browser, local files in a window of their own.
         .environment(\.openURL, OpenURLAction { url in
-            workspace.openResult = Chip(label: Self.label(for: url, in: workspace), url: url)
+            ResultWindows.open(Chip(label: Self.label(for: url, in: workspace), url: url))
             return .handled
         })
         .foregroundStyle(Theme.text)
@@ -60,7 +63,7 @@ struct RootView: View {
 extension RootView {
     /// The chip text a bot used for `url`, else its file name.
     static func label(for url: URL, in workspace: Workspace) -> String {
-        let bots = [workspace.mainBot] + workspace.projects.compactMap(workspace.bot(for:))
+        let bots = [workspace.mainBot, workspace.group] + workspace.projects.compactMap(workspace.bot(for:))
         return bots.lazy.flatMap(\.results).first { $0.url == url }?.label ?? url.deletingPathExtension().lastPathComponent
     }
 }
@@ -99,6 +102,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         !Self.isHeadless
+    }
+
+    /// Clicking the Dock icon with only result windows open brings the main window back.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        let main = NSApp.windows.first { $0.identifier?.rawValue.contains("AppWindow") == true || $0.title == "ClaudeCodeBot" }
+        if let main {
+            main.makeKeyAndOrderFront(nil)
+            return false
+        }
+        return true
     }
 
     /// Lets awake bots write memory.md before the app goes away.

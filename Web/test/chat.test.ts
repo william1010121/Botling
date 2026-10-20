@@ -110,6 +110,13 @@ describe("messages", () => {
     expect(page).toContain("\\u003c/script>");
   });
 
+  it("name who said a line in the group chat", () => {
+    const row = messageElement(message({ text: "Garden is green.", speaker: "garden" }), {});
+    expect(row.querySelector(".speaker")?.textContent).toBe("garden");
+    expect(row.querySelector(".speaker-column .bot-bubble")?.textContent).toContain("Garden is green.");
+    expect(messageElement(message({ text: "x" }), {}).querySelector(".speaker")).toBeNull();
+  });
+
   it("keep open choices unfolded", () => {
     const row = messageElement(message({ open: true, choices: [{ label: "A", detail: null, recommended: false }] }), {});
     expect(row.querySelector(".folded-choice")).toBeNull();
@@ -176,6 +183,49 @@ describe("composer", () => {
     document.querySelector<HTMLButtonElement>(".pending .remove")!.click();
     document.querySelector<HTMLButtonElement>(".reply-bar .close")!.click();
     expect(sent).toEqual([{ type: "removeFile", id: "f1" }, { type: "cancelReply" }]);
+  });
+
+  it("completes @names and puts the chosen one in on Return", () => {
+    const composer = new Composer(document.body);
+    composer.update(state({ mentions: ["Main bot", "Morning news", "garden"] }));
+    composer.insert("Hi @mo");
+    const list = document.querySelector<HTMLElement>(".mention-list")!;
+    expect(list.hidden).toBe(false);
+    expect([...list.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["@Morning news"]);
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    composer.view.contentDOM.dispatchEvent(enter);
+    expect(composer.text).toBe("Hi @Morning news ");
+    expect(list.hidden).toBe(true);
+    expect(sent).toEqual([]);
+    // No names here (a bot's own chat): no list.
+    composer.update(state());
+    composer.insert("@m");
+    expect(list.hidden).toBe(true);
+  });
+
+  it("completes @names right after Chinese, leaves Shift-Return alone, and sends a full name", () => {
+    const composer = new Composer(document.body);
+    composer.update(state({ mentions: ["garden", "garden", "News", "News digest"] }));
+    const list = document.querySelector<HTMLElement>(".mention-list")!;
+    composer.insert("請看@ga");
+    expect([...list.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["@garden"]);
+    // With a modifier the key is not the list's (Shift-Return makes a new line).
+    const shiftTab = new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true });
+    composer.view.contentDOM.dispatchEvent(shiftTab);
+    expect(composer.text).toBe("請看@ga");
+    composer.setText("");
+    composer.insert("a@ga");
+    expect(list.hidden).toBe(true);
+    composer.setText("");
+    composer.insert("@News");
+    // "News" is typed in full: no list, so Return would send.
+    expect(list.hidden).toBe(true);
+    // The names going away closes the list.
+    composer.setText("");
+    composer.insert("@ga");
+    expect(list.hidden).toBe(false);
+    composer.update(state({ mentions: [] }));
+    expect(list.hidden).toBe(true);
   });
 
   it("leaves Return to the input method while it is composing", () => {

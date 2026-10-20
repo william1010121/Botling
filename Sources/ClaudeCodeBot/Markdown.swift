@@ -104,7 +104,7 @@ struct MarkdownView: View {
     }
 }
 
-/// An image or a video, shown in the chat. Click an image to see it large in the right column.
+/// An image or a video, shown in the chat. Click an image to see it large in a window of its own.
 struct MediaView: View {
     let url: URL
     var label: String = ""

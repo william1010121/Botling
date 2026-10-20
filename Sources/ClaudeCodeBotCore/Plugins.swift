@@ -141,7 +141,7 @@ public final class PluginRegistry: ObservableObject {
 
     public let library: URL
     public let builtIns: URL?
-    /// A plugin's web part broke or it said something: the main bot's chat shows it.
+    /// A plugin's web part broke or it said something: the group chat shows it.
     public var onNotice: ((_ text: String) -> Void)?
     /// A plugin broke (check failed, threw on load): Maintainer should fix it.
     public var onBroken: ((_ plugin: String, _ problem: String) -> Void)?

@@ -31,6 +31,8 @@ public struct ChatPayload: Encodable, Equatable {
         var replyTo: String?
         var replyPreview: String?
         var openable: Bool
+        /// Who said it, above the bubble (the group chat).
+        var speaker: String?
     }
 
     public struct Display: Encodable, Equatable {
@@ -61,6 +63,21 @@ public struct ChatPayload: Encodable, Equatable {
     var replyingTo: Reply?
     var pendingFiles: [File]
     var components: [String: Component]
+    /// Names you can @ (the group chat), for completing them as you type.
+    var mentions: [String]
+
+    /// What the group chat adds: who is typing, and names for who said each line.
+    public struct GroupView {
+        public var typing: UUID?
+        public var speaker: (UUID) -> String?
+        public var names: [String]
+
+        public init(typing: UUID?, names: [String] = [], speaker: @escaping (UUID) -> String?) {
+            self.typing = typing
+            self.names = names
+            self.speaker = speaker
+        }
+    }
 
     /// A file waiting in the composer.
     public struct Pending: Equatable, Sendable {
@@ -82,13 +99,15 @@ public struct ChatPayload: Encodable, Equatable {
         pending: [Pending],
         replyingTo: UUID?,
         now: Date = Date(),
+        group: GroupView? = nil,
         avatar: (_ projectID: UUID?) -> String
     ) -> ChatPayload {
         let own = avatar(nil)
         let main = bot.profile.role == .main ? own : nil
         let messages = bot.messages.enumerated().map { index, message -> Message in
             let face: String? = switch message.role {
-            case .bot: own
+            // In the group chat each line has the face of the bot that said it.
+            case .bot: group != nil && message.sourceID != nil ? avatar(message.sourceID) : own
             case .notice: avatar(message.sourceID)
             case .relay: main ?? avatar(nil)
             default: nil
@@ -107,11 +126,16 @@ public struct ChatPayload: Encodable, Equatable {
                 attachments: message.attachments?.map(file),
                 replyTo: message.replyTo?.uuidString,
                 replyPreview: message.replyPreview,
-                openable: message.role == .notice && message.sourceID != nil
+                openable: message.role == .notice && message.sourceID != nil,
+                speaker: message.role == .bot ? message.sourceID.flatMap { id in group.map { $0.speaker(id) ?? "A removed bot" } } : nil
             )
         }
         let reply = replyingTo.flatMap { id in bot.messages.first { $0.id == id } }.map {
-            Reply(id: $0.id.uuidString, who: $0.role == .user ? "Reply to yourself" : "Reply to \(bot.name)", preview: Bot.preview(of: $0))
+            Reply(
+                id: $0.id.uuidString,
+                who: $0.role == .user ? "Reply to yourself" : "Reply to \($0.sourceID.flatMap { id in group?.speaker(id) } ?? bot.name)",
+                preview: Bot.preview(of: $0)
+            )
         }
         var components: [String: Component] = [:]
         for name in library?.names ?? [] {
@@ -128,16 +152,18 @@ public struct ChatPayload: Encodable, Equatable {
             botID: bot.id.uuidString,
             botName: bot.name,
             messages: messages,
-            working: bot.isWorking,
-            avatar: own,
-            placeholder: bot.profile.role == .main ? "Make a wish, or ask how things are going…" : "Message \(bot.name)…",
+            working: group.map { $0.typing != nil } ?? bot.isWorking,
+            avatar: group?.typing.map { avatar($0) } ?? own,
+            placeholder: group != nil ? "Message everyone, or @name one bot…"
+                : bot.profile.role == .main ? "Make a wish, or ask how things are going…" : "Message \(bot.name)…",
             replyingTo: reply,
             pendingFiles: pending.map { pending in
                 var entry = file(Attachment(url: pending.url))
                 entry.id = pending.id.uuidString
                 return entry
             },
-            components: components
+            components: components,
+            mentions: group?.names ?? []
         )
     }
 

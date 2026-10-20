@@ -13,6 +13,9 @@ struct RailView: View {
             BotRow(bot: workspace.mainBot, selected: workspace.selection == nil, waiting: false) {
                 workspace.select(nil)
             }
+            GroupRow(group: workspace.group, workspace: workspace, selected: workspace.selection == Workspace.groupID) {
+                workspace.select(Workspace.groupID)
+            }
 
             Rectangle().fill(Theme.line).frame(height: 1).padding(10)
 
@@ -110,6 +113,161 @@ struct RailView: View {
         if panel.runModal() == .OK, let folder = panel.url {
             workspace.addProject(folder: folder)
         }
+    }
+}
+
+/// The group chat: everyone's reports and questions, and where you talk to several bots at once.
+private struct GroupRow: View {
+    @ObservedObject var group: Bot
+    @ObservedObject var workspace: Workspace
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: "person.3.fill")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.text)
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(Theme.chip))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Group").font(.system(size: 15))
+                    if let speaker = workspace.groupSpeaker.flatMap(workspace.speakerName(for:)) {
+                        Text("\(speaker) is writing…")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(hex: 0x8DB5FF))
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 4)
+                if workspace.groupHasQuestion {
+                    Circle().fill(Theme.orange).frame(width: 9, height: 9)
+                } else if group.hasUnread && !selected {
+                    Circle().fill(Theme.blue).frame(width: 9, height: 9)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 48)
+            .background(RoundedRectangle(cornerRadius: 12).fill(selected ? Theme.selected : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Group chat\(workspace.groupHasQuestion ? ", waiting on you" : "")")
+    }
+}
+
+/// Right column for the group chat: who is in it, what waits for you, what was handed in.
+struct GroupPanel: View {
+    @ObservedObject var workspace: Workspace
+    @ObservedObject var group: Bot
+
+    var body: some View {
+        ScrollView {
+            content
+        }
+        .scrollIndicators(.never)
+        .padding(20)
+        .padding(.top, 16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.side)
+    }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            Text("Group").font(.system(size: 15, weight: .semibold)).frame(height: 40)
+
+            if !workspace.waiting.isEmpty {
+                PanelSection("Waiting on you") {
+                    VStack(spacing: 6) {
+                        ForEach(workspace.waiting) { item in
+                            // A question in the group chat is answered here; one in a bot's own
+                            // chat, there.
+                            Button { workspace.select(item.inGroup ? Workspace.groupID : item.projectID) } label: {
+                                    HStack(spacing: 12) {
+                                        AvatarView(kind: workspace.avatar(for: item.projectID) ?? .cloud, size: 26)
+                                        Text(item.text).lineLimit(2).multilineTextAlignment(.leading)
+                                        Spacer(minLength: 4)
+                                        Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(Theme.orange)
+                                    }
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 10)
+                                    .frame(minHeight: 52)
+                                    .background(RoundedRectangle(cornerRadius: 14).fill(Color(hex: 0x2A2116)))
+                                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: 0x6B4A1F)))
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+
+            PanelSection("In the group") {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(workspace.groupMembers, id: \.id) { member in
+                        GroupMemberRow(
+                            bot: member.bot,
+                            kind: workspace.avatar(for: member.id) ?? .circle,
+                            writing: workspace.groupSpeaker == member.id
+                        ) {
+                            workspace.select(member.id == Workspace.mainBotID ? nil : member.id)
+                        }
+                    }
+                    Text("Without @, everyone reads your message in turn and answers only if it concerns them. @name talks to one bot (@Maintainer too).")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.faint)
+                        .padding(.top, 4)
+                }
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
+            }
+
+            let results = Array(group.results.prefix(3))
+            if !results.isEmpty {
+                PanelSection("Just done") {
+                    VStack(spacing: 6) {
+                        ForEach(results, id: \.self) { chip in
+                            Button { ResultWindows.open(chip) } label: {
+                                HStack {
+                                    Text(chip.label).lineLimit(1)
+                                    Spacer()
+                                    Image(systemName: "arrow.up.right").font(.system(size: 12)).foregroundStyle(Theme.faint)
+                                }
+                                .padding(.horizontal, 14)
+                                .frame(height: 44)
+                                .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One member in the group panel; it follows that bot, so its state stays current.
+private struct GroupMemberRow: View {
+    @ObservedObject var bot: Bot
+    let kind: AvatarKind
+    let writing: Bool
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 10) {
+                AvatarView(kind: kind, size: 22, eyes: bot.eyes)
+                Text(bot.name).font(.system(size: 13)).lineLimit(1)
+                Spacer()
+                Text(bot.waitingForPermission ? "Waiting for your OK" : writing ? "Writing…" : bot.statusText)
+                    .font(.system(size: 12))
+                    .foregroundStyle(bot.waitingForPermission ? Theme.orange : Theme.faint)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -363,38 +521,12 @@ struct DetailPanel: View {
                 .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
             }
 
-            if bot.profile.role == .main, !workspace.waiting.isEmpty {
-                PanelSection("Waiting on you") {
-                    VStack(spacing: 6) {
-                        ForEach(workspace.waiting) { item in
-                            if let project = workspace.project(item.projectID) {
-                                Button { workspace.select(project.id) } label: {
-                                    HStack(spacing: 12) {
-                                        AvatarView(kind: AvatarKind(rawValue: project.avatar) ?? .square, size: 26)
-                                        Text(item.text).lineLimit(2).multilineTextAlignment(.leading)
-                                        Spacer(minLength: 4)
-                                        Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(Theme.orange)
-                                    }
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 10)
-                                    .frame(minHeight: 52)
-                                    .background(RoundedRectangle(cornerRadius: 14).fill(Color(hex: 0x2A2116)))
-                                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: 0x6B4A1F)))
-                                    .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                    }
-                }
-            }
-
             let results = Array(bot.results.prefix(3))
             if !results.isEmpty {
                 PanelSection(bot.profile.role == .main ? "Just done" : "Results") {
                     VStack(spacing: 6) {
                         ForEach(results, id: \.self) { chip in
-                            Button { workspace.openResult = chip } label: {
+                            Button { ResultWindows.open(chip) } label: {
                                 HStack {
                                     Text(chip.label).lineLimit(1)
                                     Spacer()

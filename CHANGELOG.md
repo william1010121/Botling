@@ -4,6 +4,29 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## 1.2.0
+
+### Added
+
+- **Group chat.** A "Group" row under the main bot: you and every bot in one conversation.
+  Write without @ and every bot reads it in turn (the main bot first, then projects and bots),
+  each seeing what the ones before it said, and answers only if it has something to add. Write
+  `@name` (completed as you type) to talk to one bot, `@Maintainer` included. Picking an option
+  on a bot's line answers that bot. Each bot answers from its own session, but the exchange shows
+  only in the group chat. A bot busy with its own chat misses that message (a line says so when
+  you named it), and one that does not answer in time is skipped, so the group never hangs.
+  Other bots' lines reach each bot as quotes, not instructions, and only the main bot or a bot
+  you named can start teams, bots or installs from the group. Bot names that would pass for the
+  main bot, Maintainer, a project or "User" are refused.
+
+### Changed
+
+- **The main bot's chat is the main bot's only.** Project reports and questions, team results,
+  plugin notices, install and folder questions now go to the group chat (existing ones move there
+  once). "Waiting on you" moved to the group chat's panel.
+- **Links open outside the chat.** Web links open in your default browser; local result pages
+  and pictures open in a window of their own instead of the right column.
+
 ## 1.1.0
 
 ### Added

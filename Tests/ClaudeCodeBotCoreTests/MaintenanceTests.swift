@@ -69,7 +69,7 @@ struct MaintenanceTests {
         let plugin = try #require(registry.plugin("shout"))
         #expect(plugin.enabled && plugin.usingPrevious)
         #expect(registry.webSpecs().first { $0.name == "shout" }?.source.contains("v1") == true)
-        #expect(workspace.mainBot.messages.last?.text.contains("using the previous version") == true)
+        #expect(workspace.group.messages.last?.text.contains("using the previous version") == true)
         await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text.contains("v2 broke") } }
 
         // Fixed: the new files get a try again.
@@ -106,7 +106,7 @@ struct MaintenanceTests {
         registry.git.run(["add", "-A"])
         registry.git.run(["commit", "-q", "-m", "shout: louder"])
         registry.rescan()
-        #expect(workspace.mainBot.messages.last?.text == "Plugin \"shout\" updated: 1.0.0 → 1.1.0")
+        #expect(workspace.group.messages.last?.text == "Plugin \"shout\" updated: 1.0.0 → 1.1.0")
         await eventually { registry.hasPrevious("shout") }
 
         #expect(await registry.revert("shout") == nil)
@@ -156,18 +156,18 @@ struct FolderConsentTests {
         }
         let maintainer = workspace.maintainer
         workspace.handToMaintainer("Turn laas-copy into a ClaudeCodeBot plugin")
-        await eventually { workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
-        let question = try #require(workspace.mainBot.messages.last { $0.role == .notice })
+        await eventually { workspace.group.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
+        let question = try #require(workspace.group.messages.last { $0.role == .notice })
         #expect(question.text.contains(source.path))
         #expect(question.choices?.map(\.label) == ["Allow", "Don't allow"])
         #expect(maintainer.messages.last?.text == "I need to read the original project first.")
 
-        #expect(workspace.choose(0, in: question.id, of: workspace.mainBot))
+        #expect(workspace.choose(0, in: question.id, of: workspace.group))
         await eventually { maintainer.messages.contains { $0.role == .bot && $0.text == "Read it, starting now." } }
         #expect(maintainer.messages.contains { $0.role == .divider && $0.text == "Handoff → may read laas-copy" })
         let restarted = try #require(fake.agents.last)
         #expect(restarted.launch.extraDirectories.map(\.standardizedFileURL.path).contains(source.standardizedFileURL.path))
-        #expect(!workspace.choose(0, in: question.id, of: workspace.mainBot))
+        #expect(!workspace.choose(0, in: question.id, of: workspace.group))
 
         // Remembered across restarts; a folder inside it needs no question.
         await workspace.putEveryoneToSleep()
@@ -193,9 +193,9 @@ struct FolderConsentTests {
             Bot(profile: profile, launcher: fake.launcher, store: store)
         }
         workspace.handToMaintainer("Take a look")
-        await eventually { workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
-        let question = try #require(workspace.mainBot.messages.last { $0.role == .notice })
-        #expect(workspace.choose(1, in: question.id, of: workspace.mainBot))
+        await eventually { workspace.group.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
+        let question = try #require(workspace.group.messages.last { $0.role == .notice })
+        #expect(workspace.choose(1, in: question.id, of: workspace.group))
         await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text.contains("did not allow you to read") } }
         #expect(workspace.approvedFolders.isEmpty)
         await workspace.putEveryoneToSleep()

@@ -49,7 +49,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// Called with the tags a reply carried (pull up a team, ask the component team).
     public var onRequests: (([BotRequest]) -> Void)?
     /// It asked you something outside a reply (may it use a tool?), so a manager's question can
-    /// go up to the main bot's chat too.
+    /// go up to the group chat too.
     public var onQuestion: ((ChatMessage) -> Void)?
     /// Tools you said it may always use; it starts with them allowed.
     @Published public private(set) var alwaysAllowed: [String]
@@ -68,6 +68,22 @@ public final class Bot: ObservableObject, Identifiable {
     public var permissionTimeout: TimeInterval = 10 * 60
     /// Removed from ClaudeCodeBot: it never starts again.
     private var removed = false
+    /// Waiting for a group-chat reply, which goes to the group instead of this chat.
+    private var groupReply: CheckedContinuation<GroupAnswer, Never>?
+    /// A group turn timed out: its late reply is dropped instead of showing in this chat.
+    private var dropNextReply = false
+
+    /// How a group-chat turn went.
+    public enum GroupAnswer: Equatable, Sendable {
+        case reply(String)
+        /// Still busy with its own chat (a turn, tidying, a handoff) when its turn came.
+        case busy
+        /// It could not answer: did not start, exited, errored, or took too long.
+        case failed(String)
+    }
+
+    /// Its group-chat turn is running.
+    public var isInGroupTurn: Bool { groupReply != nil }
     /// Whether the running turn started from a relay.
     private var turnFromRelay = false
     /// Something the App needs this awake bot to know, sent ahead of its next message.
@@ -276,6 +292,12 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     private func route(_ outgoing: Outgoing) {
+        // Its group-chat turn is running: what you say here waits, so the reply to it does not
+        // end up in the group.
+        if groupReply != nil {
+            queued.append(outgoing)
+            return
+        }
         switch phase {
         case .asleep:
             wake(with: outgoing)
@@ -354,6 +376,69 @@ public final class Bot: ObservableObject, Identifiable {
         replyObserver?(message)
         if !parsed.requests.isEmpty { onRequests?(parsed.requests) }
         afterTurn()
+    }
+
+    // MARK: Group chat
+
+    /// Says `text` (its turn in the group chat) and returns the reply, showing neither in this
+    /// chat. Wakes it if asleep. While it is busy with its own chat it waits up to `waitFor`,
+    /// then gives up (`.busy`); once asked, it gets `answerWithin` to reply.
+    public func groupTurn(_ text: String, waitFor: TimeInterval = 20, answerWithin: TimeInterval = 5 * 60) async -> GroupAnswer {
+        let deadline = Date().addingTimeInterval(waitFor)
+        while isWorking || groupReply != nil || phase == .tidying || isSwitching || dropNextReply {
+            guard !removed else { return .failed("It was removed.") }
+            guard Date() < deadline else { return .busy }
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+        guard !removed else { return .failed("It was removed.") }
+        return await withCheckedContinuation { continuation in
+            groupReply = continuation
+            if phase == .asleep {
+                wake(with: Outgoing(text: text))
+            } else {
+                deliver(Outgoing(text: text))
+            }
+            // It could not start, or had no process to talk to.
+            if process == nil {
+                finishGroupReply(.failed("It could not start."))
+                return
+            }
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(answerWithin))
+                guard let self, groupReply != nil else { return }
+                // Its reply, when it comes, belongs to nobody now.
+                dropNextReply = true
+                finishGroupReply(.failed("No answer in time."))
+            }
+        }
+    }
+
+    private func finishGroupReply(_ answer: GroupAnswer) {
+        guard let waiter = groupReply else { return }
+        groupReply = nil
+        waiter.resume(returning: answer)
+    }
+
+    /// A line in this chat that is not part of its own conversation (the group chat's lines).
+    public func post(_ message: ChatMessage, unread: Bool = true) {
+        append(message)
+        if unread { hasUnread = true }
+    }
+
+    /// Takes the notices out of this chat (they move to the group chat).
+    public func takeNotices() -> [ChatMessage] {
+        let notices = messages.filter { $0.role == .notice }
+        guard !notices.isEmpty else { return [] }
+        messages.removeAll { $0.role == .notice }
+        store?.save(messages: messages)
+        return notices
+    }
+
+    /// Puts earlier lines in, in date order (notices moving over from another chat).
+    public func adopt(_ older: [ChatMessage]) {
+        guard !older.isEmpty else { return }
+        messages = (older + messages).sorted { $0.date < $1.date }
+        store?.save(messages: messages)
     }
 
     // MARK: Asking to use a tool
@@ -482,6 +567,16 @@ public final class Bot: ObservableObject, Identifiable {
                 waiter.resume(returning: text)
                 return
             }
+            if groupReply != nil || dropNextReply {
+                isWorking = false
+                dropNextReply = false
+                // It may have edited its routines.cron.
+                reloadRoutines()
+                finishGroupReply(isError ? .failed(text) : .reply(text))
+                afterTurn()
+                Task { [weak self] in await self?.flushQueue() }
+                return
+            }
             if !isError, let filter = replyFilter?() {
                 Task { [weak self] in
                     let changed = await filter(text)
@@ -493,6 +588,8 @@ public final class Bot: ObservableObject, Identifiable {
         case let .exited(status, stderr):
             process = nil
             dropPermissionAsks()
+            dropNextReply = false
+            finishGroupReply(.failed(stderr.isEmpty ? "It stopped (\(status))." : stderr))
             if let waiter = internalReply {
                 internalReply = nil
                 waiter.resume(returning: "")
@@ -509,6 +606,8 @@ public final class Bot: ObservableObject, Identifiable {
             if status != 0 {
                 append(ChatMessage(role: .error, text: stderr.isEmpty ? "claude exited unexpectedly (\(status))" : stderr))
             }
+            // What you said here while a group turn ran still gets an answer.
+            if !queued.isEmpty { Task { [weak self] in await self?.flushQueue() } }
         }
     }
 
@@ -637,6 +736,8 @@ public final class Bot: ObservableObject, Identifiable {
         process = nil
         running?.stop()
         dropPermissionAsks()
+        dropNextReply = false
+        finishGroupReply(.failed("It was removed."))
         isWorking = false
         phase = .asleep
         // Anything waiting on that process (a tidy, a handoff) carries on instead of hanging.

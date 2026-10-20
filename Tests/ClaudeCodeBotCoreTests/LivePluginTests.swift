@@ -134,10 +134,10 @@ struct LivePortTests {
 
         workspace.mainBot.send("Turn \(source.path) into a ClaudeCodeBot plugin, so that typing ;a in the input box becomes \\alpha.")
         // The user's one click: allow reading the folder.
-        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion && $0.text.contains(source.lastPathComponent) } }, timeout: 600)
-        let question = try #require(workspace.mainBot.messages.last { $0.role == .notice && $0.isOpenQuestion })
+        await eventually({ workspace.group.messages.contains { $0.role == .notice && $0.isOpenQuestion && $0.text.contains(source.lastPathComponent) } }, timeout: 600)
+        let question = try #require(workspace.group.messages.last { $0.role == .notice && $0.isOpenQuestion })
         print("question:", question.text)
-        #expect(workspace.choose(0, in: question.id, of: workspace.mainBot))
+        #expect(workspace.choose(0, in: question.id, of: workspace.group))
 
         // Done when Maintainer has said something after being allowed and is idle again.
         await eventually({
@@ -186,11 +186,11 @@ struct LiveInstallTests {
         await workspace.pluginLibraryReady.value
 
         workspace.mainBot.send("Install this plugin for me: file://\(repo.path)")
-        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion } }, timeout: 180)
-        let card = try #require(workspace.mainBot.messages.last { $0.role == .notice && $0.isOpenQuestion })
+        await eventually({ workspace.group.messages.contains { $0.role == .notice && $0.isOpenQuestion } }, timeout: 180)
+        let card = try #require(workspace.group.messages.last { $0.role == .notice && $0.isOpenQuestion })
         print("card:\n" + card.text)
         #expect(workspace.plugins.plugin("ccb-number") == nil)
-        #expect(workspace.choose(0, in: card.id, of: workspace.mainBot))
+        #expect(workspace.choose(0, in: card.id, of: workspace.group))
         await eventually({ workspace.plugins.claudeTools() == ["mcp__plugin_ccb-number_numbers"] }, timeout: 60)
         workspace.plugins.setSecret("ccb-number", "number.salt", to: "1")
 

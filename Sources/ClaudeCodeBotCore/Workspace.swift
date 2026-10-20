@@ -36,6 +36,10 @@ public final class Workspace: ObservableObject {
 
     /// Maintainer's fixed id: its chat survives restarts, and it is never saved in projects.json.
     public static let maintainerID = UUID(uuidString: "DEC0DE00-0000-4000-8000-00000000DEC0")!
+    /// The group chat's id, for `select`.
+    public static let groupID = UUID(uuidString: "6A0B0000-0000-4000-8000-000000000001")!
+    /// Stands for the main bot where a project's id would go (who said a line in the group chat).
+    public static let mainBotID = UUID(uuidString: "6A0B0000-0000-4000-8000-000000000002")!
 
     /// Something a manager needs the user to decide: an open question in its chat, or else a
     /// line from its memory.md "Waiting on you" section.
@@ -45,11 +49,14 @@ public final class Workspace: ObservableObject {
         public var text: String
         /// The question in the manager's chat, when there is one to answer with a button.
         public var messageID: UUID?
+        /// The question is in the group chat (asked there, or the app's own question).
+        public var inGroup: Bool
 
-        public init(projectID: UUID, text: String, messageID: UUID? = nil) {
+        public init(projectID: UUID, text: String, messageID: UUID? = nil, inGroup: Bool = false) {
             self.projectID = projectID
             self.text = text
             self.messageID = messageID
+            self.inGroup = inGroup
         }
     }
 
@@ -63,13 +70,21 @@ public final class Workspace: ObservableObject {
     /// nil = the main bot.
     @Published public private(set) var selection: UUID?
     @Published public private(set) var waiting: [Waiting] = []
-    /// A result page open in the widened right column.
-    @Published public var openResult: Chip?
     /// Temporary teams at work right now.
     @Published public private(set) var runningTeams: [TeamRun] = []
     public private(set) var teams: [TeamSpec] = []
 
     public let mainBot: Bot
+    /// The group chat: you and every bot. Reports, questions, team results and plugin notices
+    /// land here, so each bot's own chat holds only its conversation with you.
+    public let group: Bot
+    /// Who is writing in the group chat right now (a project's id, or `mainBotID`).
+    @Published public internal(set) var groupSpeaker: UUID?
+    /// Group-chat rounds run one after another.
+    var groupQueue: Task<Void, Never>?
+    /// How long a turn waits for a bot busy with its own chat, and how long it then has to
+    /// answer: short when nobody named it (it just misses this one), long when you did.
+    public var groupTiming = (busy: 20.0, busyNamed: 5 * 60.0, answer: 3 * 60.0, answerNamed: 15 * 60.0)
     /// Maintainer's project (the plugin library); not in `projects`, which are the user's own.
     public let maintainerProject: Project
     /// The plugin library's git (made a repo on first need, see `prepareLibrary`).
@@ -139,6 +154,15 @@ public final class Workspace: ObservableObject {
         let mainHome = root.appending(path: "main")
         try? FileManager.default.createDirectory(at: mainHome, withIntermediateDirectories: true)
         mainBot = makeBot(.main(home: mainHome), BotStore(directory: mainHome))
+        let groupHome = root.appending(path: "group")
+        let firstGroup = !FileManager.default.fileExists(atPath: groupHome.appending(path: "chat.json").path)
+        group = Bot(
+            profile: BotProfile(name: "Group", role: .manager, avatar: "group", workingDirectory: groupHome, memoryPath: ".bot/memory.md", tools: []),
+            launcher: { _ in throw CocoaError(.featureUnsupported) },
+            store: BotStore(directory: groupHome)
+        )
+        // Notices used to be in the main bot's chat: they move to the group chat, once.
+        if firstGroup { group.adopt(mainBot.takeNotices()) }
         mainBot.wakeNote = { [weak self] in self?.projectBriefing() ?? "" }
         mainBot.extraDirectories = { [weak self] in self?.everyProject.map(\.notesFolder) ?? [] }
         giveClaudeParts(to: mainBot)
@@ -149,8 +173,13 @@ public final class Workspace: ObservableObject {
             if selection == nil { mainBot.markRead() }
         }
         mainBot.onRequests = { [weak self] requests in self?.handle(requests, from: nil) }
-        mainBot.onQuestion = { [weak self] _ in self?.refreshWaiting() }
-        mainBot.onQuestionSettled = { [weak self] _ in self?.refreshWaiting() }
+        // Asked during its group-chat turn, the main bot's question shows in the group too.
+        mainBot.onQuestion = { [weak self] message in
+            guard let self else { return }
+            if mainBot.isInGroupTurn { mirror(message, from: Self.mainBotID, name: mainBot.name) }
+            refreshWaiting()
+        }
+        mainBot.onQuestionSettled = { [weak self] message in self?.closeCopies(of: message) }
         teams = loadTeams()
         components.otherFolders = { [weak self] in
             (self?.plugins.componentFolders() ?? []).filter { $0.standardizedFileURL != componentFolder.standardizedFileURL }
@@ -162,16 +191,16 @@ public final class Workspace: ObservableObject {
             for bot in [mainBot] + Array(managers.values) { bot.queueNote(note) }
         }
         plugins.onNotice = { [weak self] text in
-            self?.mainBot.notice(text)
-            if self?.selection == nil { self?.mainBot.markRead() }
+            self?.group.notice(text)
+            if self?.selection == Self.groupID { self?.group.markRead() }
         }
         plugins.onBroken = { [weak self] plugin, problem in
             self?.handToMaintainer("(App: Hot-update check) The plugin \"\(plugin)\" is broken; ClaudeCodeBot fell back to the previous version or disabled it for now. Please fix it: \(problem)")
         }
         plugins.onUpdated = { [weak self] plugin, old in
             guard let self else { return }
-            mainBot.notice("Plugin \"\(plugin.manifest.title)\" updated: \(old) → \(plugin.manifest.version)")
-            if selection == nil { mainBot.markRead() }
+            group.notice("Plugin \"\(plugin.manifest.title)\" updated: \(old) → \(plugin.manifest.version)")
+            if selection == Self.groupID { group.markRead() }
         }
         connectPlugins(to: mainBot)
         startPluginHost()
@@ -212,23 +241,23 @@ public final class Workspace: ObservableObject {
         do {
             proposal = try await PluginInstaller.fetch(source, scratch: root.appending(path: "install-staging"))
         } catch {
-            mainBot.notice("Couldn't install \"\(source)\": \(error.localizedDescription)")
+            group.notice("Couldn't install \"\(source)\": \(error.localizedDescription)")
             return error.localizedDescription
         }
         guard proposal.problems.isEmpty else {
             let problem = proposal.problems.joined(separator: "; ")
-            mainBot.notice("\"\(proposal.manifest.title)\" failed the checks and was not installed: \(problem)")
+            group.notice("\"\(proposal.manifest.title)\" failed the checks and was not installed: \(problem)")
             return problem
         }
         if trusted {
             return await finishInstall(proposal)
         }
-        mainBot.notice(
+        group.notice(
             proposal.summary,
             choices: [Choice(label: "Install", detail: nil, recommended: false), Choice(label: "Don't install", detail: nil, recommended: false)]
         )
-        if let question = mainBot.messages.last { installQuestions[question.id] = proposal }
-        if selection == nil { mainBot.markRead() }
+        if let question = group.messages.last { installQuestions[question.id] = proposal }
+        if selection == Self.groupID { group.markRead() }
         return nil
     }
 
@@ -238,11 +267,11 @@ public final class Workspace: ObservableObject {
         let problem = await plugins.install(proposal)
         try? FileManager.default.removeItem(at: proposal.folder)
         if let problem {
-            mainBot.notice("\"\(proposal.manifest.title)\" could not be installed: \(problem)")
+            group.notice("\"\(proposal.manifest.title)\" could not be installed: \(problem)")
         } else {
-            mainBot.notice("Installed: \(proposal.manifest.title) \(proposal.manifest.version). You can turn it off or remove it under Plugins in Settings.")
+            group.notice("Installed: \(proposal.manifest.title) \(proposal.manifest.version). You can turn it off or remove it under Plugins in Settings.")
         }
-        if selection == nil { mainBot.markRead() }
+        if selection == Self.groupID { group.markRead() }
         return problem
     }
 
@@ -250,7 +279,7 @@ public final class Workspace: ObservableObject {
 
     /// Folders you let Maintainer read (kept in `~/.claudecodebot/folders.json`).
     public private(set) var approvedFolders: [URL] = []
-    /// Open "may it read this folder?" questions in the main chat, by message id.
+    /// Open "may it read this folder?" questions in the group chat, by message id.
     private var folderQuestions: [UUID: URL] = [:]
     private var foldersURL: URL { root.appending(path: "folders.json") }
 
@@ -260,7 +289,7 @@ public final class Workspace: ObservableObject {
         return paths.map { URL(filePath: $0) }
     }
 
-    /// Maintainer asked to read `path`: ask you once (in the main chat); a folder you allowed
+    /// Maintainer asked to read `path`: ask you once (in the group chat); a folder you allowed
     /// before, or one inside it, is allowed at once.
     func requestFolder(_ path: String) {
         let folder = URL(filePath: (path as NSString).expandingTildeInPath).standardizedFileURL
@@ -268,13 +297,13 @@ public final class Workspace: ObservableObject {
             maintainer.relay("(App) \(folder.path) was already allowed before; you can read it directly.")
             return
         }
-        mainBot.notice(
+        group.notice(
             "Maintainer wants to read \"\(folder.path)\". It will only read, never change files there. Allow it?",
             choices: [Choice(label: "Allow", detail: "Won't ask again", recommended: false), Choice(label: "Don't allow", detail: nil, recommended: false)],
             sourceID: Self.maintainerID
         )
-        if let question = mainBot.messages.last { folderQuestions[question.id] = folder }
-        if selection == nil { mainBot.markRead() }
+        if let question = group.messages.last { folderQuestions[question.id] = folder }
+        if selection == Self.groupID { group.markRead() }
         refreshWaiting()
     }
 
@@ -307,7 +336,7 @@ public final class Workspace: ObservableObject {
     }
 
     public var selectedBot: Bot {
-        selection.flatMap { managers[$0] } ?? mainBot
+        selection == Self.groupID ? group : selection.flatMap { managers[$0] } ?? mainBot
     }
 
     public func bot(for project: Project) -> Bot? {
@@ -379,12 +408,15 @@ public final class Workspace: ObservableObject {
     /// `plugin` is the plugin asking, nil for you or a bot. A plugin gets back only a bot it made
     /// itself, and never one you removed.
     func makeBot(name: String, job: String, avatar: String? = nil, setUp: Bool = false, by creator: String? = nil, plugin: String? = nil) -> BotMaking {
-        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = Self.botName(name)
         let job = job.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, !job.isEmpty else { return .empty }
         if let existing = standaloneBots.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) {
             return plugin == nil || existing.plugin == plugin ? .existing(existing) : .taken
         }
+        // A name that would pass for someone else in the group chat or in an @.
+        let others = [mainBot.name, maintainer.name, "User", "App", "Notice", "Group"] + projects.filter { !$0.isBot }.map(\.name)
+        if others.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) { return .taken }
         if let plugin, removedPluginBots.contains(Self.removalKey(plugin: plugin, name: name)) { return .removedByUser }
         let id = UUID()
         let folder = root.appending(path: "bots/\(id.uuidString)")
@@ -394,8 +426,8 @@ public final class Workspace: ObservableObject {
         prepareNotesFolder(for: project)
         attach(project)
         saveProjects()
-        mainBot.notice("New bot \"\(name)\"\(creator.map { " (made by \($0))" } ?? ""): \(Self.firstLine(of: job))", sourceID: id)
-        if selection == nil { mainBot.markRead() }
+        group.notice("New bot \"\(name)\"\(creator.map { " (made by \($0))" } ?? ""): \(Self.firstLine(of: job))", sourceID: id)
+        if selection == Self.groupID { group.markRead() }
         briefAwakeMainBot()
         if setUp {
             managers[id]?.relay("""
@@ -404,6 +436,13 @@ public final class Workspace: ObservableObject {
             """)
         }
         return .made(project)
+    }
+
+    /// A bot's name as it is kept: one line, no quotes or @, at most 40 characters.
+    static func botName(_ name: String) -> String {
+        let line = name.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        let cleaned = line.filter { !"\"@<>`".contains($0) }.trimmingCharacters(in: .whitespaces)
+        return String(cleaned.prefix(40)).trimmingCharacters(in: .whitespaces)
     }
 
     /// An awake main bot hears about bots made or removed with its next message.
@@ -432,14 +471,14 @@ public final class Workspace: ObservableObject {
             removedPluginBots.insert(Self.removalKey(plugin: plugin, name: project.name))
             try? JSONEncoder().encode(removedPluginBots.sorted()).write(to: removedBotsURL, options: .atomic)
         }
-        // Its questions in the main chat can no longer be answered.
-        for notice in mainBot.messages where notice.role == .notice && notice.sourceID == id && notice.isOpenQuestion {
-            mainBot.markAnswered(Bot.noLongerNeeded, in: notice.id)
+        // Its questions in the group chat can no longer be answered.
+        for line in group.messages where line.sourceID == id && line.isOpenQuestion {
+            group.markAnswered(Bot.noLongerNeeded, in: line.id)
         }
         briefAwakeMainBot()
         refreshWaiting()
-        mainBot.notice("Removed the bot \"\(project.name)\". Its folder stays at \(project.folder.path).")
-        if selection == nil { mainBot.markRead() }
+        group.notice("Removed the bot \"\(project.name)\". Its folder stays at \(project.folder.path).")
+        if selection == Self.groupID { group.markRead() }
     }
 
     // MARK: Routines
@@ -624,9 +663,14 @@ public final class Workspace: ObservableObject {
                 if project?.isMaintainer == true { requestFolder(path) }
             case let .newBot(name, job):
                 // The main bot makes bots when you ask it; Maintainer may too (while building one).
-                if project == nil || project?.isMaintainer == true,
-                   case let .existing(old) = makeBot(name: name, job: job, setUp: true, by: project?.name) {
-                    mainBot.notice("There is already a bot called \"\(old.name)\"; nothing new was made. To change its job, tell it, or remove it from its menu first.", sourceID: old.id)
+                guard project == nil || project?.isMaintainer == true else { break }
+                switch makeBot(name: name, job: job, setUp: true, by: project?.name) {
+                case let .existing(old):
+                    group.notice("There is already a bot called \"\(old.name)\"; nothing new was made. To change its job, tell it, or remove it from its menu first.", sourceID: old.id)
+                case .taken:
+                    group.notice("No bot was made: the name \"\(Self.botName(name))\" is already used by a project or the app.")
+                case .made, .empty, .removedByUser:
+                    break
                 }
             case let .plugin(request):
                 if project?.isMaintainer != true {
@@ -637,7 +681,7 @@ public final class Workspace: ObservableObject {
     }
 
     /// Pulls up a team in a fresh folder, gives it the task, and brings its result back to the
-    /// main bot's chat as a notice. The team ends after that one reply.
+    /// group chat as a notice. The team ends after that one reply.
     @discardableResult
     public func startTeam(_ name: String, task: String) -> TeamRun? {
         let spec = teams.first { $0.name == name } ?? teams.first ?? TeamSpec.defaults[0]
@@ -662,7 +706,7 @@ public final class Workspace: ObservableObject {
                 environment: plugins.secretEnvironment()
             ))
         } catch {
-            mainBot.notice("\(spec.title) could not start: \(error.localizedDescription)")
+            group.notice("\(spec.title) could not start: \(error.localizedDescription)")
             return nil
         }
         runningTeams.append(run)
@@ -677,12 +721,12 @@ public final class Workspace: ObservableObject {
                 case let .reply(text, _):
                     guard !reported else { continue }
                     reported = true
-                    self?.mainBot.notice("\(spec.title): \(ReplyParser.parseAll(text).body)")
-                    if self?.selection == nil { self?.mainBot.markRead() }
+                    self?.group.notice("\(spec.title): \(ReplyParser.parseAll(text).body)")
+                    if self?.selection == Self.groupID { self?.group.markRead() }
                     process.finish()
                 case let .exited(status, stderr):
                     if !reported {
-                        self?.mainBot.notice("\(spec.title) did not finish: \(stderr.isEmpty ? "exit code \(status)" : stderr)")
+                        self?.group.notice("\(spec.title) did not finish: \(stderr.isEmpty ? "exit code \(status)" : stderr)")
                     }
                 }
             }
@@ -878,24 +922,37 @@ public final class Workspace: ObservableObject {
     }
 
     public func refreshWaiting() {
-        waiting = everyProject.flatMap { project -> [Waiting] in
-            if let question = managers[project.id]?.openQuestion {
+        let managers = everyProject.flatMap { project -> [Waiting] in
+            if let question = self.managers[project.id]?.openQuestion {
                 return [Waiting(projectID: project.id, text: Self.firstLine(of: question.text), messageID: question.id)]
             }
             return MemoryFile.items(at: project.notesFolder.appending(path: "memory.md"), section: "Waiting on you")
                 .map { Waiting(projectID: project.id, text: $0) }
         }
+        // Questions only the group chat holds: a bot asked there, or the app asks (install,
+        // folder), or the main bot's copy (it has no project above). Copies of a manager's own
+        // question are counted above already.
+        let inGroup = group.messages.filter {
+            $0.isOpenQuestion && ($0.role == .bot || $0.sourceMessageID == nil || $0.sourceID == Self.mainBotID)
+        }.map {
+            Waiting(projectID: $0.sourceID ?? Self.groupID, text: Self.firstLine(of: $0.text), messageID: $0.id, inGroup: true)
+        }
+        waiting = managers + inGroup
     }
 
-    /// The single place a pick is made, from either chat. A pick on a notice in the main bot's
-    /// chat answers the manager; a pick in the manager's chat also settles its notice.
+    /// The group chat holds a question waiting for you.
+    public var groupHasQuestion: Bool { group.messages.contains { $0.isOpenQuestion } }
+
+    /// The single place a pick is made, from any chat. A pick on a notice in the group chat
+    /// answers the manager; a pick in the manager's chat also settles its notice; a pick on a
+    /// bot's line in the group chat goes back to that bot there.
     @discardableResult
     public func choose(_ index: Int, in messageID: UUID, of bot: Bot) -> Bool {
         defer { refreshWaiting() }
-        if bot === mainBot, let proposal = installQuestions[messageID] {
-            guard let notice = mainBot.messages.first(where: { $0.id == messageID }), notice.isOpenQuestion else { return false }
+        if bot === group, let proposal = installQuestions[messageID] {
+            guard let notice = group.messages.first(where: { $0.id == messageID }), notice.isOpenQuestion else { return false }
             installQuestions[messageID] = nil
-            mainBot.markChosen(index, in: messageID)
+            group.markChosen(index, in: messageID)
             if index == 0 {
                 Task { await finishInstall(proposal) }
             } else {
@@ -903,31 +960,41 @@ public final class Workspace: ObservableObject {
             }
             return true
         }
-        if bot === mainBot, let folder = folderQuestions[messageID] {
-            guard let notice = mainBot.messages.first(where: { $0.id == messageID }), notice.isOpenQuestion else { return false }
+        if bot === group, let folder = folderQuestions[messageID] {
+            guard let notice = group.messages.first(where: { $0.id == messageID }), notice.isOpenQuestion else { return false }
             folderQuestions[messageID] = nil
-            mainBot.markChosen(index, in: messageID)
+            group.markChosen(index, in: messageID)
             answerFolder(folder, allowed: index == 0)
             return true
         }
-        if bot === mainBot,
-           let notice = mainBot.messages.first(where: { $0.id == messageID }),
+        if bot === group, let line = group.messages.first(where: { $0.id == messageID }), line.role == .bot {
+            guard line.isOpenQuestion, let label = line.choices?[safe: index]?.label else { return false }
+            guard answerInGroup(line, with: "The user picked: \(label)") else {
+                // Its bot was removed: nobody would get the answer.
+                group.markAnswered(Bot.noLongerNeeded, in: messageID)
+                return false
+            }
+            group.markChosen(index, in: messageID)
+            return true
+        }
+        if bot === group,
+           let notice = group.messages.first(where: { $0.id == messageID }),
            notice.role == .notice {
             guard notice.isOpenQuestion else { return false }
             guard let projectID = notice.sourceID,
                   let questionID = notice.sourceMessageID,
-                  let manager = managers[projectID],
+                  let manager = member(projectID),
                   manager.choose(index, in: questionID) else {
                 // The manager's question was settled or is gone: so is this copy.
                 closeCopy(of: notice)
                 return false
             }
-            mainBot.markChosen(index, in: messageID)
+            group.markChosen(index, in: messageID)
             return true
         }
         guard bot.choose(index, in: messageID) else { return false }
-        if let notice = mainBot.messages.first(where: { $0.role == .notice && $0.sourceMessageID == messageID }) {
-            mainBot.markChosen(index, in: notice.id)
+        if let notice = group.messages.first(where: { $0.role == .notice && $0.sourceMessageID == messageID }) {
+            group.markChosen(index, in: notice.id)
         }
         return true
     }
@@ -941,47 +1008,69 @@ public final class Workspace: ObservableObject {
         guard message.isOpenQuestion else {
             // A question already answered stays answered.
             if message.choices?.isEmpty == false { return false }
+            if bot === group {
+                // A component on a bot's line answers that bot, not everyone.
+                guard message.role == .bot, message.sourceID != nil else { return false }
+                group.post(ChatMessage(role: .user, text: text), unread: false)
+                return answerInGroup(message, with: "The user answered with the component: \(text)")
+            }
             bot.send(text)
             return true
         }
-        if bot === mainBot, message.role == .notice {
+        if bot === group, message.role == .bot {
+            guard answerInGroup(message, with: "The user answered: \(text)") else {
+                group.markAnswered(Bot.noLongerNeeded, in: messageID)
+                return false
+            }
+            group.markAnswered(text, in: messageID)
+            return true
+        }
+        if bot === group, message.role == .notice {
             guard let projectID = message.sourceID,
                   let questionID = message.sourceMessageID,
-                  let manager = managers[projectID],
+                  let manager = member(projectID),
                   manager.answer(text, in: questionID) else {
                 closeCopy(of: message)
                 return false
             }
-            mainBot.markAnswered(text, in: messageID)
+            group.markAnswered(text, in: messageID)
             return true
         }
         guard bot.answer(text, in: messageID) else { return false }
-        if let notice = mainBot.messages.first(where: { $0.role == .notice && $0.sourceMessageID == messageID }) {
-            mainBot.markAnswered(text, in: notice.id)
+        if let notice = group.messages.first(where: { $0.role == .notice && $0.sourceMessageID == messageID }) {
+            group.markAnswered(text, in: notice.id)
         }
         return true
     }
 
-    /// A manager reported. Questions always go up to the main bot's chat; plain results go up when
+    /// A manager reported. Questions always go up to the group chat; plain results go up when
     /// they answer work the main bot handed over.
     private func report(from project: Project, _ message: ChatMessage, answersRelay: Bool) {
         guard message.role == .bot, message.isOpenQuestion || answersRelay else { return }
-        mainBot.notice(
-            "\(project.name): \(message.text)",
-            choices: message.choices,
-            sourceID: project.id,
-            sourceMessageID: message.id
-        )
-        if selection == nil { mainBot.markRead() }
+        mirror(message, from: project.id, name: project.name)
+    }
+
+    /// A bot's line copied into the group chat; a pick there answers the original.
+    private func mirror(_ message: ChatMessage, from id: UUID, name: String) {
+        group.notice("\(name): \(message.text)", choices: message.choices, sourceID: id, sourceMessageID: message.id)
+        if selection == Self.groupID { group.markRead() }
+    }
+
+    /// A bot's question was settled away from the group chat: so is its copy there.
+    private func closeCopies(of message: ChatMessage) {
+        for notice in group.messages where notice.role == .notice && notice.sourceMessageID == message.id && notice.isOpenQuestion {
+            closeCopy(of: notice)
+        }
+        refreshWaiting()
     }
 
     /// A notice whose question can no longer be answered: show what became of it.
     private func closeCopy(of notice: ChatMessage) {
-        let original = notice.sourceID.flatMap { managers[$0] }?.messages.first { $0.id == notice.sourceMessageID }
+        let original = notice.sourceID.flatMap(member)?.messages.first { $0.id == notice.sourceMessageID }
         if let chosen = original?.chosen {
-            mainBot.markChosen(chosen, in: notice.id)
+            group.markChosen(chosen, in: notice.id)
         } else {
-            mainBot.markAnswered(original?.answer ?? Bot.noLongerNeeded, in: notice.id)
+            group.markAnswered(original?.answer ?? Bot.noLongerNeeded, in: notice.id)
         }
     }
 
@@ -1004,7 +1093,11 @@ public final class Workspace: ObservableObject {
                 return
             }
         }
-        bot.send(text, files: files, replyingTo: replyID)
+        if bot === group {
+            postToGroup(text, files: files, replyingTo: replyID)
+        } else {
+            bot.send(text, files: files, replyingTo: replyID)
+        }
     }
 
     /// Runs a plugin command in the plugin host.
@@ -1013,7 +1106,7 @@ public final class Workspace: ObservableObject {
         do {
             _ = try await pluginHost.command(id)
         } catch {
-            mainBot.notice("Command \"\(id)\" failed: \(error.localizedDescription)")
+            group.notice("Command \"\(id)\" failed: \(error.localizedDescription)")
         }
     }
 
@@ -1070,8 +1163,8 @@ public final class Workspace: ObservableObject {
             let title = plugins.plugin(plugin)?.manifest.title ?? plugin
             switch method {
             case "notify":
-                mainBot.notice("\(title): \(params["text"]?.string ?? "")")
-                if selection == nil { mainBot.markRead() }
+                group.notice("\(title): \(params["text"]?.string ?? "")")
+                if selection == Self.groupID { group.markRead() }
             case "bots.send":
                 if let id = params["bot"]?.string, let text = params["text"]?.string { bot(pluginID: id)?.send(text) }
             default:
@@ -1096,7 +1189,7 @@ public final class Workspace: ObservableObject {
                 case let .made(new): (project, created) = (new, true)
                 case let .existing(old): (project, created) = (old, false)
                 case .empty: throw HostMessage.HostError(message: "A bot needs a name and a job.")
-                case .taken: throw HostMessage.HostError(message: "There is already a bot called \"\(name)\" that this plugin did not make.")
+                case .taken: throw HostMessage.HostError(message: "The name \"\(name)\" is taken (by another bot, a project, or the app).")
                 case .removedByUser: throw HostMessage.HostError(message: "The user removed the bot \"\(name)\"; it is not made again.")
                 }
                 guard let bot = managers[project.id], case var .object(fields) = info(for: bot) else {
@@ -1146,13 +1239,7 @@ public final class Workspace: ObservableObject {
             report(from: project, message, answersRelay: true)
             refreshWaiting()
         }
-        bot.onQuestionSettled = { [weak self] message in
-            guard let self else { return }
-            if let notice = mainBot.messages.first(where: { $0.role == .notice && $0.sourceMessageID == message.id && $0.isOpenQuestion }) {
-                closeCopy(of: notice)
-            }
-            refreshWaiting()
-        }
+        bot.onQuestionSettled = { [weak self] message in self?.closeCopies(of: message) }
         // Memory changes most when a manager tidies before sleeping.
         bot.$phase
             .filter { $0 == .asleep }
