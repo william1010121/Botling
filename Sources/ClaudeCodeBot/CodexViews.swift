@@ -1,6 +1,7 @@
 import AppKit
 import ClaudeCodeBotCore
 import SwiftUI
+import UniformTypeIdentifiers
 
 extension CodexSeverity {
     var tint: Color {
@@ -42,12 +43,13 @@ extension CodexReview.State {
         case .clean: Theme.green
         case .open, .stuck: Theme.orange
         case .failed: Theme.errorText
-        case .stopped: Theme.faint
+        case .stopped, .empty: Theme.faint
         }
     }
 }
 
-/// A review in a list (Results, Codex's panel): its title, how it stands, what is left.
+/// A review in a list (Results, Codex's panel): its title, what it covered, how it stands,
+/// Codex's verdict and what is left.
 struct CodexReviewCard: View {
     let review: CodexReview
     var showsOwner: String?
@@ -61,12 +63,19 @@ struct CodexReviewCard: View {
                     Spacer(minLength: 4)
                     Image(systemName: "chevron.right").font(.system(size: 11)).foregroundStyle(Theme.faint)
                 }
+                if let scope = review.scopeLine {
+                    Text(scope).font(.system(size: 12)).foregroundStyle(Theme.faint).lineLimit(1).truncationMode(.middle)
+                }
                 HStack(spacing: 6) {
                     Circle().fill(review.state.color).frame(width: 7, height: 7)
                     Text(review.stateLine).font(.system(size: 12)).foregroundStyle(Theme.muted).lineLimit(1)
                     if let owner = showsOwner {
                         Text("· \(owner)").font(.system(size: 12)).foregroundStyle(Theme.faint).lineLimit(1)
                     }
+                }
+                // The verdict of the round shown; a round under way would make it stale.
+                if !review.summary.isEmpty, !review.isActive, review.state != .empty {
+                    Text(review.summary).font(.system(size: 12)).foregroundStyle(Theme.muted).lineLimit(2).truncationMode(.tail)
                 }
                 let counts = CodexSeverity.allCases.map { ($0, review.count($0)) }.filter { $0.1 > 0 }
                 if !counts.isEmpty {
@@ -87,7 +96,140 @@ struct CodexReviewCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(review.title), \(review.stateLine)")
+        .accessibilityLabel("\(review.title), \(review.scopeLine.map { "\($0), " } ?? "")\(review.stateLine)")
+    }
+}
+
+/// "Review with Codex" in a project's panel: a popover to pick what Codex reads (what is not
+/// committed, the last commit, the branch against main, or one recent commit) and, if you want,
+/// a spec to check the change against.
+struct CodexReviewButton: View {
+    @ObservedObject var workspace: Workspace
+    @ObservedObject var bot: Bot
+    let running: Bool
+    let opened: (UUID) -> Void
+    @State private var picking = false
+    @State private var choices: CodexScopeChoices?
+    @State private var scope: CodexScope?
+    @State private var spec: URL?
+
+    var body: some View {
+        Button { picking = true } label: {
+            Label(running ? "Codex is reviewing…" : "Review with Codex", systemImage: "magnifyingglass")
+                .font(.system(size: 14))
+                .foregroundStyle(running ? Theme.faint : Theme.text)
+                .frame(maxWidth: .infinity, minHeight: 40)
+                .background(RoundedRectangle(cornerRadius: 10).stroke(Theme.blue.opacity(0.7), lineWidth: 1))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(running)
+        .help("Pick what Codex reviews (read-only), and a spec to check it against if you like; it lists what it would fix.")
+        .popover(isPresented: $picking, arrowEdge: .leading) { picker }
+    }
+
+    private var picker: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("What should Codex review?").font(.system(size: 14, weight: .semibold))
+            if let choices {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(choices.scopes, id: \.self) { option in
+                        row(option.displayName, detail: option == choices.suggested ? "Suggested" : nil, chosen: scope == option) { scope = option }
+                    }
+                }
+                if !choices.recent.isEmpty {
+                    Text("A recent commit").font(.system(size: 12)).foregroundStyle(Theme.faint)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(choices.recent, id: \.self) { commit in
+                                row("\(commit.hash)  \(commit.subject)", chosen: scope == .commit(commit.hash), monospaced: true) { scope = .commit(commit.hash) }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 180)
+                }
+                specRow
+                HStack {
+                    Spacer()
+                    Button("Cancel") { picking = false }
+                    Button("Review") {
+                        picking = false
+                        if let id = workspace.reviewWithCodex(bot, scope: scope ?? choices.suggested, spec: spec?.path) { opened(id) }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
+        .task {
+            guard let found = await workspace.codexScopeChoices(for: bot) else {
+                // No repository: the chat says so, as before.
+                picking = false
+                workspace.reviewWithCodex(bot)
+                return
+            }
+            choices = found
+            if scope == nil { scope = found.suggested }
+        }
+    }
+
+    /// The optional spec: none, one of the bot's latest pages, or any file you choose.
+    private var specRow: some View {
+        HStack(spacing: 8) {
+            Text("Spec").font(.system(size: 13)).foregroundStyle(Theme.muted)
+            Menu(spec?.lastPathComponent ?? "None") {
+                Button("None") { spec = nil }
+                let pages = CodexSpec.candidates(in: bot.profile.artifactsURL)
+                if !pages.isEmpty {
+                    Divider()
+                    ForEach(pages, id: \.self) { page in Button(page.lastPathComponent) { spec = page } }
+                }
+                Divider()
+                Button("Choose a file…") { chooseSpec() }
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            Spacer()
+        }
+        .help("Codex checks point by point that the change does what the spec says.")
+    }
+
+    private func chooseSpec() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.showsHiddenFiles = true
+        panel.directoryURL = GitDiff.repositoryRoot(bot.profile.workingDirectory) ?? bot.profile.workingDirectory
+        panel.allowedContentTypes = CodexSpec.extensions.compactMap { UTType(filenameExtension: $0) }
+        panel.prompt = "Use as spec"
+        if panel.runModal() == .OK, let url = panel.url,
+           let checked = CodexSpec.validated(url.path, folder: bot.profile.workingDirectory) {
+            spec = checked
+        }
+    }
+
+    private func row(_ title: String, detail: String? = nil, chosen: Bool, monospaced: Bool = false, pick: @escaping () -> Void) -> some View {
+        Button(action: pick) {
+            HStack(spacing: 8) {
+                Image(systemName: chosen ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(chosen ? Theme.blue : Theme.faint)
+                Text(title)
+                    .font(monospaced ? .system(size: 12, design: .monospaced) : .system(size: 13))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if let detail {
+                    Text(detail).font(.system(size: 11)).foregroundStyle(Theme.faint)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(minHeight: 28)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -198,6 +340,9 @@ struct CodexReportView: View {
                 if let last = review.rounds.last {
                     Text(last.at, style: .relative).font(.system(size: 12)).foregroundStyle(Theme.faint)
                 }
+            }
+            if let scope = review.scopeLine {
+                Text(scope).font(.system(size: 12)).foregroundStyle(Theme.muted).textSelection(.enabled)
             }
             if review.kind == .loop, !review.rounds.isEmpty {
                 // The rounds so far: found → fixed → found …

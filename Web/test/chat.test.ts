@@ -168,6 +168,28 @@ describe("messages", () => {
     expect(typeof frame.ccb.readImage).toBe("function");
   });
 
+  it("pass a component's ccb.reviewWithCodex on to Swift as text or null", async () => {
+    const { componentPage, codexReviewAction } = await import("../src/components");
+    const page = componentPage("<p>hi</p>", "{}");
+    const script = page.slice(page.indexOf("<script>") + 8, page.indexOf("</script>"));
+    const posted: unknown[] = [];
+    const frame = {} as { ccb: Record<string, (...args: unknown[]) => unknown> };
+    new Function("window", "parent", script)(frame, { postMessage: (data: unknown) => posted.push(data) });
+    await frame.ccb.reviewWithCodex({ commit: "ee988b9", spec: "/p/plan.md" });
+    await frame.ccb.reviewWithCodex();
+    expect(posted).toEqual([
+      { ccb: "reviewWithCodex", scope: null, commit: "ee988b9", spec: "/p/plan.md" },
+      { ccb: "reviewWithCodex", scope: null, commit: null, spec: null },
+    ]);
+    expect(codexReviewAction({ scope: "lastCommit", commit: 7, spec: "  " })).toEqual({ type: "codexReview", scope: "lastCommit", commit: null, spec: null });
+    // From a component's frame, it reaches Swift.
+    const row = messageElement(message({ id: "m30", displays: [{ name: "log", data: "{}", at: null }] }), { log: { template: "<p></p>", version: 0, working: false, updated: false, hasPrevious: false } });
+    document.body.append(row);
+    const shown = row.querySelector<HTMLIFrameElement>(".component-frame")!;
+    window.dispatchEvent(new MessageEvent("message", { data: { ccb: "reviewWithCodex", scope: "uncommitted", commit: null, spec: null }, source: shown.contentWindow }));
+    expect(sent).toEqual([{ type: "codexReview", scope: "uncommitted", commit: null, spec: null }]);
+  });
+
   it("draw linked result pages as preview cards that open full-size", () => {
     const preview = { template: "<button onclick=\"ccb.open(ccb.data.url, ccb.data.title)\">open</button>", version: 0, working: false, updated: false, hasPrevious: false };
     const data = JSON.stringify({ path: "/p/.bot/artifacts/a.html", title: "A", url: "file:///p/.bot/artifacts/a.html", src: "ccb-preview://page/p/.bot/artifacts/a.html" });

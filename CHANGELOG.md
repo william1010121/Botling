@@ -11,6 +11,14 @@ app and publishes it on GitHub Releases.
 - **Tool steps show pictures.** When a tool call gives back an image (a Read of a .png, a
   screenshot), the step's OUT box shows it, fit to the box's width; click it to see it full
   size. The bot keeps the pictures as files beside the chat, so chat.json stays small.
+- **Pick what Codex reviews.** "Review with Codex" asks first: uncommitted changes, the last
+  commit, the branch against main or master, or one of the last 10 commits, and optionally a
+  spec file (.md, .txt, .html; the bot's latest pages are offered) that Codex checks the change
+  against point by point. The card says what was reviewed ("main...feature · 3 files · spec:
+  plan.md") and Codex's verdict in a line or two; Run again keeps the scope and spec. With no
+  changes in the scope Codex does not run and the card says "No changes to review", not "Clean".
+- **Components can start a Codex review.** `ccb.reviewWithCodex({scope, commit, spec})` reviews
+  the chat bot's repository once; the app checks the commit and spec and ignores a bad call.
 
 ## 1.7.1
 

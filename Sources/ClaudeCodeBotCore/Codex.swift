@@ -146,18 +146,36 @@ public enum CodexPrompts {
 
     /// What to look at in the folder: a branch against its base and what is not committed, or only what is not committed.
     static func scope(base: String?) -> String {
-        if let base, !base.isEmpty {
-            return "the changes on the current branch compared with \(base): the commits not on \(base) (git diff \(base)...HEAD), plus staged, unstaged and untracked changes"
+        scope(base.flatMap { $0.isEmpty ? nil : .branch(base: $0) } ?? .uncommitted)
+    }
+
+    static func scope(_ scope: CodexScope) -> String {
+        switch scope {
+        case .uncommitted:
+            "the uncommitted changes: staged, unstaged and untracked (git status, git diff HEAD)"
+        case .lastCommit:
+            "the last commit only (git diff HEAD~1 HEAD, or git show HEAD); leave out uncommitted changes"
+        case let .branch(base):
+            "the changes on the current branch compared with \(base): the commits not on \(base) (git diff \(base)...HEAD), plus staged, unstaged and untracked changes"
+        case let .commit(hash):
+            "the commit \(hash) only (git show \(hash)); leave out other commits and uncommitted changes"
         }
-        return "the uncommitted changes: staged, unstaged and untracked (git status, git diff HEAD)"
     }
 
     /// A review: the scope, what to report, and, for a later round, what the earlier rounds said
     /// was fixed so Codex checks it is.
     public static func review(base: String?, focus: String? = nil, earlier: [CodexFinding] = []) -> String {
-        var parts = [rules, "Review \(scope(base: base)) in this git repository."]
+        review(scope: base.flatMap { $0.isEmpty ? nil : .branch(base: $0) } ?? .uncommitted, focus: focus, earlier: earlier)
+    }
+
+    /// With a spec, Codex also checks point by point that the change does what it says.
+    public static func review(scope: CodexScope, focus: String? = nil, spec: String? = nil, earlier: [CodexFinding] = []) -> String {
+        var parts = [rules, "Review \(self.scope(scope)) in this git repository."]
         if let focus = focus?.trimmingCharacters(in: .whitespacesAndNewlines), !focus.isEmpty {
             parts.append("What the change is meant to do: \(focus)")
+        }
+        if let spec, !spec.isEmpty {
+            parts.append("Read the spec at \(spec) and check, point by point, whether the change does what it says. Report each gap (something it asks for that the change leaves out, does differently or gets wrong) as a finding: file and line where the change falls short (the spec's path if no code file fits), and in the title name the point of the spec it misses.")
         }
         if !earlier.isEmpty {
             let list = earlier.map { "- [\($0.severity.rawValue)] \($0.file)\($0.line.map { ":\($0)" } ?? ""): \($0.title)" }.joined(separator: "\n")

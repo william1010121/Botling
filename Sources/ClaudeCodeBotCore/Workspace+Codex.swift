@@ -139,20 +139,33 @@ extension Workspace {
         runCodexRound(review.id)
     }
 
-    /// Runs Codex over the review's folder once, then acts on what it found.
+    /// Runs Codex over the review's folder once, then acts on what it found. A single review
+    /// first counts the files in its scope and skips Codex when there are none.
     func runCodexRound(_ id: UUID) {
         guard let review = codexReview(id) else { return }
         codexRuns[id]?.cancel()
         update(id) { $0.state = .reviewing; $0.error = nil }
         let earlier = review.kind == .loop ? review.findings.filter { $0.status == .sent } : []
-        let request = CodexRequest(
-            prompt: CodexPrompts.review(base: review.base, focus: review.note, earlier: earlier),
-            folder: URL(filePath: review.folder, directoryHint: .isDirectory)
-        )
+        let folder = URL(filePath: review.folder, directoryHint: .isDirectory)
         let runner = codexRunner
         codexRuns[id] = Task { [weak self] in
+            var scope = review.reviewedScope
+            if review.kind == .single {
+                if review.scope == .lastCommit {
+                    let commit = await Task.detached { GitDiff.shortHash("HEAD", folder: folder) }.value
+                    self?.update(id) { $0.commit = commit }
+                    scope = commit.map { .commit($0) } ?? .lastCommit
+                }
+                let files = await GitDiff.load(folder: folder, scope: scope).files.count
+                guard !Task.isCancelled else { return }
+                self?.update(id) { $0.changedFiles = files }
+                if files == 0 {
+                    self?.finishEmptyCodexRound(id)
+                    return
+                }
+            }
             do {
-                let output = try await runner.run(request)
+                let output = try await runner.run(CodexRequest(prompt: CodexPrompts.review(scope: scope, focus: review.note, spec: review.specPath, earlier: earlier), folder: folder))
                 guard !Task.isCancelled else { return }
                 self?.finishCodexRound(id, output)
             } catch is CancellationError {
@@ -162,6 +175,15 @@ extension Workspace {
                 self?.failCodexRound(id, error.localizedDescription)
             }
         }
+    }
+
+    /// Nothing in the scope: no Codex run, and no "Clean" for a change that is not there.
+    func finishEmptyCodexRound(_ id: UUID) {
+        codexRuns[id] = nil
+        guard codexReview(id)?.state == .reviewing else { return }
+        update(id) { $0.state = .empty }
+        guard let review = codexReview(id), let bot = member(review.ownerID) else { return }
+        tell(bot, "**Codex review** of \(URL(filePath: review.folder).lastPathComponent): no changes to review (\(review.reviewedScope.displayName.lowercased())).", sourceID: Self.codexID)
     }
 
     func finishCodexRound(_ id: UUID, _ output: CodexOutput) {
@@ -259,10 +281,18 @@ extension Workspace {
 
     // MARK: A single review
 
-    /// "Review with Codex": reviews the bot's folder once (its branch against main or master,
-    /// and what is not committed). Nil, with the reason in the chat, when it cannot.
+    /// What "Review with Codex" can review in the bot's folder; nil when it is no repository.
+    public func codexScopeChoices(for bot: Bot) async -> CodexScopeChoices? {
+        let folder = bot.profile.workingDirectory
+        return await Task.detached { CodexScopeChoices(folder: folder) }.value
+    }
+
+    /// "Review with Codex" (or a component's `ccb.reviewWithCodex`): reviews the bot's folder
+    /// once, in `scope` (by default its branch against main or master, or what is not committed
+    /// on those), checked against `spec` when one is given. Nil, with the reason in the chat,
+    /// when it cannot.
     @discardableResult
-    public func reviewWithCodex(_ bot: Bot) -> UUID? {
+    public func reviewWithCodex(_ bot: Bot, scope: CodexScope? = nil, spec: String? = nil) -> UUID? {
         guard let ownerID = ownerID(of: bot), bot !== codexBot else { return nil }
         guard let repository = GitDiff.repositoryRoot(bot.profile.workingDirectory) else {
             tell(bot, "Codex reviews changes in a git repository; \(bot.profile.workingDirectory.lastPathComponent) is not one.", sourceID: Self.codexID)
@@ -271,14 +301,19 @@ extension Workspace {
         if let running = codexReviews.last(where: { $0.kind == .single && $0.ownerID == ownerID && $0.state == .reviewing }) {
             return running.id
         }
-        let base = GitDiff.defaultBase(folder: repository)
-        let branch = GitDiff.git(["rev-parse", "--abbrev-ref", "HEAD"], in: repository)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let branch = GitDiff.currentBranch(folder: repository)
+        let scope = scope ?? CodexScopeChoices(folder: repository)?.suggested ?? .uncommitted
+        var base: String?
+        if case let .branch(name) = scope { base = name }
         let review = CodexReview(
             kind: .single,
             ownerID: ownerID,
-            title: "Codex review · \(branch.isEmpty || branch == "HEAD" ? repository.lastPathComponent : branch)",
+            title: "Codex review · \(branch ?? repository.lastPathComponent)",
             folder: repository.path,
-            base: base
+            base: base,
+            scope: scope,
+            branch: branch,
+            spec: spec
         )
         codexReviews.append(review)
         codexStore.save(codexReviews)
@@ -330,7 +365,7 @@ extension Workspace {
     /// The change Codex reviewed, for the review panel's diff.
     public func codexDiff(for id: UUID) async -> GitDiff {
         guard let review = codexReview(id) else { return GitDiff(files: []) }
-        return await GitDiff.load(folder: URL(filePath: review.folder, directoryHint: .isDirectory), base: review.base)
+        return await GitDiff.load(folder: URL(filePath: review.folder, directoryHint: .isDirectory), scope: review.reviewedScope)
     }
 
     // MARK: Words

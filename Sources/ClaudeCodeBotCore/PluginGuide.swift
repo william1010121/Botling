@@ -116,6 +116,10 @@ enum PluginGuide {
           `await ccb.readImage(file)` for a pasted or dropped File, or data: URLs; each picture has `dataURL` for a thumbnail. The bot receives the text
           and the pictures as files saved in the chat's attachments folder, listed like a message's attachments.
           Pictures shown: data may name local pictures by file path; load them with `img.src = ccb.image(path)` (file: URLs do not load in the frame).
+          Codex review: `ccb.reviewWithCodex({ scope, commit, spec })` (from a click) has Codex review the chat bot's repository once, read-only.
+          scope: "uncommitted", "lastCommit", "branch" (against main or master, only when on another branch) or "commit"; a `commit` hash implies "commit"
+          and must be in the repository. `spec` (optional): a .md/.txt/.html file in the bot's folder or home that Codex checks the change against point by point.
+          The report shows in the right column and a line in the chat; a call that does not check out is ignored.
         - about.md: usage notes for the bots. The first line says in one sentence what it is, followed by the data format (with an example JSON) and what the bot receives when the user answers.
 
         ## Check and release

@@ -1064,19 +1064,7 @@ extension DetailPanel {
                     }
                     if canReview {
                         let running = reviews.contains { $0.kind == .single && $0.state == .reviewing }
-                        Button {
-                            if let id = workspace.reviewWithCodex(bot) { openReview = id }
-                        } label: {
-                            Label(running ? "Codex is reviewing…" : "Review with Codex", systemImage: "magnifyingglass")
-                                .font(.system(size: 14))
-                                .foregroundStyle(running ? Theme.faint : Theme.text)
-                                .frame(maxWidth: .infinity, minHeight: 40)
-                                .background(RoundedRectangle(cornerRadius: 10).stroke(Theme.blue.opacity(0.7), lineWidth: 1))
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(running)
-                        .help("Codex reads this project's branch against main and what is not committed, read-only, and lists what it would fix.")
+                        CodexReviewButton(workspace: workspace, bot: bot, running: running) { openReview = $0 }
                     }
                 }
             }
