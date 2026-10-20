@@ -625,6 +625,35 @@ describe("composer", () => {
     expect(list.hidden).toBe(false);
   });
 
+  it("shows the / list wide enough to read: whole names, descriptions wrap instead of being cut", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const style = document.createElement("style");
+    style.textContent = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    document.head.append(style);
+    try {
+      const composer = new Composer(document.body);
+      composer.update(state({ slashCommands: [{ name: "design", about: "Make a Claude Design and get its claude.ai link" }] }));
+      composer.insert("/");
+      const list = document.querySelector<HTMLElement>(".mention-list.slash")!;
+      const name = list.querySelector<HTMLElement>(".mention-name")!;
+      const hint = list.querySelector<HTMLElement>(".mention-hint")!;
+      expect(hint.textContent).toBe("Make a Claude Design and get its claude.ai link");
+      // The command's name is never shortened to "/des…".
+      expect(getComputedStyle(name).textOverflow).not.toBe("ellipsis");
+      expect(getComputedStyle(name).flexShrink).toBe("0");
+      // The description goes on a muted line of its own and wraps rather than being clipped.
+      expect(getComputedStyle(hint).whiteSpace).not.toBe("nowrap");
+      expect(getComputedStyle(hint).textOverflow).not.toBe("ellipsis");
+      // A real width, up to the composer's, not a 160–280px box.
+      const box = getComputedStyle(list);
+      expect(box.minWidth).toContain("360px");
+      expect(box.maxWidth).toContain("100%");
+    } finally {
+      style.remove();
+    }
+  });
+
   it("leaves Return to the input method while it is composing", () => {
     const composer = new Composer(document.body);
     composer.update(state());
