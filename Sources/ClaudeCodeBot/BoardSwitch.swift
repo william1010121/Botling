@@ -13,13 +13,16 @@ struct BoardMode: ViewModifier {
     private var on: Bool { available && inputs.boards.contains(bot.id) }
 
     func body(content: Content) -> some View {
-        content
-            .overlay(alignment: .top) {
-                if available {
-                    BoardSwitch(board: on) { board in set(board) }
-                        .padding(.top, 10)
-                }
+        // The switch sits in a bar of its own above the chat, so messages never scroll under it.
+        VStack(spacing: 0) {
+            if available {
+                BoardSwitch(board: on) { board in set(board) }
+                    .padding(.top, BoardSwitch.barTop)
+                    .padding(.bottom, BoardSwitch.barBottom)
+                    .frame(maxWidth: .infinity)
             }
+            content
+        }
             .onChange(of: bot.id) { _, _ in holdPanel() }
             .onChange(of: available) { _, _ in holdPanel() }
             .onAppear { holdPanel() }
@@ -37,6 +40,10 @@ struct BoardMode: ViewModifier {
 }
 
 struct BoardSwitch: View {
+    /// The bar the switch sits in: 10 pt above it, 6 pt below.
+    static let barTop: CGFloat = 10
+    static let barBottom: CGFloat = 6
+
     let board: Bool
     let set: (Bool) -> Void
 

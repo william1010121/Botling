@@ -48,13 +48,22 @@ struct RootView: View {
         let collapsed = workspace.railCollapsed
         let spec = workspace.viewingSubagent == nil ? workspace.openSpec(in: bot) : nil
         let rightCollapsed = spec == nil && workspace.rightPanelCollapsed
+        GeometryReader { window in
+        // The columns never add up to more than the window: a panel too wide for it (the spec
+        // workspace spread wide in a half-screen window) narrows instead of pushing the rail
+        // and its own right edge off screen.
+        let columns = RightPanelLayout.columns(
+            window: window.size.width,
+            rail: RailLayout.width(collapsed: collapsed),
+            right: spec == nil ? RightPanelLayout.width(collapsed: rightCollapsed) : RightPanelLayout.specWidth(wide: workspace.specPanelWide)
+        )
         HStack(spacing: 0) {
             RailView(workspace: workspace, settings: settings, collapsed: collapsed, tip: $railTip)
                 .frame(width: RailLayout.width(collapsed: collapsed))
                 .overlay(alignment: .trailing) { Rectangle().fill(Theme.line).frame(width: 1).opacity(collapsed ? 1 : 0) }
             // One web view for every bot: switching bots redraws it instead of reloading.
             ChatSurface(bot: bot, workspace: workspace, components: workspace.components, commands: workspace.componentCommands, plugins: workspace.plugins, inputs: inputs)
-                .frame(minWidth: 480, maxWidth: .infinity)
+                .frame(minWidth: columns.chat, maxWidth: .infinity)
                 .modifier(BoardMode(workspace: workspace, inputs: inputs, bot: bot))
             Group {
                 if let spec {
@@ -75,9 +84,10 @@ struct RootView: View {
                         .onAppear { panelOpensSettings = false }
                 }
             }
-            .frame(width: spec == nil ? RightPanelLayout.width(collapsed: rightCollapsed) : RightPanelLayout.specWidth(wide: workspace.specPanelWide))
+            .frame(width: columns.right)
             .overlay(alignment: .leading) { Rectangle().fill(Theme.line).frame(width: 1).opacity(rightCollapsed || spec != nil ? 1 : 0) }
             .id(bot.id)
+        }
         }
         .coordinateSpace(name: RailTip.space)
         .overlay(alignment: .topLeading) { RailChrome(collapsed: collapsed, tip: railTip) { toggleRail() } }

@@ -4,6 +4,18 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+### Fixed
+
+- **A narrow window no longer cuts off the left column or the right panel.** The rail, the chat
+  and the right panel always add up to the window's width: a panel that wants more room than is
+  left (Make into component spread wide in a half-screen window) narrows, down to 340pt, then
+  the chat gives up some of its 480pt, instead of the whole window's content running off both
+  edges. Spread wide but squeezed below 720pt, the component panel stacks Preview above its
+  progress, as when narrow. Chat | Board now sits in a bar of its own above the chat, so
+  messages no longer scroll under it.
+
 ## 1.9.0
 
 ### Added

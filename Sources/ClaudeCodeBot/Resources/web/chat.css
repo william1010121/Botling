@@ -561,7 +561,7 @@ body.watching #composer-slot { display: none; }
 
 /* The Board: every pin as a card, in place of the messages. */
 #board { display: none; }
-body.board #board { display: flex; flex: 1; min-height: 0; flex-direction: column; padding: 52px 28px 0; }
+body.board #board { display: flex; flex: 1; min-height: 0; flex-direction: column; padding: 12px 28px 0; }
 body.board #scroller, body.board #pin-area { display: none; }
 body.board #composer-slot { max-width: none; padding: 12px 28px 16px; }
 body.board .editor .cm-scroller { max-height: 72px; }
@@ -706,6 +706,14 @@ body.spec-mode { background: #141417; }
 .spec-fields, .spec-progress { order: 2; }
 .spec-conv { order: 3; }
 .spec-panel.wide .spec-left > *, .spec-panel.wide .spec-right > * { order: 0; }
+/* Spread wide but squeezed (a half-screen window narrows the panel): one column again, as narrow. */
+@media (max-width: 719px) {
+  .spec-panel.wide .spec-body { display: flex; flex-direction: column; overflow-y: auto; padding-bottom: 8px; }
+  .spec-panel.wide .spec-left, .spec-panel.wide .spec-right { display: contents; }
+  .spec-panel.wide .spec-preview { order: 1; }
+  .spec-panel.wide .spec-fields, .spec-panel.wide .spec-progress { order: 2; }
+  .spec-panel.wide .spec-conv { order: 3; }
+}
 .spec-block { margin: 12px 12px 0; background: var(--bubble); border: 1px solid #2A2A31; border-radius: 14px; overflow: hidden; flex: none; }
 .spec-block-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; }
 .spec-label { font-weight: 600; font-size: 12.5px; }

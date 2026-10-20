@@ -111,4 +111,31 @@ struct RightPanelTests {
         #expect(RightPanelLayout.nowDetail(status: "Asleep", doing: nil) == "Asleep")
         #expect(RightPanelLayout.nowDetail(status: "Awake", doing: "  ") == "Awake")
     }
+
+    /// The rail, the chat and the right panel always fit the window: a panel wider than the
+    /// room left (the spec workspace spread wide in a half-screen window) gets narrower, and
+    /// the chat gives up some of its width before anything runs off the window's edges.
+    @Test func theColumnsFitAnyWindowWidth() {
+        for window in stride(from: 980.0, through: 2400, by: 10) {
+            for rail in [RailLayout.expandedWidth, RailLayout.collapsedWidth] {
+                for right in [RightPanelLayout.expandedWidth, RightPanelLayout.collapsedWidth, RightPanelLayout.specWidth, RightPanelLayout.specWideWidth] {
+                    let columns = RightPanelLayout.columns(window: window, rail: rail, right: right)
+                    #expect(rail + columns.chat + columns.right <= window, "window \(window), rail \(rail), panel \(right)")
+                    #expect(columns.right <= right)
+                    #expect(columns.chat >= 360)
+                }
+            }
+        }
+        // Room to spare: everything as asked.
+        let roomy = RightPanelLayout.columns(window: 1800, rail: 240, right: RightPanelLayout.specWideWidth)
+        #expect(roomy.right == RightPanelLayout.specWideWidth)
+        #expect(roomy.chat == RightPanelLayout.chatMinWidth)
+        // The reported window (about 1450 pt): the wide spec panel takes what the chat leaves.
+        let half = RightPanelLayout.columns(window: 1448, rail: 240, right: RightPanelLayout.specWideWidth)
+        #expect(half.right == 1448 - 240 - RightPanelLayout.chatMinWidth)
+        // The smallest window: the panel keeps a usable width and the chat narrows.
+        let smallest = RightPanelLayout.columns(window: 980, rail: 240, right: RightPanelLayout.specWideWidth)
+        #expect(smallest.right == RightPanelLayout.panelFloor)
+        #expect(smallest.chat == 980 - 240 - RightPanelLayout.panelFloor)
+    }
 }

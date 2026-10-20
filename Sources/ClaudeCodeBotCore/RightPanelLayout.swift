@@ -18,6 +18,27 @@ public enum RightPanelLayout {
         wide ? specWideWidth : specWidth
     }
 
+    /// The chat column's width when there is room for it.
+    public static let chatMinWidth: Double = 480
+    /// The narrowest a squeezed panel gets; below it, the chat narrows instead.
+    public static let panelFloor: Double = 340
+
+    public struct Columns: Equatable, Sendable {
+        /// The chat column's minimum width (it takes whatever is left over).
+        public var chat: Double
+        /// The right panel's width.
+        public var right: Double
+    }
+
+    /// How a window `window` wide splits between the rail (`rail` wide), the chat and a right
+    /// panel that wants to be `right` wide, so that nothing runs off the window's edges: the
+    /// panel gives up width first (down to `panelFloor`), then the chat.
+    public static func columns(window: Double, rail: Double, right wanted: Double) -> Columns {
+        let room = max(0, window - rail)
+        let right = min(room, max(min(wanted, room - chatMinWidth), min(wanted, panelFloor)))
+        return Columns(chat: max(0, min(chatMinWidth, room - right)), right: right)
+    }
+
     /// A section of the open panel that the strip has an icon for, in the panel's order.
     public enum Section: String, CaseIterable, Sendable {
         case waiting, members, codex, results, settled
