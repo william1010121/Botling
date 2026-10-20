@@ -262,7 +262,7 @@ public struct BotProfile: Equatable, Sendable {
 
     /// Every bot has the same tools; what differs is where it sits and what its job is. These
     /// it uses without asking; anything else it asks you for first.
-    public static let toolbox = ["Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch", "Agent", "Task"]
+    public static let toolbox = ["Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch", "Agent", "Task", "SendMessage"]
 
     /// The main bot asks before each command: its folder is no project to build or test in.
     public static func main(home: URL) -> BotProfile {

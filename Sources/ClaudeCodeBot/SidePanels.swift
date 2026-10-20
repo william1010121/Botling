@@ -569,6 +569,7 @@ private struct MaintainerRow: View {
 
     private var status: String {
         if let (name, change) = library.working.first { return "Component \(name): \(change)" }
+        if bot.outage != nil { return NetworkResume.label }
         if bot.isWorking { return "Working" }
         return bot.hasUnread ? "Done, click to see" : bot.statusText
     }
@@ -676,6 +677,9 @@ private struct SubagentRow: View {
                         .foregroundStyle(subagent.isRunning ? Theme.text : Theme.muted)
                         .lineLimit(1)
                     Spacer(minLength: 4)
+                    if bot.outage?.subagents.contains(subagent.id) == true {
+                        Text(NetworkResume.label).font(.system(size: 11)).foregroundStyle(Theme.orange)
+                    }
                 }
                 .padding(.leading, 26)
                 .padding(.trailing, 4)

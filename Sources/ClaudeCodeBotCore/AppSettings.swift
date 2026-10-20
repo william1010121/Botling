@@ -16,6 +16,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     public var autoApprovesSafeActions: Bool { autoApprove ?? true }
 
+    /// Minutes a running bot or subagent may show no new step before you are reminded; nil
+    /// (a settings file from before it) means `StallWatch.defaultMinutes`, 0 never reminds.
+    public var stallReminderMinutes: Int?
+
+    public var stallReminderInterval: TimeInterval { TimeInterval(max(0, stallReminderMinutes ?? StallWatch.defaultMinutes) * 60) }
+
     public init(developerMode: Bool = false, developerProjectID: UUID? = nil) {
         self.developerMode = developerMode
         self.developerProjectID = developerProjectID

@@ -138,6 +138,23 @@ public final class Bot: ObservableObject, Identifiable {
     /// It should restart (new plugins, a new folder) once free, with this divider.
     private var pendingRestart: String?
 
+    /// Its run (or a subagent's) failed because the network went away; it waits for the
+    /// network to come back (`networkRestored`) to carry on. The row says "網路中斷".
+    @Published public private(set) var outage: Outage?
+    /// Claude cannot reach the API right now and is retrying.
+    @Published public private(set) var retryingConnection = false
+    /// The clock (tests set it).
+    var now: () -> Date = Date.init
+    /// The session the running process has, to `--resume` it.
+    private var sessionID: UUID?
+    /// When anything last happened in the turn under way, and in each subagent.
+    private var lastProgress: Date?
+    private var subagentProgress: [String: Date] = [:]
+    /// Quiet spells already reminded about ("" for the bot itself, else a subagent's id).
+    private var stallReminded: Set<String> = []
+    /// Subagents' ids for SendMessage, by the id of the tool call that started them.
+    private var agentIDs: [String: String] = [:]
+
     public init(
         profile: BotProfile,
         defaultModel: BotModel = .sonnet,
@@ -471,6 +488,7 @@ public final class Bot: ObservableObject, Identifiable {
         cancelIdle()
         // A turn you started, or one you are adding to; anything else is not yours to add to.
         turnInput = outgoing.fromUser && (!isWorking || turnInput != nil) ? outgoing : nil
+        if !isWorking { noteProgress() }
         isWorking = true
         var text = outgoing.text
         if let note = pendingNote {
@@ -527,11 +545,14 @@ public final class Bot: ObservableObject, Identifiable {
         return "(App: The last messages in this chat, oldest first. You were asleep since; for anything older, Grep your chat archive in \(profile.archiveURL.path):)\n" + lines.joined(separator: "\n")
     }
 
-    private func start() throws -> AgentProcess {
+    /// Starts a process: a new session, or (`resuming`) one that went away.
+    private func start(resuming: UUID? = nil) throws -> AgentProcess {
         guard !removed else { throw CocoaError(.userCancelled) }
+        let session = resuming ?? UUID()
         let process = try launcher(AgentLaunch(
             model: model,
-            sessionID: UUID(),
+            sessionID: session,
+            resume: resuming != nil,
             workingDirectory: profile.workingDirectory,
             systemPrompt: prompts.system,
             tools: profile.tools + alwaysAllowed.filter { !profile.tools.contains($0) },
@@ -546,6 +567,8 @@ public final class Bot: ObservableObject, Identifiable {
             subagentModel: subagentModel
         ))
         self.process = process
+        sessionID = session
+        noteProgress()
         sessionCost = 0
         Task { [weak self] in
             for await event in process.events {
@@ -745,7 +768,10 @@ public final class Bot: ObservableObject, Identifiable {
 
     private func handle(_ event: AgentEvent, from source: AgentProcess) {
         guard source === process else { return }
+        noteProgress(of: event)
         switch event {
+        case .connectionTrouble:
+            if !retryingConnection { retryingConnection = true }
         case let .usage(total, tokens):
             // A running total for the session: what this turn cost is the difference.
             let spent = max(0, total - sessionCost)
@@ -754,6 +780,7 @@ public final class Bot: ObservableObject, Identifiable {
             if tokens.total > 0 { onTokens?(tokens) }
         case let .trace(step):
             if trace.apply(step) { store?.save(subagents: trace.subagents) }
+            noteSubagentEnd(step)
             // It started a turn of its own (a subagent in the background finished): it is at
             // work again, and the reply will show.
             if !isWorking, internalReply == nil, groupReply == nil, Self.startsATurn(step) {
@@ -796,6 +823,10 @@ public final class Bot: ObservableObject, Identifiable {
                 Task { [weak self] in await self?.flushQueue() }
                 return
             }
+            if isError, NetworkResume.isConnectionError(text) {
+                showNetworkLoss(text)
+                return
+            }
             if !isError, let filter = replyFilter?() {
                 Task { [weak self] in
                     let changed = await filter(text)
@@ -805,10 +836,16 @@ public final class Bot: ObservableObject, Identifiable {
                 show(reply: text, isError: isError)
             }
         case let .exited(status, stderr):
+            // Gone because of the network (or gone while waiting for it): its session and the
+            // subagents still at work are picked up again when the network is back.
+            let lostToNetwork = exitWaiter == nil && (outage != nil || (status != 0 && NetworkResume.mentionsConnectionError(stderr)))
+            let cutOff = lostToNetwork ? trace.subagents.filter(\.isRunning).map(\.id) : []
+            let session = sessionID
             process = nil
+            sessionID = nil
             turnInput = nil
             interruptions = 0
-            pausedWork = nil
+            if !lostToNetwork { pausedWork = nil }
             if trace.stopRunning() { store?.save(subagents: trace.subagents) }
             dropPermissionAsks()
             dropNextReply = false
@@ -826,7 +863,15 @@ public final class Bot: ObservableObject, Identifiable {
             cancelIdle()
             isWorking = false
             phase = .asleep
-            if status != 0 {
+            if lostToNetwork {
+                let shown = outage != nil
+                recordOutage(subagents: cutOff, lostSession: session)
+                if !shown {
+                    let line = stderr.split(whereSeparator: \.isNewline).first { NetworkResume.isConnectionErrorLine(String($0)) }
+                    append(ChatMessage(role: .error, text: NetworkResume.lostText(line.map(String.init) ?? "")))
+                    unreadCount += 1
+                }
+            } else if status != 0 {
                 append(ChatMessage(role: .error, text: stderr.isEmpty ? "claude exited unexpectedly (\(status))" : stderr))
             }
             // What you said here while a group turn ran still gets an answer.
@@ -853,6 +898,138 @@ public final class Bot: ObservableObject, Identifiable {
             return
         }
         scheduleIdle()
+    }
+
+    // MARK: Network and quiet runs
+
+    /// Something happened in the turn under way (or one starts).
+    private func noteProgress() {
+        lastProgress = now()
+        stallReminded.remove("")
+    }
+
+    private func noteProgress(of event: AgentEvent) {
+        switch event {
+        case .connectionTrouble, .exited:
+            return
+        case let .trace(step):
+            if let id = Self.subagentID(of: step) {
+                subagentProgress[id] = now()
+                stallReminded.remove(id)
+            }
+        default:
+            break
+        }
+        noteProgress()
+        if retryingConnection { retryingConnection = false }
+    }
+
+    /// The subagent a trace event belongs to, if any.
+    static func subagentID(of step: TraceEvent) -> String? {
+        switch step {
+        case let .toolUse(_, _, _, _, parent), let .toolResult(_, _, _, parent), let .text(_, parent): parent
+        case let .subagentStarted(id, _, _, _, _): id
+        case .subagentEnded: nil
+        }
+    }
+
+    /// A subagent's call returned (its agentId, for SendMessage) or it ended with claude's
+    /// connection error: then it waits for the network like the bot.
+    private func noteSubagentEnd(_ step: TraceEvent) {
+        let id: String
+        let text: String
+        switch step {
+        case let .toolResult(callID, output, _, _):
+            guard trace.subagent(callID) != nil else { return }
+            if let agentID = NetworkResume.agentID(in: output) { agentIDs[callID] = agentID }
+            id = callID
+            text = output
+        case let .subagentEnded(callID, status, summary):
+            id = callID
+            // A notification says more than the error, so a failed one counts if any line is it.
+            guard status == "failed" || status == "error" || NetworkResume.isConnectionError(summary ?? "") else { return }
+            text = (summary ?? "").split(whereSeparator: \.isNewline).first { NetworkResume.isConnectionErrorLine(String($0)) }.map(String.init) ?? ""
+        default:
+            return
+        }
+        guard let subagent = trace.subagent(id), !subagent.isRunning, NetworkResume.isConnectionError(text) else { return }
+        recordOutage(subagents: [id])
+    }
+
+    /// Its turn ended with claude's connection error: say so, and wait for the network instead
+    /// of going to sleep.
+    private func showNetworkLoss(_ text: String) {
+        isWorking = false
+        recordOutage(turnFailed: true)
+        var message = ChatMessage(role: .error, text: NetworkResume.lostText(text))
+        message.steps = trace.takeSteps()
+        append(message)
+        unreadCount += 1
+    }
+
+    private func recordOutage(turnFailed: Bool = false, subagents: [String] = [], lostSession: UUID? = nil) {
+        var record = outage ?? Outage(since: now())
+        if turnFailed { record.turnFailed = true }
+        for id in subagents where !record.subagents.contains(id) { record.subagents.append(id) }
+        if let lostSession { record.lostSession = lostSession }
+        if record != outage { outage = record }
+        retryingConnection = false
+        cancelIdle()
+    }
+
+    /// The network is back (`date`: when that was seen). Within `NetworkResume.warmWindow` of the
+    /// failure it goes on in the same session and continues its subagents; later, cut-off
+    /// subagents start over as new ones in their worktree with their prompt and one added line.
+    public func networkRestored(at date: Date) {
+        guard let outage, !removed else { return }
+        self.outage = nil
+        retryingConnection = false
+        let elapsed = max(0, date.timeIntervalSince(outage.since))
+        let warm = elapsed <= NetworkResume.warmWindow
+        let cut = outage.subagents.compactMap { id in
+            trace.subagent(id).map { NetworkResume.CutOff(description: $0.description, type: $0.type, prompt: $0.prompt, agentID: agentIDs[id]) }
+        }
+        let note = NetworkResume.resumeNote(elapsed: elapsed, carryOn: outage.turnFailed || outage.lostSession != nil, subagents: cut)
+        append(ChatMessage(role: .divider, text: NetworkResume.restoredText(elapsed: elapsed, warm: warm, subagents: cut.count)))
+        if phase == .asleep, warm, let session = outage.lostSession {
+            // The process went away with it: the same session again, while its cache is warm.
+            do {
+                let process = try start(resuming: session)
+                phase = .awake
+                isWorking = true
+                process.send(note)
+                return
+            } catch {
+                // Could not resume it: a fresh session (memory and the recent chat) below.
+            }
+        }
+        route(Outgoing(text: note))
+    }
+
+    /// Reminds you once per quiet spell when the turn under way, or a subagent at work, has shown
+    /// no new step for `interval` (0 or less: never). Not while it waits for you or for the network.
+    @discardableResult
+    public func checkStall(now date: Date, after interval: TimeInterval) -> [String] {
+        guard interval > 0, outage == nil, process != nil, !waitingForPermission else { return [] }
+        let minutes = max(1, Int((interval / 60).rounded()))
+        var lines: [String] = []
+        var quietForeground = false
+        for subagent in trace.subagents where subagent.isRunning && !stallReminded.contains(subagent.id) {
+            let last = subagentProgress[subagent.id] ?? subagent.startedAt
+            guard date.timeIntervalSince(last) >= interval else { continue }
+            stallReminded.insert(subagent.id)
+            if !subagent.background { quietForeground = true }
+            lines.append("子代理「\(subagent.description.isEmpty ? "Subagent" : subagent.description)」已經 \(minutes) 分鐘沒有新的步驟了。")
+        }
+        if isWorking, phase == .awake, let last = lastProgress, date.timeIntervalSince(last) >= interval, !stallReminded.contains("") {
+            stallReminded.insert("")
+            // Waiting on a quiet subagent is that subagent's quiet spell, already said.
+            if !quietForeground { lines.insert("\(name) 已經 \(minutes) 分鐘沒有新的步驟了。", at: 0) }
+        }
+        guard !lines.isEmpty else { return [] }
+        append(ChatMessage(role: .notice, text: lines.joined(separator: "\n") + "\n可能卡住了：可以再等等，或傳訊息問它在做什麼。"))
+        unreadCount += 1
+        return lines
     }
 
     // MARK: Routines
@@ -948,7 +1125,8 @@ public final class Bot: ObservableObject, Identifiable {
     public func goToSleep() async {
         guard phase == .awake, !isWorking, process != nil else { return }
         // A subagent still at work in the background would stop with the process: wait for it.
-        if trace.subagents.contains(where: \.isRunning), !removed {
+        // Cut off by the network, it keeps its session for when the network is back.
+        if trace.subagents.contains(where: \.isRunning) || outage != nil, !removed {
             scheduleIdle()
             return
         }

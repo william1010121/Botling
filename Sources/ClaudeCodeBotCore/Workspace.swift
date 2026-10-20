@@ -719,6 +719,40 @@ public final class Workspace: ObservableObject {
         }
     }
 
+    // MARK: Network and quiet runs
+
+    private var watchTask: Task<Void, Never>?
+    /// Whether Claude's API answers again (tests replace it).
+    public var networkProbe: @Sendable () async -> Bool = NetworkProbe.anthropic
+
+    /// Every `interval` seconds: bots cut off by the network carry on once it is back, and runs
+    /// that went quiet for `settings.stallReminderMinutes` get a reminder in their chat.
+    public func startWatching(every interval: TimeInterval = 20) {
+        watchTask?.cancel()
+        watchTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.checkNetwork()
+                self?.checkStalls()
+                try? await Task.sleep(for: .seconds(interval))
+            }
+        }
+    }
+
+    /// Asks the probe only while a bot waits for the network.
+    public func checkNetwork(now: Date? = nil) async {
+        let waiting = ([mainBot] + Array(managers.values)).filter { $0.outage != nil }
+        guard !waiting.isEmpty, await networkProbe() else { return }
+        let date = now ?? Date()
+        for bot in waiting { bot.networkRestored(at: date) }
+    }
+
+    public func checkStalls(now: Date = Date()) {
+        let interval = settings.stallReminderInterval
+        for bot in [mainBot] + Array(managers.values) {
+            bot.checkStall(now: now, after: interval)
+        }
+    }
+
     func prompt(for routine: Routine, of bot: Bot) -> String {
         let ask = routine.file.map { "Open \($0) (relative to your working folder) and do what it says." } ?? routine.instruction
         switch bot.profile.role {
@@ -1007,7 +1041,7 @@ public final class Workspace: ObservableObject {
                 case let .usage(total, tokens):
                     // A team runs one turn, so its running total is what it cost.
                     self?.record(total, tokens: tokens, by: spec.title)
-                case .trace, .permission, .permissionCancelled:
+                case .trace, .permission, .permissionCancelled, .connectionTrouble:
                     // Teams are started without asking (asksPermission is off), so nothing waits.
                     break
                 case let .reply(text, _):
