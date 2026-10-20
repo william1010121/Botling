@@ -4,6 +4,17 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+### Added
+
+- **Fold the right panel into a strip of icons.** The button at the window's top right (or
+  ⌃⌘I) shrinks the right panel to 56 points, the mirror of the left one: the bot's face with
+  its status dot (hover for what its Now card says), then an icon per section it would show
+  (Waiting on you, Codex review, Results and Settled with a count), and the bot's settings at
+  the bottom. Click an icon and that section pops out beside the strip; the chat does not move.
+  The choice is remembered, and other views can fold it for a while without changing it.
+
 ## 1.8.0
 
 ### Added

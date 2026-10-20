@@ -515,7 +515,7 @@ struct WaitingList: View {
 }
 
 /// One member in a group's panel; it follows that bot, so its state stays current.
-private struct GroupMemberRow: View {
+struct GroupMemberRow: View {
     @ObservedObject var bot: Bot
     let kind: AvatarKind
     let writing: Bool
@@ -832,7 +832,7 @@ private struct SubagentRow: View {
 
 /// Right column, "Settled": the subagents you settled out of the left column. Click one to
 /// watch its conversation; the arrow brings it back to the left column.
-private struct SettledList: View {
+struct SettledList: View {
     @ObservedObject var bot: Bot
     @ObservedObject var workspace: Workspace
     @State private var showsAll = false

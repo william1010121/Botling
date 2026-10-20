@@ -26,6 +26,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// means open.
     public var railCollapsed: Bool?
 
+    /// The right panel folded into a strip of icons. Nil (a settings file from before it)
+    /// means open.
+    public var rightPanelCollapsed: Bool?
+
     public init(developerMode: Bool = false, developerProjectID: UUID? = nil) {
         self.developerMode = developerMode
         self.developerProjectID = developerProjectID

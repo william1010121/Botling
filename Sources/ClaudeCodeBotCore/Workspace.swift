@@ -131,6 +131,9 @@ public final class Workspace: ObservableObject {
     private let makeBot: BotFactory
     /// ClaudeCodeBot's own settings: developer mode, auto-approve, ignored items.
     @Published public internal(set) var settings: AppSettings
+    /// The right panel folded (or opened) for a while by a view such as a Board, not saved;
+    /// nil when the user's own choice holds. See `setRightPanelCollapsed(_:remember:)`.
+    @Published public private(set) var rightPanelHold: Bool?
     /// What the bots spent today.
     @Published public internal(set) var spending: Spending
     var settingsURL: URL { root.appending(path: "settings.json") }
@@ -1383,6 +1386,34 @@ public final class Workspace: ObservableObject {
     /// The button by the window's lights and ⌃⌘S.
     public func toggleRail() {
         setRailCollapsed(!railCollapsed)
+    }
+
+    /// Whether the right panel is folded into a strip of icons: a view's hold if one holds it,
+    /// else the user's choice, remembered across launches.
+    public var rightPanelCollapsed: Bool { rightPanelHold ?? settings.rightPanelCollapsed ?? false }
+
+    /// Folds or opens the right panel. `remember: false` holds it so only until
+    /// `releaseRightPanel()` (or the user's own toggle), leaving the saved choice alone: for a
+    /// view that wants the room while it is shown.
+    public func setRightPanelCollapsed(_ collapsed: Bool, remember: Bool = true) {
+        guard remember else {
+            if rightPanelHold != collapsed { rightPanelHold = collapsed }
+            return
+        }
+        if rightPanelHold != nil { rightPanelHold = nil }
+        guard settings.rightPanelCollapsed != collapsed else { return }
+        settings.rightPanelCollapsed = collapsed
+        settings.save(to: settingsURL)
+    }
+
+    /// Ends a hold from `setRightPanelCollapsed(_:remember: false)`: back to the user's choice.
+    public func releaseRightPanel() {
+        if rightPanelHold != nil { rightPanelHold = nil }
+    }
+
+    /// The button at the window's top right and ⌃⌘I: flips what is shown, and remembers it.
+    public func toggleRightPanel() {
+        setRightPanelCollapsed(!rightPanelCollapsed)
     }
 
     /// How many items you ignored.
