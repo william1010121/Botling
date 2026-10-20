@@ -1,5 +1,5 @@
 import { post } from "./bridge";
-import type { StepView } from "./types";
+import type { StepImage, StepView } from "./types";
 import { escapeHTML } from "./util";
 
 /**
@@ -81,11 +81,12 @@ function toolLine(step: StepView): HTMLElement {
   head.querySelector(".step-title")!.textContent = step.title;
   head.title = step.title;
   line.append(head);
-  if (!step.detail && !step.output) return line;
+  const images = step.images ?? [];
+  if (!step.detail && !step.output && !images.length) return line;
   const body = document.createElement("div");
   body.className = "step-body";
   if (step.detail) body.append(block("In", step.detail));
-  if (step.output) body.append(block(step.failed ? "Error" : "Out", step.output));
+  if (step.output || images.length) body.append(block(step.failed ? "Error" : "Out", outputText(step.output ?? "", images), images));
   const setOpen = (open: boolean) => {
     body.hidden = !open;
     head.setAttribute("aria-expanded", String(open));
@@ -99,12 +100,39 @@ function toolLine(step: StepView): HTMLElement {
   return line;
 }
 
-function block(label: string, text: string): HTMLElement {
+function block(label: string, text: string, images: StepImage[] = []): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "step-block";
-  wrap.innerHTML = `<div class="step-label">${escapeHTML(label)}</div><pre></pre>`;
-  wrap.querySelector("pre")!.textContent = text;
+  wrap.innerHTML = `<div class="step-label">${escapeHTML(label)}</div>`;
+  if (text) {
+    const pre = document.createElement("pre");
+    pre.textContent = text;
+    wrap.append(pre);
+  }
+  for (const picture of images) wrap.append(stepImage(picture));
   return wrap;
+}
+
+/** The output's words without the "(image)" lines that stood for the pictures now shown. */
+function outputText(output: string, images: StepImage[]): string {
+  if (!images.length) return output;
+  return output.split("\n").filter((line) => line.trim() !== "(image)").join("\n").trim();
+}
+
+/** A picture fit to the box (at most so tall); click it to open it full size in a window. */
+function stepImage(picture: StepImage): HTMLElement {
+  const image = document.createElement("img");
+  image.className = "step-image";
+  image.src = picture.url;
+  image.alt = picture.name;
+  image.title = picture.name;
+  image.loading = "lazy";
+  image.decoding = "async";
+  image.addEventListener("click", (event) => {
+    event.stopPropagation();
+    post({ type: "openURL", url: picture.url, label: picture.name });
+  });
+  return image;
 }
 
 function textLine(step: StepView): HTMLElement {

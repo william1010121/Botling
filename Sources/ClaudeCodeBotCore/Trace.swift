@@ -8,6 +8,8 @@ public enum TraceEvent: Equatable, Sendable {
     case toolUse(id: String, tool: String, title: String, detail: String, parent: String?)
     /// What a tool call gave back.
     case toolResult(id: String, output: String, failed: Bool, parent: String?)
+    /// The pictures a tool call gave back (a Read of a .png, a screenshot), after its result.
+    case toolImages(id: String, images: [ToolImage], parent: String?)
     /// Something it said between tool calls.
     case text(String, parent: String?)
     /// A subagent started (`task_started`); `id` is the tool call that started it.
@@ -17,6 +19,18 @@ public enum TraceEvent: Equatable, Sendable {
     /// The name the bot gave a subagent (the Agent call's `name`), to reach it again with
     /// SendMessage.
     case subagentNamed(id: String, name: String)
+}
+
+/// A picture in a tool result, as it came (decoded from its base64). Only passed along: the step
+/// keeps a file of it (`StepImages`), not the bytes.
+public struct ToolImage: Equatable, Sendable {
+    public var mediaType: String
+    public var data: Data
+
+    public init(mediaType: String, data: Data) {
+        self.mediaType = mediaType
+        self.data = data
+    }
 }
 
 /// One line of work: a tool call, words between calls, or a subagent sent off.
@@ -38,8 +52,10 @@ public struct Step: Codable, Equatable, Identifiable, Sendable {
     public var failed: Bool
     /// Its result is in (a tool call), or it ended (a subagent).
     public var done: Bool
+    /// Files of the pictures it gave back (see `StepImages`), shown in its OUT box.
+    public var images: [String]?
 
-    public init(id: String, kind: Kind, tool: String? = nil, title: String, detail: String? = nil, output: String? = nil, failed: Bool = false, done: Bool = false) {
+    public init(id: String, kind: Kind, tool: String? = nil, title: String, detail: String? = nil, output: String? = nil, failed: Bool = false, done: Bool = false, images: [String]? = nil) {
         self.id = id
         self.kind = kind
         self.tool = tool
@@ -48,6 +64,7 @@ public struct Step: Codable, Equatable, Identifiable, Sendable {
         self.output = output
         self.failed = failed
         self.done = done
+        self.images = images
     }
 }
 
@@ -133,6 +150,8 @@ public struct TraceBook: Equatable, Sendable {
     static let keptSubagents = 40
     /// Longest detail or output kept for one step.
     static let longest = 4000
+    /// Where pictures tool calls gave back are kept (the bot's store); nil: a temporary folder.
+    public var imageFolder: URL?
 
     public init(subagents: [Subagent] = []) {
         self.subagents = subagents
@@ -178,6 +197,16 @@ public struct TraceBook: Equatable, Sendable {
             end(index, status: failed ? .failed : .completed, result: output, at: date)
             trim()
             return true
+        case let .toolImages(id, images, parent):
+            let paths = StepImages.save(images, in: imageFolder ?? StepImages.temporaryFolder)
+            guard !paths.isEmpty else { return false }
+            if let parent {
+                guard let index = subagentIndex(parent), let at = subagents[index].steps.lastIndex(where: { $0.id == id }) else { return false }
+                subagents[index].steps[at].images = paths
+            } else if let at = steps.lastIndex(where: { $0.id == id }) {
+                steps[at].images = paths
+            }
+            return false
         case let .text(text, parent):
             let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return false }

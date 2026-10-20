@@ -61,6 +61,14 @@ public struct ChatPayload: Encodable, Equatable {
         /// For a subagent: running, completed, failed or stopped, and its tool calls so far.
         var status: String?
         var count: Int?
+        /// The pictures it gave back, drawn in its OUT box; click one to open it full size.
+        var images: [StepImage]? = nil
+    }
+
+    /// A picture a tool call gave back: the `file:` URL the page loads, and its name.
+    public struct StepImage: Encodable, Equatable {
+        var url: String
+        var name: String
     }
 
     /// The top of the page while you look at a subagent (no input box: you only watch it).
@@ -335,8 +343,24 @@ public struct ChatPayload: Encodable, Equatable {
             failed: step.failed,
             done: step.done,
             status: subagent?.status.rawValue,
-            count: subagent?.toolCount
+            count: subagent?.toolCount,
+            images: images(of: step)
         )
+    }
+
+    /// The pictures a step shows: the files it kept that are still there, or, for a Read that
+    /// gave back a picture (kept before pictures were, or since pruned), the file it read.
+    static func images(of step: Step) -> [StepImage]? {
+        let manager = FileManager.default
+        let name = step.detail.map { ($0 as NSString).lastPathComponent }
+        let kept = (step.images ?? []).filter { manager.fileExists(atPath: $0) }.map { path in
+            StepImage(url: URL(filePath: path).absoluteString, name: name ?? (path as NSString).lastPathComponent)
+        }
+        if !kept.isEmpty { return kept }
+        guard step.tool == "Read", let detail = step.detail, step.output?.contains("(image)") == true else { return nil }
+        let file = URL(filePath: detail)
+        guard ComponentImages.isImage(file), manager.fileExists(atPath: file.path) else { return nil }
+        return [StepImage(url: file.absoluteString, name: file.lastPathComponent)]
     }
 
     public func json() -> String {
