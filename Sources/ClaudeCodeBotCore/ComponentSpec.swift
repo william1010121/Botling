@@ -150,9 +150,17 @@ public struct ComponentSpec: Codable, Equatable, Identifiable, Sendable {
     public var testRun: TestRun?
     /// The user's changes Maintainer has not heard yet (said with the next message or Build).
     public var pendingEdits: [String]
-    /// Maintainer was asked once to send the "This reply" sample again with every item the reply
-    /// lists (its first one left some out).
-    public var askedForAllItems: Bool?
+    /// What it is for, in the words of whoever asked for it: the bot's `<suggest-component>` text,
+    /// or what the user typed. Maintainer's request starts with it.
+    public var purpose: String?
+    /// The bot that wrote the reply, asked (once the component is built) to draw it under that
+    /// reply with `<show>`, filling the data from its own reply; nil: not asked (live data from a
+    /// command, or the reply already is the component).
+    public var filledBy: String?
+    /// What that bot drew: the component's data, shown under the reply.
+    public var filled: String?
+    /// Why it did not draw it (it answered without the component, or could not answer).
+    public var fillError: String?
     public var createdAt: Date
 
     public init(id: UUID = UUID(), messageID: UUID? = nil, name: String, about: String = "", folder: String, bots: [String], createdAt: Date = Date()) {
@@ -188,6 +196,9 @@ public struct ComponentSpec: Codable, Equatable, Identifiable, Sendable {
 
     /// The card key its test runs go under (`ComponentCommands`), apart from chat cards and pins.
     public var card: String { "spec/\(id.uuidString)" }
+
+    /// The bot that wrote the reply is drawing it now.
+    public var filling: Bool { filledBy != nil && filled == nil && fillError == nil }
 }
 
 /// Making specs: the app's first draft from a reply, Maintainer's updates, the user's edits.
@@ -601,18 +612,25 @@ public enum ComponentSpecs {
         return text
     }
 
-    /// Where its data comes from: the reply's own content, a command only for live data. When
-    /// the reply lists items, how many: the sample holds every one, not a few as an example.
-    static func dataNote(_ spec: ComponentSpec, reply: String = "", ran: String?, from bot: String) -> String {
-        var text = "Its data is the reply's own content: what \(bot) wrote and organised above (and on the result page it links), in its words and language, drawn as a component instead of text or a web page. Put all of it, not a shortened example, into a \"This reply\" sample in the fields' shape: that sample is what shows under the reply."
-        let items = spec.command == nil ? listedItems(in: reply) : []
-        if items.count >= minimumListed {
-            text += " The reply lists \(items.count) items (\(items.joined(separator: "; "))): the sample holds all \(items.count) of them, each in the reply's words, not the first few."
+    /// What the component is for, said first: the words of whoever asked for it (the bot's
+    /// suggestion, or what the user typed), else that the user only pressed the button.
+    static func purposeLine(_ spec: ComponentSpec, from bot: String) -> String {
+        let words = (spec.purpose ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty else {
+            return "What it is for: \(bot)'s reply below, shown as a component instead of text (the user pressed \"Make into component\" and said nothing more)."
         }
+        return "What it is for, in \(spec.suggestedBy.map { "\($0)'s" } ?? "the user's") words: \(words)"
+    }
+
+    /// Where its data comes from: the reply's own content, which the bot that wrote it draws once
+    /// the component is built; a command only for live data.
+    static func dataNote(_ spec: ComponentSpec, ran: String?, from bot: String) -> String {
+        var text = "Its data is the reply's own content: what \(bot) wrote and organised above (and on the result page it links), in its words and language, drawn as a component instead of text or a web page."
         if let command = spec.command {
             text += " The component in the reply got its data by running `\(command)` in the bot's folder, so it is live data: keep that as its Command (about.md gets the line \"Command: \(command)\" so the app fills it by running that in the bot's folder, only once the user allows it on the card)."
         } else {
-            text += " Give it a Command only when the user clearly wants live data that changes (test results, git status, a queue) rather than what \(bot) wrote; a summary, table or write-up needs none, and then the command stays empty and about.md says how a bot gives the data with <show>."
+            text += " \(bot) draws it under the reply with that data once it is built, so about.md says exactly what JSON a bot gives it with <show name=\"…\">JSON</show> (every field, lists of any length)."
+            text += " Give it a Command only when the user clearly wants live data that changes (test results, git status, a queue) rather than what \(bot) wrote; a summary, table or write-up needs none, and then the command stays empty."
             if let ran { text += " (\(bot) ran `\(ran)` while writing the reply: that is how it read its sources, not the component's data, unless the data is clearly live.)" }
         }
         return text
@@ -621,10 +639,11 @@ public enum ComponentSpecs {
     /// The first ask: fill in what can be inferred, ask only what cannot.
     static func draftRequest(_ spec: ComponentSpec, reply: String, pages: [ReplyPage] = [], ran: String? = nil, from bot: String) -> String {
         """
-        (Component spec \(spec.id.uuidString)) The user wants to make \(bot)'s reply into a component and is shaping it in a side panel. \(replyBlock(reply, pages: pages))
+        (Component spec \(spec.id.uuidString)) \(purposeLine(spec, from: bot))
+        The user wants to make \(bot)'s reply into a component and is shaping it in a side panel; the reply is the context. \(replyBlock(reply, pages: pages))
         The app's first draft:
         \(summary(of: spec))
-        \(dataNote(spec, reply: reply, ran: ran, from: bot))
+        \(dataNote(spec, ran: ran, from: bot))
         Fill in what you can infer (from the reply and the library), and ask only what you cannot, at most 3 questions, each with 2 or 3 short answers and the one you suggest. If a component in the library already does this, say so in "similar". Add a sample or two (say "Failing run", "Empty") so the preview shows other cases.
         \(tagNote(spec))
         """
@@ -632,22 +651,23 @@ public enum ComponentSpecs {
 
     /// "Make into component" (or a suggestion chip) pressed: Maintainer infers the whole spec and
     /// builds the first version now, asking nothing; it may reuse a library component instead.
-    /// It is sent the whole reply and the words of each result page the reply links: the
-    /// component shows that content (its "This reply" sample) under the reply.
+    /// It starts with what the component is for; the whole reply and the words of each result
+    /// page it links follow as context. Maintainer builds only the component (template.html, and
+    /// about.md with its data format), no data sample: once it is in the library the app asks the
+    /// bot that wrote the reply to draw it there with that reply's data (`fillRequest`).
     static func firstBuildRequest(_ spec: ComponentSpec, reply: String, pages: [ReplyPage] = [], ran: String? = nil, from bot: String) -> String {
+        let live = spec.command != nil
         var text = """
-        (Component spec \(spec.id.uuidString)) Build the first version now: the user pressed "Make into component" on \(bot)'s reply and wants the component built right away. \(replyBlock(reply, pages: pages))
+        (Component spec \(spec.id.uuidString)) Build the first version now. \(purposeLine(spec, from: bot))
+        The user wants it built right away from \(bot)'s reply, given here as context. \(replyBlock(reply, pages: pages))
         The app's first draft:
         \(summary(of: spec))
-        """
-        if spec.suggestedBy != nil, !spec.about.isEmpty { text += "\n\(bot) suggested it as: \(spec.about)" }
-        text += "\n" + dataNote(spec, reply: reply, ran: ran, from: bot)
-        text += """
-
+        \(dataNote(spec, ran: ran, from: bot))
         Infer the rest from the reply and the library, and ask nothing: wherever you are unsure, use your best guess (the answer you would have suggested). If a component in the library already does this, reuse it: build nothing and set "similar" to it and "reuse" to true. Otherwise have the component editor write template.html and about.md under a name not already in the library.
         """
-        text += " Never run the command yourself. Once it is in the library the app adds it to " + spec.bots.joined(separator: ", ") + " and shows it under the reply; do not add it to lists yourself."
-        text += "\nAnswer in one or two sentences, then <component-spec id=\"\(spec.id.uuidString)\">JSON</component-spec> with what you used: name (the component's name as built), about, fields [{name, type}], command (only for live data), refresh: shown|interval|manual, minutes, similar, reuse, samples [{label, data}] (the \"This reply\" sample with all of this reply's content in the fields' shape, required). No questions."
+        text += " Never run the command yourself. Once it is in the library the app adds it to " + spec.bots.joined(separator: ", ")
+        text += live ? " and shows it under the reply; do not add it to lists yourself." : ", then asks \(bot), who wrote the reply, to draw it under the reply with all of that reply's data, following about.md; do not add it to lists yourself."
+        text += "\nAnswer in one or two sentences, then <component-spec id=\"\(spec.id.uuidString)\">JSON</component-spec> with what you used: name (the component's name as built), about, fields [{name, type}], command (only for live data), refresh: shown|interval|manual, minutes, similar, reuse. Build only the component and send no samples: the data under the reply comes from \(live ? "its command" : bot). No questions."
         return text
     }
 
@@ -667,105 +687,47 @@ public enum ComponentSpecs {
         text += "\nHave the component editor write template.html and about.md"
         if let command = spec.command {
             text += "; about.md gets the line \"Command: \(command)\" so the app fills it by running that in the bot's folder (only once the user allows it)"
+        } else {
+            text += "; about.md says what JSON a bot gives it with <show>: once it is built the app asks the bot that wrote the reply to draw it there with that reply's data"
         }
         text += ". The data fields above are what the template reads. Once it is in the library the app adds it to " + spec.bots.joined(separator: ", ") + "; do not add it to lists yourself."
         return text
     }
 
-    // MARK: Every item the reply lists
+    // MARK: Filled by the bot that wrote the reply
 
-    /// A list this long is data the sample must carry whole (shorter ones are left alone).
-    static let minimumListed = 3
-
-    /// The items a reply lists, each as its title: its top-level numbered or bulleted lines, and
-    /// its tables' rows (their first cell), outside code blocks. A title is the item's bold part,
-    /// else its words before a colon or dash, without Markdown marks.
-    static func listedItems(in text: String) -> [String] {
-        var items: [String] = []
-        var inCode = false
-        var tableHeader: Int?
-        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let line = String(raw)
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("```") { inCode.toggle(); continue }
-            if inCode { continue }
-            if trimmed.hasPrefix("|") {
-                let cells = trimmed.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }
-                if !cells.isEmpty, cells.allSatisfy({ $0.wholeMatch(of: #/:?-+:?/#) != nil }) {
-                    // The row above was the table's header, not an item.
-                    if let header = tableHeader { items.remove(at: header) }
-                    tableHeader = nil
-                    continue
-                }
-                tableHeader = nil
-                if let first = cells.first {
-                    let title = itemTitle(first)
-                    if !title.isEmpty {
-                        tableHeader = items.count
-                        items.append(title)
-                    }
-                }
-                continue
-            }
-            tableHeader = nil
-            // Nested items are details of the one above.
-            guard line.prefix(while: { $0 == " " || $0 == "\t" }).count < 2,
-                  let match = trimmed.wholeMatch(of: #/(?:\d{1,3}[.)、]|[-*+•])\s+(.+)/#) else { continue }
-            let title = itemTitle(String(match.1))
-            if !title.isEmpty { items.append(title) }
+    /// The quiet app message to the bot that wrote the reply, once the component is built: draw
+    /// it for that reply with `<show>`, the reply's content in full, as its usage says. Its answer
+    /// is not shown as a message: the `<show>` becomes the reply's component.
+    static func fillRequest(_ spec: ComponentSpec, component name: String, reply: ChatMessage?, pages: [String] = [], usage: String) -> String {
+        let when = reply.map { " from " + $0.date.formatted(date: .omitted, time: .shortened) } ?? ""
+        let quote = reply.map { " (\"\(Bot.preview(of: $0))\")" } ?? ""
+        let purpose = (spec.purpose ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        var text = "(App: Draw the component \"\(name)\" for your reply\(when)\(quote): the user made that reply into this component"
+        text += purpose.isEmpty ? "." : ", for this: \(purpose)."
+        text += " Answer with only <show name=\"\(name)\">JSON</show> holding that reply's content in full (every item it has, in your words and language), in the data format its usage below gives. No words before or after it: the app shows it under that reply, not as a new message. If the reply's content does not fit this component, answer in one sentence why, without the tag."
+        if let reply {
+            text += "\nYour reply was:\n" + clip(reply.text, replyLimit)
         }
-        return items
+        for page in pages { text += "\nIt links the result page \(page); what is there is part of its content." }
+        if !usage.isEmpty { text += "\nUsage of \(name):\n" + usage }
+        return text + ")"
     }
 
-    private static func itemTitle(_ item: String) -> String {
-        var title = item
-        if let bold = item.firstMatch(of: #/\*\*(.+?)\*\*/#) {
-            title = String(bold.1)
-        } else if let cut = item.firstRange(of: #/[：:]|\s[—–-]\s/#) {
-            title = String(item[..<cut.lowerBound])
+    /// The bot's answer to `fillRequest`: the data of its `<show>` of the component (the first
+    /// one it drew, if it named another), else why not.
+    static func filledData(from answer: String, component name: String) -> Result<String, FillProblem> {
+        let parsed = ReplyParser.parseAll(answer)
+        let shown = parsed.displays.first { $0.name == name } ?? parsed.displays.first
+        if let data = shown?.data.trimmingCharacters(in: .whitespacesAndNewlines), !data.isEmpty, data != "null" {
+            return .success(data)
         }
-        title = title.replacingOccurrences(of: "`", with: "").replacingOccurrences(of: "*", with: "")
-        return clip(title.trimmingCharacters(in: .whitespaces), 60)
+        let said = parsed.body.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        return .failure(FillProblem(text: said.isEmpty ? "it answered without the component" : clip(said, 200)))
     }
 
-    /// The items the reply lists that Maintainer's "This reply" sample (sent in `json`) leaves
-    /// out. Nil when it sent no such sample, the spec takes live data, or the reply lists none.
-    static func missingItems(from json: String, reply: String, in spec: ComponentSpec) -> (listed: [String], missing: [String])? {
-        guard spec.command == nil,
-              let object = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any],
-              let samples = object["samples"] as? [Any],
-              samples.contains(where: { ($0 as? [String: Any])?["label"] as? String == "This reply" }),
-              let data = spec.samples.first(where: { $0.label == "This reply" })?.data else { return nil }
-        let listed = listedItems(in: reply)
-        guard listed.count >= minimumListed else { return nil }
-        let shown = squeezed(words(in: data))
-        return (listed, listed.filter { !shown.contains(squeezed($0)) })
-    }
-
-    /// Every key, string and number in a sample's JSON (its raw text when it is not JSON).
-    private static func words(in data: String) -> String {
-        guard let value = try? JSONSerialization.jsonObject(with: Data(data.utf8), options: [.fragmentsAllowed]) else { return data }
-        var found: [String] = []
-        func walk(_ value: Any) {
-            if let text = value as? String { found.append(text) }
-            else if let number = value as? NSNumber { found.append(number.stringValue) }
-            else if let array = value as? [Any] { array.forEach(walk) }
-            else if let object = value as? [String: Any] {
-                for (key, inner) in object { found.append(key); walk(inner) }
-            }
-        }
-        walk(value)
-        return found.joined(separator: "\n")
-    }
-
-    /// Lower case, without spaces or Markdown marks, so the sample's spelling of an item matches.
-    private static func squeezed(_ text: String) -> String {
-        String(text.lowercased().filter { !$0.isWhitespace && $0 != "*" && $0 != "`" })
-    }
-
-    /// Asked once when the sample leaves items out: send it again with every one.
-    static func allItemsRequest(_ spec: ComponentSpec, listed: [String], missing: [String]) -> String {
-        "(Component spec \(spec.id.uuidString)) The \"This reply\" sample you sent has only \(listed.count - missing.count) of the \(listed.count) items the reply lists; it leaves out: \(missing.joined(separator: "; ")). That sample is what shows under the reply, so it holds the reply's whole content. Answer in one sentence, then <component-spec id=\"\(spec.id.uuidString)\">{\"samples\":[{\"label\":\"This reply\",\"data\":…}]}</component-spec> with all \(listed.count) items in the fields' shape, in the reply's words; change nothing else and build nothing. If some of them are not the component's data, say so and send no tag."
+    struct FillProblem: Error, Equatable {
+        var text: String
     }
 
     // MARK: Helpers

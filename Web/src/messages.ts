@@ -204,11 +204,13 @@ function specChips(message: MessageView, components: Record<string, ComponentInf
     const chip = document.createElement("button");
     chip.className = `spec-chip ${spec.status}${spec.suggested ? " suggested" : ""}${spec.open ? " open" : ""}`;
     chip.setAttribute("aria-expanded", String(spec.open));
-    const building = spec.status === "building";
-    const words = spec.status === "done" ? "Component" : building ? "Building…" : spec.suggested ? "Suggested component" : "Component spec";
+    // Built, and the bot that wrote the reply is drawing it for the reply.
+    const filling = spec.status === "done" && spec.filling ? spec.filling : null;
+    const building = spec.status === "building" || !!filling;
+    const words = filling ? `Filling in · ${filling}` : spec.status === "done" ? "Component" : building ? "Building…" : spec.suggested ? "Suggested component" : "Component spec";
     chip.innerHTML = `${building ? `<span class="spinner" aria-hidden="true"></span>` : cubeIcon}<span></span><span class="spec-chip-arrow" aria-hidden="true">›</span>`;
-    chip.querySelector("span:not(.spinner)")!.textContent = `${words} · ${spec.name}`;
-    chip.title = spec.suggested ? "Make it into a component: Maintainer builds it now" : building ? "Maintainer is building it; show its progress" : spec.open ? "Showing in the right panel" : "Open in the right panel";
+    chip.querySelector("span:not(.spinner)")!.textContent = `${words} · ${spec.component ?? spec.name}`;
+    chip.title = filling ? `Built; ${filling} is drawing it with this reply's data` : spec.suggested ? "Make it into a component: Maintainer builds it now" : building ? "Maintainer is building it; show its progress" : spec.open ? "Showing in the right panel" : "Open in the right panel";
     chip.addEventListener("click", () => post({ type: "pressSpec", id: spec.id }));
     strip.append(chip);
     if (spec.status === "done") strip.append(editSpecButton(spec));

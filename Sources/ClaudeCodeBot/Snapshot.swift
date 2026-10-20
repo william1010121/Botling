@@ -485,7 +485,9 @@ enum Snapshot {
     /// workspace open in the right panel, with Maintainer's draft, a question and a test run to
     /// allow. `CCB_SPEC_STATE` draws it later on, the chat alone: `building` (the chip says
     /// Building…), `done` (the component under the reply, its command allowed and run), `done-ask`
-    /// (its card asks Allow and run), `edit` (done, with Edit spec's panel open). `CCB_SPEC_PANEL=1`
+    /// (its card asks Allow and run), `edit` (done, with Edit spec's panel open), `filling` (built
+    /// without a command, the bot that wrote the reply drawing it), `filled` (what it drew, under
+    /// the reply). `CCB_SPEC_PANEL=1`
     /// opens the panel in any state; `CCB_SPEC_WIDE=1` spreads it wide; `CCB_SPEC_WINDOW=<width>`
     /// draws a whole window that wide.
     private static func drawSpec(to path: String) {
@@ -528,8 +530,28 @@ enum Snapshot {
         spec.asked = true
         spec.testRun = ComponentSpec.TestRun(command: spec.command!, folder: home.path)
         let state = ProcessInfo.processInfo.environment["CCB_SPEC_STATE"] ?? ""
-        let built = ["done", "done-ask", "edit"].contains(state)
+        let filling = ["filling", "filled"].contains(state)
+        let built = ["done", "done-ask", "edit"].contains(state) || filling
         switch state {
+        case "filling", "filled":
+            // No command: the bot that wrote the reply draws it with the reply's data.
+            spec.status = .done
+            spec.built = "test-summary"
+            spec.command = nil
+            spec.testRun = nil
+            spec.questions = []
+            spec.purpose = "每個測試套件通過幾個、失敗幾個，一眼看完"
+            spec.filledBy = "Main bot"
+            spec.conversation = [
+                .init(kind: .event, text: "Sent to Maintainer to build the first version"),
+                .init(kind: .maintainer, text: "做好了 test-summary：about.md 寫了資料格式，由 Main bot 照它的回覆填。"),
+                .init(kind: .event, text: "test-summary added to Main bot"),
+                .init(kind: .event, text: "Asked Main bot to fill it from its reply"),
+            ]
+            if state == "filled" {
+                spec.filled = #"{"total":382,"passed":382,"failed":0,"seconds":41.2,"suites":[{"name":"WebBridgeTests","passed":112},{"name":"ChatStoreTests","passed":86},{"name":"MarkdownTests","passed":79}]}"#
+                spec.conversation.append(.init(kind: .event, text: "Filled by Main bot"))
+            }
         case "building":
             spec.status = .building
             spec.questions = []
@@ -566,9 +588,9 @@ enum Snapshot {
             let folder = workspace.components.folder.appending(path: "test-summary")
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try? snapshotTestSummary.write(to: folder.appending(path: "template.html"), atomically: true, encoding: .utf8)
-            try? "Pass and fail counts per test suite.\nCommand: \(spec.command!)\n".write(to: folder.appending(path: "about.md"), atomically: true, encoding: .utf8)
+            try? "Pass and fail counts per test suite.\n\(spec.command.map { "Command: \($0)" } ?? "Data: {total, passed, failed, seconds, suites: [{name, passed}]}")\n".write(to: folder.appending(path: "about.md"), atomically: true, encoding: .utf8)
             workspace.components.rescan()
-            if state != "done-ask" { workspace.componentCommands.approve(spec.command!, in: home) }
+            if state != "done-ask", let command = spec.command { workspace.componentCommands.approve(command, in: home) }
         }
         let panelOpen = state.isEmpty || state == "edit" || ProcessInfo.processInfo.environment["CCB_SPEC_PANEL"] == "1"
         if panelOpen { workspace.openSpec(spec.id, in: workspace.mainBot) }

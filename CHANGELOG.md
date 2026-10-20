@@ -22,12 +22,18 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
-- **A component made from a reply shows every item the reply lists.** A reply listing 12
-  features made into a component showed only 4 of them under it: Maintainer was sent the whole
-  reply but wrote its "This reply" sample as a short example. The first-version request now says
-  how many items the reply lists (its numbered and bulleted lines and table rows) and names them,
-  and when Maintainer's sample still leaves some out, the app asks it once to send the sample
-  again with all of them, naming the missing ones; the full one then shows under the reply.
+- **A component made from a reply is filled in by the bot that wrote the reply.** A reply
+  listing 12 features made into a component showed only 4 of them under it: Maintainer wrote the
+  data as a short example. Now Maintainer's first-version request starts with what the component
+  is for, in the asker's own words (a bot's `<suggest-component>` text, or what the user typed),
+  with the reply after it as context, and Maintainer builds only the component (template.html,
+  and about.md with its data format), no data sample. Once it is in the library and added, the
+  app asks the bot that wrote the reply, in a quiet app turn, to draw it for that reply with
+  `<show name="…">`, from its own reply in full; that answer is not a new message, its `<show>`
+  becomes the reply's component. The turn waits until the bot is free (nothing it is doing is
+  interrupted; what you say meanwhile waits for it). The chip under the reply says "Filling in ·
+  <bot>" meanwhile, and the spec's steps gain "Filled by <bot>". Components with live data (a
+  Command) work as before. `CCB_SPEC_STATE=filling|filled` draws both.
 
 ## 1.10.0
 

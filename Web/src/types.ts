@@ -67,6 +67,8 @@ export interface SpecChipView {
   component?: string | null;
   /** That component as drawn, with its command's run as for any card. */
   display?: DisplayView | null;
+  /** Built; the bot that wrote the reply is drawing it for the reply now (its name). */
+  filling?: string | null;
 }
 
 export type SpecStatus = "draft" | "building" | "done";
@@ -270,7 +272,7 @@ export type Action =
   | { type: "resizePin"; id: string; size: PinSize }
   | { type: "setPinRefresh"; id: string; refresh: PinRefresh; minutes: number }
   | { type: "pinStatus"; id: string; text: string | null; tone: string | null }
-  | { type: "makeComponent"; messageID: string; preview?: number }
+  | { type: "makeComponent"; messageID: string; preview?: number; purpose?: string }
   | { type: "openSpec"; id: string }
   | { type: "pressSpec"; id: string }
   | { type: "specCommand"; id: string; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean }

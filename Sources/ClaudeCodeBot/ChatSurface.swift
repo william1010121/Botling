@@ -319,7 +319,8 @@ struct ChatSurface: NSViewRepresentable {
                 // built right away; the chip says Building…, the panel stays shut.
                 if let messageID = id("messageID") {
                     let preview = body["preview"] as? Int
-                    withAnimation(.easeInOut(duration: 0.2)) { _ = workspace.makeComponent(from: messageID, preview: preview, in: bot) }
+                    let purpose = body["purpose"] as? String
+                    withAnimation(.easeInOut(duration: 0.2)) { _ = workspace.makeComponent(from: messageID, preview: preview, purpose: purpose, in: bot) }
                 }
             case "pressSpec":
                 // A chip: a bot's suggestion starts its build; otherwise the spec opens (or folds).

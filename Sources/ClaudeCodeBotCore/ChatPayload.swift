@@ -63,6 +63,8 @@ public struct ChatPayload: Encodable, Equatable {
         /// builds), with its command's run as for any card.
         var component: String? = nil
         var display: Display? = nil
+        /// The bot that wrote the reply is drawing the built component for it now (its name).
+        var filling: String? = nil
     }
 
     public struct Feedback: Encodable, Equatable {
@@ -398,6 +400,9 @@ public struct ChatPayload: Encodable, Equatable {
             if let shown = specDisplay(spec, library: library, runs: commands?.runs) {
                 chip.component = shown.name
                 chip.display = shown
+            } else if spec.filling, let built = spec.built, library?.names.contains(built) == true {
+                chip.component = built
+                chip.filling = spec.filledBy
             }
             return chip
         }
@@ -412,22 +417,25 @@ public struct ChatPayload: Encodable, Equatable {
         spec.reuse ? (library?.command(of: name) ?? spec.command) : spec.command
     }
 
-    /// The data made from the reply itself (Maintainer's "This reply" sample, else the app's).
+    /// The data made from the reply itself before it was built (a "This reply" sample: the app's
+    /// draft, or Maintainer's in specs from before the bot filled them).
     static func replySample(of spec: ComponentSpec) -> ComponentSpec.Sample? {
         spec.samples.first { $0.label == "This reply" } ?? spec.samples.first { $0.label == "This page" }
     }
 
     /// A built spec's component as drawn under its reply: without a command, the reply's own
-    /// content; with one, the data it gave (only once the user allowed it; until then the card
+    /// content as the bot that wrote it drew it (nothing while it draws it; a sample if it did
+    /// not); with one, the data it gave (only once the user allowed it; until then the card
     /// asks), else what was kept from its last run, else its sample.
     @MainActor
     static func specDisplay(_ spec: ComponentSpec, library: ComponentLibrary?, runs: ComponentCommands?) -> Display? {
         guard let name = spec.built, let library, library.names.contains(name) else { return nil }
         let command = specCommand(spec, component: name, library: library)
+        if command == nil, spec.filling { return nil }
         let kept = spec.testRun.flatMap { $0.command == command ? $0.output : nil }
         let sample = command == nil ? (replySample(of: spec) ?? spec.samples.first)
             : (spec.samples.first { $0.label == "Test run" } ?? replySample(of: spec) ?? spec.samples.first)
-        var shown = display(ComponentInstance(name: name, data: kept ?? sample?.data ?? "null"))
+        var shown = display(ComponentInstance(name: name, data: command == nil ? (spec.filled ?? sample?.data ?? "null") : (kept ?? sample?.data ?? "null")))
         guard let command else { return shown }
         let folder = URL(filePath: spec.folder)
         let detail = library.detailCommand(of: name)

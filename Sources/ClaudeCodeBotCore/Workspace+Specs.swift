@@ -32,9 +32,9 @@ extension Workspace {
     /// The reply's "Make into component" (or "Add to another bot…"), or an HTML result card's
     /// (`preview`: which card): adds the chip and has Maintainer build the first version now. A
     /// reply that already is a library component has nothing to build: its spec opens to pick the
-    /// bots. Pressed again, nothing more is sent.
+    /// bots. Pressed again, nothing more is sent. `purpose`: what the user typed it is for.
     @discardableResult
-    public func makeComponent(from messageID: UUID, preview: Int? = nil, in chat: Bot) -> ComponentSpec? {
+    public func makeComponent(from messageID: UUID, preview: Int? = nil, purpose: String? = nil, in chat: Bot) -> ComponentSpec? {
         guard let message = chat.messages.first(where: { $0.id == messageID }), message.role == .bot || message.role == .notice else { return nil }
         var page: String?
         if let preview {
@@ -47,7 +47,8 @@ extension Workspace {
             return chat.specs.first { $0.id == found.id }
         }
         let writer = message.sourceID.flatMap(member) ?? chat
-        let spec = ComponentSpecs.draft(from: message, bot: writer.name, folder: commandFolder(for: message, in: chat), library: components, page: page)
+        var spec = ComponentSpecs.draft(from: message, bot: writer.name, folder: commandFolder(for: message, in: chat), library: components, page: page)
+        if let purpose = purpose?.trimmingCharacters(in: .whitespacesAndNewlines), !purpose.isEmpty { spec.purpose = purpose }
         chat.editSpecs { $0.append(spec) }
         if spec.existing != nil { openSpec(spec.id, in: chat) } else { startSpec(spec.id, in: chat) }
         return chat.specs.first { $0.id == spec.id }
@@ -99,6 +100,8 @@ extension Workspace {
             if spec.similar == named { spec.similar = nil }
         }
         spec.about = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Its words are what the component is for.
+        spec.purpose = spec.about.isEmpty ? nil : spec.about
         spec.suggestedBy = bot.name
         bot.editSpecs { $0.append(spec) }
     }
@@ -182,7 +185,6 @@ extension Workspace {
                 specs[at].conversation.append(.init(kind: .maintainer, text: words))
             }
         }
-        askForAllItems(of: uuid, json: json, in: chat)
         guard before.status == .building, let spec = chat.specs.first(where: { $0.id == uuid }) else { return }
         if spec.reuse, let similar = spec.similar, components.names.contains(similar) {
             for (name, build) in specBuilds where build.spec == uuid { specBuilds[name] = nil }
@@ -192,21 +194,6 @@ extension Workspace {
             specBuilds[spec.name] = (build.chat, build.spec, components.names.contains(spec.name) ? components.versions[spec.name, default: 0] : nil)
             components.markWorking(spec.name, change: "built from a reply")
         }
-    }
-
-    /// Maintainer's "This reply" sample is what shows under the reply, so it carries every item
-    /// the reply lists. One that leaves some out (a few as an example) is asked for again, once.
-    private func askForAllItems(of id: UUID, json: String, in chat: Bot) {
-        guard let spec = chat.specs.first(where: { $0.id == id }), spec.askedForAllItems != true,
-              let reply = chat.messages.first(where: { $0.id == spec.messageID }),
-              let (listed, missing) = ComponentSpecs.missingItems(from: json, reply: reply.text, in: spec),
-              !missing.isEmpty else { return }
-        chat.editSpecs { specs in
-            guard let at = specs.firstIndex(where: { $0.id == id }) else { return }
-            specs[at].askedForAllItems = true
-            specs[at].conversation.append(.init(kind: .event, text: "Asked Maintainer for all \(listed.count) items of the reply"))
-        }
-        handToMaintainer(ComponentSpecs.allItemsRequest(spec, listed: listed, missing: missing))
     }
 
     // MARK: Test run
@@ -343,6 +330,61 @@ extension Workspace {
         var text = added.isEmpty ? "\(name) is in the library, but on no bot's list yet." : "\(name) added to \(added.joined(separator: ", "))."
         if !full.isEmpty { text += " Not added to \(full.joined(separator: ", ")): \(full.count == 1 ? "its list is" : "their lists are") full (\(ComponentLibrary.limit) components); take one off first." }
         tell(chat, text)
+        askToFill(id, component: name, in: chat)
+    }
+
+    // MARK: Filled by the bot that wrote the reply
+
+    /// Built (or reused) without a command: the bot that wrote the reply is asked, in a quiet app
+    /// turn, to draw it for that reply with `<show>`, the data from its own reply in full. That
+    /// turn waits until the bot is free (nothing it is doing is interrupted, and what the user says
+    /// meanwhile waits for it), and its answer is not a message: the `<show>` is the reply's
+    /// component. A reply that already is the component, or live data, needs nobody to fill it.
+    private func askToFill(_ id: UUID, component name: String, in chat: Bot) {
+        guard let spec = chat.specs.first(where: { $0.id == id }), spec.existing == nil,
+              ChatPayload.specCommand(spec, component: name, library: components) == nil,
+              let reply = chat.messages.first(where: { $0.id == spec.messageID }) else { return }
+        let writer = reply.sourceID.flatMap(member) ?? chat
+        // A group's own line has no one bot behind it.
+        guard group(of: writer) == nil else { return }
+        let pages = ComponentSpecs.pages(of: reply, page: spec.page).map(\.path)
+        let request = ComponentSpecs.fillRequest(spec, component: name, reply: reply, pages: pages, usage: components.catalog(of: [name]))
+        chat.editSpecs { specs in
+            guard let at = specs.firstIndex(where: { $0.id == id }) else { return }
+            specs[at].filledBy = writer.name
+            specs[at].fillError = nil
+            specs[at].conversation.append(.init(kind: .event, text: "Asked \(writer.name) to fill it from its reply"))
+        }
+        Task { [weak self, weak writer] in
+            guard let writer else { return }
+            let answer = await writer.groupTurn(request, waitFor: Self.fillWait, answerWithin: Self.fillAnswerTime)
+            self?.takeFill(answer, of: id, component: name, in: chat, by: writer.name)
+        }
+    }
+
+    /// How long a fill waits for the bot to be free, and then for its answer.
+    static let fillWait: TimeInterval = 3 * 60 * 60
+    static let fillAnswerTime: TimeInterval = 10 * 60
+
+    /// The bot's answer to the fill request: its `<show>` data goes under the reply.
+    private func takeFill(_ answer: Bot.GroupAnswer, of id: UUID, component name: String, in chat: Bot, by writer: String) {
+        let result: Result<String, ComponentSpecs.FillProblem> = switch answer {
+        case let .reply(text, _): ComponentSpecs.filledData(from: text, component: name)
+        case .busy: .failure(.init(text: "it stayed busy"))
+        case let .failed(why): .failure(.init(text: why))
+        }
+        chat.editSpecs { specs in
+            guard let at = specs.firstIndex(where: { $0.id == id }), specs[at].filledBy == writer, specs[at].built == name else { return }
+            switch result {
+            case let .success(data):
+                specs[at].filled = data
+                specs[at].fillError = nil
+                specs[at].conversation.append(.init(kind: .event, text: "Filled by \(writer)"))
+            case let .failure(problem):
+                specs[at].fillError = problem.text
+                specs[at].conversation.append(.init(kind: .event, text: "\(writer) did not fill it: \(problem.text)"))
+            }
+        }
     }
 
     /// Cancel: the chip goes away (a build already handed over is Maintainer's to finish).
@@ -403,6 +445,10 @@ extension Workspace {
                 .init(label: "Built into the library", state: built ? "done" : "doing"),
                 .init(label: "Add to " + (spec.bots.isEmpty ? "its bots" : spec.bots.joined(separator: ", ")), state: built ? "done" : "todo"),
             ]
+            if built, let writer = spec.filledBy {
+                steps?.append(spec.fillError != nil ? .init(label: "\(writer) did not fill it", state: "todo")
+                    : .init(label: "Filled by \(writer)", state: spec.filling ? "doing" : "done"))
+            }
         }
         let reply = chat.messages.first { $0.id == spec.messageID }
         let writer = reply?.sourceID.flatMap(member)?.name ?? chat.name
@@ -427,7 +473,9 @@ extension Workspace {
             similar: spec.similar,
             similarAbout: spec.similar.flatMap { name in components.names.contains(name) ? components.summaries(of: [name]).split(separator: ":", maxSplits: 1).last.map { $0.trimmingCharacters(in: .whitespaces) } : nil },
             reuse: spec.reuse,
-            samples: spec.samples.map { .init(label: $0.label, data: $0.data) },
+            // What the bot drew under the reply is "This reply" in the preview.
+            samples: (spec.filled.map { filled in [ComponentSpec.Sample(label: "This reply", data: filled)] + spec.samples.filter { $0.label != "This reply" } } ?? spec.samples)
+                .map { .init(label: $0.label, data: $0.data) },
             questions: spec.questions.map { question in
                 .init(id: question.id, text: question.text, options: question.options.map { .init(label: $0.label) }, suggested: question.suggested)
             },

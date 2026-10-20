@@ -227,19 +227,19 @@ struct ComponentSpecTests {
         #expect(!relay.contains("var secret"))
         #expect(!relay.contains("<li>"))
         // The reply's own content is the data; a command only when live data is clearly wanted.
-        #expect(relay.contains("\"This reply\" sample"))
+        #expect(!relay.contains("\"This reply\" sample"))
         #expect(relay.contains("the reply's own content"))
         #expect(relay.contains("only when"))
         #expect(relay.contains("head -c 200000 CHANGELOG.md"))
     }
 
-    @Test func theComponentUnderTheReplyDrawsTheReplysOwnData() throws {
-        let workspace = makeWorkspace()
+    @Test func theComponentUnderTheReplyDrawsTheReplysOwnData() async throws {
+        let data = #"{"versions":[{"version":"1.9.0","body":"- 看板變成格子"},{"version":"1.0.0","body":"- 第一版"}]}"#
+        let workspace = makeWorkspace(fillingLauncher("版本紀錄", data: data))
         let bot = workspace.mainBot
         let (reply, _) = try releaseSummaryReply(in: bot)
         let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
-        let data = #"{"versions":[{"version":"1.9.0","body":"- 看板變成格子"},{"version":"1.0.0","body":"- 第一版"}]}"#
-        let update: [String: Any] = ["name": "版本紀錄", "fields": [["name": "versions", "type": "[version, body]"]], "samples": [["label": "This reply", "data": data]]]
+        let update: [String: Any] = ["name": "版本紀錄", "fields": [["name": "versions", "type": "[version, body]"]]]
         let json = String(decoding: try JSONSerialization.data(withJSONObject: update), as: UTF8.self)
         workspace.handle([.componentSpec(id: spec.id.uuidString, json: json)], from: workspace.maintainerProject)
         // Its about.md also says how to fill it from a command (for other bots' <show>).
@@ -247,9 +247,10 @@ struct ComponentSpecTests {
         let done = try #require(bot.specs.first)
         #expect(done.status == .done)
         #expect(done.command == nil)
+        await eventually { bot.specs.first?.filled != nil }
         let commands = ChatPayload.CommandContext(runs: workspace.componentCommands) { _ in bot.profile.workingDirectory }
         let chip = try #require(ChatPayload.specChips(for: reply, in: bot, open: nil, library: workspace.components, commands: commands)?.first)
-        // Under the reply it shows what the reply said, not an Allow and run for the CHANGELOG.
+        // Under the reply: what the bot drew from its reply, not an Allow and run for the CHANGELOG.
         #expect(chip.display?.data == data)
         #expect(chip.display?.command == nil)
         #expect(chip.display?.status == nil)
@@ -259,8 +260,7 @@ struct ComponentSpecTests {
         #expect(again.display?.data == data)
     }
 
-    /// A reply listing 12 features to pick from, ending with a request for a multi-select
-    /// component (the tag is gone from its text, as the parser leaves it).
+    /// A reply listing 12 features to pick from.
     static let features = [
         "一個主 bot 管所有專案", "只在需要你決定時才打擾你", "bot 會睡覺、不浪費 token", "背景 subagent 團隊",
         "聊天裡的組件、釘選和 Board", "從回覆一鍵做成組件", "Codex code review", "Claude Design 設計稿",
@@ -274,65 +274,140 @@ struct ComponentSpecTests {
         return message
     }
 
-    func multiSelectSample(_ titles: ArraySlice<String>) throws -> String {
-        let data: [String: Any] = ["question": "想宣傳哪些功能？", "options": titles.map { ["title": $0, "detail": "說明"] }]
-        let sample = String(decoding: try JSONSerialization.data(withJSONObject: data), as: UTF8.self)
-        let update: [String: Any] = ["name": "multi-select", "samples": [["label": "This reply", "data": sample]]]
-        return String(decoding: try JSONSerialization.data(withJSONObject: update), as: UTF8.self)
+    /// The multi-select data a bot draws from the feature list: every feature.
+    nonisolated static var fullFeatureData: String {
+        let data: [String: Any] = ["question": "想宣傳哪些功能？", "options": features.map { ["title": $0] }]
+        return String(decoding: try! JSONSerialization.data(withJSONObject: data, options: [.sortedKeys]), as: UTF8.self)
     }
 
-    @Test func theFirstVersionCarriesEveryItemTheReplyLists() throws {
+    static let fillMarker = "(App: Draw the component"
+
+    /// A launcher whose bots answer the app's fill request with a whole <show> of the component.
+    func fillingLauncher(_ name: String = "multi-select", data: String = Self.fullFeatureData) -> FakeLauncher {
+        let fake = FakeLauncher()
+        fake.respond = { text in
+            if text.contains(Self.fillMarker) { return "<show name=\"\(name)\">\(data)</show>" }
+            if text.contains("hold this turn") { return nil }
+            return isAppOnly(text) ? "OK" : "Got it"
+        }
+        return fake
+    }
+
+    @Test func theFirstVersionStartsWithWhatTheComponentIsFor() throws {
+        let workspace = makeWorkspace()
+        let bot = try garden(in: workspace)
+        let reply = featureListReply(in: bot)
+        let purpose = "let the user tick several of the features this reply lists"
+        workspace.handle([.suggestComponent(name: "multi-select", draft: purpose)], from: workspace.projects.first { $0.name == "garden" })
+        let spec = try #require(bot.specs.first)
+        #expect(spec.messageID == reply.id)
+        #expect(spec.purpose == purpose)
+        workspace.pressSpec(spec.id, in: bot)
+        let ask = try #require(relays(workspace).last).text
+        // What it is for comes first, in the bot's own words; then the reply, as context.
+        #expect(ask.hasPrefix("(Component spec \(spec.id.uuidString)) Build the first version now. What it is for, in garden's words: \(purpose)"))
+        let said = try #require(ask.range(of: purpose)).lowerBound
+        let context = try #require(ask.range(of: "The reply:")).lowerBound
+        #expect(said < context)
+        for feature in Self.features { #expect(ask.contains(feature)) }
+        // Maintainer builds only the component: no data sample, no counting of items.
+        #expect(!ask.contains("\"This reply\" sample"))
+        #expect(!ask.contains("lists 12 items"))
+        #expect(ask.contains("send no samples"))
+        #expect(ask.contains("about.md"))
+        #expect(ask.contains("asks garden"))
+    }
+
+    @Test func whatTheUserTypedIsThePurposeAndNothingTypedSaysSo() throws {
         let workspace = makeWorkspace()
         let bot = workspace.mainBot
         let reply = featureListReply(in: bot)
-        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
-        // Maintainer is told how many items the reply lists, and that the data holds every one.
-        let ask = try #require(relays(workspace).last).text
-        #expect(ask.contains("lists 12 items"))
-        for feature in Self.features { #expect(ask.contains(feature)) }
-
-        // It sends a sample with only 4 of them: the app asks again for every item, once.
-        workspace.handle([.componentSpec(id: spec.id.uuidString, json: try multiSelectSample(Self.features[0..<4]))], from: workspace.maintainerProject)
-        let again = try #require(relays(workspace).last).text
-        #expect(relays(workspace).count == 2)
-        #expect(again.hasPrefix("(Component spec \(spec.id.uuidString))"))
-        #expect(again.contains("4 of the 12"))
-        #expect(again.contains("Routines 每日排程"))
-        #expect(again.contains("用量一目了然"))
-        #expect(!again.contains("Codex code review、一個主 bot"))
-        #expect(again.contains("<component-spec id=\"\(spec.id.uuidString)\">"))
-
-        // The full sample replaces it, and that is what shows under the reply; nothing more is asked.
-        let full = try multiSelectSample(Self.features[...])
-        workspace.handle([.componentSpec(id: spec.id.uuidString, json: full)], from: workspace.maintainerProject)
-        #expect(relays(workspace).count == 2)
-        try addComponent("multi-select", to: workspace)
-        let chip = try #require(ChatPayload.specChips(for: reply, in: bot, open: nil, library: workspace.components)?.first)
-        let shown = try #require(chip.display?.data)
-        for feature in Self.features { #expect(shown.contains(feature)) }
-
-        // A short one again is not asked about a second time.
-        workspace.handle([.componentSpec(id: spec.id.uuidString, json: try multiSelectSample(Self.features[0..<4]))], from: workspace.maintainerProject)
-        #expect(relays(workspace).count == 2)
+        let spec = try #require(workspace.makeComponent(from: reply.id, purpose: "勾選要宣傳的功能", in: bot))
+        #expect(try #require(relays(workspace).last).text.hasPrefix("(Component spec \(spec.id.uuidString)) Build the first version now. What it is for, in the user's words: 勾選要宣傳的功能"))
+        let other = testReply(in: bot)
+        let plain = try #require(workspace.makeComponent(from: other.id, in: bot))
+        #expect(try #require(relays(workspace).last).text.hasPrefix("(Component spec \(plain.id.uuidString)) Build the first version now. What it is for: \(bot.name)'s reply below"))
     }
 
-    @Test func listedItemsAreTheReplysTopLevelListAndTableRows() {
-        let text = """
-        Intro line.
+    @Test func onceBuiltTheBotThatWroteTheReplyFillsItInFull() async throws {
+        let fake = fillingLauncher()
+        let workspace = makeWorkspace(fake)
+        let bot = try garden(in: workspace)
+        let reply = featureListReply(in: bot)
+        let spec = try #require(workspace.makeComponent(from: reply.id, purpose: "勾選要宣傳的功能", in: bot))
+        workspace.handle([.componentSpec(id: spec.id.uuidString, json: #"{"name":"multi-select","fields":[{"name":"options","type":"[title]"}]}"#)], from: workspace.maintainerProject)
+        try addComponent("multi-select", about: "Pick several options.\nData: {\"question\": text, \"options\": [{\"title\": text}]}", to: workspace)
+        // Built and added; now garden, which wrote the reply, is asked to draw it.
+        let added = try #require(bot.specs.first)
+        #expect(added.status == .done)
+        #expect(added.filledBy == "garden")
+        let filling = try #require(ChatPayload.specChips(for: reply, in: bot, open: nil, library: workspace.components)?.first)
+        #expect(filling.filling == "garden")
+        #expect(filling.display == nil)
+        #expect(workspace.specPayload(spec.id)?.steps?.last == .init(label: "Filled by garden", state: "doing"))
+        let botLines = bot.messages.filter { $0.role == .bot }.count
 
-        1. **Login**: sign in with Apple
-        2) Export — as CSV
-          - nested detail
-        - `Notify`: push
-        ```
-        - not an item
-        ```
-        | Version | Notes |
-        |---|---|
-        | 1.9.0 | grid |
-        """
-        #expect(ComponentSpecs.listedItems(in: text) == ["Login", "Export", "Notify", "1.9.0"])
-        #expect(ComponentSpecs.listedItems(in: "No list here.").isEmpty)
+        await eventually { bot.specs.first?.filled != nil }
+        let asked = try #require(fake.agents.flatMap(\.sent).first { $0.contains(Self.fillMarker) })
+        #expect(asked.contains("<show name=\"multi-select\">"))
+        #expect(asked.contains("Pick several options."))
+        #expect(asked.contains("Routines 每日排程"))
+        #expect(asked.contains("勾選要宣傳的功能"))
+        // Its <show> is the reply's component, every item; no new bubble in the chat.
+        #expect(bot.specs.first?.filled == Self.fullFeatureData)
+        #expect(bot.messages.filter { $0.role == .bot }.count == botLines)
+        let chip = try #require(ChatPayload.specChips(for: reply, in: bot, open: nil, library: workspace.components)?.first)
+        #expect(chip.filling == nil)
+        #expect(chip.component == "multi-select")
+        let shown = try #require(chip.display?.data)
+        for feature in Self.features { #expect(shown.contains(feature)) }
+        #expect(workspace.specPayload(spec.id)?.steps?.map(\.label) == ["Sent to Maintainer", "Built into the library", "Add to garden", "Filled by garden"])
+        #expect(workspace.specPayload(spec.id)?.steps?.last?.state == "done")
+        #expect(bot.specs.first?.conversation.last?.text == "Filled by garden")
+    }
+
+    @Test func theFillWaitsUntilTheBotIsFree() async throws {
+        let fake = fillingLauncher()
+        let workspace = makeWorkspace(fake)
+        let bot = try garden(in: workspace)
+        let reply = featureListReply(in: bot)
+        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        // The bot is at work on something else when the component lands.
+        bot.send("hold this turn")
+        await eventually { bot.isWorking }
+        let agent = try #require(fake.agents.first { $0.sent.contains { $0.contains("hold this turn") } })
+        workspace.handle([.componentSpec(id: spec.id.uuidString, json: #"{"name":"multi-select"}"#)], from: workspace.maintainerProject)
+        try addComponent("multi-select", to: workspace)
+        try await Task.sleep(for: .milliseconds(800))
+        #expect(!agent.sent.contains { $0.contains(Self.fillMarker) })
+        #expect(agent.interrupts == 0)
+        #expect(bot.specs.first?.filled == nil)
+        // Its turn ends: then it is asked, and draws it.
+        agent.reply("Done.")
+        await eventually { bot.specs.first?.filled == Self.fullFeatureData }
+        #expect(agent.interrupts == 0)
+        #expect(bot.messages.last { $0.role == .bot }?.text == "Done.")
+    }
+
+    @Test func aComponentWithLiveDataIsNotFilledByTheBot() throws {
+        let workspace = makeWorkspace()
+        let bot = workspace.mainBot
+        let reply = testReply(in: bot)
+        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        workspace.handle([.componentSpec(id: spec.id.uuidString, json: #"{"name":"test-summary","command":"swift test --parallel"}"#)], from: workspace.maintainerProject)
+        try addComponent("test-summary", to: workspace)
+        #expect(bot.specs.first?.status == .done)
+        #expect(bot.specs.first?.filledBy == nil)
+        #expect(workspace.specPayload(spec.id)?.steps?.count == 3)
+    }
+
+    @Test func specsSavedWithTheOldItemCountStillLoad() throws {
+        let spec = ComponentSpec(name: "multi-select", folder: "/tmp", bots: ["garden"])
+        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(spec)) as? [String: Any])
+        object["askedForAllItems"] = true
+        let loaded = try JSONDecoder().decode(ComponentSpec.self, from: JSONSerialization.data(withJSONObject: object))
+        #expect(loaded.id == spec.id)
+        #expect(loaded.filled == nil)
     }
 
     @Test func theFirstVersionReusesALibraryComponentMaintainerPicks() throws {
@@ -698,6 +773,10 @@ struct ComponentSpecTests {
         // A reply's own content is its data; a command only for live data.
         #expect(maintainer.contains("Its data is the reply's own content"))
         #expect(maintainer.contains("A Command is optional"))
+        // It builds only the component; the bot that wrote the reply draws it with its data.
+        #expect(maintainer.contains("starts with what the component is for"))
+        #expect(maintainer.contains("the app asks the bot that wrote the reply to draw it"))
+        #expect(!maintainer.contains("\"This reply\" sample"))
         #expect(ComponentPrompts.system.contains("Data from a command (optional)"))
     }
 }
