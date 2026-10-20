@@ -43,7 +43,7 @@ extension Workspace {
     }
 
     /// The bot behind a member id: the main bot, a project's manager, a bot or Maintainer.
-    func member(_ id: UUID) -> Bot? {
+    public func member(_ id: UUID) -> Bot? {
         id == Self.mainBotID ? mainBot : id == Self.codexID ? codexBot : managers[id]
     }
 
@@ -257,12 +257,13 @@ extension Workspace {
                 unheard.append("\(member.name) (busy)")
             case let .failed(why):
                 unheard.append("\(member.name) (\(Self.firstLine(of: why)))")
-            case var .reply(text):
+            case .reply(var text, let steps):
                 if let filter = bot.replyFilter?() { text = await filter(text) }
                 guard !Self.isPass(text) else { continue }
                 let parsed = ReplyParser.parseAll(text)
                 var line = ChatMessage(role: .bot, text: parsed.body, choices: parsed.choices, sourceID: member.id)
                 if !parsed.displays.isEmpty { line.displays = parsed.displays }
+                line.steps = steps
                 if !line.text.isEmpty || line.choices != nil || line.displays != nil {
                     chat.post(line)
                     said.append(line.id)

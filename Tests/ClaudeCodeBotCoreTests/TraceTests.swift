@@ -526,7 +526,7 @@ struct TraceTests {
         for line in AskThenSave.lines {
             for event in StreamEvent.events(in: line) { agent.emit(event) }
         }
-        guard case let .reply(text) = await answer.value else {
+        guard case let .reply(text, _) = await answer.value else {
             Issue.record("no reply")
             return
         }

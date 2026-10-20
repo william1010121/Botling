@@ -86,6 +86,7 @@ struct ChatSurface: NSViewRepresentable {
             group: workspace.group(of: bot).map { group in
                 ChatPayload.GroupView(
                     typing: workspace.groupSpeakers[group.id],
+                    working: workspace.groupSpeakers[group.id].flatMap { workspace.member($0) },
                     names: workspace.members(of: group).map(\.name),
                     speaker: { [workspace] id in workspace.speakerName(for: id) }
                 )

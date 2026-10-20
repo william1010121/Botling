@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
 import { Composer } from "../src/composer";
-import { feedback, messageElement } from "../src/messages";
+import { feedback, messageElement, typingElement } from "../src/messages";
 import type { ChatState, MessageView } from "../src/types";
 
 function message(overrides: Partial<MessageView>): MessageView {
@@ -459,6 +459,64 @@ describe("messages", () => {
     head.click();
     expect(lists[0].querySelector<HTMLElement>(".step-body")!.hidden).toBe(false);
     expect(lists[0].querySelector("pre")?.textContent).toBe("swift test");
+  });
+
+  it("show the bot's words between tool calls in sight, each run of calls folded between them", () => {
+    const step = (id: string, kind: "tool" | "text" | "subagent", title: string, extra: Partial<import("../src/types").StepView> = {}) =>
+      ({ id, kind, tool: null, title, detail: null, output: null, failed: false, done: true, status: null, count: null, ...extra });
+    const row = messageElement(message({ id: "r-text", text: "All green.", steps: [
+      step("t0", "text", "First I'll look at the **tests**."),
+      step("a1", "tool", "Read Package.swift"),
+      step("a2", "tool", "Run swift test"),
+      step("t1", "text", "Two failed; fixing them."),
+      step("b1", "tool", "Edit Trace.swift"),
+    ] }), {});
+    document.body.append(row);
+    const steps = row.querySelector<HTMLElement>(".steps")!;
+    expect(steps.classList.contains("with-text")).toBe(true);
+    // In order: words, a folded run, words, a folded run; the words are markdown, not step lines.
+    const parts = [...steps.children].map((child) => child.className);
+    expect(parts).toEqual(["step-prose markdown", "steps-run", "step-prose markdown", "steps-run"]);
+    const prose = steps.querySelectorAll<HTMLElement>(".step-prose");
+    expect(prose[0].querySelector("strong")?.textContent).toBe("tests");
+    expect(prose[1].textContent).toContain("Two failed; fixing them.");
+    expect(steps.querySelector(".step.text")).toBeNull();
+    const runs = steps.querySelectorAll<HTMLElement>(".steps-run");
+    expect(runs[0].querySelector(".steps-toggle")?.textContent).toBe("2 steps");
+    expect(runs[1].querySelector(".steps-toggle")?.textContent).toBe("1 step");
+    const list = runs[0].querySelector<HTMLElement>(".step-list")!;
+    expect(list.hidden).toBe(true);
+    runs[0].querySelector<HTMLButtonElement>(".steps-toggle")!.click();
+    expect(list.hidden).toBe(false);
+    expect(list.querySelectorAll(".step.tool")).toHaveLength(2);
+    // Each run remembers being open on its own across a redraw.
+    const again = messageElement(message({ id: "r-text", text: "All green.", steps: [
+      step("t0", "text", "First I'll look at the **tests**."), step("a1", "tool", "Read Package.swift"), step("a2", "tool", "Run swift test"),
+      step("t1", "text", "Two failed; fixing them."), step("b1", "tool", "Edit Trace.swift"),
+    ] }), {});
+    const lists = again.querySelectorAll<HTMLElement>(".steps-run > .step-list:first-of-type");
+    expect(lists[0].hidden).toBe(false);
+    expect(lists[1].hidden).toBe(true);
+  });
+
+  it("show the words between tool calls while the bot is still at work", () => {
+    const step = (id: string, kind: "tool" | "text", title: string, done = true) =>
+      ({ id, kind, tool: null, title, detail: null, output: null, failed: false, done, status: null, count: null });
+    const row = typingElement("", [
+      step("l0", "tool", "Read a.swift"),
+      step("l1", "text", "Found it; now the fix."),
+      step("l2", "tool", "Edit a.swift", false),
+    ]);
+    const steps = row.querySelector<HTMLElement>(".steps.live")!;
+    expect(steps.querySelector(".step-prose")?.textContent).toContain("Found it; now the fix.");
+    // Earlier calls fold to a chip; the calls under way stay in sight.
+    const runs = steps.querySelectorAll<HTMLElement>(".steps-run");
+    expect(runs[0].querySelector(".steps-toggle")?.textContent).toBe("1 step");
+    expect(runs[0].querySelector<HTMLElement>(".step-list")!.hidden).toBe(true);
+    const current = steps.lastElementChild as HTMLElement;
+    expect(current.classList.contains("step-list")).toBe(true);
+    expect(current.hidden).toBe(false);
+    expect(current.querySelector(".step-title")?.textContent).toBe("Edit a.swift");
   });
 
   it("show the pictures a tool call gave back in its OUT box, full size on click", () => {

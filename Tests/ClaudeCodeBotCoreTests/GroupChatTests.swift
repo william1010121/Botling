@@ -213,6 +213,34 @@ struct GroupChatTests {
         #expect(!chat.messages.contains { $0.text == "Own reply" })
     }
 
+    @Test func aGroupReplyKeepsWhatTheBotSaidBetweenItsToolCalls() async throws {
+        let fake = FakeLauncher()
+        fake.respond = { text in isAppOnly(text) ? "OK" : nil }
+        let workspace = makeWorkspace(fake)
+        let project = workspace.addProject(folder: try folder("garden"))
+        let garden = try #require(workspace.bot(for: project))
+        let (group, chat) = try makeGroup(workspace, members: [project.id])
+        await workspace.send("@garden status?", to: chat)
+        await eventually { fake.agents.count == 1 }
+        let agent = fake.agents[0]
+        agent.emit(.trace(.text("Let me check the tests first.", parent: nil)))
+        agent.emit(.trace(.toolUse(id: "t1", tool: "Bash", title: "Run swift test", detail: "swift test", parent: nil)))
+        agent.emit(.trace(.toolResult(id: "t1", output: "ok", failed: false, parent: nil)))
+        // While it works, the group shows its steps live, words and all.
+        await eventually { garden.liveSteps.count == 2 }
+        let live = ChatPayload.make(bot: chat, components: nil, pending: [], replyingTo: nil,
+                                    group: ChatPayload.GroupView(typing: project.id, working: garden) { _ in "garden" }) { _ in "" }
+        #expect(live.live.map(\.kind) == ["text", "tool"])
+        agent.reply("All green.")
+        await workspace.groupQueues[group.id]?.value
+        let line = try #require(chat.messages.last)
+        #expect(line.text == "All green.")
+        #expect(line.steps?.map(\.kind) == [.text, .tool])
+        #expect(line.steps?.first?.title == "Let me check the tests first.")
+        // Its own chat does not keep them.
+        #expect(garden.liveSteps.isEmpty)
+    }
+
     @Test func passIsReadLoosely() {
         #expect(Workspace.isPass("PASS"))
         #expect(Workspace.isPass(" pass. "))

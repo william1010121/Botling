@@ -111,7 +111,8 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// How a group-chat turn went.
     public enum GroupAnswer: Equatable, Sendable {
-        case reply(String)
+        /// Its reply, with the steps it took on the way (its words between tool calls among them).
+        case reply(String, steps: [Step]? = nil)
         /// Still busy with its own chat (a turn, tidying, a handoff) when its turn came.
         case busy
         /// It could not answer: did not start, exited, errored, or took too long.
@@ -856,12 +857,13 @@ public final class Bot: ObservableObject, Identifiable {
                 return
             }
             if groupReply != nil || dropNextReply {
-                trace.dropSteps()
+                // The steps go with the reply to the group's line, not to this chat.
+                let steps = trace.takeSteps()
                 isWorking = false
                 dropNextReply = false
                 // It may have edited its routines.cron.
                 reloadRoutines()
-                finishGroupReply(isError ? .failed(text) : .reply(text))
+                finishGroupReply(isError ? .failed(text) : .reply(text, steps: steps))
                 afterTurn()
                 Task { [weak self] in await self?.flushQueue() }
                 return

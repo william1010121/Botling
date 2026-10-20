@@ -1,5 +1,6 @@
 import { post } from "./bridge";
 import type { StepImage, StepView } from "./types";
+import { renderMarkdown } from "./markdown";
 import { escapeHTML } from "./util";
 
 /**
@@ -14,16 +15,90 @@ const openSteps = new Set<string>();
 
 const chevron = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>`;
 
-/** The folded "Worked · 5 steps" line above a reply; it opens to every step. */
+/**
+ * The steps above a reply. With nothing said between tool calls: one folded "Worked · 5 steps"
+ * line that opens to every step. When the bot said something between calls, its words stay in
+ * sight, in order, as its own words, and each run of tool calls between them folds to a chip.
+ */
 export function stepsElement(listID: string, steps: StepView[]): HTMLElement {
+  const parts = segments(steps);
+  if (!parts.some((part) => part.text)) {
+    const wrap = foldedRun(listID, steps, true);
+    wrap.classList.replace("steps-run", "steps");
+    return wrap;
+  }
   const wrap = document.createElement("div");
-  wrap.className = "steps";
+  wrap.className = "steps with-text";
+  parts.forEach((part, index) => wrap.append(part.text ? prose(part.text) : foldedRun(`${listID}#${index}`, part.steps, false)));
+  return wrap;
+}
+
+/** The steps of the turn under way, shown live above the typing dots. Older ones fold away. */
+export function liveElement(steps: StepView[]): HTMLElement {
+  const parts = segments(steps);
+  const wrap = document.createElement("div");
+  wrap.className = "steps live";
+  if (!parts.some((part) => part.text)) {
+    wrap.append(...liveRun(steps));
+    return wrap;
+  }
+  // What it said stays in sight; calls it has moved on from fold to a chip, the ones under way show.
+  wrap.classList.add("with-text");
+  parts.forEach((part, index) => {
+    if (part.text) wrap.append(prose(part.text));
+    else if (index === parts.length - 1) wrap.append(...liveRun(part.steps));
+    else wrap.append(foldedRun(`live#${index}`, part.steps, false));
+  });
+  return wrap;
+}
+
+/** The steps in order, as the bot's words and the runs of tool calls between them. */
+function segments(steps: StepView[]): { text?: string; steps: StepView[] }[] {
+  const parts: { text?: string; steps: StepView[] }[] = [];
+  for (const step of steps) {
+    const last = parts[parts.length - 1];
+    if (step.kind === "text") parts.push({ text: step.title, steps: [] });
+    else if (last && !last.text) last.steps.push(step);
+    else parts.push({ steps: [step] });
+  }
+  return parts;
+}
+
+/** The bot's own words between tool calls, as markdown. */
+function prose(text: string): HTMLElement {
+  const words = document.createElement("div");
+  words.className = "step-prose markdown";
+  words.innerHTML = renderMarkdown(text);
+  return words;
+}
+
+/** The last few steps, with a line for how many came before. */
+function liveRun(steps: StepView[]): HTMLElement[] {
+  const shown = 6;
+  const tools = steps.filter((step) => step.kind !== "text");
+  const hidden = steps.length > shown ? steps.length - shown : 0;
+  const parts: HTMLElement[] = [];
+  if (hidden) {
+    const earlier = document.createElement("div");
+    earlier.className = "steps-earlier";
+    earlier.textContent = `${tools.length} steps so far · ${hidden} earlier hidden`;
+    parts.push(earlier);
+  }
+  parts.push(stepList(steps.slice(hidden)));
+  return parts;
+}
+
+/** A run of tool calls folded to one line ("Worked · 5 steps", or "5 steps" between words). */
+function foldedRun(listID: string, steps: StepView[], worked: boolean): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "steps-run";
   const tools = steps.filter((step) => step.kind !== "text").length;
   const subagents = steps.filter((step) => step.kind === "subagent");
   const running = subagents.filter((step) => step.status === "running").length;
   const toggle = document.createElement("button");
   toggle.className = "steps-toggle";
-  const label = [`Worked · ${tools} step${tools === 1 ? "" : "s"}`];
+  const count = `${tools} step${tools === 1 ? "" : "s"}`;
+  const label = [worked ? `Worked · ${count}` : count];
   if (subagents.length) label.push(`${subagents.length} subagent${subagents.length === 1 ? "" : "s"}${running ? ` (${running} running)` : ""}`);
   toggle.innerHTML = `${chevron}<span></span>`;
   toggle.querySelector("span")!.textContent = label.join(" · ");
@@ -43,23 +118,6 @@ export function stepsElement(listID: string, steps: StepView[]): HTMLElement {
   toggle.addEventListener("click", () => setOpen(list.hidden));
   wrap.append(toggle, list, cards);
   setOpen(openLists.has(listID));
-  return wrap;
-}
-
-/** The steps of the turn under way, shown live above the typing dots. Older ones fold away. */
-export function liveElement(steps: StepView[]): HTMLElement {
-  const wrap = document.createElement("div");
-  wrap.className = "steps live";
-  const shown = 6;
-  const tools = steps.filter((step) => step.kind !== "text");
-  const hidden = steps.length > shown ? steps.length - shown : 0;
-  if (hidden) {
-    const earlier = document.createElement("div");
-    earlier.className = "steps-earlier";
-    earlier.textContent = `${tools.length} steps so far · ${hidden} earlier hidden`;
-    wrap.append(earlier);
-  }
-  wrap.append(stepList(steps.slice(hidden)));
   return wrap;
 }
 
