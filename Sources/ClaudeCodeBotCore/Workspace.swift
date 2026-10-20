@@ -38,6 +38,8 @@ public final class Workspace: ObservableObject {
     public static let maintainerID = UUID(uuidString: "DEC0DE00-0000-4000-8000-00000000DEC0")!
     /// Stands for the main bot where a project's id would go (a group's members, who said a line).
     public static let mainBotID = UUID(uuidString: "6A0B0000-0000-4000-8000-000000000002")!
+    /// Codex's fixed id: its chat and its reviews survive restarts.
+    public static let codexID = UUID(uuidString: "C0DE0000-0000-4000-8000-00000000C0DE")!
 
     /// Something a manager needs the user to decide: an open question in its chat, or else a
     /// line from its memory.md "Waiting on you" section.
@@ -139,6 +141,19 @@ public final class Workspace: ObservableObject {
     public var captureWindow: (() async -> URL?)?
     /// Build cards waiting for a pick: the build, the project that asked, what changed.
     var buildQuestions: [UUID: (build: BuildInfo, requester: UUID, note: String)] = [:]
+    /// Codex, the read-only reviewer: its chat (each message one fresh `codex exec`), where
+    /// it works for the next turn, and what runs it.
+    public let codexBot: Bot
+    public let codexProject: Project
+    let codexDesk: CodexDesk
+    let codexRunner: CodexRunning
+    /// Every Codex review (single ones and subagent loops), oldest first.
+    @Published public internal(set) var codexReviews: [CodexReview] = []
+    let codexStore: CodexReviewStore
+    /// Codex runs under way, by review id.
+    var codexRuns: [UUID: Task<Void, Never>] = [:]
+    /// "Fix once more / Accept as is" cards, by message id: the review they are about.
+    var codexQuestions: [UUID: UUID] = [:]
     /// Starts processes that are not bots: temporary teams and the component team.
     private let launcher: AgentLauncher
     private var subscriptions: Set<AnyCancellable> = []
@@ -155,6 +170,7 @@ public final class Workspace: ObservableObject {
         gitForPlugins: PluginLibraryGit? = nil,
         secrets: SecretStore = KeychainSecretStore(),
         launcher: @escaping AgentLauncher = { _ in throw CocoaError(.featureUnsupported) },
+        codex: CodexRunning = CodexCLI(),
         makeBot: @escaping BotFactory
     ) {
         self.root = root
@@ -171,6 +187,12 @@ public final class Workspace: ObservableObject {
         let git = gitForPlugins ?? PluginLibraryGit(folder: library)
         libraryGit = git
         maintainerProject = Project(id: Self.maintainerID, name: "Maintainer", folder: library, avatar: "diamond")
+        let codexHome = root.appending(path: "codex")
+        codexProject = Project(id: Self.codexID, name: "Codex", folder: codexHome, avatar: "codex")
+        codexRunner = codex
+        codexDesk = CodexDesk(folder: FileManager.default.homeDirectoryForCurrentUser)
+        codexStore = CodexReviewStore(url: codexHome.appending(path: "reviews.json"))
+        codexBot = Bot(profile: .codex(folder: codexHome), launcher: CodexAgentProcess.launcher(runner: codex, desk: codexDesk), store: BotStore(directory: codexHome))
         plugins = PluginRegistry(library: library, builtIns: builtInPlugins, validateClaudePart: validateClaudePart, git: git, secrets: secrets)
         pluginHost = pluginHostScript.map { PluginHostClient(script: $0, locateNode: locateNode) }
         components = ComponentLibrary(folder: componentFolder)
@@ -181,7 +203,10 @@ public final class Workspace: ObservableObject {
         try? FileManager.default.createDirectory(at: mainHome, withIntermediateDirectories: true)
         mainBot = makeBot(.main(home: mainHome), BotStore(directory: mainHome))
         Self.retireTheOneGroup(in: root, into: mainBot)
-        mainBot.wakeNote = { [weak self] in self?.projectBriefing() ?? "" }
+        mainBot.wakeNote = { [weak self] in
+            guard let self else { return "" }
+            return [projectBriefing(), codexBriefing(for: mainBot)].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        }
         mainBot.extraDirectories = { [weak self] in self?.everyProject.map(\.notesFolder) ?? [] }
         giveClaudeParts(to: mainBot)
         mainBot.onReply = { [weak self] _, _ in
@@ -191,6 +216,7 @@ public final class Workspace: ObservableObject {
             if selection == nil { mainBot.markRead() }
         }
         mainBot.onRequests = { [weak self] requests in self?.handle(requests, from: nil) }
+        mainBot.onCodexSettings = { [weak self] _ in self?.retellCodexRules(to: Self.mainBotID) }
         mainBot.onSpend = { [weak self] amount in self?.record(amount, by: "Main bot") }
         mainBot.onTokens = { [weak self] tokens in self?.record(0, tokens: tokens, by: "Main bot") }
         // Asked during a group turn, the main bot's question shows in that group too.
@@ -234,6 +260,7 @@ public final class Workspace: ObservableObject {
             attach(project)
         }
         loadGroups()
+        setUpCodex()
         refreshWaiting()
     }
 
@@ -357,7 +384,7 @@ public final class Workspace: ObservableObject {
     }
 
     public var selectedBot: Bot {
-        selection.flatMap { groupChats[$0] ?? managers[$0] } ?? mainBot
+        selection.flatMap { groupChats[$0] ?? managers[$0] ?? ($0 == Self.codexID ? codexBot : nil) } ?? mainBot
     }
 
     public func bot(for project: Project) -> Bot? {
@@ -365,7 +392,7 @@ public final class Workspace: ObservableObject {
     }
 
     public func project(_ id: UUID) -> Project? {
-        everyProject.first { $0.id == id }
+        id == Self.codexID ? codexProject : everyProject.first { $0.id == id }
     }
 
     public func select(_ projectID: UUID?) {
@@ -548,6 +575,10 @@ public final class Workspace: ObservableObject {
         if let folder = folderQuestions.removeValue(forKey: id) {
             answerFolder(folder, allowed: false)
             return "asking to let Maintainer read \(folder.path)"
+        }
+        if let review = codexQuestions.removeValue(forKey: id) {
+            let agent = codexReviews.first { $0.id == review }?.agent ?? "the subagent"
+            return "asking whether \(agent) should fix Codex's findings once more (it stays stopped at max rounds; the report still has the buttons)"
         }
         return nil
     }
@@ -999,6 +1030,8 @@ public final class Workspace: ObservableObject {
                 if project?.isMaintainer != true {
                     handToMaintainer("\(project?.name ?? mainBot.name)'s request for ClaudeCodeBot: \(request)")
                 }
+            case let .codexReview(agent, folder, base, note):
+                requestCodexReview(agent: agent, folder: folder, base: base, note: note, from: project?.id ?? Self.mainBotID)
             }
         }
     }
@@ -1358,6 +1391,13 @@ public final class Workspace: ObservableObject {
             answerFolder(folder, allowed: index == 0)
             return true
         }
+        if let review = codexQuestions[messageID] {
+            guard message.isOpenQuestion else { return false }
+            codexQuestions[messageID] = nil
+            bot.markChosen(index, in: messageID)
+            if index == 0 { fixCodexOnceMore(review) } else { acceptCodexReview(review) }
+            return true
+        }
         if let group = group(of: bot), message.role == .bot {
             guard message.isOpenQuestion, let label = message.choices?[safe: index]?.label else { return false }
             guard answerInGroup(group.id, message, with: "The user picked: \(label)") else {
@@ -1673,11 +1713,12 @@ public final class Workspace: ObservableObject {
         }
         let bot = makeBot(profile, store)
         bot.onRequests = { [weak self] requests in self?.handle(requests, from: project) }
+        bot.onCodexSettings = { [weak self] _ in self?.retellCodexRules(to: project.id) }
         bot.onSpend = { [weak self] amount in self?.record(amount, by: project.name) }
         bot.onTokens = { [weak self] tokens in self?.record(0, tokens: tokens, by: project.name) }
         bot.wakeNote = { [weak self] in
             guard let self else { return "" }
-            return [componentBriefing(), developerBriefing(for: project)].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            return [componentBriefing(), developerBriefing(for: project), managers[project.id].map(codexBriefing(for:)) ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n")
         }
         giveClaudeParts(to: bot)
         bot.onReply = { [weak self, weak bot] _, _ in

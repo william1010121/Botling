@@ -26,22 +26,22 @@ struct CallInTests {
         let workspace = makeWorkspace(FakeLauncher())
         let garden = workspace.addProject(folder: try folder("garden"))
         let chat = try #require(workspace.bot(for: garden))
-        #expect(workspace.callable(into: chat).map(\.name) == ["Main bot", "Maintainer"])
-        #expect(workspace.callable(into: workspace.mainBot).map(\.name) == ["garden", "Maintainer"])
+        #expect(workspace.callable(into: chat).map(\.name) == ["Main bot", "Maintainer", "Codex"])
+        #expect(workspace.callable(into: workspace.mainBot).map(\.name) == ["garden", "Maintainer", "Codex"])
         // A group lists its own members, as before.
         let group = try #require(workspace.createGroup(name: "Team", members: [garden.id]))
         #expect(workspace.callable(into: try #require(workspace.groupChats[group.id])).isEmpty)
     }
 
-    @Test func theAtMenuInABotsOwnChatListsOnlyMainBotAndMaintainer() throws {
+    @Test func theAtMenuInABotsOwnChatListsOnlyTheGlobalBots() throws {
         let workspace = makeWorkspace(FakeLauncher())
         let garden = workspace.addProject(folder: try folder("garden"))
         let orchard = workspace.addProject(folder: try folder("orchard"))
         let gardenChat = try #require(workspace.bot(for: garden))
         // Other projects' bots are not offered after @, only the global bots.
-        #expect(workspace.callInView(for: gardenChat)?.names == ["Main bot", "Maintainer"])
-        #expect(workspace.callInView(for: workspace.mainBot)?.names == ["Maintainer"])
-        #expect(workspace.callInView(for: workspace.maintainer)?.names == ["Main bot"])
+        #expect(workspace.callInView(for: gardenChat)?.names == ["Main bot", "Maintainer", "Codex"])
+        #expect(workspace.callInView(for: workspace.mainBot)?.names == ["Maintainer", "Codex"])
+        #expect(workspace.callInView(for: workspace.maintainer)?.names == ["Main bot", "Codex"])
         // A group's menu is its members only.
         let group = try #require(workspace.createGroup(name: "Team", members: [garden.id, orchard.id]))
         let groupChat = try #require(workspace.groupChats[group.id])
@@ -55,13 +55,13 @@ struct CallInTests {
         let orchard = workspace.addProject(folder: try folder("orchard"))
         let gardenChat = try #require(workspace.bot(for: garden))
         // Every bot that can be called in, the short list first.
-        #expect(workspace.callInView(for: gardenChat)?.allNames == ["Main bot", "Maintainer", "orchard"])
-        #expect(workspace.callInView(for: workspace.mainBot)?.allNames == ["Maintainer", "garden", "orchard"])
+        #expect(workspace.callInView(for: gardenChat)?.allNames == ["Main bot", "Maintainer", "Codex", "orchard"])
+        #expect(workspace.callInView(for: workspace.mainBot)?.allNames == ["Maintainer", "Codex", "garden", "orchard"])
         let payload = ChatPayload.make(bot: gardenChat, components: workspace.components, pending: [], replyingTo: nil,
                                        callIn: workspace.callInView(for: gardenChat)) { _ in "" }
         let json = try #require(JSONSerialization.jsonObject(with: payload.json().data(using: .utf8)!) as? [String: Any])
-        #expect(json["mentions"] as? [String] == ["Main bot", "Maintainer"])
-        #expect(json["allMentions"] as? [String] == ["Main bot", "Maintainer", "orchard"])
+        #expect(json["mentions"] as? [String] == ["Main bot", "Maintainer", "Codex"])
+        #expect(json["allMentions"] as? [String] == ["Main bot", "Maintainer", "Codex", "orchard"])
         // A group can't call in bots that aren't in it: every list is its members.
         let group = try #require(workspace.createGroup(name: "Team", members: [garden.id]))
         let groupChat = try #require(workspace.groupChats[group.id])
@@ -107,7 +107,7 @@ struct CallInTests {
         let payload = ChatPayload.make(bot: chat, components: workspace.components, pending: [], replyingTo: nil,
                                        callIn: workspace.callInView(for: chat)) { _ in "" }
         let json = try #require(JSONSerialization.jsonObject(with: payload.json().data(using: .utf8)!) as? [String: Any])
-        #expect(json["mentions"] as? [String] == ["Main bot", "Maintainer"])
+        #expect(json["mentions"] as? [String] == ["Main bot", "Maintainer", "Codex"])
         let messages = try #require(json["messages"] as? [[String: Any]])
         #expect(messages.first { $0["text"] as? String == "I'll fix the flag." }?["speaker"] as? String == "Maintainer")
         #expect(messages.first { $0["text"] as? String == "Got it" }?["speaker"] == nil)

@@ -223,6 +223,9 @@ public struct BotProfile: Equatable, Sendable {
     public var job: String?
     /// Tools it does not get at all, not even by asking.
     public var disallowedTools: [String] = []
+    /// It reads and writes memory.md (wakes reading it, tidies it before sleeping). Codex keeps
+    /// none: every turn starts fresh.
+    public var keepsMemory = true
 
     public init(name: String, role: Role, avatar: String, workingDirectory: URL, memoryPath: String, tools: [String], instructions: String? = nil, job: String? = nil) {
         self.name = name
@@ -294,6 +297,21 @@ public struct BotProfile: Equatable, Sendable {
             tools: toolbox,
             job: job
         )
+    }
+
+    /// Codex: OpenAI's Codex CLI as a read-only reviewer. No memory, no tools of Claude's: each
+    /// message is one fresh `codex exec` in a read-only sandbox.
+    public static func codex(folder: URL) -> BotProfile {
+        var profile = BotProfile(
+            name: "Codex",
+            role: .manager,
+            avatar: "codex",
+            workingDirectory: folder,
+            memoryPath: ".bot/memory.md",
+            tools: []
+        )
+        profile.keepsMemory = false
+        return profile
     }
 
     /// Maintainer: the manager of the plugin library.

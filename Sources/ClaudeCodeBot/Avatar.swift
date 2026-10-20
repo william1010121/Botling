@@ -4,6 +4,8 @@ import SwiftUI
 enum AvatarKind: String, CaseIterable {
     case circle, star, square, triangle, diamond, clover, heart, hexagon, drop, pentagon
     case cloud, octagon, moon, pill, ghost, burst
+    /// Codex's own: a light rounded square with dark eyes. Never handed to a project.
+    case codex
 
     var color: Color {
         switch self {
@@ -23,13 +25,14 @@ enum AvatarKind: String, CaseIterable {
         case .pill: Color(hex: 0xFF72A0)
         case .ghost: Color(hex: 0x9B4FEB)
         case .burst: Color(hex: 0xFF5A45)
+        case .codex: Color(hex: 0xEDEDF0)
         }
     }
 
     /// A stable pick for a project, so the same folder keeps the same face.
     static func forName(_ name: String) -> AvatarKind {
         let sum = name.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
-        let choices = allCases.filter { $0 != .circle }
+        let choices = allCases.filter { $0 != .circle && $0 != .codex }
         return choices[sum % choices.count]
     }
 
@@ -71,6 +74,8 @@ enum AvatarKind: String, CaseIterable {
             return Path(ellipseIn: rect.insetBy(dx: w * 0.04, dy: h * 0.04))
         case .square:
             return Path(roundedRect: rect.insetBy(dx: w * 0.06, dy: h * 0.1), cornerRadius: w * 0.14)
+        case .codex:
+            return Path(roundedRect: rect.insetBy(dx: w * 0.06, dy: h * 0.06), cornerRadius: w * 0.26)
         case .pill:
             return Path(roundedRect: rect.insetBy(dx: 0, dy: h * 0.2), cornerRadius: h * 0.3)
         case .triangle:
@@ -169,10 +174,12 @@ struct AvatarView: View {
         for center in centers {
             switch eyes {
             case .open:
-                context.fill(Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)), with: .color(.white))
-                let pupil = radius * 0.58
-                let offset = CGPoint(x: center.x + radius * 0.3, y: center.y + radius * 0.05)
-                context.fill(Path(ellipseIn: CGRect(x: offset.x - pupil, y: offset.y - pupil, width: pupil * 2, height: pupil * 2)), with: .color(.black))
+                // On Codex's light face the eyes are dark with a light glint.
+                let light = kind == .codex
+                context.fill(Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)), with: .color(light ? Color(hex: 0x0E0E10) : .white))
+                let pupil = radius * (light ? 0.34 : 0.58)
+                let offset = light ? CGPoint(x: center.x + radius * 0.25, y: center.y - radius * 0.25) : CGPoint(x: center.x + radius * 0.3, y: center.y + radius * 0.05)
+                context.fill(Path(ellipseIn: CGRect(x: offset.x - pupil, y: offset.y - pupil, width: pupil * 2, height: pupil * 2)), with: .color(light ? .white : .black))
             case .happy:
                 var arc = Path()
                 arc.addArc(center: CGPoint(x: center.x, y: center.y + radius * 0.4), radius: radius * 0.8, startAngle: .degrees(200), endAngle: .degrees(340), clockwise: false)

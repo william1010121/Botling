@@ -44,7 +44,7 @@ extension Workspace {
 
     /// The bot behind a member id: the main bot, a project's manager, a bot or Maintainer.
     func member(_ id: UUID) -> Bot? {
-        id == Self.mainBotID ? mainBot : managers[id]
+        id == Self.mainBotID ? mainBot : id == Self.codexID ? codexBot : managers[id]
     }
 
     /// Who a member id is: the main bot's, a project's or Maintainer's name.

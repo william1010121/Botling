@@ -14,6 +14,9 @@ public enum TraceEvent: Equatable, Sendable {
     case subagentStarted(id: String, description: String, type: String?, prompt: String, background: Bool)
     /// A subagent finished (`task_notification`): "completed", "failed", "killed", …
     case subagentEnded(id: String, status: String, summary: String?)
+    /// The name the bot gave a subagent (the Agent call's `name`), to reach it again with
+    /// SendMessage.
+    case subagentNamed(id: String, name: String)
 }
 
 /// One line of work: a tool call, words between calls, or a subagent sent off.
@@ -80,9 +83,11 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable {
     public var unsettledAt: Date?
 
     private enum CodingKeys: String, CodingKey {
-        case id, description, type, prompt, status, background, startedAt, endedAt, steps, result, parentID, unsettledAt
+        case id, description, type, prompt, status, background, startedAt, endedAt, steps, result, parentID, unsettledAt, name
         case settledAt = "dismissedAt"
     }
+    /// The name the bot gave it, when it gave one.
+    public var name: String?
 
     public init(id: String, description: String, type: String? = nil, prompt: String, status: Status = .running, background: Bool = false, startedAt: Date = Date(), steps: [Step] = [], parentID: String? = nil) {
         self.id = id
@@ -206,6 +211,10 @@ public struct TraceBook: Equatable, Sendable {
             }
             end(index, status: ended, result: summary.map(Self.shorten) ?? subagents[index].result, at: date)
             trim()
+            return true
+        case let .subagentNamed(id, name):
+            guard let index = subagentIndex(id), subagents[index].name != name else { return false }
+            subagents[index].name = name
             return true
         }
     }

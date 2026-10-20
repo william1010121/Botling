@@ -15,17 +15,22 @@ enum StreamEvent {
         switch object["type"] as? String {
         case "assistant":
             guard let blocks = (object["message"] as? [String: Any])?["content"] as? [[String: Any]] else { return [] }
-            return blocks.compactMap { block in
+            return blocks.flatMap { block -> [AgentEvent] in
                 switch block["type"] as? String {
                 case "tool_use":
-                    guard let id = block["id"] as? String, let name = block["name"] as? String else { return nil }
+                    guard let id = block["id"] as? String, let name = block["name"] as? String else { return [] }
                     let input = block["input"] as? [String: Any] ?? [:]
-                    return .trace(.toolUse(id: id, tool: name, title: activity(tool: name, input: input), detail: detail(tool: name, input: input), parent: parent))
+                    var events: [AgentEvent] = [.trace(.toolUse(id: id, tool: name, title: activity(tool: name, input: input), detail: detail(tool: name, input: input), parent: parent))]
+                    // A subagent the bot named can be reached again (SendMessage) by that name.
+                    if TraceBook.subagentTools.contains(name), let agent = input["name"] as? String, !agent.isEmpty {
+                        events.append(.trace(.subagentNamed(id: id, name: agent)))
+                    }
+                    return events
                 case "text":
-                    guard let text = block["text"] as? String, !text.isEmpty else { return nil }
-                    return .trace(.text(text, parent: parent))
+                    guard let text = block["text"] as? String, !text.isEmpty else { return [] }
+                    return [.trace(.text(text, parent: parent))]
                 default:
-                    return nil
+                    return []
                 }
             }
         case "user":
