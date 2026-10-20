@@ -13,7 +13,8 @@ public protocol AgentProcess: AnyObject, Sendable {
     func stop()
     /// Answers a `.permission` request: let the tool run, or not (`message` says why to Claude).
     func answer(_ request: PermissionRequest, allow: Bool, message: String?)
-    /// Stops the turn under way; it ends with an error result, and the session goes on.
+    /// Stops the turn under way to take in the message just sent (send it first); the turn ends
+    /// with an error result, and the session goes on. Subagents in the background keep running.
     func interrupt()
 }
 
@@ -266,20 +267,28 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         }
     }
 
-    /// `{"type":"control_request","request":{"subtype":"interrupt"}}`: claude answers with a
-    /// control_response, then ends the turn with an `error_during_execution` result.
+    /// `{"type":"control_request","request":{"subtype":"interrupt","send_now":true}}`: claude
+    /// stops the turn for the message waiting in its queue and ends it with an
+    /// `error_during_execution` result, then answers that message. A plain interrupt (without
+    /// `send_now`) would also kill every background task: subagents sent off with
+    /// `run_in_background` and their commands. With nothing waiting it stops nothing
+    /// (`"send_now":"nothing_waiting"`), so the message goes first.
     public func interrupt() {
-        let line: [String: Any] = [
-            "type": "control_request",
-            "request_id": "interrupt-\(UUID().uuidString.lowercased())",
-            "request": ["subtype": "interrupt"]
-        ]
+        let line = Self.interruptRequest()
         guard var data = try? JSONSerialization.data(withJSONObject: line) else { return }
         data.append(0x0A)
         lock.withLock {
             guard !closed else { return }
             try? stdin.write(contentsOf: data)
         }
+    }
+
+    static func interruptRequest() -> [String: Any] {
+        [
+            "type": "control_request",
+            "request_id": "interrupt-\(UUID().uuidString.lowercased())",
+            "request": ["subtype": "interrupt", "send_now": true]
+        ]
     }
 
     /// Writes a control_response with this body.
