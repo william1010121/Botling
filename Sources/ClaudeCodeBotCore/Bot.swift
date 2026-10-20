@@ -46,6 +46,8 @@ public final class Bot: ObservableObject, Identifiable {
     /// Plugins' MCP tools it may use, and the secrets their servers read.
     public var pluginTools: (() -> [String])?
     public var pluginEnvironment: (() -> [String: String])?
+    /// Whether it starts in Claude Code's auto mode, read at each wake (off when not set).
+    public var autoMode: (() -> Bool)?
     /// Called after each reply the user sees, with whether it answers work the main bot handed
     /// over (rather than something the user said in this chat).
     public var onReply: ((ChatMessage, _ answersRelay: Bool) -> Void)?
@@ -506,7 +508,8 @@ public final class Bot: ObservableObject, Identifiable {
             pluginTools: pluginTools?() ?? [],
             environment: pluginEnvironment?() ?? [:],
             asksPermission: true,
-            disallowedTools: profile.disallowedTools
+            disallowedTools: profile.disallowedTools,
+            autoMode: autoMode?() ?? false
         ))
         self.process = process
         sessionCost = 0

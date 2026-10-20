@@ -12,6 +12,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// "Waiting on you" items you chose to ignore, by `Workspace.Waiting.id`. Optional so a
     /// settings file from before it still loads.
     public var ignoredWaiting: [String]?
+    /// Bots run in Claude Code's auto mode (safe actions without asking, risky ones blocked).
+    /// Nil (a settings file from before it) means on.
+    public var autoApprove: Bool?
+
+    public var autoApprovesSafeActions: Bool { autoApprove ?? true }
 
     public init(dailyBudget: Double? = nil, developerMode: Bool = false, developerProjectID: UUID? = nil) {
         self.dailyBudget = dailyBudget

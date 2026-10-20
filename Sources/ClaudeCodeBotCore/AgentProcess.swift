@@ -80,6 +80,11 @@ public struct AgentLaunch: Equatable, Sendable {
     public var asksPermission = false
     /// Tools it does not have at all (it cannot even ask for them).
     public var disallowedTools: [String] = []
+    /// Claude Code's auto mode (`--permission-mode auto`): its classifier approves safe actions
+    /// (reads, edits in its folders, ordinary commands) and blocks risky ones (destroying files,
+    /// sending data out, force pushes…), instead of asking about every tool not allowed. What it
+    /// still asks about (ask rules, repeated blocks) comes as a `.permission` event as before.
+    public var autoMode = false
 }
 
 public typealias AgentLauncher = @Sendable (AgentLaunch) throws -> AgentProcess
@@ -110,7 +115,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
             "--verbose",
             "--session-id", launch.sessionID.uuidString.lowercased(),
             "--model", launch.model.rawValue,
-            "--permission-mode", "acceptEdits",
+            "--permission-mode", launch.autoMode ? "auto" : "acceptEdits",
             // Plugins' skills are used through the Skill tool.
             "--allowedTools", (launch.tools + (launch.pluginDirectories.isEmpty || launch.tools.contains("Skill") ? [] : ["Skill"]) + launch.pluginTools).joined(separator: ","),
             "--append-system-prompt", launch.systemPrompt

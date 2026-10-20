@@ -1126,6 +1126,17 @@ public final class Workspace: ObservableObject {
         bot.pluginDirectories = { [weak self] in self?.plugins.claudeDirectories() ?? [] }
         bot.pluginTools = { [weak self] in self?.plugins.claudeTools() ?? [] }
         bot.pluginEnvironment = { [weak self] in self?.plugins.secretEnvironment() ?? [:] }
+        bot.autoMode = { [weak self] in self?.settings.autoApprovesSafeActions ?? false }
+    }
+
+    /// Turns auto mode for bots on or off. Awake bots start again (once free) in the new mode.
+    public func setAutoApprovesSafeActions(_ on: Bool) {
+        guard on != settings.autoApprovesSafeActions else { return }
+        settings.autoApprove = on
+        settings.save(to: settingsURL)
+        for bot in [mainBot] + Array(managers.values) where bot.phase != .asleep {
+            Task { await bot.restart(divider: on ? "Handoff → auto-approving safe actions" : "Handoff → asking before tools") }
+        }
     }
 
     /// Plugins' Claude parts changed: refresh the team list, and restart awake bots (once they

@@ -192,4 +192,40 @@ struct PermissionTests {
         let at = try? #require(arguments.firstIndex(of: "--disallowedTools"))
         #expect(at.map { arguments[$0 + 1] } == "AskUserQuestion")
     }
+
+    static func permissionMode(_ arguments: [String]) -> String? {
+        arguments.firstIndex(of: "--permission-mode").map { arguments[$0 + 1] }
+    }
+
+    /// Auto mode: Claude Code's classifier approves safe actions and blocks risky ones; what it
+    /// would still ask about comes to the chat as before.
+    @Test func autoModeKeepsAskingInTheChat() {
+        let auto = ClaudeAgentProcess.arguments(for: AgentLaunch(model: .sonnet, sessionID: UUID(), workingDirectory: root, systemPrompt: "", asksPermission: true, autoMode: true))
+        #expect(Self.permissionMode(auto) == "auto")
+        #expect(auto.contains("--permission-prompt-tool"))
+        let manual = ClaudeAgentProcess.arguments(for: AgentLaunch(model: .sonnet, sessionID: UUID(), workingDirectory: root, systemPrompt: "", asksPermission: true))
+        #expect(Self.permissionMode(manual) == "acceptEdits")
+    }
+
+    @Test func botsRunInAutoModeUntilItIsTurnedOff() async throws {
+        let fake = FakeLauncher()
+        let home = root.appending(path: "ccb")
+        let workspace = Workspace(root: home) { profile, store in
+            Bot(profile: profile, launcher: fake.launcher, store: store)
+        }
+        #expect(workspace.settings.autoApprovesSafeActions)
+        workspace.mainBot.send("hi")
+        await eventually { fake.agents.count == 1 }
+        #expect(fake.agents[0].launch.autoMode)
+
+        workspace.setAutoApprovesSafeActions(false)
+        #expect(!AppSettings.load(from: workspace.settingsURL).autoApprovesSafeActions)
+        // An awake bot starts again (once free) in the new mode.
+        await eventually { fake.agents.count == 2 }
+        #expect(fake.agents.last?.launch.autoMode == false)
+
+        // A settings file from before the setting has it on.
+        try Data(#"{"developerMode":false}"#.utf8).write(to: workspace.settingsURL)
+        #expect(AppSettings.load(from: workspace.settingsURL).autoApprovesSafeActions)
+    }
 }

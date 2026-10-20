@@ -1297,6 +1297,7 @@ private struct AppSettingsSheet: View {
                 VStack(alignment: .leading, spacing: 28) {
                     UsageSection(workspace: workspace)
                     BudgetSection(workspace: workspace)
+                    PermissionsSection(workspace: workspace)
                     if workspace.ignoredWaitingCount > 0 {
                         PanelSection("Ignored") {
                             HStack {
@@ -1435,6 +1436,34 @@ private struct BudgetSection: View {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         workspace.setDailyBudget(trimmed.isEmpty ? nil : Double(trimmed))
         text = workspace.settings.dailyBudget.map { String(format: "%g", $0) } ?? ""
+    }
+}
+
+/// Whether bots use Claude Code's auto mode, or ask in the chat before each tool not allowed.
+private struct PermissionsSection: View {
+    @ObservedObject var workspace: Workspace
+
+    var body: some View {
+        PanelSection("Permissions") {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle(isOn: Binding(
+                    get: { workspace.settings.autoApprovesSafeActions },
+                    set: { workspace.setAutoApprovesSafeActions($0) }
+                )) {
+                    Text("Auto-approve safe actions").font(.system(size: 14))
+                }
+                .toggleStyle(.switch)
+                .padding(.horizontal, 14)
+                .frame(height: 44)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+                Text(workspace.settings.autoApprovesSafeActions
+                     ? "Bots use Claude Code's auto mode: reading, searching and ordinary commands just run; a safety check blocks risky ones (deleting files that were there before, sending data out, force pushes, downloading and running code). It is not a guarantee. Anything it still wants your OK for comes as a card in the chat."
+                     : "Bots ask in the chat before each tool they are not always allowed to use.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.faint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
 
