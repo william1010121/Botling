@@ -49,8 +49,26 @@ public struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     /// For a notice: the project, and the manager's message it points at.
     public var sourceID: UUID?
     public var sourceMessageID: UUID?
-    /// A component the bot asked to draw with its data.
-    public var display: ComponentInstance?
+    /// The components the bot asked to draw, with their data, in order. Read them with `shown`.
+    public var displays: [ComponentInstance]?
+    /// Saved by versions that kept one component a message; read through `shown`.
+    var display: ComponentInstance?
+    /// Every component in the message, old saved ones too.
+    public var shown: [ComponentInstance] { displays ?? display.map { [$0] } ?? [] }
+
+    /// Versions that kept one component a message left the other `<show>` tags in the text:
+    /// drawn now as components too. The one kept back then was the first, just before the next.
+    var withShowTagsTakenOut: ChatMessage {
+        guard role == .bot, displays == nil, text.contains("<show") else { return self }
+        let parsed = ReplyParser.parseAll(text)
+        guard !parsed.displays.isEmpty else { return self }
+        var message = self
+        message.text = parsed.body
+        message.displays = display.map { [ComponentInstance(name: $0.name, data: $0.data, at: parsed.displays[0].at)] } ?? []
+        message.displays! += parsed.displays
+        message.display = nil
+        return message
+    }
     /// Files the user sent with it (copied into the bot's attachments folder).
     public var attachments: [Attachment]?
     /// The message this one replies to, and a short quote of it for showing.

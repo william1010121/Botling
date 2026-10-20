@@ -123,11 +123,10 @@ public enum PagePreview {
     }
 
     /// Cards for the result pages a message links to, `[name](file://…/artifacts/x.html)`, that
-    /// are there on disk; at most `perMessage`, each page once, none for `skipping` (the page a
-    /// `<show>` card in the same message shows already).
-    public static func linkedCards(in text: String, skipping: URL? = nil) -> [String] {
-        var seen = Set<String>()
-        if let skipping { seen.insert(skipping.standardizedFileURL.path) }
+    /// are there on disk; at most `perMessage`, each page once, none for `skipping` (the pages
+    /// `<show>` cards in the same message show already).
+    public static func linkedCards(in text: String, skipping: [URL] = []) -> [String] {
+        var seen = Set(skipping.map(\.standardizedFileURL.path))
         var cards: [String] = []
         for chip in RichText.chips(in: text) where cards.count < perMessage {
             guard chip.url.isFileURL else { continue }

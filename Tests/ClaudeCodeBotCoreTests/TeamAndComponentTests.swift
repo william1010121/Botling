@@ -16,11 +16,75 @@ struct TagParsingTests {
             .team(name: "research", task: "Compare how three note apps sync"),
             .component(name: "choices", request: "Lay the options out in a row")
         ])
-        #expect(parsed.display == ComponentInstance(name: "progress", data: #"{"done": 7, "total": 10}"#))
+        #expect(parsed.displays.map(\.name) == ["progress"])
+        #expect(parsed.displays.first?.data == #"{"done": 7, "total": 10}"#)
     }
 
     @Test func showWithBrokenJSONIsDropped() {
-        #expect(ReplyParser.parseAll(#"<show name="x">{oops</show>OK"#).display == nil)
+        let parsed = ReplyParser.parseAll(#"<show name="x">{oops</show>OK"#)
+        #expect(parsed.displays.isEmpty)
+        #expect(parsed.body == "OK")
+    }
+
+    /// A reply showing several components draws every one, each where it was written.
+    @Test func everyShowInAReplyIsKeptInOrderAndInPlace() {
+        let reply = """
+        Here are four designs.
+
+        <show name="table">[{"bot":"Main","n":19}]</show>
+
+        <show name="ranking">[{"bot":"Main","n":19}]</show>
+
+        Two more:
+
+        <show name="pie">[{"bot":"Main","n":19}]</show>
+
+        <show name="grid">[{"bot":"Main","n":19}]</show>
+
+        Which one do you like?
+        """
+        let parsed = ReplyParser.parseAll(reply)
+        #expect(parsed.displays.map(\.name) == ["table", "ranking", "pie", "grid"])
+        #expect(!parsed.body.contains("<show"))
+        let body = parsed.body as NSString
+        let before = parsed.displays.map { body.substring(to: $0.at ?? body.length).trimmingCharacters(in: .whitespacesAndNewlines) }
+        #expect(before[0] == "Here are four designs.")
+        #expect(before[1] == "Here are four designs.")
+        #expect(before[2].hasSuffix("Two more:"))
+        #expect(before[3].hasSuffix("Two more:"))
+        #expect(body.substring(from: parsed.displays[3].at ?? 0).trimmingCharacters(in: .whitespacesAndNewlines) == "Which one do you like?")
+    }
+
+    @Test func aMessageWithSeveralComponentsKeepsThemAllAfterARestart() throws {
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-shows-\(UUID().uuidString)")
+        let store = BotStore(directory: home)
+        let parsed = ReplyParser.parseAll(#"A <show name="a">{"x":1}</show> B <show name="b">{"x":2}</show> C"#)
+        var message = ChatMessage(role: .bot, text: parsed.body)
+        message.displays = parsed.displays
+        store.save(messages: [message])
+        let loaded = try #require(store.loadMessages().first)
+        #expect(loaded.shown == parsed.displays)
+        #expect(loaded.shown.map(\.name) == ["a", "b"])
+    }
+
+    /// Saved before: the first <show> taken out, the rest left in the text as tags.
+    @Test func aMessageSavedWithLeftoverShowTagsShowsThemAll() throws {
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-shows-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let text = #"Five designs.\n\n\n\n<show name=\"b\">[1]</show>\n\n<show name=\"c\">[2]</show>\n\nWhich one?"#
+        let json = #"[{"id":"5A7392E5-4CD9-4F19-95D0-9EBA9E047BE1","role":"bot","text":"\#(text)","date":0,"display":{"name":"a","data":"[0]"}}]"#
+        try Data(json.utf8).write(to: home.appending(path: "chat.json"))
+        let message = try #require(BotStore(directory: home).loadMessages().first)
+        #expect(message.shown.map(\.name) == ["a", "b", "c"])
+        #expect(!message.text.contains("<show"))
+        #expect(message.text.hasPrefix("Five designs.") && message.text.hasSuffix("Which one?"))
+        #expect(message.shown[0].at == message.shown[1].at)
+    }
+
+    @Test func aMessageSavedWithOneComponentStillShowsIt() throws {
+        let json = #"[{"id":"5A7392E5-4CD9-4F19-95D0-9EBA9E047BE1","role":"bot","text":"Hi","date":0,"display":{"name":"bars","data":"[]"}}]"#
+        let messages = try JSONDecoder().decode([ChatMessage].self, from: Data(json.utf8))
+        #expect(messages[0].shown == [ComponentInstance(name: "bars", data: "[]")])
     }
 
     @Test func teamFilesRoundTrip() throws {

@@ -28,7 +28,10 @@ export interface MessageView {
   answer: string | null;
   /** Still waiting for the user's pick. */
   open: boolean;
-  display: { name: string; data: string } | null;
+  /** Components it shows, each at `at` in `text` (a UTF-16 offset; null: after the text). */
+  displays?: DisplayView[] | null;
+  /** One component, as older payloads sent it. */
+  display?: DisplayView | null;
   attachments: FileView[] | null;
   replyTo: string | null;
   replyPreview: string | null;
@@ -40,6 +43,12 @@ export interface MessageView {
   steps?: StepView[] | null;
   /** Result pages it links to, drawn as 「網頁預覽卡片」 cards under it. */
   previews?: { name: string; data: string }[] | null;
+}
+
+export interface DisplayView {
+  name: string;
+  data: string;
+  at?: number | null;
 }
 
 /** One line of work: a tool call, words between calls, or a subagent. */

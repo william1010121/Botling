@@ -36,7 +36,7 @@ public struct BotStore: Sendable {
 
     public func loadMessages() -> [ChatMessage] {
         guard let data = try? Data(contentsOf: chatURL) else { return [] }
-        return (try? JSONDecoder().decode([ChatMessage].self, from: data)) ?? []
+        return ((try? JSONDecoder().decode([ChatMessage].self, from: data)) ?? []).map(\.withShowTagsTakenOut)
     }
 
     public func save(messages: [ChatMessage]) {

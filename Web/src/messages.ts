@@ -3,7 +3,7 @@ import { choicesData, componentElement, fallbackChoices } from "./components";
 import { mediaHTML, renderMarkdown } from "./markdown";
 import type { ComponentRender } from "./plugins";
 import { liveElement, stepsElement } from "./steps";
-import type { ComponentInfo, FileView, MessageView, StepView } from "./types";
+import type { ComponentInfo, DisplayView, FileView, MessageView, StepView } from "./types";
 import { escapeHTML } from "./util";
 
 /** What plugins add to how messages are drawn. */
@@ -172,37 +172,36 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
   const bubble = document.createElement("div");
   bubble.className = message.role === "notice" ? `bubble notice-bubble${message.open ? " open" : ""}` : "bubble bot-bubble";
   if (message.steps?.length) bubble.append(stepsElement(message.id, message.steps));
-  if (message.text) {
+  const displays = (message.displays ?? (message.display ? [message.display] : []))
+    .map((display, index) => ({ display, index, at: typeof display.at === "number" ? Math.min(Math.max(display.at, 0), message.text.length) : null }));
+  // The text in pieces, with each component drawn where it was written.
+  let from = 0;
+  const appendText = (to: number) => {
+    const piece = message.text.slice(from, to);
+    from = to;
+    if (!piece.trim()) return;
     const text = document.createElement("div");
     text.className = "markdown";
-    text.innerHTML = renderMarkdown(message.text);
+    text.innerHTML = renderMarkdown(piece);
     bubble.append(text);
+  };
+  const appendComponent = ({ display, index }: { display: DisplayView; index: number }) => {
+    const element = componentView(message, display, index, components);
+    if (element) bubble.append(element);
+  };
+  // One written at the very end goes after the question, as a single component always has.
+  const inline = displays.filter((d) => d.at !== null && d.at < message.text.length).sort((x, y) => x.at! - y.at! || x.index - y.index);
+  for (const shown of inline) {
+    appendText(shown.at!);
+    appendComponent(shown);
   }
+  appendText(message.text.length);
   if (message.choices) {
     const answered = message.chosen !== null || message.answer !== null;
     bubble.append(answered && !unfolded.has(message.id) ? foldedChoices(message, components) : choicesElement(message, components));
   }
-  if (message.display) {
-    const answer = (value: number | string) =>
-      post(typeof value === "number"
-        ? { type: "choose", messageID: message.id, index: value }
-        : { type: "answer", messageID: message.id, text: value });
-    const pluginComponent = extensions.components.get(message.display.name);
-    if (pluginComponent) {
-      const root = document.createElement("div");
-      root.className = "plugin-component";
-      let data: unknown = null;
-      try { data = JSON.parse(message.display.data); } catch { /* left null */ }
-      extensions.guard(pluginComponent.plugin, () => pluginComponent.render(root, data, answer));
-      bubble.append(root);
-    } else {
-      const component = componentElement(message.display.name, components[message.display.name], message.display.data, (value) => {
-        if (value.index !== undefined) answer(value.index);
-        else if (value.text !== undefined) answer(value.text);
-      }, message.id);
-      if (component) bubble.append(component);
-    }
-  }
+  // Ones at the end, or with no place (saved before places were kept), come after the text.
+  displays.filter((d) => !inline.includes(d)).forEach(appendComponent);
   // Result pages it links to, as preview cards under the text (the links stay chips too).
   message.previews?.forEach((preview, index) => {
     const card = componentElement(preview.name, components[preview.name], preview.data, null, `${message.id}/preview-${index}`);
@@ -216,6 +215,30 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     bubble.append(open);
   }
   return bubble;
+}
+
+/**
+ * One component a bot's message shows. Its answers go back as answers to that message; the
+ * first keeps the message's id as its key (its height survives a redraw), the rest add their place.
+ */
+function componentView(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>): HTMLElement | null {
+  const answer = (value: number | string) =>
+    post(typeof value === "number"
+      ? { type: "choose", messageID: message.id, index: value }
+      : { type: "answer", messageID: message.id, text: value });
+  const pluginComponent = extensions.components.get(display.name);
+  if (pluginComponent) {
+    const root = document.createElement("div");
+    root.className = "plugin-component";
+    let data: unknown = null;
+    try { data = JSON.parse(display.data); } catch { /* left null */ }
+    extensions.guard(pluginComponent.plugin, () => pluginComponent.render(root, data, answer));
+    return root;
+  }
+  return componentElement(display.name, components[display.name], display.data, (value) => {
+    if (value.index !== undefined) answer(value.index);
+    else if (value.text !== undefined) answer(value.text);
+  }, index === 0 ? message.id : `${message.id}/show-${index}`);
 }
 
 /** Answered questions you opened again, by message id; the rest stay folded to one line. */

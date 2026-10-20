@@ -522,7 +522,7 @@ public final class Bot: ObservableObject, Identifiable {
         isWorking = false
         let parsed = ReplyParser.parseAll(text)
         var message = ChatMessage(role: isError ? .error : .bot, text: parsed.body, choices: parsed.choices)
-        message.display = parsed.display
+        if !parsed.displays.isEmpty { message.displays = parsed.displays }
         message.steps = trace.takeSteps()
         append(message)
         unreadCount += 1

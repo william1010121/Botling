@@ -94,6 +94,33 @@ describe("plugin host", () => {
     expect(row.querySelector(".plugin-component")?.textContent).toBe("40%");
   });
 
+  it("draws every component a reply shows, each where it was written", async () => {
+    const answers: unknown[] = [];
+    await host.sync([spec("meter")], async () => (ccb) => {
+      ccb.components.register("meter", (root, data, answer) => {
+        const value = (data as { value: number }).value;
+        root.textContent = `${value}%`;
+        root.addEventListener("click", () => answer(`picked ${value}`));
+      });
+    });
+    const text = "First\n\nSecond\n\nLast";
+    const row = messageElement(message({
+      id: "m9",
+      text,
+      display: null,
+      displays: [
+        { name: "meter", data: '{"value":10}', at: text.indexOf("Second") },
+        { name: "meter", data: '{"value":20}', at: text.indexOf("Last") },
+        { name: "meter", data: '{"value":30}', at: null },
+      ],
+    }), {});
+    const parts = [...row.querySelectorAll(".markdown, .plugin-component")].map((element) => element.textContent?.trim());
+    expect(parts).toEqual(["First", "10%", "Second", "20%", "Last", "30%"]);
+    (row.querySelectorAll(".plugin-component")[1] as HTMLElement).click();
+    expect(sent.at(-1)).toEqual({ type: "answer", messageID: "m9", text: "picked 20" });
+    void answers;
+  });
+
   it("runs commands from their shortcut and tells plugins when settings change", async () => {
     const seen: unknown[] = [];
     let ran = 0;

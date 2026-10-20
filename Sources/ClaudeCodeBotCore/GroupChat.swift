@@ -261,8 +261,8 @@ extension Workspace {
                 guard !Self.isPass(text) else { continue }
                 let parsed = ReplyParser.parseAll(text)
                 var line = ChatMessage(role: .bot, text: parsed.body, choices: parsed.choices, sourceID: member.id)
-                line.display = parsed.display
-                if !line.text.isEmpty || line.choices != nil || line.display != nil {
+                if !parsed.displays.isEmpty { line.displays = parsed.displays }
+                if !line.text.isEmpty || line.choices != nil || line.displays != nil {
                     chat.post(line)
                     said.append(line.id)
                     bot.replyObserver?(line)
