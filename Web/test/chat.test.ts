@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
 import { Composer } from "../src/composer";
 import { feedback, messageElement, typingElement } from "../src/messages";
-import type { ChatState, MessageView } from "../src/types";
+import type { ChatState, MessageView, PinSize } from "../src/types";
 
 function message(overrides: Partial<MessageView>): MessageView {
   return {
@@ -410,6 +410,56 @@ describe("messages", () => {
     expect(frame.srcdoc).toContain('"options"');
     expect(row.querySelector(".flag")).not.toBeNull();
     expect(row.querySelector(".updated")?.textContent).toBe("Updated");
+  });
+
+  it("draw a component in a reply wide and frameless: the whole column, its widest size, no card in a card", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const style = document.createElement("style");
+    style.textContent = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    document.head.append(style);
+    try {
+      const info = { template: "<p></p>", version: 0, working: false, updated: false, hasPrevious: false };
+      const components = { log: { ...info, sizes: ["1x1", "2x2", "4x2"] as PinSize[] }, table: info, 網頁預覽卡片: info };
+      const row = messageElement(message({
+        id: "w1", text: "Here they are: [A](file:///p/a.html)",
+        displays: [
+          { name: "log", data: "{}", at: null },
+          { name: "table", data: "null", at: null, command: "git diff --stat", folder: "/p", status: "approve" },
+        ],
+        previews: [{ name: "網頁預覽卡片", data: "{}" }],
+      }), components);
+      document.body.append(row);
+      const bubble = row.querySelector<HTMLElement>(".bot-bubble")!;
+      // The reply spans the message column instead of shrinking to a narrow card.
+      expect(bubble.classList.contains("wide")).toBe(true);
+      expect(getComputedStyle(bubble).maxWidth).toBe("none");
+      // Each component runs edge to edge across it: the bubble is its frame, so a command's card
+      // draws no border of its own.
+      const parts = [...bubble.querySelectorAll<HTMLElement>(":scope > .wide-part")];
+      expect(parts).toHaveLength(3);
+      for (const part of parts) expect(getComputedStyle(part).marginLeft).toBe("-16px");
+      expect(getComputedStyle(bubble.querySelector<HTMLElement>(".command-card")!).borderTopStyle).toBe("none");
+      // Told it is in the chat, at the widest size it has (2×2 when it names none).
+      const frames = bubble.querySelectorAll<HTMLIFrameElement>(".component-frame");
+      expect(frames[0].srcdoc).toContain('<html data-size="4x2" data-surface="chat">');
+      expect(frames[1].srcdoc).toContain('<html data-size="2x2" data-surface="chat">');
+      // Its report flag floats over it on hover rather than taking a column beside it.
+      const shown = frames[0].closest<HTMLElement>(".component")!;
+      expect(shown.dataset.surface).toBe("chat");
+      expect(getComputedStyle(shown.querySelector<HTMLElement>(".component-side")!).position).toBe("absolute");
+
+      // A reply of words alone keeps its own width.
+      const words = messageElement(message({ id: "w2", text: "Just words." }), components);
+      expect(words.querySelector(".bot-bubble")!.classList.contains("wide")).toBe(false);
+      // A question's options are not a wide component.
+      const asked = messageElement(message({ id: "w3", open: true, choices: [{ label: "A", detail: null, recommended: false }] }),
+        { choices: info });
+      expect(asked.querySelector(".bot-bubble")!.classList.contains("wide")).toBe(false);
+      expect(asked.querySelector(".wide-part")).toBeNull();
+    } finally {
+      style.remove();
+    }
   });
 
   it("keep the Updated label on one line without squeezing the component", async () => {

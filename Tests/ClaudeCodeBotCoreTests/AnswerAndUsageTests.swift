@@ -180,7 +180,7 @@ struct AnswerAndUsageTests {
         #expect(try String(contentsOf: library.aboutURL("choices"), encoding: .utf8) == ComponentDefaults.choicesAbout)
     }
 
-    @Test func componentTeamIsToldTheAnswerContract() {
+    @Test func componentTeamIsToldTheAnswerContract() throws {
         #expect(ComponentPrompts.system.contains("ccb.answer({text, images})"))
         #expect(ComponentPrompts.system.contains("ccb.pickImage"))
         #expect(ComponentPrompts.system.contains("ccb.image(path)"))
@@ -207,10 +207,23 @@ struct AnswerAndUsageTests {
         #expect(ComponentPrompts.system.contains("ccb.setStatus({text: \"3 new\", tone: \"good\"})"))
         #expect(PluginGuide.text(builtIns: "/x").contains("`Icon: chart.pie.fill`"))
         #expect(PluginGuide.text(builtIns: "/x").contains("ccb.setStatus({ text: \"3 new\", tone: \"good\" })"))
+        // In the chat it is drawn at its widest size across the reply, frameless as on the Board.
+        #expect(ComponentPrompts.system.contains("ccb.surface = \"chat\""))
+        #expect(ComponentPrompts.system.contains("<html data-surface=\"chat\">"))
+        #expect(ComponentPrompts.system.contains("In the chat it is drawn at its widest size"))
+        #expect(!ComponentPrompts.system.contains("In the chat it is drawn 2x2"))
+        #expect(PluginGuide.text(builtIns: "/x").contains("`<html data-surface=\"chat\">`"))
+        #expect(PluginGuide.text(builtIns: "/x").contains("In the chat a component is drawn at its widest size"))
+        #expect(try setUp(FakeLauncher()).0.maintainerInstructions().contains("in the chat ccb.surface is \"chat\""))
         // Opened above the input box it is frameless too, and told so.
         #expect(ComponentPrompts.system.contains("ccb.surface = \"pinned\""))
-        #expect(ComponentPrompts.system.contains("html:not([data-surface=\"chat\"]) .card"))
         #expect(PluginGuide.text(builtIns: "/x").contains("`<html data-surface=\"pinned\">`"))
+        // Frameless everywhere, so one rule for every surface (not one that leaves the chat out).
+        let rule = ".card {border:0;background:none;border-radius:0;padding:12px;box-sizing:border-box} html[data-surface=\"board\"] .card {height:100%}"
+        #expect(ComponentPrompts.system.contains(rule))
+        #expect(!ComponentPrompts.system.contains("html:not([data-surface=\"chat\"])"))
+        #expect(PluginGuide.text(builtIns: "/x").contains("`html[data-surface=\"board\"] .card { height: 100%; }`"))
+        #expect(!PluginGuide.text(builtIns: "/x").contains("html:not([data-surface=\"chat\"])"))
         #expect(ComponentDefaults.choicesTemplate.contains("ccb.answer(index)"))
     }
 }

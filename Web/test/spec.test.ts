@@ -118,6 +118,30 @@ describe("make into component, in the chat", () => {
     expect(sent).toEqual([{ type: "openSpec", id: "S1" }]);
   });
 
+  it("the component made from a reply spans the column at its widest size, framed as a tile", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const style = document.createElement("style");
+    style.textContent = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    document.head.append(style);
+    try {
+      const row = messageElement(reply({ specs: [{
+        id: "S1", name: "test-summary", status: "done", suggested: false, open: false,
+        component: "test-summary", display: { name: "test-summary", data: '{"total":382}', at: null },
+      }] }), { ...components, "test-summary": { ...components["test-summary"], sizes: ["1x1", "2x1", "4x2"] } });
+      document.body.append(row);
+      const column = row.querySelector<HTMLElement>(".bot-column")!;
+      expect(column.classList.contains("wide")).toBe(true);
+      expect(getComputedStyle(column).maxWidth).toBe("none");
+      const built = row.querySelector<HTMLElement>(".spec-built")!;
+      const shown = built.querySelector<HTMLElement>(":scope > .component")!;
+      // The tile is the frame (the reply's bubble color, rounded); the component draws none.
+      expect(getComputedStyle(shown).borderRadius).toBe("18px");      expect(shown.querySelector<HTMLIFrameElement>("iframe")!.srcdoc).toContain('<html data-size="4x2" data-surface="chat">');
+    } finally {
+      style.remove();
+    }
+  });
+
   it("a built component whose command isn't allowed asks with the exact command and folder", () => {
     const row = messageElement(reply({ specs: [{
       id: "S1", name: "test-summary", status: "done", suggested: false, open: false, component: "test-summary",

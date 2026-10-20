@@ -68,6 +68,8 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
         }
         column.append(body);
         if (chips) column.append(chips);
+        // A component in the reply, or one made from it, takes the whole message column.
+        if (body.classList.contains("wide") || column.querySelector(".spec-built")) column.classList.add("wide");
         row.append(avatar(message.avatar), column, actions);
       } else {
         row.append(avatar(message.avatar), body, actions);
@@ -350,9 +352,18 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     text.innerHTML = renderMarkdown(piece);
     bubble.append(text);
   };
+  // A component in it spans the reply edge to edge, and the reply the whole message column: the
+  // bubble is its frame, as a tile is on the Board (a plugin's own component keeps its place).
+  const appendWide = (element: HTMLElement) => {
+    if (!element.matches(".plugin-component") && !element.querySelector(".plugin-component")) {
+      element.classList.add("wide-part");
+      bubble.classList.add("wide");
+    }
+    bubble.append(element);
+  };
   const appendComponent = ({ display, index }: { display: DisplayView; index: number }) => {
     const element = componentView(message, display, index, components);
-    if (element) bubble.append(element);
+    if (element) appendWide(element);
   };
   // One written at the very end goes after the question, as a single component always has.
   const inline = displays.filter((d) => d.at !== null && d.at < message.text.length).sort((x, y) => x.at! - y.at! || x.index - y.index);
@@ -372,7 +383,7 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     const card = componentElement(preview.name, components[preview.name], preview.data, null, `${message.id}/preview-${index}`);
     if (!card) return;
     if (!makeComponents.enabled || message.role !== "bot") {
-      bubble.append(card);
+      appendWide(card);
       return;
     }
     // Its hover toolbar: make the page into a component.
@@ -389,7 +400,7 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     });
     bar.append(make);
     holder.append(card, bar);
-    bubble.append(holder);
+    appendWide(holder);
   });
   if (message.openable) {
     const open = document.createElement("button");

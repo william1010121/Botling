@@ -21,6 +21,21 @@ app and publishes it on GitHub Releases.
 
 ### Changed
 
+- **Components in the chat are wide and frameless, like a Board tile.** A reply that shows a
+  component (`<show>`, a command's card, a result page's preview) now takes the whole message
+  column instead of shrinking to a narrow card, and the component runs edge to edge across the
+  bubble, which is its frame: a command's card loses its border, and the report flag floats over
+  the component's bottom-right corner on hover instead of taking a column beside it. A component
+  made from a reply ("Make into component") is drawn under it the same width, on a tile of its
+  own. In the chat a component is drawn at its widest size: the widest in its about.md's `Sizes:`
+  line (4×2 when listed; of two as wide, the taller), still 2×2 without the line. It is told so
+  with `ccb.size`, `<html data-size="4x2">` and `ccb.surface` / `<html data-surface="chat">`.
+  ComponentPrompts (the component editor), PLUGINS.md and the Maintainer now say a component
+  draws no card of its own in the chat either (no border, background or radius, at most about
+  12px padding), only as tall as its content there. With the Board, an opened pin and the chat
+  all frameless, they give one rule for every surface: `.card { border: 0; background: none;
+  border-radius: 0; padding: 12px; box-sizing: border-box }`, plus
+  `html[data-surface="board"] .card { height: 100% }` to fill a Board tile.
 - **An opened pin is its component, like a Board tile.** Clicking a pin's chip above the input
   box no longer shows a card in a card: the header row (name, command, "Updated 3:32", ↻, ⋯,
   collapse) and the padding are gone, the component's frame fills the panel and its rounded
@@ -28,8 +43,7 @@ app and publishes it on GitHub Releases.
   keyboard focus (and while its command runs); the ⋯ menu starts with the name, when it last ran
   and its command. Components are told: `ccb.surface` is `"pinned"` and
   `<html data-surface="pinned">` there, and the page stays as tall as its content.
-  ComponentPrompts, PLUGINS.md and the Maintainer say to draw no card of one's own there either:
-  `html:not([data-surface="chat"]) .card { … }` drops it on the Board and when pinned.
+  ComponentPrompts, PLUGINS.md and the Maintainer say to draw no card of one's own there either.
 
 ### Fixed
 

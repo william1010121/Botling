@@ -133,14 +133,21 @@ enum PluginGuide {
           the card's size button offers those. Give each size its own layout: small = the one key number or status, wide = a short row or list,
           tall = a vertical list, large = the full view. `ccb.size` is `{ w, h, name }` (name "small", "wide", "tall", "large" or "xlarge"),
           `<html data-size="2x1">` is there for CSS, and `ccb.onSize((size) => redraw(size))` runs when the user resizes the card (returns a
-          function that stops it). In the chat a component is drawn 2x2 (or its largest size).
+          function that stops it).
           On the Board the component is the whole tile, like a home-screen widget: no header, the app's controls (size, ↻, ⋯) float over
-          the top-right corner on hover. There `ccb.surface` is "board" and `<html data-surface="board">` is set (in the chat: "chat"), so
+          the top-right corner on hover. There `ccb.surface` is "board" and `<html data-surface="board">` is set, so
           drop your own card frame: no border, no background (transparent, or the tile's), no border-radius, no outer padding beyond about
-          12px, and fill the tile, e.g. `html[data-surface="board"] .card { border: 0; background: none; border-radius: 0; padding: 12px; height: 100%; }`.
+          12px, and fill the tile.
+          In the chat a component is drawn at its widest size (the widest in `Sizes:`, so 4x2 when listed; 2x2 without the line) across the
+          whole width of the reply, edge to edge, with its report flag floating over its bottom-right corner on hover. There `ccb.surface`
+          is "chat" and `<html data-surface="chat">` is set; the reply's bubble (or, under a reply, a tile like the Board's) is its frame,
+          so draw no card frame there either (same rules), only let it be as tall as its content.
           A pin opened from its chip above the input box is frameless the same way: `ccb.surface` is "pinned" and `<html data-surface="pinned">`
           is set, the panel gives the corners and background and its controls (↻, ⋯, collapse) float over the top-right corner on hover, but the
-          page is as tall as its content (as in the chat). Drop the frame on both with `html:not([data-surface="chat"]) .card { … }`.
+          page is as tall as its content (as in the chat).
+          So a component never draws a card frame of its own, and one rule covers every surface:
+          `.card { border: 0; background: none; border-radius: 0; padding: 12px; box-sizing: border-box; }` with
+          `html[data-surface="board"] .card { height: 100%; }` to fill a Board tile.
           Pin chip: a pinned component also shows as a small chip above the input box, an icon with a short status (its name in the tooltip).
           about.md's `Icon: chart.pie.fill` (an SF Symbol name) or `Icon: 📊` (one emoji) gives the icon (missing: a generic one).
           `ccb.setStatus({ text: "3 new", tone: "good" })` sets the status: a short value (about 14 characters show) and a tone, "good", "warning",

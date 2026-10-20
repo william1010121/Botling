@@ -485,12 +485,18 @@ describe("the Board", () => {
     expect(card.querySelector(".board-size")?.textContent).toBe("2×1");
   });
 
-  it("a component in the chat is drawn 2×2, or the largest size it has", () => {
+  it("a component in the chat is drawn at the widest size it has, 2×2 when it names none", () => {
     const at = (info: ComponentInfo) => componentElement("x", info, "{}", null)!.querySelector<HTMLIFrameElement>("iframe")!.srcdoc;
     const info = components.提交紀錄;
+    // No Sizes: line: its one layout, 2×2.
     expect(at(info)).toContain('data-size="2x2" data-surface="chat"');
-    expect(at({ ...info, sizes: ["1x1", "2x1", "1x2"] })).toContain('data-size="2x1"');
-    expect(chatSize({ ...info, sizes: ["1x1", "4x2", "2x2"] })).toBe("2x2");
+    expect(at({ ...info, sizes: ["1x1", "4x2", "2x2"] })).toContain('<html data-size="4x2" data-surface="chat">');
+    expect(at({ ...info, sizes: ["1x1", "4x2", "2x2"] })).toContain('{"w":4,"h":2,"name":"xlarge"}');
+    // The widest first; of two as wide, the taller.
+    expect(chatSize({ ...info, sizes: ["1x1", "2x2", "1x2"] })).toBe("2x2");
+    expect(chatSize({ ...info, sizes: ["2x2", "2x1"] })).toBe("2x2");
+    expect(chatSize({ ...info, sizes: ["1x1", "2x1", "1x2"] })).toBe("2x1");
+    expect(chatSize({ ...info, sizes: ["1x1", "1x2"] })).toBe("1x2");
   });
 
   it("an empty Board offers to add a component", () => {
