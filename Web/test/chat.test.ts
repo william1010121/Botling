@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
 import { Composer } from "../src/composer";
