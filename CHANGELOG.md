@@ -8,6 +8,17 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Release planner: vote on shared features with 👍, and pick the next version.** With
+  developer mode on, Settings → Release planner lists the open PRs labelled
+  `community-feature`, most 👍 first (other reactions are not votes; a tie puts the older PR
+  first), read with `gh pr list` in the developer project's folder. The 👍 button on a row is a
+  vote: a 👍 reaction on that PR as you, seen on GitHub too; clicking a title opens the PR. The
+  repo's owner (admin or maintainer, from `gh repo view`) also gets a checkbox per PR and a
+  "Next version" row: "Send to <project>" hands the picks to the developer project's manager,
+  which merges each one whose tests pass, writes the release notes under Unreleased, and brings
+  back any that conflict or fail. Picks are kept in `release-plan.json`, and PRs no longer open
+  drop out. Without gh or a sign-in it says what to run. `CCB_RELEASES_SNAPSHOT=out.png` draws
+  it with sample PRs (`CCB_RELEASES_OWNER=0`: as a voter).
 - **Pin bots to the top of the left column.** Right-click a project or bot and choose Pin (or
   Unpin), or click the pin glyph that shows at the row's end on hover. Pinned rows sit in a
   "Pinned" section above Chats, in the order they were pinned, and come first in the folded
