@@ -6,10 +6,13 @@ public struct ComponentInstance: Codable, Equatable, Sendable {
     public var name: String
     /// JSON for `window.ccb.data`.
     public var data: String
+    /// Where in the message's text it is drawn (a UTF-16 offset); nil: after the text.
+    public var at: Int?
 
-    public init(name: String, data: String) {
+    public init(name: String, data: String, at: Int? = nil) {
         self.name = name
         self.data = data
+        self.at = at
     }
 }
 
@@ -385,7 +388,7 @@ enum ComponentDefaults {
 
     - 回覆裡連到 `artifacts` 資料夾裡 .html 的連結，例如 `[競品比較](file:///…/.bot/artifacts/report.html)`，App 會自動畫成這張卡片，照常附連結就好，不必另外寫 `<show>`。
     - 想換卡片標題，或頁面不在 `artifacts` 資料夾時，才用 `<show>`。不在 `artifacts` 裡的頁面只會載入那一個檔案，旁邊的圖片不會顯示。
-    - 一則回覆只能有一個 `<show>`。
+    - 一則回覆可以有好幾個 `<show>`，各自畫在寫的位置。
     - 不需要使用者回答，不會呼叫 `ccb.answer`。
     """
 

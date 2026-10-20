@@ -26,7 +26,8 @@ public struct ChatPayload: Encodable, Equatable {
         var chosen: Int?
         var answer: String?
         var open: Bool
-        var display: Display?
+        /// The components it shows, each with where in `text` it goes.
+        var displays: [Display]?
         var attachments: [File]?
         var replyTo: String?
         var replyPreview: String?
@@ -66,6 +67,8 @@ public struct ChatPayload: Encodable, Equatable {
     public struct Display: Encodable, Equatable {
         var name: String
         var data: String
+        /// Where in the message's text (UTF-16 offset); nil: after it.
+        var at: Int?
     }
 
     public struct Reply: Encodable, Equatable {
@@ -159,7 +162,7 @@ public struct ChatPayload: Encodable, Equatable {
                 chosen: message.chosen,
                 answer: message.answer,
                 open: message.isOpenQuestion,
-                display: message.display.map(display),
+                displays: message.shown.isEmpty ? nil : message.shown.map(display),
                 attachments: message.attachments?.map(file),
                 replyTo: message.replyTo?.uuidString,
                 replyPreview: message.replyPreview,
@@ -218,7 +221,7 @@ public struct ChatPayload: Encodable, Equatable {
         func message(_ id: String, role: String, text: String, steps: [Step]) -> Message {
             Message(
                 id: "\(subagent.id)-\(id)", role: role, text: text, stamp: nil, avatar: role == "bot" ? avatar : nil,
-                choices: nil, chosen: nil, answer: nil, open: false, display: nil, attachments: nil,
+                choices: nil, chosen: nil, answer: nil, open: false, displays: nil, attachments: nil,
                 replyTo: nil, replyPreview: nil, openable: false, speaker: nil,
                 steps: steps.isEmpty ? nil : steps.map { stepView($0, in: bot) }
             )
@@ -292,7 +295,7 @@ public struct ChatPayload: Encodable, Equatable {
 
     /// A component in a message; a 「網頁預覽卡片」 gets where to load its page from.
     static func display(_ instance: ComponentInstance) -> Display {
-        Display(name: instance.name, data: instance.name == PagePreview.component ? PagePreview.cardData(instance.data) : instance.data)
+        Display(name: instance.name, data: instance.name == PagePreview.component ? PagePreview.cardData(instance.data) : instance.data, at: instance.at)
     }
 
     /// Cards for the result pages a bot's line or a notice links to, when the card component is
@@ -302,9 +305,9 @@ public struct ChatPayload: Encodable, Equatable {
         guard message.role == .bot || message.role == .notice,
               library?.names.contains(PagePreview.component) == true,
               message.text.contains("](file:") else { return nil }
-        let shown = message.display.flatMap { $0.name == PagePreview.component ? PagePreview.page(inCard: $0.data) : nil }
+        let shown = message.shown.compactMap { $0.name == PagePreview.component ? PagePreview.page(inCard: $0.data) : nil }
         let cards = PagePreview.linkedCards(in: message.text, skipping: shown)
-        return cards.isEmpty ? nil : cards.map { Display(name: PagePreview.component, data: $0) }
+        return cards.isEmpty ? nil : cards.map { Display(name: PagePreview.component, data: $0, at: nil) }
     }
 
     private static func file(_ attachment: Attachment) -> File {

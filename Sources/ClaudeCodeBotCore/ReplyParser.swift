@@ -39,8 +39,9 @@ public enum ReplyParser {
         public var body: String
         public var choices: [Choice]?
         public var requests: [BotRequest]
-        /// `<show name="x">{json}</show>`: draw component x with that data.
-        public var display: ComponentInstance?
+        /// Each `<show name="x">{json}</show>`: draw component x with that data, in the order they
+        /// came, each at the place in `body` it was written (`at`).
+        public var displays: [ComponentInstance]
     }
 
     private static let choicesBlock = try! NSRegularExpression(pattern: #"<choices>\s*(.*?)\s*</choices>"#, options: .dotMatchesLineSeparators)
@@ -89,7 +90,7 @@ public enum ReplyParser {
         let text = NSMutableString(string: reply)
         let mask = masked(reply)
         var requests: [BotRequest] = []
-        var display: ComponentInstance?
+        var displays: [ComponentInstance] = []
 
         /// Matches of `pattern` outside code, last first; each is taken out of the reply.
         func take(_ pattern: NSRegularExpression, first only: Bool = false, _ found: ([String]) -> Void) {
@@ -103,10 +104,17 @@ public enum ReplyParser {
             }
         }
 
-        take(showTag, first: true) { groups in
-            if (try? JSONSerialization.jsonObject(with: Data(groups[1].utf8))) != nil {
-                display = ComponentInstance(name: groups[0], data: groups[1])
+        // Every <show> with good JSON is kept, its place marked with a character of its own
+        // (from the private use area) until the rest is taken out, so it can be found again.
+        for match in showTag.matches(in: mask as String, range: NSRange(location: 0, length: mask.length)).reversed() {
+            let name = text.substring(with: match.range(at: 1)), data = text.substring(with: match.range(at: 2))
+            var marker = ""
+            if (try? JSONSerialization.jsonObject(with: Data(data.utf8))) != nil {
+                displays.insert(ComponentInstance(name: name, data: data), at: 0)
+                marker = "\u{E000}"
             }
+            text.replaceCharacters(in: match.range, with: marker)
+            mask.replaceCharacters(in: match.range, with: marker)
         }
         var tagged: [BotRequest] = []
         take(requestTag) { groups in
@@ -136,7 +144,27 @@ public enum ReplyParser {
             let parsed = groups[0].split(separator: "\n").compactMap(choice(from:))
             choices = parsed.isEmpty ? nil : parsed
         }
-        return Parsed(body: (text as String).trimmingCharacters(in: .whitespacesAndNewlines), choices: choices, requests: requests, display: display)
+        let (body, places) = placing(text as String, count: displays.count)
+        for index in displays.indices { displays[index].at = places[index] }
+        return Parsed(body: body, choices: choices, requests: requests, displays: displays)
+    }
+
+    /// The reply without its markers, trimmed, and where each marker was in it (UTF-16 offsets,
+    /// as the page counts). A marker another tag took out with it has no place: drawn at the end.
+    private static func placing(_ text: String, count: Int) -> (String, [Int?]) {
+        let marker = "\u{E000}".utf16.first!
+        var units: [UInt16] = []
+        var places: [Int] = []
+        for unit in text.utf16 {
+            if unit == marker { places.append(units.count) } else { units.append(unit) }
+        }
+        let untrimmed = String(decoding: units, as: UTF16.self)
+        let body = untrimmed.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lead = untrimmed.unicodeScalars.prefix { CharacterSet.whitespacesAndNewlines.contains($0) }.reduce(0) { $0 + $1.utf16.count }
+        let length = body.utf16.count
+        let found = places.map { min(max($0 - lead, 0), length) }
+        // Markers line up with the components in order, unless some were lost.
+        return (body, found.count == count ? found : Array(repeating: nil, count: count))
     }
 
     private static func choice(from line: Substring) -> Choice? {

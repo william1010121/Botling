@@ -115,7 +115,7 @@ struct PagePreviewTests {
         let cards = try PagePreview.linkedCards(in: text).map(object)
         #expect(cards.map { $0["path"] as? String } == [a.path, b.path])
         #expect(cards.map { $0["title"] as? String } == ["A page", "B"])
-        #expect(try PagePreview.linkedCards(in: text, skipping: a).map(object).map { $0["path"] as? String } == [b.path])
+        #expect(try PagePreview.linkedCards(in: text, skipping: [a]).map(object).map { $0["path"] as? String } == [b.path])
 
         let many = try (0..<5).map { try write("p/.bot/artifacts/\($0).html") }
         #expect(PagePreview.linkedCards(in: many.map { "[\($0.lastPathComponent)](\($0.absoluteString))" }.joined(separator: " ")).count == 3)
@@ -126,7 +126,7 @@ struct PagePreviewTests {
         let other = try write("p/.bot/artifacts/other.html")
         let home = root.appending(path: "ccb/main")
         var shown = ChatMessage(role: .bot, text: "See [Report](\(page.absoluteString)) and [Other](\(other.absoluteString))")
-        shown.display = ComponentInstance(name: PagePreview.component, data: #"{"path":"\#(page.path)","title":"報告"}"#)
+        shown.displays = [ComponentInstance(name: PagePreview.component, data: #"{"path":"\#(page.path)","title":"報告"}"#)]
         BotStore(directory: home).save(messages: [
             ChatMessage(role: .user, text: "My [own link](\(page.absoluteString))"),
             ChatMessage(role: .notice, text: "Prototype team: done. [Report](\(page.absoluteString))", sourceID: UUID()),
@@ -145,7 +145,7 @@ struct PagePreviewTests {
         #expect(notice[0]["name"] as? String == PagePreview.component)
         #expect(try object(try #require(notice[0]["data"] as? String))["src"] != nil)
         // A <show> card gets where to load from; the page it shows is not drawn twice.
-        let display = try #require(messages[2]["display"] as? [String: Any])
+        let display = try #require((messages[2]["displays"] as? [[String: Any]])?.first)
         let card = try object(try #require(display["data"] as? String))
         #expect(card["title"] as? String == "報告")
         #expect((card["src"] as? String)?.hasPrefix("\(PagePreview.scheme)://page/") == true)
