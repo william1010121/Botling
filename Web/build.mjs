@@ -1,4 +1,5 @@
-// Bundles the chat surface into the app's resources (chat.html, chat.js, chat.css), and each
+// Bundles the chat surface into the app's resources (chat.html, chat.js, chat.css; viewer.html and
+// viewer.js, the file window for .md files, share chat.css), and each
 // built-in plugin in plugins/ into Resources/plugins/<name>/ (package.json, dist/web.js and the
 // files its manifest names), and the Node plugin host into Resources/host/host.mjs. Output is
 // committed so `swift build` needs no npm.
@@ -28,6 +29,15 @@ await build({
   outfile: join(out, "chat.js"),
 });
 await build({
+  entryPoints: [join(here, "src/viewer.ts")],
+  bundle: true,
+  format: "iife",
+  target: "safari17",
+  minify: true,
+  legalComments: "eof",
+  outfile: join(out, "viewer.js"),
+});
+await build({
   entryPoints: [join(here, "host/src/host.ts")],
   bundle: true,
   platform: "node",
@@ -38,6 +48,7 @@ await build({
 });
 cpSync(join(here, "src/chat.html"), join(out, "chat.html"));
 cpSync(join(here, "src/chat.css"), join(out, "chat.css"));
+cpSync(join(here, "src/viewer.html"), join(out, "viewer.html"));
 
 /** Extra files a built-in plugin needs beside its bundle. */
 const assets = {
