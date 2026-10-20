@@ -71,15 +71,19 @@ struct ChatSurface: NSViewRepresentable {
             components: components,
             pending: inputs.files[bot.id] ?? [],
             replyingTo: inputs.replies[bot.id],
-            group: bot === workspace.group
-                ? ChatPayload.GroupView(typing: workspace.groupSpeaker, names: workspace.mentionable.map(\.name), speaker: { [workspace] id in workspace.speakerName(for: id) })
-                : nil,
+            group: workspace.group(of: bot).map { group in
+                ChatPayload.GroupView(
+                    typing: workspace.groupSpeakers[group.id],
+                    names: workspace.members(of: group).map(\.name),
+                    speaker: { [workspace] id in workspace.speakerName(for: id) }
+                )
+            },
             avatar: { projectID in
                 if let projectID, let kind = workspace.avatar(for: projectID) {
                     return AvatarImages.dataURL(kind, eyes: .open)
                 }
-                // The group chat's own lines (the app, teams) and lines of removed bots.
-                if bot === workspace.group { return AvatarImages.dataURL(projectID == nil ? .cloud : .ghost, eyes: .open) }
+                // A group's own lines (the app) and lines of removed bots.
+                if workspace.group(of: bot) != nil { return AvatarImages.dataURL(projectID == nil ? .cloud : .ghost, eyes: .open) }
                 return AvatarImages.dataURL(bot.avatarKind, eyes: .open)
             }
         )
@@ -175,7 +179,7 @@ struct ChatSurface: NSViewRepresentable {
                     let components = surface.components
                     Task {
                         if let problem = await components.revert(name) {
-                            workspace.group.notice("Couldn't revert component \"\(name)\": \(problem)")
+                            workspace.mainBot.notice("Couldn't revert component \"\(name)\": \(problem)")
                         }
                     }
                 }

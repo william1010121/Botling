@@ -31,7 +31,7 @@ public struct ChatPayload: Encodable, Equatable {
         var replyTo: String?
         var replyPreview: String?
         var openable: Bool
-        /// Who said it, above the bubble (the group chat).
+        /// Who said it, above the bubble (a group chat).
         var speaker: String?
     }
 
@@ -63,10 +63,10 @@ public struct ChatPayload: Encodable, Equatable {
     var replyingTo: Reply?
     var pendingFiles: [File]
     var components: [String: Component]
-    /// Names you can @ (the group chat), for completing them as you type.
+    /// Names you can @ (a group chat), for completing them as you type.
     var mentions: [String]
 
-    /// What the group chat adds: who is typing, and names for who said each line.
+    /// What a group chat adds: who is typing, and names for who said each line.
     public struct GroupView {
         public var typing: UUID?
         public var speaker: (UUID) -> String?
@@ -106,7 +106,7 @@ public struct ChatPayload: Encodable, Equatable {
         let main = bot.profile.role == .main ? own : nil
         let messages = bot.messages.enumerated().map { index, message -> Message in
             let face: String? = switch message.role {
-            // In the group chat each line has the face of the bot that said it.
+            // In a group chat each line has the face of the bot that said it.
             case .bot: group != nil && message.sourceID != nil ? avatar(message.sourceID) : own
             case .notice: avatar(message.sourceID)
             case .relay: main ?? avatar(nil)

@@ -39,24 +39,6 @@ struct AnswerAndUsageTests {
         #expect(workspace.waiting.isEmpty)
     }
 
-    @Test func answeringInWordsFromTheMainBotsNoticeReachesTheManager() async throws {
-        let fake = FakeLauncher()
-        fake.respond = { text in text.contains("succulents") ? question : "OK." }
-        let (workspace, _, manager) = try setUp(fake)
-
-        manager.relay("Should we support succulents? Let the user decide")
-        await eventually { workspace.group.messages.contains { $0.role == .notice } }
-        let notice = try #require(workspace.group.messages.last { $0.role == .notice })
-
-        #expect(workspace.answer("It depends; do one kind first", in: notice.id, of: workspace.group))
-        await eventually { manager.messages.last?.text == "OK." }
-
-        #expect(fake.agents[0].sent.last == "It depends; do one kind first")
-        #expect(workspace.group.messages.first { $0.id == notice.id }?.answer == "It depends; do one kind first")
-        #expect(manager.messages.first { $0.id == notice.sourceMessageID }?.answer == "It depends; do one kind first")
-        #expect(workspace.waiting.isEmpty)
-    }
-
     @Test func aComponentThatAsksNothingJustReplies() async throws {
         let fake = FakeLauncher()
         fake.respond = { _ in "Got it" }

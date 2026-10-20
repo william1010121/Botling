@@ -161,22 +161,24 @@ struct RoutineTests {
         #expect(manager.system.contains(".bot/routines.cron"))
     }
 
-    @Test func managerRoutineReportsUpToTheMainBot() async throws {
+    @Test func managerRoutineReportsInItsOwnChat() async throws {
         let fake = FakeLauncher()
         fake.respond = { _ in "All tests pass." }
         let workspace = makeWorkspace(fake)
         let project = try makeProject(workspace, "garden")
         let manager = try #require(workspace.bot(for: project))
+        workspace.select(nil)
         workspace.mainBot.setRoutine(workspace.mainBot.routines[0].id, enabled: false)
         manager.addRoutine(title: "Run tests", instruction: "Run the tests once", hour: 9, minute: 0)
 
         workspace.checkRoutines(now: day(7, 0))
         workspace.checkRoutines(now: day(9, 0))
-        await eventually { workspace.group.messages.contains { $0.role == .notice } }
+        await eventually { manager.messages.contains { $0.text == "All tests pass." } }
 
         #expect(fake.agents.count == 1)
         #expect(fake.agents[0].sent.first?.contains("Time for the routine \"Run tests\": Run the tests once") == true)
-        #expect(workspace.group.messages.last?.text == "garden: All tests pass.")
+        #expect(manager.hasUnread)
+        #expect(!workspace.mainBot.messages.contains { $0.role == .notice })
     }
 
     @Test func oldSettingsMoveIntoTheFile() throws {

@@ -61,11 +61,9 @@ struct TeamTests {
         let workspace = makeWorkspace(fake)
 
         workspace.mainBot.send("Help me compare note apps")
-        await eventually { workspace.group.messages.contains { $0.role == .notice } }
+        await eventually { workspace.mainBot.messages.contains { $0.role == .notice } }
 
-        // The team's result goes to the group chat; the main bot's chat keeps only your exchange.
-        #expect(workspace.mainBot.messages.map(\.role) == [.user, .bot])
-        #expect(workspace.group.messages.map(\.role) == [.notice])
+        #expect(workspace.mainBot.messages.map(\.role) == [.user, .bot, .notice])
         #expect(workspace.mainBot.messages[1].text == "Handed to the Research team.")
         let team = try #require(fake.agents.last)
         #expect(team.launch.model == .sonnet)
@@ -73,9 +71,9 @@ struct TeamTests {
         #expect(team.launch.workingDirectory.path.contains("/runs/"))
         #expect(team.launch.workingDirectory.lastPathComponent.hasSuffix("research"))
         #expect(team.sent.first?.contains("Compare how three note apps sync") == true)
-        let notice = try #require(workspace.group.messages.last)
+        let notice = try #require(workspace.mainBot.messages.last)
         #expect(notice.text.hasPrefix("Research team: "))
-        #expect(workspace.group.results.first?.label == "Note app comparison")
+        #expect(workspace.mainBot.results.first?.label == "Note app comparison")
         await eventually { workspace.runningTeams.isEmpty }
         #expect(team.finished)
     }
@@ -146,7 +144,8 @@ struct ComponentTests {
         #expect(library.updated.contains("choices"))
         #expect(library.template("choices")?.hasSuffix("<!-- row -->") == true)
         await eventually { library.hasPrevious("choices") }
-        #expect(workspace.group.messages.last?.text == "Maintainer: The options are in a row now.")
+        #expect(workspace.maintainer.messages.last?.text == "The options are in a row now.")
+        #expect(!workspace.mainBot.messages.contains { $0.role == .notice })
 
         #expect(await library.revert("choices") == nil)
         #expect(library.template("choices") == original)

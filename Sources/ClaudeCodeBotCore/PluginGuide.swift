@@ -78,7 +78,7 @@ enum PluginGuide {
         - `ccb.commands.register(id, run)`, `ccb.commands.execute(id)`; commands with a key in the manifest get a keyboard shortcut.
         - `ccb.settings.get(key)`, `ccb.settings.onChange(key, fn)`.
         - `ccb.host.call(method, params)`: calls your own program part (which answers with `ccb.web.handle`).
-        - `ccb.notify(text)`: adds a line to the group chat.
+        - `ccb.notify(text)`: adds a line to the main bot's chat.
 
         The web part must be bundled into a single ES module (esbuild --bundle --format=esm). On errors it is disabled; if an earlier version worked, ClaudeCodeBot keeps using that one.
 
@@ -119,7 +119,7 @@ enum PluginGuide {
         1. Edit the files, bump version.
         2. Run `ccb plugin check` (Maintainer's instructions have the actual command): checks package.json, runs npm build/test, validates the Claude part, and loads the web part once in an invisible chat view.
         3. `git add <plugin>`, `git commit -m "<plugin>: <what you did>"`, `git tag <plugin>--v<version>`.
-        4. ClaudeCodeBot hot-updates; a "Plugin … updated" line appears in the group chat.
+        4. ClaudeCodeBot hot-updates; a "Plugin … updated" line appears in the main bot's chat.
 
         Reverting: right-click the plugin in the plugin list in Settings and choose "Revert to previous version"; ClaudeCodeBot uses git to put that plugin back to its previous version.
 

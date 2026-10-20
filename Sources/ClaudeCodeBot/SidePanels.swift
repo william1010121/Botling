@@ -7,14 +7,14 @@ struct RailView: View {
     @ObservedObject var workspace: Workspace
     @State private var makingBot = false
     @State private var removing: Workspace.Project?
+    /// The group being made (a new one) or changed, in the sheet.
+    @State private var editingGroup: ChatGroup?
+    @State private var deletingGroup: ChatGroup?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            BotRow(bot: workspace.mainBot, selected: workspace.selection == nil, waiting: false) {
+            BotRow(bot: workspace.mainBot, selected: workspace.selection == nil, waiting: workspace.waiting.contains { $0.projectID == Workspace.mainBotID }) {
                 workspace.select(nil)
-            }
-            GroupRow(group: workspace.group, workspace: workspace, selected: workspace.selection == Workspace.groupID) {
-                workspace.select(Workspace.groupID)
             }
 
             Rectangle().fill(Theme.line).frame(height: 1).padding(10)
@@ -30,6 +30,35 @@ struct RailView: View {
 
             ScrollView {
                 VStack(spacing: 2) {
+                    HStack {
+                        Text("Groups").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.faint)
+                        Spacer()
+                        Button { editingGroup = ChatGroup(name: "", members: []) } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.faint)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("New group: pick the bots you want in one conversation")
+                        .accessibilityLabel("New group")
+                    }
+                    .padding(.leading, 10)
+                    ForEach(workspace.groups) { group in
+                        if let chat = workspace.groupChats[group.id] {
+                            GroupRow(group: group, chat: chat, workspace: workspace, selected: workspace.selection == group.id) {
+                                workspace.select(group.id)
+                            }
+                            .contextMenu {
+                                Button("Edit group…") { editingGroup = group }
+                                Button("Delete group…", role: .destructive) { deletingGroup = group }
+                            }
+                        }
+                    }
+                    if !workspace.groups.isEmpty || !workspace.projects.isEmpty {
+                        Rectangle().fill(Theme.line).frame(height: 1).padding(.horizontal, 10).padding(.vertical, 6)
+                    }
                     ForEach(workspace.projects.filter { !$0.isMaintainer }) { project in
                         if let bot = workspace.bot(for: project) {
                             BotRow(
@@ -101,6 +130,24 @@ struct RailView: View {
         } message: { project in
             Text("It stops at once. Its notes stay in \(project.folder.path).")
         }
+        .confirmationDialog(
+            "Delete the group \"\(deletingGroup?.name ?? "")\"?",
+            isPresented: Binding(get: { deletingGroup != nil }, set: { if !$0 { deletingGroup = nil } }),
+            presenting: deletingGroup
+        ) { group in
+            Button("Delete group", role: .destructive) { workspace.deleteGroup(group.id) }
+        } message: { _ in
+            Text("Its conversation is deleted. The bots in it keep their own chats and memory.")
+        }
+        .sheet(item: $editingGroup) { group in
+            GroupForm(workspace: workspace, group: group) { name, members in
+                if workspace.group(group.id) != nil {
+                    workspace.editGroup(group.id, name: name, members: members)
+                } else {
+                    workspace.createGroup(name: name, members: members)
+                }
+            }
+        }
     }
 
     private func addProject() {
@@ -116,9 +163,10 @@ struct RailView: View {
     }
 }
 
-/// The group chat: everyone's reports and questions, and where you talk to several bots at once.
+/// A group you made: its name, and who is writing or how many are in it.
 private struct GroupRow: View {
-    @ObservedObject var group: Bot
+    let group: ChatGroup
+    @ObservedObject var chat: Bot
     @ObservedObject var workspace: Workspace
     let selected: Bool
     let action: () -> Void
@@ -132,18 +180,23 @@ private struct GroupRow: View {
                     .frame(width: 32, height: 32)
                     .background(Circle().fill(Theme.chip))
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Group").font(.system(size: 15))
-                    if let speaker = workspace.groupSpeaker.flatMap(workspace.speakerName(for:)) {
+                    Text(group.name).font(.system(size: 15)).lineLimit(1)
+                    if let speaker = workspace.groupSpeakers[group.id].flatMap(workspace.speakerName(for:)) {
                         Text("\(speaker) is writing…")
                             .font(.system(size: 12))
                             .foregroundStyle(Color(hex: 0x8DB5FF))
                             .lineLimit(1)
+                    } else {
+                        Text(workspace.members(of: group).map(\.name).joined(separator: ", "))
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.faint)
+                            .lineLimit(1)
                     }
                 }
                 Spacer(minLength: 4)
-                if workspace.groupHasQuestion {
+                if workspace.groupHasQuestion(group.id) {
                     Circle().fill(Theme.orange).frame(width: 9, height: 9)
-                } else if group.hasUnread && !selected {
+                } else if chat.hasUnread && !selected {
                     Circle().fill(Theme.blue).frame(width: 9, height: 9)
                 }
             }
@@ -153,14 +206,76 @@ private struct GroupRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Group chat\(workspace.groupHasQuestion ? ", waiting on you" : "")")
+        .accessibilityLabel("Group \(group.name)\(workspace.groupHasQuestion(group.id) ? ", waiting on you" : "")")
     }
 }
 
-/// Right column for the group chat: who is in it, what waits for you, what was handed in.
+/// Making or changing a group: a name and the bots in it.
+private struct GroupForm: View {
+    @ObservedObject var workspace: Workspace
+    let group: ChatGroup
+    let save: (_ name: String, _ members: [UUID]) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    @State private var picked: Set<UUID>
+
+    init(workspace: Workspace, group: ChatGroup, save: @escaping (String, [UUID]) -> Void) {
+        self.workspace = workspace
+        self.group = group
+        self.save = save
+        _name = State(initialValue: group.name)
+        _picked = State(initialValue: Set(group.members))
+    }
+
+    private var isNew: Bool { workspace.group(group.id) == nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(isNew ? "New group" : "Edit group").font(.system(size: 15, weight: .semibold))
+            TextField("Group name, e.g. Blog team", text: $name)
+                .textFieldStyle(.roundedBorder)
+            Text("Who is in it").font(.system(size: 12)).foregroundStyle(Theme.faint)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(workspace.everyMember, id: \.id) { member in
+                        Toggle(isOn: Binding(
+                            get: { picked.contains(member.id) },
+                            set: { if $0 { picked.insert(member.id) } else { picked.remove(member.id) } }
+                        )) {
+                            HStack(spacing: 8) {
+                                AvatarView(kind: workspace.avatar(for: member.id) ?? .circle, size: 20)
+                                Text(member.name).lineLimit(1)
+                            }
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 280)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(isNew ? "Create" : "Save") {
+                    save(name, Array(picked))
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || picked.isEmpty)
+            }
+        }
+        .font(.system(size: 13))
+        .padding(20)
+        .frame(width: 340)
+    }
+}
+
+/// Right column for a group: who is in it, what waits for you there, what was handed in.
 struct GroupPanel: View {
     @ObservedObject var workspace: Workspace
-    @ObservedObject var group: Bot
+    let group: ChatGroup
+    @ObservedObject var chat: Bot
+    @State private var editing: ChatGroup?
 
     var body: some View {
         ScrollView {
@@ -171,50 +286,50 @@ struct GroupPanel: View {
         .padding(.top, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.side)
+        .sheet(item: $editing) { group in
+            GroupForm(workspace: workspace, group: group) { name, members in
+                workspace.editGroup(group.id, name: name, members: members)
+            }
+        }
     }
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 24) {
-            Text("Group").font(.system(size: 15, weight: .semibold)).frame(height: 40)
+            HStack {
+                Text(group.name).font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                Spacer()
+                Button { editing = group } label: {
+                    Image(systemName: "person.badge.plus")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.muted)
+                        .frame(width: 40, height: 40)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Rename, add or take out members")
+                .accessibilityLabel("Edit group")
+            }
+            .frame(height: 40)
 
-            if !workspace.waiting.isEmpty {
+            let waiting = workspace.waiting.filter { $0.groupID == group.id }
+            if !waiting.isEmpty {
                 PanelSection("Waiting on you") {
-                    VStack(spacing: 6) {
-                        ForEach(workspace.waiting) { item in
-                            // A question in the group chat is answered here; one in a bot's own
-                            // chat, there.
-                            Button { workspace.select(item.inGroup ? Workspace.groupID : item.projectID) } label: {
-                                    HStack(spacing: 12) {
-                                        AvatarView(kind: workspace.avatar(for: item.projectID) ?? .cloud, size: 26)
-                                        Text(item.text).lineLimit(2).multilineTextAlignment(.leading)
-                                        Spacer(minLength: 4)
-                                        Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(Theme.orange)
-                                    }
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 10)
-                                    .frame(minHeight: 52)
-                                    .background(RoundedRectangle(cornerRadius: 14).fill(Color(hex: 0x2A2116)))
-                                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: 0x6B4A1F)))
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
+                    WaitingList(workspace: workspace, items: waiting)
                 }
             }
 
             PanelSection("In the group") {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(workspace.groupMembers, id: \.id) { member in
+                    ForEach(workspace.members(of: group), id: \.id) { member in
                         GroupMemberRow(
                             bot: member.bot,
                             kind: workspace.avatar(for: member.id) ?? .circle,
-                            writing: workspace.groupSpeaker == member.id
+                            writing: workspace.groupSpeakers[group.id] == member.id
                         ) {
                             workspace.select(member.id == Workspace.mainBotID ? nil : member.id)
                         }
                     }
-                    Text("Without @, everyone reads your message in turn and answers only if it concerns them. @name talks to one bot (@Maintainer too).")
+                    Text("Without @, everyone here reads your message in turn and answers only if it concerns them. @name talks to one of them.")
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.faint)
                         .padding(.top, 4)
@@ -223,7 +338,7 @@ struct GroupPanel: View {
                 .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
             }
 
-            let results = Array(group.results.prefix(3))
+            let results = Array(chat.results.prefix(3))
             if !results.isEmpty {
                 PanelSection("Just done") {
                     VStack(spacing: 6) {
@@ -248,7 +363,35 @@ struct GroupPanel: View {
     }
 }
 
-/// One member in the group panel; it follows that bot, so its state stays current.
+/// Questions waiting for you; each opens the chat where it can be answered.
+struct WaitingList: View {
+    @ObservedObject var workspace: Workspace
+    let items: [Workspace.Waiting]
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ForEach(items) { item in
+                Button { workspace.select(item.groupID ?? (item.projectID == Workspace.mainBotID ? nil : item.projectID)) } label: {
+                    HStack(spacing: 12) {
+                        AvatarView(kind: workspace.avatar(for: item.projectID) ?? .cloud, size: 26)
+                        Text(item.text).lineLimit(2).multilineTextAlignment(.leading)
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(Theme.orange)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .frame(minHeight: 52)
+                    .background(RoundedRectangle(cornerRadius: 14).fill(Color(hex: 0x2A2116)))
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: 0x6B4A1F)))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+/// One member in a group's panel; it follows that bot, so its state stays current.
 private struct GroupMemberRow: View {
     @ObservedObject var bot: Bot
     let kind: AvatarKind
@@ -519,6 +662,12 @@ struct DetailPanel: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
                 .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
+            }
+
+            if bot.profile.role == .main, !workspace.waiting.isEmpty {
+                PanelSection("Waiting on you") {
+                    WaitingList(workspace: workspace, items: workspace.waiting)
+                }
             }
 
             let results = Array(bot.results.prefix(3))

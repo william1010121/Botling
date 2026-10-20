@@ -72,7 +72,7 @@ struct InstallTests {
 
         let source = "file://\(repo.path)"
         #expect(await workspace.proposeInstall(source) == nil)
-        let card = try #require(workspace.group.messages.last { $0.role == .notice && $0.isOpenQuestion })
+        let card = try #require(workspace.mainBot.messages.last { $0.role == .notice && $0.isOpenQuestion })
         print(card.text)
         #expect(card.text.contains("Secret number"))
         #expect(card.text.contains("Source: \(source)"))
@@ -81,11 +81,11 @@ struct InstallTests {
         #expect(card.text.contains("(MCP): numbers"))
         #expect(workspace.plugins.plugin("ccb-number") == nil)
 
-        #expect(workspace.choose(0, in: card.id, of: workspace.group))
+        #expect(workspace.choose(0, in: card.id, of: workspace.mainBot))
         await eventually { workspace.plugins.plugin("ccb-number") != nil }
         let plugin = try #require(workspace.plugins.plugin("ccb-number"))
         #expect(plugin.installedFrom == source)
-        #expect(workspace.group.messages.last?.text.hasPrefix("Installed: Secret number 1.0.0") == true)
+        #expect(workspace.mainBot.messages.last?.text.hasPrefix("Installed: Secret number 1.0.0") == true)
         #expect(workspace.plugins.git.run(["log", "-1", "--format=%s"]).output.hasPrefix("Install ccb-number 1.0.0"))
         #expect(!FileManager.default.fileExists(atPath: plugin.folder.appending(path: ".git").path))
 
@@ -115,9 +115,9 @@ struct InstallTests {
         let workspace = workspace(fake)
         await workspace.pluginLibraryReady.value
         workspace.mainBot.send("Install that plugin for me")
-        await eventually({ workspace.group.messages.contains { $0.role == .notice && $0.isOpenQuestion } }, timeout: 10)
-        let card = try #require(workspace.group.messages.last { $0.role == .notice && $0.isOpenQuestion })
-        #expect(workspace.choose(1, in: card.id, of: workspace.group))
+        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion } }, timeout: 10)
+        let card = try #require(workspace.mainBot.messages.last { $0.role == .notice && $0.isOpenQuestion })
+        #expect(workspace.choose(1, in: card.id, of: workspace.mainBot))
         try await Task.sleep(for: .milliseconds(200))
         #expect(workspace.plugins.plugin("ccb-number") == nil)
         #expect(!FileManager.default.fileExists(atPath: root.appending(path: "ccb/plugins/ccb-number").path))
@@ -130,14 +130,14 @@ struct InstallTests {
         await workspace.pluginLibraryReady.value
         #expect(await workspace.proposeInstall(repo.path, trusted: true) == nil)
         #expect(workspace.plugins.plugin("ccb-number")?.installedFrom == repo.path)
-        #expect(!workspace.group.messages.contains { $0.isOpenQuestion })
+        #expect(!workspace.mainBot.messages.contains { $0.isOpenQuestion })
 
         let broken = root.appending(path: "src/broken")
         try FileManager.default.createDirectory(at: broken, withIntermediateDirectories: true)
         try #"{ "name": "broken", "version": "1.0.0", "engines": { "ccb": "^9.0.0" } }"#
             .write(to: broken.appending(path: "package.json"), atomically: true, encoding: .utf8)
         #expect(await workspace.proposeInstall(broken.path) != nil)
-        #expect(workspace.group.messages.last?.text.contains("failed the checks") == true)
+        #expect(workspace.mainBot.messages.last?.text.contains("failed the checks") == true)
         #expect(workspace.plugins.plugin("broken") == nil)
     }
 }

@@ -4,6 +4,23 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## 1.3.0
+
+### Changed
+
+- **Group chats like a messenger.** Instead of one group of everyone, make as many groups as you
+  like (+ next to Groups in the left column), name them and tick who is in each: the main bot,
+  Maintainer, projects or bots. Right-click a group, or use the button in its panel, to rename it
+  or add and take out members; delete it from the same menu. In a group, `@name` reaches only its
+  members; without the main bot, the first member takes greetings. A removed bot leaves its groups,
+  and a group with nobody left goes away.
+- **Each bot's news stays in its own chat.** Project reports and questions, routine results and
+  tool questions show where the bot said them, with a dot in the left column, instead of being
+  copied into one place. Maintainer asks to read a folder in its own chat. The app's own lines
+  (installs, plugin updates, team results, new and removed bots) go to the main bot's chat, and
+  its panel lists everything waiting on you again.
+- The 1.2.0 group chat is put away: its notices go back to the main bot's chat.
+
 ## 1.2.0
 
 ### Added

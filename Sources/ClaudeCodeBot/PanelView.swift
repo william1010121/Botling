@@ -18,7 +18,7 @@ enum PluginBridge {
         case "pluginNotice":
             if let name = body["name"] as? String, let text = body["text"] as? String {
                 let title = plugins.plugin(name)?.manifest.title ?? name
-                workspace.group.notice("\(title): \(text)")
+                workspace.mainBot.notice("\(title): \(text)")
             }
         case "command":
             if let id = body["id"] as? String { Task { await workspace.runCommand(id) } }

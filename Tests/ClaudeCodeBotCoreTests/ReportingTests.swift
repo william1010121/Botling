@@ -77,64 +77,40 @@ struct ReportingTests {
         #expect(manager.openQuestion == nil)
     }
 
-    @Test func questionGoesUpToTheMainBotAndCanBeAnsweredThere() async throws {
+    @Test func aQuestionStaysInTheManagersChatAndWaitsForYou() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in text.contains("succulents") ? question : "OK, doing that." }
         let (workspace, project, manager) = try setUp(fake)
         workspace.select(nil)
 
         manager.relay("Should we support succulents? Let the user decide")
-        await eventually { workspace.group.messages.contains { $0.role == .notice } }
-
-        let notice = try #require(workspace.group.messages.last)
-        #expect(notice.role == .notice)
-        #expect(notice.text == "garden: Should we support succulents?")
-        #expect(notice.sourceID == project.id)
-        #expect(notice.isOpenQuestion)
+        await eventually { manager.openQuestion != nil }
+        // Nothing is copied into the main bot's chat: the question waits where it was asked.
+        #expect(!workspace.mainBot.messages.contains { $0.role == .notice })
         #expect(workspace.waiting.map(\.text) == ["Should we support succulents?"])
+        #expect(workspace.waiting.first?.projectID == project.id)
+        #expect(manager.hasUnread)
         // The main bot was not woken to say it.
         #expect(fake.agents.count == 1)
 
-        #expect(workspace.choose(0, in: notice.id, of: workspace.group))
+        let asked = try #require(manager.openQuestion)
+        #expect(workspace.choose(0, in: asked.id, of: manager))
         await eventually { manager.messages.last?.text == "OK, doing that." }
-
         #expect(fake.agents[0].sent.last == "Support them")
-        #expect(workspace.group.messages.first { $0.id == notice.id }?.chosen == 0)
-        #expect(manager.messages.first { $0.id == notice.sourceMessageID }?.chosen == 0)
         #expect(workspace.waiting.isEmpty)
     }
 
-    @Test func answeringInTheProjectChatSettlesTheNotice() async throws {
-        let fake = FakeLauncher()
-        fake.respond = { text in text.contains("succulents") ? question : "OK." }
-        let (workspace, project, manager) = try setUp(fake)
-
-        manager.relay("Should we support succulents?")
-        await eventually { manager.openQuestion != nil }
-        workspace.select(project.id)
-        let asked = try #require(manager.openQuestion)
-
-        #expect(workspace.choose(1, in: asked.id, of: manager))
-        let notice = try #require(workspace.group.messages.first { $0.role == .notice })
-        #expect(notice.chosen == 1)
-        #expect(!notice.isOpenQuestion)
-    }
-
-    @Test func finishedRelayedWorkIsReportedButChatWithTheUserIsNot() async throws {
+    @Test func finishedRelayedWorkStaysInTheManagersChat() async throws {
         let fake = FakeLauncher()
         fake.respond = { _ in "README is written." }
         let (workspace, _, manager) = try setUp(fake)
-
-        manager.send("Hello")
-        await eventually { manager.messages.count == 2 }
-        #expect(!workspace.group.messages.contains { $0.role == .notice })
+        workspace.select(nil)
 
         manager.relay("Write the README")
-        await eventually { manager.messages.count == 4 }
-        let notices = workspace.group.messages.filter { $0.role == .notice }
-        #expect(notices.map(\.text) == ["garden: README is written."])
-        #expect(notices.first?.choices == nil)
-        #expect(workspace.group.hasUnread)
+        await eventually { manager.messages.count == 2 }
+        #expect(manager.messages.last?.text == "README is written.")
+        #expect(manager.hasUnread)
+        #expect(!workspace.mainBot.messages.contains { $0.role == .notice })
     }
 
     @Test func managersAreToldHowToAskForADecision() {

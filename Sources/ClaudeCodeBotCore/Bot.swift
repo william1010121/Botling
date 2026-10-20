@@ -48,8 +48,8 @@ public final class Bot: ObservableObject, Identifiable {
     public var replyObserver: ((ChatMessage) -> Void)?
     /// Called with the tags a reply carried (pull up a team, ask the component team).
     public var onRequests: (([BotRequest]) -> Void)?
-    /// It asked you something outside a reply (may it use a tool?), so a manager's question can
-    /// go up to the group chat too.
+    /// It asked you something outside a reply (may it use a tool?), so a question asked during a
+    /// group turn can show in that group too.
     public var onQuestion: ((ChatMessage) -> Void)?
     /// Tools you said it may always use; it starts with them allowed.
     @Published public private(set) var alwaysAllowed: [String]
@@ -82,8 +82,6 @@ public final class Bot: ObservableObject, Identifiable {
         case failed(String)
     }
 
-    /// Its group-chat turn is running.
-    public var isInGroupTurn: Bool { groupReply != nil }
     /// Whether the running turn started from a relay.
     private var turnFromRelay = false
     /// Something the App needs this awake bot to know, sent ahead of its next message.
@@ -380,7 +378,7 @@ public final class Bot: ObservableObject, Identifiable {
 
     // MARK: Group chat
 
-    /// Says `text` (its turn in the group chat) and returns the reply, showing neither in this
+    /// Says `text` (its turn in a group chat) and returns the reply, showing neither in this
     /// chat. Wakes it if asleep. While it is busy with its own chat it waits up to `waitFor`,
     /// then gives up (`.busy`); once asked, it gets `answerWithin` to reply.
     public func groupTurn(_ text: String, waitFor: TimeInterval = 20, answerWithin: TimeInterval = 5 * 60) async -> GroupAnswer {
@@ -419,19 +417,10 @@ public final class Bot: ObservableObject, Identifiable {
         waiter.resume(returning: answer)
     }
 
-    /// A line in this chat that is not part of its own conversation (the group chat's lines).
+    /// A line in this chat that is not part of its own conversation (a group chat's lines).
     public func post(_ message: ChatMessage, unread: Bool = true) {
         append(message)
         if unread { hasUnread = true }
-    }
-
-    /// Takes the notices out of this chat (they move to the group chat).
-    public func takeNotices() -> [ChatMessage] {
-        let notices = messages.filter { $0.role == .notice }
-        guard !notices.isEmpty else { return [] }
-        messages.removeAll { $0.role == .notice }
-        store?.save(messages: messages)
-        return notices
     }
 
     /// Puts earlier lines in, in date order (notices moving over from another chat).

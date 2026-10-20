@@ -106,7 +106,7 @@ struct PermissionTests {
         #expect(!bot.choose(0, in: question.id))
     }
 
-    @Test func aManagersQuestionGoesUpToTheMainChat() async throws {
+    @Test func aManagersQuestionWaitsInItsOwnChat() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in isAppOnly(text) ? "OK" : nil }
         let workspace = Workspace(root: root.appending(path: "ccb")) { profile, store in
@@ -119,12 +119,12 @@ struct PermissionTests {
         manager.send("Publish it")
         await eventually { fake.agents.count == 1 }
         fake.agents[0].emit(.permission(request("r1")))
-        await eventually { workspace.group.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
+        await eventually { manager.openQuestion != nil }
         #expect(workspace.waiting.first?.projectID == project.id)
+        #expect(!workspace.mainBot.messages.contains { $0.role == .notice })
 
-        // Picking in the main chat answers the manager's claude.
-        let notice = try #require(workspace.group.messages.last { $0.role == .notice && $0.isOpenQuestion })
-        #expect(workspace.choose(0, in: notice.id, of: workspace.group))
+        let question = try #require(manager.openQuestion)
+        #expect(workspace.choose(0, in: question.id, of: manager))
         #expect(fake.agents[0].answers.first?.1 == true)
         #expect(manager.openQuestion == nil)
     }
@@ -185,26 +185,6 @@ struct PermissionTests {
         #expect(StreamEvent.events(in: #"{"type":"control_cancel_request","request_id":"r1"}"#) == [.permissionCancelled("r1")])
         #expect(StreamEvent.unsupportedRequest(in: #"{"type":"control_request","request_id":"e1","request":{"subtype":"elicitation"}}"#) == "e1")
         #expect(StreamEvent.unsupportedRequest(in: #"{"type":"control_request","request_id":"p1","request":{"subtype":"can_use_tool","tool_name":"X"}}"#) == nil)
-    }
-
-    @Test func theMainChatCopyClosesWhenTheManagersQuestionIsSettled() async throws {
-        let fake = FakeLauncher()
-        fake.respond = { text in isAppOnly(text) ? "OK" : nil }
-        let workspace = Workspace(root: root.appending(path: "ccb")) { profile, store in
-            Bot(profile: profile, launcher: fake.launcher, store: store)
-        }
-        let folder = root.appending(path: "code/eeg")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let manager = try #require(workspace.bot(for: workspace.addProject(folder: folder)))
-        manager.send("Publish it")
-        await eventually { fake.agents.count == 1 }
-        fake.agents[0].emit(.permission(request("r1")))
-        await eventually { workspace.group.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
-        // claude goes away: both copies close.
-        fake.agents[0].finish()
-        await eventually { !workspace.group.messages.contains { $0.isOpenQuestion } }
-        #expect(workspace.group.messages.last { $0.role == .notice }?.answer == Bot.noLongerNeeded)
-        #expect(workspace.waiting.isEmpty)
     }
 
     @Test func askUserQuestionIsTurnedOffForBots() {

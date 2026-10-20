@@ -30,7 +30,7 @@ struct StandaloneBotTests {
         #expect(!bot.prompts.system.contains("manager of the"))
         let ignore = try String(contentsOf: project.notesFolder.appending(path: ".gitignore"), encoding: .utf8)
         #expect(ignore == "*\n")
-        #expect(workspace.group.messages.last?.text.contains("New bot \"Morning news\"") == true)
+        #expect(workspace.mainBot.messages.last?.text.contains("New bot \"Morning news\"") == true)
     }
 
     @Test func theSameNameTwiceKeepsOneBotAndEmptyOnesAreRefused() throws {
@@ -166,12 +166,14 @@ struct StandaloneBotTests {
         bot.send("Publish it")
         await eventually { fake.agents.count == 1 }
         fake.agents[0].emit(.permission(PermissionRequest(id: "r1", tool: "Artifact", summary: "a.html", input: "{}")))
-        await eventually { workspace.group.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
+        await eventually { bot.openQuestion != nil }
+        #expect(workspace.waiting.contains { $0.projectID == project.id })
 
         workspace.removeBot(project.id)
         #expect(fake.agents[0].finished)
         #expect(workspace.selection == nil)
-        #expect(!workspace.group.messages.contains { $0.isOpenQuestion })
+        #expect(bot.openQuestion == nil)
+        #expect(!workspace.waiting.contains { $0.projectID == project.id })
     }
 
     @Test func removingABotDuringAHandoffDoesNotStartItAgain() async throws {
@@ -210,6 +212,6 @@ struct StandaloneBotTests {
         workspace.createBot(name: "News", job: "x")
         workspace.handle([.newBot(name: "news", job: "y")], from: nil)
         #expect(workspace.standaloneBots.count == 1)
-        #expect(workspace.group.messages.last?.text.contains("already a bot called \"News\"") == true)
+        #expect(workspace.mainBot.messages.last?.text.contains("already a bot called \"News\"") == true)
     }
 }

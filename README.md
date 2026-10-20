@@ -21,11 +21,12 @@ a link to the result. Bots sleep when idle, write down what matters, and wake up
   through each project's inbox.
 - **Temporary teams**: a wish that belongs to no project goes to a research or prototype team, which
   hands back a one-page result.
-- **Only interrupts when it should**: managers report when they finish or get stuck; when you need to
-  decide, buttons appear (with a recommended option and what each one costs).
-- **Group chat**: you and every bot in one conversation; without @ each bot reads in turn and
-  answers only if it has something to add, `@name` talks to one. Reports and questions land here,
-  so each bot's own chat is just your conversation with it.
+- **Only interrupts when it should**: each bot reports in its own chat when it finishes or gets
+  stuck; when you need to decide, buttons appear (with a recommended option and what each one
+  costs), and the main bot's panel lists everything waiting on you.
+- **Group chats, like a messenger**: make as many groups as you like and pick who is in each;
+  without @ every member reads in turn and answers only if it has something to add, `@name` talks
+  to one.
 - **Bots of their own**: a morning news bot or a reading coach, with its own memory and routines
   (New bot in the left column, ask the main bot, or `ccb.bots.create` from a plugin).
 - **Asks before using a tool it may not use**: Allow once / Always allow / Don't allow, in the chat.
@@ -75,7 +76,7 @@ Swift 6.2 (Xcode 26) is needed. The web chat is prebuilt and committed in
 
 ![Architecture](docs/flowcharts/flow-7-architecture-v2.png)
 
-- **The shell** is SwiftUI: the left column lists the main bot, the group chat, your projects and
+- **The shell** is SwiftUI: the left column lists the main bot, your groups, your projects and
   bots; the right column shows what is going on, what waits for you, results and settings. Result
   pages open in windows of their own.
 - **The chat** in the middle is a web page (TypeScript, markdown-it, KaTeX, CodeMirror 6) in a

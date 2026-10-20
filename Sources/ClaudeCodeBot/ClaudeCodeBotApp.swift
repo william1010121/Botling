@@ -40,8 +40,8 @@ struct RootView: View {
             ChatSurface(bot: bot, workspace: workspace, components: workspace.components, plugins: workspace.plugins, inputs: inputs)
                 .frame(minWidth: 480, maxWidth: .infinity)
             Group {
-                if bot === workspace.group {
-                    GroupPanel(workspace: workspace, group: workspace.group)
+                if let group = workspace.group(of: bot) {
+                    GroupPanel(workspace: workspace, group: group, chat: bot)
                 } else {
                     DetailPanel(workspace: workspace, bot: bot)
                 }
@@ -63,7 +63,7 @@ struct RootView: View {
 extension RootView {
     /// The chip text a bot used for `url`, else its file name.
     static func label(for url: URL, in workspace: Workspace) -> String {
-        let bots = [workspace.mainBot, workspace.group] + workspace.projects.compactMap(workspace.bot(for:))
+        let bots = [workspace.mainBot] + workspace.projects.compactMap(workspace.bot(for:)) + Array(workspace.groupChats.values)
         return bots.lazy.flatMap(\.results).first { $0.url == url }?.label ?? url.deletingPathExtension().lastPathComponent
     }
 }

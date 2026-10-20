@@ -31,8 +31,8 @@ public struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
         case user, bot, divider, error
         /// Work handed over by the main bot; `text` is the instruction.
         case relay
-        /// In the group chat: a project manager reported something, or the app says something.
-        /// `sourceID` is the project (or `Workspace.mainBotID`).
+        /// The app says something, or a bot's question is copied here (a group chat). `sourceID`
+        /// is the bot it is about (a project's id, or `Workspace.mainBotID`).
         case notice
     }
 
