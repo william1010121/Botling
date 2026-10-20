@@ -81,6 +81,72 @@ struct PagePreviewTests {
         #expect(PagePreview.response(for: PagePreview.previewURL(for: picture))?.mimeType == "image/svg+xml")
     }
 
+    /// WebKit plays a video or sound through `ccb-preview:` only when it is answered in byte
+    /// ranges: `Range: bytes=0-1` first, then the parts it needs (206 + Content-Range).
+    @Test func videoAndAudioBesideAPageAreServedInByteRanges() throws {
+        let bytes = Data((0..<1000).map { UInt8($0 % 251) })
+        let video = root.appending(path: "p/.bot/artifacts/demo.mp4")
+        try FileManager.default.createDirectory(at: video.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try bytes.write(to: video)
+        let sound = root.appending(path: "p/.bot/artifacts/voice.mp3")
+        try bytes.write(to: sound)
+        let url = PagePreview.previewURL(for: video)
+
+        let probe = try #require(PagePreview.response(for: url, range: "bytes=0-1"))
+        #expect(probe.statusCode == 206)
+        #expect(probe.mimeType == "video/mp4")
+        #expect(probe.data == bytes.prefix(2))
+        #expect(probe.headers["Content-Range"] == "bytes 0-1/1000")
+        #expect(probe.headers["Content-Length"] == "2")
+        #expect(probe.headers["Content-Type"] == "video/mp4")
+        #expect(probe.headers["Accept-Ranges"] == "bytes")
+
+        let middle = try #require(PagePreview.response(for: url, range: "bytes=100-199"))
+        #expect(middle.statusCode == 206)
+        #expect(middle.data == bytes.subdata(in: 100..<200))
+        #expect(middle.headers["Content-Range"] == "bytes 100-199/1000")
+        let rest = try #require(PagePreview.response(for: url, range: "bytes=990-"))
+        #expect(rest.data == bytes.suffix(10))
+        #expect(rest.headers["Content-Range"] == "bytes 990-999/1000")
+        let tail = try #require(PagePreview.response(for: url, range: "bytes=-5"))
+        #expect(tail.data == bytes.suffix(5))
+        #expect(tail.headers["Content-Range"] == "bytes 995-999/1000")
+        // Past the end is cut to the end; a start past it cannot be answered.
+        #expect(PagePreview.response(for: url, range: "bytes=900-5000")?.data == bytes.suffix(100))
+        let beyond = try #require(PagePreview.response(for: url, range: "bytes=1000-"))
+        #expect(beyond.statusCode == 416)
+        #expect(beyond.headers["Content-Range"] == "bytes */1000")
+        #expect(beyond.data.isEmpty)
+
+        // Without a range: the whole file, saying ranges may be asked for.
+        let whole = try #require(PagePreview.response(for: url))
+        #expect(whole.statusCode == 200)
+        #expect(whole.data == bytes)
+        #expect(whole.headers["Accept-Ranges"] == "bytes")
+        #expect(whole.headers["Content-Length"] == "1000")
+
+        #expect(PagePreview.response(for: PagePreview.previewURL(for: sound), range: "bytes=0-1")?.mimeType == "audio/mpeg")
+        // Still only files that may be served.
+        let secret = root.appending(path: "p/clip.mp4")
+        try bytes.write(to: secret)
+        #expect(PagePreview.response(for: PagePreview.previewURL(for: secret), range: "bytes=0-1") == nil)
+    }
+
+    /// 開啟完整頁面: a page in an `artifacts` folder opens through `ccb-preview:` as well, since
+    /// WebKit will not play a video beside a page loaded from data with a `file:` base.
+    @Test func theFullWindowLoadsArtifactPagesThroughTheScheme() throws {
+        let page = try write("p/.bot/artifacts/demo.html")
+        let window = PagePreview.windowURL(for: page)
+        #expect(window.scheme == PagePreview.scheme)
+        #expect(PagePreview.file(forPreview: window) == page)
+        let outside = try write("p/site/index.html")
+        #expect(PagePreview.windowURL(for: outside) == outside)
+        let picture = try write("p/.bot/artifacts/chart.svg", "<svg/>")
+        #expect(PagePreview.windowURL(for: picture) == picture)
+        let web = try #require(URL(string: "https://example.com/a/artifacts/x.html"))
+        #expect(PagePreview.windowURL(for: web) == web)
+    }
+
     @Test func picturesAComponentNamesByPathAreServedToItsFrame() throws {
         let chart = try write("p/charts/chart.png", "png")
         let photo = try write("p/photos/me.JPG", "jpg")
