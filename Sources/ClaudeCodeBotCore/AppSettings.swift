@@ -22,6 +22,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     public var stallReminderInterval: TimeInterval { TimeInterval(max(0, stallReminderMinutes ?? StallWatch.defaultMinutes) * 60) }
 
+    /// The left column folded into a strip of faces. Nil (a settings file from before it)
+    /// means open.
+    public var railCollapsed: Bool?
+
     public init(developerMode: Bool = false, developerProjectID: UUID? = nil) {
         self.developerMode = developerMode
         self.developerProjectID = developerProjectID

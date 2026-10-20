@@ -38,11 +38,15 @@ struct RootView: View {
     @ObservedObject var workspace: Workspace
     @ObservedObject var settings: SettingsNavigator
     @StateObject private var inputs = ChatInputs()
+    @State private var railTip: RailTip?
 
     var body: some View {
         let bot = workspace.selectedBot
+        let collapsed = workspace.railCollapsed
         HStack(spacing: 0) {
-            RailView(workspace: workspace, settings: settings).frame(width: 240)
+            RailView(workspace: workspace, settings: settings, collapsed: collapsed, tip: $railTip)
+                .frame(width: RailLayout.width(collapsed: collapsed))
+                .overlay(alignment: .trailing) { Rectangle().fill(Theme.line).frame(width: 1).opacity(collapsed ? 1 : 0) }
             // One web view for every bot: switching bots redraws it instead of reloading.
             ChatSurface(bot: bot, workspace: workspace, components: workspace.components, commands: workspace.componentCommands, plugins: workspace.plugins, inputs: inputs)
                 .frame(minWidth: 480, maxWidth: .infinity)
@@ -56,6 +60,9 @@ struct RootView: View {
             .frame(width: 340)
             .id(bot.id)
         }
+        .coordinateSpace(name: RailTip.space)
+        .overlay(alignment: .topLeading) { RailChrome(collapsed: collapsed, tip: railTip) { toggleRail() } }
+        .onChange(of: collapsed) { _, _ in railTip = nil }
         // Chips and result rows: web links in the browser, local files in a window of their own.
         .environment(\.openURL, OpenURLAction { url in
             ResultWindows.open(Chip(label: Self.label(for: url, in: workspace), url: url))
@@ -71,6 +78,11 @@ struct RootView: View {
 }
 
 extension RootView {
+    private func toggleRail() {
+        withAnimation(.easeInOut(duration: 0.2)) { workspace.toggleRail() }
+    }
+
+
     /// The chip text a bot used for `url`, else its file name.
     static func label(for url: URL, in workspace: Workspace) -> String {
         let bots = [workspace.mainBot] + workspace.projects.compactMap(workspace.bot(for:)) + Array(workspace.groupChats.values)
@@ -88,7 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A run that only draws a snapshot or checks a plugin, then quits.
     static var isHeadless: Bool {
         let environment = ProcessInfo.processInfo.environment
-        return environment["CCB_SNAPSHOT"] != nil || environment["CCB_ICON"] != nil || environment["CCB_CODEX_SNAPSHOT"] != nil
+        return environment["CCB_SNAPSHOT"] != nil || environment["CCB_ICON"] != nil || environment["CCB_CODEX_SNAPSHOT"] != nil || environment["CCB_RAIL_SNAPSHOT"] != nil
             || CommandLine.arguments.contains("--check-plugin") || Snapshot.isChatRequest
     }
 
