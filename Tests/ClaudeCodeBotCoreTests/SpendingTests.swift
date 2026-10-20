@@ -2,13 +2,13 @@ import Foundation
 import Testing
 @testable import ClaudeCodeBotCore
 
-/// What bots spend is added up per day; past the budget only work nobody typed waits.
+/// What bots spend is added up per day, only to be shown; it never holds work back.
 @MainActor
-struct BudgetTests {
-    let root = FileManager.default.temporaryDirectory.appending(path: "ccb-budget-\(UUID().uuidString)")
+struct SpendingTests {
+    let root = FileManager.default.temporaryDirectory.appending(path: "ccb-spending-\(UUID().uuidString)")
 
     func makeWorkspace(_ fake: FakeLauncher) -> Workspace {
-        Workspace(root: root.appending(path: "ccb")) { profile, store in
+        Workspace(root: root.appending(path: "ccb"), launcher: fake.launcher) { profile, store in
             Bot(profile: profile, launcher: fake.launcher, store: store)
         }
     }
@@ -81,54 +81,38 @@ struct BudgetTests {
     }
 
     @Test func aNewDayStartsFromZero() {
-        var spending = Spending(day: "2026-10-19", spent: 3, allowance: 1, byBot: ["Main bot": 3], warned: true)
+        var spending = Spending(day: "2026-10-19", spent: 3, byBot: ["Main bot": 3])
         spending.add(0.5, by: "garden", on: Date())
         #expect(spending.day == Spending.today())
-        #expect(spending.spent == 0.5 && spending.allowance == 0 && !spending.warned)
+        #expect(spending.spent == 0.5)
         #expect(spending.byBot == ["garden": 0.5])
     }
 
-    @Test func pastTheBudgetOnlyWorkNobodyTypedWaits() async throws {
+    @Test func spendingAnyAmountNeverHoldsWorkBack() async throws {
         let fake = FakeLauncher()
         let workspace = makeWorkspace(fake)
         let folder = root.appending(path: "code/garden")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let project = workspace.addProject(folder: folder)
-        workspace.setDailyBudget(1)
-        #expect(!workspace.isOverBudget)
 
-        workspace.record(1.2, by: "garden")
-        #expect(workspace.isOverBudget)
-        let card = try #require(workspace.mainBot.messages.last { $0.isOpenQuestion })
-        #expect(card.text.contains("$1.20 of your $1.00 budget"))
-        // Saying it again later today does not repeat the card.
-        workspace.record(0.1, by: "garden")
-        #expect(workspace.mainBot.messages.filter(\.isOpenQuestion).count == 1)
+        workspace.record(500, by: "garden")
+        #expect(workspace.spending.spent == 500)
+        // No card about spending.
+        #expect(!workspace.mainBot.messages.contains { $0.isOpenQuestion })
 
-        // Handed-over work waits in the inbox; a team does not start.
+        // Handed-over work is delivered and a team starts.
         try "Water the plants\n".write(to: project.inboxURL, atomically: true, encoding: .utf8)
         workspace.deliverInboxes()
         let manager = try #require(workspace.bot(for: project))
-        #expect(manager.messages.isEmpty)
-        #expect(workspace.startTeam("research", task: "Look it up") == nil)
-        // Your own message still goes through.
-        manager.send("Hi")
-        await eventually { manager.messages.last?.role == .bot }
-
-        // Allowing more today lets the waiting work go on.
-        #expect(workspace.choose(0, in: card.id, of: workspace.mainBot))
-        #expect(!workspace.isOverBudget)
         await eventually { manager.messages.contains { $0.role == .relay && $0.text == "Water the plants" } }
-        // It was saved.
-        #expect(AppSettings.load(from: root.appending(path: "ccb/settings.json")).dailyBudget == 1)
-        #expect(Spending.load(from: root.appending(path: "ccb/spending.json")).allowance == 1)
+        #expect(workspace.startTeam("research", task: "Look it up") != nil)
     }
 
-    @Test func noBudgetMeansNoLimit() {
-        let workspace = makeWorkspace(FakeLauncher())
-        workspace.record(500, by: "garden")
-        #expect(!workspace.isOverBudget)
-        workspace.setDailyBudget(0)
-        #expect(workspace.settings.dailyBudget == nil)
+    @Test func aSettingsFileWithAnOldDailyBudgetStillLoads() throws {
+        let url = root.appending(path: "settings.json")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data(#"{"dailyBudget":5,"developerMode":true,"autoApprove":false}"#.utf8).write(to: url)
+        let loaded = AppSettings.load(from: url)
+        #expect(loaded.developerMode && loaded.autoApprove == false)
     }
 }

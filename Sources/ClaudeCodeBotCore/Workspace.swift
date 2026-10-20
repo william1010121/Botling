@@ -125,14 +125,12 @@ public final class Workspace: ObservableObject {
     public let pluginHost: PluginHostClient?
     public let root: URL
     private let makeBot: BotFactory
-    /// ClaudeCodeBot's own settings: daily budget, developer mode.
+    /// ClaudeCodeBot's own settings: developer mode, auto-approve, ignored items.
     @Published public internal(set) var settings: AppSettings
     /// What the bots spent today.
     @Published public internal(set) var spending: Spending
     var settingsURL: URL { root.appending(path: "settings.json") }
     var spendingURL: URL { root.appending(path: "spending.json") }
-    /// The "budget reached" card waiting for a pick.
-    var budgetQuestion: UUID?
     /// The ClaudeCodeBot build running now; nil when not run from an app bundle (`swift run`).
     public var runningBuild: BuildInfo?
     /// Runs the install script, detached, and quits the app (the app sets it).
@@ -536,10 +534,6 @@ public final class Workspace: ObservableObject {
     /// Forgets an app card that was answered in words, undoing what it waited to do; says what
     /// the card was about. Nil if `id` is no app card waiting for a pick.
     private func closeAppCard(_ id: UUID) -> String? {
-        if id == budgetQuestion {
-            budgetQuestion = nil
-            return "saying today's budget is used up"
-        }
         if let proposal = buildQuestions.removeValue(forKey: id) {
             managers[proposal.requester]?.queueNote("(App: The user did not install \(proposal.build.label); they wrote instead.)")
             return "asking to install the ClaudeCodeBot build \(proposal.build.label)"
@@ -717,8 +711,6 @@ public final class Workspace: ObservableObject {
     }
 
     public func checkRoutines(now: Date = Date()) {
-        // Over today's budget: routines wait (they are still due once there is room).
-        guard !isOverBudget else { return }
         for bot in [mainBot] + everyProject.compactMap({ managers[$0.id] }) {
             bot.reloadRoutines()
             for routine in bot.routines where bot.isDue(routine, at: now) {
@@ -947,11 +939,6 @@ public final class Workspace: ObservableObject {
     @discardableResult
     public func startTeam(_ name: String, task: String) -> TeamRun? {
         let spec = teams.first { $0.name == name } ?? teams.first ?? TeamSpec.defaults[0]
-        guard !isOverBudget else {
-            tell(mainBot, "\(spec.title) did not start: today's budget is used up. Raise it in Settings, or ask again tomorrow.")
-            mainBot.queueNote("(App: The \(spec.title) team was not started because today's budget is used up.)")
-            return nil
-        }
         let stamp = Date().formatted(.verbatim(
             "\(year: .defaultDigits)\(month: .twoDigits)\(day: .twoDigits)-\(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased))\(minute: .twoDigits)\(second: .twoDigits)",
             timeZone: .current,
@@ -1202,10 +1189,8 @@ public final class Workspace: ObservableObject {
             .store(in: &subscriptions)
     }
 
-    /// Hands whatever the main bot wrote into a project's inbox.md to that manager. Over today's
-    /// budget it stays in the inbox until there is room.
+    /// Hands whatever the main bot wrote into a project's inbox.md to that manager.
     public func deliverInboxes() {
-        guard !isOverBudget else { return }
         for project in everyProject {
             guard let text = try? String(contentsOf: project.inboxURL, encoding: .utf8),
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
@@ -1288,13 +1273,6 @@ public final class Workspace: ObservableObject {
             buildQuestions[messageID] = nil
             bot.markChosen(index, in: messageID)
             answerBuild(proposal.build, requester: proposal.requester, note: proposal.note, install: index == 0)
-            return true
-        }
-        if messageID == budgetQuestion {
-            guard message.isOpenQuestion else { return false }
-            budgetQuestion = nil
-            bot.markChosen(index, in: messageID)
-            answerBudget(index)
             return true
         }
         if let proposal = projectQuestions[messageID] {

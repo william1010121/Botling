@@ -150,7 +150,7 @@ struct RailView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Settings: usage and cost, budget, plugins")
+                .help("Settings: usage and cost, plugins")
                 .accessibilityLabel("Settings")
             }
         }
@@ -1412,8 +1412,8 @@ private struct SettingControl: View {
     }
 }
 
-/// ClaudeCodeBot's own settings, from the gear under the chat list: what the bots used, the
-/// daily budget, plugins, ignored items, developer mode.
+/// ClaudeCodeBot's own settings, from the gear under the chat list: what the bots used,
+/// plugins, ignored items, developer mode.
 private struct AppSettingsSheet: View {
     @ObservedObject var workspace: Workspace
     @Environment(\.dismiss) private var dismiss
@@ -1429,7 +1429,6 @@ private struct AppSettingsSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     UsageSection(workspace: workspace)
-                    BudgetSection(workspace: workspace)
                     PermissionsSection(workspace: workspace)
                     if workspace.ignoredWaitingCount > 0 {
                         PanelSection("Ignored") {
@@ -1521,54 +1520,6 @@ private struct UsageSection: View {
         .font(.system(size: 13))
         .padding(.horizontal, 14)
         .frame(height: 36)
-    }
-}
-
-/// What the bots may spend in a day, and what they spent today.
-private struct BudgetSection: View {
-    @ObservedObject var workspace: Workspace
-    @State private var text = ""
-
-    var body: some View {
-        PanelSection("Daily budget") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    Text("$").foregroundStyle(Theme.muted)
-                    TextField("No limit", text: $text)
-                        .textFieldStyle(.plain)
-                        .onSubmit(save)
-                    Button("Save", action: save)
-                        .buttonStyle(.plain)
-                        .foregroundStyle(Theme.blue)
-                        .disabled(Double(text) == workspace.settings.dailyBudget || (text.isEmpty && workspace.settings.dailyBudget == nil))
-                }
-                .font(.system(size: 14))
-                .padding(.horizontal, 14)
-                .frame(height: 44)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-                Text(summary)
-                    .font(.system(size: 12))
-                    .foregroundStyle(workspace.isOverBudget ? Theme.orange : Theme.faint)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .onAppear { text = workspace.settings.dailyBudget.map { String(format: "%g", $0) } ?? "" }
-    }
-
-    private var summary: String {
-        let today = workspace.spending.day == Spending.today() ? workspace.spending.spent : 0
-        let top = workspace.spending.byBot.sorted { $0.value > $1.value }.prefix(3)
-            .map { "\($0.key) \(Workspace.dollars($0.value))" }.joined(separator: ", ")
-        var line = "Spent today: \(Workspace.dollars(today))" + (top.isEmpty ? "" : " (\(top))") + "."
-        if workspace.isOverBudget { line += " Used up: routines, handed-over work and teams wait; your own messages still go through." }
-        else if workspace.settings.dailyBudget == nil { line += " With no limit, nothing ever waits." }
-        return line
-    }
-
-    private func save() {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        workspace.setDailyBudget(trimmed.isEmpty ? nil : Double(trimmed))
-        text = workspace.settings.dailyBudget.map { String(format: "%g", $0) } ?? ""
     }
 }
 

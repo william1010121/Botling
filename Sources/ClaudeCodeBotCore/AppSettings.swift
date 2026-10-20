@@ -1,10 +1,8 @@
 import Foundation
 
-/// ClaudeCodeBot's own settings, in `~/.claudecodebot/settings.json`.
+/// ClaudeCodeBot's own settings, in `~/.claudecodebot/settings.json`. Keys it no longer has
+/// (such as an old `dailyBudget`) are ignored when loading.
 public struct AppSettings: Codable, Equatable, Sendable {
-    /// What the bots may spend in a day, in US dollars; nil for no limit. Only work nobody typed
-    /// waits when it is used up (routines, handed-over work, teams); your own messages never do.
-    public var dailyBudget: Double?
     /// For working on ClaudeCodeBot itself: off for everyone else.
     public var developerMode = false
     /// The project whose folder is ClaudeCodeBot's own source (developer mode only).
@@ -18,8 +16,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     public var autoApprovesSafeActions: Bool { autoApprove ?? true }
 
-    public init(dailyBudget: Double? = nil, developerMode: Bool = false, developerProjectID: UUID? = nil) {
-        self.dailyBudget = dailyBudget
+    public init(developerMode: Bool = false, developerProjectID: UUID? = nil) {
         self.developerMode = developerMode
         self.developerProjectID = developerProjectID
     }
@@ -69,17 +66,13 @@ public struct DayTotal: Codable, Equatable, Sendable {
 
 /// What the bots spent today, from the cost `claude` reports with each turn, in
 /// `~/.claudecodebot/spending.json`. A new day starts from zero; the days before are kept as
-/// totals (the last 30).
+/// totals (the last 30). Keys from older files (`allowance`, `warned`) are ignored.
 public struct Spending: Codable, Equatable, Sendable {
     /// "2026-10-20", in the local time zone.
     public var day: String
     public var spent: Double
-    /// Extra you allowed today on top of the budget.
-    public var allowance: Double
     /// Spent today, by bot name.
     public var byBot: [String: Double]
-    /// The "budget reached" card was shown today.
-    public var warned: Bool
     /// Tokens used today, in all and by bot name.
     public var tokens = TokenUsage()
     public var tokensByBot: [String: TokenUsage] = [:]
@@ -88,24 +81,20 @@ public struct Spending: Codable, Equatable, Sendable {
 
     static let historyDays = 30
 
-    public init(day: String, spent: Double = 0, allowance: Double = 0, byBot: [String: Double] = [:], warned: Bool = false) {
+    public init(day: String, spent: Double = 0, byBot: [String: Double] = [:]) {
         self.day = day
         self.spent = spent
-        self.allowance = allowance
         self.byBot = byBot
-        self.warned = warned
     }
 
-    private enum CodingKeys: String, CodingKey { case day, spent, allowance, byBot, warned, tokens, tokensByBot, history }
+    private enum CodingKeys: String, CodingKey { case day, spent, byBot, tokens, tokensByBot, history }
 
     // A file from before tokens were counted still loads.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         day = try c.decode(String.self, forKey: .day)
         spent = try c.decode(Double.self, forKey: .spent)
-        allowance = try c.decode(Double.self, forKey: .allowance)
         byBot = try c.decode([String: Double].self, forKey: .byBot)
-        warned = try c.decode(Bool.self, forKey: .warned)
         tokens = try c.decodeIfPresent(TokenUsage.self, forKey: .tokens) ?? TokenUsage()
         tokensByBot = try c.decodeIfPresent([String: TokenUsage].self, forKey: .tokensByBot) ?? [:]
         history = try c.decodeIfPresent([DayTotal].self, forKey: .history) ?? []
@@ -149,11 +138,5 @@ public struct Spending: Codable, Equatable, Sendable {
         guard amount > 0 else { return }
         spent += amount
         byBot[bot, default: 0] += amount
-    }
-
-    /// Used up: work nobody typed waits.
-    func isOver(_ budget: Double?) -> Bool {
-        guard let budget, budget > 0 else { return false }
-        return spent >= budget + allowance
     }
 }
