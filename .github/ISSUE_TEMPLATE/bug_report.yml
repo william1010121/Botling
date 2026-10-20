@@ -1,0 +1,43 @@
+name: Bug report
+description: Something in ClaudeCodeBot does not work as it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Ask the main bot …
+        3. See …
+  - type: input
+    id: version
+    attributes:
+      label: ClaudeCodeBot version
+      placeholder: "1.10.0"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "macOS 15.5, Apple silicon"
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Settings → Doctor
+      description: The Claude Code and Codex versions and sign-in that Doctor shows (leave out paths).
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or logs
+      description: Please remove chats, names, emails and paths you do not want public.
