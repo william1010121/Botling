@@ -377,6 +377,9 @@ public enum SlashCommands {
     public static let all = [
         Command(name: "design", about: "Make a Claude Design and get its claude.ai link"),
     ]
+
+    /// Developer mode only, in the developer project's chat: the app answers it (`Workspace.share`).
+    public static let share = Command(name: "share", about: "Share a feature you built: check it, then open a pull request to ClaudeCodeBot")
 }
 
 /// How a component is written; the ccb-core:component-editor agent's instructions.

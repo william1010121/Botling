@@ -39,6 +39,10 @@ enum Snapshot {
             drawSpec(to: path)
             return true
         }
+        if let path = ProcessInfo.processInfo.environment["CCB_SHARE_SNAPSHOT"] {
+            drawShare(to: path, blocked: ProcessInfo.processInfo.environment["CCB_SHARE_BLOCKED"] != nil)
+            return true
+        }
         if let (chat, path) = chatRequest() {
             drawChat(chat, to: path)
             return true
@@ -139,11 +143,13 @@ enum Snapshot {
 
     /// Draws the main bot's chat under `root` in an offscreen window, saves it as a PNG, quits.
     /// `pins`: with the chat's pinned components (chips; `--board` draws its Board instead).
-    private static func draw(root: URL, to path: String, pins: Bool = false) {
+    /// `prepare` adds to the chat once loaded (an app card saved open is closed at load).
+    private static func draw(root: URL, to path: String, pins: Bool = false, prepare: (Workspace) -> Void = { _ in }) {
         guard let page = ChatSurface.pageURL else { exit(1) }
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
+        prepare(workspace)
         let board = CommandLine.arguments.contains("--board")
         let json = ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, pins: pins ? workspace.pinContext(for: workspace.mainBot, board: board) : nil, specs: pins) { projectID in
             AvatarImages.dataURL(projectID == nil ? .circle : .triangle, eyes: .open)
@@ -162,6 +168,38 @@ enum Snapshot {
         view.loadFileURL(page, allowingReadAccessTo: URL(filePath: "/"))
         self.window = window
         self.handler = handler
+    }
+
+    /// `CCB_SHARE_SNAPSHOT=/path/out.png`: developer mode's /share in a chat, from sample
+    /// features: the list, then a feature's checklist ready to open its pull request
+    /// (`CCB_SHARE_BLOCKED=1`: one the privacy check stops).
+    private static func drawShare(to path: String, blocked: Bool) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
+        let now = Date()
+        let reactions = CommunityShare.Feature(branch: "bot/pin-reactions", title: "Add emoji reactions to pinned messages", commits: 3, files: ["Web/src/pins.ts", "Web/src/pins.css", "Sources/ClaudeCodeBotCore/Pins.swift"], subjects: [])
+        let search = CommunityShare.Feature(branch: "bot/chat-search", title: "Search inside a chat with Cmd-F", commits: 5, files: Array(repeating: "x", count: 7), subjects: [])
+        let list = CommunityShare.listCard([reactions, search], base: "upstream/main")
+        let feature = blocked ? search : reactions
+        let checks: [CommunityShare.Check] = [
+            .init(state: .ok, text: "Up to date with upstream/main"),
+            blocked
+                ? .init(state: .failed, text: "Privacy check: Sources/ClaudeCodeBotCore/Search.swift: an Anthropic API key; Web/src/search.ts: your home folder's path")
+                : .init(state: .ok, text: "Privacy check: no keys, tokens or personal paths in the diff"),
+            .init(state: .ok, text: "Your fork: mei-lin/ClaudeCodeBot"),
+            .init(state: .ok, text: "Description drafted from its \(feature.commits) commits"),
+            .init(state: .ok, text: "Label: community-feature"),
+        ]
+        let card = CommunityShare.checklistCard(feature, checks: checks, owner: "mei-lin")
+        var picked = ChatMessage(role: .notice, text: list.text, date: now.addingTimeInterval(-20), choices: list.choices)
+        picked.chosen = blocked ? 1 : 0
+        BotStore(directory: root.appending(path: "main")).save(messages: [
+            ChatMessage(role: .bot, text: "Merged **emoji reactions on pins** into main and kept its branch `bot/pin-reactions`. Type /share when you want to send it upstream.", date: now.addingTimeInterval(-60)),
+            ChatMessage(role: .user, text: "/share", date: now.addingTimeInterval(-30)),
+            picked,
+        ])
+        draw(root: root, to: path) { workspace in
+            workspace.mainBot.notice(card.text, choices: card.ready ? [Choice(label: "Open pull request", recommended: true), Choice(label: "Not now")] : nil)
+        }
     }
 
     /// `CCB_CODEX_SNAPSHOT=/path/out.png`: the left column with Codex and a subagent in a review

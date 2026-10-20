@@ -160,6 +160,11 @@ public final class Workspace: ObservableObject {
     public var captureWindow: (() async -> URL?)?
     /// Build cards waiting for a pick: the build, the project that asked, what changed.
     var buildQuestions: [UUID: (build: BuildInfo, requester: UUID, note: String)] = [:]
+    /// Runs `git push` and `gh pr create` for /share (tests put a fake in).
+    public typealias ShareRunner = @Sendable (_ arguments: [String], _ folder: URL) -> (ok: Bool, output: String)
+    public var shareRunner: ShareRunner = { CommunityShare.run($0, in: $1) }
+    /// /share's cards waiting for a pick, by message id.
+    var shareQuestions: [UUID: ShareCard] = [:]
     /// Codex, the read-only reviewer: its chat (each message one fresh `codex exec`), where
     /// it works for the next turn, and what runs it.
     public let codexBot: Bot
@@ -681,6 +686,9 @@ public final class Workspace: ObservableObject {
         if let proposal = buildQuestions.removeValue(forKey: id) {
             managers[proposal.requester]?.queueNote("(App: The user did not install \(proposal.build.label); they wrote instead.)")
             return "asking to install the ClaudeCodeBot build \(proposal.build.label)"
+        }
+        if let card = shareQuestions.removeValue(forKey: id) {
+            return card.about
         }
         if let folders = projectQuestions.removeValue(forKey: id) {
             return "asking to add \(folders.map(\.folder.lastPathComponent).joined(separator: ", ")) as projects"
@@ -1676,6 +1684,13 @@ public final class Workspace: ObservableObject {
             }
             return true
         }
+        if let card = shareQuestions[messageID] {
+            guard message.isOpenQuestion else { return false }
+            shareQuestions[messageID] = nil
+            bot.markChosen(index, in: messageID)
+            answerShare(card, index: index, in: bot)
+            return true
+        }
         if let proposal = buildQuestions[messageID] {
             guard message.isOpenQuestion else { return false }
             buildQuestions[messageID] = nil
@@ -1897,6 +1912,8 @@ public final class Workspace: ObservableObject {
         if let group = group(of: bot) {
             postToGroup(group.id, text, files: files, replyingTo: replyID)
         } else {
+            // /share is the app's: it lists your features and opens a pull request for one.
+            if share(text, in: bot) { return }
             // Bots you named with @ are called in: they answer here too, after reading the chat.
             let called = calledIn(text, into: bot)
             // Components you named with / (picked from the input box's list) are explained to it.
