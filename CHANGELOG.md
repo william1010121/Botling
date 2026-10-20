@@ -4,6 +4,17 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## 1.7.1
+
+1.7.0 was tagged but never published as a GitHub Release, so 1.7.1 is the first release with
+its features: see [1.7.0](#170) below for what is new.
+
+### Fixed
+
+- The app no longer quits with SIGPIPE when the plugin host exits before any bot has woken.
+- A bot no longer tidies itself away in the moment between a background subagent finishing
+  and the turn where it reports back: a subagent ending restarts the idle countdown.
+
 ## 1.7.0
 
 ### Added

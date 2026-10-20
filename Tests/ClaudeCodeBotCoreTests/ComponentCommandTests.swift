@@ -108,7 +108,9 @@ struct ComponentCommandTests {
         func execute(_ command: String, timeout: TimeInterval, limit: Int) async -> CommandOutcome {
             await Task.detached { ComponentCommands.execute(command, in: folder, timeout: timeout, limit: limit) }.value
         }
-        let slow = await execute("sh -c 'trap \"\" TERM; sleep 30 & echo $! > slow.pid; wait'", timeout: 1, limit: 100_000)
+        // The limit leaves the login shell time to start on a busy machine (it took over 1 s
+        // under load, before the command could even write its pid).
+        let slow = await execute("sh -c 'trap \"\" TERM; sleep 30 & echo $! > slow.pid; wait'", timeout: 5, limit: 100_000)
         #expect(slow.error?.contains("took longer") == true)
         let slowPID = try #require(pid_t(String(contentsOf: folder.appending(path: "slow.pid"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
         #expect(await gone(slowPID))

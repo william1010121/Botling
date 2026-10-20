@@ -377,7 +377,8 @@ struct TraceTests {
 
     @Test func aTurnItStartsItselfShowsAsWorkAndItWaitsForSubagentsBeforeSleeping() async {
         let fake = FakeLauncher()
-        let bot = makeBot(fake, idle: 0.05)
+        // Long enough that a busy main actor between two stream events does not count as idle.
+        let bot = makeBot(fake, idle: 1)
         fake.respond = { text in isAppOnly(text) ? "OK" : nil }
         bot.send("Send a subagent off")
         await eventually { fake.agents.count == 1 }
@@ -389,7 +390,7 @@ struct TraceTests {
         await eventually { !bot.isWorking }
 
         // Idle well past its nap: it stays awake while the subagent works.
-        try? await Task.sleep(for: .milliseconds(300))
+        try? await Task.sleep(for: .milliseconds(1_500))
         #expect(bot.phase == .awake)
 
         // The subagent's own steps do not count as the bot working.

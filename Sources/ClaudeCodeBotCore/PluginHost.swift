@@ -189,6 +189,7 @@ public final class PluginHostClient: ObservableObject {
         }
         problem = nil
         stopping = false
+        BrokenPipes.ignore()
         let process = Process()
         process.executableURL = node
         process.arguments = [script.path]

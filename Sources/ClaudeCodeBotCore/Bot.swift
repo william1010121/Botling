@@ -807,6 +807,10 @@ public final class Bot: ObservableObject, Identifiable {
             if !isWorking, internalReply == nil, groupReply == nil, Self.startsATurn(step) {
                 cancelIdle()
                 isWorking = true
+            } else if case .subagentEnded = step, !isWorking, phase == .awake, sleepsAt != nil {
+                // Its report turn comes next: the countdown starts over, so the bot does not
+                // begin tidying in the moment between the two.
+                scheduleIdle()
             }
         case let .permission(request):
             ask(permission: request, from: source)

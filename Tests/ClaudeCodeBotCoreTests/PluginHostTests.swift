@@ -35,13 +35,13 @@ struct PluginHostTests {
         let fake = FakeLauncher()
         let workspace = workspace(fake)
         let host = try #require(workspace.pluginHost)
-        #expect(await host.waitUntilReady(timeout: .seconds(10)))
-        await eventually({ host.beforeSendHooks == 1 }, timeout: 10)
+        #expect(await host.waitUntilReady(timeout: .seconds(60)))
+        await eventually({ host.beforeSendHooks == 1 })
 
         let bot = workspace.mainBot
         await workspace.send("Compute \\(x^2\\)", to: bot)
         #expect(bot.messages.first?.text == "Compute $x^2$")
-        await eventually({ fake.agents.first?.sent.contains { $0.contains("Compute $x^2$") } == true }, timeout: 10)
+        await eventually({ fake.agents.first?.sent.contains { $0.contains("Compute $x^2$") } == true })
 
         await workspace.send("My password is 1234", to: bot)
         #expect(!bot.messages.contains { $0.role == .user && $0.text.contains("1234") && !$0.text.contains("stopped") })
@@ -55,15 +55,17 @@ struct PluginHostTests {
         """)
         let workspace = workspace(FakeLauncher())
         let host = try #require(workspace.pluginHost)
-        #expect(await host.waitUntilReady(timeout: .seconds(10)))
-        await eventually({ host.beforeSendHooks == 1 }, timeout: 10)
+        #expect(await host.waitUntilReady(timeout: .seconds(60)))
+        await eventually({ host.beforeSendHooks == 1 })
         let pid = try #require(host.pid)
 
         kill(pid, SIGKILL)
         let killed = Date()
-        await eventually({ !host.isRunning }, timeout: 2)
-        await eventually({ host.isRunning && host.pid != pid && host.beforeSendHooks == 1 }, timeout: 10)
-        #expect(Date().timeIntervalSince(killed) < 3)
+        await eventually({ !host.isRunning })
+        await eventually({ host.isRunning && host.pid != pid && host.beforeSendHooks == 1 })
+        // It restarts after 0.3 s; the slack is for a busy CI runner, where the new host's
+        // "ready" can wait seconds for the main actor.
+        #expect(Date().timeIntervalSince(killed) < 10)
         #expect(host.restarts == 1)
         // An unexplained exit is not blamed on the plugin.
         #expect(workspace.plugins.plugin("shout")?.enabled == true)
@@ -89,15 +91,15 @@ struct PluginHostTests {
         fake.respond = { text in isAppOnly(text) ? "OK" : "Fine" }
         let workspace = workspace(fake)
         let host = try #require(workspace.pluginHost)
-        #expect(await host.waitUntilReady(timeout: .seconds(10)))
-        await eventually({ host.afterReplyHooks == 1 }, timeout: 10)
-        await eventually({ workspace.mainBot.routines.contains { $0.task.hasPrefix("Monday backup") } }, timeout: 10)
+        #expect(await host.waitUntilReady(timeout: .seconds(60)))
+        await eventually({ host.afterReplyHooks == 1 })
+        await eventually({ workspace.mainBot.routines.contains { $0.task.hasPrefix("Monday backup") } })
 
         await workspace.send("Hi", to: workspace.mainBot)
-        await eventually({ workspace.mainBot.messages.contains { $0.role == .bot && $0.text == "Fine (checked)" } }, timeout: 10)
-        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.text.contains("Main bot replied, 2 bots in all") } }, timeout: 10)
+        await eventually({ workspace.mainBot.messages.contains { $0.role == .bot && $0.text == "Fine (checked)" } })
+        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.text.contains("Main bot replied, 2 bots in all") } })
         let storage = root.appending(path: "ccb/plugin-data/helper/storage.json")
-        await eventually({ (try? String(contentsOf: storage, encoding: .utf8))?.contains("Fine (checked)") == true }, timeout: 10)
+        await eventually({ (try? String(contentsOf: storage, encoding: .utf8))?.contains("Fine (checked)") == true })
         host.stop()
     }
 
@@ -122,9 +124,9 @@ struct PluginHostTests {
 
         let workspace = workspace(FakeLauncher())
         let host = try #require(workspace.pluginHost)
-        #expect(await host.waitUntilReady(timeout: .seconds(10)))
-        await eventually({ workspace.mainBot.messages.contains { $0.text.contains("made bot once") } }, timeout: 10)
-        await eventually({ workspace.mainBot.messages.contains { $0.text.contains("needs the \"bots\" permission") } }, timeout: 10)
+        #expect(await host.waitUntilReady(timeout: .seconds(60)))
+        await eventually({ workspace.mainBot.messages.contains { $0.text.contains("made bot once") } })
+        await eventually({ workspace.mainBot.messages.contains { $0.text.contains("needs the \"bots\" permission") } })
         #expect(workspace.standaloneBots.map(\.name) == ["Morning news"])
         let bot = try #require(workspace.standaloneBots.first.flatMap(workspace.bot(for:)))
         #expect(bot.routines.filter { $0.schedule.text == "0 8 * * *" && $0.task.hasPrefix("Morning news") }.count == 1)
@@ -140,9 +142,9 @@ struct PluginHostTests {
         """)
         let workspace = workspace(FakeLauncher())
         let host = try #require(workspace.pluginHost)
-        await eventually({ workspace.plugins.plugin("broken")?.failure?.contains("kaput") == true }, timeout: 10)
+        await eventually({ workspace.plugins.plugin("broken")?.failure?.contains("kaput") == true })
         #expect(workspace.mainBot.messages.contains { $0.text.contains("broken") && $0.text.contains("disabled") })
-        await eventually({ host.commands == ["calc.double"] }, timeout: 10)
+        await eventually({ host.commands == ["calc.double"] })
         #expect(try await host.command("calc.double", args: [.number(5)]) == .number(10))
         host.stop()
     }

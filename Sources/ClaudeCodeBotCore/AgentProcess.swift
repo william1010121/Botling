@@ -103,6 +103,13 @@ public typealias AgentLauncher = @Sendable (AgentLaunch) throws -> AgentProcess
 
 /// One long-lived `claude -p --input-format stream-json` process. It stays alive while stdin is
 /// open, so it can be steered mid-turn (verified in prototypes/steering-probe).
+/// Writing to a child (`claude`, the plugin host) that already exited would otherwise raise
+/// SIGPIPE and end the app; the write fails with EPIPE instead.
+public enum BrokenPipes {
+    private static let ignored: Void = { signal(SIGPIPE, SIG_IGN) }()
+    public static func ignore() { ignored }
+}
+
 public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
     public let events: AsyncStream<AgentEvent>
     private let process: Process
@@ -110,10 +117,6 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
     private let lock = NSLock()
     private var closed = false
 
-    /// Writing to a `claude` that already exited would otherwise raise SIGPIPE and end the app.
-    private static let ignoreBrokenPipes: Void = {
-        signal(SIGPIPE, SIG_IGN)
-    }()
 
     public static func launcher(executable: URL) -> AgentLauncher {
         { launch in try ClaudeAgentProcess(launch, executable: executable) }
@@ -163,7 +166,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
     }
 
     init(_ launch: AgentLaunch, executable: URL) throws {
-        Self.ignoreBrokenPipes
+        BrokenPipes.ignore()
         process = Process()
         process.executableURL = executable
         process.arguments = Self.arguments(for: launch)

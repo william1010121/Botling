@@ -101,12 +101,12 @@ func isAppOnly(_ text: String) -> Bool {
 /// Waits for `condition`. Generous by default: the whole suite runs in parallel on the main actor,
 /// and on a small CI runner a test can wait many seconds for its turn. It returns as soon as the
 /// condition holds, so a long limit only costs time when a test is failing anyway.
-func eventually(_ condition: @MainActor () -> Bool, timeout: TimeInterval = 60) async {
+func eventually(_ condition: @MainActor () -> Bool, timeout: TimeInterval = 60, sourceLocation: SourceLocation = #_sourceLocation) async {
     let deadline = Date().addingTimeInterval(timeout)
     while !condition(), Date() < deadline {
         try? await Task.sleep(for: .milliseconds(20))
     }
-    #expect(condition())
+    #expect(condition(), sourceLocation: sourceLocation)
 }
 
 @MainActor
