@@ -26,10 +26,13 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./
  *   1×2 "tall", 2×2 "large", 4×2 "xlarge". Also `<html data-size="2x1">`, for CSS. A card on the
  *   Board has the size the user picked; in the chat it is 2×2 (or the largest the component has).
  * - `onSize(fn)`: calls `fn(size)` whenever the user resizes its card; returns a function that stops.
- * - `surface`: where it is drawn, "chat" or "board"; also `<html data-surface="board">`. On the
- *   Board the component is the whole tile, like a home-screen widget: the tile gives the rounded
- *   corners and background, so it draws no frame of its own (no border, background or radius, at
- *   most ~12px padding) and fills the tile; the page itself is the tile's height and scrolls.
+ * - `surface`: where it is drawn, "chat", "board" or "pinned"; also `<html data-surface="board">`.
+ *   On the Board the component is the whole tile, like a home-screen widget: the tile gives the
+ *   rounded corners and background, so it draws no frame of its own (no border, background or
+ *   radius, at most ~12px padding) and fills the tile; the page itself is the tile's height and
+ *   scrolls. "pinned" is a pin opened from its chip above the input box: frameless the same way
+ *   (the panel gives the corners and background), but as tall as its content, like in the chat.
+ *   `html:not([data-surface="chat"]) .card { … }` drops a component's frame in both.
  * The frame reports its height and answers to this page, which passes answers on to Swift.
  */
 export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2", surface: Surface = "chat"): string {
@@ -182,8 +185,11 @@ document.documentElement.addEventListener('mouseleave', () => parent.postMessage
 </script></body></html>`;
 }
 
-/** Where a component is drawn: in the chat (and a pin's sheet), or as a tile on the Board. */
-export type Surface = "chat" | "board";
+/**
+ * Where a component is drawn: in the chat, as a tile on the Board, or "pinned": opened from its
+ * chip above the input box, filling that panel.
+ */
+export type Surface = "chat" | "board" | "pinned";
 
 /** Every Board size, smallest first. */
 export const pinSizes: PinSize[] = ["1x1", "2x1", "1x2", "2x2", "4x2"];
@@ -317,8 +323,8 @@ window.addEventListener("message", (event) => {
     frame.style.height = `${message.height}px`;
     if (frame.ccbKey) frameHeights.set(frame.ccbKey, message.height);
   } else if (message.ccb === "hover") {
-    // The pointer is over the component: its Board tile shows its controls.
-    frame.closest(".board-card")?.classList.toggle("hovered", !!(message as { on?: unknown }).on);
+    // The pointer is over the component: its Board tile (or opened pin) shows its controls.
+    frame.closest(".board-card, .pin-sheet")?.classList.toggle("hovered", !!(message as { on?: unknown }).on);
   } else if (message.ccb === "answer" && frame.ccbAnswer) {
     const images = answerImages(message.images);
     if (typeof message.index === "number") frame.ccbAnswer({ index: message.index });
