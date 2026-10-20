@@ -25,6 +25,9 @@ app and publishes it on GitHub Releases.
 - **Tables size their columns by what is in them.** A short column (a version, a name) gets
   its natural width, up to 40%, before a long text column takes the rest, and a cell never
   breaks inside a word, so "v1.6.0" no longer wraps as "v1. / 6. / 0". Cells line up at the top.
+- **Choices after a handoff are buttons again.** The reply a bot gives right after a handoff
+  (switching model or effort, loading new plugins) showed its `<choices>` block as plain text;
+  it is now read like any reply, so the choices are buttons and `<show>` components are drawn.
 
 ## 1.7.1
 
