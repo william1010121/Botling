@@ -13,6 +13,10 @@ public final class Bot: ObservableObject, Identifiable {
     @Published public private(set) var model: BotModel
     /// The model being switched to, while a handoff runs.
     @Published public private(set) var switchTarget: BotModel?
+    /// The model its subagents use; nil: the same as its own.
+    @Published public private(set) var subagentModel: BotModel?
+    /// How hard it (and its subagents) think; nil: the model's default.
+    @Published public private(set) var effort: EffortLevel?
     /// When the bot will tidy and fall asleep if nothing else happens; nil unless idle and awake.
     @Published public private(set) var sleepsAt: Date?
     /// A reply arrived that the user has not looked at.
@@ -166,6 +170,8 @@ public final class Bot: ObservableObject, Identifiable {
         alwaysAllowed = store?.loadAlwaysAllowed() ?? []
         unreadCount = store?.loadUnread() ?? 0
         model = store?.loadModel() ?? defaultModel
+        subagentModel = store?.loadSubagentModel()
+        effort = store?.loadEffort()
         routineFile = RoutineFile(url: profile.routinesURL)
         // The main bot starts with a daily summary; managers with none. Routines saved the old way
         // move into the file.
@@ -527,7 +533,9 @@ public final class Bot: ObservableObject, Identifiable {
             environment: pluginEnvironment?() ?? [:],
             asksPermission: true,
             disallowedTools: profile.disallowedTools,
-            autoMode: autoMode?() ?? false
+            autoMode: autoMode?() ?? false,
+            effort: effort,
+            subagentModel: subagentModel
         ))
         self.process = process
         sessionCost = 0
@@ -992,6 +1000,23 @@ public final class Bot: ObservableObject, Identifiable {
         }
 
         await handOver(to: newModel, divider: "Handoff → \(newModel.displayName)")
+    }
+
+    /// Picks the model its subagents use. Awake: hands over and restarts once free, like a model
+    /// switch; asleep: the next wake uses it.
+    public func setSubagentModel(_ newModel: BotModel?) async {
+        guard newModel != subagentModel else { return }
+        subagentModel = newModel
+        store?.save(subagentModel: newModel)
+        await restart(divider: "Handoff → subagents on \(newModel?.displayName ?? "the same model")")
+    }
+
+    /// Picks how hard it thinks. Awake: hands over and restarts once free; asleep: the next wake.
+    public func setEffort(_ newEffort: EffortLevel?) async {
+        guard newEffort != effort else { return }
+        effort = newEffort
+        store?.save(effort: newEffort)
+        await restart(divider: "Handoff → \(newEffort?.displayName ?? "default") effort")
     }
 
     /// Plugins' Claude parts changed. Asleep: the next wake loads them. Awake: hand over and

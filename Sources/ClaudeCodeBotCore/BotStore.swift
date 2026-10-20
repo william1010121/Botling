@@ -16,6 +16,10 @@ public struct BotStore: Sendable {
 
     private struct Settings: Codable {
         var model: BotModel?
+        /// The model its subagents use and how hard it thinks; kept as text so a value this
+        /// build does not know leaves the rest of the file readable. Missing: the defaults.
+        var subagentModel: String?
+        var effort: String?
         /// Routines from before they moved to routines.cron; read once to carry them over.
         var routines: [LegacyRoutine]?
         /// When each routines.cron job last ran, by job id.
@@ -60,6 +64,28 @@ public struct BotStore: Sendable {
     public func save(model: BotModel) {
         var settings = loadSettings()
         settings.model = model
+        write(settings, to: settingsURL)
+    }
+
+    /// The model its subagents use; nil: the same as its own.
+    public func loadSubagentModel() -> BotModel? {
+        loadSettings().subagentModel.flatMap(BotModel.init(rawValue:))
+    }
+
+    public func save(subagentModel: BotModel?) {
+        var settings = loadSettings()
+        settings.subagentModel = subagentModel?.rawValue
+        write(settings, to: settingsURL)
+    }
+
+    /// How hard it thinks; nil: the model's default.
+    public func loadEffort() -> EffortLevel? {
+        loadSettings().effort.flatMap(EffortLevel.init(rawValue:))
+    }
+
+    public func save(effort: EffortLevel?) {
+        var settings = loadSettings()
+        settings.effort = effort?.rawValue
         write(settings, to: settingsURL)
     }
 

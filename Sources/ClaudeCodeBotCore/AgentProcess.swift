@@ -85,6 +85,11 @@ public struct AgentLaunch: Equatable, Sendable {
     /// sending data out, force pushes…), instead of asking about every tool not allowed. What it
     /// still asks about (ask rules, repeated blocks) comes as a `.permission` event as before.
     public var autoMode = false
+    /// How hard it thinks (`--effort`); nil leaves the model's default.
+    public var effort: EffortLevel? = nil
+    /// The model its subagents use (`CLAUDE_CODE_SUBAGENT_MODEL`); nil: the same as its own.
+    /// An agent whose definition names a model keeps that one.
+    public var subagentModel: BotModel? = nil
 }
 
 public typealias AgentLauncher = @Sendable (AgentLaunch) throws -> AgentProcess
@@ -135,7 +140,19 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         for directory in launch.pluginDirectories {
             arguments += ["--plugin-dir", directory.path]
         }
+        if let effort = launch.effort {
+            arguments += ["--effort", effort.rawValue]
+        }
         return arguments
+    }
+
+    /// What it adds to the app's environment: plugins' secrets and the subagent model.
+    static func launchEnvironment(for launch: AgentLaunch) -> [String: String] {
+        var environment = launch.environment
+        if let model = launch.subagentModel {
+            environment["CLAUDE_CODE_SUBAGENT_MODEL"] = model.rawValue
+        }
+        return environment
     }
 
     init(_ launch: AgentLaunch, executable: URL) throws {
@@ -144,7 +161,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         process.executableURL = executable
         process.arguments = Self.arguments(for: launch)
         process.currentDirectoryURL = launch.workingDirectory
-        process.environment = Self.environment().merging(launch.environment) { _, plugin in plugin }
+        process.environment = Self.environment().merging(Self.launchEnvironment(for: launch)) { _, launch in launch }
 
         let input = Pipe()
         let output = Pipe()

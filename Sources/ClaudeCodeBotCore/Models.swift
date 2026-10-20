@@ -12,6 +12,22 @@ public enum BotModel: String, CaseIterable, Codable, Sendable {
     }
 }
 
+/// How hard it thinks: Claude Code's `--effort`. No choice (nil) leaves the model's own default.
+/// Its subagents think at the same level unless their definition sets one.
+public enum EffortLevel: String, CaseIterable, Codable, Sendable {
+    case low, medium, high, xhigh, max
+
+    public var displayName: String {
+        switch self {
+        case .low: "Low"
+        case .medium: "Medium"
+        case .high: "High"
+        case .xhigh: "Extra high"
+        case .max: "Max"
+        }
+    }
+}
+
 public enum BotPhase: Equatable, Sendable {
     /// No process. The row is dimmed; the next message wakes it.
     case asleep
