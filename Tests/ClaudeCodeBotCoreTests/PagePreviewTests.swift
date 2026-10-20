@@ -135,8 +135,12 @@ struct PagePreviewTests {
         let workspace = makeWorkspace()
         let payload = ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil) { _ in "" }
         let json = try object(payload.json())
-        #expect((json["componentMentions"] as? [String])?.contains(PagePreview.component) == true)
-        #expect((json["componentMentions"] as? [String])?.contains("choices") == true)
+        // Components and commands come after /; @ is only for bots.
+        #expect(json["componentMentions"] == nil)
+        #expect((json["slashComponents"] as? [String])?.contains(PagePreview.component) == true)
+        #expect((json["slashComponents"] as? [String])?.contains("choices") == true)
+        #expect((json["slashCommands"] as? [[String: Any]])?.compactMap { $0["name"] as? String }.contains("design") == true)
+        #expect((json["mentions"] as? [String])?.contains(PagePreview.component) == false)
         let messages = try #require(json["messages"] as? [[String: Any]])
         // Your own links stay links.
         #expect(messages[0]["previews"] == nil)
@@ -174,18 +178,20 @@ struct PagePreviewTests {
     }
 }
 
-/// Components named with @ in the input box.
+/// Components named with / in the input box (picked from its list of components and commands).
 @MainActor
 struct ComponentMentionTests {
     let root = FileManager.default.temporaryDirectory.appending(path: "ccb-mention-\(UUID().uuidString)")
 
     @Test func namesAreFoundWholeLongestFirstAndInOrder() {
         let names = ["choices", "網頁預覽卡片", "網頁", "error", "error-toast"]
-        #expect(ComponentMentions.names(in: "用@網頁預覽卡片請看，再用 @choices。", among: names) == ["網頁預覽卡片", "choices"])
-        #expect(ComponentMentions.names(in: "@CHOICES first, then @網頁", among: names) == ["choices", "網頁"])
-        #expect(ComponentMentions.names(in: "@error-toast and @error-x", among: names) == ["error-toast"])
-        #expect(ComponentMentions.names(in: "mail me@choices.dev or @choicesX", among: names) == [])
-        #expect(ComponentMentions.names(in: "@choices @choices", among: names) == ["choices"])
+        #expect(ComponentMentions.names(in: "用/網頁預覽卡片請看，再用 /choices。", among: names) == ["網頁預覽卡片", "choices"])
+        #expect(ComponentMentions.names(in: "/CHOICES first, then /網頁", among: names) == ["choices", "網頁"])
+        #expect(ComponentMentions.names(in: "/error-toast and /error-x", among: names) == ["error-toast"])
+        #expect(ComponentMentions.names(in: "see ~/choices or a/choices or /choicesX", among: names) == [])
+        #expect(ComponentMentions.names(in: "/choices /choices", among: names) == ["choices"])
+        // @ is for bots now.
+        #expect(ComponentMentions.names(in: "@choices", among: names) == [])
         #expect(ComponentMentions.names(in: "no mention", among: names) == [])
     }
 
@@ -194,18 +200,25 @@ struct ComponentMentionTests {
         let workspace = Workspace(root: root.appending(path: "ccb"), launcher: fake.launcher) { profile, store in
             Bot(profile: profile, launcher: fake.launcher, store: store)
         }
-        let note = try #require(workspace.components.mentionNote(for: "做一張 @網頁預覽卡片 給我"))
-        #expect(note.hasPrefix("(App: With @ the user names the in-chat component \"網頁預覽卡片\""))
+        let note = try #require(workspace.components.mentionNote(for: "做一張 /網頁預覽卡片 給我"))
+        #expect(note.hasPrefix("(App: With / the user names the in-chat component \"網頁預覽卡片\""))
         #expect(note.contains("- 網頁預覽卡片: "))
         #expect(!note.contains("- choices: "))
         #expect(workspace.components.mentionNote(for: "plain words") == nil)
+        #expect(workspace.components.mentionNote(for: "做一張 @網頁預覽卡片 給我") == nil)
 
-        await workspace.send("做一張 @網頁預覽卡片 給我", to: workspace.mainBot)
-        await eventually { fake.agents.last?.sent.contains { $0.contains("做一張 @網頁預覽卡片 給我") } == true }
-        let sent = try #require(fake.agents.last?.sent.first { $0.contains("做一張 @網頁預覽卡片 給我") })
-        #expect(sent.contains("(App: With @ the user names the in-chat component \"網頁預覽卡片\""))
+        await workspace.send("做一張 /網頁預覽卡片 給我", to: workspace.mainBot)
+        await eventually { fake.agents.last?.sent.contains { $0.contains("做一張 /網頁預覽卡片 給我") } == true }
+        let sent = try #require(fake.agents.last?.sent.first { $0.contains("做一張 /網頁預覽卡片 給我") })
+        #expect(sent.contains("(App: With / the user names the in-chat component \"網頁預覽卡片\""))
         // The chat shows only what you typed.
-        #expect(workspace.mainBot.messages.first { $0.role == .user }?.text == "做一張 @網頁預覽卡片 給我")
+        #expect(workspace.mainBot.messages.first { $0.role == .user }?.text == "做一張 /網頁預覽卡片 給我")
+    }
+
+    @Test func theSlashCommandsAreTheOnesTheBotsKnow() {
+        #expect(SlashCommands.all.map(\.name) == ["design"])
+        // The bots' rules say what /design means.
+        #expect(BotPrompts(profile: .main(home: root)).system.contains("\"/design\""))
     }
 
     @Test func aGroupMemberIsToldToo() throws {
@@ -216,7 +229,7 @@ struct ComponentMentionTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let garden = workspace.addProject(folder: folder)
         let group = try #require(workspace.createGroup(name: "Team", members: [Workspace.mainBotID, garden.id]))
-        let line = ChatMessage(role: .user, text: "@garden 用 @網頁預覽卡片 給我看")
+        let line = ChatMessage(role: .user, text: "@garden 用 /網頁預覽卡片 給我看")
         let member = workspace.members(of: group)[1]
         let prompt = workspace.groupPrompt(for: member, in: group, addressed: true, transcript: [line], newest: line.id, ask: nil)
         #expect(prompt.contains("in-chat component \"網頁預覽卡片\""))

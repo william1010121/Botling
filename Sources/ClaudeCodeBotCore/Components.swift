@@ -117,18 +117,18 @@ public final class ComponentLibrary: ObservableObject {
         return catalog(names.filter(wanted.contains))
     }
 
-    /// The components `text` names with @Name (the user picked one from the input box's list),
+    /// The components `text` names with /Name (the user picked one from the input box's list),
     /// in the order they are named.
     public func mentioned(in text: String) -> [String] {
         ComponentMentions.names(in: text, among: names)
     }
 
-    /// What goes to the bot, unseen, with a message that names components with @.
+    /// What goes to the bot, unseen, with a message that names components with /.
     public func mentionNote(for text: String) -> String? {
         let named = mentioned(in: text)
         guard !named.isEmpty else { return nil }
         let list = named.map { "\"\($0)\"" }.joined(separator: ", ")
-        return "(App: With @ the user names the in-chat component\(named.count == 1 ? "" : "s") \(list): they mean \(named.count == 1 ? "that component" : "those components") of the app's chat. <show name=\"name\">JSON</show> draws one; <component name=\"name\">request</component> asks Maintainer to change one. How to use \(named.count == 1 ? "it" : "them"):\n\(catalog(of: named)))"
+        return "(App: With / the user names the in-chat component\(named.count == 1 ? "" : "s") \(list): they mean \(named.count == 1 ? "that component" : "those components") of the app's chat. <show name=\"name\">JSON</show> draws one; <component name=\"name\">request</component> asks Maintainer to change one. How to use \(named.count == 1 ? "it" : "them"):\n\(catalog(of: named)))"
     }
 
     func aboutURL(_ name: String) -> URL {
@@ -243,23 +243,25 @@ public final class ComponentLibrary: ObservableObject {
     }
 }
 
-/// Components named with @ in what the user typed (the input box offers them after @, beside
-/// the bots of a group chat).
+/// Components named with / in what the user typed (the input box offers them after /, with
+/// the app's commands; @ is for bots).
 public enum ComponentMentions {
-    /// The names `text` has as `@name`, in the order they come. Longer names win, so a name that
-    /// starts another is not read inside it; only ASCII letters, digits, _ and - end a name, so
-    /// "@網頁預覽卡片請看" and "看@choices。" both count, but "me@choices.dev" does not.
+    /// The names `text` has as `/name`, in the order they come. Longer names win, so a name that
+    /// starts another is not read inside it. The slash starts a word (after a space, a bracket or
+    /// quote, or non-ASCII text such as Chinese), so "用/網頁預覽卡片" counts but "a/choices" and
+    /// "~/choices" (paths) do not; only ASCII letters, digits, _, - and / end a name.
     public static func names(in text: String, among names: [String]) -> [String] {
         let lower = text.lowercased()
-        let wordCharacter = { (c: Character) in c.isASCII && (c.isLetter || c.isNumber || c == "_" || c == "-") }
+        let wordCharacter = { (c: Character) in c.isASCII && (c.isLetter || c.isNumber || c == "_" || c == "-" || c == "/") }
+        let startsAfter = { (c: Character) in !c.isASCII || c.isWhitespace || "([{\"'".contains(c) }
         var found: [(at: String.Index, name: String)] = []
         var taken: [Range<String.Index>] = []
         for name in Set(names).sorted(by: { $0.count > $1.count }) where !name.isEmpty {
-            let needle = "@" + name.lowercased()
+            let needle = "/" + name.lowercased()
             var from = lower.startIndex
             while let range = lower.range(of: needle, range: from..<lower.endIndex) {
                 from = range.upperBound
-                let startsWord = range.lowerBound == lower.startIndex || !wordCharacter(lower[lower.index(before: range.lowerBound)])
+                let startsWord = range.lowerBound == lower.startIndex || startsAfter(lower[lower.index(before: range.lowerBound)])
                 let endsWord = range.upperBound == lower.endIndex || !wordCharacter(lower[range.upperBound])
                 guard startsWord, endsWord, !taken.contains(where: { $0.overlaps(range) }) else { continue }
                 taken.append(range)
@@ -268,6 +270,19 @@ public enum ComponentMentions {
         }
         return found.sorted { $0.at < $1.at }.map(\.name)
     }
+}
+
+/// The app's / commands, offered in the input box with the components. The bots' rules (see
+/// `BotPrompts`) say what each means; the command stays in the text the bot reads.
+public enum SlashCommands {
+    public struct Command: Encodable, Equatable, Sendable {
+        public let name: String
+        public let about: String
+    }
+
+    public static let all = [
+        Command(name: "design", about: "Make a Claude Design and get its claude.ai link"),
+    ]
 }
 
 /// How a component is written; the ccb-core:component-editor agent's instructions.

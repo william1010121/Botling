@@ -318,25 +318,61 @@ describe("composer", () => {
     expect(list.hidden).toBe(true);
   });
 
-  it("offers components after @ in any chat, after the group's bots, and puts the picked one in", () => {
+  it("offers only bots after @, never components", () => {
     const composer = new Composer(document.body);
-    composer.update(state({ componentMentions: ["choices", "網頁預覽卡片", "天氣卡片"] }));
+    // A one-to-one chat: the bots you can call in, but no components.
+    composer.update(state({ mentions: ["Main bot", "Maintainer", "garden"], slashComponents: ["choices", "網頁預覽卡片"], componentMentions: ["choices", "網頁預覽卡片"] } as Partial<ChatState>));
     const list = document.querySelector<HTMLElement>(".mention-list")!;
+    composer.insert("@");
+    expect([...list.querySelectorAll("button")].map((b) => b.querySelector(".mention-name")?.textContent)).toEqual(["@Main bot", "@Maintainer", "@garden"]);
+    composer.setText("");
     composer.insert("看這個@網");
+    expect(list.hidden).toBe(true);
+  });
+
+  it("offers commands and components after / at the start of a word, and puts the picked one in", () => {
+    const composer = new Composer(document.body);
+    composer.update(state({
+      mentions: ["garden"],
+      slashCommands: [{ name: "design", about: "Make a Claude Design" }],
+      slashComponents: ["choices", "網頁預覽卡片", "design"],
+    }));
+    const list = document.querySelector<HTMLElement>(".mention-list")!;
+    composer.insert("/");
     expect(list.hidden).toBe(false);
     const options = [...list.querySelectorAll("button")];
-    expect(options.map((b) => b.querySelector(".mention-name")?.textContent)).toEqual(["@網頁預覽卡片"]);
-    expect(options[0].querySelector(".mention-kind")?.textContent).toBe("組件");
-    composer.view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-    expect(composer.text).toBe("看這個@網頁預覽卡片 ");
+    // Commands first; a component named like a command is offered once, as the command.
+    expect(options.map((b) => b.querySelector(".mention-name")?.textContent)).toEqual(["/design", "/choices", "/網頁預覽卡片"]);
+    expect(options.map((b) => b.querySelector(".mention-kind")?.textContent)).toEqual(["指令", "組件", "組件"]);
+    // Up/Down move, Return puts it in.
+    const key = (k: string) => composer.view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    key("ArrowDown");
+    key("ArrowDown");
+    expect(list.querySelector("button.active .mention-name")?.textContent).toBe("/網頁預覽卡片");
+    key("Enter");
+    expect(composer.text).toBe("/網頁預覽卡片 ");
     expect(sent).toEqual([]);
-    // In a group chat the bots come first; a component named like a bot is offered once, as the bot.
+    // Typed after other words, and filtered by what follows the slash; Tab picks too.
     composer.setText("");
-    composer.update(state({ mentions: ["garden", "choices"], componentMentions: ["choices", "網頁預覽卡片"] }));
+    composer.insert("請做 /de");
+    expect([...list.querySelectorAll("button")].map((b) => b.querySelector(".mention-name")?.textContent)).toEqual(["/design"]);
+    key("Tab");
+    expect(composer.text).toBe("請做 /design ");
+    // Inside a word or a path it is just a slash; Escape closes the list.
+    composer.setText("");
+    composer.insert("a/b");
+    expect(list.hidden).toBe(true);
+    composer.setText("");
+    composer.insert("see ~/de");
+    expect(list.hidden).toBe(true);
+    composer.setText("");
+    composer.insert("/");
+    key("Escape");
+    expect(list.hidden).toBe(true);
+    // @ still offers the bots, not components.
+    composer.setText("");
     composer.insert("@");
-    const all = [...list.querySelectorAll("button")];
-    expect(all.map((b) => b.querySelector(".mention-name")?.textContent)).toEqual(["@garden", "@choices", "@網頁預覽卡片"]);
-    expect(all.map((b) => b.querySelector(".mention-kind") !== null)).toEqual([false, false, true]);
+    expect([...list.querySelectorAll("button")].map((b) => b.querySelector(".mention-name")?.textContent)).toEqual(["@garden"]);
   });
 
   it("leaves Return to the input method while it is composing", () => {

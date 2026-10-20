@@ -83,6 +83,7 @@ struct ChatSurface: NSViewRepresentable {
                     speaker: { [workspace] id in workspace.speakerName(for: id) }
                 )
             },
+            callIn: workspace.callInView(for: bot),
             feedback: workspace.developerProject != nil,
             avatar: { projectID in
                 if let projectID, let kind = workspace.avatar(for: projectID) {

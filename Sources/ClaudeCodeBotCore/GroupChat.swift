@@ -286,28 +286,7 @@ extension Workspace {
     func groupPrompt(for member: Member, in group: ChatGroup, addressed: Bool, transcript: [ChatMessage], newest: UUID?, ask: String?) -> String {
         let everyone = members(of: group)
         let others = everyone.filter { $0.id != member.id }.map { Self.quoteName($0.name) }
-        let lines = transcript.compactMap { message -> String? in
-            let who: String
-            switch message.role {
-            case .user: who = message.id == newest ? "User (newest)" : "User"
-            case .bot: who = message.sourceID.flatMap(speakerName(for:)).map(Self.quoteName) ?? "A removed bot"
-            case .notice: who = "Notice"
-            default: return nil
-            }
-            var text = Self.oneLine(message.text, limit: 400)
-            if let choices = message.choices {
-                text += " [options: " + choices.map { Self.oneLine($0.label, limit: 60) }.joined(separator: " / ") + "]"
-                if let chosen = message.chosen, let label = message.choices?[safe: chosen]?.label {
-                    text += " (the user picked: \(Self.oneLine(label, limit: 60)))"
-                } else if let answer = message.answer {
-                    text += " (the user answered: \(Self.oneLine(answer, limit: 200)))"
-                }
-            }
-            if let files = message.attachments, !files.isEmpty {
-                text += " (attachments: " + files.map(\.url.path).joined(separator: ", ") + ")"
-            }
-            return "\(who): \(text)"
-        }
+        let lines = transcriptLines(transcript, newest: newest)
         let isMain = member.id == Self.mainBotID
         // Greetings and questions for everyone go to the main bot, or, without it, to whoever
         // speaks first.
@@ -338,6 +317,38 @@ extension Workspace {
         >>>
         \(rule) Keep it to 1–3 sentences, in the language of the user's lines. \(tags)\(named)
         """
+    }
+
+    /// A chat's lines as a bot reads them for its turn: who said each (a bot's own lines, with
+    /// no source, are `host`'s), your picks and answers, and attachments.
+    func transcriptLines(_ transcript: [ChatMessage], newest: UUID?, host: String? = nil) -> [String] {
+        transcript.compactMap { message -> String? in
+            let who: String
+            switch message.role {
+            case .user: who = message.id == newest ? "User (newest)" : "User"
+            case .bot:
+                if let source = message.sourceID {
+                    who = speakerName(for: source).map(Self.quoteName) ?? "A removed bot"
+                } else {
+                    who = host.map(Self.quoteName) ?? "A removed bot"
+                }
+            case .notice: who = "Notice"
+            default: return nil
+            }
+            var text = Self.oneLine(message.text, limit: 400)
+            if let choices = message.choices {
+                text += " [options: " + choices.map { Self.oneLine($0.label, limit: 60) }.joined(separator: " / ") + "]"
+                if let chosen = message.chosen, let label = message.choices?[safe: chosen]?.label {
+                    text += " (the user picked: \(Self.oneLine(label, limit: 60)))"
+                } else if let answer = message.answer {
+                    text += " (the user answered: \(Self.oneLine(answer, limit: 200)))"
+                }
+            }
+            if let files = message.attachments, !files.isEmpty {
+                text += " (attachments: " + files.map(\.url.path).joined(separator: ", ") + ")"
+            }
+            return "\(who): \(text)"
+        }
     }
 
     /// One line of at most `limit` characters, so a message cannot fake further transcript lines.

@@ -32,7 +32,7 @@ public struct ChatPayload: Encodable, Equatable {
         var replyTo: String?
         var replyPreview: String?
         var openable: Bool
-        /// Who said it, above the bubble (a group chat).
+        /// Who said it, above the bubble (a group chat, or a bot called into this one with @).
         var speaker: String?
         /// What the bot did on the way to this reply.
         var steps: [StepView]?
@@ -94,10 +94,12 @@ public struct ChatPayload: Encodable, Equatable {
     var replyingTo: Reply?
     var pendingFiles: [File]
     var components: [String: Component]
-    /// Names you can @ (a group chat), for completing them as you type.
+    /// Bots you can @, for completing them as you type: a group's members, or in a bot's own
+    /// chat the other bots, to call one in.
     var mentions: [String]
-    /// Components you can @ (every chat you can type in), offered after the names.
-    var componentMentions: [String] = []
+    /// What you can / (every chat you can type in): the app's commands, then components.
+    var slashCommands: [SlashCommands.Command] = SlashCommands.all
+    var slashComponents: [String] = []
     /// What it is doing right now, while it works.
     var live: [StepView]
     /// Set while you look at one of its subagents instead of the chat.
@@ -105,7 +107,8 @@ public struct ChatPayload: Encodable, Equatable {
     /// Developer mode: replies can be flagged as not right.
     var feedback = false
 
-    /// What a group chat adds: who is typing, and names for who said each line.
+    /// What a group chat adds: who is typing, and names for who said each line. A bot's own chat
+    /// has one too, for the bots called into it with @.
     public struct GroupView {
         public var typing: UUID?
         public var speaker: (UUID) -> String?
@@ -139,15 +142,20 @@ public struct ChatPayload: Encodable, Equatable {
         replyingTo: UUID?,
         now: Date = Date(),
         group: GroupView? = nil,
+        callIn: GroupView? = nil,
         feedback: Bool = false,
         avatar: (_ projectID: UUID?) -> String
     ) -> ChatPayload {
         let own = avatar(nil)
         let main = bot.profile.role == .main ? own : nil
+        let speaker = group?.speaker ?? callIn?.speaker
+        // Someone called in is answering while the bot itself is not.
+        let guest = bot.isWorking ? nil : callIn?.typing
         let messages = bot.messages.enumerated().map { index, message -> Message in
             let face: String? = switch message.role {
             // In a group chat each line has the face of the bot that said it.
-            case .bot: group != nil && message.sourceID != nil ? avatar(message.sourceID) : own
+            // So does a bot called into a bot's own chat.
+            case .bot: speaker != nil && message.sourceID != nil ? avatar(message.sourceID) : own
             case .notice: avatar(message.sourceID)
             case .relay: main ?? avatar(nil)
             default: nil
@@ -167,7 +175,7 @@ public struct ChatPayload: Encodable, Equatable {
                 replyTo: message.replyTo?.uuidString,
                 replyPreview: message.replyPreview,
                 openable: message.role == .notice && message.sourceID != nil,
-                speaker: message.role == .bot ? message.sourceID.flatMap { id in group.map { $0.speaker(id) ?? "A removed bot" } } : nil,
+                speaker: message.role == .bot ? message.sourceID.flatMap { id in speaker.map { $0(id) ?? "A removed bot" } } : nil,
                 steps: message.steps.map { $0.map { stepView($0, in: bot) } },
                 previews: previews(for: message, in: library)
             )
@@ -175,7 +183,7 @@ public struct ChatPayload: Encodable, Equatable {
         let reply = replyingTo.flatMap { id in bot.messages.first { $0.id == id } }.map {
             Reply(
                 id: $0.id.uuidString,
-                who: $0.role == .user ? "Reply to yourself" : "Reply to \($0.sourceID.flatMap { id in group?.speaker(id) } ?? bot.name)",
+                who: $0.role == .user ? "Reply to yourself" : "Reply to \($0.sourceID.flatMap { id in speaker?(id) } ?? bot.name)",
                 preview: Bot.preview(of: $0)
             )
         }
@@ -194,8 +202,8 @@ public struct ChatPayload: Encodable, Equatable {
             botID: bot.id.uuidString,
             botName: bot.name,
             messages: messages,
-            working: group.map { $0.typing != nil } ?? bot.isWorking,
-            avatar: group?.typing.map { avatar($0) } ?? own,
+            working: group.map { $0.typing != nil } ?? (bot.isWorking || guest != nil),
+            avatar: (group?.typing ?? guest).map { avatar($0) } ?? own,
             placeholder: group != nil ? "Message everyone, or @name one bot…"
                 : bot.profile.role == .main ? "Make a wish, or ask how things are going…" : "Message \(bot.name)…",
             replyingTo: reply,
@@ -205,8 +213,8 @@ public struct ChatPayload: Encodable, Equatable {
                 return entry
             },
             components: components,
-            mentions: group?.names ?? [],
-            componentMentions: library?.names ?? [],
+            mentions: group?.names ?? callIn?.names ?? [],
+            slashComponents: library?.names ?? [],
             live: group == nil && bot.isWorking ? bot.liveSteps.map { stepView($0, in: bot) } : [],
             subagent: nil,
             feedback: feedback

@@ -12,8 +12,12 @@ app and publishes it on GitHub Releases.
   result as a small live preview with its title and a button to open it full-size in its own
   window. Links to pages in an `artifacts` folder (results from teams and bots) become such cards
   by themselves; bots can also show one with `<show name="網頁預覽卡片">{"path": …}</show>`.
-- **@ a component.** Type @ in the input box to pick one of the chat's components (after the bots
-  of a group chat); the bot is told you mean that component and how it is used.
+- **/ for components and commands.** Type / at the start of a word in the input box to pick an
+  app command (`/design`) or one of the chat's components; for a component the bot is told you
+  mean it and how it is used. @ is only for bots now.
+- **@ a bot into any chat.** In a bot's own chat, @ lists the other bots (Main bot, Maintainer,
+  projects); the one you name reads the chat and answers there, under its own name and face, and
+  picks on its line go back to it. The chat's own bot still gets your line.
 
 ## 1.4.0
 

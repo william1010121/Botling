@@ -86,10 +86,12 @@ export interface ChatState {
   replyingTo: { id: string; who: string; preview: string } | null;
   pendingFiles: (FileView & { id: string })[];
   components: Record<string, ComponentInfo>;
-  /** Names you can @ in this chat (the group chat), to complete as you type. */
+  /** Bots you can @ in this chat (a group's members, or the bots you can call in), to complete as you type. */
   mentions?: string[];
-  /** Components you can @ (picked, the bot is told you mean that component). */
-  componentMentions?: string[];
+  /** The app's / commands (e.g. /design), offered after / before the components. */
+  slashCommands?: { name: string; about: string }[];
+  /** Components you can / (picked, the bot is told you mean that component). */
+  slashComponents?: string[];
   /** What it is doing right now, while it works. */
   live?: StepView[];
   /** Set while you watch one of its subagents: the page has no input box then. */

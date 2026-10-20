@@ -88,6 +88,10 @@ public final class Workspace: ObservableObject {
     /// How long a turn waits for a bot busy with its own chat, and how long it then has to
     /// answer: short when nobody named it (it just misses this one), long when you did.
     public var groupTiming = (busy: 20.0, busyNamed: 5 * 60.0, answer: 3 * 60.0, answerNamed: 15 * 60.0)
+    /// Who is answering, called in with @, in a bot's own chat right now, by that chat's member id.
+    @Published public internal(set) var callInSpeakers: [UUID: UUID] = [:]
+    /// The turns of bots called into a bot's own chat run one after another, by its member id.
+    var callInQueues: [UUID: Task<Void, Never>] = [:]
     /// Maintainer's project (the plugin library); not in `projects`, which are the user's own.
     public let maintainerProject: Project
     /// The plugin library's git (made a repo on first need, see `prepareLibrary`).
@@ -1279,6 +1283,15 @@ public final class Workspace: ObservableObject {
             bot.markChosen(index, in: messageID)
             return true
         }
+        if isCalledIn(message, in: bot) {
+            guard message.isOpenQuestion, let label = message.choices?[safe: index]?.label else { return false }
+            guard answerCallIn(message, in: bot, with: "The user picked: \(label)") else {
+                bot.markAnswered(Bot.noLongerNeeded, in: messageID)
+                return false
+            }
+            bot.markChosen(index, in: messageID)
+            return true
+        }
         if message.role == .notice, let questionID = message.sourceMessageID {
             guard message.isOpenQuestion else { return false }
             guard let original = message.sourceID.flatMap(member), original.choose(index, in: questionID) else {
@@ -1310,6 +1323,10 @@ public final class Workspace: ObservableObject {
                 bot.post(ChatMessage(role: .user, text: text), unread: false)
                 return answerInGroup(group.id, message, with: "The user answered with the component: \(text)")
             }
+            if isCalledIn(message, in: bot) {
+                bot.post(ChatMessage(role: .user, text: text), unread: false)
+                return answerCallIn(message, in: bot, with: "The user answered with the component: \(text)")
+            }
             bot.send(text)
             return true
         }
@@ -1322,6 +1339,14 @@ public final class Workspace: ObservableObject {
         }
         if let group, message.role == .bot {
             guard answerInGroup(group.id, message, with: "The user answered: \(text)") else {
+                bot.markAnswered(Bot.noLongerNeeded, in: messageID)
+                return false
+            }
+            bot.markAnswered(text, in: messageID)
+            return true
+        }
+        if isCalledIn(message, in: bot) {
+            guard answerCallIn(message, in: bot, with: "The user answered: \(text)") else {
                 bot.markAnswered(Bot.noLongerNeeded, in: messageID)
                 return false
             }
@@ -1405,8 +1430,14 @@ public final class Workspace: ObservableObject {
         if let group = group(of: bot) {
             postToGroup(group.id, text, files: files, replyingTo: replyID)
         } else {
-            // Components you named with @ (picked from the input box's list) are explained to it.
-            bot.send(text, files: files, replyingTo: replyID, appNote: components.mentionNote(for: text))
+            // Bots you named with @ are called in: they answer here too, after reading the chat.
+            let called = calledIn(text, into: bot)
+            // Components you named with / (picked from the input box's list) are explained to it.
+            let notes = [heardSinceLastTurn(in: bot), callInNote(called), components.mentionNote(for: text)].compactMap { $0 }
+            bot.send(text, files: files, replyingTo: replyID, appNote: notes.isEmpty ? nil : notes.joined(separator: "\n"))
+            if !called.isEmpty, let newest = bot.messages.last(where: { $0.role == .user }) {
+                startCallIn(in: bot, to: called, newest: newest.id, ask: nil)
+            }
         }
     }
 

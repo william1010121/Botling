@@ -23,14 +23,16 @@ export class Composer {
   onKey: (event: KeyboardEvent) => boolean = () => false;
   private popover: HTMLElement | null = null;
   /**
-   * What can be @-mentioned here: the bots of a group chat, then the chat's components (the bot
-   * is told you mean that component). The list offers them as you type.
+   * What the list offers as you type: after @ the bots (a group's members, or in a bot's own chat
+   * the bots you can call in); after / at the start of a word the app's commands, then the
+   * components (the bot is told you mean that component).
    */
   private mentions: Mention[] = [];
+  private slashItems: Mention[] = [];
   private readonly mentionList: HTMLElement;
   private mentionMatches: Mention[] = [];
   private mentionActive = 0;
-  /** Where the "@…" being typed starts. */
+  /** Where the "@…" or "/…" being typed starts. */
   private mentionFrom = -1;
 
   constructor(parent: HTMLElement) {
@@ -139,17 +141,21 @@ export class Composer {
     this.view.focus();
   }
 
-  /** Offers the names that start with what follows the "@" before the caret. */
+  /** Offers the names that start with what follows the "@" or "/" before the caret. */
   private refreshMentions(): void {
     const head = this.view.state.selection.main.head;
     const line = this.view.state.doc.lineAt(head);
     const before = line.text.slice(0, head - line.from);
     // Like the app: an @ right after Chinese text counts; one inside a word (a@b) does not.
-    const match = this.mentions.length ? /(?:^|[^A-Za-z0-9_])@([^@\n]{0,40})$/.exec(before) : null;
+    const at = this.mentions.length ? /(?:^|[^A-Za-z0-9_])@([^@\n]{0,40})$/.exec(before) : null;
+    // A / starts a word (after a space, a bracket or quote, or Chinese); a/b and ~/x are paths.
+    const slash = !at && this.slashItems.length ? /(?:^|[\s([{"'\u0080-\uffff])\/([^\s/]{0,40})$/.exec(before) : null;
+    const match = at ?? slash;
+    const items = at ? this.mentions : this.slashItems;
     const query = match ? match[1].toLowerCase() : null;
     // A name typed in full needs no list (Return then sends).
-    const complete = query !== null && this.mentions.some((mention) => mention.name.toLowerCase() === query);
-    this.mentionMatches = query === null || complete ? [] : this.mentions.filter((mention) => mention.name.toLowerCase().startsWith(query)).slice(0, 8);
+    const complete = query !== null && items.some((mention) => mention.name.toLowerCase() === query);
+    this.mentionMatches = query === null || complete ? [] : items.filter((mention) => mention.name.toLowerCase().startsWith(query)).slice(0, 8);
     this.mentionFrom = match ? head - match[1].length - 1 : -1;
     this.mentionActive = Math.min(this.mentionActive, Math.max(0, this.mentionMatches.length - 1));
     this.mentionList.hidden = this.mentionMatches.length === 0;
@@ -160,18 +166,19 @@ export class Composer {
       option.className = index === this.mentionActive ? "active" : "";
       const label = document.createElement("span");
       label.className = "mention-name";
-      label.textContent = "@" + mention.name;
+      label.textContent = sigil(mention) + mention.name;
       option.append(label);
-      if (mention.kind === "component") {
+      if (mention.kind !== "bot") {
         const kind = document.createElement("span");
         kind.className = "mention-kind";
-        kind.textContent = "組件";
+        kind.textContent = mention.kind === "command" ? "指令" : "組件";
         option.append(kind);
-        option.setAttribute("aria-label", `@${mention.name}, component`);
+        option.setAttribute("aria-label", `/${mention.name}, ${mention.kind}`);
+        if (mention.about) option.title = mention.about;
       }
       option.addEventListener("mousedown", (event) => {
         event.preventDefault();
-        this.pickMention(mention.name);
+        this.pickMention(mention);
       });
       this.mentionList.append(option);
     });
@@ -187,7 +194,7 @@ export class Composer {
       this.mentionActive = (this.mentionActive + step + this.mentionMatches.length) % this.mentionMatches.length;
       this.refreshMentions();
     } else if (event.key === "Enter" || event.key === "Tab") {
-      this.pickMention(this.mentionMatches[this.mentionActive].name);
+      this.pickMention(this.mentionMatches[this.mentionActive]);
     } else if (event.key === "Escape") {
       this.mentionMatches = [];
       this.mentionList.hidden = true;
@@ -198,13 +205,13 @@ export class Composer {
     return true;
   }
 
-  private pickMention(name: string): void {
+  private pickMention(mention: Mention): void {
     const head = this.view.state.selection.main.head;
     if (this.mentionFrom < 0) return;
     // Picked in the middle of a word: the rest of the word goes too.
     const line = this.view.state.doc.lineAt(head);
     const rest = /^[A-Za-z0-9_\-]*/.exec(line.text.slice(head - line.from))?.[0].length ?? 0;
-    const insert = `@${name} `;
+    const insert = `${sigil(mention)}${mention.name} `;
     this.view.dispatch({ changes: { from: this.mentionFrom, to: head + rest, insert }, selection: { anchor: this.mentionFrom + insert.length } });
     this.mentionMatches = [];
     this.mentionList.hidden = true;
@@ -213,8 +220,10 @@ export class Composer {
 
   update(state: ChatState): void {
     const mentions = mentionsOf(state);
-    if (JSON.stringify(mentions) !== JSON.stringify(this.mentions)) {
+    const slashItems = slashItemsOf(state);
+    if (JSON.stringify([mentions, slashItems]) !== JSON.stringify([this.mentions, this.slashItems])) {
       this.mentions = mentions;
+      this.slashItems = slashItems;
       this.refreshMentions();
     }
     this.view.dispatch({ effects: this.placeholder.reconfigure(placeholderExtension(state.placeholder)) });
@@ -270,24 +279,39 @@ export class Composer {
   }
 }
 
-/** Something that can follow @: a bot of the group chat, or a component. */
+/** Something the list offers: a bot (after @), or a command or component (after /). */
 interface Mention {
   name: string;
-  kind: "bot" | "component";
+  kind: "bot" | "command" | "component";
+  about?: string;
 }
 
-/** The group's bots first, then components; each name once (a bot's name wins). */
-function mentionsOf(state: ChatState): Mention[] {
+function sigil(mention: Mention): string {
+  return mention.kind === "bot" ? "@" : "/";
+}
+
+/** Each name once, in the order given (the first kind wins). */
+function unique(entries: Mention[]): Mention[] {
   const seen = new Set<string>();
-  const list: Mention[] = [];
-  const add = (name: string, kind: Mention["kind"]) => {
-    if (!name || seen.has(name.toLowerCase())) return;
-    seen.add(name.toLowerCase());
-    list.push({ name, kind });
-  };
-  for (const name of state.mentions ?? []) add(name, "bot");
-  for (const name of state.componentMentions ?? []) add(name, "component");
-  return list;
+  return entries.filter((entry) => {
+    const key = entry.name.toLowerCase();
+    if (!entry.name || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** The bots you can @ here. */
+function mentionsOf(state: ChatState): Mention[] {
+  return unique((state.mentions ?? []).map((name) => ({ name, kind: "bot" })));
+}
+
+/** The app's commands first, then the components. */
+function slashItemsOf(state: ChatState): Mention[] {
+  return unique([
+    ...(state.slashCommands ?? []).map(({ name, about }): Mention => ({ name, kind: "command", about })),
+    ...(state.slashComponents ?? []).map((name): Mention => ({ name, kind: "component" })),
+  ]);
 }
 
 /** Reads a file in the page and hands it to Swift, which saves it and attaches it. */
