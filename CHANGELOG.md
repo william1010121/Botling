@@ -16,6 +16,10 @@ app and publishes it on GitHub Releases.
   components show once you type a letter after it, in up to 5 small, flat rows without tags.
   Maintainer makes no new component when there are already 20; it asks which one to delete
   first, and bots see "N / 20 installed". More than 20 already there still all load.
+- **Fold the left column into a strip of faces.** The button beside the window's lights (or
+  ⌃⌘S) shrinks the bot list to 56 points: faces only, a dashed ring while one works, an
+  orange ring and "!" when its connection is stuck, an orange dot when it waits on you, a blue
+  dot for unread lines. Hover a face for its name and status; the choice is remembered.
 - **Tool steps show pictures.** When a tool call gives back an image (a Read of a .png, a
   screenshot), the step's OUT box shows it, fit to the box's width; click it to see it full
   size. The bot keeps the pictures as files beside the chat, so chat.json stays small.

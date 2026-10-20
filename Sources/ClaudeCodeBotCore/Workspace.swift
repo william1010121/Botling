@@ -1371,6 +1371,20 @@ public final class Workspace: ObservableObject {
         refreshWaiting()
     }
 
+    /// Whether the left column is folded into a strip of faces; remembered across launches.
+    public var railCollapsed: Bool { settings.railCollapsed ?? false }
+
+    public func setRailCollapsed(_ collapsed: Bool) {
+        guard collapsed != railCollapsed else { return }
+        settings.railCollapsed = collapsed
+        settings.save(to: settingsURL)
+    }
+
+    /// The button by the window's lights and ⌃⌘S.
+    public func toggleRail() {
+        setRailCollapsed(!railCollapsed)
+    }
+
     /// How many items you ignored.
     public var ignoredWaitingCount: Int { settings.ignoredWaiting?.count ?? 0 }
 

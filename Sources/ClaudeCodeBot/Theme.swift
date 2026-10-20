@@ -7,6 +7,10 @@ enum Theme {
     static let bubble = Color(hex: 0x1B1B1F)
     static let userBubble = Color(hex: 0x2B2B31)
     static let selected = Color(hex: 0x26262C)
+    /// Under the pointer, a step quieter than `selected`.
+    static let hover = Color(hex: 0x1F1F24)
+    /// The edge of a hover tip.
+    static let tipLine = Color(hex: 0x3A3A42)
     static let line = Color(hex: 0x232327)
     static let text = Color(hex: 0xEDEDF0)
     static let muted = Color(hex: 0xA0A0A8)

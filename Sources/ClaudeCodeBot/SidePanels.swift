@@ -4,9 +4,13 @@ import ClaudeCodeBotCore
 import SwiftUI
 
 /// Left column: who. One row per bot; the face shows its state, a dot shows what is new.
+/// Folded (`collapsed`), it is a strip of faces only (see `RailStrip`).
 struct RailView: View {
     @ObservedObject var workspace: Workspace
     @ObservedObject var settings: SettingsNavigator
+    var collapsed = false
+    /// The folded strip's hover tip, drawn by the window over the chat.
+    @Binding var tip: RailTip?
     @State private var makingBot = false
     @State private var showingQuickSettings = false
     @State private var removing: Workspace.Project?
@@ -16,8 +20,15 @@ struct RailView: View {
     /// Bumped when any chat gets a line, so the list sorts again.
     @State private var activity = 0
 
+    init(workspace: Workspace, settings: SettingsNavigator, collapsed: Bool = false, tip: Binding<RailTip?> = .constant(nil)) {
+        self.workspace = workspace
+        self.settings = settings
+        self.collapsed = collapsed
+        _tip = tip
+    }
+
     /// One row of the list: a group or a project's bot.
-    private struct Entry: Identifiable {
+    struct Entry: Identifiable {
         enum Kind {
             case group(ChatGroup, Bot)
             case project(Workspace.Project, Bot)
@@ -43,6 +54,70 @@ struct RailView: View {
     }
 
     var body: some View {
+        Group {
+            if collapsed {
+                RailStrip(
+                    workspace: workspace,
+                    entries: entries,
+                    tip: $tip,
+                    showingQuickSettings: $showingQuickSettings,
+                    addProject: addProject,
+                    // The form needs the open column's width.
+                    newBot: { workspace.setRailCollapsed(false); makingBot = true },
+                    newGroup: { editingGroup = ChatGroup(name: "", members: []) },
+                    editGroup: { editingGroup = $0 },
+                    deleteGroup: { deletingGroup = $0 },
+                    removeBot: { removing = $0 },
+                    openSettings: openSettings
+                )
+            } else {
+                list
+            }
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(Theme.side)
+        // Only new lines count: @Published sends its current value as soon as it is subscribed
+        // to, and this is subscribed to again on every redraw, so taking that first value too
+        // would bump `activity`, redraw, subscribe again, and never stop (a frozen app).
+        .onReceive(Publishers.MergeMany(entries.map { $0.bot.$messages.dropFirst().map { _ in () } })) { _ in activity &+= 1 }
+        .confirmationDialog(
+            "Remove \"\(removing?.name ?? "")\"?",
+            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+            presenting: removing
+        ) { project in
+            Button("Remove bot", role: .destructive) { workspace.removeBot(project.id) }
+        } message: { project in
+            Text("It stops at once. Its notes stay in \(project.folder.path).")
+        }
+        .confirmationDialog(
+            "Delete the group \"\(deletingGroup?.name ?? "")\"?",
+            isPresented: Binding(get: { deletingGroup != nil }, set: { if !$0 { deletingGroup = nil } }),
+            presenting: deletingGroup
+        ) { group in
+            Button("Delete group", role: .destructive) { workspace.deleteGroup(group.id) }
+        } message: { _ in
+            Text("Its conversation is deleted. The bots in it keep their own chats and memory.")
+        }
+        .sheet(item: $editingGroup) { group in
+            GroupForm(workspace: workspace, group: group) { name, members in
+                if workspace.group(group.id) != nil {
+                    workspace.editGroup(group.id, name: name, members: members)
+                } else {
+                    workspace.createGroup(name: name, members: members)
+                }
+            }
+        }
+    }
+
+    /// The gear popover's rows open the settings window, after the popover has gone (so the
+    /// sheet is not shown from inside it).
+    private func openSettings(_ section: SettingsSection?) {
+        showingQuickSettings = false
+        DispatchQueue.main.async { settings.open(section) }
+    }
+
+    /// The open column: a row per bot with its name, status and subagents.
+    private var list: some View {
         VStack(alignment: .leading, spacing: 2) {
             BotRow(bot: workspace.mainBot, selected: workspace.selection == nil && workspace.viewingSubagent == nil, waiting: workspace.waiting.contains { $0.projectID == Workspace.mainBotID }) {
                 workspace.select(nil)
@@ -159,50 +234,13 @@ struct RailView: View {
                 .help("Settings: today's cost, auto-approve, plugins")
                 .accessibilityLabel("Settings")
                 .popover(isPresented: $showingQuickSettings, arrowEdge: .top) {
-                    SettingsPopover(workspace: workspace, registry: workspace.plugins) { section in
-                        showingQuickSettings = false
-                        // After the popover has gone, so the sheet is not shown from inside it.
-                        DispatchQueue.main.async { settings.open(section) }
-                    }
+                    SettingsPopover(workspace: workspace, registry: workspace.plugins, open: openSettings)
                 }
             }
         }
         .padding(.horizontal, 12)
         .padding(.top, 36)
         .padding(.bottom, 12)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(Theme.side)
-        // Only new lines count: @Published sends its current value as soon as it is subscribed
-        // to, and this is subscribed to again on every redraw, so taking that first value too
-        // would bump `activity`, redraw, subscribe again, and never stop (a frozen app).
-        .onReceive(Publishers.MergeMany(entries.map { $0.bot.$messages.dropFirst().map { _ in () } })) { _ in activity &+= 1 }
-        .confirmationDialog(
-            "Remove \"\(removing?.name ?? "")\"?",
-            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
-            presenting: removing
-        ) { project in
-            Button("Remove bot", role: .destructive) { workspace.removeBot(project.id) }
-        } message: { project in
-            Text("It stops at once. Its notes stay in \(project.folder.path).")
-        }
-        .confirmationDialog(
-            "Delete the group \"\(deletingGroup?.name ?? "")\"?",
-            isPresented: Binding(get: { deletingGroup != nil }, set: { if !$0 { deletingGroup = nil } }),
-            presenting: deletingGroup
-        ) { group in
-            Button("Delete group", role: .destructive) { workspace.deleteGroup(group.id) }
-        } message: { _ in
-            Text("Its conversation is deleted. The bots in it keep their own chats and memory.")
-        }
-        .sheet(item: $editingGroup) { group in
-            GroupForm(workspace: workspace, group: group) { name, members in
-                if workspace.group(group.id) != nil {
-                    workspace.editGroup(group.id, name: name, members: members)
-                } else {
-                    workspace.createGroup(name: name, members: members)
-                }
-            }
-        }
     }
 
     private func addProject() {

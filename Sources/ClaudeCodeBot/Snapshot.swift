@@ -19,6 +19,10 @@ enum Snapshot {
             drawCodex(to: path)
             return true
         }
+        if let path = ProcessInfo.processInfo.environment["CCB_RAIL_SNAPSHOT"] {
+            drawRail(to: path)
+            return true
+        }
         if let (chat, path) = chatRequest() {
             drawChat(chat, to: path)
             return true
@@ -179,6 +183,65 @@ enum Snapshot {
         .background(Theme.ground)
         .preferredColorScheme(.dark)
         let frame = NSRect(x: 0, y: 0, width: 1480, height: 900)
+        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: .darkAqua)
+        let host = NSHostingView(rootView: content)
+        host.frame = frame
+        window.contentView = host
+        self.window = window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
+            exit(0)
+        }
+    }
+
+    /// `CCB_RAIL_SNAPSHOT=/path/out.png`: the left column open and folded side by side, from
+    /// sample projects with unread lines, with the folded one's hover tip on Maintainer.
+    private static func drawRail(to path: String) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let samples: [(String, String, Int)] = [("ClaudeCodeBot", "square", 0), ("Arbor", "triangle", 0), ("Morning news", "star", 5), ("Paper research", "hexagon", 0), ("Home server", "pill", 0)]
+        let projects = samples.map { name, avatar, _ in
+            Workspace.Project(id: UUID(), name: name, folder: root.appending(path: "code/\(name)"), avatar: avatar)
+        }
+        try? JSONEncoder().encode(projects).write(to: root.appending(path: "projects.json"))
+        for (project, sample) in zip(projects, samples) where sample.2 > 0 {
+            BotStore(directory: root.appending(path: "projects/\(project.id.uuidString)")).save(unread: sample.2)
+        }
+        BotStore(directory: root.appending(path: "projects/\(Workspace.maintainerID.uuidString)")).save(unread: 2)
+        let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
+            Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
+        }
+        // Main bot's icon (36 + 40) and the gap (4), then half of Maintainer's.
+        let tip = RailTip(title: workspace.maintainer.name, detail: RailLayout.tipDetail(status: "Done, click to see", unread: 2, waiting: false), midY: 36 + 40 + 4 + 20)
+        let pane = { (collapsed: Bool) in
+            HStack(spacing: 0) {
+                RailView(workspace: workspace, settings: SettingsNavigator(), collapsed: collapsed)
+                    .frame(width: RailLayout.width(collapsed: collapsed))
+                    .overlay(alignment: .trailing) { Rectangle().fill(Theme.line).frame(width: 1) }
+                VStack(alignment: .leading, spacing: 10) {
+                    RoundedRectangle(cornerRadius: 12).fill(Theme.bubble).frame(width: 180, height: 34)
+                    RoundedRectangle(cornerRadius: 12).fill(Theme.userBubble).frame(width: 120, height: 34).frame(maxWidth: .infinity, alignment: .trailing)
+                    RoundedRectangle(cornerRadius: 12).fill(Theme.bubble).frame(height: 64)
+                    Spacer()
+                    RoundedRectangle(cornerRadius: 10).stroke(Theme.chip).frame(height: 36)
+                }
+                .padding(EdgeInsets(top: 44, leading: 16, bottom: 16, trailing: 16))
+            }
+            .frame(width: 520, height: 560)
+            .background(Theme.ground)
+            .overlay(alignment: .topLeading) { RailChrome(collapsed: collapsed, tip: collapsed ? tip : nil) {} }
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+        let content = HStack(spacing: 40) { pane(false); pane(true) }
+            .padding(30)
+            .frame(width: 1140, height: 620)
+            .foregroundStyle(Theme.text)
+            .background(Color(hex: 0x0A0A0C))
+            .preferredColorScheme(.dark)
+        let frame = NSRect(x: 0, y: 0, width: 1140, height: 620)
         let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: content)
