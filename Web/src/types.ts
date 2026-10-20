@@ -116,6 +116,8 @@ export interface ChatState {
   slashCommands?: { name: string; about: string }[];
   /** Components you can / (picked, the bot is told you mean that component). */
   slashComponents?: string[];
+  /** The shared library's other components (not this bot's yet), offered after its own, marked faintly. */
+  slashLibrary?: string[];
   /** What it is doing right now, while it works. */
   live?: StepView[];
   /** Set while you watch one of its subagents: the page has no input box then. */

@@ -45,7 +45,7 @@ struct BotPrompts {
         - Write math in LaTeX: inline $…$, display $$…$$ on its own line; the app typesets it.
         - The in-chat components (buttons, cards and the like) belong to "Maintainer"; when you are woken up the app attaches the component list.
           To show data with a component: add <show name="component name">JSON matching its format</show> to your reply.
-          To get a component changed or a new one made: end your reply with <component name="component name">what to change</component>; do not change the app yourself.
+          To get a component changed, a new one made, or one from the shared library added to your own list: end your reply with <component name="component name">what you need</component>; do not change the app yourself.
           Designing chat components (new looks, several kinds to choose from) is Maintainer's: end your reply with one <component> tag per design, carrying the user's words (including /design when they said it); never draw design pages of your own for them.
         - When the user says "/design" or asks for a design, the result is a Claude Design on claude.ai, not a local HTML file: with the Artifact tool, run quickstart with intent "design", publish from the Design type it names, and reply with the claude.ai link it returns as [name](link). Do not open it yourself.
           For new features or changed behaviour in ClaudeCodeBot itself (plugins): end your reply with <plugin>what is wanted</plugin>; Maintainer takes it.

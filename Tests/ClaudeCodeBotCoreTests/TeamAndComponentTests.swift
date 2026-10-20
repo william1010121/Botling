@@ -298,25 +298,19 @@ struct ComponentTests {
         await eventually { fake.agents.count == 2 }
         let maintainer = try #require(fake.agents.last)
         #expect(maintainer.sent.first?.contains("Main bot wants a new component \"error-toast\"") == true)
+        #expect(maintainer.sent.first?.contains("Main bot has 2 / 20") == true)
         await workspace.putEveryoneToSleep()
     }
 
-    /// At most 20 components: bots see "N / 20", and at the limit Maintainer makes no new one
-    /// but asks the user which to delete first. More than 20 already there still all load.
-    @Test func componentsAreCappedAtTwentyButMoreStillLoad() async throws {
+    /// The library has no cap (the 20 is per bot, see BotComponentListTests): more than 20 all
+    /// load, and a new one asked for by the user (no bot behind it) is never held back.
+    @Test func theLibraryHoldsMoreThanTwentyAndStillTakesNewOnes() async throws {
         #expect(ComponentLibrary.limit == 20)
         let fake = FakeLauncher()
         let workspace = makeWorkspace(fake)
         await workspace.pluginLibraryReady.value
         let library = workspace.components
-        #expect(!library.isFull)
-        #expect(workspace.componentBriefing().contains("2 / 20 installed"))
-
-        let rules = workspace.maintainerInstructions()
-        #expect(rules.contains("At most 20 components"))
-        #expect(rules.contains("do not make a new one"))
-        #expect(rules.contains("ask which one to delete first"))
-        #expect(rules.contains("組件使用統計"))
+        #expect(workspace.componentBriefing().contains("2 / 20 yours"))
 
         for index in 0..<19 {
             let folder = library.folder.appending(path: "extra-\(index)")
@@ -326,17 +320,13 @@ struct ComponentTests {
         }
         library.rescan()
         #expect(library.names.count == 21)
-        #expect(library.isFull)
         #expect(library.template("extra-18") == "<p>18</p>")
-        #expect(workspace.componentBriefing().contains("21 / 20 installed"))
+        #expect(workspace.componentBriefing().contains("2 / 20 yours"))
         #expect(workspace.componentBriefing().contains("- extra-18: Extra 18."))
 
         workspace.requestComponentChange("toast", request: "Make an error toast", from: "The user")
-        let full = try #require(workspace.maintainer.messages.last { $0.role == .relay })
-        #expect(full.text.hasPrefix("The user wants a new component \"toast\": Make an error toast"))
-        #expect(full.text.contains("21 / 20"))
-        #expect(full.text.contains("Do not make it"))
-        #expect(full.text.contains("which component to delete first"))
+        let made = try #require(workspace.maintainer.messages.last { $0.role == .relay })
+        #expect(made.text == "The user wants a new component \"toast\": Make an error toast")
 
         // Changing one that is there is still fine.
         workspace.requestComponentChange("choices", request: "Lay the options out in a row", from: "The user")

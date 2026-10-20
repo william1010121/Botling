@@ -29,6 +29,12 @@ public enum BotRequest: Equatable, Sendable {
     /// `<codex-review agent="fix-login" folder="/…/worktree" base="main">what it does</codex-review>`:
     /// have Codex review a subagent's change; what it finds goes back to that subagent.
     case codexReview(agent: String, folder: String, base: String?, note: String)
+    /// `<give-component bot="garden">weather</give-component>`: Maintainer only. Puts a library
+    /// component on that bot's own list (the app refuses past the per-bot limit).
+    case giveComponent(bot: String, name: String)
+    /// `<take-component bot="garden">weather</take-component>`: Maintainer only. Takes it off that
+    /// bot's list; the library copy stays.
+    case takeComponent(bot: String, name: String)
 }
 
 /// Splits a bot's reply into the text to show, the buttons to draw, and the requests to act on.
@@ -70,6 +76,10 @@ public enum ReplyParser {
     )
     private static let codexTag = try! NSRegularExpression(
         pattern: #"<codex-review((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(?:/>|>\s*(.*?)\s*</codex-review>)"#,
+        options: .dotMatchesLineSeparators
+    )
+    private static let listTag = try! NSRegularExpression(
+        pattern: #"<(give|take)-component\s+bot\s*=\s*(?:"([^"]*)"|'([^']*)')\s*>\s*(.*?)\s*</\1-component>"#,
         options: .dotMatchesLineSeparators
     )
     private static let screenshotTag = try! NSRegularExpression(pattern: #"<app-screenshot\s*/?>(?:\s*</app-screenshot>)?"#)
@@ -192,6 +202,14 @@ public enum ReplyParser {
             reviews.insert(.codexReview(agent: (attributes["agent"] ?? "").trimmingCharacters(in: .whitespaces), folder: folder, base: base, note: groups[1]), at: 0)
         }
         requests += reviews
+        var lists: [BotRequest] = []
+        take(listTag) { groups in
+            let bot = (groups[1].isEmpty ? groups[2] : groups[1]).trimmingCharacters(in: .whitespaces)
+            let name = groups[3].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !bot.isEmpty, !name.isEmpty else { return }
+            lists.insert(groups[0] == "give" ? .giveComponent(bot: bot, name: name) : .takeComponent(bot: bot, name: name), at: 0)
+        }
+        requests += lists
 
         var choices: [Choice]?
         take(choicesBlock, first: true) { groups in

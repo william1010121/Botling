@@ -21,6 +21,9 @@ public final class Bot: ObservableObject, Identifiable {
     @Published public private(set) var codexSettings: CodexSettings
     /// Called when you change `codexSettings`, so an awake bot hears the new rules.
     public var onCodexSettings: ((CodexSettings) -> Void)?
+    /// The components it has from the shared library (at most `ComponentLibrary.limit`); its
+    /// briefing has their whole usage. Nil until first given, and for chats without one (groups).
+    @Published public private(set) var componentList: [String]?
     /// When the bot will tidy and fall asleep if nothing else happens; nil unless idle and awake.
     @Published public private(set) var sleepsAt: Date?
     /// A reply arrived that the user has not looked at.
@@ -199,6 +202,7 @@ public final class Bot: ObservableObject, Identifiable {
         subagentModel = store?.loadSubagentModel()
         effort = store?.loadEffort()
         codexSettings = store?.loadCodexSettings() ?? CodexSettings()
+        componentList = store?.loadComponentList()
         routineFile = RoutineFile(url: profile.routinesURL)
         // The main bot starts with a daily summary; managers with none. Routines saved the old way
         // move into the file.
@@ -1241,6 +1245,13 @@ public final class Bot: ObservableObject, Identifiable {
         codexSettings = settings
         store?.save(codexSettings: settings)
         onCodexSettings?(settings)
+    }
+
+    /// Its own components (kept in bot.json).
+    public func setComponentList(_ names: [String]) {
+        guard names != componentList else { return }
+        componentList = names
+        store?.save(componentList: names)
     }
 
     /// Plugins' Claude parts changed. Asleep: the next wake loads them. Awake: hand over and

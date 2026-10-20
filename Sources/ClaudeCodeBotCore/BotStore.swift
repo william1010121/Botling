@@ -26,6 +26,8 @@ public struct BotStore: Sendable {
         var routineRuns: [String: Date]?
         /// Tools you said it may always use.
         var alwaysAllowed: [String]?
+        /// The components it has from the shared library; nil until first given (1.9).
+        var components: [String]?
         /// Lines the user has not looked at yet.
         var unread: Int?
         /// Codex review of its subagents' work.
@@ -112,6 +114,18 @@ public struct BotStore: Sendable {
     public func save(alwaysAllowed: [String]) {
         var settings = loadSettings()
         settings.alwaysAllowed = alwaysAllowed
+        write(settings, to: settingsURL)
+    }
+
+    /// The components it has (full usage in its briefing); nil: never set, see
+    /// `Workspace.giveFirstComponents`.
+    public func loadComponentList() -> [String]? {
+        loadSettings().components
+    }
+
+    public func save(componentList: [String]) {
+        var settings = loadSettings()
+        settings.components = componentList
         write(settings, to: settingsURL)
     }
 

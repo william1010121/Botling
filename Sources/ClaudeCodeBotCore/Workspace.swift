@@ -123,6 +123,8 @@ public final class Workspace: ObservableObject {
     public let componentCommands: ComponentCommands
     /// How often each component card has been drawn (`component-usage.json`).
     public let componentUsage: ComponentUsage
+    /// New components bots asked for, by name: each goes on those bots' lists once it is built.
+    var componentAsks: [String: Set<UUID>] = [:]
     /// Plugins for ClaudeCodeBot itself: `~/.claudecodebot/plugins/` and the ones shipped with the app.
     public let plugins: PluginRegistry
     /// Runs plugins' program parts (Node), when a script for it was given.
@@ -244,10 +246,13 @@ public final class Workspace: ObservableObject {
             (self?.plugins.componentFolders() ?? []).filter { $0.standardizedFileURL != componentFolder.standardizedFileURL }
         }
         components.rescan()
+        giveFirstComponents(to: mainBot)
         components.onCatalogChanged = { [weak self] in
             guard let self else { return }
-            let note = "(App: Components were updated; here is how to use them now.)\n" + componentBriefing()
-            for bot in [mainBot] + Array(managers.values) { bot.queueNote(note) }
+            deliverAskedComponents()
+            for bot in botsWithComponents {
+                bot.queueNote("(App: Components were updated; here is how to use them now.)\n" + componentBriefing(for: bot))
+            }
         }
         plugins.onNotice = { [weak self] text in
             guard let self else { return }
@@ -838,7 +843,7 @@ public final class Workspace: ObservableObject {
         \(maintainerLine)\(cardLine)
         (App: Temporary teams you can start, with <team name="name">task</team>.)
         \(teamLines)
-        \(componentBriefing())
+        \(componentBriefing(for: mainBot))
         """
     }
 
@@ -945,11 +950,6 @@ public final class Workspace: ObservableObject {
         return folder
     }
 
-    /// The components a bot can draw or ask to change.
-    func componentBriefing() -> String {
-        "(App: Components in the chat, \(components.usage) installed (at most \(ComponentLibrary.limit)). <show name=\"name\">JSON</show> draws one; <show name=\"name\" command=\"git diff --stat\"></show> fills it with what that command prints instead (run in your project folder once the user allows it; JSON output is used as the data, other output as one string; the card has a refresh button). A component whose usage has a \"Command:\" line needs only <show name=\"name\"></show>. <component name=\"name\">request</component> asks Maintainer to change one.)\n" + components.catalog()
-    }
-
     /// The folder a message's component commands run in: the project of the bot that wrote it
     /// (a group chat's lines say who), else the chat's own bot's.
     public func commandFolder(for message: ChatMessage, in bot: Bot) -> URL {
@@ -983,7 +983,9 @@ public final class Workspace: ObservableObject {
     /// Someone asked for a component change: the user beside a component, or a bot with a
     /// <component> tag. Maintainer hands it to a component-editor agent in the background,
     /// then reviews, checks and commits it.
-    public func requestComponentChange(_ name: String, request: String, from asker: String, files: [URL] = []) {
+    /// `bot` is the bot that asked, when one did: an existing component goes on its list at once,
+    /// a new one once Maintainer has built it (see `componentAskNote`).
+    public func requestComponentChange(_ name: String, request: String, from asker: String, for bot: Bot? = nil, files: [URL] = []) {
         let name = ComponentLibrary.safeName(name)
         guard !name.isEmpty else { return }
         let request = request.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -992,13 +994,11 @@ public final class Workspace: ObservableObject {
         components.markWorking(name, change: said)
         let exists = components.names.contains(name)
         let pictures = files.isEmpty ? "" : " (Attached: \(files.count == 1 ? "a picture" : "\(files.count) pictures") of how it looks now or should look.)"
-        // A new one with the library full: Maintainer asks what to delete instead.
-        let full = !exists && components.isFull
-            ? " (App: There are already \(components.usage) components, the limit. Do not make it: tell the user the library is full and ask which component to delete first.)"
-            : ""
+        // Which bot asked, and how full its own list is (the library has no cap).
+        let note = componentAskNote(name, exists: exists, from: bot)
         handToMaintainer(exists
-            ? "\(asker)'s request for the component \"\(name)\": \(said)\(pictures)"
-            : "\(asker) wants a new component \"\(name)\": \(said)\(pictures)\(full)", files: files)
+            ? "\(asker)'s request for the component \"\(name)\": \(said)\(pictures)\(note)"
+            : "\(asker) wants a new component \"\(name)\": \(said)\(pictures)\(note)", files: files)
     }
 
     // MARK: Temporary teams
@@ -1018,7 +1018,11 @@ public final class Workspace: ObservableObject {
                 // Only the main bot pulls up teams; managers work in their own folder.
                 if project == nil { startTeam(name, task: task) }
             case let .component(name, request):
-                requestComponentChange(name, request: request, from: project?.name ?? mainBot.name)
+                requestComponentChange(name, request: request, from: project?.name ?? mainBot.name, for: project.flatMap { managers[$0.id] } ?? mainBot)
+            case let .giveComponent(bot, name):
+                if project?.isMaintainer == true { changeComponentList(give: true, name: name, bot: bot) }
+            case let .takeComponent(bot, name):
+                if project?.isMaintainer == true { changeComponentList(give: false, name: name, bot: bot) }
             case let .install(source):
                 Task { await proposeInstall(source) }
             case let .folder(path):
@@ -1147,7 +1151,10 @@ public final class Workspace: ObservableObject {
           every component request (a new component or a change) goes to a ccb-core:component-editor agent with the Agent tool, run in the background, one agent per component, so several components can be worked on at once. Give it the component folder's path and the request (and any attached pictures).
           Two editors never work on the same component folder at once: if another request comes for a component already being edited, send it to that running editor with SendMessage, or keep it until that editor returns.
           While editors run, stay free for new requests. When an editor returns, review its change, then do the rest yourself, one component at a time: bump the ccb-components version, run the check, then git add, commit and tag as above.
-        - At most \(ComponentLibrary.limit) components. The components note says how many there are ("N / \(ComponentLibrary.limit) installed"). When there are already \(ComponentLibrary.limit) or more, do not make a new one and hand nothing to an editor: tell the user the library is at the limit and, with a choices block of the components, ask which one to delete first (the 組件使用統計 card shows which are used least). Make the new one only after a deletion leaves room. Changes to existing components are always fine; never delete one the user did not pick.
+        - The component library (your shelf) is shared and has no cap; each bot has its own list of components, at most \(ComponentLibrary.limit) per bot. A bot's briefing has the whole usage of the components on its list and one line for each of the others. A bot's request names the bot that asked and how many it has ("garden has N / \(ComponentLibrary.limit) components").
+          Check the library first: if a component there already does what the bot needs (the one-line list in your components note, and its about.md), build nothing: reply with <give-component bot="bot name">component name</give-component> and the app puts it on that bot's list. A request for a component already in the library by its own name is put on the bot's list by the app before it reaches you; change it only if the request asks for a change.
+          Otherwise build the new one (as above); once it is in the library the app adds it to the asking bot's list.
+          A bot already at \(ComponentLibrary.limit): add or build nothing for it; with a choices block of that bot's components, ask the user which one to remove from that bot's list first (the 組件使用統計 card shows which are used least), then <take-component bot="bot name">component name</take-component>. Removing from a list never deletes anything: the library copy stays. Deleting a component from the library itself is yours alone, only when the user asks for that, and never one the user did not pick. Changes to existing components are always fine. Never write these tags inside code or examples.
         - When a component request says /design or asks for designs to choose from, first make them a Claude Design: with the Artifact tool, quickstart with intent "design", publish from the Design type, using the look of ccb-components (its templates' colours, type and spacing) as the design system, and reply with the claude.ai link. Build the chosen one into ccb-components only after the user picks.
         - Plugins built into the app are not here and cannot be edited directly: to change one, copy its whole folder into the plugin library; a plugin with the same name overrides the built-in one (paths in PLUGINS.md).
         - To read a folder outside the plugin library (for example to turn an existing project into a plugin): end your reply with <need-folder>full path</need-folder>, say in one sentence why you need it, then stop and wait.
@@ -1278,8 +1285,12 @@ public final class Workspace: ObservableObject {
             guard let self, let bot else { return }
             let names = ComponentUsage.components(in: message, previews: components.names.contains(PagePreview.component))
             guard !names.isEmpty else { return }
-            let who = message.sourceID.flatMap { self.member($0)?.name } ?? bot.name
-            componentUsage.record(names, bot: who)
+            let writer = message.sourceID.flatMap { self.member($0) } ?? bot
+            componentUsage.record(names, bot: writer.name)
+            // A library component a bot drew without having it goes on its list (if there is room).
+            if message.role == .bot {
+                for name in Set(message.shown.map(\.name)) { giveComponent(name, to: writer) }
+            }
         }
     }
 
@@ -1516,6 +1527,11 @@ public final class Workspace: ObservableObject {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !files.isEmpty else { return false }
         guard let message = bot.messages.first(where: { $0.id == messageID }) else { return false }
+        // The usage card's delete button: off that bot's list, not out of the library.
+        if !message.shown.isEmpty, let name = Self.componentToDrop(in: text) {
+            dropComponent(name, shownIn: message, in: bot)
+            return true
+        }
         let group = group(of: bot)
         let shown = Bot.answerLabel(text, files: files)
         /// For a bot told in words (a group or a called-in bot): the pictures, kept in `bot`'s
@@ -1786,14 +1802,15 @@ public final class Workspace: ObservableObject {
             .manager(name: project.name, avatar: project.avatar, folder: project.folder)
         }
         let bot = makeBot(profile, store)
+        giveFirstComponents(to: bot)
         bot.onRequests = { [weak self] requests in self?.handle(requests, from: project) }
         bot.onCodexSettings = { [weak self] _ in self?.retellCodexRules(to: project.id) }
         bot.onSpend = { [weak self] amount in self?.record(amount, by: project.name) }
         bot.onTokens = { [weak self] tokens in self?.record(0, tokens: tokens, by: project.name) }
         bot.onRateLimits = { [weak self] limits in self?.note(limits) }
-        bot.wakeNote = { [weak self] in
+        bot.wakeNote = { [weak self, weak bot] in
             guard let self else { return "" }
-            return [componentBriefing(), developerBriefing(for: project), managers[project.id].map(codexBriefing(for:)) ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            return [componentBriefing(for: bot), developerBriefing(for: project), managers[project.id].map(codexBriefing(for:)) ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n")
         }
         giveClaudeParts(to: bot)
         countComponents(of: bot)
