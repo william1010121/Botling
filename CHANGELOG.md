@@ -19,6 +19,13 @@ app and publishes it on GitHub Releases.
   back any that conflict or fail. Picks are kept in `release-plan.json`, and PRs no longer open
   drop out. Without gh or a sign-in it says what to run. `CCB_RELEASES_SNAPSHOT=out.png` draws
   it with sample PRs (`CCB_RELEASES_OWNER=0`: as a voter).
+- **Share a feature you built with /share (developer mode).** In the chat of the project that
+  is ClaudeCodeBot's source, /share lists your features (local branches with commits upstream's
+  main lacks) and checks the one you pick: up to date, a privacy check for keys, tokens and your
+  home folder's path in what it adds, and a GitHub fork as origin. When nothing fails, "Open pull
+  request" pushes the branch to your fork and runs `gh pr create` to william1010121/ClaudeCodeBot
+  with the `community-feature` label (left for the owner to add when you may not), so others can
+  vote on it with 👍. `/share <branch>` goes straight to that branch's checklist.
 - **Pin bots to the top of the left column.** Right-click a project or bot and choose Pin (or
   Unpin), or click the pin glyph that shows at the row's end on hover. Pinned rows sit in a
   "Pinned" section above Chats, in the order they were pinned, and come first in the folded

@@ -107,6 +107,7 @@ struct ChatSurface: NSViewRepresentable {
             },
             callIn: workspace.callInView(for: bot),
             feedback: workspace.developerProject != nil,
+            share: workspace.offersShare(in: bot),
             commands: workspace.commandContext(for: bot),
             pins: bot === workspace.codexBot ? nil : workspace.pinContext(for: bot, board: inputs.boards.contains(bot.id)),
             specs: bot !== workspace.codexBot,

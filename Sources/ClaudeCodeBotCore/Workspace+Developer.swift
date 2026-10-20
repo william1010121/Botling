@@ -44,6 +44,7 @@ extension Workspace {
         - To try your work: from the main folder, after merging, build with SINGLE_ARCH=1 scripts/make-app.sh <version>-dev. See how a chat looks in that build without installing it: dist/ClaudeCodeBot.app/Contents/MacOS/ClaudeCodeBot --snapshot "<chat name>" <png path>, then read the PNG.
         - To install it: write where you are into your memory file first (you are restarted too), then end your reply with <install-build path="full path of dist/ClaudeCodeBot.app">what changed, in a sentence or two</install-build>. The user confirms; the app restarts on the new build and tells you whether it came up. A build that does not come up is rolled back by itself.
         - To see the running app: end your reply with <app-screenshot/>; a picture of its window comes back to you.
+        - Sharing: after merging a feature, keep its bot/<short-task> branch (delete only the worktree). The user shares one with /share: the app checks it (up to date, no keys or personal paths) and opens a pull request from their fork (origin) to \(CommunityShare.upstream) with the \(CommunityShare.label) label. If origin is not their GitHub fork, set it up when they ask (gh repo fork --remote).
         - Never change what bots may do (tools, permissions, the prompts' rules) unless the user asked for it; the install card shows such changes to the user.)
         """
     }
