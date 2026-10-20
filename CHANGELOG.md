@@ -4,6 +4,14 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+### Added
+
+- **Tool steps show pictures.** When a tool call gives back an image (a Read of a .png, a
+  screenshot), the step's OUT box shows it, fit to the box's width; click it to see it full
+  size. The bot keeps the pictures as files beside the chat, so chat.json stays small.
+
 ## 1.7.1
 
 1.7.0 was tagged but never published as a GitHub Release, so 1.7.1 is the first release with
