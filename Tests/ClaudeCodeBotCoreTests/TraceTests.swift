@@ -120,9 +120,25 @@ struct TraceTests {
         for id in ids {
             book.apply(.subagentStarted(id: id, description: id, type: "general-purpose", prompt: "Do \(id)", background: true))
         }
-        #expect(book.listed().map(\.id) == Array(ids.suffix(TraceBook.listedAtMost)))
+        #expect(book.listed().map(\.id) == Array(ids.reversed().prefix(TraceBook.listedAtMost)))
         book.dismiss(ids.last!)
-        #expect(book.listed().map(\.id) == Array(ids.dropLast()))
+        #expect(book.listed().map(\.id) == Array(ids.dropLast().reversed()))
+    }
+
+    /// Running rows come first, then the rest; newest first within each. The cap keeps the
+    /// first rows of that order.
+    @Test func runningSubagentsAreListedFirstThenNewest() {
+        var book = TraceBook()
+        let start = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let ids = ["A", "B", "C", "D", "E", "F"]
+        for (offset, id) in ids.enumerated() {
+            book.apply(.subagentStarted(id: id, description: id, type: "general-purpose", prompt: "Do \(id)", background: true), at: start.addingTimeInterval(Double(offset)))
+        }
+        // A, C, E and F end; B and D keep running.
+        for id in ["A", "C", "E", "F"] {
+            book.apply(.subagentEnded(id: id, status: "completed", summary: nil), at: start.addingTimeInterval(10))
+        }
+        #expect(book.listed(at: start.addingTimeInterval(20)).map(\.id) == ["D", "B", "F", "E"])
     }
 
     @Test func aDismissalOutlivesARestart() {
@@ -137,7 +153,7 @@ struct TraceTests {
         store.save(subagents: [kept, hidden])
 
         let bot = Bot(profile: .main(home: home), launcher: FakeLauncher().launcher, store: store)
-        #expect(bot.trace.listed().map(\.id) == ["A", "B"])
+        #expect(bot.trace.listed().map(\.id) == ["B", "A"])
         bot.dismissSubagent("B")
         #expect(bot.trace.listed().map(\.id) == ["A"])
         #expect(bot.subagents.map(\.id) == ["A", "B"])

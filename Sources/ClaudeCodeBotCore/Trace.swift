@@ -250,15 +250,22 @@ public struct TraceBook: Equatable, Sendable {
 
     /// The subagents the left column lists under the bot at `date`: the ones the bot itself
     /// sent off that still run, or ended a short while ago, and whose row you did not take
-    /// away (newest last).
+    /// away. Running ones come first, then the rest, newest first within each; the cap keeps
+    /// the first rows of that order.
     public func listed(at date: Date = Date()) -> [Subagent] {
-        let shown = subagents.filter { subagent in
+        let shown = subagents.enumerated().filter { _, subagent in
             guard subagent.parentID == nil, !subagent.isDismissed else { return false }
             if subagent.isRunning { return true }
             guard let ended = subagent.endedAt else { return false }
             return date.timeIntervalSince(ended) < Self.listedAfterEnding
         }
-        return Array(shown.suffix(Self.listedAtMost))
+        // Later in the book counts as newer when two started at the same moment.
+        let ordered = shown.sorted { a, b in
+            if a.element.isRunning != b.element.isRunning { return a.element.isRunning }
+            if a.element.startedAt != b.element.startedAt { return a.element.startedAt > b.element.startedAt }
+            return a.offset > b.offset
+        }
+        return ordered.prefix(Self.listedAtMost).map(\.element)
     }
 
     /// Takes its row out of the left column. It does not stop it: a running one works on and
