@@ -3,9 +3,11 @@ import Foundation
 /// A component being made from a bot's reply ("Make into component", or a bot's own
 /// `<suggest-component>`): what it shows (its data fields), where the data comes from (a command
 /// run in the bot's folder), how it refreshes, which bots get it, and whether a component already
-/// in the library would do. In the chat it is a small chip under the reply; pressed, it opens as a
-/// workspace in the right panel, shaped with Maintainer in a side conversation. Nothing runs or
-/// is built until the user test-runs it (through the usual command allow flow) or presses Build.
+/// in the library would do. "Make into component" (or pressing a bot's suggestion chip) has
+/// Maintainer infer it and build the first version right away; the chip says Building…, then the
+/// component itself shows under the reply. Its "Edit spec" opens it as a workspace in the right
+/// panel, shaped with Maintainer in a side conversation; Build it there makes a new version. Its
+/// command runs only once the user allows it (the usual command allow flow), never by itself.
 /// Saved per bot in `specs.json` beside its chat.
 public struct ComponentSpec: Codable, Equatable, Identifiable, Sendable {
     /// Who set a value: the user (blue), Maintainer (purple), or the app's first draft.
@@ -142,6 +144,9 @@ public struct ComponentSpec: Codable, Equatable, Identifiable, Sendable {
     public var existing: String?
     /// The component drawn in the reply, whose look the preview borrows before it is built.
     public var shownAs: String?
+    /// The library component it became (its first version or a reused one), drawn under the reply
+    /// from then on, also while a new version is built.
+    public var built: String?
     public var testRun: TestRun?
     /// The user's changes Maintainer has not heard yet (said with the next message or Build).
     public var pendingEdits: [String]
@@ -172,6 +177,7 @@ public struct ComponentSpec: Codable, Equatable, Identifiable, Sendable {
         asked = false
         existing = nil
         shownAs = nil
+        built = nil
         testRun = nil
         pendingEdits = []
         self.createdAt = createdAt
@@ -531,6 +537,28 @@ public enum ComponentSpecs {
         Fill in what you can infer (from the reply and the library), and ask only what you cannot, at most 3 questions, each with 2 or 3 short answers and the one you suggest. If a component in the library already does this, say so in "similar". Add a sample or two (say "Failing run", "Empty") so the preview shows other cases.
         \(tagNote(spec))
         """
+    }
+
+    /// "Make into component" (or a suggestion chip) pressed: Maintainer infers the whole spec and
+    /// builds the first version now, asking nothing; it may reuse a library component instead.
+    static func firstBuildRequest(_ spec: ComponentSpec, reply: String, from bot: String) -> String {
+        var text = """
+        (Component spec \(spec.id.uuidString)) Build the first version now: the user pressed "Make into component" on \(bot)'s reply and wants the component built right away. The reply:
+        \(clip(reply, 1500))
+        The app's first draft:
+        \(summary(of: spec))
+        """
+        if spec.suggestedBy != nil, !spec.about.isEmpty { text += "\n\(bot) suggested it as: \(spec.about)" }
+        text += """
+
+        Infer the rest from the reply and the library, and ask nothing: wherever you are unsure, use your best guess (the answer you would have suggested). If a component in the library already does this, reuse it: build nothing and set "similar" to it and "reuse" to true. Otherwise have the component editor write template.html and about.md under a name not already in the library
+        """
+        if let command = spec.command {
+            text += "; about.md gets the line \"Command: <the command>\" (likely \(command)) so the app fills it by running that in the bot's folder, only once the user allows it on the card"
+        }
+        text += ". Never run the command yourself. Once it is in the library the app adds it to " + spec.bots.joined(separator: ", ") + " and shows it under the reply; do not add it to lists yourself."
+        text += "\nAnswer in one or two sentences, then <component-spec id=\"\(spec.id.uuidString)\">JSON</component-spec> with what you used: name (the component's name as built), about, fields [{name, type}], command, refresh: shown|interval|manual, minutes, similar, reuse, samples [{label, data}] (a \"This reply\" sample holding this reply's data in the fields' shape). No questions."
+        return text
     }
 
     /// What the user said in the side panel, with their edits since.

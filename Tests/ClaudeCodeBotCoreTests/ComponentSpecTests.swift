@@ -40,6 +40,19 @@ struct ComponentSpecTests {
         return message
     }
 
+    /// A spec still in draft, as the panel shapes it (a bot's suggestion, or one from before the
+    /// first version was built right away).
+    @discardableResult
+    func draftSpec(from reply: ChatMessage, in bot: Bot, in workspace: Workspace) -> ComponentSpec {
+        let spec = ComponentSpecs.draft(from: reply, bot: bot.name, folder: bot.profile.workingDirectory, library: workspace.components)
+        bot.editSpecs { $0.append(spec) }
+        return spec
+    }
+
+    func relays(_ workspace: Workspace) -> [ChatMessage] {
+        workspace.maintainer.messages.filter { $0.role == .relay }
+    }
+
     // MARK: Drafting from a reply
 
     @Test func dataFieldsComeFromTheJSONWithTheirTypes() {
@@ -93,7 +106,9 @@ struct ComponentSpecTests {
         let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
         #expect(spec.existing == "git-log")
         #expect(spec.name == "git-log")
-        // Nothing to draft: Maintainer is not asked.
+        // Nothing to build: the panel opens to pick the bots, and Maintainer is not asked.
+        #expect(spec.status == .draft)
+        #expect(workspace.openSpecID == spec.id)
         #expect(!workspace.maintainer.messages.contains { $0.role == .relay })
         // The chat says so on its button.
         let json = ChatPayload.make(bot: bot, components: workspace.components, pending: [], replyingTo: nil, specs: true) { _ in "" }.json()
@@ -101,37 +116,165 @@ struct ComponentSpecTests {
         #expect(json.contains(#""makeComponents":true"#))
     }
 
-    // MARK: The chip
+    // MARK: The first version, built right away
 
-    @Test func makingOneAddsAChipOpensItOnceAndAsksMaintainer() throws {
+    @Test func makingOneBuildsTheFirstVersionRightAway() throws {
         let workspace = makeWorkspace()
         let bot = workspace.mainBot
         let reply = testReply(in: bot)
         let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
         #expect(bot.specs.map(\.id) == [spec.id])
-        #expect(workspace.openSpecID == spec.id)
-        #expect(bot.specs[0].opened)
+        #expect(spec.status == .building)
+        // The panel does not open by itself.
+        #expect(workspace.openSpecID == nil)
+        #expect(!spec.opened)
         // Kept beside the chat.
         let saved = BotStore(directory: root.appending(path: "ccb/main")).loadSpecs()
         #expect(saved.map(\.id) == [spec.id])
-        // Maintainer gets the draft to fill in, with the spec's id to answer with.
-        let relay = try #require(workspace.maintainer.messages.last { $0.role == .relay })
-        #expect(relay.text.hasPrefix("(Component spec \(spec.id.uuidString))"))
+        // Maintainer infers the spec and builds it now, asking nothing.
+        let relay = try #require(relays(workspace).last)
+        #expect(relay.text.hasPrefix("(Component spec \(spec.id.uuidString)) Build the first version"))
         #expect(relay.text.contains("swift test --parallel"))
+        #expect(relay.text.contains("ask nothing"))
+        #expect(relay.text.contains("best guess"))
+        #expect(relay.text.contains("reuse"))
         #expect(relay.text.contains("<component-spec id=\"\(spec.id.uuidString)\">"))
+        #expect(relay.text.contains("Never run the command yourself"))
+        #expect(workspace.components.working["swift-test"] != nil)
+        // Nothing has run.
+        #expect(workspace.componentCommands.runs.isEmpty)
 
-        // Collapsed back to the chip; pressing the button again opens the same spec.
-        workspace.closeSpec()
-        #expect(workspace.openSpecID == nil)
+        // Pressed again: the same spec, nothing sent again, still not opened.
         let again = try #require(workspace.makeComponent(from: reply.id, in: bot))
         #expect(again.id == spec.id)
         #expect(bot.specs.count == 1)
-        #expect(workspace.openSpecID == spec.id)
-        #expect(workspace.maintainer.messages.filter { $0.role == .relay }.count == 1)
+        #expect(relays(workspace).count == 1)
+        #expect(workspace.openSpecID == nil)
 
-        // The chip is drawn under the reply.
+        // The chip under the reply says it is being built.
         let json = ChatPayload.make(bot: bot, components: workspace.components, pending: [], replyingTo: nil, specs: true, openSpec: workspace.openSpecID) { _ in "" }.json()
-        #expect(json.contains(#""specs":[{"id":"\#(spec.id.uuidString)","name":"swift-test","open":true,"status":"draft","suggested":false}]"#))
+        #expect(json.contains(#""specs":[{"id":"\#(spec.id.uuidString)","name":"swift-test","open":false,"status":"building","suggested":false}]"#))
+    }
+
+    @Test func theFirstVersionTakesMaintainersBestGuessesAndLandsUnderTheReply() throws {
+        let workspace = makeWorkspace()
+        let bot = workspace.mainBot
+        let reply = testReply(in: bot)
+        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        // Maintainer names it, fills it in; a question it should not have asked takes its suggestion.
+        let json = #"""
+        {"name":"test-summary","about":"Pass and fail counts","fields":[{"name":"total","type":"int"},{"name":"failed","type":"int"}],
+         "command":"swift test --parallel","refresh":"manual",
+         "samples":[{"label":"This reply","data":"{\"total\":382,\"failed\":0}"}],
+         "questions":[{"id":"q1","key":"refresh","text":"How often?","options":[{"label":"Only on ↻","value":"manual"},{"label":"Every show","value":"shown"}],"suggested":1}]}
+        """#
+        workspace.handle([.componentSpec(id: spec.id.uuidString, json: json)], from: workspace.maintainerProject)
+        var built = try #require(bot.specs.first)
+        #expect(built.name == "test-summary")
+        #expect(built.fields.map(\.name) == ["total", "failed"])
+        #expect(built.questions.isEmpty)
+        #expect(built.refresh == .shown)
+        #expect(built.status == .building)
+
+        // It lands in the library under its new name: on the bot's list, shown under the reply.
+        try addComponent("test-summary", to: workspace)
+        built = try #require(bot.specs.first)
+        #expect(built.status == .done)
+        #expect(built.built == "test-summary")
+        #expect(workspace.ownComponents(of: bot).contains("test-summary"))
+        #expect(bot.messages.last?.text.contains("test-summary added to") == true)
+        #expect(workspace.openSpecID == nil)
+        let commands = ChatPayload.CommandContext(runs: workspace.componentCommands) { _ in bot.profile.workingDirectory }
+        let chat = ChatPayload.make(bot: bot, components: workspace.components, pending: [], replyingTo: nil, commands: commands, specs: true) { _ in "" }.json()
+        #expect(chat.contains(#""component":"test-summary""#))
+        // Its command is not allowed yet: the card asks, with the exact command and folder.
+        #expect(chat.contains(#""command":"swift test --parallel""#))
+        #expect(chat.contains(#""status":"approve""#))
+        #expect(workspace.componentCommands.runs.isEmpty)
+    }
+
+    @Test func theFirstVersionReusesALibraryComponentMaintainerPicks() throws {
+        let workspace = makeWorkspace()
+        try addComponent("build-status", about: "Whether the last swift test passed.", to: workspace)
+        let bot = try garden(in: workspace)
+        workspace.takeComponent("build-status", from: bot)
+        let reply = testReply(in: bot)
+        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        #expect(spec.status == .building)
+        workspace.handle([.componentSpec(id: spec.id.uuidString, json: #"{"similar":"build-status","reuse":true}"#)], from: workspace.maintainerProject)
+        let done = try #require(bot.specs.first)
+        #expect(done.status == .done)
+        #expect(done.built == "build-status")
+        #expect(workspace.ownComponents(of: bot).contains("build-status"))
+    }
+
+    @Test func theBuiltComponentRunsOnlyWhatTheUserAllowed() async throws {
+        let workspace = makeWorkspace()
+        let bot = workspace.mainBot
+        try FileManager.default.createDirectory(at: bot.profile.workingDirectory, withIntermediateDirectories: true)
+        let reply = testReply(in: bot)
+        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        let command = #"printf '{"total":3,"failed":1}'"#
+        let folder = bot.profile.workingDirectory
+        workspace.handle([.componentSpec(id: spec.id.uuidString, json: #"{"name":"test-summary","command":"printf '{\"total\":3,\"failed\":1}'"}"#)], from: workspace.maintainerProject)
+        // Allowed already: landing still runs nothing by itself (no test run).
+        workspace.componentCommands.approve(command, in: folder)
+        try addComponent("test-summary", to: workspace)
+        #expect(bot.specs.first?.status == .done)
+        #expect(workspace.componentCommands.runs.isEmpty)
+        #expect(bot.specs.first?.testRun == nil)
+        workspace.componentCommands.forget(command, inFolderPath: folder.standardizedFileURL.path)
+
+        // The card's Allow and run: only with the exact command and folder it showed.
+        await workspace.runSpecComponent(spec.id, in: bot)
+        await workspace.runSpecComponent(spec.id, in: bot, command: "rm -rf /", folder: folder.path, approve: true)
+        await workspace.runSpecComponent(spec.id, in: bot, command: command, folder: "/tmp", approve: true)
+        #expect(workspace.componentCommands.runs.isEmpty)
+        #expect(!workspace.componentCommands.isApproved("rm -rf /", in: folder))
+        await workspace.runSpecComponent(spec.id, in: bot, command: command, folder: folder.path, approve: true)
+        #expect(workspace.componentCommands.runs[spec.card]?.data == #"{"total":3,"failed":1}"#)
+        let commands = ChatPayload.CommandContext(runs: workspace.componentCommands) { _ in folder }
+        let chip = try #require(ChatPayload.specChips(for: reply, in: bot, open: nil, library: workspace.components, commands: commands)?.first)
+        #expect(chip.display?.status == "done")
+        #expect(chip.display?.data == #"{"total":3,"failed":1}"#)
+        // Kept, so it shows after a restart too.
+        #expect(bot.specs.first?.testRun?.output == #"{"total":3,"failed":1}"#)
+    }
+
+    @Test func editSpecOpensThePanelAndBuildItMakesANewVersion() throws {
+        let workspace = makeWorkspace()
+        let bot = workspace.mainBot
+        let reply = testReply(in: bot)
+        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        try addComponent("swift-test", to: workspace)
+        #expect(bot.specs.first?.status == .done)
+        let asked = relays(workspace).count
+
+        // Edit spec: the panel opens on it; Maintainer is not asked to draft anything.
+        workspace.openSpec(spec.id, in: bot)
+        #expect(workspace.openSpecID == spec.id)
+        #expect(relays(workspace).count == asked)
+        // Its values can be changed; the component stays in the chat meanwhile.
+        workspace.editSpec(spec.id, key: "about", value: "Only the failures", in: bot)
+        #expect(bot.specs.first?.about == "Only the failures")
+        #expect(bot.specs.first?.origins["about"] == .user)
+        #expect(bot.specs.first?.status == .done)
+
+        // Build it: a new version.
+        workspace.buildSpec(spec.id, in: bot)
+        #expect(bot.specs.first?.status == .building)
+        let build = try #require(relays(workspace).last)
+        #expect(build.text.contains("Build it"))
+        #expect(build.text.contains("Only the failures"))
+        let json = ChatPayload.make(bot: bot, components: workspace.components, pending: [], replyingTo: nil, specs: true) { _ in "" }.json()
+        #expect(json.contains(#""component":"swift-test""#))
+
+        // Its template changes (seen when Maintainer's turn ends): done again.
+        let folder = workspace.components.folder.appending(path: "swift-test")
+        try "<p>failures</p>".write(to: folder.appending(path: "template.html"), atomically: true, encoding: .utf8)
+        workspace.components.rescan()
+        workspace.finishSpecBuilds()
+        #expect(bot.specs.first?.status == .done)
     }
 
     @Test func aBotsSuggestionIsOnlyAChipUntilPressed() throws {
@@ -144,23 +287,30 @@ struct ComponentSpecTests {
         #expect(spec.suggestedBy == "garden")
         #expect(spec.name == "test-summary")
         #expect(spec.about == "Pass/fail counts per suite, from swift test.")
+        #expect(spec.status == .draft)
         // Nothing opens, nothing runs, Maintainer hears nothing.
         #expect(!spec.opened)
         #expect(workspace.openSpecID == nil)
-        #expect(!workspace.maintainer.messages.contains { $0.role == .relay })
+        #expect(relays(workspace).isEmpty)
         #expect(workspace.componentCommands.runs.isEmpty)
 
         // A second suggestion for the same reply does not add another chip.
         workspace.handle([.suggestComponent(name: "other", draft: "x")], from: workspace.projects.first { $0.name == "garden" })
         #expect(bot.specs.count == 1)
 
-        // Pressed: it opens, and only now Maintainer is asked to draft it.
-        workspace.openSpec(spec.id, in: bot)
+        // Pressed: the first version is built; the panel stays shut.
+        workspace.pressSpec(spec.id, in: bot)
+        #expect(bot.specs.first?.status == .building)
+        #expect(workspace.openSpecID == nil)
+        #expect(relays(workspace).count == 1)
+        #expect(relays(workspace).last?.text.contains("Build the first version") == true)
+        #expect(relays(workspace).last?.text.contains("Pass/fail counts per suite") == true)
+        // Pressed again while it builds: its progress opens; nothing is sent again.
+        workspace.pressSpec(spec.id, in: bot)
         #expect(workspace.openSpecID == spec.id)
-        #expect(workspace.maintainer.messages.filter { $0.role == .relay }.count == 1)
-        workspace.closeSpec()
-        workspace.openSpec(spec.id, in: bot)
-        #expect(workspace.maintainer.messages.filter { $0.role == .relay }.count == 1)
+        #expect(relays(workspace).count == 1)
+        workspace.pressSpec(spec.id, in: bot)
+        #expect(workspace.openSpecID == nil)
     }
 
     // MARK: Shaping it with Maintainer
@@ -169,7 +319,7 @@ struct ComponentSpecTests {
         let workspace = makeWorkspace()
         let bot = workspace.mainBot
         let reply = testReply(in: bot)
-        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        let spec = draftSpec(from: reply, in: bot, in: workspace)
         let json = #"""
         {"name":"test-summary","fields":[{"name":"total","type":"int"},{"name":"failed","type":"int"}],
          "samples":[{"label":"Failing run","data":"{\"total\":382,\"failed\":2}"}],
@@ -194,7 +344,7 @@ struct ComponentSpecTests {
         let workspace = makeWorkspace()
         let bot = workspace.mainBot
         let reply = testReply(in: bot)
-        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        let spec = draftSpec(from: reply, in: bot, in: workspace)
         workspace.editSpec(spec.id, key: "command", value: "swift test --skip-build", in: bot)
         var edited = try #require(bot.specs.first)
         #expect(edited.command == "swift test --skip-build")
@@ -227,7 +377,7 @@ struct ComponentSpecTests {
         let workspace = makeWorkspace()
         let bot = workspace.mainBot
         let reply = testReply(in: bot)
-        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        let spec = draftSpec(from: reply, in: bot, in: workspace)
         let json = #"""
         {"questions":[
           {"id":"q1","key":"refresh","text":"How often?","options":[{"label":"Only on ↻","value":"manual"},{"label":"Every show","value":"shown"}],"suggested":0},
@@ -257,7 +407,7 @@ struct ComponentSpecTests {
         var reply = ChatMessage(role: .bot, text: "Counts:")
         reply.displays = [ComponentInstance(name: "x", data: #"{"total":1,"failed":0}"#)]
         bot.post(reply, unread: false)
-        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        let spec = draftSpec(from: reply, in: bot, in: workspace)
         workspace.editSpec(spec.id, key: "command", value: #"printf '{"total":3,"failed":1}'"#, in: bot)
         let folder = bot.profile.workingDirectory.path
 
@@ -301,7 +451,7 @@ struct ComponentSpecTests {
         let bot = workspace.mainBot
         let other = try garden(in: workspace)
         let reply = testReply(in: bot)
-        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        let spec = draftSpec(from: reply, in: bot, in: workspace)
         workspace.editSpec(spec.id, key: "bots", value: "\(bot.name), garden", in: bot)
         workspace.buildSpec(spec.id, in: bot)
         let build = try #require(workspace.maintainer.messages.last { $0.role == .relay })
@@ -328,7 +478,7 @@ struct ComponentSpecTests {
         let bot = try garden(in: workspace)
         workspace.takeComponent("build-status", from: bot)
         let reply = testReply(in: bot)
-        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        let spec = draftSpec(from: reply, in: bot, in: workspace)
         #expect(spec.similar == "build-status")
         workspace.editSpec(spec.id, key: "reuse", value: "true", in: bot)
         let asked = workspace.maintainer.messages.filter { $0.role == .relay }.count
@@ -357,7 +507,7 @@ struct ComponentSpecTests {
         let workspace = makeWorkspace()
         let bot = workspace.mainBot
         let reply = testReply(in: bot)
-        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        let spec = draftSpec(from: reply, in: bot, in: workspace)
         workspace.cancelSpec(spec.id, in: bot)
         #expect(bot.specs.isEmpty)
         #expect(workspace.openSpecID == nil)
@@ -382,7 +532,7 @@ struct ComponentSpecTests {
         let workspace = makeWorkspace(fake)
         let bot = workspace.mainBot
         let reply = testReply(in: bot)
-        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        let spec = draftSpec(from: reply, in: bot, in: workspace)
         workspace.applySpecUpdate(id: spec.id.uuidString, json: #"{"about":"Tests"}"#, said: "其他欄位我照這則回覆填好了。")
         let line = try #require(bot.specs.first?.conversation.last)
         #expect(line.kind == .maintainer)
@@ -393,10 +543,13 @@ struct ComponentSpecTests {
         let profile = BotProfile.main(home: root.appending(path: "home"))
         let rules = BotPrompts(profile: profile).system
         #expect(rules.contains("<suggest-component name="))
-        #expect(rules.contains("nothing happens until the user opens it"))
+        #expect(rules.contains("nothing happens until the user presses it"))
         let workspace = makeWorkspace()
         let maintainer = workspace.maintainerInstructions()
         #expect(maintainer.contains("(Component spec <id>)"))
         #expect(maintainer.contains("<component-spec id="))
+        #expect(maintainer.contains("(Component spec <id>) Build the first version"))
+        #expect(maintainer.contains("Ask nothing"))
+        #expect(maintainer.contains("best guess"))
     }
 }

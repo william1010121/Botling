@@ -136,8 +136,10 @@ export class SpecPanel {
     const left = el("div", "spec-left");
     const right = el("div", "spec-right");
     left.append(this.preview(state));
-    if (state.status === "draft") right.append(this.fields(state));
-    else right.append(this.progress(state));
+    // A built one can be changed here too: Build it then makes a new version.
+    if (state.status === "building") right.append(this.progress(state));
+    else right.append(this.fields(state));
+    if (state.status === "done") right.append(this.progress(state));
     left.append(this.conversation(state));
     body.append(left, right);
     panel.append(body, this.foot(state));
@@ -378,7 +380,7 @@ export class SpecPanel {
       const on = state.bots.filter((b) => b.on).map((b) => b.name);
       block.append(el("div", "spec-added", on.length ? `Added to ${on.join(", ")}` : `${state.name} is in the library`));
     } else {
-      block.append(el("div", "spec-faint", "Maintainer is building it. You can collapse this and keep chatting; the chat says when it is added."));
+      block.append(el("div", "spec-faint", "Maintainer is building it. You can collapse this and keep chatting; it shows under the reply once it is added."));
     }
     return block;
   }
@@ -397,7 +399,7 @@ export class SpecPanel {
       row.append(el("div", "spec-words", line.text));
       block.append(row);
     }
-    if (state.status === "draft") {
+    if (state.status !== "building") {
       for (const question of state.questions) {
         const box = el("div", "spec-question");
         box.append(el("div", "spec-question-text", question.text));
@@ -442,13 +444,15 @@ export class SpecPanel {
     });
     say.append(box, send);
     if (!state.existing) foot.append(say);
-    if (state.status === "draft") {
+    if (state.status !== "building") {
+      const done = state.status === "done";
       const actions = el("div", "spec-actions");
-      actions.append(button("spec-button ghost spec-cancel", "Cancel", () => post({ type: "specCancel", id: state.id })));
+      if (done) actions.append(button("spec-button ghost", "Hide", () => post({ type: "specClose" })));
+      else actions.append(button("spec-button ghost spec-cancel", "Cancel", () => post({ type: "specCancel", id: state.id })));
       actions.append(el("span", "spec-grow"));
       if (state.questions.length) actions.append(el("span", "spec-faint spec-note", "Open questions use the suggested answers"));
       const build = button("spec-button primary spec-build", "", () => post({ type: "specBuild", id: state.id }));
-      build.textContent = state.existing ? "Add to bots" : "Build it";
+      build.textContent = state.existing ? "Add to bots" : done ? "Build a new version" : "Build it";
       build.disabled = !state.bots.some((b) => b.on);
       actions.append(build);
       foot.append(actions);
@@ -458,7 +462,7 @@ export class SpecPanel {
       legend.append(button("spec-button ghost", "Hide", () => post({ type: "specClose" })));
       foot.append(legend);
     }
-    if (state.status === "draft" && !state.existing) {
+    if (state.status !== "building" && !state.existing) {
       const legend = el("div", "spec-legend");
       legend.innerHTML = `<span><span class="spec-by user">blue</span> you</span><span><span class="spec-by maintainer">purple</span> Maintainer</span>`;
       foot.append(legend);

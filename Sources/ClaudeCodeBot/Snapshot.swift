@@ -377,7 +377,10 @@ enum Snapshot {
     /// `CCB_SPEC_SNAPSHOT=/path/out.png` ("Make into component"): a sample chat whose test-run
     /// reply has its spec chip (and a later reply with a bot's suggestion chip) beside the spec
     /// workspace open in the right panel, with Maintainer's draft, a question and a test run to
-    /// allow. `CCB_SPEC_STATE=building|done` draws it later on; `CCB_SPEC_WIDE=1` spread wide.
+    /// allow. `CCB_SPEC_STATE` draws it later on, the chat alone: `building` (the chip says
+    /// Building…), `done` (the component under the reply, its command allowed and run), `done-ask`
+    /// (its card asks Allow and run), `edit` (done, with Edit spec's panel open). `CCB_SPEC_PANEL=1`
+    /// opens the panel in any state; `CCB_SPEC_WIDE=1` spreads it wide.
     private static func drawSpec(to path: String) {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         let home = root.appending(path: "main")
@@ -417,14 +420,31 @@ enum Snapshot {
         spec.opened = true
         spec.asked = true
         spec.testRun = ComponentSpec.TestRun(command: spec.command!, folder: home.path)
-        switch ProcessInfo.processInfo.environment["CCB_SPEC_STATE"] {
+        let state = ProcessInfo.processInfo.environment["CCB_SPEC_STATE"] ?? ""
+        let built = ["done", "done-ask", "edit"].contains(state)
+        switch state {
         case "building":
             spec.status = .building
             spec.questions = []
-        case "done":
+            spec.conversation = [.init(kind: .event, text: "Sent to Maintainer to build the first version")]
+        case "done", "done-ask", "edit":
             spec.status = .done
+            spec.built = "test-summary"
             spec.questions = []
-            spec.conversation.append(.init(kind: .event, text: "test-summary added to Main bot"))
+            spec.conversation = [
+                .init(kind: .event, text: "Sent to Maintainer to build the first version"),
+                .init(kind: .maintainer, text: "照這則回覆做好了 test-summary：每次按 ↻ 跑 swift test，列出通過與失敗的數字。"),
+                .init(kind: .event, text: "test-summary added to Main bot"),
+            ]
+            spec.origins = ["command": .maintainer, "fields": .maintainer, "about": .maintainer, "name": .maintainer]
+            spec.fields[4].by = .maintainer
+            if state != "done-ask" {
+                spec.testRun = ComponentSpec.TestRun(
+                    command: spec.command!, folder: home.path,
+                    output: #"{"total":382,"passed":380,"failed":2,"seconds":41.2,"failures":[{"suite":"WebBridgeTests","test":"testDropOrder"},{"suite":"ChatStoreTests","test":"testMergeOnSave"}]}"#,
+                    ranAt: now.addingTimeInterval(-20), matches: true
+                )
+            }
         default:
             break
         }
@@ -434,26 +454,39 @@ enum Snapshot {
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
-        workspace.openSpec(spec.id, in: workspace.mainBot)
+        if built {
+            // The component Maintainer built, in the library; its command allowed unless asked.
+            let folder = workspace.components.folder.appending(path: "test-summary")
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? snapshotTestSummary.write(to: folder.appending(path: "template.html"), atomically: true, encoding: .utf8)
+            try? "Pass and fail counts per test suite.\nCommand: \(spec.command!)\n".write(to: folder.appending(path: "about.md"), atomically: true, encoding: .utf8)
+            workspace.components.rescan()
+            if state != "done-ask" { workspace.componentCommands.approve(spec.command!, in: home) }
+        }
+        let panelOpen = state.isEmpty || state == "edit" || ProcessInfo.processInfo.environment["CCB_SPEC_PANEL"] == "1"
+        if panelOpen { workspace.openSpec(spec.id, in: workspace.mainBot) }
         workspace.setSpecPanelWide(ProcessInfo.processInfo.environment["CCB_SPEC_WIDE"] == "1")
-        let chatJSON = ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, specs: true, openSpec: workspace.openSpecID) { projectID in
+        let commands = ChatPayload.CommandContext(runs: workspace.componentCommands) { _ in home }
+        let chatJSON = ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, commands: commands, specs: true, openSpec: workspace.openSpecID) { projectID in
             AvatarImages.dataURL(projectID == nil ? .circle : .triangle, eyes: .open)
         }.json()
         guard let specJSON = workspace.specPayload(spec.id)?.json(), let page = ChatSurface.pageURL else { exit(1) }
         let height: CGFloat = 900
-        let panelWidth = CGFloat(RightPanelLayout.specWidth(wide: workspace.specPanelWide))
+        let panelWidth = panelOpen ? CGFloat(RightPanelLayout.specWidth(wide: workspace.specPanelWide)) : 0
         var shots: [Int: NSImage] = [:]
         let finish = {
-            guard let chat = shots[0], let panel = shots[1] else { return }
+            guard let chat = shots[0], let panel = panelOpen ? shots[1] : NSImage() else { return }
             let size = NSSize(width: 640 + panelWidth, height: height)
             let image = NSImage(size: size)
             image.lockFocus()
             NSColor(red: 0.055, green: 0.055, blue: 0.063, alpha: 1).setFill()
             NSRect(origin: .zero, size: size).fill()
             chat.draw(in: NSRect(x: 0, y: 0, width: 640, height: height))
-            panel.draw(in: NSRect(x: 640, y: 0, width: panelWidth, height: height))
-            NSColor(red: 0.137, green: 0.137, blue: 0.153, alpha: 1).setFill()
-            NSRect(x: 640, y: 0, width: 1, height: height).fill()
+            if panelOpen {
+                panel.draw(in: NSRect(x: 640, y: 0, width: panelWidth, height: height))
+                NSColor(red: 0.137, green: 0.137, blue: 0.153, alpha: 1).setFill()
+                NSRect(x: 640, y: 0, width: 1, height: height).fill()
+            }
             image.unlockFocus()
             if let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
                 try? png.write(to: URL(filePath: path))
@@ -467,7 +500,7 @@ enum Snapshot {
                 parts.queryItems = [URLQueryItem(name: "spec", value: "1")]
                 return parts.url
             } ?? page, "document.body.style.background='#141417'; ccb.setSpec(\(specJSON))"),
-        ] {
+        ] where index == 0 || panelOpen {
             let frame = NSRect(x: 0, y: 0, width: width, height: height)
             let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
             let shot = Shot(script: script) { image in
@@ -484,6 +517,30 @@ enum Snapshot {
     }
 
     private static var keep: [(NSWindow, Shot)] = []
+
+    /// The snapshot's built test-summary component: counts, then the failures by name.
+    private static let snapshotTestSummary = """
+    <style>
+    .t{font:13px -apple-system,"PingFang TC",sans-serif;color:#EDEDF0;background:#141417;border:1px solid #2A2A31;border-radius:12px;padding:12px 14px}
+    .n{display:flex;gap:18px;align-items:baseline}.n b{font-size:22px;font-weight:600}.n span{color:#8E8E96;font-size:12px;margin-left:4px}
+    .ok{color:#7FD1A4}.bad{color:#F08A8A}.f{margin-top:10px;border-top:1px solid #2A2A31;padding-top:8px}
+    .r{display:flex;gap:8px;padding:2px 0;font-size:12px}.s{color:#8E8E96;min-width:120px}
+    </style><div class="t" id="t"></div><script>
+    (() => {
+      const d = window.ccb.data || {};
+      const t = document.getElementById('t');
+      const n = document.createElement('div'); n.className = 'n';
+      const add = (v, label, cls) => { const x = document.createElement('div'); const b = document.createElement('b'); b.textContent = v; if (cls) b.className = cls; const s = document.createElement('span'); s.textContent = label; x.append(b, s); n.append(x); };
+      add(d.passed ?? '–', 'passed', 'ok'); add(d.failed ?? '–', 'failed', d.failed ? 'bad' : ''); add(d.total ?? '–', 'total'); add((d.seconds ?? '–') + 's', 'time');
+      t.append(n);
+      if ((d.failures || []).length) {
+        const f = document.createElement('div'); f.className = 'f';
+        for (const x of d.failures) { const r = document.createElement('div'); r.className = 'r'; const s = document.createElement('span'); s.className = 's'; s.textContent = x.suite; const m = document.createElement('span'); m.textContent = x.test; r.append(s, m); f.append(r); }
+        t.append(f);
+      }
+    })();
+    </script>
+    """
 
     /// A page that, once ready, runs `script` and gives back a picture of itself.
     private final class Shot: NSObject, WKScriptMessageHandler {
