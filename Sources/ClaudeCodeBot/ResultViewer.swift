@@ -107,12 +107,18 @@ struct PageView: NSViewRepresentable {
 
     final class Coordinator {
         var loaded: URL?
+        /// What the view was pointed at for `loaded` (a `ccb-preview:` URL for a result page).
+        var target: URL?
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> WKWebView {
-        let view = WKWebView()
+        let configuration = WKWebViewConfiguration()
+        // Result pages in an `artifacts` folder load through `ccb-preview:`, so a video or sound
+        // beside them plays (served in byte ranges); see `PagePreview.windowURL(for:)`.
+        configuration.setURLSchemeHandler(PreviewSchemeHandler.shared, forURLScheme: PagePreview.scheme)
+        let view = WKWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
         load(url, in: view, context.coordinator)
         return view
@@ -120,7 +126,7 @@ struct PageView: NSViewRepresentable {
 
     func updateNSView(_ view: WKWebView, context: Context) {
         // Opening the result again also brings it back from a page it linked to.
-        if context.coordinator.loaded != url || view.url != url { load(url, in: view, context.coordinator) }
+        if context.coordinator.loaded != url || view.url != context.coordinator.target { load(url, in: view, context.coordinator) }
     }
 
     /// Text files WebKit would read as Latin-1 when nothing in them names an encoding.
@@ -129,7 +135,13 @@ struct PageView: NSViewRepresentable {
 
     private func load(_ url: URL, in view: WKWebView, _ coordinator: Coordinator) {
         coordinator.loaded = url
-        if url.isFileURL, let mime = Self.textTypes[url.pathExtension.lowercased()],
+        coordinator.target = url
+        let served = PagePreview.windowURL(for: url)
+        if served != url {
+            // Served with its charset (UTF-8 pages read right) and the files beside it.
+            coordinator.target = served
+            view.load(URLRequest(url: served))
+        } else if url.isFileURL, let mime = Self.textTypes[url.pathExtension.lowercased()],
            let data = try? Data(contentsOf: url), Self.isPlainUTF8(data) {
             // Pages bots write often have no <meta charset>, and such a file is read as Latin-1
             // (Chinese turns to mojibake). Valid UTF-8 that names no other encoding is read as

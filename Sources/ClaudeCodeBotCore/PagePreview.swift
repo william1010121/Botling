@@ -152,15 +152,87 @@ public enum PagePreview {
 
     // MARK: Serving
 
+    /// What a `ccb-preview:` request is answered with.
+    public struct Answer {
+        /// 200 for the whole file, 206 for the part a `Range` asked for, 416 for a range past the end.
+        public var statusCode: Int
+        public var data: Data
+        public var mimeType: String
+        public var encoding: String?
+        /// The HTTP headers to answer with (Content-Type, Content-Length, Accept-Ranges, Content-Range).
+        public var headers: [String: String]
+    }
+
     /// What a `ccb-preview:` request is answered with: the file and its type. Text pages that are
     /// plain UTF-8 say so, since pages bots write often name no charset (Chinese would turn to
-    /// mojibake otherwise).
-    public static func response(for url: URL) -> (data: Data, mimeType: String, encoding: String?)? {
-        guard let file = file(forPreview: url), let data = try? Data(contentsOf: file) else { return nil }
+    /// mojibake otherwise). `range` is the request's `Range` header: WebKit plays video and sound
+    /// only from a server that answers byte ranges (`bytes=0-1` first, then the parts it needs),
+    /// so a range is answered with just that part (206), read from the file without loading all of it.
+    public static func response(for url: URL, range: String? = nil) -> Answer? {
+        guard let file = file(forPreview: url),
+              let attributes = try? FileManager.default.attributesOfItem(atPath: file.path),
+              (attributes[.type] as? FileAttributeType) != .typeDirectory,
+              let size = (attributes[.size] as? NSNumber)?.intValue else { return nil }
         let ext = file.pathExtension.lowercased()
         let type = mimeTypes[ext] ?? "application/octet-stream"
+        var headers = ["Accept-Ranges": "bytes"]
+
+        if let range, let bounds = byteRange(range, size: size) {
+            guard let bounds else {
+                headers["Content-Range"] = "bytes */\(size)"
+                headers["Content-Length"] = "0"
+                headers["Content-Type"] = type
+                return Answer(statusCode: 416, data: Data(), mimeType: type, encoding: nil, headers: headers)
+            }
+            guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+            defer { try? handle.close() }
+            guard (try? handle.seek(toOffset: UInt64(bounds.lowerBound))) != nil,
+                  let data = try? handle.read(upToCount: bounds.count) else { return nil }
+            headers["Content-Range"] = "bytes \(bounds.lowerBound)-\(bounds.lowerBound + data.count - 1)/\(size)"
+            headers["Content-Length"] = String(data.count)
+            headers["Content-Type"] = type
+            return Answer(statusCode: 206, data: data, mimeType: type, encoding: nil, headers: headers)
+        }
+
+        guard let data = try? Data(contentsOf: file) else { return nil }
         let text = type.hasPrefix("text/") || type == "application/javascript" || type == "application/json" || type == "image/svg+xml"
-        return (data, type, text && String(data: data, encoding: .utf8) != nil ? "utf-8" : nil)
+        let encoding = text && String(data: data, encoding: .utf8) != nil ? "utf-8" : nil
+        headers["Content-Length"] = String(data.count)
+        headers["Content-Type"] = encoding.map { "\(type); charset=\($0)" } ?? type
+        return Answer(statusCode: 200, data: data, mimeType: type, encoding: encoding, headers: headers)
+    }
+
+    /// The bytes a `Range: bytes=…` header asks for in a file of `size` bytes: nil when it is not
+    /// one range of bytes (then the whole file is sent), `.some(nil)` when it starts past the end.
+    static func byteRange(_ header: String, size: Int) -> Range<Int>?? {
+        let header = header.trimmingCharacters(in: .whitespaces)
+        guard header.lowercased().hasPrefix("bytes=") else { return nil }
+        let spec = header.dropFirst(6).trimmingCharacters(in: .whitespaces)
+        guard !spec.contains(","), let dash = spec.firstIndex(of: "-") else { return nil }
+        let first = spec[..<dash].trimmingCharacters(in: .whitespaces)
+        let last = spec[spec.index(after: dash)...].trimmingCharacters(in: .whitespaces)
+        if first.isEmpty {
+            // The last n bytes.
+            guard let count = Int(last), count > 0 else { return nil }
+            guard size > 0 else { return .some(nil) }
+            return .some(max(0, size - count)..<size)
+        }
+        guard let start = Int(first), start >= 0 else { return nil }
+        guard start < size else { return .some(nil) }
+        guard !last.isEmpty else { return .some(start..<size) }
+        guard let end = Int(last), end >= start else { return nil }
+        return .some(start..<min(end + 1, size))
+    }
+
+    /// Where 開啟完整頁面 loads `file` from: a page in an `artifacts` folder through
+    /// `ccb-preview:` (WebKit will not play a video beside a page it was handed as data with a
+    /// `file:` base, and the scheme answers it in byte ranges); anything else as it is.
+    public static func windowURL(for file: URL) -> URL {
+        guard isArtifactPage(file) else { return file }
+        let real = file.standardizedFileURL.resolvingSymlinksInPath()
+        guard artifactsFolder(of: real) != nil else { return file }
+        let date = (try? FileManager.default.attributesOfItem(atPath: real.path))?[.modificationDate] as? Date
+        return previewURL(for: real, version: date)
     }
 
     static let mimeTypes: [String: String] = [
@@ -168,7 +240,9 @@ public enum PagePreview {
         "mjs": "application/javascript", "json": "application/json", "txt": "text/plain", "csv": "text/plain",
         "svg": "image/svg+xml", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif",
         "webp": "image/webp", "ico": "image/x-icon", "heic": "image/heic", "heif": "image/heif", "avif": "image/avif",
-        "bmp": "image/bmp", "tif": "image/tiff", "tiff": "image/tiff", "mp4": "video/mp4", "mov": "video/quicktime", "webm": "video/webm",
+        "bmp": "image/bmp", "tif": "image/tiff", "tiff": "image/tiff", "mp4": "video/mp4", "m4v": "video/x-m4v", "mov": "video/quicktime", "webm": "video/webm",
+        "ogv": "video/ogg", "mp3": "audio/mpeg", "m4a": "audio/mp4", "aac": "audio/aac", "wav": "audio/wav",
+        "ogg": "audio/ogg", "oga": "audio/ogg", "opus": "audio/ogg", "flac": "audio/flac", "aiff": "audio/aiff", "aif": "audio/aiff",
         "woff": "font/woff", "woff2": "font/woff2", "ttf": "font/ttf", "otf": "font/otf", "wasm": "application/wasm",
     ]
 }

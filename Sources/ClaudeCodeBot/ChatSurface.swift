@@ -295,17 +295,20 @@ struct ChatSurface: NSViewRepresentable {
     }
 }
 
-/// Serves `ccb-preview:` requests: the result pages a preview card shows, and the files beside
-/// them in an `artifacts` folder. Anything else is refused (see `PagePreview.file(forPreview:)`).
+/// Serves `ccb-preview:` requests: the result pages a preview card (or 開啟完整頁面's window)
+/// shows, and the files beside them in an `artifacts` folder. Anything else is refused (see `PagePreview.file(forPreview:)`).
 final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
     static let shared = PreviewSchemeHandler()
 
     func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
-        guard let url = task.request.url, let answer = PagePreview.response(for: url) else {
+        // Video and sound are read in byte ranges (WebKit asks for `bytes=0-1` first): answered
+        // as HTTP with 206 and Content-Range, or the player stays a black box.
+        let range = task.request.value(forHTTPHeaderField: "Range")
+        guard let url = task.request.url, let answer = PagePreview.response(for: url, range: range),
+              let response = HTTPURLResponse(url: url, statusCode: answer.statusCode, httpVersion: "HTTP/1.1", headerFields: answer.headers) else {
             task.didFailWithError(URLError(.fileDoesNotExist))
             return
         }
-        let response = URLResponse(url: url, mimeType: answer.mimeType, expectedContentLength: answer.data.count, textEncodingName: answer.encoding)
         task.didReceive(response)
         task.didReceive(answer.data)
         task.didFinish()
