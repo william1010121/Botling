@@ -599,7 +599,8 @@ private struct BotRow: View {
 }
 
 /// Under a bot: the subagents it sent off that are running or ended a few minutes ago, the
-/// way Claude Code lists a session's subagents. Click one to watch its conversation.
+/// way Claude Code lists a session's subagents. Click one to watch its conversation; the
+/// cross on the right takes its row away (it does not stop the subagent).
 private struct SubagentRows: View {
     @ObservedObject var bot: Bot
     @ObservedObject var workspace: Workspace
@@ -607,28 +608,7 @@ private struct SubagentRows: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             ForEach(bot.trace.listed(at: context.date)) { subagent in
-                let selected = workspace.selectedBot === bot && workspace.viewingSubagent == subagent.id
-                Button { workspace.view(subagent: subagent.id, of: bot) } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "arrow.turn.down.right")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Theme.faint)
-                        Text(subagent.description.isEmpty ? "Subagent" : subagent.description)
-                            .font(.system(size: 13))
-                            .foregroundStyle(subagent.isRunning ? Theme.text : Theme.muted)
-                            .lineLimit(1)
-                        Spacer(minLength: 4)
-                        Self.mark(subagent.mark).frame(width: 10)
-                    }
-                    .padding(.leading, 26)
-                    .padding(.trailing, 10)
-                    .frame(height: 30)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(selected ? Theme.selected : .clear))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(subagent.prompt)
-                .accessibilityLabel("Subagent of \(bot.name): \(subagent.description), \(subagent.status.rawValue)")
+                SubagentRow(subagent: subagent, bot: bot, workspace: workspace)
             }
         }
     }
@@ -646,6 +626,67 @@ private struct SubagentRows: View {
         case .stopped:
             Image(systemName: "stop.fill").font(.system(size: 7)).foregroundStyle(Theme.faint)
         }
+    }
+}
+
+/// One subagent's row. The cross shows while the pointer is on the row, and always once the
+/// subagent has ended.
+private struct SubagentRow: View {
+    let subagent: Subagent
+    @ObservedObject var bot: Bot
+    @ObservedObject var workspace: Workspace
+    @State private var hovering = false
+
+    private var selected: Bool { workspace.selectedBot === bot && workspace.viewingSubagent == subagent.id }
+    private var showsDismiss: Bool { hovering || !subagent.isRunning }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button { workspace.view(subagent: subagent.id, of: bot) } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.turn.down.right")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.faint)
+                    Text(subagent.description.isEmpty ? "Subagent" : subagent.description)
+                        .font(.system(size: 13))
+                        .foregroundStyle(subagent.isRunning ? Theme.text : Theme.muted)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    SubagentRows.mark(subagent.mark).frame(width: 10)
+                }
+                .padding(.leading, 26)
+                .padding(.trailing, 4)
+                .frame(height: 30)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(subagent.prompt)
+            .accessibilityLabel("Subagent of \(bot.name): \(subagent.description), \(subagent.status.rawValue)")
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Theme.faint)
+                    .frame(width: 22, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .opacity(showsDismiss ? 1 : 0)
+            .allowsHitTesting(showsDismiss)
+            .help(subagent.isRunning ? "Hide this row (the subagent keeps working)" : "Hide this row")
+            .accessibilityLabel("Hide subagent \(subagent.description)")
+            .padding(.trailing, 4)
+        }
+        .background(RoundedRectangle(cornerRadius: 10).fill(selected ? Theme.selected : .clear))
+        .onHover { hovering = $0 }
+        .contextMenu {
+            Button("Hide") { dismiss() }
+        }
+    }
+
+    /// Takes the row away; if you were watching it, back to the bot's chat.
+    private func dismiss() {
+        if selected { workspace.view(subagent: nil, of: bot) }
+        bot.dismissSubagent(subagent.id)
     }
 }
 

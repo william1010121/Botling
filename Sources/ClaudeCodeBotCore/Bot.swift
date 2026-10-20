@@ -188,6 +188,12 @@ public final class Bot: ObservableObject, Identifiable {
     /// The subagents it sent off, newest last.
     public var subagents: [Subagent] { trace.subagents }
 
+    /// Takes a subagent's row out of the left column, for good (it is saved). A running one
+    /// is left alone: it works on and reports back as before.
+    public func dismissSubagent(_ id: String) {
+        if trace.dismiss(id) { store?.save(subagents: trace.subagents) }
+    }
+
     public var name: String { profile.name }
 
     public var isSwitching: Bool {

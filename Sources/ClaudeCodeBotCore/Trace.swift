@@ -71,6 +71,9 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable {
     public var result: String?
     /// The subagent that sent this one off, for one started by a subagent.
     public var parentID: String?
+    /// When you took its row out of the left column. It only hides the row: the subagent
+    /// itself runs on. Nil while it is listed.
+    public var dismissedAt: Date?
 
     public init(id: String, description: String, type: String? = nil, prompt: String, status: Status = .running, background: Bool = false, startedAt: Date = Date(), steps: [Step] = [], parentID: String? = nil) {
         self.id = id
@@ -85,6 +88,9 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var isRunning: Bool { status == .running }
+
+    /// You took its row out of the left column.
+    public var isDismissed: Bool { dismissedAt != nil }
 
     /// How the left column marks it. Only one still at work gets a live dot; a finished one
     /// gets a check, so it never looks like a bot that is awake (green).
@@ -243,15 +249,25 @@ public struct TraceBook: Equatable, Sendable {
     public static let listedAtMost = 4
 
     /// The subagents the left column lists under the bot at `date`: the ones the bot itself
-    /// sent off that still run, or ended a short while ago (newest last).
+    /// sent off that still run, or ended a short while ago, and whose row you did not take
+    /// away (newest last).
     public func listed(at date: Date = Date()) -> [Subagent] {
         let shown = subagents.filter { subagent in
-            guard subagent.parentID == nil else { return false }
+            guard subagent.parentID == nil, !subagent.isDismissed else { return false }
             if subagent.isRunning { return true }
             guard let ended = subagent.endedAt else { return false }
             return date.timeIntervalSince(ended) < Self.listedAfterEnding
         }
         return Array(shown.suffix(Self.listedAtMost))
+    }
+
+    /// Takes its row out of the left column. It does not stop it: a running one works on and
+    /// still reports back. True if it was listed until now (worth saving).
+    @discardableResult
+    public mutating func dismiss(_ id: String, at date: Date = Date()) -> Bool {
+        guard let index = subagentIndex(id), subagents[index].dismissedAt == nil else { return false }
+        subagents[index].dismissedAt = date
+        return true
     }
 
     public func subagent(_ id: String) -> Subagent? {

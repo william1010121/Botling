@@ -90,6 +90,70 @@ struct TraceTests {
         #expect(book.listed(at: end.addingTimeInterval(TraceBook.listedAfterEnding + 1)).isEmpty)
     }
 
+    /// The cross on a subagent's row takes it out of the left column without stopping it.
+    @Test func aDismissedSubagentLeavesTheListButKeepsRunning() {
+        var book = TraceBook()
+        let start = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        for line in SubagentRun.lines.dropLast() {
+            for case let .trace(event) in StreamEvent.events(in: line) { book.apply(event, at: start) }
+        }
+        #expect(book.listed(at: start).map(\.id) == ["toolu_A"])
+        let first = book.dismiss("toolu_A", at: start)
+        let twice = book.dismiss("toolu_A", at: start)
+        let unknown = book.dismiss("nobody", at: start)
+        #expect(first)
+        #expect(!twice)
+        #expect(!unknown)
+        #expect(book.listed(at: start).isEmpty)
+        // Still at work, and its report still comes in.
+        #expect(book.subagent("toolu_A")?.isRunning == true)
+        for case let .trace(event) in StreamEvent.events(in: SubagentRun.notification) { book.apply(event, at: start) }
+        #expect(book.subagent("toolu_A")?.status == .completed)
+        #expect(book.subagent("toolu_A")?.result == "It says hello world.")
+        #expect(book.listed(at: start).isEmpty)
+    }
+
+    /// A hidden row frees its place for an older one still within the list's limit.
+    @Test func aDismissedSubagentMakesRoomInTheList() {
+        var book = TraceBook()
+        let ids = (0...TraceBook.listedAtMost).map { "S\($0)" }
+        for id in ids {
+            book.apply(.subagentStarted(id: id, description: id, type: "general-purpose", prompt: "Do \(id)", background: true))
+        }
+        #expect(book.listed().map(\.id) == Array(ids.suffix(TraceBook.listedAtMost)))
+        book.dismiss(ids.last!)
+        #expect(book.listed().map(\.id) == Array(ids.dropLast()))
+    }
+
+    @Test func aDismissalOutlivesARestart() {
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-dismiss-\(UUID().uuidString)")
+        let store = BotStore(directory: home.appending(path: "store"))
+        var kept = Subagent(id: "A", description: "Keep me", type: "general-purpose", prompt: "Keep")
+        kept.status = .completed
+        kept.endedAt = Date()
+        var hidden = Subagent(id: "B", description: "Hide me", type: "general-purpose", prompt: "Hide")
+        hidden.status = .completed
+        hidden.endedAt = Date()
+        store.save(subagents: [kept, hidden])
+
+        let bot = Bot(profile: .main(home: home), launcher: FakeLauncher().launcher, store: store)
+        #expect(bot.trace.listed().map(\.id) == ["A", "B"])
+        bot.dismissSubagent("B")
+        #expect(bot.trace.listed().map(\.id) == ["A"])
+        #expect(bot.subagents.map(\.id) == ["A", "B"])
+        #expect(store.loadSubagents().first { $0.id == "B" }?.isDismissed == true)
+
+        let again = Bot(profile: .main(home: home), launcher: FakeLauncher().launcher, store: store)
+        #expect(again.trace.listed().map(\.id) == ["A"])
+    }
+
+    /// subagents.json written before rows could be hidden still loads, every row listed.
+    @Test func subagentsSavedBeforeDismissingStillLoad() throws {
+        let json = #"[{"id":"A","description":"Old","prompt":"p","status":"completed","background":false,"startedAt":0,"steps":[]}]"#
+        let loaded = try JSONDecoder().decode([Subagent].self, from: Data(json.utf8))
+        #expect(loaded.map(\.isDismissed) == [false])
+    }
+
     @Test func aSubagentSavedAsRunningIsNotRunningAfterARestart() {
         let home = FileManager.default.temporaryDirectory.appending(path: "ccb-restart-\(UUID().uuidString)")
         let store = BotStore(directory: home.appending(path: "store"))
