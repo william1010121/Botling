@@ -202,6 +202,10 @@ struct AnswerAndUsageTests {
         #expect(ComponentPrompts.system.contains("<html data-surface=\"board\">"))
         #expect(ComponentPrompts.system.contains("no outer padding beyond about 12px"))
         #expect(PluginGuide.text(builtIns: "/x").contains("`<html data-surface=\"board\">`"))
+        // Opened above the input box it is frameless too, and told so.
+        #expect(ComponentPrompts.system.contains("ccb.surface = \"pinned\""))
+        #expect(ComponentPrompts.system.contains("html:not([data-surface=\"chat\"]) .card"))
+        #expect(PluginGuide.text(builtIns: "/x").contains("`<html data-surface=\"pinned\">`"))
         #expect(ComponentDefaults.choicesTemplate.contains("ccb.answer(index)"))
     }
 }

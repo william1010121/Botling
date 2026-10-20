@@ -138,6 +138,9 @@ enum PluginGuide {
           the top-right corner on hover. There `ccb.surface` is "board" and `<html data-surface="board">` is set (in the chat: "chat"), so
           drop your own card frame: no border, no background (transparent, or the tile's), no border-radius, no outer padding beyond about
           12px, and fill the tile, e.g. `html[data-surface="board"] .card { border: 0; background: none; border-radius: 0; padding: 12px; height: 100%; }`.
+          A pin opened from its chip above the input box is frameless the same way: `ccb.surface` is "pinned" and `<html data-surface="pinned">`
+          is set, the panel gives the corners and background and its controls (↻, ⋯, collapse) float over the top-right corner on hover, but the
+          page is as tall as its content (as in the chat). Drop the frame on both with `html:not([data-surface="chat"]) .card { … }`.
         - about.md: usage notes for the bots. The first line says in one sentence what it is, followed by the data format (with an example JSON) and what the bot receives when the user answers.
 
         ## Check and release

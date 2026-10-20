@@ -6,6 +6,18 @@ app and publishes it on GitHub Releases.
 
 ## Unreleased
 
+### Changed
+
+- **An opened pin is its component, like a Board tile.** Clicking a pin's chip above the input
+  box no longer shows a card in a card: the header row (name, command, "Updated 3:32", ↻, ⋯,
+  collapse) and the padding are gone, the component's frame fills the panel and its rounded
+  corners clip it. ↻, ⋯ and collapse float over the top-right corner as a small pill on hover or
+  keyboard focus (and while its command runs); the ⋯ menu starts with the name, when it last ran
+  and its command. Components are told: `ccb.surface` is `"pinned"` and
+  `<html data-surface="pinned">` there, and the page stays as tall as its content.
+  ComponentPrompts, PLUGINS.md and the Maintainer say to draw no card of one's own there either:
+  `html:not([data-surface="chat"]) .card { … }` drops it on the Board and when pinned.
+
 ### Fixed
 
 - **A narrow window no longer cuts off the left column or the right panel.** The rail, the chat
