@@ -35,6 +35,13 @@ public enum BotRequest: Equatable, Sendable {
     /// `<take-component bot="garden">weather</take-component>`: Maintainer only. Takes it off that
     /// bot's list; the library copy stays.
     case takeComponent(bot: String, name: String)
+    /// `<suggest-component name="test-summary">short draft</suggest-component>`: any bot. Offers to
+    /// make what it just showed into a component; the app only adds a quiet chip under the reply,
+    /// and nothing opens, runs or is built until the user presses it.
+    case suggestComponent(name: String, draft: String)
+    /// `<component-spec id="…">JSON</component-spec>`: Maintainer only. Fills in or changes a
+    /// component spec the user is shaping in the right panel (see `ComponentSpecs.update`).
+    case componentSpec(id: String, json: String)
 }
 
 /// Splits a bot's reply into the text to show, the buttons to draw, and the requests to act on.
@@ -80,6 +87,14 @@ public enum ReplyParser {
     )
     private static let listTag = try! NSRegularExpression(
         pattern: #"<(give|take)-component\s+bot\s*=\s*(?:"([^"]*)"|'([^']*)')\s*>\s*(.*?)\s*</\1-component>"#,
+        options: .dotMatchesLineSeparators
+    )
+    private static let suggestTag = try! NSRegularExpression(
+        pattern: #"<suggest-component\s+name\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:/>|>\s*(.*?)\s*</suggest-component>)"#,
+        options: .dotMatchesLineSeparators
+    )
+    private static let specTag = try! NSRegularExpression(
+        pattern: #"<component-spec\s+id\s*=\s*(?:"([^"]*)"|'([^']*)')\s*>\s*(.*?)\s*</component-spec>"#,
         options: .dotMatchesLineSeparators
     )
     private static let screenshotTag = try! NSRegularExpression(pattern: #"<app-screenshot\s*/?>(?:\s*</app-screenshot>)?"#)
@@ -210,6 +225,18 @@ public enum ReplyParser {
             lists.insert(groups[0] == "give" ? .giveComponent(bot: bot, name: name) : .takeComponent(bot: bot, name: name), at: 0)
         }
         requests += lists
+        var suggestions: [BotRequest] = []
+        take(suggestTag) { groups in
+            let name = (groups[0].isEmpty ? groups[1] : groups[0]).trimmingCharacters(in: .whitespaces)
+            if !name.isEmpty { suggestions.insert(.suggestComponent(name: name, draft: groups[2]), at: 0) }
+        }
+        requests += suggestions
+        var specs: [BotRequest] = []
+        take(specTag) { groups in
+            let id = (groups[0].isEmpty ? groups[1] : groups[0]).trimmingCharacters(in: .whitespaces)
+            if !id.isEmpty { specs.insert(.componentSpec(id: id, json: groups[2]), at: 0) }
+        }
+        requests += specs
 
         var choices: [Choice]?
         take(choicesBlock, first: true) { groups in

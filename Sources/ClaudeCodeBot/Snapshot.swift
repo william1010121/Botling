@@ -27,6 +27,10 @@ enum Snapshot {
             drawRightPanel(to: path)
             return true
         }
+        if let path = ProcessInfo.processInfo.environment["CCB_SPEC_SNAPSHOT"] {
+            drawSpec(to: path)
+            return true
+        }
         if let (chat, path) = chatRequest() {
             drawChat(chat, to: path)
             return true
@@ -108,7 +112,7 @@ enum Snapshot {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         let copy = root.appending(path: "main")
         try? FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
-        for file in ["chat.json", "subagents.json", "pins.json"] {
+        for file in ["chat.json", "subagents.json", "pins.json", "specs.json"] {
             try? FileManager.default.copyItem(at: folder.appending(path: file), to: copy.appending(path: file))
         }
         // `--pins file.json`: pins to draw instead of the chat's own (to look at them without pinning).
@@ -133,7 +137,7 @@ enum Snapshot {
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
         let board = CommandLine.arguments.contains("--board")
-        let json = ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, pins: pins ? workspace.pinContext(for: workspace.mainBot, board: board) : nil) { projectID in
+        let json = ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, pins: pins ? workspace.pinContext(for: workspace.mainBot, board: board) : nil, specs: pins) { projectID in
             AvatarImages.dataURL(projectID == nil ? .circle : .triangle, eyes: .open)
         }.json()
 
@@ -367,6 +371,141 @@ enum Snapshot {
             host.cacheDisplay(in: host.bounds, to: rep)
             try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
             exit(0)
+        }
+    }
+
+    /// `CCB_SPEC_SNAPSHOT=/path/out.png` ("Make into component"): a sample chat whose test-run
+    /// reply has its spec chip (and a later reply with a bot's suggestion chip) beside the spec
+    /// workspace open in the right panel, with Maintainer's draft, a question and a test run to
+    /// allow. `CCB_SPEC_STATE=building|done` draws it later on; `CCB_SPEC_WIDE=1` spread wide.
+    private static func drawSpec(to path: String) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
+        let home = root.appending(path: "main")
+        try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        let now = Date()
+        var reply = ChatMessage(role: .bot, text: "測試全部跑完了：382 個測試，0 個失敗，共 41.2 秒。WebBridgeTests 112、ChatStoreTests 86、MarkdownTests 79，全部通過。", date: now.addingTimeInterval(-120))
+        reply.steps = [Step(id: "1", kind: .tool, tool: "Bash", title: "Run swift test", detail: "swift test --parallel", output: "382 passed", done: true)]
+        let later = ChatMessage(role: .bot, text: "README 的安裝步驟還寫 1.7，我先列出要改的三個地方給你看。", date: now.addingTimeInterval(-30))
+        let store = BotStore(directory: home)
+        store.save(messages: [
+            ChatMessage(role: .user, text: "跑一下全部測試，跟我說結果。", date: now.addingTimeInterval(-180)),
+            reply,
+            ChatMessage(role: .user, text: "好，那順便看一下 README。", date: now.addingTimeInterval(-60)),
+            later,
+        ])
+        var spec = ComponentSpec(messageID: reply.id, name: "test-summary", about: "Pass and fail counts per test suite", folder: home.path, bots: ["Main bot"])
+        spec.command = "swift test --parallel 2>&1 | python3 .bot/scripts/test-summary.py"
+        spec.fields = [
+            .init(name: "total", type: "int", by: .maintainer), .init(name: "passed", type: "int", by: .maintainer),
+            .init(name: "failed", type: "int", by: .maintainer), .init(name: "seconds", type: "num", by: .maintainer),
+            .init(name: "failures", type: "[suite, test, message]", by: .user),
+        ]
+        spec.samples = [
+            .init(label: "This reply", data: #"{"total":382,"passed":382,"failed":0,"seconds":41.2,"suites":[{"name":"WebBridgeTests","passed":112},{"name":"ChatStoreTests","passed":86}]}"#),
+            .init(label: "Failing run", data: #"{"total":382,"passed":380,"failed":2,"seconds":41.2,"failures":[{"suite":"WebBridgeTests","test":"testDropOrder"}]}"#),
+            .init(label: "Empty", data: "null"),
+        ]
+        spec.similar = "build-status"
+        spec.origins = ["command": .user, "fields": .maintainer, "about": .maintainer, "name": .maintainer]
+        spec.questions = [.init(id: "refresh", key: "refresh", text: "測試要跑 40 秒左右：每次顯示都重跑，還是按 ↻ 才跑？", options: [.init(label: "按 ↻ 才跑", value: "manual"), .init(label: "每次顯示都跑", value: "shown")], suggested: 0)]
+        spec.conversation = [
+            .init(kind: .maintainer, text: "其他欄位我照這則回覆填好了，只剩一件事要你決定。"),
+            .init(kind: .user, text: "失敗的測試要列出名字。"),
+            .init(kind: .event, text: "You edited Command · swift test --parallel 2>&1 | python3 …"),
+        ]
+        spec.draft = 2
+        spec.opened = true
+        spec.asked = true
+        spec.testRun = ComponentSpec.TestRun(command: spec.command!, folder: home.path)
+        switch ProcessInfo.processInfo.environment["CCB_SPEC_STATE"] {
+        case "building":
+            spec.status = .building
+            spec.questions = []
+        case "done":
+            spec.status = .done
+            spec.questions = []
+            spec.conversation.append(.init(kind: .event, text: "test-summary added to Main bot"))
+        default:
+            break
+        }
+        var suggestion = ComponentSpec(messageID: later.id, name: "readme-check", about: "What in README is out of date", folder: home.path, bots: ["Main bot"])
+        suggestion.suggestedBy = "Main bot"
+        store.save(specs: [spec, suggestion])
+        let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
+            Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
+        }
+        workspace.openSpec(spec.id, in: workspace.mainBot)
+        workspace.setSpecPanelWide(ProcessInfo.processInfo.environment["CCB_SPEC_WIDE"] == "1")
+        let chatJSON = ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, specs: true, openSpec: workspace.openSpecID) { projectID in
+            AvatarImages.dataURL(projectID == nil ? .circle : .triangle, eyes: .open)
+        }.json()
+        guard let specJSON = workspace.specPayload(spec.id)?.json(), let page = ChatSurface.pageURL else { exit(1) }
+        let height: CGFloat = 900
+        let panelWidth = CGFloat(RightPanelLayout.specWidth(wide: workspace.specPanelWide))
+        var shots: [Int: NSImage] = [:]
+        let finish = {
+            guard let chat = shots[0], let panel = shots[1] else { return }
+            let size = NSSize(width: 640 + panelWidth, height: height)
+            let image = NSImage(size: size)
+            image.lockFocus()
+            NSColor(red: 0.055, green: 0.055, blue: 0.063, alpha: 1).setFill()
+            NSRect(origin: .zero, size: size).fill()
+            chat.draw(in: NSRect(x: 0, y: 0, width: 640, height: height))
+            panel.draw(in: NSRect(x: 640, y: 0, width: panelWidth, height: height))
+            NSColor(red: 0.137, green: 0.137, blue: 0.153, alpha: 1).setFill()
+            NSRect(x: 640, y: 0, width: 1, height: height).fill()
+            image.unlockFocus()
+            if let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(filePath: path))
+            }
+            exit(0)
+        }
+        for (index, width, url, script) in [
+            (0, CGFloat(640), page, "\(ChatSurface.setPluginsScript(workspace.plugins)); ccb.setState(\(chatJSON))"),
+            (1, panelWidth, URLComponents(url: page, resolvingAgainstBaseURL: false).flatMap { parts -> URL? in
+                var parts = parts
+                parts.queryItems = [URLQueryItem(name: "spec", value: "1")]
+                return parts.url
+            } ?? page, "document.body.style.background='#141417'; ccb.setSpec(\(specJSON))"),
+        ] {
+            let frame = NSRect(x: 0, y: 0, width: width, height: height)
+            let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            let shot = Shot(script: script) { image in
+                shots[index] = image
+                finish()
+            }
+            let view = SpecPanelView.makeWebView(handler: shot)
+            view.frame = frame
+            shot.view = view
+            window.contentView = view
+            view.loadFileURL(url, allowingReadAccessTo: URL(filePath: "/"))
+            keep.append((window, shot))
+        }
+    }
+
+    private static var keep: [(NSWindow, Shot)] = []
+
+    /// A page that, once ready, runs `script` and gives back a picture of itself.
+    private final class Shot: NSObject, WKScriptMessageHandler {
+        let script: String
+        let done: (NSImage) -> Void
+        weak var view: WKWebView?
+        private var taken = false
+
+        init(script: String, done: @escaping (NSImage) -> Void) {
+            self.script = script
+            self.done = done
+        }
+
+        func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard !taken, (message.body as? [String: Any])?["type"] as? String == "ready", let view else { return }
+            taken = true
+            view.evaluateJavaScript(script)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [done] in
+                view.takeSnapshot(with: nil) { image, _ in
+                    if let image { done(image) } else { exit(1) }
+                }
+            }
         }
     }
 

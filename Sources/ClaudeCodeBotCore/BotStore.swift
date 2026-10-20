@@ -14,6 +14,7 @@ public struct BotStore: Sendable {
     private var settingsURL: URL { directory.appending(path: "bot.json") }
     private var subagentsURL: URL { directory.appending(path: "subagents.json") }
     private var pinsURL: URL { directory.appending(path: "pins.json") }
+    private var specsURL: URL { directory.appending(path: "specs.json") }
 
     private struct Settings: Codable {
         var model: BotModel?
@@ -70,6 +71,16 @@ public struct BotStore: Sendable {
 
     public func save(pins: [PinnedComponent]) {
         write(pins, to: pinsURL)
+    }
+
+    /// Components being made from its replies (the chips under them), oldest first.
+    public func loadSpecs() -> [ComponentSpec] {
+        guard let data = try? Data(contentsOf: specsURL) else { return [] }
+        return (try? JSONDecoder().decode([ComponentSpec].self, from: data)) ?? []
+    }
+
+    public func save(specs: [ComponentSpec]) {
+        write(specs, to: specsURL)
     }
 
     public func loadModel() -> BotModel? {

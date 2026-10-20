@@ -24,6 +24,11 @@ export const extensions = {
 /** Developer mode: bot replies get a "not right" flag (set from the state before drawing). */
 export const feedback = { enabled: false };
 
+/** Replies can be made into components (set from the state before drawing). */
+export const makeComponents = { enabled: false };
+
+const cubeIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></svg>`;
+
 const flagIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4h11l-2 4 2 4H5"/></svg>`;
 
 const replyIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>`;
@@ -49,15 +54,20 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
     case "bot":
     case "notice": {
       const body = botBody(message, components);
-      const actions = message.role === "bot" && feedback.enabled ? withFeedback(message) : replyButton(message);
-      if (message.speaker) {
-        // The group chat: who said it, above what they said.
+      const actions = message.role === "bot" && (feedback.enabled || makeComponents.enabled) ? actionColumn(message) : replyButton(message);
+      const chips = message.specs?.length ? specChips(message) : null;
+      if (message.speaker || chips) {
+        // The group chat: who said it, above what they said. A spec's chip goes under it.
         const column = document.createElement("div");
-        column.className = "speaker-column";
-        const name = document.createElement("div");
-        name.className = "speaker";
-        name.textContent = message.speaker;
-        column.append(name, body);
+        column.className = message.speaker ? "speaker-column" : "bot-column";
+        if (message.speaker) {
+          const name = document.createElement("div");
+          name.className = "speaker";
+          name.textContent = message.speaker;
+          column.append(name);
+        }
+        column.append(body);
+        if (chips) column.append(chips);
         row.append(avatar(message.avatar), column, actions);
       } else {
         row.append(avatar(message.avatar), body, actions);
@@ -145,10 +155,51 @@ function avatar(src: string | null): HTMLElement {
   return image;
 }
 
-/** The reply button with a "not right" flag under it, for developer mode. */
-function withFeedback(message: MessageView): HTMLElement {
+/**
+ * A bot reply's hover column: Reply, Make into component (or "Add to another bot…" when the reply
+ * already is a library component), and in developer mode the "not right" flag.
+ */
+function actionColumn(message: MessageView): HTMLElement {
   const column = document.createElement("div");
   column.className = "message-actions";
+  column.append(replyButton(message));
+  if (makeComponents.enabled) {
+    const label = message.component ? "Add to another bot…" : "Make into component";
+    const make = document.createElement("button");
+    make.className = "reply-button make-component";
+    make.setAttribute("aria-label", label);
+    make.title = message.component ? label : `${label}: reuse this kind of reply. Maintainer drafts a spec first`;
+    make.innerHTML = cubeIcon;
+    make.addEventListener("click", (event) => {
+      event.stopPropagation();
+      post({ type: "makeComponent", messageID: message.id });
+    });
+    column.append(make);
+  }
+  if (feedback.enabled) column.append(feedbackFlag(message));
+  return column;
+}
+
+/** The quiet chips of the component specs made from a reply; pressed, one opens in the right panel. */
+function specChips(message: MessageView): HTMLElement {
+  const strip = document.createElement("div");
+  strip.className = "spec-chips";
+  for (const spec of message.specs ?? []) {
+    const chip = document.createElement("button");
+    chip.className = `spec-chip ${spec.status}${spec.suggested ? " suggested" : ""}${spec.open ? " open" : ""}`;
+    chip.setAttribute("aria-expanded", String(spec.open));
+    const words = spec.status === "done" ? "Component" : spec.status === "building" ? "Building component" : spec.suggested ? "Suggested component" : "Component spec";
+    chip.innerHTML = `${cubeIcon}<span></span><span class="spec-chip-arrow" aria-hidden="true">›</span>`;
+    chip.querySelector("span")!.textContent = `${words} · ${spec.name}`;
+    chip.title = spec.open ? "Showing in the right panel" : "Open in the right panel";
+    chip.addEventListener("click", () => post({ type: "openSpec", id: spec.id }));
+    strip.append(chip);
+  }
+  return strip;
+}
+
+/** The "not right" flag, for developer mode. */
+function feedbackFlag(message: MessageView): HTMLElement {
   const flag = document.createElement("button");
   flag.className = "reply-button feedback-button";
   flag.setAttribute("aria-label", "Not right: send to the developer project");
@@ -158,8 +209,7 @@ function withFeedback(message: MessageView): HTMLElement {
     event.stopPropagation();
     openFeedback(flag, message);
   });
-  column.append(replyButton(message), flag);
-  return column;
+  return flag;
 }
 
 /**
@@ -271,7 +321,26 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
   // Result pages it links to, as preview cards under the text (the links stay chips too).
   message.previews?.forEach((preview, index) => {
     const card = componentElement(preview.name, components[preview.name], preview.data, null, `${message.id}/preview-${index}`);
-    if (card) bubble.append(card);
+    if (!card) return;
+    if (!makeComponents.enabled || message.role !== "bot") {
+      bubble.append(card);
+      return;
+    }
+    // Its hover toolbar: make the page into a component.
+    const holder = document.createElement("div");
+    holder.className = "preview-holder";
+    const bar = document.createElement("div");
+    bar.className = "preview-bar";
+    const make = document.createElement("button");
+    make.className = "preview-make";
+    make.innerHTML = `${cubeIcon}<span>Make into component</span>`;
+    make.addEventListener("click", (event) => {
+      event.stopPropagation();
+      post({ type: "makeComponent", messageID: message.id, preview: index });
+    });
+    bar.append(make);
+    holder.append(card, bar);
+    bubble.append(holder);
   });
   if (message.openable) {
     const open = document.createElement("button");
