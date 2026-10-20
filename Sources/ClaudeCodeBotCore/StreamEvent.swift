@@ -69,13 +69,26 @@ enum StreamEvent {
                 )]
             case "task_notification":
                 guard let id = object["tool_use_id"] as? String else { return [] }
-                return [.trace(.subagentEnded(id: id, status: object["status"] as? String ?? "completed", summary: object["summary"] as? String))]
+                let status = object["status"] as? String ?? "completed"
+                let summary = object["summary"] as? String
+                // Not a report: it stopped with a Monitor or background command of its own still
+                // running, and claude says so again each time that work wakes it.
+                if status == "completed", object["handback"] == nil, summary.map(Self.isStillWaiting) == true {
+                    return [.trace(.subagentWaiting(id: id))]
+                }
+                return [.trace(.subagentEnded(id: id, status: status, summary: summary))]
             default:
                 return []
             }
         default:
             return []
         }
+    }
+
+    /// claude's summary for a subagent that has not reported yet: "Agent "…" is waiting on its
+    /// own background work".
+    static func isStillWaiting(_ summary: String) -> Bool {
+        summary.hasSuffix("is waiting on its own background work")
     }
 
     /// A tool result's content: a string, or text blocks (images say so in words).

@@ -14,6 +14,11 @@ enum SubagentRun {
     static let notification = #"{"type":"system","subtype":"task_notification","task_id":"a35","tool_use_id":"toolu_A","status":"completed","summary":"It says hello world."}"#
 
     static var lines: [String] { [spawn, started, launched, subagentSays, subagentReads, readResult, notification] }
+
+    /// The subagent stopped with a Monitor or background command of its own still running: it
+    /// has not reported. claude sends this again each time that work wakes it, and each one
+    /// starts a turn of the bot's own.
+    static let waiting = #"{"type":"system","subtype":"task_notification","task_id":"a35","tool_use_id":"toolu_A","status":"completed","summary":"Agent \"Read a.txt and report content\" is waiting on its own background work"}"#
 }
 
 @MainActor
@@ -407,6 +412,75 @@ struct TraceTests {
         agent.reply("It says hello world.")
         await eventually { bot.messages.last?.text == "It says hello world." }
         await eventually { bot.phase == .asleep }
+    }
+
+    @Test func aSubagentStillWaitingOnItsOwnWorkWakesNoReply() async {
+        let fake = FakeLauncher()
+        let bot = makeBot(fake, idle: 5)
+        fake.respond = { text in isAppOnly(text) ? "OK" : nil }
+        bot.send("Transcribe the recording in a subagent")
+        await eventually { fake.agents.count == 1 }
+        let agent = fake.agents[0]
+        for line in SubagentRun.lines.prefix(3) {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+        agent.reply("Sent it off.")
+        await eventually { !bot.isWorking }
+        let shown = bot.messages.count
+
+        // Its Monitor wakes it again and again; each time claude tells the bot it is still
+        // waiting, and the bot has nothing new to say.
+        for _ in 0..<3 {
+            #expect(StreamEvent.events(in: SubagentRun.waiting) == [.trace(.subagentWaiting(id: "toolu_A"))])
+            for event in StreamEvent.events(in: SubagentRun.waiting) { agent.emit(event) }
+            agent.emit(.trace(.text("Still transcribing.", parent: nil)))
+            await eventually { bot.isWorking }
+            agent.reply("Still transcribing.")
+            await eventually { !bot.isWorking }
+        }
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(bot.messages.count == shown)
+        #expect(bot.subagents.first?.isRunning == true)
+        #expect(bot.phase == .awake)
+
+        // It really finishes: that report shows.
+        for event in StreamEvent.events(in: SubagentRun.notification) { agent.emit(event) }
+        agent.emit(.trace(.text("Done.", parent: nil)))
+        await eventually { bot.isWorking }
+        agent.reply("It says hello world.")
+        await eventually { bot.messages.last?.text == "It says hello world." }
+        #expect(bot.messages.count == shown + 1)
+        #expect(bot.subagents.first?.status == .completed)
+    }
+
+    @Test func whatYouSayWhileItWaitsQuietlyStillGetsAnAnswer() async {
+        let fake = FakeLauncher()
+        let bot = makeBot(fake, idle: 5)
+        fake.respond = { text in isAppOnly(text) && !text.contains("How far") ? "OK" : nil }
+        bot.send("Transcribe the recording in a subagent")
+        await eventually { fake.agents.count == 1 }
+        let agent = fake.agents[0]
+        for line in SubagentRun.lines.prefix(3) {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+        agent.reply("Sent it off.")
+        await eventually { !bot.isWorking }
+        let shown = bot.messages.count
+        for event in StreamEvent.events(in: SubagentRun.waiting) { agent.emit(event) }
+        agent.emit(.trace(.text("Still transcribing.", parent: nil)))
+        await eventually { bot.isWorking }
+
+        // You ask in the middle of that turn: it is paused for you, and its answer shows; the
+        // waiting it carries on with after stays quiet.
+        bot.send("How far along is it?")
+        await eventually { agent.sent.contains { $0.contains("How far along is it?") } }
+        agent.reply("About half done.")
+        await eventually { bot.messages.last?.text == "About half done." }
+        await eventually { agent.sent.contains(Bot.resumeNote) }
+        await eventually { !bot.isWorking }
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(bot.messages.last?.text == "About half done.")
+        #expect(bot.messages.count == shown + 2)
     }
 
     @Test func aRunningSubagentLeavesTheChatsTextAloneBetweenItsSteps() async {
