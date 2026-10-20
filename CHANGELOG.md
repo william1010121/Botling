@@ -15,6 +15,17 @@ app and publishes it on GitHub Releases.
   when fewer). Cards pack densely, the Add component tile is one cell, and a card's size button
   (and its ⋯ menu) offers the sizes its component has a layout for. The old S, M and L become 1×1,
   2×2 and 4×2; a new pin starts at 2×2, or the component's first size when it has no 2×2.
+- **A Board tile is its component, like a widget.** The header row (name, size, "Updated 10:42",
+  ↻, ⋯) and the padding are gone: the component's frame fills the whole tile and the rounded
+  corners clip it. Its controls (a grip to drag it by, the size, ↻ and ⋯) float over the
+  top-right corner as a small pill on hover or keyboard focus, and stay in sight while its
+  command runs; the ⋯ menu now starts with the name, when it last ran and its command, and the
+  arrow keys and Escape work in it. Allow and run, a failed command and the wait still fill the
+  tile without hovering. Components are told where they are: `ccb.surface` is `"board"` and
+  `<html data-surface="board">` on the Board (`"chat"` in the chat), and there the page is the
+  tile's height. ComponentPrompts, PLUGINS.md and the Maintainer say a component on the Board
+  draws no card of its own: no border, background or radius, at most about 12px padding, and
+  it fills the tile.
 - **Components lay out per size.** about.md may say `Sizes: 1x1, 2x1, 2x2` (missing: 2x2 only).
   The template reads `ccb.size` (`{w, h, name}`, name `small`, `wide`, `tall`, `large` or
   `xlarge`), `<html data-size="2x1">` for CSS, and `ccb.onSize(fn)` hears a resize; the card keeps

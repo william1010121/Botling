@@ -19,6 +19,7 @@ const icons = {
   refresh: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>`,
   more: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg>`,
   plus: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
+  grip: `<svg width="12" height="14" viewBox="0 0 12 14" fill="currentColor" aria-hidden="true"><circle cx="4" cy="3" r="1.3"/><circle cx="8" cy="3" r="1.3"/><circle cx="4" cy="7" r="1.3"/><circle cx="8" cy="7" r="1.3"/><circle cx="4" cy="11" r="1.3"/><circle cx="8" cy="11" r="1.3"/></svg>`,
   close: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`,
 };
 
@@ -189,7 +190,8 @@ function showToast(text: string, undo: () => void): void {
 
 // MARK: Menus and popups
 
-interface MenuItem { label: string; run: () => void; checked?: boolean; disabled?: boolean }
+/** A menu's entry; a heading or note is a line of text, not a button. */
+interface MenuItem { label: string; run: () => void; checked?: boolean; disabled?: boolean; heading?: boolean; note?: boolean; code?: boolean }
 
 function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[]): void {
   closePopups();
@@ -201,6 +203,14 @@ function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[]): void {
       const line = document.createElement("div");
       line.className = "pin-menu-line";
       menu.append(line);
+      continue;
+    }
+    if (item.heading || item.note) {
+      const text = document.createElement("div");
+      text.className = item.heading ? "pin-menu-heading" : "pin-menu-note" + (item.code ? " code" : "");
+      text.textContent = item.label;
+      text.title = item.label;
+      menu.append(text);
       continue;
     }
     const entry = document.createElement("button");
@@ -231,6 +241,23 @@ function place(popup: HTMLElement, anchor: HTMLElement): void {
   const below = rect.bottom + 6 + height < window.innerHeight;
   popup.style.left = `${Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))}px`;
   popup.style.top = `${Math.max(8, below ? rect.bottom + 6 : rect.top - height - 6)}px`;
+  // Opened from the keyboard: its first entry has focus, Escape closes it and goes back.
+  if (popup.classList.contains("pin-menu")) {
+    popup.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
+    popup.addEventListener("keydown", (event) => {
+      const entries = [...popup.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+      const at = entries.indexOf(document.activeElement as HTMLButtonElement);
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        popup.remove();
+        anchor.focus({ preventScroll: true });
+      } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const next = entries[(at + (event.key === "ArrowDown" ? 1 : entries.length - 1)) % entries.length];
+        next?.focus();
+      }
+    });
+  }
   const close = (event: MouseEvent) => {
     if (!popup.isConnected) return document.removeEventListener("mousedown", close);
     if (!popup.contains(event.target as Node)) {
@@ -242,9 +269,16 @@ function place(popup: HTMLElement, anchor: HTMLElement): void {
 }
 
 /** The menu of a pin (a chip's right-click, a sheet's or card's ⋯). */
-function pinMenu(anchor: HTMLElement, pin: PinView, options: { sizes?: boolean } = {}): void {
+function pinMenu(anchor: HTMLElement, pin: PinView, options: { sizes?: boolean; about?: boolean } = {}): void {
   const at = current.pins.findIndex((p) => p.id === pin.id);
   const items: (MenuItem | "-")[] = [];
+  if (options.about) {
+    // A Board tile has no header: its name, command and when it ran are said here.
+    items.push({ label: pin.name, heading: true, run: () => {} });
+    items.push({ label: whenWords(pin), note: true, run: () => {} });
+    if (pin.display.command) items.push({ label: `$ ${pin.display.command}`, note: true, code: true, run: () => {} });
+    items.push("-");
+  }
   if (pin.display.command) {
     for (const [refresh, minutes] of [["shown", pin.minutes], ["interval", pin.minutes], ["manual", pin.minutes]] as [PinRefresh, number][]) {
       items.push({ label: refreshWords(refresh, minutes), checked: pin.refresh === refresh, run: () => post({ type: "setPinRefresh", id: pin.id, refresh, minutes }) });
@@ -354,9 +388,13 @@ function openPicker(): void {
 
 // MARK: The pinned component itself
 
-/** The pinned component, with its command's ask, error or wait as in the chat, without the bar. */
+/**
+ * The pinned component, with its command's ask, error or wait as in the chat, without the bar.
+ * Given a size it is a Board tile: drawn at that size, told it is on the Board.
+ */
 function pinBody(pin: PinView, size?: PinSize): HTMLElement {
-  const draw = () => componentElement(pin.name, current.components[pin.name], pin.display.data, null, `pin-${pin.id}`, pin.display.images, detailTarget(pin.display), size);
+  const key = size ? `board-${pin.id}` : `pin-${pin.id}`;
+  const draw = () => componentElement(pin.name, current.components[pin.name], pin.display.data, null, key, pin.display.images, detailTarget(pin.display), size, size ? "board" : "chat");
   if (pin.display.command || pin.display.status) {
     return commandCard(pin.display, `pin:${pin.id}`, 0, draw, {
       bar: false,
@@ -376,7 +414,14 @@ function refreshPin(pin: PinView): void {
   post({ type: "pinCommand", id: pin.id, command: pin.display.command, folder: pin.display.folder ?? "", force: true });
 }
 
-/** Name, command, when it ran, ↻ and ⋯: the top of a sheet or a Board card. */
+/** When it last ran, or how it refreshes: "Updated 10:42", "Running…", "Snapshot". */
+function whenWords(pin: PinView): string {
+  if (pin.display.status === "running") return "Running…";
+  if (pin.display.ranAt) return `Updated ${pin.display.ranAt}`;
+  return pin.display.command ? refreshWords(pin.refresh, pin.minutes) : "Snapshot";
+}
+
+/** Name, command, when it ran, ↻ and ⋯: the top of a pin's sheet. */
 function pinHeader(pin: PinView, className: string, extra: HTMLElement[] = [], sizes = false): HTMLElement {
   const head = document.createElement("div");
   head.className = className;
@@ -397,7 +442,7 @@ function pinHeader(pin: PinView, className: string, extra: HTMLElement[] = [], s
   const when = document.createElement("span");
   when.className = "pin-when";
   const status = pin.display.status;
-  when.textContent = status === "running" ? "Running…" : pin.display.ranAt ? `Updated ${pin.display.ranAt}` : pin.display.command ? refreshWords(pin.refresh, pin.minutes) : "Snapshot";
+  when.textContent = whenWords(pin);
   head.append(when);
   if (pin.display.command) {
     const refresh = button("pin-tool" + (status === "running" ? " spinning" : ""), "Refresh", icons.refresh, () => refreshPin(pin));
@@ -673,34 +718,65 @@ export class PinArea {
 
   /** Puts a card at its pin's new size, keeping the component's frame (it hears `ccb.onSize`). */
   private resize(card: HTMLElement, pin: PinView, index: number): void {
-    card.className = `board-card size-${pin.size}`;
+    card.className = this.cardClass(pin);
     card.dataset.size = pin.size;
     this.span(card);
-    card.querySelector(".board-card-head")?.replaceWith(this.cardHead(pin, index));
+    card.querySelector(".board-card-tools")?.replaceWith(this.cardTools(pin, index));
     for (const frame of card.querySelectorAll<HTMLIFrameElement>("iframe.component-frame")) resizeFrame(frame, pin.size);
   }
 
-  /** A card's top: name, command, size, when it ran, ↻ and ⋯; dragged to move the card. */
-  private cardHead(pin: PinView, index: number): HTMLElement {
-    const head = pinHeader(pin, "board-card-head", [], true);
-    const size = button("board-size", `Size: ${sizeLabel(pin.size)}`, sizeInfo(pin.size).w + "×" + sizeInfo(pin.size).h, () => openMenu(size, sizeItems(pin)));
-    head.insertBefore(size, head.querySelector(".pin-fill"));
-    head.draggable = true;
-    this.dragAndDrop(head, pin.id, index);
-    return head;
+  /** A tile's classes: its size, and while its command runs (its tools stay in sight). */
+  private cardClass(pin: PinView): string {
+    return `board-card size-${pin.size}` + (pin.display.status === "running" ? " running" : "");
   }
 
+  /**
+   * A tile's controls, floating over its top-right corner on hover or keyboard focus: a grip to
+   * drag it by, its size, ↻ and ⋯ (name, when it ran, refresh, sizes, move, unpin).
+   */
+  private cardTools(pin: PinView, index: number): HTMLElement {
+    const tools = document.createElement("div");
+    tools.className = "board-card-tools";
+    tools.setAttribute("role", "toolbar");
+    tools.setAttribute("aria-label", `${pin.name}: ${whenWords(pin)}`);
+    const grip = document.createElement("span");
+    grip.className = "board-grip";
+    grip.title = `${pin.name} · ${whenWords(pin)} · drag to move`;
+    grip.setAttribute("aria-hidden", "true");
+    grip.innerHTML = icons.grip;
+    grip.draggable = true;
+    this.dragAndDrop(grip, pin.id, index);
+    const size = button("board-size pin-tool", `Size: ${sizeLabel(pin.size)}`, sizeInfo(pin.size).w + "×" + sizeInfo(pin.size).h, () => openMenu(size, sizeItems(pin)));
+    tools.append(grip, size);
+    const status = pin.display.status;
+    if (pin.display.command) {
+      const refresh = button("pin-tool" + (status === "running" ? " spinning" : ""), `Refresh (${whenWords(pin)})`, icons.refresh, () => refreshPin(pin));
+      refresh.disabled = status === "running" || status === "approve";
+      tools.append(refresh);
+    }
+    const more = button("pin-tool", "More", icons.more, () => pinMenu(more, pin, { sizes: true, about: true }));
+    tools.append(more);
+    return tools;
+  }
+
+  /** A tile: the component is all of it, like a home-screen widget; its controls float over it. */
   private card(pin: PinView, index: number): HTMLElement {
     const card = document.createElement("section");
-    card.className = `board-card size-${pin.size}`;
+    card.className = this.cardClass(pin);
     card.dataset.id = pin.id;
     card.dataset.size = pin.size;
+    if (pin.display.status) card.dataset.status = pin.display.status;
     card.setAttribute("aria-label", pin.name);
     this.span(card);
-    const head = this.cardHead(pin, index);
-    // Dropping anywhere on a card puts the dragged one there.
-    card.addEventListener("dragover", (event) => { if (this.dragging) event.preventDefault(); });
+    // Dropping anywhere on a tile puts the dragged one there.
+    card.addEventListener("dragover", (event) => {
+      if (!this.dragging) return;
+      event.preventDefault();
+      card.classList.add("drop-target");
+    });
+    card.addEventListener("dragleave", (event) => { if (!card.contains(event.relatedTarget as Node)) card.classList.remove("drop-target"); });
     card.addEventListener("drop", (event) => {
+      card.classList.remove("drop-target");
       const moving = this.dragging;
       this.dragging = null;
       if (!moving) return;
@@ -710,7 +786,7 @@ export class PinArea {
     const body = document.createElement("div");
     body.className = "board-card-body";
     body.append(pinBody(pin, pin.size));
-    card.append(head, body);
+    card.append(body, this.cardTools(pin, index));
     return card;
   }
 }

@@ -197,6 +197,11 @@ struct AnswerAndUsageTests {
         #expect(ComponentPrompts.system.contains("small = the one key number or status"))
         #expect(PluginGuide.text(builtIns: "/x").contains("`Sizes: 1x1, 2x1, 2x2`"))
         #expect(PluginGuide.text(builtIns: "/x").contains("ccb.onSize("))
+        // On the Board the component is the tile: told so, and told to drop its own frame.
+        #expect(ComponentPrompts.system.contains("ccb.surface = \"board\""))
+        #expect(ComponentPrompts.system.contains("<html data-surface=\"board\">"))
+        #expect(ComponentPrompts.system.contains("no outer padding beyond about 12px"))
+        #expect(PluginGuide.text(builtIns: "/x").contains("`<html data-surface=\"board\">`"))
         #expect(ComponentDefaults.choicesTemplate.contains("ccb.answer(index)"))
     }
 }

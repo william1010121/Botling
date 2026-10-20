@@ -494,6 +494,10 @@ body.watching #composer-slot { display: none; }
 .pin-menu button:disabled { color: var(--faint); cursor: default; }
 .pin-menu button.checked::before { content: "✓"; position: absolute; left: 8px; color: var(--blue); }
 .pin-menu-line { height: 1px; margin: 4px 6px; background: #2E2E35; }
+.pin-menu button:focus-visible { outline: none; background: #2B2B31; }
+.pin-menu-heading { padding: 6px 10px 2px 24px; font-size: 13px; font-weight: 600; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pin-menu-note { padding: 0 10px 4px 24px; font-size: 11.5px; color: var(--faint); max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pin-menu-note.code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 
 /* The picker */
 .pin-picker-backdrop { inset: 0; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; }
@@ -530,7 +534,7 @@ body.watching #composer-slot { display: none; }
 .pin-chip.on { background: #26262C; border-color: var(--blue); }
 .pin-chip.failed .pin-chip-line { color: var(--error); }
 .pin-chip.add { padding: 0 10px; color: var(--muted); }
-.pin-chip.drop-target, .board-card-head.drop-target { outline: 2px solid var(--blue); outline-offset: 1px; }
+.pin-chip.drop-target, .board-card.drop-target, .board-grip.drop-target { outline: 2px solid var(--blue); outline-offset: 1px; }
 .pin-chip-name { flex: none; }
 .pin-chip-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 11.5px; }
 .pin-sheet {
@@ -538,19 +542,19 @@ body.watching #composer-slot { display: none; }
   display: flex; flex-direction: column; background: var(--bubble); border: 1px solid #3A3A42; border-radius: 16px;
   box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.55); overflow: hidden;
 }
-.pin-sheet-head, .board-card-head {
+.pin-sheet-head {
   display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 16px; border-bottom: 1px solid var(--line); font-size: 12px; flex: none;
 }
-.pin-sheet-title, .board-card-title { font-weight: 600; font-size: 14px; white-space: nowrap; }
+.pin-sheet-title { font-weight: 600; font-size: 14px; white-space: nowrap; }
 .pin-command {
   min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); background: #26262C; border-radius: 5px; padding: 2px 6px;
 }
 .pin-fill { flex: 1; }
 .pin-when { flex: none; color: var(--faint); font-size: 11.5px; }
-.pin-sheet-body, .board-card-body { overflow-y: auto; padding: 4px 8px 10px 12px; }
-.pin-sheet-body > .command-card, .board-card-body > .command-card { border: none; padding: 0; margin-top: 0; }
-.pin-sheet-body .component, .board-card-body .component { margin-top: 6px; }
+.pin-sheet-body { overflow-y: auto; padding: 4px 8px 10px 12px; }
+.pin-sheet-body > .command-card { border: none; padding: 0; margin-top: 0; }
+.pin-sheet-body .component { margin-top: 6px; }
 
 /* The Board: every pin as a card, in place of the messages. */
 #board { display: none; }
@@ -575,33 +579,42 @@ body.board .editor .cm-scroller { max-height: 72px; }
   grid-auto-rows: var(--board-cell, 160px); grid-auto-flow: dense; align-content: start;
 }
 .board-grid::-webkit-scrollbar { display: none; }
-.board-card { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--bubble); border: 1px solid #2A2A31; border-radius: 18px; overflow: hidden; }
-.board-card-head { cursor: grab; padding-left: 14px; }
-/* The header gives way by shortening its parts, never by pushing the card wider: a narrow card
-   drops the command (it is the pin's, not something to read at a glance), then when it ran, then
-   the size button (the ⋯ menu has the sizes too), so the name stays readable. The body never
-   scrolls sideways, and what is in it fits. */
-.board-card { container-type: inline-size; }
-.board-card-title { min-width: 2em; overflow: hidden; text-overflow: ellipsis; }
-.board-card-head .pin-command { min-width: 3.5em; flex-shrink: 20; }
-.board-card-head .pin-when { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
-@container (max-width: 439px) { .board-card-head .pin-command { display: none; } }
-@container (max-width: 299px) { .board-card-head .pin-when { display: none; } }
-@container (max-width: 199px) { .board-card-head .board-size { display: none; } .board-card-head { gap: 2px; } }
-.board-card-body { flex: 1; min-height: 0; overflow-x: hidden; scrollbar-width: none; }
-.board-card-body::-webkit-scrollbar { display: none; }
-.board-card-body .command-card, .board-card-body .component-frame { min-width: 0; }
-/* The report flag sits over the component's corner instead of keeping a 42px strip beside it. */
-.board-card-body .component { min-width: 0; position: relative; }
-.board-card-body .component-side { position: absolute; top: 4px; right: 4px; min-width: 0; z-index: 1; }
-.board-card-body .component:hover .flag { background: var(--bubble); }
-.board-size {
-  flex: none; font-size: 10.5px; color: var(--faint); border: 1px solid #2A2A31; border-radius: 5px; padding: 0 5px; line-height: 16px;
-  background: transparent; cursor: pointer; font-variant-numeric: tabular-nums;
+.board-card {
+  position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column;
+  background: var(--bubble); border: 1px solid #26262C; border-radius: 20px; overflow: hidden; isolation: isolate;
 }
-.board-size:hover { color: var(--text); border-color: #3A3A42; }
+/* The component is the whole tile, like a home-screen widget: no header, no padding; its frame
+   fills the tile and the rounded corners clip it. It is told it is on the Board
+   (<html data-surface="board">) so it draws no card of its own. */
+.board-card-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-x: hidden; overflow-y: hidden; }
+.board-card-body > .command-card { flex: 1; min-height: 0; min-width: 0; margin: 0; padding: 0; border: none; border-radius: 0; display: flex; flex-direction: column; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; }
+.board-card-body > .command-card::-webkit-scrollbar { display: none; }
+.board-card-body .component { flex: 1; min-width: 0; min-height: 0; margin: 0; position: relative; display: flex; align-items: stretch; }
+.board-card-body .component-frame { flex: 1; min-width: 0; height: auto !important; align-self: stretch; }
+/* What is not the component (the ask to allow its command, its error, the wait) fills the tile
+   in sight, without hovering, with room around it. */
+.board-card-body .command-approve, .board-card-body .command-error, .board-card-body .command-waiting { padding: 12px 14px; }
+.board-card-body > .command-error { flex: 1; overflow-y: auto; }
+.board-card-body .command-waiting { flex: 1; justify-content: center; }
+.board-card-body .command-full, .board-card-body .command-error pre { max-height: none; }
+/* The report flag over the bottom-right corner, on hover only. */
+.board-card-body .component-side { position: absolute; right: 4px; bottom: 4px; min-width: 0; z-index: 1; }
+.board-card-body .component:hover .flag { background: rgba(43, 43, 49, 0.92); }
+.board-card.hovered .flag { opacity: 1; background: rgba(43, 43, 49, 0.92); }
+/* Its controls float over the top-right corner as a small pill, on hover or keyboard focus (and
+   while its command runs, so the turning ↻ says so). */
+.board-card-tools {
+  position: absolute; top: 8px; right: 8px; z-index: 2; display: flex; align-items: center; gap: 1px; padding: 2px;
+  background: rgba(43, 43, 49, 0.94); border: 1px solid #3A3A42; border-radius: 10px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  opacity: 0; pointer-events: none; transition: opacity 0.12s;
+}
+.board-card:hover > .board-card-tools, .board-card.hovered > .board-card-tools, .board-card-tools:focus-within, .board-card.running > .board-card-tools { opacity: 1; pointer-events: auto; }
+.board-grip { width: 18px; height: 26px; display: inline-flex; align-items: center; justify-content: center; color: var(--faint); cursor: grab; flex: none; }
+.board-grip:active { cursor: grabbing; }
+.board-size.pin-tool { width: auto; padding: 0 6px; font-size: 11px; color: #C8C8CE; font-variant-numeric: tabular-nums; }
 .board-add {
-  min-width: 0; border: 1.5px dashed #3A3A42; border-radius: 18px; background: transparent; color: var(--muted); padding: 8px;
+  min-width: 0; border: 1.5px dashed #3A3A42; border-radius: 20px; background: transparent; color: var(--muted); padding: 8px;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 13px; cursor: pointer; text-align: center;
 }
 .board-add-note { font-size: 11.5px; color: var(--faint); }
