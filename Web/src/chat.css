@@ -559,7 +559,7 @@ body.board .editor .cm-scroller { max-height: 72px; }
 .board-button.primary-outline { border-color: var(--blue); background: transparent; }
 .board-grid {
   flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; display: grid; gap: 16px; padding-bottom: 8px;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); grid-auto-rows: 150px; grid-auto-flow: dense;
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); grid-auto-rows: 150px; grid-auto-flow: dense;
 }
 .board-grid::-webkit-scrollbar { display: none; }
 .board-card { min-width: 0; display: flex; flex-direction: column; background: var(--bubble); border: 1px solid #2A2A31; border-radius: 14px; overflow: hidden; }
@@ -567,21 +567,30 @@ body.board .editor .cm-scroller { max-height: 72px; }
 .board-card.size-m { grid-row: span 2; }
 .board-card.size-l { grid-row: span 3; grid-column: span 2; }
 .board-card-head { cursor: grab; padding-left: 14px; }
-/* A column can be 260px wide: the header gives way by shortening its parts, never by pushing the
-   card wider; the body never scrolls sideways, and what is in it (280px wide in the chat) fits. */
+/* A column is at least 320px wide (narrower only when the window is): at 260px a component got under
+   200px and a commit's title broke a word per line. The header gives way by shortening its parts,
+   never by pushing the card wider; in a narrow card it drops the command (it is the pin's, not
+   something to read at a glance) so the name and the time stay readable. The body never scrolls
+   sideways, and what is in it (280px wide in the chat) fits. */
+.board-card { container-type: inline-size; }
 .board-card-title { min-width: 2em; overflow: hidden; text-overflow: ellipsis; }
-.board-card-head .pin-command { min-width: 3.5em; flex-shrink: 2; }
+.board-card-head .pin-command { min-width: 3.5em; flex-shrink: 20; }
 .board-card-head .pin-when { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+@container (max-width: 439px) { .board-card-head .pin-command { display: none; } }
 .board-card-body { flex: 1; min-height: 0; overflow-x: hidden; }
 .board-card-body .command-card, .board-card-body .component-frame { min-width: 0; }
-.board-card-body .component { min-width: 0; }
+/* The report flag sits over the component's corner instead of keeping a 42px strip beside it. */
+.board-card-body .component { min-width: 0; position: relative; }
+.board-card-body .component-side { position: absolute; top: 4px; right: 4px; min-width: 0; z-index: 1; }
+.board-card-body .component:hover .flag { background: var(--bubble); }
 .board-size { font-size: 10.5px; color: var(--faint); border: 1px solid #2A2A31; border-radius: 5px; padding: 0 5px; line-height: 16px; }
 .board-add {
   grid-row: span 1; border: 1.5px dashed #3A3A42; border-radius: 14px; background: transparent; color: var(--muted);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 13px; cursor: pointer;
 }
 .board-add-note { font-size: 11.5px; color: var(--faint); }
-@media (max-width: 640px) { .board-card.size-l { grid-column: span 1; } }
+/* One column below 2 × 320px + gap + the Board's 28px sides. */
+@media (max-width: 711px) { .board-card.size-l { grid-column: span 1; } }
 
 /* The file window for a .md file (viewer.html): the chat's Markdown at a readable width. */
 body.viewer { display: block; overflow-y: auto; height: auto; min-height: 100%; }
