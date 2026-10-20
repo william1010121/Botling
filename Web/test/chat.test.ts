@@ -206,31 +206,47 @@ describe("messages", () => {
     const page = componentPage("<p>hi</p>", "{}", {}, "2x1");
     expect(page).toContain('<html data-size="2x1" data-surface="chat">');
     const script = page.slice(page.indexOf("<script>") + 8, page.indexOf("</script>"));
-    let hear: (event: { source: unknown; data: unknown }) => void = () => {};
+    const listeners: Record<string, (event: { source?: unknown; data?: unknown }) => void> = {};
+    const hear = (event: { source: unknown; data: unknown }) => listeners.message(event);
     const parent = { postMessage() {} };
-    const frame = { addEventListener: (_: string, listener: typeof hear) => { hear = listener; } } as unknown as { ccb: { size: unknown; onSize: (fn: (size: unknown) => void) => () => void } };
+    // The frame's own width and height, as a stand-in window has them.
+    const frame = { innerWidth: 330.4, innerHeight: 158, addEventListener: (type: string, listener: (event: { source?: unknown; data?: unknown }) => void) => { listeners[type] = listener; } } as unknown as { innerWidth: number; innerHeight: number; ccb: { size: unknown; onSize: (fn: (size: unknown) => void) => () => void } };
     new Function("window", "parent", script)(frame, parent);
-    expect(frame.ccb.size).toEqual({ w: 2, h: 1, name: "wide" });
+    expect(frame.ccb.size).toEqual({ w: 2, h: 1, name: "wide", px: { width: 330, height: 158 } });
     const heard: unknown[] = [];
     const stop = frame.ccb.onSize((size) => heard.push(size));
     hear({ source: {}, data: { ccbSize: { w: 1, h: 1, name: "small" } } });
     hear({ source: parent, data: { ccbSize: { w: 2, h: 1, name: "wide" } } });
     hear({ source: parent, data: { ccbSize: { w: 1, h: 2, name: "tall" } } });
-    expect(heard).toEqual([{ w: 1, h: 2, name: "tall" }]);
-    expect(frame.ccb.size).toEqual({ w: 1, h: 2, name: "tall" });
+    expect(heard).toEqual([{ w: 1, h: 2, name: "tall", px: { width: 330, height: 158 } }]);
+    expect(frame.ccb.size).toEqual({ w: 1, h: 2, name: "tall", px: { width: 330, height: 158 } });
     expect(document.documentElement.dataset.size).toBe("1x2");
+    // Its pixels change (a drag between cells, a narrower window): heard too, cells as they were.
+    frame.innerWidth = 160;
+    frame.innerHeight = 332;
+    listeners.resize({});
+    listeners.resize({});
+    expect(heard).toHaveLength(2);
+    expect(heard[1]).toEqual({ w: 1, h: 2, name: "tall", px: { width: 160, height: 332 } });
     stop();
     hear({ source: parent, data: { ccbSize: { w: 2, h: 2, name: "large" } } });
-    expect(heard).toHaveLength(1);
+    expect(heard).toHaveLength(2);
     delete document.documentElement.dataset.size;
   });
 
   it("tell a component it is a Board tile: ccb.surface and <html data-surface>", async () => {
     const { componentPage } = await import("../src/components");
     const page = componentPage("<p>hi</p>", "{}", {}, "1x1", "board");
-    expect(page).toContain('<html data-size="1x1" data-surface="board">');
+    expect(page).toContain('<html data-size="1x1" data-surface="board" data-fill>');
     // On the Board the page is the tile's height, so a layout can fill it.
     expect(page).toContain('html[data-surface="board"] #ccb-root{height:100%}');
+    // Its root is a CSS container the tile's size, so container queries just work; elsewhere
+    // (as tall as its content) one of its width.
+    expect(page).toContain("#ccb-root{container-type:inline-size;container-name:ccb}");
+    expect(page).toContain("html[data-fill] #ccb-root{container-type:size}");
+    expect(componentPage("<p>hi</p>", "{}")).not.toContain("<html data-size=\"2x2\" data-surface=\"chat\" data-fill");
+    // A pin opened above the input box fills its panel once the user gave it a height.
+    expect(componentPage("<p>hi</p>", "{}", {}, "2x2", "pinned", true)).toContain('<html data-size="2x2" data-surface="pinned" data-fill>');
     const script = page.slice(page.indexOf("<script>") + 8, page.indexOf("</script>"));
     const frame = { addEventListener() {} } as unknown as { ccb: { surface: string } };
     new Function("window", "parent", script)(frame, { postMessage() {} });

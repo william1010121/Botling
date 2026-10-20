@@ -19,6 +19,23 @@ app and publishes it on GitHub Releases.
   Enter opens the first, Esc empties it and puts the cursor back in the input box. Nothing kept
   says "No bots match". ⌘K works from anywhere, the input box included, and opens a folded
   column first. `CCB_RAIL_PINS_SNAPSHOT=out.png` draws both.
+- **Drag to resize pinned components; components lay themselves out for any size.** A Board tile
+  shows a handle over its bottom-right corner on hover: drag it to any size from 1×1 to 4×4 cells
+  (snapping cell by cell, no wider than the Board's columns), and the tile and its component follow
+  the drag. A pin opened above the input box has a grab bar along its top edge: drag it taller or
+  shorter (double-click: back to its content's height), and the component then fills that height.
+  Both are kept per pin in pins.json (`size` is any `WxH` up to `4x4`; the old `s`/`m`/`l` and the
+  five fixed sizes still load; `panelHeight` for the panel). The size button and ⋯ menu offer every
+  size as a 4×4 picker, with the sizes an about.md `Sizes:` line names marked as hints; that line
+  is now optional and only sets the size a new pin starts at. Components are told their real size:
+  `ccb.size` is `{w, h, name, px: {width, height}}` (`name` the nearest of small, wide, tall, large,
+  xlarge, so `<html data-size>` templates keep working), `ccb.onSize` runs on every resize (cells
+  or pixels, while dragging too), and `#ccb-root` is a CSS container (a size container on the Board
+  and in a sized panel), so container queries and plain responsive CSS just work. The component
+  editor's instructions (ComponentPrompts), PLUGINS.md and the Maintainer now ask for one responsive
+  layout (CSS grid auto-fill columns, container queries, a summary when short, the key number when
+  tiny) instead of a layout per size. `CCB_SNAPSHOT_JS` runs a script in a `--snapshot` page before
+  the picture is taken.
 
 ### Fixed
 

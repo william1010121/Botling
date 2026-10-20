@@ -296,6 +296,9 @@ struct ChatSurface: NSViewRepresentable {
                 if let pinID = id("id"), let size = (body["size"] as? String).flatMap(PinnedComponent.Size.init(spelled:)) {
                     workspace.resizePin(pinID, to: size, in: bot)
                 }
+            case "setPinHeight":
+                // An opened pin's panel dragged taller or shorter (null: back to its content's height).
+                if let pinID = id("id") { workspace.setPinPanelHeight(pinID, to: (body["height"] as? NSNumber)?.intValue, in: bot) }
             case "pinStatus":
                 // A pinned component's ccb.setStatus: its chip's short value and tone (text null: cleared).
                 if let pinID = id("id") {

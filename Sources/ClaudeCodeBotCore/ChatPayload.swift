@@ -153,7 +153,10 @@ public struct ChatPayload: Encodable, Equatable {
         /// What its chip shows beside its icon: what the component set (`ccb.setStatus`), else
         /// `headline` cut short; its command's state when that matters.
         var chip: PinStatus
+        /// Its Board card, "3x2": any columns × rows up to 4×4.
         var size: String
+        /// How tall it opens above the input box, as the user dragged it; nil: its content's height.
+        var panelHeight: Int?
         var refresh: String
         var minutes: Int
         /// The component as drawn, with its command's run as for a card in the chat.
@@ -193,7 +196,8 @@ public struct ChatPayload: Encodable, Equatable {
         var working: Bool
         var updated: Bool
         var hasPrevious: Bool
-        /// The Board sizes it has a layout for ("2x2", …): its about.md's `Sizes:` line.
+        /// The Board sizes its about.md's optional `Sizes:` line hints at ("2x2", …): the first
+        /// is what a new pin gets, the widest how the chat draws it. Any size may still be picked.
         var sizes: [String] = [PinnedComponent.Size.large.rawValue]
         /// Its pin chip's icon (about.md's `Icon:`): an SF Symbol name or an emoji.
         var icon: String? = nil
@@ -497,7 +501,7 @@ public struct ChatPayload: Encodable, Equatable {
         default: Pins.headline(shown.status == nil ? pin.data : shown.data)
         }
         let chip = Pins.chip(status: pin.status, headline: headline, command: shown.status.flatMap(ComponentCommands.Status.init(rawValue:)), hasData: pin.data != "null")
-        return Pin(id: pin.id.uuidString, name: pin.name, headline: headline, chip: chip, size: pin.size.rawValue, refresh: pin.refresh.rawValue, minutes: pin.minutes, display: shown)
+        return Pin(id: pin.id.uuidString, name: pin.name, headline: headline, chip: chip, size: pin.size.rawValue, panelHeight: pin.panelHeight, refresh: pin.refresh.rawValue, minutes: pin.minutes, display: shown)
     }
 
     /// The picker's list: components this bot drew (newest use first), then its own others (the

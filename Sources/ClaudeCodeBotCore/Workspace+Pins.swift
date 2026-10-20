@@ -81,6 +81,14 @@ extension Workspace {
         }
     }
 
+    /// How tall a pin opens above the input box, as the user dragged its panel (nil: as tall as
+    /// its content again). Kept within `PinnedComponent.panelHeights`.
+    public func setPinPanelHeight(_ id: UUID, to height: Int?, in bot: Bot) {
+        bot.editPins { pins in
+            if let at = pins.firstIndex(where: { $0.id == id }) { pins[at].panelHeight = PinnedComponent.clampedPanelHeight(height) }
+        }
+    }
+
     /// A pinned component's `ccb.setStatus({text, tone})`: what its chip shows beside its icon,
     /// kept with the pin. Nil text clears it (the chip shows the pin's headline again).
     public func setPinStatus(_ id: UUID, text: String?, tone: String?, in bot: Bot) {
