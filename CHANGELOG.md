@@ -12,6 +12,10 @@ app and publishes it on GitHub Releases.
   `<show>`, a `<choices>` block, a linked result page's preview card) adds one use to
   `~/.claudecodebot/component-usage.json`, with the bot and time, so rarely used components can
   be found. Reopening or redrawing a chat does not count again.
+- **A quieter / menu and at most 20 components.** A bare "/" offers only the app's commands;
+  components show once you type a letter after it, in up to 5 small, flat rows without tags.
+  Maintainer makes no new component when there are already 20; it asks which one to delete
+  first, and bots see "N / 20 installed". More than 20 already there still all load.
 - **Tool steps show pictures.** When a tool call gives back an image (a Read of a .png, a
   screenshot), the step's OUT box shows it, fit to the box's width; click it to see it full
   size. The bot keeps the pictures as files beside the chat, so chat.json stays small.
