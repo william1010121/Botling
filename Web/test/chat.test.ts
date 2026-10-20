@@ -266,6 +266,28 @@ describe("messages", () => {
     expect(row.querySelector(".updated")?.textContent).toBe("Updated");
   });
 
+  it("keep the Updated label on one line without squeezing the component", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const style = document.createElement("style");
+    style.textContent = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    document.head.append(style);
+    try {
+      const row = messageElement(message({
+        open: true, choices: [{ label: "A", detail: null, recommended: false }],
+      }), { choices: { template: "<button>A</button>", version: 0, working: false, updated: true, hasPrevious: false } });
+      document.body.append(row);
+      const label = row.querySelector<HTMLElement>(".updated")!;
+      const side = label.closest<HTMLElement>(".component-side")!;
+      expect(getComputedStyle(label).whiteSpace).toBe("nowrap");
+      expect(getComputedStyle(side).flexShrink).toBe("0");
+      // A fixed narrow width is what broke the word as "Updat / ed".
+      expect(getComputedStyle(side).width).not.toBe("36px");
+    } finally {
+      style.remove();
+    }
+  });
+
   it("send a component report with a screenshot of it unless you untick it", async () => {
     const row = messageElement(message({
       open: true, choices: [{ label: "A", detail: null, recommended: false }],
