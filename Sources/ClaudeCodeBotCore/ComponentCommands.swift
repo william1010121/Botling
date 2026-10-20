@@ -74,6 +74,23 @@ public final class ComponentCommands: ObservableObject {
     public func approve(_ command: String, in folder: URL) {
         guard !isApproved(command, in: folder) else { return }
         approved[Self.key(folder), default: []].append(command)
+        saveApprovals()
+    }
+
+    /// Takes back an allowed command (Settings > Permissions): its cards ask again before it runs.
+    public func forget(_ command: String, inFolderPath path: String) {
+        guard var commands = approved[path], let at = commands.firstIndex(of: command) else { return }
+        commands.remove(at: at)
+        approved[path] = commands.isEmpty ? nil : commands
+        saveApprovals()
+    }
+
+    /// Every allowed command, by folder path then in the order allowed.
+    public var approvals: [(folder: String, command: String)] {
+        approved.keys.sorted().flatMap { folder in approved[folder, default: []].map { (folder, $0) } }
+    }
+
+    private func saveApprovals() {
         try? FileManager.default.createDirectory(at: approvalsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
@@ -84,8 +101,9 @@ public final class ComponentCommands: ObservableObject {
 
     /// The card `card` (a message and its component's place) with `command` in `folder`.
     public func state(for card: String, command: String, in folder: URL) -> State {
-        if let run = runs[card] { return run }
-        return State(status: isApproved(command, in: folder) ? .idle : .approve)
+        // A command taken back asks again, even on a card that ran it before.
+        guard isApproved(command, in: folder) else { return State(status: .approve) }
+        return runs[card] ?? State(status: .idle)
     }
 
     /// Runs it for this card, if allowed and not running already. `force` runs a done or failed

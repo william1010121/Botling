@@ -116,6 +116,45 @@ struct ComponentCommandTests {
         #expect(!later.isApproved("ls", in: URL(filePath: "/p/other")))
     }
 
+    @Test func forgettingACommandAsksAgainAndIsRemembered() async {
+        let file = root.appending(path: "approved-commands.json")
+        let commands = ComponentCommands(approvalsURL: file) { _, _ in CommandOutcome(data: "[1]") }
+        let garden = URL(filePath: "/p/garden"), other = URL(filePath: "/p/other")
+        commands.approve("ls", in: garden)
+        commands.approve("git diff --stat", in: garden)
+        commands.approve("ls", in: other)
+        await commands.run(card: "m/0", command: "ls", in: garden)
+        #expect(commands.approvals.map { "\($0.folder) \($0.command)" } == ["/p/garden ls", "/p/garden git diff --stat", "/p/other ls"])
+
+        commands.forget("ls", inFolderPath: "/p/garden")
+        // The card that ran it asks again, and a refresh does not run it.
+        #expect(commands.state(for: "m/0", command: "ls", in: garden).status == .approve)
+        await commands.run(card: "m/0", command: "ls", in: garden, force: true)
+        #expect(commands.runs["m/0"]?.status == .done)
+        #expect(commands.isApproved("ls", in: other))
+        commands.forget("git diff --stat", inFolderPath: "/p/garden")
+        commands.forget("nothing", inFolderPath: "/p/none")
+        #expect(commands.approved["/p/garden"] == nil)
+        let later = ComponentCommands(approvalsURL: file)
+        #expect(later.approvals.map(\.command) == ["ls"])
+        #expect(!later.isApproved("ls", in: garden))
+    }
+
+    @Test func settingsListApprovedCommandsByBot() throws {
+        let workspace = makeWorkspace()
+        let home = workspace.mainBot.profile.workingDirectory
+        workspace.componentCommands.approve("ls", in: home)
+        workspace.componentCommands.approve("pwd", in: URL(filePath: "/nowhere/garden"))
+        let listed = workspace.approvedCommands
+        #expect(Set(listed.map(\.command)) == ["ls", "pwd"])
+        let mine = try #require(listed.first { $0.command == "ls" })
+        #expect(mine.owner == workspace.mainBot.profile.name)
+        #expect(listed.first { $0.command == "pwd" }?.owner == "garden")
+        workspace.forget(mine)
+        #expect(workspace.approvedCommands.map(\.command) == ["pwd"])
+        #expect(!workspace.componentCommands.isApproved("ls", in: home))
+    }
+
     @Test func aFailedRunSaysWhy() async {
         let commands = ComponentCommands(approvalsURL: root.appending(path: "a.json")) { _, _ in CommandOutcome(error: "The command failed (exit code 1).") }
         let folder = URL(filePath: "/p")

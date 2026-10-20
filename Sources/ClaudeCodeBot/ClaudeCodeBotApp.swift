@@ -18,24 +18,31 @@ struct ClaudeCodeBotApp: App {
             if AppDelegate.isHeadless {
                 Color.clear.frame(width: 1, height: 1)
             } else {
-                RootView(workspace: delegate.workspace)
+                RootView(workspace: delegate.workspace, settings: delegate.settings)
                     .frame(minWidth: 980, minHeight: 620)
                     .preferredColorScheme(.dark)
             }
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 820)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { delegate.settings.open() }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
+        }
     }
 }
 
 struct RootView: View {
     @ObservedObject var workspace: Workspace
+    @ObservedObject var settings: SettingsNavigator
     @StateObject private var inputs = ChatInputs()
 
     var body: some View {
         let bot = workspace.selectedBot
         HStack(spacing: 0) {
-            RailView(workspace: workspace).frame(width: 240)
+            RailView(workspace: workspace, settings: settings).frame(width: 240)
             // One web view for every bot: switching bots redraws it instead of reloading.
             ChatSurface(bot: bot, workspace: workspace, components: workspace.components, commands: workspace.componentCommands, plugins: workspace.plugins, inputs: inputs)
                 .frame(minWidth: 480, maxWidth: .infinity)
@@ -57,6 +64,9 @@ struct RootView: View {
         .foregroundStyle(Theme.text)
         .background(Theme.ground)
         .ignoresSafeArea()
+        .sheet(isPresented: $settings.isOpen) {
+            SettingsWindow(workspace: workspace, navigator: settings)
+        }
     }
 }
 
@@ -71,6 +81,8 @@ extension RootView {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var workspace = AppDelegate.makeWorkspace()
+    /// The settings window: open or not, and at which section (the gear and ⌘, open it).
+    let settings = SettingsNavigator()
     private var badge: AnyCancellable?
 
     /// A run that only draws a snapshot or checks a plugin, then quits.

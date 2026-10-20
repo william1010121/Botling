@@ -6,8 +6,9 @@ import SwiftUI
 /// Left column: who. One row per bot; the face shows its state, a dot shows what is new.
 struct RailView: View {
     @ObservedObject var workspace: Workspace
+    @ObservedObject var settings: SettingsNavigator
     @State private var makingBot = false
-    @State private var showingSettings = false
+    @State private var showingQuickSettings = false
     @State private var removing: Workspace.Project?
     /// The group being made (a new one) or changed, in the sheet.
     @State private var editingGroup: ChatGroup?
@@ -142,16 +143,25 @@ struct RailView: View {
                 }
                 .buttonStyle(.plain)
                 .help("A bot of its own, with its own memory and routines (a morning news bot, say)")
-                Button { showingSettings = true } label: {
+                Button { showingQuickSettings.toggle() } label: {
                     Image(systemName: "gearshape")
                         .font(.system(size: 14))
-                        .foregroundStyle(Theme.faint)
-                        .frame(width: 32, height: 44)
+                        .foregroundStyle(showingQuickSettings ? Theme.text : Theme.faint)
+                        .frame(width: 32, height: 32)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(showingQuickSettings ? Theme.selected : .clear))
+                        .frame(height: 44)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Settings: usage and cost, plugins")
+                .help("Settings: today's cost, auto-approve, plugins")
                 .accessibilityLabel("Settings")
+                .popover(isPresented: $showingQuickSettings, arrowEdge: .top) {
+                    SettingsPopover(workspace: workspace, registry: workspace.plugins) { section in
+                        showingQuickSettings = false
+                        // After the popover has gone, so the sheet is not shown from inside it.
+                        DispatchQueue.main.async { settings.open(section) }
+                    }
+                }
             }
         }
         .padding(.horizontal, 12)
@@ -180,9 +190,6 @@ struct RailView: View {
             Button("Delete group", role: .destructive) { workspace.deleteGroup(group.id) }
         } message: { _ in
             Text("Its conversation is deleted. The bots in it keep their own chats and memory.")
-        }
-        .sheet(isPresented: $showingSettings) {
-            AppSettingsSheet(workspace: workspace)
         }
         .sheet(item: $editingGroup) { group in
             GroupForm(workspace: workspace, group: group) { name, members in
@@ -898,7 +905,7 @@ private struct SleepCountdown: View {
 }
 
 /// One bot's settings: its model, routines and the tools it may use. ClaudeCodeBot's own are
-/// in `AppSettingsSheet`.
+/// in the settings window (`SettingsWindow`).
 private struct SettingsPage: View {
     @ObservedObject var bot: Bot
     var close: () -> Void
@@ -1200,408 +1207,7 @@ private struct AddRoutineForm: View {
     }
 }
 
-/// ClaudeCodeBot's plugins: on or off, why one broke, and the settings each declares.
-private struct PluginsSection: View {
-    @ObservedObject var registry: PluginRegistry
-    var host: PluginHostClient?
-    var workspace: Workspace?
-    @State private var open: String?
-    @State private var source = ""
-
-    var body: some View {
-        PanelSection("Plugins") {
-            VStack(spacing: 0) {
-                ForEach(registry.plugins) { plugin in
-                    PluginRow(registry: registry, plugin: plugin, open: open == plugin.name) {
-                        open = open == plugin.name ? nil : plugin.name
-                    }
-                    if plugin.id != registry.plugins.last?.id {
-                        Rectangle().fill(Theme.line).frame(height: 1)
-                    }
-                }
-            }
-            .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            if let problem = host?.problem {
-                Text(problem).font(.system(size: 12)).foregroundStyle(Theme.errorText)
-            }
-            if let workspace {
-                AddPluginRow(workspace: workspace, source: $source)
-            }
-            ForEach(registry.problems.keys.sorted(), id: \.self) { folder in
-                Text("Couldn't read \"\(folder)\": \(registry.problems[folder]?.joined(separator: "; ") ?? "")")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.errorText)
-            }
-        }
-    }
-}
-
-private struct PluginRow: View {
-    @ObservedObject var registry: PluginRegistry
-    let plugin: InstalledPlugin
-    let open: Bool
-    let toggleOpen: () -> Void
-
-    private var settings: [(key: String, value: PluginManifest.Setting)] {
-        (plugin.manifest.ccb?.contributes?.settings ?? [:]).sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Button(action: toggleOpen) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(plugin.manifest.title).foregroundStyle(plugin.enabled ? Theme.text : Theme.muted)
-                        Text(plugin.builtIn ? "Built-in · \(plugin.manifest.version)"
-                             : plugin.installedFrom.map { "External · \(plugin.manifest.version) · \($0)" } ?? plugin.manifest.version)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.faint)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(plugin.manifest.description ?? "")
-                Toggle("", isOn: Binding(
-                    get: { plugin.enabled },
-                    set: { registry.setEnabled(plugin.name, $0) }
-                ))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .accessibilityLabel("Enable \(plugin.manifest.title)")
-            }
-            if let failure = plugin.failure {
-                Text(plugin.usingPrevious ? "New version failed, using the previous one: \(failure)" : "Failed and disabled: \(failure)")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.errorText)
-            }
-            if open {
-                if let description = plugin.manifest.description {
-                    Text(description).font(.system(size: 12)).foregroundStyle(Theme.muted)
-                }
-                ForEach(settings, id: \.key) { key, setting in
-                    SettingControl(registry: registry, plugin: plugin.name, key: key, setting: setting)
-                }
-            }
-        }
-        .font(.system(size: 14))
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .frame(minHeight: 48)
-        .contentShape(Rectangle())
-        .contextMenu {
-            if !plugin.builtIn {
-                Button("Revert to previous version") { Task { report(await registry.revert(plugin.name)) } }
-                    .disabled(!registry.hasPrevious(plugin.name))
-                Button("Remove", role: .destructive) { confirmingRemove = true }
-            }
-        }
-        .confirmationDialog("Remove \"\(plugin.manifest.title)\"?", isPresented: $confirmingRemove) {
-            Button("Remove", role: .destructive) { Task { report(await registry.remove(plugin.name)) } }
-        } message: {
-            Text("The plugin library's git history is kept, so it can be recovered later.")
-        }
-        .alert("Couldn't finish", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
-            Button("OK") { problem = nil }
-        } message: {
-            Text(problem ?? "")
-        }
-    }
-
-    @State private var confirmingRemove = false
-    @State private var problem: String?
-
-    private func report(_ result: String?) {
-        problem = result
-    }
-}
-
-/// "Add plugin": paste a git URL, npm name or archive URL (ClaudeCodeBot asks before installing), or pick
-/// a folder of your own (installed right away).
-private struct AddPluginRow: View {
-    @ObservedObject var workspace: Workspace
-    @Binding var source: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                TextField("Add plugin: git URL, npm name or .zip URL", text: $source)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(add)
-                Button("Add", action: add).disabled(source.trimmingCharacters(in: .whitespaces).isEmpty)
-                Button {
-                    let panel = NSOpenPanel()
-                    panel.canChooseDirectories = true
-                    panel.canChooseFiles = false
-                    panel.prompt = "Add as plugin"
-                    panel.message = "Pick a plugin folder (one with a package.json)."
-                    if panel.runModal() == .OK, let folder = panel.url {
-                        Task { await workspace.proposeInstall(folder.path, trusted: true) }
-                    }
-                } label: {
-                    Image(systemName: "folder")
-                }
-                .help("Add from folder")
-                .accessibilityLabel("Add plugin from folder")
-            }
-            .font(.system(size: 13))
-            ForEach(workspace.fetching, id: \.self) { item in
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Fetching \(item)…").font(.system(size: 12)).foregroundStyle(Theme.faint).lineLimit(1)
-                }
-            }
-        }
-    }
-
-    private func add() {
-        let text = source.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        source = ""
-        Task { await workspace.proposeInstall(text) }
-    }
-}
-
-/// One declared setting, drawn from its type.
-private struct SettingControl: View {
-    @ObservedObject var registry: PluginRegistry
-    let plugin: String
-    let key: String
-    let setting: PluginManifest.Setting
-    @State private var secret = ""
-
-    var body: some View {
-        let value = registry.setting(plugin, key)
-        HStack {
-            Text(setting.title).foregroundStyle(Theme.muted)
-            Spacer()
-            if setting.secret == true {
-                // Kept in the keychain; ClaudeCodeBot never shows it again.
-                SecureField(registry.secret(plugin, key) == nil ? "Not set" : "Saved in Keychain", text: $secret)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 140)
-                    .onSubmit {
-                        registry.setSecret(plugin, key, to: secret)
-                        secret = ""
-                    }
-            } else {
-            switch setting.type {
-            case "boolean":
-                Toggle("", isOn: Binding(get: { value?.bool ?? false }, set: { registry.set(plugin, key, to: .bool($0)) }))
-                    .labelsHidden().toggleStyle(.switch).controlSize(.mini)
-            case "enum":
-                Picker("", selection: Binding(get: { value?.string ?? "" }, set: { registry.set(plugin, key, to: .string($0)) })) {
-                    ForEach(setting.options ?? [], id: \.self) { Text($0).tag($0) }
-                }
-                .labelsHidden().pickerStyle(.menu).fixedSize()
-            case "number":
-                TextField("", value: Binding(get: { value?.number ?? 0 }, set: { registry.set(plugin, key, to: .number($0)) }), format: .number)
-                    .textFieldStyle(.roundedBorder).frame(width: 70)
-            default:
-                TextField("", text: Binding(get: { value?.string ?? "" }, set: { registry.set(plugin, key, to: .string($0)) }))
-                    .textFieldStyle(.roundedBorder).frame(width: 140)
-            }
-            }
-        }
-        .font(.system(size: 13))
-        .accessibilityLabel(setting.title)
-    }
-}
-
-/// ClaudeCodeBot's own settings, from the gear under the chat list: what the bots used,
-/// plugins, ignored items, developer mode.
-private struct AppSettingsSheet: View {
-    @ObservedObject var workspace: Workspace
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Settings").font(.system(size: 15, weight: .semibold))
-                Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
-            }
-            .padding(20)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    UsageSection(workspace: workspace)
-                    PermissionsSection(workspace: workspace)
-                    if workspace.ignoredWaitingCount > 0 {
-                        PanelSection("Ignored") {
-                            HStack {
-                                Text("\(workspace.ignoredWaitingCount) item(s) taken off \"Waiting on you\"")
-                                Spacer()
-                                Button("Show again") { workspace.showIgnoredWaiting() }
-                                    .buttonStyle(.plain)
-                                    .foregroundStyle(Theme.blue)
-                            }
-                            .font(.system(size: 14))
-                            .padding(.horizontal, 14)
-                            .frame(height: 44)
-                            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-                        }
-                    }
-                    PluginsSection(registry: workspace.plugins, host: workspace.pluginHost, workspace: workspace)
-                    DeveloperSection(workspace: workspace)
-                }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 20)
-            }
-            .scrollIndicators(.never)
-        }
-        .frame(width: 480, height: 640)
-        .background(Theme.side)
-    }
-}
-
-/// Cost and tokens: today in all and by bot, and the days before.
-private struct UsageSection: View {
-    @ObservedObject var workspace: Workspace
-
-    var body: some View {
-        let spending = workspace.spending
-        let isToday = spending.day == Spending.today()
-        let tokens = isToday ? spending.tokens : TokenUsage()
-        PanelSection("Usage today") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    tile("Cost", Workspace.dollars(isToday ? spending.spent : 0))
-                    tile("Tokens", Workspace.tokenCount(tokens.total))
-                }
-                Text("In \(Workspace.tokenCount(tokens.input)) · out \(Workspace.tokenCount(tokens.output)) · cache write \(Workspace.tokenCount(tokens.cacheWrite)) · cache read \(Workspace.tokenCount(tokens.cacheRead))")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.faint)
-                let bots = isToday ? Set(spending.byBot.keys).union(spending.tokensByBot.keys).sorted {
-                    (spending.byBot[$0] ?? 0, spending.tokensByBot[$0]?.total ?? 0) > (spending.byBot[$1] ?? 0, spending.tokensByBot[$1]?.total ?? 0)
-                } : []
-                if !bots.isEmpty {
-                    VStack(spacing: 0) {
-                        ForEach(bots, id: \.self) { name in
-                            row(name, spending.byBot[name] ?? 0, spending.tokensByBot[name]?.total ?? 0)
-                        }
-                    }
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-                }
-            }
-        }
-        if !spending.history.isEmpty {
-            PanelSection("Earlier days") {
-                VStack(spacing: 0) {
-                    ForEach(spending.history.reversed(), id: \.day) { day in
-                        row(day.day, day.spent, day.tokens.total)
-                    }
-                }
-                .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-            }
-        }
-    }
-
-    private func tile(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.system(size: 12)).foregroundStyle(Theme.faint)
-            Text(value).font(.system(size: 22, weight: .semibold)).monospacedDigit()
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-    }
-
-    private func row(_ name: String, _ cost: Double, _ tokens: Int) -> some View {
-        HStack {
-            Text(name).lineLimit(1)
-            Spacer()
-            Text("\(Workspace.tokenCount(tokens)) tokens").foregroundStyle(Theme.faint).monospacedDigit()
-            Text(Workspace.dollars(cost)).monospacedDigit().frame(width: 70, alignment: .trailing)
-        }
-        .font(.system(size: 13))
-        .padding(.horizontal, 14)
-        .frame(height: 36)
-    }
-}
-
-/// Whether bots use Claude Code's auto mode, or ask in the chat before each tool not allowed.
-private struct PermissionsSection: View {
-    @ObservedObject var workspace: Workspace
-
-    var body: some View {
-        PanelSection("Permissions") {
-            VStack(alignment: .leading, spacing: 10) {
-                Toggle(isOn: Binding(
-                    get: { workspace.settings.autoApprovesSafeActions },
-                    set: { workspace.setAutoApprovesSafeActions($0) }
-                )) {
-                    Text("Auto-approve safe actions").font(.system(size: 14))
-                }
-                .toggleStyle(.switch)
-                .padding(.horizontal, 14)
-                .frame(height: 44)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-                Text(workspace.settings.autoApprovesSafeActions
-                     ? "Bots use Claude Code's auto mode: reading, searching and ordinary commands just run; a safety check blocks risky ones (deleting files that were there before, sending data out, force pushes, downloading and running code). It is not a guarantee. Anything it still wants your OK for comes as a card in the chat."
-                     : "Bots ask in the chat before each tool they are not always allowed to use.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.faint)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-}
-
-/// For working on ClaudeCodeBot itself: which project is its source, whose manager may then
-/// install new builds, look at the app, and get what you flag as not right.
-private struct DeveloperSection: View {
-    @ObservedObject var workspace: Workspace
-
-    var body: some View {
-        let folders = workspace.projects.filter { !$0.isBot }
-        PanelSection("Developer mode") {
-            VStack(alignment: .leading, spacing: 10) {
-                Toggle(isOn: Binding(
-                    get: { workspace.settings.developerMode },
-                    set: { on in workspace.setDeveloperMode(on, project: workspace.settings.developerProjectID ?? Self.guess(folders)?.id) }
-                )) {
-                    Text("Develop ClaudeCodeBot itself").font(.system(size: 14))
-                }
-                .toggleStyle(.switch)
-                .padding(.horizontal, 14)
-                .frame(height: 44)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-                if workspace.settings.developerMode {
-                    Picker("Its source", selection: Binding(
-                        get: { workspace.settings.developerProjectID },
-                        set: { workspace.setDeveloperMode(true, project: $0) }
-                    )) {
-                        Text("Choose a project").tag(UUID?.none)
-                        ForEach(folders) { project in
-                            Text(project.name).tag(Optional(project.id))
-                        }
-                    }
-                    .font(.system(size: 14))
-                }
-                Text(workspace.settings.developerMode
-                     ? "\(workspace.developerProject?.name ?? "That project")'s manager may install new builds (you confirm; one that does not start is rolled back), take screenshots of this window, and gets what you flag as \"not right\" in any chat."
-                     : "Off for everyone who only uses ClaudeCodeBot. Turn it on to let one project's manager work on the app itself.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.faint)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    /// The project that looks like ClaudeCodeBot's source, to start with.
-    static func guess(_ projects: [Workspace.Project]) -> Workspace.Project? {
-        projects.first { project in
-            let manifest = (try? String(contentsOf: project.folder.appending(path: "Package.swift"), encoding: .utf8)) ?? ""
-            return manifest.contains("\"ClaudeCodeBot\"")
-        }
-    }
-}
-
-private struct PanelSection<Content: View>: View {
+struct PanelSection<Content: View>: View {
     let title: String
     @ViewBuilder var content: Content
 
