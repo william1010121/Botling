@@ -170,6 +170,42 @@ describe("the chips above the input box", () => {
     }
   });
 
+  it("an opened pin's controls never cover its content: the pill sits above the panel, the flag is in ⋯", () => {
+    const css = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    const style = document.createElement("style");
+    style.textContent = css;
+    document.head.append(style);
+    try {
+      const area = setUp();
+      area.update(state({ pins: [pin()] }));
+      click(document.querySelector(".pin-chip"));
+      const sheet = document.querySelector<HTMLElement>(".pin-sheet")!;
+      const tools = sheet.querySelector<HTMLElement>(".pin-sheet-tools")!;
+      // The pill floats just above the panel's top-right corner, outside the component (it covered
+      // the first row's right-aligned time), with a bridge so the pointer can reach it.
+      const look = getComputedStyle(tools);
+      expect(look.top).toMatch(/^(auto|)$/);
+      expect(look.bottom).toBe("calc(100% + 6px)");
+      expect(css).toMatch(/\.pin-sheet-tools::after \{[^}]*top: 100%/);
+      // So the panel does not clip it: the body clips the component to the rounded corners
+      // instead (clip-path too, as WebKit does not clip a frame to a radius with overflow alone).
+      expect(getComputedStyle(sheet).overflow).toBe("visible");
+      const body = sheet.querySelector<HTMLElement>(".pin-sheet-body")!;
+      expect(getComputedStyle(body).borderRadius).toBe("19px");
+      expect(css).toMatch(/\.pin-sheet-body \{[^}]*clip-path: inset\(0 round 19px\)/);
+      // No report flag over the bottom-right corner (it covered the last row's time)...
+      expect(getComputedStyle(sheet.querySelector<HTMLElement>(".component-side")!).display).toBe("none");
+      // ...it is in the ⋯ menu instead.
+      click(tools.querySelector("[aria-label='More']"));
+      const report = [...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")].find((b) => b.textContent === "Report this component…")!;
+      expect(report).toBeDefined();
+      report.click();
+      expect(document.querySelector(".report")).not.toBeNull();
+    } finally {
+      style.remove();
+    }
+  });
+
   it("no pins, no chips", () => {
     setUp().update(state());
     expect(document.querySelector<HTMLElement>(".pin-dock")!.hidden).toBe(true);

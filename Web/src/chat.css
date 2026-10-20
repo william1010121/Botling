@@ -570,20 +570,24 @@ body.watching #composer-slot { display: none; }
 .pin-sheet {
   position: absolute; left: 24px; right: 24px; bottom: calc(100% + 8px); z-index: 10; max-height: min(560px, 62vh);
   display: flex; flex-direction: column; background: var(--bubble); border: 1px solid #3A3A42; border-radius: 20px;
-  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.55); overflow: hidden; isolation: isolate;
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.55); overflow: visible; isolation: isolate;
 }
 .pin-fill { flex: 1; }
-.pin-sheet-body { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0; scrollbar-width: none; }
+/* The body clips the component to the panel's rounded corners (its radius less the border), so
+   the panel itself need not clip and its controls can sit above it. clip-path as well: WebKit
+   does not clip a frame to a radius with overflow alone, which broke the bottom-left corner. */
+.pin-sheet-body {
+  flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0; scrollbar-width: none;
+  border-radius: 19px; clip-path: inset(0 round 19px);
+}
 .pin-sheet-body::-webkit-scrollbar { display: none; }
 .pin-sheet-body > .command-card { border: none; border-radius: 0; padding: 0; margin: 0; }
 .pin-sheet-body .component { margin: 0; position: relative; }
 .pin-sheet-body .component-frame { min-width: 0; display: block; }
 /* What is not the component (the ask to allow its command, its error, the wait) keeps room around it. */
 .pin-sheet-body .command-approve, .pin-sheet-body .command-error, .pin-sheet-body .command-waiting { padding: 12px 14px; }
-/* The report flag over the bottom-right corner, on hover only. */
-.pin-sheet-body .component-side { position: absolute; right: 4px; bottom: 4px; min-width: 0; z-index: 1; }
-.pin-sheet-body .component:hover .flag { background: rgba(43, 43, 49, 0.92); }
-.pin-sheet.hovered .flag { opacity: 1; background: rgba(43, 43, 49, 0.92); }
+/* No report flag over the component (it covered the last row): Report is in the ⋯ menu. */
+.pin-sheet-body .component-side { display: none; }
 
 /* The Board: every pin as a card, in place of the messages. */
 #board { display: none; }
@@ -639,6 +643,10 @@ body.board .editor .cm-scroller { max-height: 72px; }
   opacity: 0; pointer-events: none; transition: opacity 0.12s;
 }
 .board-card:hover > .board-card-tools, .board-card.hovered > .board-card-tools, .board-card-tools:focus-within, .board-card.running > .board-card-tools { opacity: 1; pointer-events: auto; }
+/* An opened pin's pill sits just above the panel's top-right corner, never over the component
+   (it covered the first row's right-aligned time); its ::after bridges the gap for the pointer. */
+.pin-sheet-tools { top: auto; bottom: calc(100% + 6px); right: 10px; }
+.pin-sheet-tools::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 8px; }
 .pin-sheet:hover > .pin-sheet-tools, .pin-sheet.hovered > .pin-sheet-tools, .pin-sheet-tools:focus-within, .pin-sheet.running > .pin-sheet-tools { opacity: 1; pointer-events: auto; }
 .board-grip { width: 18px; height: 26px; display: inline-flex; align-items: center; justify-content: center; color: var(--faint); cursor: grab; flex: none; }
 .board-grip:active { cursor: grabbing; }

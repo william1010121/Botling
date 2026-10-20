@@ -47,6 +47,13 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **An opened pin's controls no longer cover its content.** On hover the ↻ ⋯ collapse pill
+  sat over the component's top-right corner, hiding the first row's right-aligned time, and the
+  report flag hid the last row's time at the bottom right. The pill now shows just above the
+  panel's top-right corner, and Report this component… is in its ⋯ menu instead of a flag. The
+  panel's body clips the component to its rounded corners (with clip-path, which WebKit needs for
+  a frame), so the bottom-left corner's border no longer looks broken.
+
 - **A plugin update no longer cuts off a bot's background work.** When a plugin's Claude part
   changed (Maintainer editing ccb-core, say), every awake bot handed off and restarted as soon as
   no turn was under way, even with a subagent still at work in the background, which ended that

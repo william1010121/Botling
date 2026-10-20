@@ -1,5 +1,5 @@
 import { post } from "./bridge";
-import { commandCard, componentElement, componentSizes, detailTarget, markPinFrames, resizeFrame, sizeInfo } from "./components";
+import { commandCard, componentElement, componentSizes, detailTarget, markPinFrames, reportComponent, resizeFrame, sizeInfo } from "./components";
 import type { ChatState, ChipStatus, ComponentInfo, DisplayView, PinChoiceView, PinRefresh, PinSize, PinView } from "./types";
 
 /**
@@ -271,7 +271,7 @@ function place(popup: HTMLElement, anchor: HTMLElement): void {
 }
 
 /** The menu of a pin (a chip's right-click, a sheet's or card's ⋯). */
-function pinMenu(anchor: HTMLElement, pin: PinView, options: { sizes?: boolean; about?: boolean } = {}): void {
+function pinMenu(anchor: HTMLElement, pin: PinView, options: { sizes?: boolean; about?: boolean; report?: HTMLElement } = {}): void {
   const at = current.pins.findIndex((p) => p.id === pin.id);
   const items: (MenuItem | "-")[] = [];
   if (options.about) {
@@ -289,6 +289,15 @@ function pinMenu(anchor: HTMLElement, pin: PinView, options: { sizes?: boolean; 
   }
   if (options.sizes) {
     items.push(...sizeItems(pin));
+    items.push("-");
+  }
+  const info = current.components[pin.name];
+  if (options.report && info) {
+    // An opened pin has no flag over its corner (it covered the content): Report is here.
+    const drawn = options.report;
+    items.push(info.working
+      ? { label: "Being updated…", disabled: true, run: () => {} }
+      : { label: "Report this component…", run: () => reportComponent(anchor, pin.name, info, drawn) });
     items.push("-");
   }
   items.push({ label: "Move earlier", disabled: at <= 0, run: () => post({ type: "movePin", id: pin.id, to: at - 1 }) });
@@ -433,7 +442,7 @@ function whenWords(pin: PinView): string {
  * An opened pin's controls, floating over its top-right corner on hover or keyboard focus, as on
  * a Board tile: ↻, ⋯ (name, when it ran, its command, refresh, move, unpin) and collapse.
  */
-function sheetTools(pin: PinView, collapse: () => void): HTMLElement {
+function sheetTools(pin: PinView, collapse: () => void, body: HTMLElement): HTMLElement {
   const tools = document.createElement("div");
   tools.className = "pin-sheet-tools";
   tools.setAttribute("role", "toolbar");
@@ -444,7 +453,7 @@ function sheetTools(pin: PinView, collapse: () => void): HTMLElement {
     refresh.disabled = status === "running" || status === "approve";
     tools.append(refresh);
   }
-  const more = button("pin-tool", "More", icons.more, () => pinMenu(more, pin, { about: true }));
+  const more = button("pin-tool", "More", icons.more, () => pinMenu(more, pin, { about: true, report: body }));
   tools.append(more, button("pin-tool", "Collapse", icons.close, collapse));
   return tools;
 }
@@ -662,7 +671,7 @@ export class PinArea {
     const body = document.createElement("div");
     body.className = "pin-sheet-body";
     body.append(pinBody(pin));
-    this.sheet.append(body, sheetTools(pin, () => this.close()));
+    this.sheet.append(body, sheetTools(pin, () => this.close(), body));
   }
 
   private drawBoard(state: ChatState): void {

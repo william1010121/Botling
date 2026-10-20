@@ -143,8 +143,8 @@ enum PluginGuide {
           is "chat" and `<html data-surface="chat">` is set; the reply's bubble (or, under a reply, a tile like the Board's) is its frame,
           so draw no card frame there either (same rules), only let it be as tall as its content.
           A pin opened from its chip above the input box is frameless the same way: `ccb.surface` is "pinned" and `<html data-surface="pinned">`
-          is set, the panel gives the corners and background and its controls (↻, ⋯, collapse) float over the top-right corner on hover, but the
-          page is as tall as its content (as in the chat).
+          is set, the panel gives the corners and background and its controls (↻, ⋯, collapse) show just above the panel on hover, so nothing
+          covers the component (Report is in that ⋯ menu), but the page is as tall as its content (as in the chat).
           So a component never draws a card frame of its own, and one rule covers every surface:
           `.card { border: 0; background: none; border-radius: 0; padding: 12px; box-sizing: border-box; }` with
           `html[data-surface="board"] .card { height: 100%; }` to fill a Board tile.

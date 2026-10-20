@@ -677,12 +677,20 @@ function reportControl(name: string, info: ComponentInfo): HTMLElement {
 }
 
 /**
+ * The report box for `name`, from somewhere other than its flag (an opened pin's ⋯ menu): shown
+ * by `anchor`, with a screenshot of the component drawn in `drawn`.
+ */
+export function reportComponent(anchor: HTMLElement, name: string, info: ComponentInfo, drawn: HTMLElement | null): void {
+  openReport(anchor, name, info, drawn?.querySelector<HTMLElement>(".component-frame") ?? null);
+}
+
+/**
  * Say what to change, in words, pictures or both: a screenshot of the component as it is now
  * goes along unless you untick it, and pictures pasted (⌘V) or dropped on the box go too.
  */
-function openReport(anchor: HTMLElement, name: string, info: ComponentInfo): void {
+function openReport(anchor: HTMLElement, name: string, info: ComponentInfo, frame?: HTMLElement | null): void {
   document.querySelector(".report")?.remove();
-  const component = anchor.closest(".component")?.querySelector<HTMLElement>(".component-frame") ?? null;
+  const component = frame ?? anchor.closest(".component")?.querySelector<HTMLElement>(".component-frame") ?? null;
   const box = document.createElement("div");
   box.className = "report";
   box.innerHTML = `<div class="report-title">How should this component change?</div>
