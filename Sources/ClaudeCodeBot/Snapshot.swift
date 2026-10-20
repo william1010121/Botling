@@ -226,6 +226,20 @@ enum Snapshot {
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
             guard (message.body as? [String: Any])?["type"] as? String == "ready", let view else { return }
             view.evaluateJavaScript("\(plugins); ccb.setState(\(json))")
+            // CCB_SNAPSHOT_STEP_IMAGES=1: unfold the last tool call that gave back a picture and
+            // scroll to it, to check how its OUT box looks.
+            if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_STEP_IMAGES"] == "1" {
+                view.evaluateJavaScript("""
+                setTimeout(() => {
+                  const line = [...document.querySelectorAll('.step.tool')].filter((l) => l.querySelector('img.step-image')).pop();
+                  if (!line) return;
+                  const list = line.closest('.steps');
+                  if (list && !list.classList.contains('open')) list.querySelector('.steps-toggle')?.click();
+                  if (!line.classList.contains('open')) line.querySelector('.step-head')?.click();
+                  setTimeout(() => line.scrollIntoView({ block: 'center' }), 300);
+                }, 500)
+                """)
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [path] in
                 view.takeSnapshot(with: nil) { image, _ in
                     if let tiff = image?.tiffRepresentation,

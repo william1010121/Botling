@@ -207,6 +207,7 @@ public final class Bot: ObservableObject, Identifiable {
         let saved = store?.loadSubagents() ?? []
         let real = saved.filter { $0.type != nil || !$0.prompt.isEmpty || !$0.steps.isEmpty }
         var book = TraceBook(subagents: real)
+        book.imageFolder = store.map { $0.directory.appending(path: StepImages.folderName) }
         if real.count != saved.count { store?.save(subagents: real) }
         if book.stopLeftovers() { store?.save(subagents: book.subagents) }
         trace = book
@@ -951,7 +952,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// The subagent a trace event belongs to, if any.
     static func subagentID(of step: TraceEvent) -> String? {
         switch step {
-        case let .toolUse(_, _, _, _, parent), let .toolResult(_, _, _, parent), let .text(_, parent): parent
+        case let .toolUse(_, _, _, _, parent), let .toolResult(_, _, _, parent), let .toolImages(_, _, parent), let .text(_, parent): parent
         case let .subagentStarted(id, _, _, _, _): id
         case .subagentEnded, .subagentNamed: nil
         }

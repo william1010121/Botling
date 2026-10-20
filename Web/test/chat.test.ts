@@ -370,6 +370,25 @@ describe("messages", () => {
     expect(lists[0].querySelector("pre")?.textContent).toBe("swift test");
   });
 
+  it("show the pictures a tool call gave back in its OUT box, full size on click", () => {
+    const row = messageElement(message({ id: "r-img", text: "Looked.", steps: [
+      { id: "p1", kind: "tool", tool: "Read", title: "Read login.png", detail: "/Users/me/login.png", output: "(image)", failed: false, done: true, status: null, count: null,
+        images: [{ url: "file:///Users/me/login.png", name: "login.png" }] },
+    ] }), {});
+    document.body.append(row);
+    row.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
+    row.querySelector<HTMLButtonElement>(".step-head")!.click();
+    const blocks = row.querySelectorAll<HTMLElement>(".step-block");
+    expect(blocks[1].querySelector(".step-label")?.textContent).toBe("Out");
+    const image = blocks[1].querySelector<HTMLImageElement>("img.step-image")!;
+    expect(image.getAttribute("src")).toBe("file:///Users/me/login.png");
+    expect(image.alt).toBe("login.png");
+    // The words standing for the picture go; nothing else to say, so no text box.
+    expect(blocks[1].querySelector("pre")).toBeNull();
+    image.click();
+    expect(sent).toEqual([{ type: "openURL", url: "file:///Users/me/login.png", label: "login.png" }]);
+  });
+
   it("flag a bot's reply as not right in developer mode only", async () => {
     feedback.enabled = false;
     expect(messageElement(message({ text: "Hi" }), {}).querySelector(".feedback-button")).toBeNull();

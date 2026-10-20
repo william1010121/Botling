@@ -79,6 +79,14 @@ export interface StepView {
   status: string | null;
   /** A subagent's tool calls so far. */
   count: number | null;
+  /** Pictures it gave back (a Read of a .png, a screenshot), shown in its OUT box. */
+  images?: StepImage[] | null;
+}
+
+/** A picture a tool call gave back: the `file:` URL to load, and its name. */
+export interface StepImage {
+  url: string;
+  name: string;
 }
 
 export interface ComponentInfo {

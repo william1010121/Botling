@@ -35,9 +35,12 @@ enum StreamEvent {
             }
         case "user":
             guard let blocks = (object["message"] as? [String: Any])?["content"] as? [[String: Any]] else { return [] }
-            return blocks.compactMap { block in
-                guard block["type"] as? String == "tool_result", let id = block["tool_use_id"] as? String else { return nil }
-                return .trace(.toolResult(id: id, output: text(of: block["content"]), failed: block["is_error"] as? Bool ?? false, parent: parent))
+            return blocks.flatMap { block -> [AgentEvent] in
+                guard block["type"] as? String == "tool_result", let id = block["tool_use_id"] as? String else { return [] }
+                var events: [AgentEvent] = [.trace(.toolResult(id: id, output: text(of: block["content"]), failed: block["is_error"] as? Bool ?? false, parent: parent))]
+                let pictures = images(of: block["content"])
+                if !pictures.isEmpty { events.append(.trace(.toolImages(id: id, images: pictures, parent: parent))) }
+                return events
             }
         case "rate_limit_event":
             return RateLimits.parse(object, seen: Date()).map { [.rateLimits($0)] } ?? []
@@ -86,6 +89,19 @@ enum StreamEvent {
             default: nil
             }
         }.joined(separator: "\n")
+    }
+
+    /// The pictures in a tool result's content: `{"type":"image","source":{"type":"base64",…}}`.
+    static func images(of content: Any?) -> [ToolImage] {
+        guard let blocks = content as? [[String: Any]] else { return [] }
+        return blocks.compactMap { block in
+            guard block["type"] as? String == "image",
+                  let source = block["source"] as? [String: Any],
+                  source["type"] as? String ?? "base64" == "base64",
+                  let base64 = source["data"] as? String,
+                  let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters), !data.isEmpty else { return nil }
+            return ToolImage(mediaType: source["media_type"] as? String ?? "image/png", data: data)
+        }
     }
 
     /// What went into a tool call, in full: the command, the path, the subagent's task.

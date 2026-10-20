@@ -340,6 +340,12 @@ body.panel-mode #scroller, body.panel-mode #composer-slot { display: none; }
   background: var(--code); color: var(--text); font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
   white-space: pre-wrap; overflow-wrap: anywhere;
 }
+/* A picture a tool call gave back, fit to the OUT box; click for full size. */
+.step-image {
+  display: block; margin-top: 4px; max-width: 100%; max-height: 320px; width: auto; height: auto;
+  object-fit: contain; border: 1px solid var(--line); border-radius: 8px; background: var(--code); cursor: zoom-in;
+}
+.step-image:hover { border-color: var(--blue); }
 .step.text { color: var(--muted); padding: 2px 0 2px 20px; white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* A subagent the bot sent off: click to watch its own conversation. */
