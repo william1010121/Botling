@@ -338,6 +338,39 @@ struct TraceTests {
         await eventually { bot.phase == .asleep }
     }
 
+    @Test func aRunningSubagentLeavesTheChatsTextAloneBetweenItsSteps() async {
+        let fake = FakeLauncher()
+        let bot = makeBot(fake)
+        fake.respond = { text in isAppOnly(text) ? "OK" : nil }
+        bot.send("Send a subagent off, then ask me")
+        await eventually { fake.agents.count == 1 }
+        let agent = fake.agents[0]
+        for line in SubagentRun.lines.prefix(3) {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+        agent.reply("Which one?\n<choices>\n* Alpha\n- Beta\n</choices>")
+        await eventually { !bot.isWorking }
+        for event in StreamEvent.events(in: SubagentRun.subagentSays) { agent.emit(event) }
+        try? await Task.sleep(for: .milliseconds(50))
+
+        // While it runs the app redraws often; the same chat must be the same text, so the
+        // page is not sent it again (its question's frame would be redrawn for nothing).
+        let make = { (now: Date) in ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil, now: now) { _ in "" }.json() }
+        let before = make(Date())
+        #expect(before.contains("\"status\":\"running\""))
+        #expect(make(Date().addingTimeInterval(5)) == before)
+
+        // A step of its own changes its card only; the question reads the same.
+        for event in StreamEvent.events(in: SubagentRun.subagentReads) { agent.emit(event) }
+        try? await Task.sleep(for: .milliseconds(50))
+        let after = ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil) { _ in "" }
+        let earlier = ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil) { _ in "" }
+        #expect(after == earlier)
+        let question = after.messages.last
+        #expect(question?.choices?.map(\.label) == ["Alpha", "Beta"])
+        #expect(question?.steps?.first { $0.kind == "subagent" }?.count == 1)
+    }
+
     @Test func aSubagentReadsLikeAConversation() {
         var subagent = Subagent(id: "A", description: "Read a.txt", type: "general-purpose", prompt: "Read a.txt")
         subagent.steps = [

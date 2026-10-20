@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
-import type { ChatState, ComponentInfo, MessageView } from "../src/types";
+import type { ChatState, ComponentInfo, MessageView, StepView } from "../src/types";
 
 // jsdom has no ResizeObserver; the chat follows sizes with one.
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
@@ -81,6 +81,45 @@ describe("components in the chat", () => {
     expect(card.isConnected && chart.isConnected).toBe(true);
     expect(srcdoc.count).toBe(0);
     expect(document.querySelector("#messages .row.bot .markdown")?.textContent).toContain("Here it is.");
+  });
+
+  it("keep their frames while a subagent runs: its card ticks, live steps change, the bot works on", () => {
+    const step = (id: string, extra: Partial<StepView> = {}): StepView =>
+      ({ id, kind: "tool", tool: "Bash", title: id, detail: null, output: null, failed: false, done: true, status: null, count: null, ...extra });
+    const agent = (status: string, count: number) => step("agent", { kind: "subagent", tool: "Agent", title: "Look into it", done: status !== "running", status, count });
+    const question = message({
+      id: "q1", text: "Which one?", stamp: "Today 10:00", open: true,
+      choices: [{ label: "A", detail: null, recommended: true }, { label: "B", detail: null, recommended: false }],
+    });
+    const reply = (status: string, count: number, text = "Started a subagent.") => message({
+      id: "r1", text, steps: [step("ls"), agent(status, count)],
+      displays: [{ name: "card", data: "{\"a\":1}", at: null }],
+    });
+    const working = (status: string, count: number, live: StepView[], extra: Partial<ChatState> = {}) =>
+      state([question, reply(status, count)], { working: true, live, ...extra });
+
+    window.ccb.setState(working("running", 0, [agent("running", 0)]));
+    const [choices, card] = frames();
+    expect(frames()).toHaveLength(2);
+    for (const frame of [choices, card]) window.dispatchEvent(new MessageEvent("message", { data: { ccb: "size", height: 90 }, source: frame.contentWindow }));
+    const srcdoc = watchSrcdoc(choices, card);
+
+    // What a running subagent sends, push after push.
+    for (let count = 1; count <= 5; count++) {
+      window.ccb.setState(working("running", count, [step(`t${count}`, { done: false }), agent("running", count)]));
+    }
+    // A component being edited in the background (the Maintainer's editor) shows as working.
+    window.ccb.setState(working("running", 6, [agent("running", 6)], { components: { ...components, card: info("<p>card</p>", { working: true }) } }));
+    window.ccb.setState(working("running", 7, [agent("running", 7)], { components: { ...components, choices: info("<p>choices</p>", { working: true }) } }));
+    window.ccb.setState(state([question, reply("completed", 8, "Started a subagent. It is done.")]));
+
+    expect(frames()[0]).toBe(choices);
+    expect(frames()[1]).toBe(card);
+    expect(choices.isConnected && card.isConnected).toBe(true);
+    expect(srcdoc.count).toBe(0);
+    expect(choices.style.height).toBe("90px");
+    expect(card.style.height).toBe("90px");
+    expect(document.querySelector(".row[data-id=\"r1\"] .steps-toggle")?.textContent).toContain("1 subagent");
   });
 
   it("rebuild only the component whose data changed, keeping its height", () => {
