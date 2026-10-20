@@ -251,8 +251,8 @@ public struct TraceBook: Equatable, Sendable {
     /// The subagents the left column lists under the bot at `date`: the ones the bot itself
     /// sent off that still run, or ended a short while ago, and whose row you did not take
     /// away. Running ones come first, then the rest, newest first within each; the cap keeps
-    /// the first rows of that order.
-    public func listed(at date: Date = Date()) -> [Subagent] {
+    /// the first `limit` rows of that order (nil lists them all, for "Show more").
+    public func listed(at date: Date = Date(), limit: Int? = Self.listedAtMost) -> [Subagent] {
         let shown = subagents.enumerated().filter { _, subagent in
             guard subagent.parentID == nil, !subagent.isDismissed else { return false }
             if subagent.isRunning { return true }
@@ -265,7 +265,13 @@ public struct TraceBook: Equatable, Sendable {
             if a.element.startedAt != b.element.startedAt { return a.element.startedAt > b.element.startedAt }
             return a.offset > b.offset
         }
-        return ordered.prefix(Self.listedAtMost).map(\.element)
+        guard let limit else { return ordered.map(\.element) }
+        return ordered.prefix(limit).map(\.element)
+    }
+
+    /// How many rows the capped list leaves out at `date`.
+    public func beyondCap(at date: Date = Date()) -> Int {
+        max(0, listed(at: date, limit: nil).count - Self.listedAtMost)
     }
 
     /// Takes its row out of the left column. It does not stop it: a running one works on and

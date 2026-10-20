@@ -604,11 +604,27 @@ private struct BotRow: View {
 private struct SubagentRows: View {
     @ObservedObject var bot: Bot
     @ObservedObject var workspace: Workspace
+    /// "Show more" lists every row; per bot, forgotten on restart.
+    @State private var showsAll = false
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            ForEach(bot.trace.listed(at: context.date)) { subagent in
+            let more = bot.trace.beyondCap(at: context.date)
+            ForEach(bot.trace.listed(at: context.date, limit: showsAll && more > 0 ? nil : TraceBook.listedAtMost)) { subagent in
                 SubagentRow(subagent: subagent, bot: bot, workspace: workspace)
+            }
+            if more > 0 {
+                Button { showsAll.toggle() } label: {
+                    Text(showsAll ? "Show less" : "Show \(more) more")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.faint)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 45)
+                        .frame(height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(showsAll ? "Show fewer subagents of \(bot.name)" : "Show \(more) more subagents of \(bot.name)")
             }
         }
     }

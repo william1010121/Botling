@@ -141,6 +141,28 @@ struct TraceTests {
         #expect(book.listed(at: start.addingTimeInterval(20)).map(\.id) == ["D", "B", "F", "E"])
     }
 
+    /// Past the cap, "Show more" lists every row in the same order; `beyondCap` counts the
+    /// rows the capped list leaves out, and dismissed ones do not count.
+    @Test func theFullListGoesPastTheCap() {
+        var book = TraceBook()
+        let start = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let ids = (0..<(TraceBook.listedAtMost + 2)).map { "S\($0)" }
+        for (offset, id) in ids.enumerated() {
+            book.apply(.subagentStarted(id: id, description: id, type: "general-purpose", prompt: "Do \(id)", background: true), at: start.addingTimeInterval(Double(offset)))
+        }
+        let now = start.addingTimeInterval(20)
+        let all = Array(ids.reversed())
+        #expect(book.listed(at: now).map(\.id) == Array(all.prefix(TraceBook.listedAtMost)))
+        #expect(book.listed(at: now, limit: nil).map(\.id) == all)
+        #expect(book.beyondCap(at: now) == 2)
+        book.dismiss(ids.last!)
+        #expect(book.listed(at: now, limit: nil).map(\.id) == Array(all.dropFirst()))
+        #expect(book.beyondCap(at: now) == 1)
+        book.dismiss(ids[ids.count - 2])
+        #expect(book.beyondCap(at: now) == 0)
+        #expect(book.listed(at: now, limit: nil).count == TraceBook.listedAtMost)
+    }
+
     @Test func aDismissalOutlivesARestart() {
         let home = FileManager.default.temporaryDirectory.appending(path: "ccb-dismiss-\(UUID().uuidString)")
         let store = BotStore(directory: home.appending(path: "store"))
