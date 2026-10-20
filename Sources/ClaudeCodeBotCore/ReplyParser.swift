@@ -23,6 +23,9 @@ public enum BotRequest: Equatable, Sendable {
     case installBuild(path: String, note: String)
     /// `<app-screenshot/>`: developer mode only. A picture of the app's window, sent back.
     case appScreenshot
+    /// `<open-question from="project name"/>`: main bot only. Shows, in the main bot's chat, the
+    /// card a project or bot is already asking in its own chat (the same decision, not a new card).
+    case openQuestion(from: String)
 }
 
 /// Splits a bot's reply into the text to show, the buttons to draw, and the requests to act on.
@@ -63,6 +66,9 @@ public enum ReplyParser {
         options: .dotMatchesLineSeparators
     )
     private static let screenshotTag = try! NSRegularExpression(pattern: #"<app-screenshot\s*/?>(?:\s*</app-screenshot>)?"#)
+    private static let openQuestionTag = try! NSRegularExpression(
+        pattern: #"<open-question\s+from\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:/>|>\s*</open-question>)"#
+    )
     private static let projectTag = try! NSRegularExpression(
         pattern: #"<new-project\s+folder\s*=\s*"([^"]+)"\s*(?:/>|>\s*(.*?)\s*</new-project>)"#,
         options: .dotMatchesLineSeparators
@@ -164,6 +170,12 @@ public enum ReplyParser {
         take(screenshotTag) { _ in screenshot = true }
         if screenshot { requests.append(.appScreenshot) }
         take(folderTag) { requests.append(.folder(path: $0[0])) }
+        var openQuestions: [BotRequest] = []
+        take(openQuestionTag) { groups in
+            let name = (groups[0].isEmpty ? groups[1] : groups[0]).trimmingCharacters(in: .whitespaces)
+            if !name.isEmpty { openQuestions.insert(.openQuestion(from: name), at: 0) }
+        }
+        requests += openQuestions
 
         var choices: [Choice]?
         take(choicesBlock, first: true) { groups in

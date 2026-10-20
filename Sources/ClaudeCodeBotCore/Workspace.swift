@@ -744,22 +744,48 @@ public final class Workspace: ObservableObject {
         let projectLines = folders.isEmpty
             ? "(No projects yet.)"
             : folders.map { project in
-                "- \(project.name) (folder \(project.folder.path)): memory file \(project.notesFolder.appending(path: "memory.md").path); inbox file \(project.inboxURL.path)"
+                "- \(project.name) (folder \(project.folder.path)): memory file \(project.notesFolder.appending(path: "memory.md").path); inbox file \(project.inboxURL.path)\(openQuestionNote(project))"
             }.joined(separator: "\n")
         let bots = standaloneBots
         let botLines = bots.isEmpty ? "" : "\n(App: Bots of their own, which you reach the same way.)\n" + bots.map { bot in
-            "- \(bot.name) (\(Self.firstLine(of: bot.job ?? ""))): memory file \(bot.notesFolder.appending(path: "memory.md").path); inbox file \(bot.inboxURL.path)"
+            "- \(bot.name) (\(Self.firstLine(of: bot.job ?? ""))): memory file \(bot.notesFolder.appending(path: "memory.md").path); inbox file \(bot.inboxURL.path)\(openQuestionNote(bot))"
         }.joined(separator: "\n")
-        let maintainerLine = "- Maintainer (looks after ClaudeCodeBot itself: plugins, components): memory file \(maintainerProject.notesFolder.appending(path: "memory.md").path); inbox file \(maintainerProject.inboxURL.path)"
+        let maintainerLine = "- Maintainer (looks after ClaudeCodeBot itself: plugins, components): memory file \(maintainerProject.notesFolder.appending(path: "memory.md").path); inbox file \(maintainerProject.inboxURL.path)\(openQuestionNote(maintainerProject))"
+        let asking = everyProject.contains { managers[$0.id]?.openQuestion != nil }
+        let cardLine = asking ? "\n(App: A decision marked \"open question in its chat\" already has its card there. To bring it up, write <open-question from=\"its name\"/> in your reply: the app shows that same card here. Never write a new choices block for it.)" : ""
         let teamLines = teams.map { "- \($0.name) (\($0.title)): \($0.description)" }.joined(separator: "\n")
         return """
         (App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file.)
         \(projectLines)\(botLines)
-        \(maintainerLine)
+        \(maintainerLine)\(cardLine)
         (App: Temporary teams you can start, with <team name="name">task</team>.)
         \(teamLines)
         \(componentBriefing())
         """
+    }
+
+    /// "; open question in its chat: …" for a project or bot whose own chat has a card waiting.
+    private func openQuestionNote(_ project: Project) -> String {
+        guard let question = managers[project.id]?.openQuestion else { return "" }
+        return "; open question in its chat: \(Self.firstLine(of: question.text))"
+    }
+
+    /// The main bot brings up a decision a project or bot already asked about in its own chat:
+    /// that same card shows here (a copy kept in step with it), so the user is asked once. A pick
+    /// or words on it go to the project, and both cards show the answer.
+    private func showOpenQuestion(of name: String) {
+        let wanted = name.trimmingCharacters(in: .whitespaces).lowercased()
+        guard let project = everyProject.first(where: { $0.name.lowercased() == wanted }) else {
+            mainBot.queueNote("(App: There is no project or bot called \"\(name)\"; no card was shown.)")
+            return
+        }
+        guard let question = managers[project.id]?.openQuestion else {
+            tell(mainBot, "\(project.name) has no question waiting in its chat now.", sourceID: project.id)
+            mainBot.queueNote("(App: \(project.name) has no open card, so none was shown. Do not ask its question again yourself; if it still needs the user, it asks in its own chat.)")
+            return
+        }
+        tell(mainBot, "\(project.name): \(question.text)", choices: question.choices, sourceID: project.id, sourceMessageID: question.id)
+        refreshWaiting()
     }
 
     /// A plugin library from when the app was called Deck: plugins named `deck-*` whose
@@ -932,6 +958,9 @@ public final class Workspace: ObservableObject {
                 if let project { proposeBuild(path, note: note, from: project) }
             case .appScreenshot:
                 if let project { sendScreenshot(to: project) }
+            case let .openQuestion(name):
+                // Only the main bot brings up other bots' cards.
+                if project == nil { showOpenQuestion(of: name) }
             case let .plugin(request):
                 if project?.isMaintainer != true {
                     handToMaintainer("\(project?.name ?? mainBot.name)'s request for ClaudeCodeBot: \(request)")
@@ -1426,7 +1455,8 @@ public final class Workspace: ObservableObject {
         tell(chat, "\(name): \(message.text)", choices: message.choices, sourceID: id, sourceMessageID: message.id)
     }
 
-    /// Copies of the question `messageID` (in the main bot's chat from before 1.3.0, or in a group).
+    /// Copies of the question `messageID` (in the main bot's chat, shown there by its
+    /// <open-question> tag, or in a group).
     private func forEachCopy(of messageID: UUID, _ body: (Bot, ChatMessage) -> Void) {
         for chat in [mainBot] + Array(groupChats.values) {
             for copy in chat.messages where copy.role == .notice && copy.sourceMessageID == messageID {
