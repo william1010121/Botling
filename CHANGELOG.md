@@ -8,6 +8,15 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Settings → Doctor checks Claude Code and Codex.** A new section in the settings window
+  shows, for each CLI, a green, orange or red dot, its version, where it was found (the same
+  lookup bots use), how it is signed in (`claude auth status`, `codex login status`; no tokens
+  spent) and the latest version on npm when online. Claude Code needs 2.1.111 or later
+  (`--effort xhigh`), Codex 0.99.0 or later (`codex exec --ephemeral`). When something is wrong
+  a one-line fix (`npm i -g …@latest`, `claude update`, `claude auth login`, `codex login`) can
+  be copied. Every check runs off the main thread with a 10-second limit; **Run again** repeats
+  them. At launch a quick local check puts a red dot on the gear if Claude Code is missing, too
+  old or signed out.
 - **Markdown files open formatted.** A `.md` or `.markdown` file opened in its own window
   (a result, an attachment) is drawn with the chat's Markdown and LaTeX instead of as raw text:
   headings, lists, quotes, tables, code, `$…$` and `$$…$$` typeset, links opening like the

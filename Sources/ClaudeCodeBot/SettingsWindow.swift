@@ -37,6 +37,9 @@ struct SettingsPopover: View {
             SettingSwitch("Develop ClaudeCodeBot itself", isOn: DeveloperSection.binding(workspace))
             divider
             VStack(spacing: 0) {
+                if workspace.doctor.needsAttention {
+                    link("Claude Code needs attention", detail: "Doctor ›", color: DoctorRow.color(.failing)) { open(.doctor) }
+                }
                 link("Plugins", detail: "\(registry.plugins.filter(\.enabled).count) on") { open(.plugins) }
                 link("Usage by bot", detail: "›") { open(.usage) }
                 link("All settings…", detail: "⌘ ,", color: Theme.blue) { open(nil) }
@@ -215,6 +218,7 @@ struct SettingsWindow: View {
                         case .permissions: PermissionsSection(workspace: workspace, commands: workspace.componentCommands)
                         case .plugins: PluginsSection(registry: workspace.plugins, host: workspace.pluginHost, workspace: workspace)
                         case .developer: DeveloperSection(workspace: workspace)
+                        case .doctor: DoctorSection(model: workspace.doctor)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -687,6 +691,121 @@ struct DeveloperSection: View {
         projects.first { project in
             let manifest = (try? String(contentsOf: project.folder.appending(path: "Package.swift"), encoding: .utf8)) ?? ""
             return manifest.contains("\"ClaudeCodeBot\"")
+        }
+    }
+}
+
+/// Settings → Doctor: Claude Code and Codex, each found the way bots find it, with its version,
+/// sign-in, and a command to copy when something is wrong.
+struct DoctorSection: View {
+    @ObservedObject var model: DoctorModel
+
+    var body: some View {
+        PanelSection("Command-line tools") {
+            Card {
+                if model.checks.isEmpty {
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text("Checking…").foregroundStyle(Theme.muted)
+                    }
+                    .font(.system(size: 14))
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                ForEach(Array(model.checks.enumerated()), id: \.element.id) { index, check in
+                    if index > 0 { RowDivider() }
+                    DoctorRow(check: check)
+                }
+            }
+            HStack(spacing: 10) {
+                Button("Run again") { Task { await model.run(includeLatest: true) } }
+                    .disabled(model.isRunning)
+                if model.isRunning {
+                    ProgressView().controlSize(.small)
+                } else if let checkedAt = model.checkedAt {
+                    Text("Checked \(checkedAt.formatted(date: .omitted, time: .shortened))")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.faint)
+                }
+            }
+            Text("Bots run Claude Code; Codex reviews run Codex. Each check has a \(Int(Doctor.timeout))-second limit and spends no tokens.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.faint)
+        }
+        .task {
+            if !model.includedLatest || model.checks.isEmpty { await model.run(includeLatest: true) }
+        }
+    }
+}
+
+struct DoctorRow: View {
+    let check: DoctorCheck
+    @State private var copied = false
+
+    static func color(_ status: DoctorStatus) -> Color {
+        switch status {
+        case .ok: Theme.green
+        case .warning: Theme.orange
+        case .failing: Color(hex: 0xFF5F57)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Circle().fill(Self.color(check.status)).frame(width: 9, height: 9)
+                    .accessibilityLabel(check.status == .ok ? "OK" : check.status == .warning ? "Warning" : "Failing")
+                Text(check.tool.name).font(.system(size: 14, weight: .medium))
+                Text(check.version ?? "—").font(.system(size: 13)).monospacedDigit().foregroundStyle(Theme.muted)
+                Spacer()
+                Text("needs \(check.tool.minimum.description)+").font(.system(size: 12)).foregroundStyle(Theme.faint)
+            }
+            Group {
+                Text(check.summary).foregroundStyle(check.status == .ok ? Theme.muted : Self.color(check.status))
+                if let path = check.path {
+                    Text(path).lineLimit(1).truncationMode(.middle).foregroundStyle(Theme.faint).textSelection(.enabled)
+                }
+            }
+            .font(.system(size: 12))
+            .padding(.leading, 19)
+            if let fix = check.fix {
+                HStack(spacing: 8) {
+                    Text(fix)
+                        .font(.system(size: 12, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button(copied ? "Copied" : "Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(fix, forType: .string)
+                        copied = true
+                    }
+                    .controlSize(.small)
+                    .help("Copy the command, then run it in Terminal")
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.ground))
+                .padding(.leading, 19)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The gear's dot when a required check (Claude Code) failed.
+struct DoctorDot: View {
+    @ObservedObject var model: DoctorModel
+
+    var body: some View {
+        if model.needsAttention {
+            Circle().fill(Color(hex: 0xFF5F57)).frame(width: 7, height: 7)
+                .offset(x: -6, y: 6)
+                .allowsHitTesting(false)
+                .accessibilityLabel("Claude Code needs attention")
         }
     }
 }

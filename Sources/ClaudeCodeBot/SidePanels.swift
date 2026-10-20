@@ -227,6 +227,7 @@ struct RailView: View {
                         .foregroundStyle(showingQuickSettings ? Theme.text : Theme.faint)
                         .frame(width: 32, height: 32)
                         .background(RoundedRectangle(cornerRadius: 8).fill(showingQuickSettings ? Theme.selected : .clear))
+                        .overlay(alignment: .topTrailing) { DoctorDot(model: workspace.doctor) }
                         .frame(height: 44)
                         .contentShape(Rectangle())
                 }
