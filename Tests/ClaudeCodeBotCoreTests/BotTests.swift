@@ -199,6 +199,33 @@ struct BotTests {
         #expect(bot.messages.map(\.role) == [.user, .bot, .divider])
     }
 
+    @Test func resumeReplyAfterHandoffDrawsItsChoicesAsButtons() async throws {
+        let fake = FakeLauncher()
+        let bot = makeBot(fake)
+        let resume = bot.prompts.resume
+        fake.respond = { text in
+            guard text == resume else { return isAppOnly(text) ? "OK" : "Got it" }
+            return """
+            目前正在等你決定是否 push。
+
+            <choices>
+            * 現在 push ed1f2ad | 內容已審過
+            - 先不 push，等你看過再說 | 本機保留
+            </choices>
+            """
+        }
+
+        bot.send("hi")
+        await eventually { bot.messages.last?.role == .bot }
+        await bot.reloadPlugins()
+
+        let resumed = try #require(bot.messages.last)
+        #expect(resumed.role == .bot)
+        #expect(resumed.text == "目前正在等你決定是否 push。")
+        #expect(resumed.choices?.map(\.label) == ["現在 push ed1f2ad", "先不 push，等你看過再說"])
+        #expect(resumed.choices?.first?.recommended == true)
+    }
+
     @Test func switchingWhileAsleepJustChangesTheNextSession() async {
         let fake = FakeLauncher()
         let bot = makeBot(fake)

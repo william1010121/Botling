@@ -1280,7 +1280,15 @@ public final class Bot: ObservableObject, Identifiable {
             guard !removed else { return }
             phase = process == nil ? .asleep : .awake
             if !BotPrompts.isPlainOK(reply) {
-                append(ChatMessage(role: .bot, text: reply))
+                // Read like any reply: its <choices> become buttons, <show> components and
+                // requests are acted on, rather than showing the raw tags.
+                let parsed = ReplyParser.parseAll(reply)
+                var message = ChatMessage(role: .bot, text: parsed.body, choices: parsed.choices)
+                if !parsed.displays.isEmpty { message.displays = parsed.displays }
+                if !message.text.isEmpty || message.choices != nil || message.displays != nil {
+                    append(message)
+                }
+                if !parsed.requests.isEmpty { onRequests?(parsed.requests) }
             }
             if phase == .awake { scheduleIdle() }
         } catch {
