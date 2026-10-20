@@ -617,6 +617,10 @@ export class PinArea {
       add.addEventListener("click", () => openPicker());
     }
     if (this.grid.lastElementChild !== add) this.grid.append(add);
+    // How many columns the cards would fill side by side (a large card takes two), at least two so
+    // a lone card shares the row with the add tile instead of stretching across the whole Board.
+    const columns = Math.max(2, pins.reduce((sum, pin) => sum + (pin.size === "l" ? 2 : 1), 0));
+    this.grid.style.setProperty("--board-columns", String(columns));
   }
 
   private card(pin: PinView, index: number): HTMLElement {

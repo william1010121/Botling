@@ -261,13 +261,38 @@ describe("the Board", () => {
       area.update(state({ board: true, pins: [pin()] }));
       // At 260px a component got under 200px: a commit's title broke a word per line.
       const columns = getComputedStyle(document.querySelector<HTMLElement>(".board-grid")!).gridTemplateColumns;
-      expect(columns).toContain("minmax(min(320px, 100%), 1fr)");
+      expect(columns).toContain("min(320px, 100%)");
       // The report flag sits over the corner instead of keeping a strip beside the component.
       const side = document.querySelector<HTMLElement>(".board-card-body .component-side")!;
       expect(getComputedStyle(side).position).toBe("absolute");
       // A narrow card drops the command from its header so the name and the time stay readable.
       expect(getComputedStyle(document.querySelector<HTMLElement>(".board-card")!).getPropertyValue("container-type")).toBe("inline-size");
       expect(css).toMatch(/@container \(max-width: 439px\) \{ \.board-card-head \.pin-command \{ display: none; \} \}/);
+    } finally {
+      style.remove();
+    }
+  });
+
+  it("the cards share the Board's width instead of leaving empty columns", () => {
+    const style = document.createElement("style");
+    style.textContent = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    document.head.append(style);
+    try {
+      const area = setUp();
+      const grid = () => document.querySelector<HTMLElement>(".board-grid")!;
+      // auto-fit collapses the empty tracks auto-fill kept, so two cards stretch across a wide Board,
+      // split between the cards' columns but no wider than 640px before another column fits.
+      const columns = getComputedStyle(grid()).gridTemplateColumns;
+      expect(columns).toMatch(/^repeat\(auto-fit, /);
+      expect(columns).toContain("min(640px, calc((100% - (var(--board-columns, 2) - 1) * 16px) / var(--board-columns, 2)))");
+      area.update(state({ board: true, pins: [pin(), pin({ id: "P2" })] }));
+      expect(grid().style.getPropertyValue("--board-columns")).toBe("2");
+      // A large card takes two columns; the add tile never counts, it wraps below.
+      area.update(state({ board: true, pins: [pin(), pin({ id: "P2", size: "l" }), pin({ id: "P3", size: "s" })] }));
+      expect(grid().style.getPropertyValue("--board-columns")).toBe("4");
+      // A lone card shares the row with the add tile instead of spanning the whole Board.
+      area.update(state({ board: true, pins: [pin()] }));
+      expect(grid().style.getPropertyValue("--board-columns")).toBe("2");
     } finally {
       style.remove();
     }
