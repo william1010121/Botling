@@ -94,6 +94,20 @@ struct PermissionTests {
         #expect(agent.answers.first?.2?.contains("Not on this machine") == true)
     }
 
+    @Test func aPictureWithTheRefusalIsNotLost() async throws {
+        let (bot, agent) = try await awakeBot(FakeLauncher())
+        agent.emit(.permission(request("r1", tool: "Bash")))
+        await eventually { bot.openQuestion != nil }
+        let shot = root.appending(path: "incoming/why.png")
+        try FileManager.default.createDirectory(at: shot.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([0x89, 0x50]).write(to: shot)
+        #expect(bot.answer("", files: [shot], in: try #require(bot.openQuestion).id))
+        #expect(agent.answers.first?.1 == false)
+        let said = try #require(agent.answers.first?.2)
+        #expect(said.contains("(Attachments:\n- "))
+        #expect(said.contains("-why.png"))
+    }
+
     @Test func questionsLeftWhenClaudeExitsCannotBeAnswered() async throws {
         let (bot, agent) = try await awakeBot(FakeLauncher())
         agent.emit(.permission(request("r1")))

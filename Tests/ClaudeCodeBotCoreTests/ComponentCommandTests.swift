@@ -89,6 +89,51 @@ struct ComponentCommandTests {
         #expect(ComponentCommands.execute("true", in: folder.appending(path: "gone"), timeout: 5, limit: 100).error?.contains("not there") == true)
     }
 
+    /// Whether `pid` is gone, within a few seconds.
+    func gone(_ pid: pid_t) async -> Bool {
+        for _ in 0..<60 {
+            if kill(pid, 0) != 0, errno == ESRCH { return true }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return false
+    }
+
+    @Test func stoppingACommandStopsWhatItStarted() async throws {
+        let folder = root.appending(path: "project")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        // Children that shrug off a polite stop outlive the shell unless their whole group is killed.
+        // Off the main actor: stopping takes seconds, and other tests wait on it.
+        func execute(_ command: String, timeout: TimeInterval, limit: Int) async -> CommandOutcome {
+            await Task.detached { ComponentCommands.execute(command, in: folder, timeout: timeout, limit: limit) }.value
+        }
+        let slow = await execute("sh -c 'trap \"\" TERM; sleep 30 & echo $! > slow.pid; wait'", timeout: 1, limit: 100_000)
+        #expect(slow.error?.contains("took longer") == true)
+        let slowPID = try #require(pid_t(String(contentsOf: folder.appending(path: "slow.pid"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        #expect(await gone(slowPID))
+        let started = Date()
+        let loud = await execute("sh -c 'trap \"\" TERM; sleep 30 > /dev/null & echo $! > loud.pid; sleep 0.3; yes'", timeout: 10, limit: 1_000)
+        #expect(loud.error?.contains("printed more than") == true)
+        // Stopped soon after it went over, not at the time limit.
+        #expect(Date().timeIntervalSince(started) < 8)
+        let loudPID = try #require(pid_t(String(contentsOf: folder.appending(path: "loud.pid"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        #expect(await gone(loudPID))
+    }
+
+    @Test func aCardsRunIsForItsCommandAndFolder() async {
+        let commands = ComponentCommands(approvalsURL: root.appending(path: "a.json")) { command, folder in
+            CommandOutcome(data: "\"\(command) in \(folder.path)\"")
+        }
+        let garden = URL(filePath: "/p/garden"), other = URL(filePath: "/p/other")
+        for folder in [garden, other] { for command in ["ls", "pwd"] { commands.approve(command, in: folder) } }
+        await commands.run(card: "m/0", command: "ls", in: garden)
+        #expect(commands.state(for: "m/0", command: "ls", in: garden).data == #""ls in /p/garden""#)
+        // Its command or folder changed: the old output is not shown under it, and it runs anew.
+        #expect(commands.state(for: "m/0", command: "pwd", in: garden) == .init(status: .idle))
+        #expect(commands.state(for: "m/0", command: "ls", in: other) == .init(status: .idle))
+        await commands.run(card: "m/0", command: "pwd", in: garden)
+        #expect(commands.state(for: "m/0", command: "pwd", in: garden).data == #""pwd in /p/garden""#)
+    }
+
     @Test func nothingRunsUntilAllowedAndAllowingIsRemembered() async {
         let file = root.appending(path: "approved-commands.json")
         let count = Counter()
@@ -192,12 +237,55 @@ struct ComponentCommandTests {
         // Not allowed: asking for a run does nothing.
         await workspace.runComponentCommand(messageID: message.id, index: 0, in: bot)
         #expect(try displays()[0]["status"] as? String == "approve")
+        let shownCommand = try #require(shown[0]["command"] as? String), shownFolder = try #require(shown[0]["folder"] as? String)
+        // Allowing needs the command the card showed.
         await workspace.runComponentCommand(messageID: message.id, index: 0, in: bot, approve: true)
+        #expect(try displays()[0]["status"] as? String == "approve")
+        await workspace.runComponentCommand(messageID: message.id, index: 0, in: bot, command: shownCommand, folder: shownFolder, approve: true)
         shown = try displays()
         #expect(shown[0]["status"] as? String == "done")
         #expect(shown[0]["data"] as? String == #"{"n":7}"#)
         #expect(shown[0]["ranAt"] != nil)
         #expect(workspace.componentCommands.isApproved(#"printf '{"n":7}'"#, in: bot.profile.workingDirectory))
+    }
+
+    @Test func allowingRunsOnlyTheCommandTheCardShowed() async throws {
+        let workspace = makeWorkspace()
+        let component = workspace.components.folder.appending(path: "usage")
+        try FileManager.default.createDirectory(at: component, withIntermediateDirectories: true)
+        try "<pre></pre>".write(to: component.appending(path: "template.html"), atomically: true, encoding: .utf8)
+        func declare(_ command: String) throws {
+            try "Usage.\nCommand: `\(command)`".write(to: component.appending(path: "about.md"), atomically: true, encoding: .utf8)
+            workspace.components.rescan()
+        }
+        try declare("printf '[1]'")
+        let bot = workspace.mainBot
+        var message = ChatMessage(role: .bot, text: "Usage:")
+        message.displays = [ComponentInstance(name: "usage", data: "null")]
+        bot.post(message, unread: false)
+        let folder = workspace.commandFolder(for: message, in: bot)
+        // The card showed printf '[1]'; about.md changed before the click.
+        try declare("printf '[2]'")
+        await workspace.runComponentCommand(messageID: message.id, index: 0, in: bot, command: "printf '[1]'", folder: folder.path, approve: true)
+        #expect(!workspace.componentCommands.isApproved("printf '[2]'", in: folder))
+        #expect(!workspace.componentCommands.isApproved("printf '[1]'", in: folder))
+        #expect(workspace.componentCommands.runs.isEmpty)
+        // Nor in another folder than the one shown.
+        await workspace.runComponentCommand(messageID: message.id, index: 0, in: bot, command: "printf '[2]'", folder: "/elsewhere", approve: true)
+        #expect(!workspace.componentCommands.isApproved("printf '[2]'", in: folder))
+        // What the card shows now is allowed and runs.
+        await workspace.runComponentCommand(messageID: message.id, index: 0, in: bot, command: "printf '[2]'", folder: folder.path, approve: true)
+        #expect(workspace.componentCommands.isApproved("printf '[2]'", in: folder))
+        #expect(workspace.componentCommands.state(for: "\(message.id.uuidString)/0", command: "printf '[2]'", in: folder).data == "[2]")
+    }
+
+    @Test func onlyTheChatPageItselfIsHeard() {
+        #expect(PageMessages.accepts("componentCommand", fromMainFrame: true))
+        #expect(PageMessages.accepts("answer", fromMainFrame: true))
+        // A component's frame talks to the page (which answers for it), never to the app.
+        #expect(!PageMessages.accepts("componentCommand", fromMainFrame: false))
+        #expect(!PageMessages.accepts("choose", fromMainFrame: false))
+        #expect(!PageMessages.accepts("send", fromMainFrame: false))
     }
 
     @Test func aComponentsOwnCommandIsUsedWhenTheShowHasNone() throws {

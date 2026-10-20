@@ -297,8 +297,10 @@ export function commandCard(display: DisplayView, messageID: string, index: numb
   card.className = "command-card";
   const status = display.status ?? "approve";
   card.dataset.status = status;
+  // With the command and folder this card shows: Swift allows and runs only what you saw.
+  const shown = { command: display.command ?? "", folder: display.folder ?? "" };
   const run = (extra: { approve?: boolean; force?: boolean }) =>
-    post({ type: "componentCommand", messageID, index, ...extra });
+    post({ type: "componentCommand", messageID, index, ...shown, ...extra });
   const hasData = display.data !== "null" && display.data !== "";
 
   if (display.command) {
@@ -366,8 +368,8 @@ export function commandCard(display: DisplayView, messageID: string, index: numb
     const component = draw();
     if (component) card.append(component);
   } else {
-    // Allowed and not run yet (ask once), or running for the first time.
-    const key = `${messageID}/${index}`;
+    // Allowed and not run yet (ask once per command and folder), or running for the first time.
+    const key = JSON.stringify([messageID, index, shown.folder, shown.command]);
     if (status === "idle" && !requestedRuns.has(key)) {
       requestedRuns.add(key);
       run({});

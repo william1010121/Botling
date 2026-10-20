@@ -46,6 +46,9 @@ public final class ComponentCommands: ObservableObject {
     public typealias Runner = @Sendable (_ command: String, _ folder: URL) -> CommandOutcome
 
     @Published public private(set) var runs: [String: State] = [:]
+    /// What each card's run is of (its folder and command): a card whose command or folder has
+    /// changed since does not show the old output, and runs anew.
+    private var ranWith: [String: String] = [:]
     /// Allowed commands, by folder path.
     @Published public private(set) var approved: [String: [String]]
     public let approvalsURL: URL
@@ -103,16 +106,24 @@ public final class ComponentCommands: ObservableObject {
     public func state(for card: String, command: String, in folder: URL) -> State {
         // A command taken back asks again, even on a card that ran it before.
         guard isApproved(command, in: folder) else { return State(status: .approve) }
-        return runs[card] ?? State(status: .idle)
+        return run(of: card, command: command, in: folder) ?? State(status: .idle)
     }
+
+    /// The card's last run, if it was of this command in this folder.
+    private func run(of card: String, command: String, in folder: URL) -> State? {
+        ranWith[card] == Self.what(command, folder) ? runs[card] : nil
+    }
+
+    private static func what(_ command: String, _ folder: URL) -> String { key(folder) + "\n" + command }
 
     /// Runs it for this card, if allowed and not running already. `force` runs a done or failed
     /// card again (its refresh button); without it only a card not run yet starts.
     public func run(card: String, command: String, in folder: URL, force: Bool = false) async {
         guard isApproved(command, in: folder) else { return }
-        let previous = runs[card]
-        if previous?.status == .running { return }
+        if runs[card]?.status == .running { return }
+        let previous = run(of: card, command: command, in: folder)
         if previous != nil, !force { return }
+        ranWith[card] = Self.what(command, folder)
         runs[card] = State(status: .running, data: previous?.data, error: nil, ranAt: previous?.ranAt)
         let runner = runner
         let outcome = await blocking { runner(command, folder) }
@@ -155,6 +166,8 @@ public final class ComponentCommands: ObservableObject {
 
         let collected = Collected(limit: limit)
         let finished = DispatchSemaphore(value: 0)
+        // The shell ending, or its output going over the limit: either way the wait is over.
+        let wake = DispatchSemaphore(value: 0)
         // Both pipes reaching their end, so nothing printed last is lost.
         let drained = DispatchGroup()
         drained.enter()
@@ -162,14 +175,14 @@ public final class ComponentCommands: ObservableObject {
         out.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
             if chunk.isEmpty { handle.readabilityHandler = nil; drained.leave(); return }
-            if collected.add(chunk, error: false) { process.terminate() }
+            if collected.add(chunk, error: false) { wake.signal() }
         }
         err.fileHandleForReading.readabilityHandler = { handle in
             let chunk = handle.availableData
             if chunk.isEmpty { handle.readabilityHandler = nil; drained.leave(); return }
             _ = collected.add(chunk, error: true)
         }
-        process.terminationHandler = { _ in finished.signal() }
+        process.terminationHandler = { _ in finished.signal(); wake.signal() }
         do {
             try process.run()
         } catch {
@@ -177,19 +190,30 @@ public final class ComponentCommands: ObservableObject {
             err.fileHandleForReading.readabilityHandler = nil
             return CommandOutcome(error: "Couldn't start the command: \(error.localizedDescription)")
         }
+        // The shell leads its own process group (Process starts it so), and what it starts joins
+        // it: stopping the command stops all of them, not just the shell.
+        let pid = process.processIdentifier
+        let group = getpgid(pid) == pid ? pid : nil
+        func signal(_ number: Int32) {
+            if let group { kill(-group, number) } else { kill(pid, number) }
+        }
         var timedOut = false
-        if finished.wait(timeout: .now() + timeout) == .timedOut {
-            timedOut = true
-            process.terminate()
-            if finished.wait(timeout: .now() + 2) == .timedOut {
-                kill(process.processIdentifier, SIGKILL)
-                _ = finished.wait(timeout: .now() + 2)
-            }
+        if wake.wait(timeout: .now() + timeout) == .timedOut { timedOut = true }
+        if timedOut || collected.result().2 {
+            signal(SIGTERM)
+            let ended = finished.wait(timeout: .now() + 2) == .success
+            // Whatever shrugged off the polite stop, the shell or anything it left behind.
+            signal(SIGKILL)
+            if !ended { _ = finished.wait(timeout: .now() + 2) }
+        } else {
+            finished.wait()
         }
         // What is left in the pipes (a child still holding them open is not waited for long).
         _ = drained.wait(timeout: .now() + 1)
         out.fileHandleForReading.readabilityHandler = nil
         err.fileHandleForReading.readabilityHandler = nil
+        try? out.fileHandleForReading.close()
+        try? err.fileHandleForReading.close()
         let (stdout, stderr, overflow) = collected.result()
         if overflow {
             return CommandOutcome(error: "The command printed more than \(limit / 1000) KB, so it was stopped.")

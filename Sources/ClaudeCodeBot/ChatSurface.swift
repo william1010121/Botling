@@ -124,7 +124,8 @@ struct ChatSurface: NSViewRepresentable {
         }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard let body = message.body as? [String: Any], let type = body["type"] as? String, let surface else { return }
+            guard let body = message.body as? [String: Any], let type = body["type"] as? String, let surface,
+                  PageMessages.accepts(type, fromMainFrame: message.frameInfo.isMainFrame) else { return }
             let bot = surface.bot
             let inputs = surface.inputs
             let workspace = surface.workspace
@@ -226,11 +227,12 @@ struct ChatSurface: NSViewRepresentable {
             case "componentCommand":
                 // A card whose data comes from a command: allowed by the user (Allow), run again
                 // (refresh), or drawn for the first time once allowed. Only the chat page itself
-                // sends this, never a component's frame.
+                // sends this (frames are not heard, above), with the command and folder it showed.
                 if let messageID = id("messageID"), let index = body["index"] as? Int {
                     let approve = body["approve"] as? Bool ?? false
                     let force = body["force"] as? Bool ?? false
-                    Task { await workspace.runComponentCommand(messageID: messageID, index: index, in: bot, approve: approve, force: force) }
+                    let command = body["command"] as? String, folder = body["folder"] as? String
+                    Task { await workspace.runComponentCommand(messageID: messageID, index: index, in: bot, command: command, folder: folder, approve: approve, force: force) }
                 }
             case "pluginLoaded":
                 if let name = body["name"] as? String { surface.plugins.markLoaded(name) }

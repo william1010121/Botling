@@ -860,12 +860,18 @@ public final class Workspace: ObservableObject {
 
     /// A component card's command: `approve` is the user allowing it (remembered for that
     /// folder); `force` runs it again (the refresh button). A command not allowed never runs.
-    public func runComponentCommand(messageID: UUID, index: Int, in bot: Bot, approve: Bool = false, force: Bool = false) async {
+    /// `command` and `folder` are what the card showed: allowing needs them, and nothing runs
+    /// when the card's command or folder has changed since (say, its about.md was edited), so
+    /// what is allowed and run is always what the user saw.
+    public func runComponentCommand(messageID: UUID, index: Int, in bot: Bot, command shown: String? = nil, folder shownFolder: String? = nil, approve: Bool = false, force: Bool = false) async {
         guard let message = bot.messages.first(where: { $0.id == messageID }),
               message.shown.indices.contains(index) else { return }
         let instance = message.shown[index]
         guard let command = ChatPayload.command(of: instance, in: message, library: components) else { return }
         let folder = commandFolder(for: message, in: bot)
+        if approve, shown == nil || shownFolder == nil { return }
+        if let shown, shown != command { return }
+        if let shownFolder, URL(filePath: shownFolder).standardizedFileURL.path != folder.standardizedFileURL.path { return }
         if approve { componentCommands.approve(command, in: folder) }
         await componentCommands.run(card: "\(message.id.uuidString)/\(index)", command: command, in: folder, force: force)
     }
@@ -1365,8 +1371,19 @@ public final class Workspace: ObservableObject {
             bot.send(text, files: files, replyingTo: messageID, appNote: "(App: The user wrote this on the app's card \(card) instead of picking an option. That card is closed and nothing was done. To ask again, put the tag in your reply again; never say the app has it unless your reply carries the tag.)")
             return true
         }
+        /// Pictures with the answer: kept, and shown on a line of yours in this chat, so you and
+        /// the bots reading it later see them (the question shows the words).
+        func keptAndShown() -> String {
+            let (note, attachments) = kept()
+            if !attachments.isEmpty {
+                var line = ChatMessage(role: .user, text: "")
+                line.attachments = attachments
+                bot.post(line, unread: false)
+            }
+            return note
+        }
         if let group, message.role == .bot {
-            guard answerInGroup(group.id, message, with: "The user answered: \(shown)\(kept().note)") else {
+            guard answerInGroup(group.id, message, with: "The user answered: \(shown)\(keptAndShown())") else {
                 bot.markAnswered(Bot.noLongerNeeded, in: messageID)
                 return false
             }
@@ -1374,7 +1391,7 @@ public final class Workspace: ObservableObject {
             return true
         }
         if isCalledIn(message, in: bot) {
-            guard answerCallIn(message, in: bot, with: "The user answered: \(shown)\(kept().note)") else {
+            guard answerCallIn(message, in: bot, with: "The user answered: \(shown)\(keptAndShown())") else {
                 bot.markAnswered(Bot.noLongerNeeded, in: messageID)
                 return false
             }

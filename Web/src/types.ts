@@ -133,7 +133,7 @@ export type Action =
   | { type: "addFileData"; name: string; base64: string }
   | { type: "componentReport"; name: string; text: string; images: { name: string; base64: string }[]; rect: { x: number; y: number; width: number; height: number } | null }
   | { type: "componentRevert"; name: string }
-  | { type: "componentCommand"; messageID: string; index: number; approve?: boolean; force?: boolean }
+  | { type: "componentCommand"; messageID: string; index: number; command: string; folder: string; approve?: boolean; force?: boolean }
   | { type: "pluginError"; name: string; message: string }
   | { type: "pluginNotice"; name: string; text: string }
   | { type: "pluginLoaded"; name: string; version: string }

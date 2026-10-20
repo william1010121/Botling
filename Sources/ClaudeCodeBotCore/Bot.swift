@@ -352,7 +352,10 @@ public final class Bot: ObservableObject, Identifiable {
                 return false
             }
             markAnswered(shown, in: messageID)
-            ask.process.answer(ask.request, allow: false, message: "The user did not allow it and said: \(shown)")
+            // Pictures with it are kept, and Claude is told where (a refusal carries only words).
+            let kept = files.compactMap(keep)
+            let note = kept.isEmpty ? "" : "\n(Attachments:\n" + kept.map { "- " + $0.url.path }.joined(separator: "\n") + ")"
+            ask.process.answer(ask.request, allow: false, message: "The user did not allow it and said: \(shown)\(note)")
             return true
         }
         markAnswered(shown, in: messageID)

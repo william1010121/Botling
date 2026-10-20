@@ -199,20 +199,25 @@ describe("messages", () => {
     expect(asking.querySelector(".command-folder")?.textContent).toBe("/p/garden");
     expect(asking.querySelector(".command-refresh")).toBeNull();
     asking.querySelector<HTMLButtonElement>(".command-allow")!.click();
-    expect(sent).toEqual([{ type: "componentCommand", messageID: "c1", index: 0, approve: true }]);
+    // With the command and folder it showed, so only what you saw is allowed.
+    expect(sent).toEqual([{ type: "componentCommand", messageID: "c1", index: 0, command: "git diff --stat", folder: "/p/garden", approve: true }]);
     sent.length = 0;
     // Allowed but not run yet: asks for a run once, however often it is drawn.
     const idle = message({ id: "c2", displays: [{ ...display, status: "idle" }] });
     messageElement(idle, components);
     messageElement(idle, components);
-    expect(sent).toEqual([{ type: "componentCommand", messageID: "c2", index: 0 }]);
+    expect(sent).toEqual([{ type: "componentCommand", messageID: "c2", index: 0, command: "git diff --stat", folder: "/p/garden" }]);
+    sent.length = 0;
+    // Its command changed (say, about.md was edited): that one is asked for too.
+    messageElement(message({ id: "c2", displays: [{ ...display, command: "git log -1", status: "idle" }] }), components);
+    expect(sent).toEqual([{ type: "componentCommand", messageID: "c2", index: 0, command: "git log -1", folder: "/p/garden" }]);
     sent.length = 0;
     // Done: the component with the output, and a refresh button that runs it again.
     const done = messageElement(message({ id: "c3", displays: [{ ...display, data: JSON.stringify(" 2 files changed"), status: "done", ranAt: "10:42" }] }), components);
     expect(done.querySelector<HTMLIFrameElement>(".component-frame")!.srcdoc).toContain("2 files changed");
     expect(done.querySelector(".command-when")?.textContent).toBe("Ran 10:42");
     done.querySelector<HTMLButtonElement>(".command-refresh")!.click();
-    expect(sent).toEqual([{ type: "componentCommand", messageID: "c3", index: 0, force: true }]);
+    expect(sent).toEqual([{ type: "componentCommand", messageID: "c3", index: 0, command: "git diff --stat", folder: "/p/garden", force: true }]);
     // Running again keeps the last output, with the button busy.
     const again = messageElement(message({ id: "c3", displays: [{ ...display, data: "[1]", status: "running" }] }), components);
     expect(again.querySelector(".component-frame")).not.toBeNull();

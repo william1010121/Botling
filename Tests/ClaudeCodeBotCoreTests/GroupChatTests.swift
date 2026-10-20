@@ -143,6 +143,8 @@ struct GroupChatTests {
         #expect(chat.messages.first { $0.id == question.id }?.answer == "Like this")
         let kept = try FileManager.default.contentsOfDirectory(atPath: chat.profile.workingDirectory.appending(path: "attachments").path)
         #expect(kept.contains { $0.hasSuffix("-sketch.png") })
+        // Your line keeps the picture, for you to see and for the others reading the chat.
+        #expect(chat.messages.contains { $0.role == .user && $0.attachments?.contains { $0.url.lastPathComponent.hasSuffix("-sketch.png") } == true })
     }
 
     @Test func groupsAreKeptAcrossRestartsAndCanBeChangedAndDeleted() throws {
