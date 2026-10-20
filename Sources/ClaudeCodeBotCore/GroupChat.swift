@@ -326,6 +326,9 @@ extension Workspace {
             rule = "Answer only if the user's newest line is about your own work and they would want your answer here; greetings, thanks and general questions are \(desk). Work handed to you reaches you separately: do not do it here. Otherwise reply with exactly PASS: only that word."
         }
         let tags = addressed || isMain || ask != nil ? "You may use the usual tags (<choices>, <team>, …)." : "Do not use tags here."
+        // Components the user's newest line names with @.
+        let newestLine = transcript.last { $0.id == newest && $0.role == .user }?.text ?? ""
+        let named = components.mentionNote(for: newestLine).map { "\n" + $0 } ?? ""
         let company = others.isEmpty ? "the user" : "the user and the bots \(others.joined(separator: ", "))"
         return """
         (App: Group chat \(Self.quoteName(group.name)). In it are \(company); you are \(Self.quoteName(member.name)). Your reply is shown in the group chat, not in your own chat with the user.)
@@ -333,7 +336,7 @@ extension Workspace {
         <<<
         \(lines.isEmpty ? "(nothing yet)" : lines.joined(separator: "\n"))
         >>>
-        \(rule) Keep it to 1–3 sentences, in the language of the user's lines. \(tags)
+        \(rule) Keep it to 1–3 sentences, in the language of the user's lines. \(tags)\(named)
         """
     }
 

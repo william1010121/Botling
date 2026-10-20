@@ -4,7 +4,8 @@ import type { ChoiceView, ComponentInfo } from "./types";
 
 /**
  * A component template inside its own iframe, so one template cannot break another or the chat.
- * The template sees `window.ccb` (data, answer, choose, send) as before; the frame reports its
+ * The template sees `window.ccb` (data, answer, choose, send, and open(url, label) to show a
+ * page or file full-size, as a link chip does) as before; the frame reports its
  * height and answers to this page, which passes answers on to Swift.
  */
 export function componentPage(template: string, data: string): string {
@@ -18,7 +19,8 @@ window.ccb = {
     else parent.postMessage({ccb: 'answer', text: String(value)}, '*');
   },
   choose(index) { this.answer(Number(index)); },
-  send(text) { this.answer(String(text)); }
+  send(text) { this.answer(String(text)); },
+  open(url, label) { parent.postMessage({ccb: 'open', url: String(url), label: label == null ? '' : String(label)}, '*'); }
 };
 // Templates written while the app was called Deck call deck.answer(...).
 window.deck = window.ccb;
@@ -49,7 +51,7 @@ const frameHeights = new Map<string, number>();
 // Frames are found by their window when they speak, so a message sent before the frame's own
 // load event is not lost.
 window.addEventListener("message", (event) => {
-  const message = event.data as { ccb?: string; height?: number; index?: number; text?: string };
+  const message = event.data as { ccb?: string; height?: number; index?: number; text?: string; url?: string; label?: string };
   if (!message?.ccb) return;
   const frame = [...document.querySelectorAll<ComponentFrame>("iframe.component-frame")]
     .find((candidate) => candidate.contentWindow === event.source);
@@ -60,6 +62,9 @@ window.addEventListener("message", (event) => {
   } else if (message.ccb === "answer" && frame.ccbAnswer) {
     if (typeof message.index === "number") frame.ccbAnswer({ index: message.index });
     else if (typeof message.text === "string" && message.text.trim() !== "") frame.ccbAnswer({ text: message.text });
+  } else if (message.ccb === "open" && typeof message.url === "string" && message.url !== "") {
+    // Opened full-size the way a link chip is: a file in a window of its own.
+    post({ type: "openURL", url: message.url, label: typeof message.label === "string" ? message.label : "" });
   }
 });
 

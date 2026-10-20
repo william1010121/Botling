@@ -4,6 +4,17 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+### Added
+
+- **Result pages show in the chat.** A new component, 「網頁預覽卡片」, draws a one-page HTML
+  result as a small live preview with its title and a button to open it full-size in its own
+  window. Links to pages in an `artifacts` folder (results from teams and bots) become such cards
+  by themselves; bots can also show one with `<show name="網頁預覽卡片">{"path": …}</show>`.
+- **@ a component.** Type @ in the input box to pick one of the chat's components (after the bots
+  of a group chat); the bot is told you mean that component and how it is used.
+
 ## 1.4.0
 
 ### Added

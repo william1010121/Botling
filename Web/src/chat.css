@@ -88,6 +88,9 @@ button { font: inherit; color: inherit; }
   color: var(--text); font-size: 14px; text-align: left; cursor: pointer;
 }
 .mention-list button.active, .mention-list button:hover { background: #2B3B5C; }
+.mention-list button { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.mention-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-kind { flex: none; font-size: 11px; color: var(--muted); padding: 1px 6px; border: 1px solid #3A3A42; border-radius: 6px; }
 .composer { position: relative; }
 .user-body { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 460px; min-width: 0; }
 .user-bubble { background: var(--user-bubble); padding: 10px 16px; }

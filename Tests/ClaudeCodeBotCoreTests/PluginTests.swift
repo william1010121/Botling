@@ -134,7 +134,7 @@ struct PluginTests {
         #expect(workspace.components.folder.standardizedFileURL == folder.standardizedFileURL)
         #expect(!FileManager.default.fileExists(atPath: ccb.appending(path: "components").path))
         #expect(workspace.plugins.plugin("ccb-components") != nil)
-        #expect(workspace.components.names == ["bar", "choices", "meter"])
+        #expect(workspace.components.names == ["bar", "choices", "meter", PagePreview.component])
         #expect(workspace.components.template("bar") == "<div>bar</div>")
         #expect(workspace.components.catalog().contains("meter: Progress bar"))
     }

@@ -22,10 +22,13 @@ export class Composer {
   /** Plugins see key presses first; returning true means a plugin handled it. */
   onKey: (event: KeyboardEvent) => boolean = () => false;
   private popover: HTMLElement | null = null;
-  /** Names that can be @-mentioned here, and the list offering them as you type. */
-  private mentions: string[] = [];
+  /**
+   * What can be @-mentioned here: the bots of a group chat, then the chat's components (the bot
+   * is told you mean that component). The list offers them as you type.
+   */
+  private mentions: Mention[] = [];
   private readonly mentionList: HTMLElement;
-  private mentionMatches: string[] = [];
+  private mentionMatches: Mention[] = [];
   private mentionActive = 0;
   /** Where the "@…" being typed starts. */
   private mentionFrom = -1;
@@ -144,22 +147,31 @@ export class Composer {
     // Like the app: an @ right after Chinese text counts; one inside a word (a@b) does not.
     const match = this.mentions.length ? /(?:^|[^A-Za-z0-9_])@([^@\n]{0,40})$/.exec(before) : null;
     const query = match ? match[1].toLowerCase() : null;
-    const names = [...new Set(this.mentions)];
     // A name typed in full needs no list (Return then sends).
-    const complete = query !== null && names.some((name) => name.toLowerCase() === query);
-    this.mentionMatches = query === null || complete ? [] : names.filter((name) => name.toLowerCase().startsWith(query)).slice(0, 6);
+    const complete = query !== null && this.mentions.some((mention) => mention.name.toLowerCase() === query);
+    this.mentionMatches = query === null || complete ? [] : this.mentions.filter((mention) => mention.name.toLowerCase().startsWith(query)).slice(0, 8);
     this.mentionFrom = match ? head - match[1].length - 1 : -1;
     this.mentionActive = Math.min(this.mentionActive, Math.max(0, this.mentionMatches.length - 1));
     this.mentionList.hidden = this.mentionMatches.length === 0;
     this.mentionList.innerHTML = "";
-    this.mentionMatches.forEach((name, index) => {
+    this.mentionMatches.forEach((mention, index) => {
       const option = document.createElement("button");
       option.setAttribute("role", "option");
       option.className = index === this.mentionActive ? "active" : "";
-      option.textContent = "@" + name;
+      const label = document.createElement("span");
+      label.className = "mention-name";
+      label.textContent = "@" + mention.name;
+      option.append(label);
+      if (mention.kind === "component") {
+        const kind = document.createElement("span");
+        kind.className = "mention-kind";
+        kind.textContent = "組件";
+        option.append(kind);
+        option.setAttribute("aria-label", `@${mention.name}, component`);
+      }
       option.addEventListener("mousedown", (event) => {
         event.preventDefault();
-        this.pickMention(name);
+        this.pickMention(mention.name);
       });
       this.mentionList.append(option);
     });
@@ -175,7 +187,7 @@ export class Composer {
       this.mentionActive = (this.mentionActive + step + this.mentionMatches.length) % this.mentionMatches.length;
       this.refreshMentions();
     } else if (event.key === "Enter" || event.key === "Tab") {
-      this.pickMention(this.mentionMatches[this.mentionActive]);
+      this.pickMention(this.mentionMatches[this.mentionActive].name);
     } else if (event.key === "Escape") {
       this.mentionMatches = [];
       this.mentionList.hidden = true;
@@ -200,8 +212,8 @@ export class Composer {
   }
 
   update(state: ChatState): void {
-    const mentions = state.mentions ?? [];
-    if (mentions.join("\n") !== this.mentions.join("\n")) {
+    const mentions = mentionsOf(state);
+    if (JSON.stringify(mentions) !== JSON.stringify(this.mentions)) {
       this.mentions = mentions;
       this.refreshMentions();
     }
@@ -256,6 +268,26 @@ export class Composer {
     for (const file of files) sendFile(file);
     return true;
   }
+}
+
+/** Something that can follow @: a bot of the group chat, or a component. */
+interface Mention {
+  name: string;
+  kind: "bot" | "component";
+}
+
+/** The group's bots first, then components; each name once (a bot's name wins). */
+function mentionsOf(state: ChatState): Mention[] {
+  const seen = new Set<string>();
+  const list: Mention[] = [];
+  const add = (name: string, kind: Mention["kind"]) => {
+    if (!name || seen.has(name.toLowerCase())) return;
+    seen.add(name.toLowerCase());
+    list.push({ name, kind });
+  };
+  for (const name of state.mentions ?? []) add(name, "bot");
+  for (const name of state.componentMentions ?? []) add(name, "component");
+  return list;
 }
 
 /** Reads a file in the page and hands it to Swift, which saves it and attaches it. */

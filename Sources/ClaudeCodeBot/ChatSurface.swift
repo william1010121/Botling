@@ -26,6 +26,8 @@ struct ChatSurface: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "ccb")
         // Attachments and result pictures are local files anywhere on disk.
         configuration.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
+        // Result pages shown in 「網頁預覽卡片」 cards (their frames cannot open file: URLs).
+        configuration.setURLSchemeHandler(PreviewSchemeHandler.shared, forURLScheme: PagePreview.scheme)
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
         view.navigationDelegate = context.coordinator
@@ -247,6 +249,25 @@ struct ChatSurface: NSViewRepresentable {
             return (try? data.write(to: url)) == nil ? nil : url
         }
     }
+}
+
+/// Serves `ccb-preview:` requests: the result pages a preview card shows, and the files beside
+/// them in an `artifacts` folder. Anything else is refused (see `PagePreview.file(forPreview:)`).
+final class PreviewSchemeHandler: NSObject, WKURLSchemeHandler {
+    static let shared = PreviewSchemeHandler()
+
+    func webView(_ webView: WKWebView, start task: any WKURLSchemeTask) {
+        guard let url = task.request.url, let answer = PagePreview.response(for: url) else {
+            task.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+        let response = URLResponse(url: url, mimeType: answer.mimeType, expectedContentLength: answer.data.count, textEncodingName: answer.encoding)
+        task.didReceive(response)
+        task.didReceive(answer.data)
+        task.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop task: any WKURLSchemeTask) {}
 }
 
 /// The shape avatars as PNG data URLs, for the web page.

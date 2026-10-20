@@ -38,6 +38,8 @@ export interface MessageView {
   speaker?: string | null;
   /** What the bot did on the way to this reply. */
   steps?: StepView[] | null;
+  /** Result pages it links to, drawn as 「網頁預覽卡片」 cards under it. */
+  previews?: { name: string; data: string }[] | null;
 }
 
 /** One line of work: a tool call, words between calls, or a subagent. */
@@ -77,6 +79,8 @@ export interface ChatState {
   components: Record<string, ComponentInfo>;
   /** Names you can @ in this chat (the group chat), to complete as you type. */
   mentions?: string[];
+  /** Components you can @ (picked, the bot is told you mean that component). */
+  componentMentions?: string[];
   /** What it is doing right now, while it works. */
   live?: StepView[];
   /** Set while you watch one of its subagents: the page has no input box then. */

@@ -91,7 +91,7 @@ class Chat {
     let previous: Element | null = null;
     for (const message of state.messages) {
       // A stamp is part of the row it heads.
-      const key = JSON.stringify([message, message.choices || message.display ? state.components : null]);
+      const key = JSON.stringify([message, message.choices || message.display || message.previews ? state.components : null]);
       let entry = this.drawn.get(message.id);
       if (!entry || entry.key !== key) {
         const element = this.render(message, state);
