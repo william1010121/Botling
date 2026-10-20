@@ -146,8 +146,11 @@ public struct ChatPayload: Encodable, Equatable {
     public struct Pin: Encodable, Equatable {
         var id: String
         var name: String
-        /// One line for its chip, from its data.
+        /// One line from its data: its chip's tooltip.
         var headline: String
+        /// What its chip shows beside its icon: what the component set (`ccb.setStatus`), else
+        /// `headline` cut short; its command's state when that matters.
+        var chip: PinStatus
         var size: String
         var refresh: String
         var minutes: Int
@@ -190,6 +193,10 @@ public struct ChatPayload: Encodable, Equatable {
         var hasPrevious: Bool
         /// The Board sizes it has a layout for ("2x2", …): its about.md's `Sizes:` line.
         var sizes: [String] = [PinnedComponent.Size.large.rawValue]
+        /// Its pin chip's icon (about.md's `Icon:`): an SF Symbol name or an emoji.
+        var icon: String? = nil
+        /// An SF Symbol `icon` drawn as a PNG data URL (the page cannot draw symbols itself).
+        var iconImage: String? = nil
     }
 
     var botID: String
@@ -342,13 +349,16 @@ public struct ChatPayload: Encodable, Equatable {
         var components: [String: Component] = [:]
         for name in library?.names ?? [] {
             guard let library, let template = library.template(name) else { continue }
+            let icon = library.icon(of: name)
             components[name] = Component(
                 template: template,
                 version: library.versions[name, default: 0],
                 working: library.working[name] != nil,
                 updated: library.updated.contains(name),
                 hasPrevious: library.hasPrevious(name),
-                sizes: library.sizes(of: name).map(\.rawValue)
+                sizes: library.sizes(of: name).map(\.rawValue),
+                icon: icon,
+                iconImage: icon.flatMap(ComponentIcon.symbolImage)
             )
         }
         return ChatPayload(
@@ -472,7 +482,8 @@ public struct ChatPayload: Encodable, Equatable {
         case ComponentCommands.Status.running.rawValue where pin.data == "null": "Running…"
         default: Pins.headline(shown.status == nil ? pin.data : shown.data)
         }
-        return Pin(id: pin.id.uuidString, name: pin.name, headline: headline, size: pin.size.rawValue, refresh: pin.refresh.rawValue, minutes: pin.minutes, display: shown)
+        let chip = Pins.chip(status: pin.status, headline: headline, command: shown.status.flatMap(ComponentCommands.Status.init(rawValue:)), hasData: pin.data != "null")
+        return Pin(id: pin.id.uuidString, name: pin.name, headline: headline, chip: chip, size: pin.size.rawValue, refresh: pin.refresh.rawValue, minutes: pin.minutes, display: shown)
     }
 
     /// The picker's list: components this bot drew (newest use first), then its own others (the

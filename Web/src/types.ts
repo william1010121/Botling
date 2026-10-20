@@ -137,12 +137,20 @@ export type PinRefresh = "shown" | "interval" | "manual";
 /** A Board card's size in square cells, columns × rows (like a home-screen widget). */
 export type PinSize = "1x1" | "2x1" | "1x2" | "2x2" | "4x2";
 
+/** A pin chip's short value and tone (a dot on its icon unless neutral). */
+export interface ChipStatus {
+  text: string;
+  tone: "neutral" | "good" | "warning" | "bad";
+}
+
 /** A component pinned to the bot: a chip above the input box and a card on its Board. */
 export interface PinView {
   id: string;
   name: string;
-  /** One line for its chip. */
+  /** One line from its data: its chip's tooltip. */
   headline: string;
+  /** What its chip shows beside its icon (what the component set, else `headline` cut short). */
+  chip?: ChipStatus;
   size: PinSize;
   refresh: PinRefresh;
   minutes: number;
@@ -192,6 +200,10 @@ export interface ComponentInfo {
   hasPrevious: boolean;
   /** The Board sizes it has a layout for (its about.md's `Sizes:` line); 2×2 when missing. */
   sizes?: PinSize[];
+  /** Its pin chip's icon (about.md's `Icon:`): an SF Symbol name or an emoji. */
+  icon?: string | null;
+  /** An SF Symbol `icon` drawn as a PNG data URL, used as a mask so it takes the chip's colour. */
+  iconImage?: string | null;
 }
 
 export interface ChatState {
@@ -257,6 +269,7 @@ export type Action =
   | { type: "movePin"; id: string; to: number }
   | { type: "resizePin"; id: string; size: PinSize }
   | { type: "setPinRefresh"; id: string; refresh: PinRefresh; minutes: number }
+  | { type: "pinStatus"; id: string; text: string | null; tone: string | null }
   | { type: "makeComponent"; messageID: string; preview?: number }
   | { type: "openSpec"; id: string }
   | { type: "pressSpec"; id: string }

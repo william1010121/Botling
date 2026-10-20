@@ -30,6 +30,11 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./
  *   Board the component is the whole tile, like a home-screen widget: the tile gives the rounded
  *   corners and background, so it draws no frame of its own (no border, background or radius, at
  *   most ~12px padding) and fills the tile; the page itself is the tile's height and scrolls.
+ * - `setStatus({text, tone})`: what the chip of its pin (above the input box) shows beside its
+ *   icon: a short value ("26°", "3 new"; about 14 characters show) and a tone ("good", "warning",
+ *   "bad" or "neutral"), a dot on the icon unless neutral. Text alone is fine; `null` clears it (the
+ *   chip shows the summary of its data again). Only a pinned copy (its sheet or Board tile) sets
+ *   it, and the chip keeps the last one; elsewhere it does nothing.
  * The frame reports its height and answers to this page, which passes answers on to Swift.
  */
 export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2", surface: Surface = "chat"): string {
@@ -151,6 +156,12 @@ html[data-surface="board"] body{overflow-y:auto;scrollbar-width:none}html[data-s
       parent.postMessage({ccb: 'reviewWithCodex', scope: text(given.scope), commit: text(given.commit), spec: text(given.spec)}, '*');
       return Promise.resolve();
     },
+    setStatus(status) {
+      if (status == null) parent.postMessage({ccb: 'status', clear: true}, '*');
+      else if (typeof status === 'object') parent.postMessage({ccb: 'status', text: status.text == null ? '' : String(status.text), tone: status.tone == null ? null : String(status.tone)}, '*');
+      else parent.postMessage({ccb: 'status', text: String(status), tone: null}, '*');
+      return Promise.resolve();
+    },
     runDetail(values) {
       return new Promise((resolve, reject) => {
         const id = ++detailCount;
@@ -239,7 +250,19 @@ type AnswerHandler = (answer: ComponentAnswer) => void;
  * A component's frame: its answer handler, the use it is (`ccbKey`), and what it was drawn from
  * (`ccbDrawn`), so a redrawn message can keep a frame whose component did not change.
  */
-type ComponentFrame = HTMLIFrameElement & { ccbAnswer?: AnswerHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDetail?: DetailTarget | null; ccbSize?: PinSize };
+type ComponentFrame = HTMLIFrameElement & { ccbAnswer?: AnswerHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbPin?: string | null };
+
+/** Marks the component frames in `element` as pin `id`'s: their `ccb.setStatus` sets its chip. */
+export function markPinFrames(element: HTMLElement | null, id: string): void {
+  for (const frame of element?.querySelectorAll<ComponentFrame>("iframe.component-frame") ?? []) frame.ccbPin = id;
+}
+
+/** A pinned frame's `ccb.setStatus(...)` as the action Swift gets: text and tone as strings, or cleared. */
+export function pinStatusAction(id: string, message: { clear?: unknown; text?: unknown; tone?: unknown }): Action {
+  if (message.clear) return { type: "pinStatus", id, text: null, tone: null };
+  const text = typeof message.text === "string" ? message.text : typeof message.text === "number" ? String(message.text) : "";
+  return { type: "pinStatus", id, text, tone: typeof message.tone === "string" && message.tone !== "" ? message.tone : null };
+}
 
 /** Where a frame's `ccb.runDetail` goes: its component, and the folder its card showed. */
 export interface DetailTarget {
@@ -330,6 +353,9 @@ window.addEventListener("message", (event) => {
   } else if (message.ccb === "reviewWithCodex") {
     // Passed on as strings or null; Swift checks them against the bot's repository.
     post(codexReviewAction(message));
+  } else if (message.ccb === "status") {
+    // Only a pinned copy has a chip to set.
+    if (frame.ccbPin) post(pinStatusAction(frame.ccbPin, message as { clear?: unknown; text?: unknown; tone?: unknown }));
   } else if (message.ccb === "runDetail" && event.source) {
     runDetail(frame, event.source, message.id, message.values);
   }

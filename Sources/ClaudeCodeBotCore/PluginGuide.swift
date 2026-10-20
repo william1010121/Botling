@@ -137,6 +137,11 @@ enum PluginGuide {
           the top-right corner on hover. There `ccb.surface` is "board" and `<html data-surface="board">` is set (in the chat: "chat"), so
           drop your own card frame: no border, no background (transparent, or the tile's), no border-radius, no outer padding beyond about
           12px, and fill the tile, e.g. `html[data-surface="board"] .card { border: 0; background: none; border-radius: 0; padding: 12px; height: 100%; }`.
+          Pin chip: a pinned component also shows as a small chip above the input box, an icon with a short status (its name in the tooltip).
+          about.md's `Icon: chart.pie.fill` (an SF Symbol name) or `Icon: 📊` (one emoji) gives the icon (missing: a generic one).
+          `ccb.setStatus({ text: "3 new", tone: "good" })` sets the status: a short value (about 14 characters show) and a tone, "good", "warning",
+          "bad" or "neutral" (a coloured dot on the icon unless neutral); text alone is fine, `ccb.setStatus(null)` clears it. Without it the chip
+          shows the start of a summary of the data. Only a pinned copy (its sheet or Board tile) sets the chip, which keeps the last status.
         - about.md: usage notes for the bots. The first line says in one sentence what it is, followed by the data format (with an example JSON) and what the bot receives when the user answers.
 
         ## Check and release

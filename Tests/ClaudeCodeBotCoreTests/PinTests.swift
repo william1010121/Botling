@@ -130,6 +130,99 @@ struct PinTests {
         #expect(Pins.headline(String(repeating: "x", count: 100), limit: 10) == "xxxxxxxxx…")
     }
 
+    // MARK: Chip icon and status
+
+    @Test func aboutMdGivesAChipIcon() throws {
+        #expect(ComponentLibrary.icon(inAbout: "Commits.\nIcon: chart.pie.fill") == "chart.pie.fill")
+        #expect(ComponentLibrary.icon(inAbout: "- Icon: `📊`") == "📊")
+        #expect(ComponentLibrary.icon(inAbout: "Icon: 👩‍💻") == "👩‍💻")
+        // Not a symbol name nor one or two glyphs: none, and the chip uses its generic icon.
+        #expect(ComponentLibrary.icon(inAbout: "Icon: a pie chart please") == nil)
+        #expect(ComponentLibrary.icon(inAbout: "Icon: <svg>") == nil)
+        #expect(ComponentLibrary.icon(inAbout: "Commits.\nCommand: git log") == nil)
+        #expect(ComponentIcon.isSymbolName("chart.pie.fill"))
+        #expect(!ComponentIcon.isSymbolName("📊"))
+
+        // The page hears it, and an SF Symbol drawn as a picture the web view can show.
+        let workspace = makeWorkspace()
+        try addComponent("pie", to: workspace)
+        try "Pie.\nIcon: chart.pie.fill".write(to: workspace.components.folder.appending(path: "pie/about.md"), atomically: true, encoding: .utf8)
+        try addComponent("weather", to: workspace)
+        try "Weather.\nIcon: ⛅️".write(to: workspace.components.folder.appending(path: "weather/about.md"), atomically: true, encoding: .utf8)
+        try addComponent("plain", to: workspace)
+        let components = try #require(try payload(workspace)["components"] as? [String: [String: Any]])
+        #expect(components["pie"]?["icon"] as? String == "chart.pie.fill")
+        #expect((components["pie"]?["iconImage"] as? String)?.hasPrefix("data:image/png;base64,") == true)
+        #expect(components["weather"]?["icon"] as? String == "⛅️")
+        #expect(components["weather"]?["iconImage"] == nil)
+        #expect(components["plain"]?["icon"] == nil)
+        // A name that is no SF Symbol draws nothing.
+        #expect(ComponentIcon.symbolImage("no.such.symbol.anywhere") == nil)
+    }
+
+    @Test func aComponentSetsItsChipsStatus() throws {
+        let workspace = makeWorkspace()
+        try addComponent("weather", to: workspace)
+        let bot = workspace.mainBot
+        var message = ChatMessage(role: .bot, text: "")
+        message.displays = [ComponentInstance(name: "weather", data: #"{"city":"台北","condition":"多雲 with a long tail"}"#)]
+        bot.post(message, unread: false)
+        let pin = try #require(workspace.pin(messageID: message.id, index: 0, in: bot))
+        func chip() throws -> [String: Any] {
+            let pins = try #require(try payload(workspace)["pins"] as? [[String: Any]])
+            return try #require(pins.first?["chip"] as? [String: Any])
+        }
+        // Not set: the summary line, cut short, in a neutral tone; the whole line stays for the tooltip.
+        #expect(try chip()["text"] as? String == "台北 · 多雲 with…")
+        #expect(try chip()["tone"] as? String == "neutral")
+        let pins = try #require(try payload(workspace)["pins"] as? [[String: Any]])
+        #expect(pins.first?["headline"] as? String == "台北 · 多雲 with a long tail")
+
+        // ccb.setStatus({text, tone}) from the pinned component.
+        workspace.setPinStatus(pin.id, text: "26°", tone: "ok", in: bot)
+        #expect(bot.pins[0].status == PinStatus(text: "26°", tone: .good))
+        #expect(try chip()["text"] as? String == "26°")
+        #expect(try chip()["tone"] as? String == "good")
+        // Kept with the pin, for after a restart.
+        #expect(BotStore(directory: root.appending(path: "ccb/main")).loadPins()[0].status == PinStatus(text: "26°", tone: .good))
+
+        // Long text is cut, an unknown tone is neutral, a dot alone (no text) is fine.
+        workspace.setPinStatus(pin.id, text: "  far too long a status line\nsecond", tone: "purple", in: bot)
+        #expect(bot.pins[0].status == PinStatus(text: "far too long…", tone: .neutral))
+        workspace.setPinStatus(pin.id, text: "", tone: "error", in: bot)
+        #expect(try chip()["text"] as? String == "")
+        #expect(try chip()["tone"] as? String == "bad")
+        #expect(PinStatus.Tone(spelled: "warn") == .warning)
+        #expect(PinStatus.Tone(spelled: "Success") == .good)
+
+        // Cleared (ccb.setStatus(null)): back to the summary.
+        workspace.setPinStatus(pin.id, text: nil, tone: nil, in: bot)
+        #expect(bot.pins[0].status == nil)
+        #expect(try chip()["text"] as? String == "台北 · 多雲 with…")
+
+        // Older pins.json files without a status still load.
+        let json = #"[{"id":"8E1B5D2C-3C55-4C6E-9C0B-6D7B0B8E4A11","name":"x","data":"1"}]"#
+        #expect(try JSONDecoder().decode([PinnedComponent].self, from: Data(json.utf8))[0].status == nil)
+    }
+
+    @Test func aPinnedCommandsStateShowsOnItsChip() async throws {
+        let workspace = makeWorkspace()
+        try addComponent("stats", command: "exit 3", to: workspace)
+        let bot = workspace.mainBot
+        let pin = try #require(workspace.pin(named: "stats", in: bot))
+        func chip() throws -> [String: Any] {
+            let pins = try #require(try payload(workspace)["pins"] as? [[String: Any]])
+            return try #require(pins.first?["chip"] as? [String: Any])
+        }
+        #expect(try chip()["text"] as? String == "Allow?")
+        #expect(try chip()["tone"] as? String == "warning")
+        workspace.setPinStatus(pin.id, text: "3", tone: "good", in: bot)
+        await workspace.runPin(pin.id, in: bot, command: "exit 3", folder: workspace.pinFolder(for: bot).path, approve: true)
+        // A failed run shows over what the component last said.
+        #expect(try chip()["text"] as? String == "Failed")
+        #expect(try chip()["tone"] as? String == "bad")
+    }
+
     // MARK: Pinning
 
     @Test func pinningFromAChatCardKeepsWhatItShows() async throws {

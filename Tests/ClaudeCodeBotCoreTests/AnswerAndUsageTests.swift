@@ -202,6 +202,11 @@ struct AnswerAndUsageTests {
         #expect(ComponentPrompts.system.contains("<html data-surface=\"board\">"))
         #expect(ComponentPrompts.system.contains("no outer padding beyond about 12px"))
         #expect(PluginGuide.text(builtIns: "/x").contains("`<html data-surface=\"board\">`"))
+        // Pin chips: the about.md icon line and the call that sets the chip's status.
+        #expect(ComponentPrompts.system.contains("\"Icon: chart.pie.fill\""))
+        #expect(ComponentPrompts.system.contains("ccb.setStatus({text: \"3 new\", tone: \"good\"})"))
+        #expect(PluginGuide.text(builtIns: "/x").contains("`Icon: chart.pie.fill`"))
+        #expect(PluginGuide.text(builtIns: "/x").contains("ccb.setStatus({ text: \"3 new\", tone: \"good\" })"))
         #expect(ComponentDefaults.choicesTemplate.contains("ccb.answer(index)"))
     }
 }

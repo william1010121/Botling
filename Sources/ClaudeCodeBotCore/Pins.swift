@@ -66,12 +66,14 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
     public var minutes: Int
     /// Its card on the Board.
     public var size: Size
+    /// What its chip says, as the component last set it (`ccb.setStatus`); nil: its headline.
+    public var status: PinStatus?
 
     public static let defaultMinutes = 15
     /// A pin refreshed every so often runs at most this often.
     public static let minimumMinutes = 1
 
-    public init(id: UUID = UUID(), name: String, command: String? = nil, data: String, ranAt: Date? = nil, refresh: Refresh = .shown, minutes: Int = PinnedComponent.defaultMinutes, size: Size = .large) {
+    public init(id: UUID = UUID(), name: String, command: String? = nil, data: String, ranAt: Date? = nil, refresh: Refresh = .shown, minutes: Int = PinnedComponent.defaultMinutes, size: Size = .large, status: PinStatus? = nil) {
         self.id = id
         self.name = name
         self.command = command
@@ -80,9 +82,10 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         self.refresh = command == nil ? .manual : refresh
         self.minutes = max(Self.minimumMinutes, minutes)
         self.size = size
+        self.status = status
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size }
+    private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size, status }
 
     // A value this build does not know (a newer refresh mode or size) falls back, so the rest
     // of the file still loads. The old sizes S, M and L become 1×1, 2×2 and 4×2.
@@ -99,6 +102,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         self.minutes = max(Self.minimumMinutes, minutes ?? Self.defaultMinutes)
         let size: String? = try? c.decodeIfPresent(String.self, forKey: .size)
         self.size = size.flatMap(Size.init(spelled:)) ?? .large
+        status = try? c.decodeIfPresent(PinStatus.self, forKey: .status)
     }
 
     /// The card key its command's runs go under (`ComponentCommands`), apart from chat cards.
@@ -109,6 +113,51 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         guard refresh == .interval, command != nil else { return false }
         guard let lastRan else { return true }
         return now.timeIntervalSince(lastRan) >= TimeInterval(minutes * 60)
+    }
+}
+
+/// What a pin's chip shows beside its icon: a short value ("26°", "3 new", "719364f") and a tone,
+/// a coloured dot on the icon unless neutral. A component sets it with `ccb.setStatus({text,
+/// tone})`; without that the chip shows its headline cut short.
+public struct PinStatus: Codable, Equatable, Sendable {
+    public enum Tone: String, Codable, CaseIterable, Sendable {
+        case neutral, good, warning, bad
+
+        /// A tone as a component may spell it: also ok/success/green, warn/yellow,
+        /// error/danger/red/fail. Anything else is neutral.
+        public init(spelled text: String?) {
+            switch (text ?? "").trimmingCharacters(in: .whitespaces).lowercased() {
+            case "good", "ok", "success", "green", "done": self = .good
+            case "warning", "warn", "yellow", "orange", "pending": self = .warning
+            case "bad", "error", "danger", "red", "fail", "failed": self = .bad
+            default: self = .neutral
+            }
+        }
+
+        public init(from decoder: Decoder) throws {
+            self.init(spelled: try decoder.singleValueContainer().decode(String.self))
+        }
+    }
+
+    /// The most a chip's status shows, in characters (with the "…").
+    public static let limit = 14
+
+    public var text: String
+    public var tone: Tone
+
+    /// `text`'s first line, cut to `limit`.
+    public init(text: String, tone: Tone = .neutral) {
+        self.text = Pins.short(text)
+        self.tone = tone
+    }
+
+    private enum CodingKeys: String, CodingKey { case text, tone }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let text: String? = try? c.decodeIfPresent(String.self, forKey: .text)
+        let tone: Tone? = try? c.decodeIfPresent(Tone.self, forKey: .tone)
+        self.init(text: text ?? "", tone: tone ?? .neutral)
     }
 }
 
@@ -185,6 +234,25 @@ public enum Pins {
             return simple.prefix(2).joined(separator: " · ")
         default:
             return ""
+        }
+    }
+
+    /// `text`'s first line cut to a chip's few characters (`PinStatus.limit`).
+    public static func short(_ text: String) -> String {
+        let line = firstLine(text)
+        guard line.count > PinStatus.limit else { return line }
+        return String(line.prefix(PinStatus.limit - 1)).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
+    /// What a pin's chip shows: how its command stands when that matters (failed; waiting for
+    /// your OK or running for the first time, with nothing to show yet), else what the
+    /// component set, else `headline` cut short.
+    public static func chip(status: PinStatus?, headline: String, command: ComponentCommands.Status?, hasData: Bool) -> PinStatus {
+        switch command {
+        case .failed: PinStatus(text: "Failed", tone: .bad)
+        case .approve where !hasData: PinStatus(text: "Allow?", tone: .warning)
+        case .running where !hasData: PinStatus(text: "…")
+        default: status ?? PinStatus(text: headline)
         }
     }
 

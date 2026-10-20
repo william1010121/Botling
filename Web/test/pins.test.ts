@@ -25,7 +25,7 @@ function message(displays: DisplayView[]): MessageView {
 
 function pin(overrides: Partial<PinView> = {}): PinView {
   return {
-    id: "P1", name: "提交紀錄", headline: "f472a1c · Merge bot/sidebar-a · 20", size: "2x2", refresh: "shown", minutes: 15,
+    id: "P1", name: "提交紀錄", headline: "f472a1c · Merge bot/sidebar-a · 20", chip: { text: "f472a1c · Mer…", tone: "neutral" }, size: "2x2", refresh: "shown", minutes: 15,
     display: { name: "提交紀錄", data: "[]", command: "python3 git-log-json.py 20", folder: "/p", status: "done", ranAt: "10:42" },
     ...overrides,
   };
@@ -111,7 +111,8 @@ describe("the chips above the input box", () => {
     area.update(state({ pins: [pin(), pin({ id: "P2", name: "天氣卡片", headline: "台北 · 多雲", refresh: "manual", display: { name: "天氣卡片", data: "{}" } })] }));
     const chips = document.querySelectorAll<HTMLButtonElement>(".pin-chip:not(.add)");
     expect(chips).toHaveLength(2);
-    expect(chips[0].textContent).toContain("提交紀錄");
+    // The name is in its tooltip; the chip shows an icon and a short status.
+    expect(chips[0].title).toContain("提交紀錄");
     expect(chips[0].textContent).toContain("f472a1c");
     chips[0].click();
     const sheet = document.querySelector<HTMLElement>(".pin-sheet")!;
@@ -170,6 +171,90 @@ describe("the chips above the input box", () => {
     rows[1].click();
     expect(sent[0]).toMatchObject({ type: "pin", name: "天氣卡片", refresh: "manual" });
     expect(document.querySelector(".pin-picker")).toBeNull();
+  });
+});
+
+describe("chips as small status icons", () => {
+  const iconed: Record<string, ComponentInfo> = {
+    ...components,
+    提交紀錄: { ...components.提交紀錄, icon: "📜" },
+    天氣卡片: { ...components.天氣卡片, icon: "cloud.sun.fill", iconImage: "data:image/png;base64,AAAA" },
+  };
+
+  it("each chip is the component's icon with a short status; the full name and line in the tooltip", () => {
+    const area = setUp();
+    area.update(state({ components: iconed, pins: [
+      pin({ chip: { text: "719364f", tone: "neutral" } }),
+      pin({ id: "P2", name: "天氣卡片", headline: "台北 · 多雲", chip: { text: "26°", tone: "good" }, display: { name: "天氣卡片", data: "{}" } }),
+      pin({ id: "P3", name: "daily-chats-pie", headline: "ClaudeCodeBot · 3", chip: { text: "", tone: "bad" }, display: { name: "daily-chats-pie", data: "{}" } }),
+    ] }));
+    const chips = [...document.querySelectorAll<HTMLButtonElement>(".pin-chip:not(.add)")];
+    expect(chips).toHaveLength(3);
+    // No name on the chip itself.
+    expect(document.querySelector(".pin-chip-name")).toBeNull();
+    expect(chips.map((chip) => chip.querySelector(".pin-chip-status")?.textContent ?? null)).toEqual(["719364f", "26°", null]);
+    expect(chips[0].title).toBe("提交紀錄 — f472a1c · Merge bot/sidebar-a · 20");
+    expect(chips[0].getAttribute("aria-label")).toBe("提交紀錄: 719364f");
+    // An emoji icon as text, an SF Symbol as its picture tinted by the chip, else a generic icon.
+    expect(chips[0].querySelector(".pin-chip-icon")?.textContent).toBe("📜");
+    const symbol = chips[1].querySelector<HTMLElement>(".pin-chip-icon .pin-chip-symbol")!;
+    expect(symbol.style.maskImage || symbol.style.getPropertyValue("-webkit-mask-image")).toContain("data:image/png;base64,AAAA");
+    expect(chips[2].querySelector(".pin-chip-icon svg")).not.toBeNull();
+    // A tone other than neutral is a dot on the icon.
+    expect(chips.map((chip) => chip.dataset.tone)).toEqual(["neutral", "good", "bad"]);
+    expect(chips.map((chip) => !!chip.querySelector(".pin-chip-dot"))).toEqual([false, true, true]);
+  });
+
+  it("chips are compact: several fit on one row", () => {
+    const css = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    const rule = css.match(/\.pin-chip \{[^}]*\}/)?.[0] ?? "";
+    const px = (name: string) => Number(rule.match(new RegExp(`${name}: (\\d+)px`))?.[1]);
+    expect(px("max-width")).toBeLessThanOrEqual(140);
+    expect(px("height")).toBeLessThanOrEqual(28);
+  });
+
+  it("a pin without a chip status (an older app) falls back to its line", () => {
+    const area = setUp();
+    area.update(state({ pins: [pin({ chip: undefined })] }));
+    expect(document.querySelector(".pin-chip-status")?.textContent).toBe("f472a1c · Merge bot/sidebar-a · 20");
+  });
+
+  it("a pinned component's ccb.setStatus sets its chip; a chat card's is ignored", () => {
+    const area = setUp();
+    area.update(state({ pins: [pin()] }));
+    click(document.querySelector(".pin-chip"));
+    sent.length = 0;
+    const frame = document.querySelector<HTMLIFrameElement>(".pin-sheet .component-frame")!;
+    expect(frame.srcdoc).toContain("setStatus(");
+    const say = (data: unknown, source = frame.contentWindow) => window.dispatchEvent(new MessageEvent("message", { data, source }));
+    say({ ccb: "status", text: "3 new", tone: "good" });
+    say({ ccb: "status", text: 42, tone: null });
+    say({ ccb: "status", clear: true });
+    expect(sent).toEqual([
+      { type: "pinStatus", id: "P1", text: "3 new", tone: "good" },
+      { type: "pinStatus", id: "P1", text: "42", tone: null },
+      { type: "pinStatus", id: "P1", text: null, tone: null },
+    ]);
+    // The sheet keeps its frame when only the chip's status changes.
+    area.update(state({ pins: [pin({ chip: { text: "3 new", tone: "good" } })] }));
+    expect(document.querySelector(".pin-sheet .component-frame")).toBe(frame);
+
+    sent.length = 0;
+    const row = messageElement(message([{ name: "提交紀錄", data: "[]" }]), components);
+    document.body.append(row);
+    say({ ccb: "status", text: "x" }, row.querySelector<HTMLIFrameElement>(".component-frame")!.contentWindow);
+    expect(sent).toEqual([]);
+  });
+
+  it("a Board tile's ccb.setStatus sets its chip too, and keeps the tile's frame", () => {
+    const area = setUp();
+    area.update(state({ board: true, pins: [pin()] }));
+    sent.length = 0;
+    const frame = document.querySelector<HTMLIFrameElement>(".board-card .component-frame")!;
+    window.dispatchEvent(new MessageEvent("message", { data: { ccb: "status", text: "ok", tone: "good" }, source: frame.contentWindow }));
+    expect(sent).toEqual([{ type: "pinStatus", id: "P1", text: "ok", tone: "good" }]);
+    area.update(state({ board: true, pins: [pin({ chip: { text: "ok", tone: "good" } })] }));
+    expect(document.querySelector(".board-card .component-frame")).toBe(frame);
   });
 });
 

@@ -281,6 +281,11 @@ struct ChatSurface: NSViewRepresentable {
                 if let pinID = id("id"), let size = (body["size"] as? String).flatMap(PinnedComponent.Size.init(spelled:)) {
                     workspace.resizePin(pinID, to: size, in: bot)
                 }
+            case "pinStatus":
+                // A pinned component's ccb.setStatus: its chip's short value and tone (text null: cleared).
+                if let pinID = id("id") {
+                    workspace.setPinStatus(pinID, text: body["text"] as? String, tone: body["tone"] as? String, in: bot)
+                }
             case "setPinRefresh":
                 if let pinID = id("id"), let refresh = (body["refresh"] as? String).flatMap(PinnedComponent.Refresh.init(rawValue:)) {
                     workspace.setPinRefresh(pinID, to: refresh, minutes: body["minutes"] as? Int, in: bot)

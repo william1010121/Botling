@@ -4,6 +4,21 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+### Added
+
+- **Pins above the input box are small status icons.** Each pinned component's chip is now its
+  icon with a short status beside it (a count, a temperature, a hash; about 14 characters) and a
+  coloured dot for its tone, with its name and whole summary line in the tooltip; chips are 28px
+  tall and at most 132px wide, so several fit on a row. A component gives its icon with an
+  about.md line `Icon: chart.pie.fill` (an SF Symbol, drawn by the app and tinted like the chip)
+  or `Icon: 📊`; without one the chip has a generic widget icon. A pinned copy (its sheet or Board
+  tile) sets its chip with `ccb.setStatus({text, tone})` (tone `good`, `warning`, `bad` or
+  `neutral`; `null` clears it), kept in pins.json; without it the chip shows its summary cut
+  short. A command waiting for your OK shows "Allow?", a failed one "Failed" in red.
+  ComponentPrompts (the component editor), PLUGINS.md and the Maintainer describe both.
+
 ## 1.9.0
 
 ### Added

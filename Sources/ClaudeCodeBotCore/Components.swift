@@ -197,6 +197,18 @@ public final class ComponentLibrary: ObservableObject {
         return sizes.isEmpty ? [.large] : sizes
     }
 
+    /// The icon of a component's chip when it is pinned, from an about.md line `Icon: chart.pie.fill`
+    /// (an SF Symbol name) or `Icon: 📊` (an emoji, one or two glyphs). Nil when it has none, or
+    /// the line is neither: the chip shows a generic icon.
+    public func icon(of name: String) -> String? {
+        Self.icon(inAbout: (try? String(contentsOf: aboutURL(name), encoding: .utf8)) ?? "")
+    }
+
+    static func icon(inAbout about: String) -> String? {
+        guard let icon = line(labelled: "icon:", inAbout: about) else { return nil }
+        return ComponentIcon.isSymbolName(icon) || ComponentIcon.isEmoji(icon) ? icon : nil
+    }
+
     /// The text after `label` on the first about.md line that starts with it (a list item too),
     /// without backticks around it.
     private static func line(labelled label: String, inAbout about: String) -> String? {
@@ -378,6 +390,7 @@ enum ComponentPrompts {
     - Data from a command: an about.md line "Command: git log --format=..." makes the app fill the component with what that command prints (run in the bot's folder once the user presses "Allow and run" on its card; JSON output is the data, other output one string; at most 1 MB, 60 seconds).
     - Details on demand: when the data would be too big to give all at once (each commit's whole diff, each file's contents), keep the Command's output small and add an about.md line "Detail command: git show --patch --stat {hash}". Then await ccb.runDetail({hash: "2aed630"}) (from a click) runs it with each {name} filled in, in the same folder, with the same limits, and resolves to its output (parsed when it is JSON, else the text); it rejects with an Error (show error.message) when the user has not allowed it yet, a value is missing or not allowed, or the command fails. Values may only hold letters, digits and . _ / - (up to 200, not starting with -); every {name} in the template needs one, and nothing else may be passed. It is allowed together with the Command on the card, so changing the Detail command line asks the user again. Cache what you fetched; show a spinner while waiting.
     - Board sizes: a pinned component is a card on the bot's Board, in square cells like a home-screen widget: 1x1 small, 2x1 wide, 1x2 tall, 2x2 large, 4x2 xlarge. An about.md line "Sizes: 1x1, 2x1, 2x2" names the sizes it has a layout for (without it: 2x2 only); the user picks one of those on the card. Each size needs its own layout, not the full view squeezed: small = the one key number or status, wide = a short row or list (2–3 items), tall = a vertical list, large = the full view, xlarge = the full view with room beside it. The size it is drawn at is ccb.size = {w, h, name} ("small", "wide", "tall", "large", "xlarge"), also <html data-size="2x1"> for CSS (html[data-size="1x1"] .detail {display:none}); ccb.onSize((size) => …) is called when the user resizes the card (it returns a function that stops it), so redraw then. In the chat it is drawn 2x2 (or its largest size). A card is fixed in height: a cell is about 150–170px square and the component is the whole tile, like a home-screen widget (no header; the app's controls float over the top-right corner on hover), so keep each layout inside it. On the Board ccb.surface = "board" and <html data-surface="board"> (in the chat "chat"): there draw no card frame of your own, since the tile already has the rounded corners and background: no border, no background (transparent, or the tile's), no border-radius, no outer padding beyond about 12px, and fill the tile (html[data-surface="board"] .card {border:0;background:none;border-radius:0;padding:12px;height:100%;box-sizing:border-box}); leave the top-right corner free of key content.
+    - Pin chip: a pinned component also shows as a small chip above the input box: an icon and a short status, its name in the tooltip. An about.md line "Icon: chart.pie.fill" (an SF Symbol name) or "Icon: 📊" (one emoji) gives the icon (without it: a generic one). ccb.setStatus({text: "3 new", tone: "good"}) sets the status: text is a short value (about 14 characters show: a count, a temperature, a hash), tone is "good", "warning", "bad" or "neutral" (a coloured dot on the icon unless neutral); text alone is fine, and ccb.setStatus(null) clears it. Without it the chip shows the start of a summary of the data. Call it each time you draw, from what the data says; only a pinned copy (its sheet or Board tile) sets the chip, which keeps the last status, and elsewhere it does nothing.
     - Pictures shown: when the data names a local picture by file path, set img.src = ccb.image(path) (a file: URL does not load in the frame); ccb.image returns "" for a file that is not there.
     - In choice-style data, chosen is the index already picked and answer is a typed answer; if either is not null the question is answered, so show the answer and disable the buttons.
     - Text color #EDEDF0, secondary text #A0A0A8, accent blue #4C8DFF, recommended orange #F7C27F; font -apple-system, "PingFang TC", sans-serif.

@@ -1,6 +1,6 @@
 import { post } from "./bridge";
-import { commandCard, componentElement, componentSizes, detailTarget, resizeFrame, sizeInfo } from "./components";
-import type { ChatState, ComponentInfo, DisplayView, PinChoiceView, PinRefresh, PinSize, PinView } from "./types";
+import { commandCard, componentElement, componentSizes, detailTarget, markPinFrames, resizeFrame, sizeInfo } from "./components";
+import type { ChatState, ChipStatus, ComponentInfo, DisplayView, PinChoiceView, PinRefresh, PinSize, PinView } from "./types";
 
 /**
  * Components pinned to a bot. In the chat a component shows pin / ↻ / ⋯ on hover; pinning asks
@@ -20,6 +20,8 @@ const icons = {
   more: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg>`,
   plus: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
   grip: `<svg width="12" height="14" viewBox="0 0 12 14" fill="currentColor" aria-hidden="true"><circle cx="4" cy="3" r="1.3"/><circle cx="8" cy="3" r="1.3"/><circle cx="4" cy="7" r="1.3"/><circle cx="8" cy="7" r="1.3"/><circle cx="4" cy="11" r="1.3"/><circle cx="8" cy="11" r="1.3"/></svg>`,
+  /** A pin chip whose component names no icon: a small widget. */
+  component: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/></svg>`,
   close: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>`,
 };
 
@@ -394,7 +396,12 @@ function openPicker(): void {
  */
 function pinBody(pin: PinView, size?: PinSize): HTMLElement {
   const key = size ? `board-${pin.id}` : `pin-${pin.id}`;
-  const draw = () => componentElement(pin.name, current.components[pin.name], pin.display.data, null, key, pin.display.images, detailTarget(pin.display), size, size ? "board" : "chat");
+  const draw = () => {
+    const drawn = componentElement(pin.name, current.components[pin.name], pin.display.data, null, key, pin.display.images, detailTarget(pin.display), size, size ? "board" : "chat");
+    // Its ccb.setStatus sets this pin's chip.
+    markPinFrames(drawn, pin.id);
+    return drawn;
+  };
   if (pin.display.command || pin.display.status) {
     return commandCard(pin.display, `pin:${pin.id}`, 0, draw, {
       bar: false,
@@ -455,6 +462,39 @@ function pinHeader(pin: PinView, className: string, extra: HTMLElement[] = [], s
 }
 
 // MARK: Chips, the sheet, the Board
+
+/**
+ * A chip's icon: the component's emoji, its SF Symbol (a picture Swift drew, used as a mask so it
+ * takes the chip's colour), or a generic one; with a dot in its tone unless neutral.
+ */
+function chipIcon(info: ComponentInfo | undefined, status: ChipStatus): HTMLElement {
+  const holder = document.createElement("span");
+  holder.className = "pin-chip-icon";
+  holder.setAttribute("aria-hidden", "true");
+  if (info?.iconImage) {
+    const symbol = document.createElement("span");
+    symbol.className = "pin-chip-symbol";
+    const mask = `url("${info.iconImage}")`;
+    symbol.style.setProperty("mask-image", mask);
+    symbol.style.setProperty("-webkit-mask-image", mask);
+    holder.append(symbol);
+  } else if (info?.icon && !/^[a-z0-9.]+$/.test(info.icon)) {
+    holder.textContent = info.icon;
+  } else {
+    holder.innerHTML = icons.component;
+  }
+  if (status.tone !== "neutral") {
+    const dot = document.createElement("span");
+    dot.className = "pin-chip-dot";
+    holder.append(dot);
+  }
+  return holder;
+}
+
+/** A pin as its sheet or tile draws it: what only its chip shows is left out, so a new chip status does not reload the frame. */
+function drawnPart(pin: PinView): PinView {
+  return { ...pin, headline: "", chip: undefined };
+}
 
 /** The Board's smallest cell and the gap between cells, in px (chat.css has the same gap). */
 const boardCell = 150;
@@ -547,27 +587,30 @@ export class PinArea {
   private drawDock(): void {
     const pins = this.enabled ? current.pins : [];
     this.dock.hidden = pins.length === 0;
-    const key = JSON.stringify([pins.map((p) => [p.id, p.name, p.headline, p.display.status]), this.openID]);
+    const icon = (p: PinView) => [current.components[p.name]?.icon ?? null, current.components[p.name]?.iconImage ?? null];
+    const key = JSON.stringify([pins.map((p) => [p.id, p.name, p.headline, p.chip ?? null, icon(p), p.display.status]), this.openID]);
     if (key === this.dockKey) return;
     this.dockKey = key;
     this.dock.innerHTML = "";
     pins.forEach((pin, index) => {
+      // A small status icon: the component's icon, a short value beside it and a dot for its
+      // tone; its name and whole line in the tooltip.
+      const status: ChipStatus = pin.chip ?? { text: pin.headline, tone: pin.display.status === "failed" ? "bad" : "neutral" };
       const chip = document.createElement("button");
       chip.className = "pin-chip" + (pin.id === this.openID ? " on" : "") + (pin.display.status === "failed" ? " failed" : "");
       chip.draggable = true;
       chip.dataset.id = pin.id;
+      chip.dataset.tone = status.tone;
       chip.setAttribute("aria-expanded", String(pin.id === this.openID));
-      const name = document.createElement("span");
-      name.className = "pin-chip-name";
-      name.textContent = pin.name;
-      chip.append(name);
-      if (pin.headline) {
-        const line = document.createElement("span");
-        line.className = "pin-chip-line";
-        line.textContent = pin.headline;
-        chip.append(line);
+      chip.append(chipIcon(current.components[pin.name], status));
+      if (status.text) {
+        const text = document.createElement("span");
+        text.className = "pin-chip-status";
+        text.textContent = status.text;
+        chip.append(text);
       }
-      chip.title = pin.headline ? `${pin.name}: ${pin.headline}` : pin.name;
+      chip.title = pin.headline ? `${pin.name} — ${pin.headline}` : pin.name;
+      chip.setAttribute("aria-label", status.text ? `${pin.name}: ${status.text}` : pin.name);
       chip.addEventListener("click", () => (this.openID === pin.id ? this.close() : this.open(pin.id)));
       chip.addEventListener("contextmenu", (event) => {
         event.preventDefault();
@@ -619,7 +662,7 @@ export class PinArea {
       return;
     }
     this.sheet.hidden = false;
-    const key = JSON.stringify([pin, current.components[pin.name] ?? null]);
+    const key = JSON.stringify([drawnPart(pin), current.components[pin.name] ?? null]);
     if (key === this.sheetKey) return;
     this.sheetKey = key;
     this.sheet.innerHTML = "";
@@ -663,7 +706,7 @@ export class PinArea {
     let previous: Element | null = null;
     pins.forEach((pin, index) => {
       // Its size is not part of it: a resized card keeps its frame and tells the component.
-      const key = JSON.stringify([{ ...pin, size: null }, current.components[pin.name] ?? null, index, pins.length]);
+      const key = JSON.stringify([{ ...drawnPart(pin), size: null }, current.components[pin.name] ?? null, index, pins.length]);
       let entry = this.cards.get(pin.id);
       if (!entry || entry.key !== key) {
         const element = this.card(pin, index);

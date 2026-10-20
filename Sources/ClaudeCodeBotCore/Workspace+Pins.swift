@@ -81,6 +81,15 @@ extension Workspace {
         }
     }
 
+    /// A pinned component's `ccb.setStatus({text, tone})`: what its chip shows beside its icon,
+    /// kept with the pin. Nil text clears it (the chip shows the pin's headline again).
+    public func setPinStatus(_ id: UUID, text: String?, tone: String?, in bot: Bot) {
+        bot.editPins { pins in
+            guard let at = pins.firstIndex(where: { $0.id == id }) else { return }
+            pins[at].status = text.map { PinStatus(text: $0, tone: PinStatus.Tone(spelled: tone)) }
+        }
+    }
+
     public func setPinRefresh(_ id: UUID, to refresh: PinnedComponent.Refresh, minutes: Int? = nil, in bot: Bot) {
         bot.editPins { pins in
             guard let at = pins.firstIndex(where: { $0.id == id }), pins[at].command != nil else { return }
