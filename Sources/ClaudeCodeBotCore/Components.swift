@@ -35,15 +35,13 @@ public final class ComponentLibrary: ObservableObject {
     @Published public private(set) var updated: Set<String> = []
     @Published public private(set) var names: [String] = []
 
-    /// At most this many components: at the limit Maintainer makes no new one and asks the user
-    /// which to delete first. Only new ones are held back; more than this already there all load.
+    /// At most this many components per bot (its own list, see `Bot.componentList`): at the limit
+    /// a bot gets no new one until the user picks one to take off its list. The library itself
+    /// has no cap.
     public static let limit = 20
 
-    /// There are `limit` components or more: no room for a new one.
-    public var isFull: Bool { names.count >= Self.limit }
-
-    /// "N / 20", how full the library is.
-    public var usage: String { "\(names.count) / \(Self.limit)" }
+    /// What every bot has from the start: the choices buttons and the result page preview card.
+    public static let builtIns = ["choices", PagePreview.component]
 
     /// Where new components are made: the ccb-components plugin.
     public let folder: URL
@@ -129,6 +127,16 @@ public final class ComponentLibrary: ObservableObject {
     public func catalog(of only: [String]) -> String {
         let wanted = Set(only)
         return catalog(names.filter(wanted.contains))
+    }
+
+    /// The first line of each of these components' about.md: what it is, in a sentence.
+    public func summaries(of only: [String]) -> String {
+        let wanted = Set(only)
+        return names.filter(wanted.contains).map { name in
+            let about = ((try? String(contentsOf: aboutURL(name), encoding: .utf8)) ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return "- \(name): " + (about.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? "")
+        }.joined(separator: "\n")
     }
 
     /// The components `text` names with /Name (the user picked one from the input box's list),

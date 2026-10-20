@@ -14,6 +14,20 @@ app and publishes it on GitHub Releases.
   (Waiting on you, Codex review, Results and Settled with a count), and the bot's settings at
   the bottom. Click an icon and that section pops out beside the strip; the chat does not move.
   The choice is remembered, and other views can fold it for a while without changing it.
+- **Each bot has its own components.** Every component sits on Maintainer's shelf (the shared
+  library, no longer capped); each bot has its own list of at most 20, kept in its `bot.json`.
+  A bot's wake-up briefing has the full usage only of its own components ("N / 20 yours") and
+  one line for each of the others, so it knows they exist. Asking with `<component name=…>`
+  now says which bot asked: one already in the library goes straight onto that bot's list;
+  otherwise Maintainer first looks for a suitable one (`<give-component bot=…>`), else builds
+  it, and the app adds it to the asker's list once it lands. A bot at 20 gets nothing new until
+  the user picks one to take off its list (`<take-component bot=…>`). A `<show>` of a library
+  component the bot lacks still draws, and adds it to the bot's list while there is room. The
+  usage card's delete button ("刪除組件：name") now takes the component off that bot's list
+  only; deleting it from the library is up to Maintainer. The / menu offers the bot's own
+  components first, then the library's, marked "library". On the first start existing bots
+  get the components they have used (by `component-usage.json` and the cards in their chat)
+  plus choices and 網頁預覽卡片.
 
 ## 1.8.0
 

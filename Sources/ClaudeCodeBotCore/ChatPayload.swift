@@ -142,6 +142,8 @@ public struct ChatPayload: Encodable, Equatable {
     /// What you can / (every chat you can type in): the app's commands, then components.
     var slashCommands: [SlashCommands.Command] = SlashCommands.all
     var slashComponents: [String] = []
+    /// The shared library's other components (not on this bot's own list), offered after its own.
+    var slashLibrary: [String] = []
     /// What it is doing right now, while it works.
     var live: [StepView]
     /// Set while you look at one of its subagents instead of the chat.
@@ -238,6 +240,12 @@ public struct ChatPayload: Encodable, Equatable {
                 preview: Bot.preview(of: $0)
             )
         }
+        // A bot's own components first in the / menu; a chat without a list (a group) has them all.
+        let names = library?.names ?? []
+        let slash: (own: [String], library: [String]) = bot.componentList.map { list in
+            let own = Set(list)
+            return (names.filter(own.contains), names.filter { !own.contains($0) })
+        } ?? (names, [])
         var components: [String: Component] = [:]
         for name in library?.names ?? [] {
             guard let library, let template = library.template(name) else { continue }
@@ -266,7 +274,8 @@ public struct ChatPayload: Encodable, Equatable {
             components: components,
             mentions: group?.names ?? callIn?.names ?? [],
             allMentions: group?.allNames ?? callIn?.allNames ?? [],
-            slashComponents: library?.names ?? [],
+            slashComponents: slash.own,
+            slashLibrary: slash.library,
             live: group == nil && bot.isWorking ? bot.liveSteps.map { stepView($0, in: bot) } : [],
             subagent: nil,
             feedback: feedback

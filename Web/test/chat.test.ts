@@ -625,6 +625,19 @@ describe("composer", () => {
     expect(list.hidden).toBe(false);
   });
 
+  it("offers the bot's own components first, then the shared library's, marked faintly", () => {
+    const composer = new Composer(document.body);
+    composer.update(state({ slashComponents: ["weather"], slashLibrary: ["wave", "weather", "wide"] } as Partial<ChatState>));
+    const list = document.querySelector<HTMLElement>(".mention-list")!;
+    composer.insert("/w");
+    const rows = [...list.querySelectorAll("button")];
+    expect(rows.map((b) => b.querySelector(".mention-name")?.textContent)).toEqual(["/weather", "/wave", "/wide"]);
+    expect(rows.map((b) => b.classList.contains("library"))).toEqual([false, true, true]);
+    expect(rows[1].querySelector(".mention-hint")?.textContent).toBe("library");
+    expect(rows[1].getAttribute("aria-label")).toBe("/wave, component in the shared library");
+    expect(rows[0].querySelector(".mention-hint")).toBeNull();
+  });
+
   it("shows the / list wide enough to read: whole names, descriptions wrap instead of being cut", async () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");

@@ -194,7 +194,8 @@ export class Composer {
           option.append(hint);
           option.title = mention.about;
         }
-        option.setAttribute("aria-label", `/${mention.name}, ${mention.kind}`);
+        option.setAttribute("aria-label", `/${mention.name}, ${mention.kind}${mention.library ? " in the shared library" : ""}`);
+        if (mention.library) option.classList.add("library");
       }
       option.addEventListener("mousedown", (event) => {
         event.preventDefault();
@@ -311,6 +312,8 @@ interface Mention {
   name: string;
   kind: "bot" | "command" | "component";
   about?: string;
+  /** A component on the shared library's shelf, not on this bot's own list. */
+  library?: boolean;
 }
 
 function sigil(mention: Mention): string {
@@ -333,11 +336,12 @@ function mentionsOf(names: string[] | undefined): Mention[] {
   return unique((names ?? []).map((name) => ({ name, kind: "bot" })));
 }
 
-/** The app's commands first, then the components. */
+/** The app's commands first, then the bot's own components, then the rest of the library. */
 function slashItemsOf(state: ChatState): Mention[] {
   return unique([
     ...(state.slashCommands ?? []).map(({ name, about }): Mention => ({ name, kind: "command", about })),
     ...(state.slashComponents ?? []).map((name): Mention => ({ name, kind: "component" })),
+    ...(state.slashLibrary ?? []).map((name): Mention => ({ name, kind: "component", about: "library", library: true })),
   ]);
 }
 
