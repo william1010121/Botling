@@ -2,7 +2,7 @@ import AppKit
 import ClaudeCodeBotCore
 import SwiftUI
 
-/// The gear under the chat list: today's cost, the two switches people change most, and the way
+/// The gear under the chat list: today's tokens and the subscription limits, the two switches people change most, and the way
 /// into the settings window at the section a row is about.
 struct SettingsPopover: View {
     @ObservedObject var workspace: Workspace
@@ -14,17 +14,20 @@ struct SettingsPopover: View {
         let spending = workspace.spending
         let isToday = spending.day == Spending.today()
         VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
                 Text("Today").font(.system(size: 12)).foregroundStyle(Theme.faint)
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(Workspace.dollars(isToday ? spending.spent : 0))
-                        .font(.system(size: 15, weight: .semibold))
+                Spacer()
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(Workspace.tokenCount(isToday ? spending.tokens.total : 0))
+                        .font(.system(size: 20, weight: .semibold))
                         .monospacedDigit()
-                    Text("\(Workspace.tokenCount(isToday ? spending.tokens.total : 0)) tokens")
+                    Text("tokens")
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.muted)
-                        .monospacedDigit()
                 }
+            }
+            if !workspace.rateLimits.isEmpty {
+                RateLimitCards(limits: workspace.rateLimits)
             }
             divider
             SettingSwitch("Auto-approve safe actions", isOn: Binding(
@@ -62,6 +65,65 @@ struct SettingsPopover: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(HoverRowStyle())
+    }
+}
+
+/// The subscription's two limits, side by side: a ring of how much is used and when it starts
+/// over, with an "as of" note when the last reading is old (it comes with bots' turns only).
+struct RateLimitCards: View {
+    let limits: RateLimits
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let now = context.date
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    card("5 hours", limits.fiveHour, now: now) { RateLimitText.countdown($0, now: now) }
+                    card("Week", limits.week, now: now) { RateLimitText.resetDay($0, now: now) }
+                }
+                if let since = limits.staleSince(now: now) {
+                    Text(RateLimitText.asOf(since, now: now))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.faint)
+                }
+            }
+        }
+    }
+
+    private func card(_ title: String, _ window: RateLimitWindow?, now: Date, reset: (RateLimitWindow) -> String) -> some View {
+        let gone = window.map { $0.hasReset(at: now) } ?? true
+        let used = gone ? 0 : window?.used ?? 0
+        return HStack(spacing: 8) {
+            ZStack {
+                Circle().stroke(Theme.chip, lineWidth: 5)
+                Circle()
+                    .trim(from: 0, to: used)
+                    .stroke(used >= 0.8 ? Theme.orange : Theme.blue, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Text(window.map { RateLimitText.percent($0, now: now) } ?? "–")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .monospacedDigit()
+            }
+            .frame(width: 36, height: 36)
+            .padding(2.5)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.system(size: 13))
+                Text(window.map(reset) ?? "no data")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.faint)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .monospacedDigit()
+            }
+            .layoutPriority(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(hex: 0x232328)))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(title) limit, \(window.map { RateLimitText.percent($0, now: now) } ?? "no data") used, \(window.map(reset) ?? "")")
     }
 }
 
