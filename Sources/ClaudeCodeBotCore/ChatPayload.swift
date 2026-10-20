@@ -111,6 +111,9 @@ public struct ChatPayload: Encodable, Equatable {
         /// its run is going (see `ComponentCommands.Status`), with the error or when it last ran.
         var command: String?
         var folder: String?
+        /// Its component's Detail command (about.md), which `ccb.runDetail` fills and runs in
+        /// `folder`; allowed together with `command` on the card.
+        var detail: String?
         var status: String?
         var error: String?
         var ranAt: String?
@@ -128,11 +131,14 @@ public struct ChatPayload: Encodable, Equatable {
         public var runs: ComponentCommands
         public var folder: URL
         public var board: Bool
+        /// Where pinned components' Detail commands are read from.
+        public var library: ComponentLibrary?
 
-        public init(runs: ComponentCommands, folder: URL, board: Bool = false) {
+        public init(runs: ComponentCommands, folder: URL, board: Bool = false, library: ComponentLibrary? = nil) {
             self.runs = runs
             self.folder = folder
             self.board = board
+            self.library = library
         }
     }
 
@@ -402,13 +408,15 @@ public struct ChatPayload: Encodable, Equatable {
         var shown = display(ComponentInstance(name: name, data: kept ?? sample?.data ?? "null"))
         guard let command else { return shown }
         let folder = URL(filePath: spec.folder)
+        let detail = library.detailCommand(of: name)
         shown.command = command
         shown.folder = folder.path
+        shown.detail = detail
         guard let runs else {
             shown.status = ComponentCommands.Status.approve.rawValue
             return shown
         }
-        let state = runs.state(for: spec.card, command: command, in: folder)
+        let state = runs.state(for: spec.card, command: command, detail: detail, in: folder)
         var status = state.status
         // Kept from before (a restart): shown until ↻, unless it refreshes when shown.
         if status == .idle, kept != nil, spec.refresh != .shown { status = .done }
@@ -432,8 +440,13 @@ public struct ChatPayload: Encodable, Equatable {
         let ranAt: (Date?) -> String? = { date in
             date.map { Calendar.current.isDateInToday($0) ? $0.formatted(date: .omitted, time: .shortened) : $0.formatted(.dateTime.month().day().hour().minute()) }
         }
+        let detail = context.library?.detailCommand(of: pin.name)
+        if detail != nil {
+            shown.detail = detail
+            shown.folder = context.folder.path
+        }
         if let command = pin.command {
-            let state = context.runs.state(for: pin.card, command: command, in: context.folder)
+            let state = context.runs.state(for: pin.card, command: command, detail: detail, in: context.folder)
             var status = state.status
             if status == .idle, pin.data != "null", pin.refresh != .shown { status = .done }
             shown.command = command
@@ -603,6 +616,13 @@ public struct ChatPayload: Encodable, Equatable {
     @MainActor
     static func display(_ instance: ComponentInstance, card: String, in message: ChatMessage, library: ComponentLibrary?, commands: CommandContext?, fallbackFolder: URL) -> Display {
         var shown = display(instance)
+        // A bot's component with a Detail command can ask for more of its data (ccb.runDetail),
+        // in the folder its command would run in, once the user has allowed it on a card.
+        let detail = message.role == .bot ? library?.detailCommand(of: instance.name) : nil
+        if detail != nil {
+            shown.detail = detail
+            shown.folder = (commands?.folder(message) ?? fallbackFolder).path
+        }
         guard let command = command(of: instance, in: message, library: library) else {
             if instance.data == "null" {
                 shown.status = ComponentCommands.Status.failed.rawValue
@@ -613,7 +633,7 @@ public struct ChatPayload: Encodable, Equatable {
         let folder = commands?.folder(message) ?? fallbackFolder
         shown.command = command
         shown.folder = folder.path
-        guard let state = commands?.runs.state(for: card, command: command, in: folder) else {
+        guard let state = commands?.runs.state(for: card, command: command, detail: detail, in: folder) else {
             shown.status = ComponentCommands.Status.approve.rawValue
             return shown
         }

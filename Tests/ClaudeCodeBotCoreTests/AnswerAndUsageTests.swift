@@ -186,6 +186,10 @@ struct AnswerAndUsageTests {
         #expect(ComponentPrompts.system.contains("ccb.image(path)"))
         #expect(ComponentPrompts.system.contains("ccb.answer"))
         #expect(ComponentPrompts.system.contains("about.md is the usage guide every bot reads"))
+        // Details on demand: the about.md line and the call that runs it.
+        #expect(ComponentPrompts.system.contains("Detail command: git show --patch --stat {hash}"))
+        #expect(ComponentPrompts.system.contains("ccb.runDetail({hash: \"2aed630\"})"))
+        #expect(PluginGuide.text(builtIns: "/x").contains("ccb.runDetail({ hash: \"2aed630\" })"))
         #expect(ComponentDefaults.choicesTemplate.contains("ccb.answer(index)"))
     }
 }

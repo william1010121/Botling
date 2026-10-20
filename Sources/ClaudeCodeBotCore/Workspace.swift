@@ -977,7 +977,7 @@ public final class Workspace: ObservableObject {
     /// `command` and `folder` are what the card showed: allowing needs them, and nothing runs
     /// when the card's command or folder has changed since (say, its about.md was edited), so
     /// what is allowed and run is always what the user saw.
-    public func runComponentCommand(messageID: UUID, index: Int, in bot: Bot, command shown: String? = nil, folder shownFolder: String? = nil, approve: Bool = false, force: Bool = false) async {
+    public func runComponentCommand(messageID: UUID, index: Int, in bot: Bot, command shown: String? = nil, folder shownFolder: String? = nil, detail shownDetail: String? = nil, approve: Bool = false, force: Bool = false) async {
         guard let message = bot.messages.first(where: { $0.id == messageID }),
               message.shown.indices.contains(index) else { return }
         let instance = message.shown[index]
@@ -986,8 +986,30 @@ public final class Workspace: ObservableObject {
         if approve, shown == nil || shownFolder == nil { return }
         if let shown, shown != command { return }
         if let shownFolder, URL(filePath: shownFolder).standardizedFileURL.path != folder.standardizedFileURL.path { return }
-        if approve { componentCommands.approve(command, in: folder) }
+        if approve {
+            guard approveCard(command, detail: components.detailCommand(of: instance.name), shownDetail: shownDetail, in: folder) else { return }
+        }
         await componentCommands.run(card: "\(message.id.uuidString)/\(index)", command: command, in: folder, force: force)
+    }
+
+    /// The user pressed Allow on a card: its command, and its component's Detail command when it
+    /// has one, as the card showed them (`shownDetail`). Nothing is allowed when the Detail
+    /// command differs from what the card showed (about.md changed since). False then.
+    func approveCard(_ command: String, detail: String?, shownDetail: String?, in folder: URL) -> Bool {
+        if detail != shownDetail { return false }
+        componentCommands.approve(command, in: folder)
+        if let detail { componentCommands.approve(detail: detail, in: folder) }
+        return true
+    }
+
+    /// A component's `ccb.runDetail(values)` from a card in `folder` (the one the card showed):
+    /// its about.md's Detail command, as it is now, filled with `values` and run there, only if
+    /// the user allowed that very template in that folder.
+    public func runComponentDetail(_ name: String, values: [String: String], folder: String) async -> CommandOutcome {
+        guard let template = components.detailCommand(of: ComponentLibrary.safeName(name)) else {
+            return CommandOutcome(error: "The component \"\(name)\" has no Detail command.")
+        }
+        return await componentCommands.runDetail(template, values: values, in: URL(filePath: folder))
     }
 
     /// Someone asked for a component change: the user beside a component, or a bot with a
@@ -1172,7 +1194,7 @@ public final class Workspace: ObservableObject {
           Check the library first: if a component there already does what the bot needs (the one-line list in your components note, and its about.md), build nothing: reply with <give-component bot="bot name">component name</give-component> and the app puts it on that bot's list. A request for a component already in the library by its own name is put on the bot's list by the app before it reaches you; change it only if the request asks for a change.
           Otherwise build the new one (as above); once it is in the library the app adds it to the asking bot's list.
           A bot already at \(ComponentLibrary.limit): add or build nothing for it; with a choices block of that bot's components, ask the user which one to remove from that bot's list first (the 組件使用統計 card shows which are used least), then <take-component bot="bot name">component name</take-component>. Removing from a list never deletes anything: the library copy stays. Deleting a component from the library itself is yours alone, only when the user asks for that, and never one the user did not pick. Changes to existing components are always fine. Never write these tags inside code or examples.
-        - A message starting "(Component spec <id>) Build the first version" is the user making a bot's reply into a component with one press: infer the whole spec yourself from the reply and the library and build it now. Ask nothing: wherever you are unsure, use your best guess (the answer you would have suggested). If a component in the library already does this, reuse it: build nothing, and set similar to it and reuse to true. Otherwise build it as any new component (about.md gets its Command: line when it has one), under a name not already in the library. Never run the command yourself: the user allows it on the component's card. Answer in one or two sentences followed by <component-spec id="<id>">JSON</component-spec> with what you used: name (as built), about, fields [{name, type}], command, refresh (shown, interval or manual), minutes, similar, reuse, samples [{label, data}] (a "This reply" sample with the reply's data in the fields' shape). The app adds it to the bot's list and shows it under the reply once it is in the library.
+        - A message starting "(Component spec <id>) Build the first version" is the user making a bot's reply into a component with one press: infer the whole spec yourself from the reply and the library and build it now. Ask nothing: wherever you are unsure, use your best guess (the answer you would have suggested). If a component in the library already does this, reuse it: build nothing, and set similar to it and reuse to true. Otherwise build it as any new component (about.md gets its Command: line when it has one; when its output would go over 1 MB, such as every commit's whole diff, the Command gives a short list and a "Detail command: … {hash}" line plus ccb.runDetail loads the rest on demand, see PLUGINS.md), under a name not already in the library. Never run the command yourself: the user allows it on the component's card. Answer in one or two sentences followed by <component-spec id="<id>">JSON</component-spec> with what you used: name (as built), about, fields [{name, type}], command, refresh (shown, interval or manual), minutes, similar, reuse, samples [{label, data}] (a "This reply" sample with the reply's data in the fields' shape). The app adds it to the bot's list and shows it under the reply once it is in the library.
         - Other messages starting "(Component spec <id>)" are the user changing such a component (or a bot's draft) in a panel beside the chat. Fill in what you can infer, ask only what you cannot (at most 3 questions, each with 2 or 3 short answers and the one you suggest), and answer in one or two sentences followed by <component-spec id="<id>">JSON</component-spec> holding only what you set or change: the keys above, plus questions [{id, key, text, options [{label, value}], suggested}]; a question's key is the value its answer sets. Build nothing and never run the command yourself until a "(Component spec <id>) Build it" message; then build it (its new version) as the spec says; the app adds it to the chosen bots once it is in the library. Never write these tags inside code or examples.
         - When a component request says /design or asks for designs to choose from, first make them a Claude Design: with the Artifact tool, quickstart with intent "design", publish from the Design type, using the look of ccb-components (its templates' colours, type and spacing) as the design system, and reply with the claude.ai link. Build the chosen one into ccb-components only after the user picks.
         - Plugins built into the app are not here and cannot be edited directly: to change one, copy its whole folder into the plugin library; a plugin with the same name overrides the built-in one (paths in PLUGINS.md).

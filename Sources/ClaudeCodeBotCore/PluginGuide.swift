@@ -120,6 +120,13 @@ enum PluginGuide {
           scope: "uncommitted", "lastCommit", "branch" (against main or master, only when on another branch) or "commit"; a `commit` hash implies "commit"
           and must be in the repository. `spec` (optional): a .md/.txt/.html file in the bot's folder or home that Codex checks the change against point by point.
           The report shows in the right column and a line in the chat; a call that does not check out is ignored.
+          Data from a command: about.md's `Command: <command>` line fills the component with what it prints (run in the bot's folder after the user
+          presses "Allow and run" on the card; JSON output is the data, other output one string; at most 1 MB and 60 seconds).
+          Details on demand: when the data would be too big to give at once (every commit's whole diff), keep the Command's output small and add
+          `Detail command: git show --patch --stat {hash}` to about.md. `await ccb.runDetail({ hash: "2aed630" })` (from a click) runs it with each
+          `{name}` filled in as one quoted argument, in the same folder with the same limits, and resolves to its output (parsed if JSON, else text);
+          it rejects with an Error when not allowed yet, a value is missing, extra or not allowed (only letters, digits and `. _ / -`, at most 200,
+          no leading `-`), or the command fails. The card's Allow covers both commands; editing the Detail command line asks the user again.
         - about.md: usage notes for the bots. The first line says in one sentence what it is, followed by the data format (with an example JSON) and what the bot receives when the user answers.
 
         ## Check and release

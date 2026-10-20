@@ -242,8 +242,25 @@ struct ChatSurface: NSViewRepresentable {
                 if let messageID = id("messageID"), let index = body["index"] as? Int {
                     let approve = body["approve"] as? Bool ?? false
                     let force = body["force"] as? Bool ?? false
-                    let command = body["command"] as? String, folder = body["folder"] as? String
-                    Task { await workspace.runComponentCommand(messageID: messageID, index: index, in: bot, command: command, folder: folder, approve: approve, force: force) }
+                    let command = body["command"] as? String, folder = body["folder"] as? String, detail = body["detail"] as? String
+                    Task { await workspace.runComponentCommand(messageID: messageID, index: index, in: bot, command: command, folder: folder, detail: detail, approve: approve, force: force) }
+                }
+            case "componentDetail":
+                // A component's ccb.runDetail(values), passed on by the page with the folder its
+                // card showed. Only a Detail command the user allowed in that folder runs; the
+                // answer goes back to the page, which hands it to the frame that asked.
+                if let requestID = body["requestID"] as? Int, let name = body["name"] as? String,
+                   let folder = body["folder"] as? String {
+                    let values = ComponentCommands.detailValues(body["values"])
+                    Task { @MainActor [weak view] in
+                        let outcome: CommandOutcome
+                        if let values {
+                            outcome = await workspace.runComponentDetail(name, values: values, folder: folder)
+                        } else {
+                            outcome = CommandOutcome(error: "ccb.runDetail takes an object of text or whole-number values, like {hash: \"2aed630\"}.")
+                        }
+                        _ = try? await view?.evaluateJavaScript(ComponentCommands.detailReplyScript(requestID, outcome))
+                    }
                 }
             case "pin":
                 // From a chat card's pin button (a message and its place) or the picker (a name).
@@ -273,8 +290,8 @@ struct ChatSurface: NSViewRepresentable {
                 if let pinID = id("id") {
                     let approve = body["approve"] as? Bool ?? false
                     let force = body["force"] as? Bool ?? false
-                    let command = body["command"] as? String, folder = body["folder"] as? String
-                    Task { await workspace.runPin(pinID, in: bot, command: command, folder: folder, approve: approve, force: force) }
+                    let command = body["command"] as? String, folder = body["folder"] as? String, detail = body["detail"] as? String
+                    Task { await workspace.runPin(pinID, in: bot, command: command, folder: folder, detail: detail, approve: approve, force: force) }
                 }
             case "makeComponent":
                 // A reply's "Make into component" (or an HTML result card's): its first version is
@@ -294,8 +311,8 @@ struct ChatSurface: NSViewRepresentable {
                 if let specID = id("id") {
                     let approve = body["approve"] as? Bool ?? false
                     let force = body["force"] as? Bool ?? false
-                    let command = body["command"] as? String, folder = body["folder"] as? String
-                    Task { await workspace.runSpecComponent(specID, in: bot, command: command, folder: folder, approve: approve, force: force) }
+                    let command = body["command"] as? String, folder = body["folder"] as? String, detail = body["detail"] as? String
+                    Task { await workspace.runSpecComponent(specID, in: bot, command: command, folder: folder, detail: detail, approve: approve, force: force) }
                 }
             case "openSpec":
                 // "Edit spec": the spec in the right panel (pressed again, folded back).

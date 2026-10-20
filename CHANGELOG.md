@@ -8,6 +8,18 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Components load details on demand.** A component's about.md may add a line
+  `Detail command: git show --patch --stat {hash}` beside its `Command:`. The template then calls
+  `await ccb.runDetail({hash: "2aed630"})`, which runs that template in the same folder as the
+  Command, with the same 60-second limit, 1 MB cap and stopping of everything it started, and
+  resolves to the output (parsed when it is JSON, else the text) or rejects with an Error saying
+  why. So a component like 提交紀錄 lists commits up front and fetches one commit's diff when it is
+  opened, instead of embedding every diff and going over the limit. Each `{name}` is filled with
+  one single-quoted argument that may hold only letters, digits and `. _ / -` (at most 200, not
+  starting with `-`); a missing or extra value is refused. The card's **Allow and run** shows and
+  allows the Detail command along with the Command; one that is not allowed, or whose about.md
+  line changed since, never runs (the card asks again), and it can be taken back in Settings →
+  Permissions. Maintainer and the component editor are told how to use it.
 - **Settings → Doctor checks Claude Code and Codex.** A new section in the settings window
   shows, for each CLI, a green, orange or red dot, its version, where it was found (the same
   lookup bots use), how it is signed in (`claude auth status`, `codex login status`; no tokens

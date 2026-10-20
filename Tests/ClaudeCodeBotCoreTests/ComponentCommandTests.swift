@@ -306,6 +306,149 @@ struct ComponentCommandTests {
         #expect(ChatPayload.command(of: ComponentInstance(name: "usage", data: "null", command: "ls"), in: ChatMessage(role: .user, text: ""), library: workspace.components) == nil)
         #expect(workspace.componentBriefing().contains("command=\""))
     }
+
+    // MARK: Detail commands (ccb.runDetail)
+
+    @Test func aboutCanDeclareADetailCommand() {
+        let about = "Commits.\nCommand: `git log --format=%h -20`\n- Detail command: `git show --patch --stat {hash}`\nData: …"
+        #expect(ComponentLibrary.command(inAbout: about) == "git log --format=%h -20")
+        #expect(ComponentLibrary.detailCommand(inAbout: about) == "git show --patch --stat {hash}")
+        #expect(ComponentLibrary.detailCommand(inAbout: "Commits.\nCommand: git log") == nil)
+        // A Detail command line is not taken for the Command.
+        #expect(ComponentLibrary.command(inAbout: "Detail command: git show {hash}") == nil)
+    }
+
+    @Test func placeholdersAreFilledAsSingleQuotedArguments() {
+        #expect(ComponentCommands.placeholders(in: "git diff {from} {to} -- {path} {from}") == ["from", "to", "path"])
+        // Braces that are not {name} are left to the shell (awk, ${HOME}'s name is a placeholder).
+        #expect(ComponentCommands.placeholders(in: "awk '{print $1}' {file}") == ["file"])
+        #expect(ComponentCommands.detailCommand("git show --patch --stat {hash}", values: ["hash": "2aed630"]) == .success("git show --patch --stat '2aed630'"))
+        #expect(ComponentCommands.detailCommand("git diff {a}..{b} -- {path}", values: ["a": "v1.0", "b": "HEAD", "path": "Sources/App_1.swift"])
+            == .success("git diff 'v1.0'..'HEAD' -- 'Sources/App_1.swift'"))
+        #expect(ComponentCommands.detailCommand("echo {x} {x}", values: ["x": "a"]) == .success("echo 'a' 'a'"))
+        #expect(ComponentCommands.detailCommand("git log -5", values: [:]) == .success("git log -5"))
+    }
+
+    @Test func placeholderValuesAreChecked() {
+        func problem(_ values: [String: String], _ template: String = "git show {hash}") -> String? {
+            if case .failure(let problem) = ComponentCommands.detailCommand(template, values: values) { return problem.message }
+            return nil
+        }
+        #expect(problem([:]) == "No value for {hash}.")
+        #expect(problem(["hash": "abc", "path": "x"]) == "The Detail command has no {path}.")
+        #expect(problem(["other": "abc"]) == "The Detail command has no {other}.")
+        for bad in ["", "-p", "--output=/tmp/x", "a b", "a;rm", "$(id)", "`id`", "a'b", "a\"b", "a\nb", "é", "a|b", "a&b", "~/x", "*", String(repeating: "a", count: 201)] {
+            #expect(problem(["hash": bad]) != nil, "\(bad) should be refused")
+        }
+        #expect(problem(["hash": String(repeating: "a", count: 200)]) == nil)
+        #expect(problem(["hash": "../a/b.c_d-e"]) == nil)
+        #expect(ComponentCommands.problem(withValue: "-x", for: "hash") == "The value for {hash} starts with \"-\".")
+    }
+
+    @Test func aDetailRunsOnlyOnceAllowedAndOnlyItsTemplate() async {
+        let file = root.appending(path: "a.json")
+        let ran = Ran()
+        let commands = ComponentCommands(approvalsURL: file) { command, folder in
+            ran.add(command)
+            return CommandOutcome(data: #"{"ran":true}"#)
+        }
+        let folder = URL(filePath: "/tmp")
+        let template = "git show --stat {hash}"
+        var outcome = await commands.runDetail(template, values: ["hash": "2aed630"], in: folder)
+        #expect(outcome.data == nil)
+        #expect(outcome.error?.contains("not allowed yet") == true)
+        #expect(ran.all.isEmpty)
+        // The card's main command being allowed is not enough.
+        commands.approve("git log", in: folder)
+        #expect(await commands.runDetail(template, values: ["hash": "2aed630"], in: folder).data == nil)
+        commands.approve(detail: template, in: folder)
+        outcome = await commands.runDetail(template, values: ["hash": "2aed630"], in: folder)
+        #expect(outcome.data == #"{"ran":true}"#)
+        #expect(ran.all == ["git show --stat '2aed630'"])
+        // A changed template, another folder, or a bad value: nothing runs.
+        #expect(await commands.runDetail("git show {hash}; rm -rf .", values: ["hash": "2aed630"], in: folder).data == nil)
+        #expect(await commands.runDetail(template, values: ["hash": "2aed630"], in: URL(filePath: "/elsewhere")).data == nil)
+        #expect(await commands.runDetail(template, values: ["hash": "-p"], in: folder).error?.contains("starts with") == true)
+        #expect(ran.all.count == 1)
+        // Remembered, and listed with the allowed commands (so it can be taken back).
+        let later = ComponentCommands(approvalsURL: file)
+        #expect(later.isApproved(detail: template, in: folder))
+        #expect(later.approvals.map(\.command).contains("Detail command: git show --stat {hash}"))
+        later.forget("Detail command: git show --stat {hash}", inFolderPath: folder.standardizedFileURL.path)
+        #expect(!later.isApproved(detail: template, in: folder))
+    }
+
+    @Test func aDetailsOutputIsDataWithTheCommandsLimits() async throws {
+        let folder = root.appending(path: "project")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try "inside".write(to: folder.appending(path: "note.txt"), atomically: true, encoding: .utf8)
+        let commands = ComponentCommands(approvalsURL: root.appending(path: "a.json"))
+        let json = #"printf '{"n":%s}' {n}"#, text = "cat {file}", fails = "ls {file}"
+        for template in [json, text, fails] { commands.approve(detail: template, in: folder) }
+        #expect(await commands.runDetail(json, values: ["n": "7"], in: folder).data == #"{"n":7}"#)
+        // Run in the folder; plain text comes back as one JSON string.
+        #expect(await commands.runDetail(text, values: ["file": "note.txt"], in: folder).data == #""inside""#)
+        let failed = await commands.runDetail(fails, values: ["file": "missing.txt"], in: folder)
+        #expect(failed.data == nil)
+        #expect(failed.error?.contains("exit code") == true)
+        // The same cap as the card's command.
+        let big = ComponentCommands.execute("head -c 3000 /dev/zero | tr '\\0' a", in: folder, timeout: 10, limit: 1000)
+        #expect(big.error?.contains("more than 1 KB") == true)
+    }
+
+    @Test func theCardAllowsItsDetailCommandWithItsCommand() async throws {
+        let workspace = makeWorkspace()
+        let component = workspace.components.folder.appending(path: "commits")
+        try FileManager.default.createDirectory(at: component, withIntermediateDirectories: true)
+        try "<pre></pre>".write(to: component.appending(path: "template.html"), atomically: true, encoding: .utf8)
+        func declare(detail: String) throws {
+            try "Commits.\nCommand: `printf '[1]'`\nDetail command: `\(detail)`".write(to: component.appending(path: "about.md"), atomically: true, encoding: .utf8)
+            workspace.components.rescan()
+        }
+        try declare(detail: "printf '{\"hash\":\"%s\"}' {hash}")
+        let bot = workspace.mainBot
+        var message = ChatMessage(role: .bot, text: "Log:")
+        message.displays = [ComponentInstance(name: "commits", data: "null")]
+        bot.post(message, unread: false)
+        let folder = workspace.commandFolder(for: message, in: bot)
+        func shown() throws -> [String: Any] {
+            let payload = ChatPayload.make(bot: bot, components: workspace.components, pending: [], replyingTo: nil, commands: workspace.commandContext(for: bot)) { _ in "" }
+            let messages = try #require(try object(payload.json())["messages"] as? [[String: Any]])
+            return try #require((messages.last?["displays"] as? [[String: Any]])?.first)
+        }
+        var card = try shown()
+        #expect(card["status"] as? String == "approve")
+        #expect(card["detail"] as? String == #"printf '{"hash":"%s"}' {hash}"#)
+        // Not allowed yet: runDetail says so and runs nothing.
+        var outcome = await workspace.runComponentDetail("commits", values: ["hash": "abc"], folder: folder.path)
+        #expect(outcome.error?.contains("not allowed yet") == true)
+        // Allowing without the Detail command the card showed allows nothing.
+        await workspace.runComponentCommand(messageID: message.id, index: 0, in: bot, command: "printf '[1]'", folder: folder.path, approve: true)
+        #expect(!workspace.componentCommands.isApproved("printf '[1]'", in: folder))
+        await workspace.runComponentCommand(messageID: message.id, index: 0, in: bot, command: "printf '[1]'", folder: folder.path, detail: #"printf '{"hash":"%s"}' {hash}"#, approve: true)
+        card = try shown()
+        #expect(card["status"] as? String == "done")
+        outcome = await workspace.runComponentDetail("commits", values: ["hash": "abc"], folder: folder.path)
+        #expect(outcome.data == #"{"hash":"abc"}"#)
+        // about.md's Detail command changed after the user allowed it: it does not run, and the card asks again.
+        try declare(detail: "printf 'changed %s' {hash}")
+        outcome = await workspace.runComponentDetail("commits", values: ["hash": "abc"], folder: folder.path)
+        #expect(outcome.error?.contains("not allowed yet") == true)
+        #expect(try shown()["status"] as? String == "approve")
+        // A component without a Detail command.
+        #expect(await workspace.runComponentDetail("nothing", values: [:], folder: folder.path).error?.contains("no Detail command") == true)
+    }
+
+    @Test func runDetailCallsAreReadAndAnsweredSafely() {
+        #expect(ComponentCommands.detailValues(["hash": "abc", "n": NSNumber(value: 7)]) == ["hash": "abc", "n": "7"])
+        #expect(ComponentCommands.detailValues(nil) == [:])
+        #expect(ComponentCommands.detailValues(["b": NSNumber(value: true)]) == nil)
+        #expect(ComponentCommands.detailValues(["x": NSNumber(value: 1.5)]) == nil)
+        #expect(ComponentCommands.detailValues(["x": ["nested"]]) == nil)
+        #expect(ComponentCommands.detailValues("text") == nil)
+        #expect(ComponentCommands.detailReplyScript(3, CommandOutcome(data: #"{"a":"</script>"}"#)) == #"ccb.detailReply(3, true, "{\"a\":\"<\/script>\"}")"#)
+        #expect(ComponentCommands.detailReplyScript(4, CommandOutcome(error: "No \"x\".")) == #"ccb.detailReply(4, false, "No \"x\".")"#)
+    }
 }
 
 private final class Counter: @unchecked Sendable {
@@ -313,4 +456,11 @@ private final class Counter: @unchecked Sendable {
     private var count = 0
     var value: Int { lock.withLock { count } }
     func add() { lock.withLock { count += 1 } }
+}
+
+private final class Ran: @unchecked Sendable {
+    private let lock = NSLock()
+    private var commands: [String] = []
+    var all: [String] { lock.withLock { commands } }
+    func add(_ command: String) { lock.withLock { commands.append(command) } }
 }
