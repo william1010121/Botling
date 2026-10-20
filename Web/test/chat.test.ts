@@ -464,6 +464,34 @@ describe("composer", () => {
     expect(list.hidden).toBe(true);
   });
 
+  it("offers the short list after @, searches every bot once you type, and lists them all after @@", () => {
+    const composer = new Composer(document.body);
+    const all = ["Main bot", "Maintainer", "laas", "garden", "lab notes", "a", "b", "c", "d", "e"];
+    composer.update(state({ mentions: ["Main bot", "Maintainer"], allMentions: all } as Partial<ChatState>));
+    const list = document.querySelector<HTMLElement>(".mention-list")!;
+    const names = () => [...list.querySelectorAll("button")].map((b) => b.querySelector(".mention-name")?.textContent);
+    composer.insert("@");
+    expect(names()).toEqual(["@Main bot", "@Maintainer"]);
+    composer.setText("");
+    composer.insert("@la");
+    expect(names()).toEqual(["@laas", "@lab notes"]);
+    composer.setText("");
+    composer.insert("@ma");
+    expect(names()).toEqual(["@Main bot", "@Maintainer"]);
+    composer.setText("");
+    composer.insert("@@");
+    expect(names()).toEqual(all.map((name) => "@" + name));
+    composer.insert("g");
+    expect(names()).toEqual(["@garden"]);
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    composer.view.contentDOM.dispatchEvent(enter);
+    expect(composer.text).toBe("@garden ");
+    composer.setText("Hi ");
+    composer.insert("@la");
+    composer.view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(composer.text).toBe("Hi @laas ");
+  });
+
   it("offers only bots after @, never components", () => {
     const composer = new Composer(document.body);
     // A one-to-one chat: the bots you can call in, but no components.

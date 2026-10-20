@@ -127,6 +127,10 @@ public struct ChatPayload: Encodable, Equatable {
     /// Bots you can @, for completing them as you type: a group's members, or in a bot's own
     /// chat the other bots, to call one in.
     var mentions: [String]
+    /// Every bot you could @ here, searched once you type letters after @ or open with @@: in a
+    /// bot's own chat every bot that can be called in (the short list first); in a group, its
+    /// members (a bot outside it can't be called in).
+    var allMentions: [String]
     /// What you can / (every chat you can type in): the app's commands, then components.
     var slashCommands: [SlashCommands.Command] = SlashCommands.all
     var slashComponents: [String] = []
@@ -143,10 +147,13 @@ public struct ChatPayload: Encodable, Equatable {
         public var typing: UUID?
         public var speaker: (UUID) -> String?
         public var names: [String]
+        /// Every name you could @, the short list (`names`) first.
+        public var allNames: [String]
 
-        public init(typing: UUID?, names: [String] = [], speaker: @escaping (UUID) -> String?) {
+        public init(typing: UUID?, names: [String] = [], allNames: [String]? = nil, speaker: @escaping (UUID) -> String?) {
             self.typing = typing
             self.names = names
+            self.allNames = allNames ?? names
             self.speaker = speaker
         }
     }
@@ -250,6 +257,7 @@ public struct ChatPayload: Encodable, Equatable {
             },
             components: components,
             mentions: group?.names ?? callIn?.names ?? [],
+            allMentions: group?.allNames ?? callIn?.allNames ?? [],
             slashComponents: library?.names ?? [],
             live: group == nil && bot.isWorking ? bot.liveSteps.map { stepView($0, in: bot) } : [],
             subagent: nil,
@@ -302,6 +310,7 @@ public struct ChatPayload: Encodable, Equatable {
             pendingFiles: [],
             components: [:],
             mentions: [],
+            allMentions: [],
             live: subagent.isRunning ? pending.map { stepView($0, in: bot) } : [],
             subagent: SubagentHeader(
                 id: subagent.id,

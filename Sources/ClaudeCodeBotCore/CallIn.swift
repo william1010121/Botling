@@ -18,13 +18,16 @@ extension Workspace {
         callable(into: chat).filter { $0.id == Self.mainBotID || $0.id == Self.maintainerID }
     }
 
-    /// What the chat page needs to show called-in bots: who is answering, their names, and the
-    /// names the @ menu offers.
+    /// What the chat page needs to show called-in bots: who is answering, their names, the names
+    /// the @ menu offers, and every bot it searches once you type after @ (or open it with @@).
     public func callInView(for chat: Bot) -> ChatPayload.GroupView? {
         guard let host = hostID(of: chat) else { return nil }
+        let offered = offeredAfterAt(in: chat)
+        let rest = callable(into: chat).filter { member in !offered.contains { $0.id == member.id } }
         return ChatPayload.GroupView(
             typing: callInSpeakers[host],
-            names: offeredAfterAt(in: chat).map(\.name),
+            names: offered.map(\.name),
+            allNames: (offered + rest).map(\.name),
             speaker: { [weak self] id in self?.speakerName(for: id) }
         )
     }

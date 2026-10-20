@@ -102,6 +102,8 @@ export interface ChatState {
   components: Record<string, ComponentInfo>;
   /** Bots you can @ in this chat (a group's members, or the bots you can call in), to complete as you type. */
   mentions?: string[];
+  /** Every bot you could @ here (the short list first), searched once you type after @, or listed in full after @@. */
+  allMentions?: string[];
   /** The app's / commands (e.g. /design), offered after / before the components. */
   slashCommands?: { name: string; about: string }[];
   /** Components you can / (picked, the bot is told you mean that component). */

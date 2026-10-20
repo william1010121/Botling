@@ -28,6 +28,7 @@ export class Composer {
    * components (the bot is told you mean that component).
    */
   private mentions: Mention[] = [];
+  private allMentions: Mention[] = [];
   private slashItems: Mention[] = [];
   private readonly mentionList: HTMLElement;
   private mentionMatches: Mention[] = [];
@@ -141,22 +142,34 @@ export class Composer {
     this.view.focus();
   }
 
-  /** Offers the names that start with what follows the "@" or "/" before the caret. */
+  /**
+   * Offers the names that start with what follows the "@" or "/" before the caret. A bare @
+   * offers the short list; letters after @ search every bot (the short list's first); @@ lists
+   * every bot, narrowed by what follows it.
+   */
   private refreshMentions(): void {
     const head = this.view.state.selection.main.head;
     const line = this.view.state.doc.lineAt(head);
     const before = line.text.slice(0, head - line.from);
+    const bots = this.allMentions.length > 0;
     // Like the app: an @ right after Chinese text counts; one inside a word (a@b) does not.
-    const at = this.mentions.length ? /(?:^|[^A-Za-z0-9_])@([^@\n]{0,40})$/.exec(before) : null;
+    const atAt = bots ? /(?:^|[^A-Za-z0-9_@])@@([^@\n]{0,40})$/.exec(before) : null;
+    const at = bots && !atAt ? /(?:^|[^A-Za-z0-9_@])@([^@\n]{0,40})$/.exec(before) : null;
     // A / starts a word (after a space, a bracket or quote, or Chinese); a/b and ~/x are paths.
-    const slash = !at && this.slashItems.length ? /(?:^|[\s([{"'\u0080-\uffff])\/([^\s/]{0,40})$/.exec(before) : null;
-    const match = at ?? slash;
-    const items = at ? this.mentions : this.slashItems;
+    const slash = !atAt && !at && this.slashItems.length ? /(?:^|[\s([{"'\u0080-\uffff])\/([^\s/]{0,40})$/.exec(before) : null;
+    const match = atAt ?? at ?? slash;
     const query = match ? match[1].toLowerCase() : null;
+    const items = atAt || (at && query) ? this.allMentions : at ? this.mentions : this.slashItems;
     // A name typed in full needs no list (Return then sends).
-    const complete = query !== null && items.some((mention) => mention.name.toLowerCase() === query);
-    this.mentionMatches = query === null || complete ? [] : items.filter((mention) => mention.name.toLowerCase().startsWith(query)).slice(0, 8);
-    this.mentionFrom = match ? head - match[1].length - 1 : -1;
+    const complete = !atAt && query !== null && items.some((mention) => mention.name.toLowerCase() === query);
+    const found = query === null || complete ? [] : items.filter((mention) => mention.name.toLowerCase().startsWith(query));
+    if (at && query) {
+      // The short list's names first.
+      const short = new Set(this.mentions.map((mention) => mention.name.toLowerCase()));
+      found.sort((a, b) => Number(short.has(b.name.toLowerCase())) - Number(short.has(a.name.toLowerCase())));
+    }
+    this.mentionMatches = atAt ? found : found.slice(0, 8);
+    this.mentionFrom = match ? head - match[1].length - (atAt ? 2 : 1) : -1;
     this.mentionActive = Math.min(this.mentionActive, Math.max(0, this.mentionMatches.length - 1));
     this.mentionList.hidden = this.mentionMatches.length === 0;
     this.mentionList.innerHTML = "";
@@ -181,6 +194,8 @@ export class Composer {
         this.pickMention(mention);
       });
       this.mentionList.append(option);
+      // @@ can list more than fit: keep the chosen one in view.
+      if (index === this.mentionActive) option.scrollIntoView?.({ block: "nearest" });
     });
   }
 
@@ -219,10 +234,12 @@ export class Composer {
   }
 
   update(state: ChatState): void {
-    const mentions = mentionsOf(state);
+    const mentions = mentionsOf(state.mentions);
+    const allMentions = mentionsOf([...(state.mentions ?? []), ...(state.allMentions ?? [])]);
     const slashItems = slashItemsOf(state);
-    if (JSON.stringify([mentions, slashItems]) !== JSON.stringify([this.mentions, this.slashItems])) {
+    if (JSON.stringify([mentions, allMentions, slashItems]) !== JSON.stringify([this.mentions, this.allMentions, this.slashItems])) {
       this.mentions = mentions;
+      this.allMentions = allMentions;
       this.slashItems = slashItems;
       this.refreshMentions();
     }
@@ -301,9 +318,9 @@ function unique(entries: Mention[]): Mention[] {
   });
 }
 
-/** The bots you can @ here. */
-function mentionsOf(state: ChatState): Mention[] {
-  return unique((state.mentions ?? []).map((name) => ({ name, kind: "bot" })));
+/** Bots you can @ here, each once. */
+function mentionsOf(names: string[] | undefined): Mention[] {
+  return unique((names ?? []).map((name) => ({ name, kind: "bot" })));
 }
 
 /** The app's commands first, then the components. */

@@ -49,6 +49,29 @@ struct CallInTests {
         #expect(Set(workspace.members(of: group).map(\.name)) == ["garden", "orchard"])
     }
 
+    @Test func typingAfterAtOrAtAtSearchesEveryBotThatCanBeCalledIn() throws {
+        let workspace = makeWorkspace(FakeLauncher())
+        let garden = workspace.addProject(folder: try folder("garden"))
+        let orchard = workspace.addProject(folder: try folder("orchard"))
+        let gardenChat = try #require(workspace.bot(for: garden))
+        // Every bot that can be called in, the short list first.
+        #expect(workspace.callInView(for: gardenChat)?.allNames == ["Main bot", "Maintainer", "orchard"])
+        #expect(workspace.callInView(for: workspace.mainBot)?.allNames == ["Maintainer", "garden", "orchard"])
+        let payload = ChatPayload.make(bot: gardenChat, components: workspace.components, pending: [], replyingTo: nil,
+                                       callIn: workspace.callInView(for: gardenChat)) { _ in "" }
+        let json = try #require(JSONSerialization.jsonObject(with: payload.json().data(using: .utf8)!) as? [String: Any])
+        #expect(json["mentions"] as? [String] == ["Main bot", "Maintainer"])
+        #expect(json["allMentions"] as? [String] == ["Main bot", "Maintainer", "orchard"])
+        // A group can't call in bots that aren't in it: every list is its members.
+        let group = try #require(workspace.createGroup(name: "Team", members: [garden.id]))
+        let groupChat = try #require(workspace.groupChats[group.id])
+        let groupPayload = ChatPayload.make(bot: groupChat, components: workspace.components, pending: [], replyingTo: nil,
+                                            group: ChatPayload.GroupView(typing: nil, names: ["garden"]) { _ in nil }) { _ in "" }
+        let groupJSON = try #require(JSONSerialization.jsonObject(with: groupPayload.json().data(using: .utf8)!) as? [String: Any])
+        #expect(groupJSON["allMentions"] as? [String] == ["garden"])
+        _ = orchard
+    }
+
     @Test func aBotNamedWithAtAnswersInThisChatUnderItsOwnName() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
