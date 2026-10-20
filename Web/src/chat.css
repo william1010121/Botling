@@ -540,28 +540,30 @@ body.watching #composer-slot { display: none; }
 .pin-chip.drop-target, .board-card.drop-target, .board-grip.drop-target { outline: 2px solid var(--blue); outline-offset: 1px; }
 .pin-chip-name { flex: none; }
 .pin-chip-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 11.5px; }
+/* An opened pin is its component, like a Board tile: no header, no padding; its frame fills the
+   panel and the rounded corners clip it. It is told it is pinned (<html data-surface="pinned">)
+   so it draws no card of its own. */
 .pin-sheet {
   position: absolute; left: 24px; right: 24px; bottom: calc(100% + 8px); z-index: 10; max-height: min(560px, 62vh);
-  display: flex; flex-direction: column; background: var(--bubble); border: 1px solid #3A3A42; border-radius: 16px;
-  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.55); overflow: hidden;
-}
-.pin-sheet-head {
-  display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 16px; border-bottom: 1px solid var(--line); font-size: 12px; flex: none;
-}
-.pin-sheet-title { font-weight: 600; font-size: 14px; white-space: nowrap; }
-.pin-command {
-  min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); background: #26262C; border-radius: 5px; padding: 2px 6px;
+  display: flex; flex-direction: column; background: var(--bubble); border: 1px solid #3A3A42; border-radius: 20px;
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.55); overflow: hidden; isolation: isolate;
 }
 .pin-fill { flex: 1; }
-.pin-when { flex: none; color: var(--faint); font-size: 11.5px; }
-.pin-sheet-body { overflow-y: auto; padding: 4px 8px 10px 12px; }
-.pin-sheet-body > .command-card { border: none; padding: 0; margin-top: 0; }
-.pin-sheet-body .component { margin-top: 6px; }
+.pin-sheet-body { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: 0; scrollbar-width: none; }
+.pin-sheet-body::-webkit-scrollbar { display: none; }
+.pin-sheet-body > .command-card { border: none; border-radius: 0; padding: 0; margin: 0; }
+.pin-sheet-body .component { margin: 0; position: relative; }
+.pin-sheet-body .component-frame { min-width: 0; display: block; }
+/* What is not the component (the ask to allow its command, its error, the wait) keeps room around it. */
+.pin-sheet-body .command-approve, .pin-sheet-body .command-error, .pin-sheet-body .command-waiting { padding: 12px 14px; }
+/* The report flag over the bottom-right corner, on hover only. */
+.pin-sheet-body .component-side { position: absolute; right: 4px; bottom: 4px; min-width: 0; z-index: 1; }
+.pin-sheet-body .component:hover .flag { background: rgba(43, 43, 49, 0.92); }
+.pin-sheet.hovered .flag { opacity: 1; background: rgba(43, 43, 49, 0.92); }
 
 /* The Board: every pin as a card, in place of the messages. */
 #board { display: none; }
-body.board #board { display: flex; flex: 1; min-height: 0; flex-direction: column; padding: 52px 28px 0; }
+body.board #board { display: flex; flex: 1; min-height: 0; flex-direction: column; padding: 12px 28px 0; }
 body.board #scroller, body.board #pin-area { display: none; }
 body.board #composer-slot { max-width: none; padding: 12px 28px 16px; }
 body.board .editor .cm-scroller { max-height: 72px; }
@@ -606,13 +608,14 @@ body.board .editor .cm-scroller { max-height: 72px; }
 .board-card.hovered .flag { opacity: 1; background: rgba(43, 43, 49, 0.92); }
 /* Its controls float over the top-right corner as a small pill, on hover or keyboard focus (and
    while its command runs, so the turning ↻ says so). */
-.board-card-tools {
+.board-card-tools, .pin-sheet-tools {
   position: absolute; top: 8px; right: 8px; z-index: 2; display: flex; align-items: center; gap: 1px; padding: 2px;
   background: rgba(43, 43, 49, 0.94); border: 1px solid #3A3A42; border-radius: 10px; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
   opacity: 0; pointer-events: none; transition: opacity 0.12s;
 }
 .board-card:hover > .board-card-tools, .board-card.hovered > .board-card-tools, .board-card-tools:focus-within, .board-card.running > .board-card-tools { opacity: 1; pointer-events: auto; }
+.pin-sheet:hover > .pin-sheet-tools, .pin-sheet.hovered > .pin-sheet-tools, .pin-sheet-tools:focus-within, .pin-sheet.running > .pin-sheet-tools { opacity: 1; pointer-events: auto; }
 .board-grip { width: 18px; height: 26px; display: inline-flex; align-items: center; justify-content: center; color: var(--faint); cursor: grab; flex: none; }
 .board-grip:active { cursor: grabbing; }
 .board-size.pin-tool { width: auto; padding: 0 6px; font-size: 11px; color: #C8C8CE; font-variant-numeric: tabular-nums; }
@@ -727,6 +730,14 @@ body.spec-mode { background: #141417; }
 .spec-fields, .spec-progress { order: 2; }
 .spec-conv { order: 3; }
 .spec-panel.wide .spec-left > *, .spec-panel.wide .spec-right > * { order: 0; }
+/* Spread wide but squeezed (a half-screen window narrows the panel): one column again, as narrow. */
+@media (max-width: 719px) {
+  .spec-panel.wide .spec-body { display: flex; flex-direction: column; overflow-y: auto; padding-bottom: 8px; }
+  .spec-panel.wide .spec-left, .spec-panel.wide .spec-right { display: contents; }
+  .spec-panel.wide .spec-preview { order: 1; }
+  .spec-panel.wide .spec-fields, .spec-panel.wide .spec-progress { order: 2; }
+  .spec-panel.wide .spec-conv { order: 3; }
+}
 .spec-block { margin: 12px 12px 0; background: var(--bubble); border: 1px solid #2A2A31; border-radius: 14px; overflow: hidden; flex: none; }
 .spec-block-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; }
 .spec-label { font-weight: 600; font-size: 12.5px; }

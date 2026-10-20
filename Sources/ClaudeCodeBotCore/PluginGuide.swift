@@ -121,7 +121,8 @@ enum PluginGuide {
           and must be in the repository. `spec` (optional): a .md/.txt/.html file in the bot's folder or home that Codex checks the change against point by point.
           The report shows in the right column and a line in the chat; a call that does not check out is ignored.
           Data from a command: about.md's `Command: <command>` line fills the component with what it prints (run in the bot's folder after the user
-          presses "Allow and run" on the card; JSON output is the data, other output one string; at most 1 MB and 60 seconds).
+          presses "Allow and run" on the card; JSON output is the data, other output one string; at most 1 MB and 60 seconds). It is optional,
+          only for live data that changes: most components draw the data a bot gives them with `<show>`, and one made from a bot's reply shows that reply.
           Details on demand: when the data would be too big to give at once (every commit's whole diff), keep the Command's output small and add
           `Detail command: git show --patch --stat {hash}` to about.md. `await ccb.runDetail({ hash: "2aed630" })` (from a click) runs it with each
           `{name}` filled in as one quoted argument, in the same folder with the same limits, and resolves to its output (parsed if JSON, else text);
@@ -136,12 +137,17 @@ enum PluginGuide {
           On the Board the component is the whole tile, like a home-screen widget: no header, the app's controls (size, ↻, ⋯) float over
           the top-right corner on hover. There `ccb.surface` is "board" and `<html data-surface="board">` is set, so
           drop your own card frame: no border, no background (transparent, or the tile's), no border-radius, no outer padding beyond about
-          12px, and fill the tile, e.g. `html[data-surface="board"] .card { border: 0; background: none; border-radius: 0; padding: 12px; height: 100%; }`.
+          12px, and fill the tile.
           In the chat a component is drawn at its widest size (the widest in `Sizes:`, so 4x2 when listed; 2x2 without the line) across the
           whole width of the reply, edge to edge, with its report flag floating over its bottom-right corner on hover. There `ccb.surface`
           is "chat" and `<html data-surface="chat">` is set; the reply's bubble (or, under a reply, a tile like the Board's) is its frame,
-          so draw no card frame there either (same rules), only let it be as tall as its content: `.card { border: 0; background: none;
-          border-radius: 0; padding: 12px; }` with `html[data-surface="board"] .card { height: 100%; }`.
+          so draw no card frame there either (same rules), only let it be as tall as its content.
+          A pin opened from its chip above the input box is frameless the same way: `ccb.surface` is "pinned" and `<html data-surface="pinned">`
+          is set, the panel gives the corners and background and its controls (↻, ⋯, collapse) float over the top-right corner on hover, but the
+          page is as tall as its content (as in the chat).
+          So a component never draws a card frame of its own, and one rule covers every surface:
+          `.card { border: 0; background: none; border-radius: 0; padding: 12px; box-sizing: border-box; }` with
+          `html[data-surface="board"] .card { height: 100%; }` to fill a Board tile.
         - about.md: usage notes for the bots. The first line says in one sentence what it is, followed by the data format (with an example JSON) and what the bot receives when the user answers.
 
         ## Check and release

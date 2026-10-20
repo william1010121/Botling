@@ -70,8 +70,8 @@ struct ComponentSpecTests {
         let reply = testReply(in: bot)
         let spec = ComponentSpecs.draft(from: reply, bot: bot.name, folder: bot.profile.workingDirectory, library: workspace.components)
         #expect(spec.messageID == reply.id)
-        // The command it ran is the likely source of the data.
-        #expect(spec.command == "swift test --parallel")
+        // The command it ran names it, but the reply's own words are the data: no command.
+        #expect(spec.command == nil)
         #expect(spec.name == "swift-test")
         #expect(spec.folder == bot.profile.workingDirectory.path)
         #expect(spec.bots == [bot.name])
@@ -191,6 +191,72 @@ struct ComponentSpecTests {
         #expect(chat.contains(#""command":"swift test --parallel""#))
         #expect(chat.contains(#""status":"approve""#))
         #expect(workspace.componentCommands.runs.isEmpty)
+    }
+
+    /// A reply that summed up every release in Chinese (a table, and a result page with each
+    /// version's bullets), written after the bot read CHANGELOG.md with a shell command.
+    func releaseSummaryReply(in bot: Bot) throws -> (message: ChatMessage, page: URL) {
+        let artifacts = root.appending(path: "code/proj/.bot/artifacts")
+        try FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
+        let page = artifacts.appending(path: "release-history.html")
+        try """
+        <!doctype html><html><head><style>body { color: red; }</style><script>var secret = 1;</script></head>
+        <body><h1>版本紀錄</h1><h2>1.9.0</h2><ul><li>看板變成格子 &amp; 組件可釘選</li><li>過程收成一行</li></ul>
+        <h2>1.0.0</h2><ul><li>第一版：和 claude 對話的 Mac app</li></ul></body></html>
+        """.write(to: page, atomically: true, encoding: .utf8)
+        let rows = (0..<60).map { "| 1.\($0).0 | 第 \($0) 版的重點整理 |" }.joined(separator: "\n")
+        var message = ChatMessage(role: .bot, text: "每一版的中文整理：\n\n| 版本 | 重點 |\n|---|---|\n\(rows)\n\n最後一行：完整內容在 [版本紀錄頁](file://\(page.path))。")
+        message.steps = [Step(id: "1", kind: .tool, tool: "Bash", title: "Read the changelog", detail: "head -c 200000 CHANGELOG.md", output: "# Changelog", done: true)]
+        bot.post(message, unread: false)
+        return (message, page)
+    }
+
+    @Test func maintainerGetsTheWholeReplyAndItsResultPageAsTheData() throws {
+        let workspace = makeWorkspace()
+        let bot = workspace.mainBot
+        let (reply, page) = try releaseSummaryReply(in: bot)
+        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        // The shell command the bot ran to read its sources is not the component's data source.
+        #expect(spec.command == nil)
+        let relay = try #require(relays(workspace).last).text
+        // The whole reply (not only its first 1500 characters) and the page it links, as text.
+        #expect(relay.contains("最後一行：完整內容在"))
+        #expect(relay.contains(page.path))
+        #expect(relay.contains("看板變成格子 & 組件可釘選"))
+        #expect(relay.contains("第一版：和 claude 對話的 Mac app"))
+        #expect(!relay.contains("var secret"))
+        #expect(!relay.contains("<li>"))
+        // The reply's own content is the data; a command only when live data is clearly wanted.
+        #expect(relay.contains("\"This reply\" sample"))
+        #expect(relay.contains("the reply's own content"))
+        #expect(relay.contains("only when"))
+        #expect(relay.contains("head -c 200000 CHANGELOG.md"))
+    }
+
+    @Test func theComponentUnderTheReplyDrawsTheReplysOwnData() throws {
+        let workspace = makeWorkspace()
+        let bot = workspace.mainBot
+        let (reply, _) = try releaseSummaryReply(in: bot)
+        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        let data = #"{"versions":[{"version":"1.9.0","body":"- 看板變成格子"},{"version":"1.0.0","body":"- 第一版"}]}"#
+        let update: [String: Any] = ["name": "版本紀錄", "fields": [["name": "versions", "type": "[version, body]"]], "samples": [["label": "This reply", "data": data]]]
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: update), as: UTF8.self)
+        workspace.handle([.componentSpec(id: spec.id.uuidString, json: json)], from: workspace.maintainerProject)
+        // Its about.md also says how to fill it from a command (for other bots' <show>).
+        try addComponent("版本紀錄", about: "版本紀錄：每一版做了什麼。\nCommand: head -c 200000 CHANGELOG.md", to: workspace)
+        let done = try #require(bot.specs.first)
+        #expect(done.status == .done)
+        #expect(done.command == nil)
+        let commands = ChatPayload.CommandContext(runs: workspace.componentCommands) { _ in bot.profile.workingDirectory }
+        let chip = try #require(ChatPayload.specChips(for: reply, in: bot, open: nil, library: workspace.components, commands: commands)?.first)
+        // Under the reply it shows what the reply said, not an Allow and run for the CHANGELOG.
+        #expect(chip.display?.data == data)
+        #expect(chip.display?.command == nil)
+        #expect(chip.display?.status == nil)
+        // Even after a test run of a command was kept, the reply's data stays what it shows.
+        bot.editSpecs { specs in specs[0].samples.append(.init(label: "Test run", data: "\"# Changelog\"")) }
+        let again = try #require(ChatPayload.specChips(for: reply, in: bot, open: nil, library: workspace.components, commands: commands)?.first)
+        #expect(again.display?.data == data)
     }
 
     @Test func theFirstVersionReusesALibraryComponentMaintainerPicks() throws {
@@ -453,6 +519,8 @@ struct ComponentSpecTests {
         let reply = testReply(in: bot)
         let spec = draftSpec(from: reply, in: bot, in: workspace)
         workspace.editSpec(spec.id, key: "bots", value: "\(bot.name), garden", in: bot)
+        // The user chose live data: the tests' own command.
+        workspace.editSpec(spec.id, key: "command", value: "swift test --parallel", in: bot)
         workspace.buildSpec(spec.id, in: bot)
         let build = try #require(workspace.maintainer.messages.last { $0.role == .relay })
         #expect(build.text.contains("Build it"))
@@ -551,5 +619,9 @@ struct ComponentSpecTests {
         #expect(maintainer.contains("(Component spec <id>) Build the first version"))
         #expect(maintainer.contains("Ask nothing"))
         #expect(maintainer.contains("best guess"))
+        // A reply's own content is its data; a command only for live data.
+        #expect(maintainer.contains("Its data is the reply's own content"))
+        #expect(maintainer.contains("A Command is optional"))
+        #expect(ComponentPrompts.system.contains("Data from a command (optional)"))
     }
 }

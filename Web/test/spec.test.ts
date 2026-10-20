@@ -188,6 +188,20 @@ describe("the spec workspace in the right panel", () => {
     expect(root.querySelector(".spec-samples button[aria-pressed='true']")?.textContent).toBe("Failing run");
   });
 
+  it("a built component without a command previews with the reply's own data", () => {
+    const samples = [
+      { label: "Failing run", data: '{"total":382,"failed":2}' },
+      { label: "Test run", data: '"# Changelog"' },
+      { label: "This reply", data: '{"versions":["1.9.0 看板變成格子"]}' },
+    ];
+    const root = panel(spec({ status: "done", preview: "test-summary", command: null, samples, questions: [] }));
+    expect(root.querySelector(".spec-samples button[aria-pressed='true']")?.textContent).toBe("This reply");
+    expect(root.querySelector<HTMLIFrameElement>(".spec-preview iframe")!.srcdoc).toContain("看板變成格子");
+    // With a command (live data), the real run comes first.
+    const live = panel(spec({ id: "S2", status: "done", preview: "test-summary", samples, questions: [] }));
+    expect(live.querySelector(".spec-samples button[aria-pressed='true']")?.textContent).toBe("Test run");
+  });
+
   it("a built or existing component previews with its own template", () => {
     const root = panel(spec({ preview: "test-summary" }));
     expect(root.querySelector<HTMLIFrameElement>(".spec-preview iframe")!.srcdoc).toContain("<div>tests</div>");
@@ -302,5 +316,33 @@ describe("the spec workspace in the right panel", () => {
     const again = root.querySelector<HTMLTextAreaElement>(".spec-say textarea")!;
     expect(again.value).toBe("half typed");
     expect(document.activeElement).toBe(again);
+  });
+});
+
+describe("the spec panel at narrow widths", () => {
+  it("stacks the wide panel's Preview and progress columns when the panel is narrow", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const style = document.createElement("style");
+    style.textContent = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    document.head.append(style);
+    try {
+      // A half-screen window leaves the wide panel too little room for two columns side by side.
+      const narrow = [...style.sheet!.cssRules].filter((rule): rule is CSSMediaRule =>
+        "media" in rule && /max-width:\s*(\d+)px/.test((rule as CSSMediaRule).media.mediaText));
+      const stacked = narrow.find((rule) => [...rule.cssRules].some((inner) =>
+        "selectorText" in inner && (inner as CSSStyleRule).selectorText.includes(".spec-panel.wide .spec-body")
+        && (inner as CSSStyleRule).style.display === "flex" && (inner as CSSStyleRule).style.getPropertyValue("flex-direction") === "column"));
+      expect(stacked, "a max-width rule that stacks .spec-panel.wide .spec-body").toBeDefined();
+      const width = Number(/max-width:\s*(\d+)px/.exec(stacked!.media.mediaText)![1]);
+      // Two columns need the preview's 420 px plus a usable progress column.
+      expect(width).toBeGreaterThanOrEqual(700);
+      // The columns fall back to the narrow panel's single scrolling list, in its order.
+      const rules = [...stacked!.cssRules].filter((inner): inner is CSSStyleRule => "selectorText" in inner);
+      expect(rules.some((inner) => inner.selectorText.includes(".spec-panel.wide .spec-left") && inner.style.display === "contents")).toBe(true);
+      expect(rules.some((inner) => inner.selectorText.includes(".spec-panel.wide .spec-body") && inner.style.getPropertyValue("overflow-y") === "auto")).toBe(true);
+    } finally {
+      style.remove();
+    }
   });
 });

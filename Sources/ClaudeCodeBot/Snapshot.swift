@@ -412,7 +412,8 @@ enum Snapshot {
     /// allow. `CCB_SPEC_STATE` draws it later on, the chat alone: `building` (the chip says
     /// Building…), `done` (the component under the reply, its command allowed and run), `done-ask`
     /// (its card asks Allow and run), `edit` (done, with Edit spec's panel open). `CCB_SPEC_PANEL=1`
-    /// opens the panel in any state; `CCB_SPEC_WIDE=1` spreads it wide.
+    /// opens the panel in any state; `CCB_SPEC_WIDE=1` spreads it wide; `CCB_SPEC_WINDOW=<width>`
+    /// draws a whole window that wide.
     private static func drawSpec(to path: String) {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         let home = root.appending(path: "main")
@@ -504,20 +505,39 @@ enum Snapshot {
         }.json()
         guard let specJSON = workspace.specPayload(spec.id)?.json(), let page = ChatSurface.pageURL else { exit(1) }
         let height: CGFloat = 900
-        let panelWidth = panelOpen ? CGFloat(RightPanelLayout.specWidth(wide: workspace.specPanelWide)) : 0
+        // `CCB_SPEC_WINDOW=1000`: the whole window that wide, its columns split as the app splits
+        // them (the rail as a plain column, the Chat | Board bar above the chat).
+        let windowWidth = ProcessInfo.processInfo.environment["CCB_SPEC_WINDOW"].flatMap(Double.init)
+        let rail: CGFloat = windowWidth == nil ? 0 : CGFloat(RailLayout.expandedWidth)
+        let wanted = RightPanelLayout.specWidth(wide: workspace.specPanelWide)
+        let panelWidth = panelOpen ? CGFloat(windowWidth.map { RightPanelLayout.columns(window: $0, rail: Double(rail), right: wanted).right } ?? wanted) : 0
+        let chatWidth = windowWidth.map { CGFloat($0) - rail - panelWidth } ?? 640
+        let bar: NSImage? = windowWidth == nil ? nil : {
+            let renderer = ImageRenderer(content: BoardSwitch(board: false) { _ in }
+                .padding(.top, BoardSwitch.barTop).padding(.bottom, BoardSwitch.barBottom)
+                .frame(width: chatWidth).background(Theme.ground).preferredColorScheme(.dark))
+            renderer.scale = 2
+            return renderer.nsImage
+        }()
+        let barHeight = bar?.size.height ?? 0
         var shots: [Int: NSImage] = [:]
         let finish = {
             guard let chat = shots[0], let panel = panelOpen ? shots[1] : NSImage() else { return }
-            let size = NSSize(width: 640 + panelWidth, height: height)
+            let size = NSSize(width: rail + chatWidth + panelWidth, height: height)
             let image = NSImage(size: size)
             image.lockFocus()
             NSColor(red: 0.055, green: 0.055, blue: 0.063, alpha: 1).setFill()
             NSRect(origin: .zero, size: size).fill()
-            chat.draw(in: NSRect(x: 0, y: 0, width: 640, height: height))
+            if rail > 0 {
+                NSColor(red: 0.075, green: 0.075, blue: 0.085, alpha: 1).setFill()
+                NSRect(x: 0, y: 0, width: rail, height: height).fill()
+            }
+            chat.draw(in: NSRect(x: rail, y: 0, width: chatWidth, height: height - barHeight))
+            bar?.draw(in: NSRect(x: rail, y: height - barHeight, width: chatWidth, height: barHeight))
             if panelOpen {
-                panel.draw(in: NSRect(x: 640, y: 0, width: panelWidth, height: height))
+                panel.draw(in: NSRect(x: rail + chatWidth, y: 0, width: panelWidth, height: height))
                 NSColor(red: 0.137, green: 0.137, blue: 0.153, alpha: 1).setFill()
-                NSRect(x: 640, y: 0, width: 1, height: height).fill()
+                NSRect(x: rail + chatWidth, y: 0, width: 1, height: height).fill()
             }
             image.unlockFocus()
             if let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
@@ -526,14 +546,14 @@ enum Snapshot {
             exit(0)
         }
         for (index, width, url, script) in [
-            (0, CGFloat(640), page, "\(ChatSurface.setPluginsScript(workspace.plugins)); ccb.setState(\(chatJSON))"),
+            (0, chatWidth, page, "\(ChatSurface.setPluginsScript(workspace.plugins)); ccb.setState(\(chatJSON))"),
             (1, panelWidth, URLComponents(url: page, resolvingAgainstBaseURL: false).flatMap { parts -> URL? in
                 var parts = parts
                 parts.queryItems = [URLQueryItem(name: "spec", value: "1")]
                 return parts.url
             } ?? page, "document.body.style.background='#141417'; ccb.setSpec(\(specJSON))"),
         ] where index == 0 || panelOpen {
-            let frame = NSRect(x: 0, y: 0, width: width, height: height)
+            let frame = NSRect(x: 0, y: 0, width: width, height: index == 0 ? height - barHeight : height)
             let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
             let shot = Shot(script: script) { image in
                 shots[index] = image

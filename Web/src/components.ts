@@ -27,12 +27,15 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./
  *   Board has the size the user picked; in the chat it is the widest the component has (4×2 when
  *   it has that; 2×2 when its about.md names no sizes), drawn across the whole reply.
  * - `onSize(fn)`: calls `fn(size)` whenever the user resizes its card; returns a function that stops.
- * - `surface`: where it is drawn, "chat" or "board"; also `<html data-surface="chat">`. Either
- *   way it draws no frame of its own (no border, background or radius, at most ~12px padding):
- *   on the Board the component is the whole tile, like a home-screen widget, whose rounded corners
- *   and background frame it, and it fills the tile (the page is the tile's height and scrolls); in
- *   the chat the reply's bubble (or, under a reply, a tile like the Board's) frames it, edge to
- *   edge across the message column, and the page is as tall as its content.
+ * - `surface`: where it is drawn, "chat", "board" or "pinned"; also `<html data-surface="chat">`.
+ *   Everywhere it draws no frame of its own (no border, background or radius, at most ~12px
+ *   padding): on the Board the component is the whole tile, like a home-screen widget, whose
+ *   rounded corners and background frame it, and it fills the tile (the page is the tile's height
+ *   and scrolls); in the chat the reply's bubble (or, under a reply, a tile like the Board's)
+ *   frames it, edge to edge across the message column; "pinned" is a pin opened from its chip
+ *   above the input box, framed by the panel. In the chat and pinned the page is as tall as its
+ *   content. One rule for all: `.card { border: 0; background: none; border-radius: 0;
+ *   padding: 12px }` with `html[data-surface="board"] .card { height: 100% }`.
  * The frame reports its height and answers to this page, which passes answers on to Swift.
  */
 export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2", surface: Surface = "chat"): string {
@@ -185,8 +188,11 @@ document.documentElement.addEventListener('mouseleave', () => parent.postMessage
 </script></body></html>`;
 }
 
-/** Where a component is drawn: in the chat (and a pin's sheet), or as a tile on the Board. */
-export type Surface = "chat" | "board";
+/**
+ * Where a component is drawn: in the chat, as a tile on the Board, or "pinned": opened from its
+ * chip above the input box, filling that panel.
+ */
+export type Surface = "chat" | "board" | "pinned";
 
 /** Every Board size, smallest first. */
 export const pinSizes: PinSize[] = ["1x1", "2x1", "1x2", "2x2", "4x2"];
@@ -325,8 +331,8 @@ window.addEventListener("message", (event) => {
     frame.style.height = `${message.height}px`;
     if (frame.ccbKey) frameHeights.set(frame.ccbKey, message.height);
   } else if (message.ccb === "hover") {
-    // The pointer is over the component: its Board tile shows its controls.
-    frame.closest(".board-card")?.classList.toggle("hovered", !!(message as { on?: unknown }).on);
+    // The pointer is over the component: its Board tile (or opened pin) shows its controls.
+    frame.closest(".board-card, .pin-sheet")?.classList.toggle("hovered", !!(message as { on?: unknown }).on);
   } else if (message.ccb === "answer" && frame.ccbAnswer) {
     const images = answerImages(message.images);
     if (typeof message.index === "number") frame.ccbAnswer({ index: message.index });
