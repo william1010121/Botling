@@ -598,17 +598,15 @@ private struct BotRow: View {
     }
 }
 
-/// Under a bot: the subagents it sent off that are running or ended in the last half hour, the
+/// Under a bot: the subagents it sent off that are running or ended a few minutes ago, the
 /// way Claude Code lists a session's subagents. Click one to watch its conversation.
 private struct SubagentRows: View {
     @ObservedObject var bot: Bot
     @ObservedObject var workspace: Workspace
-    static let recent: TimeInterval = 30 * 60
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            let shown = bot.subagents.filter { $0.parentID == nil && ($0.isRunning || ($0.endedAt ?? .distantPast) > context.date.addingTimeInterval(-Self.recent)) }.suffix(4)
-            ForEach(Array(shown)) { subagent in
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            ForEach(bot.trace.listed(at: context.date)) { subagent in
                 let selected = workspace.selectedBot === bot && workspace.viewingSubagent == subagent.id
                 Button { workspace.view(subagent: subagent.id, of: bot) } label: {
                     HStack(spacing: 8) {
@@ -620,10 +618,7 @@ private struct SubagentRows: View {
                             .foregroundStyle(subagent.isRunning ? Theme.text : Theme.muted)
                             .lineLimit(1)
                         Spacer(minLength: 4)
-                        Circle()
-                            .fill(Self.color(subagent.status))
-                            .frame(width: 7, height: 7)
-                            .opacity(subagent.isRunning ? 0.9 : 0.6)
+                        Self.mark(subagent.mark).frame(width: 10)
                     }
                     .padding(.leading, 26)
                     .padding(.trailing, 10)
@@ -638,12 +633,18 @@ private struct SubagentRows: View {
         }
     }
 
-    static func color(_ status: Subagent.Status) -> Color {
-        switch status {
-        case .running: Theme.blue
-        case .completed: Theme.green
-        case .failed: Theme.orange
-        case .stopped: Theme.faint
+    /// A dot only while it works (blue, like a bot at work); once ended, a quiet sign of how.
+    @ViewBuilder
+    static func mark(_ mark: Subagent.Mark) -> some View {
+        switch mark {
+        case .live:
+            Circle().fill(Theme.blue).frame(width: 7, height: 7).opacity(0.9)
+        case .done:
+            Image(systemName: "checkmark").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.faint)
+        case .failed:
+            Image(systemName: "exclamationmark").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.orange)
+        case .stopped:
+            Image(systemName: "stop.fill").font(.system(size: 7)).foregroundStyle(Theme.faint)
         }
     }
 }

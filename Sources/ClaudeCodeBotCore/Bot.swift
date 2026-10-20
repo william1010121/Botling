@@ -176,7 +176,7 @@ public final class Bot: ObservableObject, Identifiable {
         let real = saved.filter { $0.type != nil || !$0.prompt.isEmpty || !$0.steps.isEmpty }
         var book = TraceBook(subagents: real)
         if real.count != saved.count { store?.save(subagents: real) }
-        if book.stopRunning() { store?.save(subagents: book.subagents) }
+        if book.stopLeftovers() { store?.save(subagents: book.subagents) }
         trace = book
     }
 

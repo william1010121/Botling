@@ -86,6 +86,21 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable {
 
     public var isRunning: Bool { status == .running }
 
+    /// How the left column marks it. Only one still at work gets a live dot; a finished one
+    /// gets a check, so it never looks like a bot that is awake (green).
+    public enum Mark: Equatable, Sendable {
+        case live, done, failed, stopped
+    }
+
+    public var mark: Mark {
+        switch status {
+        case .running: .live
+        case .completed: .done
+        case .failed: .failed
+        case .stopped: .stopped
+        }
+    }
+
     /// Its tool calls so far.
     public var toolCount: Int { steps.filter { $0.kind != .text }.count }
 }
@@ -205,6 +220,38 @@ public struct TraceBook: Equatable, Sendable {
         }
         trim()
         return any
+    }
+
+    /// Subagents left from an earlier run of the app (loaded from disk) went away with their
+    /// process. Stopped as of when they were last known to be at work (they started), so
+    /// they do not come back to the left column as if they just ended. True if any was.
+    @discardableResult
+    public mutating func stopLeftovers() -> Bool {
+        steps = []
+        var any = false
+        for index in subagents.indices where subagents[index].isRunning {
+            end(index, status: .stopped, result: subagents[index].result, at: subagents[index].startedAt)
+            any = true
+        }
+        trim()
+        return any
+    }
+
+    /// How long a finished subagent stays in the left column.
+    public static let listedAfterEnding: TimeInterval = 10 * 60
+    /// Most rows listed under one bot.
+    public static let listedAtMost = 4
+
+    /// The subagents the left column lists under the bot at `date`: the ones the bot itself
+    /// sent off that still run, or ended a short while ago (newest last).
+    public func listed(at date: Date = Date()) -> [Subagent] {
+        let shown = subagents.filter { subagent in
+            guard subagent.parentID == nil else { return false }
+            if subagent.isRunning { return true }
+            guard let ended = subagent.endedAt else { return false }
+            return date.timeIntervalSince(ended) < Self.listedAfterEnding
+        }
+        return Array(shown.suffix(Self.listedAtMost))
     }
 
     public func subagent(_ id: String) -> Subagent? {

@@ -70,6 +70,41 @@ struct TraceTests {
         #expect(book.steps[0].done)
     }
 
+    /// The left column kept a finished subagent with a green dot (the colour of a bot that is
+    /// awake) for half an hour, so it looked like it was still at work.
+    @Test func aFinishedSubagentStopsLookingActiveAndLeavesTheList() {
+        var book = TraceBook()
+        let start = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        for line in SubagentRun.lines.dropLast() {
+            for case let .trace(event) in StreamEvent.events(in: line) { book.apply(event, at: start) }
+        }
+        #expect(book.listed(at: start).map(\.mark) == [.live])
+
+        let end = start.addingTimeInterval(60)
+        for case let .trace(event) in StreamEvent.events(in: SubagentRun.notification) { book.apply(event, at: end) }
+        let listed = book.listed(at: end.addingTimeInterval(30))
+        #expect(listed.map(\.id) == ["toolu_A"])
+        #expect(listed.map(\.mark) == [.done])
+        #expect(!listed.contains { $0.mark == .live })
+        // A while later it is no longer listed at all.
+        #expect(book.listed(at: end.addingTimeInterval(TraceBook.listedAfterEnding + 1)).isEmpty)
+    }
+
+    @Test func aSubagentSavedAsRunningIsNotRunningAfterARestart() {
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-restart-\(UUID().uuidString)")
+        let store = BotStore(directory: home.appending(path: "store"))
+        let longAgo = Date().addingTimeInterval(-3600)
+        let left = Subagent(id: "A", description: "Research developer mode", type: "general-purpose", prompt: "Look into it", background: true, startedAt: longAgo)
+        store.save(subagents: [left])
+
+        let bot = Bot(profile: .main(home: home), launcher: FakeLauncher().launcher, store: store)
+        #expect(bot.subagents.map(\.status) == [.stopped])
+        #expect(bot.subagents.allSatisfy { !$0.isRunning })
+        // It went away with the app an hour ago: it does not come back to the left column.
+        #expect(bot.trace.listed().isEmpty)
+        #expect(store.loadSubagents().map(\.status) == [.stopped])
+    }
+
     @Test func aSubagentInTheForegroundEndsWithItsToolResult() {
         var book = TraceBook()
         book.apply(.toolUse(id: "A", tool: "Task", title: "Delegate Check the tests", detail: "Run the tests", parent: nil))
