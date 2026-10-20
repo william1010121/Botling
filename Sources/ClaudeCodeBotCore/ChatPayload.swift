@@ -188,6 +188,8 @@ public struct ChatPayload: Encodable, Equatable {
         var working: Bool
         var updated: Bool
         var hasPrevious: Bool
+        /// The Board sizes it has a layout for ("2x2", …): its about.md's `Sizes:` line.
+        var sizes: [String] = [PinnedComponent.Size.large.rawValue]
     }
 
     var botID: String
@@ -342,7 +344,8 @@ public struct ChatPayload: Encodable, Equatable {
                 version: library.versions[name, default: 0],
                 working: library.working[name] != nil,
                 updated: library.updated.contains(name),
-                hasPrevious: library.hasPrevious(name)
+                hasPrevious: library.hasPrevious(name),
+                sizes: library.sizes(of: name).map(\.rawValue)
             )
         }
         return ChatPayload(

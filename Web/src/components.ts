@@ -1,6 +1,6 @@
 import { post } from "./bridge";
 import { escapeHTML } from "./util";
-import type { Action, ChoiceView, ComponentInfo, DisplayView } from "./types";
+import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./types";
 
 /**
  * A component template inside its own iframe, so one template cannot break another or the chat.
@@ -22,11 +22,15 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView } from "./types";
  *   placeholders filled from `values` (`{hash: "2aed630"}`), in the folder its card's command
  *   runs in, once the user has allowed it there. Resolves to the output (parsed when it is JSON,
  *   else the text) or rejects with an Error saying why.
+ * - `size`: the size it is drawn at, `{w, h, name}` in Board cells: 1×1 "small", 2×1 "wide",
+ *   1×2 "tall", 2×2 "large", 4×2 "xlarge". Also `<html data-size="2x1">`, for CSS. A card on the
+ *   Board has the size the user picked; in the chat it is 2×2 (or the largest the component has).
+ * - `onSize(fn)`: calls `fn(size)` whenever the user resizes its card; returns a function that stops.
  * The frame reports its height and answers to this page, which passes answers on to Swift.
  */
-export function componentPage(template: string, data: string, images: Record<string, string> = {}): string {
+export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2"): string {
   const safe = (json: string) => json.replace(/</g, "\\u003c");
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
+  return `<!doctype html><html data-size="${size}"><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
 <style>:root{color-scheme:dark}html,body{margin:0;padding:0;background:transparent;color:#EDEDF0;font:14px -apple-system,"PingFang TC",sans-serif;overflow:hidden}</style>
 <script>
 (() => {
@@ -59,9 +63,22 @@ export function componentPage(template: string, data: string, images: Record<str
   // runDetail calls waiting for the page's answer, by number.
   const details = new Map();
   let detailCount = 0;
+  // Who wants to hear when its card is resized.
+  const sizeWatchers = new Set();
+  const resized = (next) => {
+    if (typeof next.w !== 'number' || typeof next.h !== 'number') return;
+    if (next.w === window.ccb.size.w && next.h === window.ccb.size.h) return;
+    window.ccb.size = Object.freeze({w: next.w, h: next.h, name: String(next.name)});
+    document.documentElement.dataset.size = next.w + 'x' + next.h;
+    for (const watcher of [...sizeWatchers]) {
+      try { watcher(window.ccb.size); } catch (error) { console.error(error); }
+    }
+  };
   window.addEventListener('message', (event) => {
     const message = event.data;
-    if (event.source !== parent || !message || typeof message.ccbDetail !== 'number') return;
+    if (event.source !== parent || !message) return;
+    if (message.ccbSize && typeof message.ccbSize === 'object') return resized(message.ccbSize);
+    if (typeof message.ccbDetail !== 'number') return;
     const call = details.get(message.ccbDetail);
     if (!call) return;
     details.delete(message.ccbDetail);
@@ -70,6 +87,12 @@ export function componentPage(template: string, data: string, images: Record<str
   });
   window.ccb = {
     data: ${safe(data)},
+    size: Object.freeze(${JSON.stringify(sizeInfo(size))}),
+    onSize(fn) {
+      if (typeof fn !== 'function') return () => {};
+      sizeWatchers.add(fn);
+      return () => sizeWatchers.delete(fn);
+    },
     answer(value) {
       if (typeof value === 'number') {
         parent.postMessage({ccb: 'answer', index: value}, '*');
@@ -149,6 +172,37 @@ window.addEventListener('load', ccbSize);
 </script></body></html>`;
 }
 
+/** Every Board size, smallest first. */
+export const pinSizes: PinSize[] = ["1x1", "2x1", "1x2", "2x2", "4x2"];
+
+const sizeNames: Record<PinSize, string> = { "1x1": "small", "2x1": "wide", "1x2": "tall", "2x2": "large", "4x2": "xlarge" };
+
+/** What a template sees in `ccb.size`. */
+export function sizeInfo(size: PinSize): { w: number; h: number; name: string } {
+  const [w, h] = size.split("x").map(Number);
+  return { w, h, name: sizeNames[size] };
+}
+
+/** The sizes a component has a layout for: its about.md's, else 2×2 alone. */
+export function componentSizes(info: ComponentInfo | undefined): PinSize[] {
+  const sizes = (info?.sizes ?? []).filter((size) => pinSizes.includes(size));
+  return sizes.length ? sizes : ["2x2"];
+}
+
+/** The size a component is drawn at in the chat: 2×2 when it has that layout, else its largest. */
+export function chatSize(info: ComponentInfo | undefined): PinSize {
+  const sizes = componentSizes(info);
+  if (sizes.includes("2x2")) return "2x2";
+  const area = (size: PinSize) => sizeInfo(size).w * sizeInfo(size).h;
+  return sizes.reduce((best, size) => (area(size) > area(best) ? size : best));
+}
+
+/** Tells a component's frame its card now has `size` (its `ccb.onSize` watchers run). */
+export function resizeFrame(frame: HTMLIFrameElement, size: PinSize): void {
+  (frame as ComponentFrame).ccbSize = size;
+  frame.contentWindow?.postMessage({ ccbSize: sizeInfo(size) }, "*");
+}
+
 /** The choices data a 「choices」 template reads. */
 export function choicesData(choices: ChoiceView[], chosen: number | null, answer: string | null): string {
   return JSON.stringify({ options: choices, chosen, answer });
@@ -172,7 +226,7 @@ type AnswerHandler = (answer: ComponentAnswer) => void;
  * A component's frame: its answer handler, the use it is (`ccbKey`), and what it was drawn from
  * (`ccbDrawn`), so a redrawn message can keep a frame whose component did not change.
  */
-type ComponentFrame = HTMLIFrameElement & { ccbAnswer?: AnswerHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDetail?: DetailTarget | null };
+type ComponentFrame = HTMLIFrameElement & { ccbAnswer?: AnswerHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDetail?: DetailTarget | null; ccbSize?: PinSize };
 
 /** Where a frame's `ccb.runDetail` goes: its component, and the folder its card showed. */
 export interface DetailTarget {
@@ -304,6 +358,7 @@ export function componentElement(
   key?: string,
   images?: Record<string, string> | null,
   detail?: DetailTarget | null,
+  size?: PinSize,
 ): HTMLElement | null {
   if (!info) return null;
   const wrap = document.createElement("div");
@@ -322,7 +377,13 @@ export function componentElement(
   // What it shows; the order of the pictures does not count (a Swift dictionary has none).
   const pictures = Object.entries(images ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   frame.ccbDrawn = JSON.stringify([name, info.template, info.version, data, pictures]);
-  frame.srcdoc = componentPage(info.template, data, images ?? {});
+  const drawnSize = size ?? chatSize(info);
+  frame.ccbSize = drawnSize;
+  frame.srcdoc = componentPage(info.template, data, images ?? {}, drawnSize);
+  // Resized before its page ran: tell it once it has loaded.
+  frame.addEventListener("load", () => {
+    if (frame.ccbSize && frame.ccbSize !== drawnSize) resizeFrame(frame, frame.ccbSize);
+  });
   wrap.append(frame, reportControl(name, info));
   return wrap;
 }

@@ -277,7 +277,7 @@ struct ChatSurface: NSViewRepresentable {
             case "movePin":
                 if let pinID = id("id"), let to = body["to"] as? Int { workspace.movePin(pinID, to: to, in: bot) }
             case "resizePin":
-                if let pinID = id("id"), let size = (body["size"] as? String).flatMap(PinnedComponent.Size.init(rawValue:)) {
+                if let pinID = id("id"), let size = (body["size"] as? String).flatMap(PinnedComponent.Size.init(spelled:)) {
                     workspace.resizePin(pinID, to: size, in: bot)
                 }
             case "setPinRefresh":

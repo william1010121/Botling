@@ -134,7 +134,8 @@ export interface DisplayView {
 }
 
 export type PinRefresh = "shown" | "interval" | "manual";
-export type PinSize = "s" | "m" | "l";
+/** A Board card's size in square cells, columns × rows (like a home-screen widget). */
+export type PinSize = "1x1" | "2x1" | "1x2" | "2x2" | "4x2";
 
 /** A component pinned to the bot: a chip above the input box and a card on its Board. */
 export interface PinView {
@@ -189,6 +190,8 @@ export interface ComponentInfo {
   working: boolean;
   updated: boolean;
   hasPrevious: boolean;
+  /** The Board sizes it has a layout for (its about.md's `Sizes:` line); 2×2 when missing. */
+  sizes?: PinSize[];
 }
 
 export interface ChatState {

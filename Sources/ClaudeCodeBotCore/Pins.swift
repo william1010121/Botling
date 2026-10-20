@@ -15,8 +15,41 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         case manual
     }
 
+    /// Its card on the Board, in square cells like a home-screen widget: columns × rows.
     public enum Size: String, Codable, CaseIterable, Sendable {
-        case s, m, l
+        case small = "1x1", wide = "2x1", tall = "1x2", large = "2x2", extraLarge = "4x2"
+
+        public var columns: Int { Int(rawValue.prefix(1)) ?? 2 }
+        public var rows: Int { Int(rawValue.suffix(1)) ?? 2 }
+        /// What a template sees in `ccb.size.name`.
+        public var name: String {
+            switch self {
+            case .small: "small"
+            case .wide: "wide"
+            case .tall: "tall"
+            case .large: "large"
+            case .extraLarge: "xlarge"
+            }
+        }
+
+        /// A size as pins.json or an about.md `Sizes:` line spells it: "2x1", "2×1", a name, or
+        /// the old S/M/L (small, the 2×2 default, the widest).
+        public init?(spelled text: String) {
+            let text = text.trimmingCharacters(in: .whitespaces).lowercased().replacingOccurrences(of: "×", with: "x").replacingOccurrences(of: " ", with: "")
+            switch text {
+            case "s": self = .small
+            case "m": self = .large
+            case "l": self = .extraLarge
+            default:
+                guard let size = Size(rawValue: text) ?? Size.allCases.first(where: { $0.name == text }) else { return nil }
+                self = size
+            }
+        }
+
+        /// What a component gets when it is pinned: 2×2 when it has that layout, else its first.
+        public static func preferred(among sizes: [Size]) -> Size {
+            sizes.contains(.large) ? .large : sizes.first ?? .large
+        }
     }
 
     public var id: UUID
@@ -38,7 +71,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
     /// A pin refreshed every so often runs at most this often.
     public static let minimumMinutes = 1
 
-    public init(id: UUID = UUID(), name: String, command: String? = nil, data: String, ranAt: Date? = nil, refresh: Refresh = .shown, minutes: Int = PinnedComponent.defaultMinutes, size: Size = .m) {
+    public init(id: UUID = UUID(), name: String, command: String? = nil, data: String, ranAt: Date? = nil, refresh: Refresh = .shown, minutes: Int = PinnedComponent.defaultMinutes, size: Size = .large) {
         self.id = id
         self.name = name
         self.command = command
@@ -52,7 +85,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
     private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size }
 
     // A value this build does not know (a newer refresh mode or size) falls back, so the rest
-    // of the file still loads.
+    // of the file still loads. The old sizes S, M and L become 1×1, 2×2 and 4×2.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -65,7 +98,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         let minutes: Int? = try? c.decodeIfPresent(Int.self, forKey: .minutes)
         self.minutes = max(Self.minimumMinutes, minutes ?? Self.defaultMinutes)
         let size: String? = try? c.decodeIfPresent(String.self, forKey: .size)
-        self.size = size.flatMap(Size.init(rawValue:)) ?? .m
+        self.size = size.flatMap(Size.init(spelled:)) ?? .large
     }
 
     /// The card key its command's runs go under (`ComponentCommands`), apart from chat cards.
