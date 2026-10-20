@@ -83,7 +83,7 @@ struct ClaudePartTests {
         // A new plugin with a Claude part arrives (Maintainer made one).
         _ = try claudePlugin("fresh", skill: "new-skill")
         workspace.plugins.rescan()
-        await eventually({ bot.messages.contains { $0.role == .divider && $0.text == "Handoff → loading new plugins" } }, timeout: 3)
+        await eventually({ bot.messages.contains { $0.role == .divider && $0.text == "Handoff → loading new plugins" } })
         await eventually { fake.agents.count == 2 && bot.phase == .awake }
         #expect(fake.agents[1].launch.pluginDirectories.contains { $0.path.contains("/fresh/") })
         await workspace.putEveryoneToSleep()

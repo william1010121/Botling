@@ -115,7 +115,7 @@ struct InstallTests {
         let workspace = workspace(fake)
         await workspace.pluginLibraryReady.value
         workspace.mainBot.send("Install that plugin for me")
-        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion } }, timeout: 10)
+        await eventually({ workspace.mainBot.messages.contains { $0.role == .notice && $0.isOpenQuestion } })
         let card = try #require(workspace.mainBot.messages.last { $0.role == .notice && $0.isOpenQuestion })
         #expect(workspace.choose(1, in: card.id, of: workspace.mainBot))
         try await Task.sleep(for: .milliseconds(200))
