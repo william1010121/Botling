@@ -54,6 +54,7 @@ struct RootView: View {
             // One web view for every bot: switching bots redraws it instead of reloading.
             ChatSurface(bot: bot, workspace: workspace, components: workspace.components, commands: workspace.componentCommands, plugins: workspace.plugins, inputs: inputs)
                 .frame(minWidth: 480, maxWidth: .infinity)
+                .modifier(BoardMode(workspace: workspace, inputs: inputs, bot: bot))
             Group {
                 if rightCollapsed {
                     RightStrip(workspace: workspace, bot: bot, group: workspace.group(of: bot), tip: $rightTip) {
@@ -139,6 +140,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         workspace.prepareLibrary()
         connectSelfUpdate()
         workspace.startRoutines()
+        workspace.startPinRefresh()
         workspace.startWatching()
         workspace.components.startWatching()
         workspace.plugins.startWatching()

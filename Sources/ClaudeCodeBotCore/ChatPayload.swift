@@ -95,6 +95,45 @@ public struct ChatPayload: Encodable, Equatable {
         /// Pictures its data names by file path, each to the URL its frame loads it from
         /// (`ccb.image(path)` in the template).
         var images: [String: String]? = nil
+        /// In a chat that can pin: whether this component is pinned to the bot (its hover bar
+        /// says so). Nil where nothing can be pinned.
+        var pinned: Bool? = nil
+    }
+
+    /// What drawing a chat's pins needs: their command runs, the folder they run in, and
+    /// whether the Board is showing.
+    public struct PinContext {
+        public var runs: ComponentCommands
+        public var folder: URL
+        public var board: Bool
+
+        public init(runs: ComponentCommands, folder: URL, board: Bool = false) {
+            self.runs = runs
+            self.folder = folder
+            self.board = board
+        }
+    }
+
+    /// A component pinned to the bot: a chip above the input box and a card on its Board.
+    public struct Pin: Encodable, Equatable {
+        var id: String
+        var name: String
+        /// One line for its chip, from its data.
+        var headline: String
+        var size: String
+        var refresh: String
+        var minutes: Int
+        /// The component as drawn, with its command's run as for a card in the chat.
+        var display: Display
+    }
+
+    /// A component the picker offers: one this bot drew, or one with a Command.
+    public struct PinChoice: Encodable, Equatable {
+        var name: String
+        var command: String?
+        /// How often this bot drew it.
+        var uses: Int
+        var pinned: Bool
     }
 
     /// What drawing components with commands needs: their runs, and the folder each message's
@@ -150,6 +189,12 @@ public struct ChatPayload: Encodable, Equatable {
     var subagent: SubagentHeader?
     /// Developer mode: replies can be flagged as not right.
     var feedback = false
+    /// The bot's pinned components, in order; nil where nothing can be pinned (a subagent).
+    var pins: [Pin]? = nil
+    /// What the pin picker offers.
+    var pinChoices: [PinChoice]? = nil
+    /// The Board is showing instead of the messages.
+    var board: Bool? = nil
 
     /// What a group chat adds: who is typing, and names for who said each line. A bot's own chat
     /// has one too, for the bots called into it with @.
@@ -192,8 +237,10 @@ public struct ChatPayload: Encodable, Equatable {
         callIn: GroupView? = nil,
         feedback: Bool = false,
         commands: CommandContext? = nil,
+        pins pinning: PinContext? = nil,
         avatar: (_ projectID: UUID?) -> String
     ) -> ChatPayload {
+        let pinnedNames = pinning.map { _ in Set(bot.pins.map(\.name)) }
         let own = avatar(nil)
         let main = bot.profile.role == .main ? own : nil
         let speaker = group?.speaker ?? callIn?.speaker
@@ -219,7 +266,12 @@ public struct ChatPayload: Encodable, Equatable {
                 answer: message.answer,
                 open: message.isOpenQuestion,
                 displays: message.shown.isEmpty ? nil : message.shown.enumerated().map { index, instance in
-                    display(instance, card: "\(message.id.uuidString)/\(index)", in: message, library: library, commands: commands, fallbackFolder: bot.profile.workingDirectory)
+                    var shown = display(instance, card: "\(message.id.uuidString)/\(index)", in: message, library: library, commands: commands, fallbackFolder: bot.profile.workingDirectory)
+                    // Only a bot's components that are in the library can be pinned.
+                    if let pinnedNames, message.role == .bot, library?.names.contains(instance.name) == true {
+                        shown.pinned = pinnedNames.contains(instance.name)
+                    }
+                    return shown
                 },
                 attachments: message.attachments?.map(file),
                 replyTo: message.replyTo?.uuidString,
@@ -278,8 +330,72 @@ public struct ChatPayload: Encodable, Equatable {
             slashLibrary: slash.library,
             live: group == nil && bot.isWorking ? bot.liveSteps.map { stepView($0, in: bot) } : [],
             subagent: nil,
-            feedback: feedback
+            feedback: feedback,
+            pins: pinning.map { context in bot.pins.map { pin(view: $0, context: context) } },
+            pinChoices: pinning.map { _ in pinChoices(for: bot, library: library) },
+            board: pinning.map(\.board)
         )
+    }
+
+    /// A pin as the page draws it. A pin with a command whose output was kept and that is not
+    /// refreshed "when shown" shows that output until you press ↻ (or its time comes), instead
+    /// of running again each time the app starts.
+    @MainActor
+    static func pin(view pin: PinnedComponent, context: PinContext) -> Pin {
+        var shown = display(ComponentInstance(name: pin.name, data: pin.data))
+        let ranAt: (Date?) -> String? = { date in
+            date.map { Calendar.current.isDateInToday($0) ? $0.formatted(date: .omitted, time: .shortened) : $0.formatted(.dateTime.month().day().hour().minute()) }
+        }
+        if let command = pin.command {
+            let state = context.runs.state(for: pin.card, command: command, in: context.folder)
+            var status = state.status
+            if status == .idle, pin.data != "null", pin.refresh != .shown { status = .done }
+            shown.command = command
+            shown.folder = context.folder.path
+            shown.status = status.rawValue
+            shown.error = state.error
+            shown.ranAt = ranAt(state.ranAt ?? pin.ranAt)
+            if let data = state.data {
+                shown.data = pin.name == PagePreview.component ? PagePreview.cardData(data) : data
+                let images = ComponentImages.urls(in: shown.data)
+                shown.images = images.isEmpty ? nil : images
+            }
+        }
+        let headline: String = switch shown.status {
+        case ComponentCommands.Status.approve.rawValue where pin.data == "null": "Needs your OK"
+        case ComponentCommands.Status.failed.rawValue: "Failed"
+        case ComponentCommands.Status.running.rawValue where pin.data == "null": "Running…"
+        default: Pins.headline(shown.status == nil ? pin.data : shown.data)
+        }
+        return Pin(id: pin.id.uuidString, name: pin.name, headline: headline, size: pin.size.rawValue, refresh: pin.refresh.rawValue, minutes: pin.minutes, display: shown)
+    }
+
+    /// The picker's list: components this bot drew (newest use first), then its own others (the
+    /// library's, before it has a list) that have a Command. The question component is left out.
+    @MainActor
+    static func pinChoices(for bot: Bot, library: ComponentLibrary?) -> [PinChoice] {
+        guard let library else { return [] }
+        let available = Set(library.names)
+        var uses: [String: Int] = [:]
+        var commands: [String: String] = [:]
+        var order: [String] = []
+        for message in bot.messages.reversed() where message.role == .bot {
+            for instance in message.shown.reversed() where available.contains(instance.name) && instance.name != "choices" {
+                if uses[instance.name] == nil {
+                    order.append(instance.name)
+                    if let command = command(of: instance, in: message, library: library) { commands[instance.name] = command }
+                }
+                uses[instance.name, default: 0] += 1
+            }
+        }
+        let pinned = Set(bot.pins.map(\.name))
+        let used = order.map { PinChoice(name: $0, command: commands[$0], uses: uses[$0] ?? 0, pinned: pinned.contains($0)) }
+        // Not drawn here yet: from the bot's own components when it has a list, else the library's.
+        let offered = bot.componentList?.filter(available.contains) ?? library.names
+        let others = offered.filter { uses[$0] == nil }.compactMap { name in
+            library.command(of: name).map { PinChoice(name: name, command: $0, uses: 0, pinned: pinned.contains(name)) }
+        }
+        return used + others
     }
 
     /// A subagent's conversation, the way Claude Code shows one: its task as your line, then what

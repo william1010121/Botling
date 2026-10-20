@@ -9,6 +9,8 @@ import WebKit
 final class ChatInputs: ObservableObject {
     @Published var files: [UUID: [ChatPayload.Pending]] = [:]
     @Published var replies: [UUID: UUID] = [:]
+    /// Bots whose Board shows instead of their chat (Chat | Board, ⌃⌘B).
+    @Published var boards: Set<UUID> = []
 }
 
 /// The middle column: the web chat surface (messages and the input box) for one bot. The page
@@ -91,6 +93,7 @@ struct ChatSurface: NSViewRepresentable {
             callIn: workspace.callInView(for: bot),
             feedback: workspace.developerProject != nil,
             commands: workspace.commandContext(for: bot),
+            pins: bot === workspace.codexBot ? nil : workspace.pinContext(for: bot, board: inputs.boards.contains(bot.id)),
             avatar: { projectID in
                 if let projectID, let kind = workspace.avatar(for: projectID) {
                     return AvatarImages.dataURL(kind, eyes: .open)
@@ -240,6 +243,40 @@ struct ChatSurface: NSViewRepresentable {
                     let command = body["command"] as? String, folder = body["folder"] as? String
                     Task { await workspace.runComponentCommand(messageID: messageID, index: index, in: bot, command: command, folder: folder, approve: approve, force: force) }
                 }
+            case "pin":
+                // From a chat card's pin button (a message and its place) or the picker (a name).
+                guard let pinID = id("id") else { break }
+                let refresh = (body["refresh"] as? String).flatMap(PinnedComponent.Refresh.init(rawValue:)) ?? .shown
+                let minutes = body["minutes"] as? Int ?? PinnedComponent.defaultMinutes
+                if let messageID = id("messageID"), let index = body["index"] as? Int {
+                    workspace.pin(messageID: messageID, index: index, in: bot, id: pinID, refresh: refresh, minutes: minutes)
+                } else if let name = body["name"] as? String {
+                    workspace.pin(named: name, in: bot, id: pinID, refresh: refresh, minutes: minutes)
+                }
+            case "unpin":
+                if let pinID = id("id") { workspace.unpin(pinID, in: bot) }
+            case "movePin":
+                if let pinID = id("id"), let to = body["to"] as? Int { workspace.movePin(pinID, to: to, in: bot) }
+            case "resizePin":
+                if let pinID = id("id"), let size = (body["size"] as? String).flatMap(PinnedComponent.Size.init(rawValue:)) {
+                    workspace.resizePin(pinID, to: size, in: bot)
+                }
+            case "setPinRefresh":
+                if let pinID = id("id"), let refresh = (body["refresh"] as? String).flatMap(PinnedComponent.Refresh.init(rawValue:)) {
+                    workspace.setPinRefresh(pinID, to: refresh, minutes: body["minutes"] as? Int, in: bot)
+                }
+            case "pinCommand":
+                // A pinned card: Allow (with the command and folder it showed) or ↻. Only what
+                // the user allowed runs, as for a card in the chat.
+                if let pinID = id("id") {
+                    let approve = body["approve"] as? Bool ?? false
+                    let force = body["force"] as? Bool ?? false
+                    let command = body["command"] as? String, folder = body["folder"] as? String
+                    Task { await workspace.runPin(pinID, in: bot, command: command, folder: folder, approve: approve, force: force) }
+                }
+            case "pinShown":
+                let ids = (body["ids"] as? [String])?.compactMap(UUID.init(uuidString:))
+                Task { await workspace.pinsShown(ids, in: bot) }
             case "pluginLoaded":
                 if let name = body["name"] as? String { surface.plugins.markLoaded(name) }
             default:
