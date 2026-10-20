@@ -149,13 +149,20 @@ enum StreamEvent {
         return id
     }
 
-    /// The session's cost so far, from a result line.
+    /// The session's cost so far and this turn's tokens, from a result line.
     static func usage(in line: String) -> AgentEvent? {
         guard let data = line.data(using: .utf8),
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               object["type"] as? String == "result",
               let cost = (object["total_cost_usd"] as? NSNumber)?.doubleValue else { return nil }
-        return .usage(totalCost: cost)
+        let usage = object["usage"] as? [String: Any] ?? [:]
+        func count(_ key: String) -> Int { (usage[key] as? NSNumber)?.intValue ?? 0 }
+        return .usage(totalCost: cost, tokens: TokenUsage(
+            input: count("input_tokens"),
+            output: count("output_tokens"),
+            cacheWrite: count("cache_creation_input_tokens"),
+            cacheRead: count("cache_read_input_tokens")
+        ))
     }
 
     static func reply(in line: String) -> AgentEvent? {

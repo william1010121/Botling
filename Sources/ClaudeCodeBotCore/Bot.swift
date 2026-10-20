@@ -55,6 +55,8 @@ public final class Bot: ObservableObject, Identifiable {
     public var replyObserver: ((ChatMessage) -> Void)?
     /// Called with what each turn cost, in US dollars.
     public var onSpend: ((Double) -> Void)?
+    /// Called with the tokens each turn used.
+    public var onTokens: ((TokenUsage) -> Void)?
     /// What the running session has cost so far (claude reports a running total).
     private var sessionCost = 0.0
     /// Called with the tags a reply carried (pull up a team, ask the component team).
@@ -546,7 +548,9 @@ public final class Bot: ObservableObject, Identifiable {
     /// then gives up (`.busy`); once asked, it gets `answerWithin` to reply.
     public func groupTurn(_ text: String, waitFor: TimeInterval = 20, answerWithin: TimeInterval = 5 * 60) async -> GroupAnswer {
         let deadline = Date().addingTimeInterval(waitFor)
-        while isWorking || groupReply != nil || phase == .tidying || isSwitching || dropNextReply {
+        // A background subagent's report would come back as a turn of its own and be taken for the group's reply.
+        while isWorking || groupReply != nil || phase == .tidying || isSwitching || dropNextReply
+                || trace.subagents.contains(where: \.isRunning) {
             guard !removed else { return .failed("It was removed.") }
             guard Date() < deadline else { return .busy }
             try? await Task.sleep(for: .milliseconds(300))
@@ -705,11 +709,12 @@ public final class Bot: ObservableObject, Identifiable {
     private func handle(_ event: AgentEvent, from source: AgentProcess) {
         guard source === process else { return }
         switch event {
-        case let .usage(total):
+        case let .usage(total, tokens):
             // A running total for the session: what this turn cost is the difference.
             let spent = max(0, total - sessionCost)
             sessionCost = max(sessionCost, total)
             if spent > 0 { onSpend?(spent) }
+            if tokens.total > 0 { onTokens?(tokens) }
         case let .trace(step):
             if trace.apply(step) { store?.save(subagents: trace.subagents) }
             // It started a turn of its own (a subagent in the background finished): it is at

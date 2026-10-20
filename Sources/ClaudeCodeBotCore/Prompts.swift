@@ -80,6 +80,7 @@ struct BotPrompts {
             - The main bot reads the "Current status" and "Waiting on you" sections of your memory file to follow progress, so update them whenever they change.
             - Messages starting with "\(Self.relayPrefix)" are work passed on by the main bot. When done, say the result in one sentence; when stuck, say where, and attach a choices block if the user needs to decide. The app passes your report on to the user.
             - In .bot/ only \(memory), \(profile.routinesPath), inbox.md and artifacts/ are yours, and archive/ to read; leave every other file alone.
+            - By default, hand real work (building, fixing, researching, anything longer than a few quick reads) to subagents with the Agent tool and keep yourself free for the user: give each one a clear, self-contained task, run independent ones in parallel, say in one sentence what you handed off, and report their results when they come back. Do it yourself only when it is quicker than explaining it.
             \(profile.instructions ?? "")
             """
         }

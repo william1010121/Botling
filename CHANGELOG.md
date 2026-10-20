@@ -4,6 +4,42 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## 1.4.0
+
+### Added
+
+- **See what bots do.** Each reply folds the steps behind it (tool calls with what went in and
+  came out); the turn under way shows its steps live. Subagents a bot sends off show as cards in
+  the chat and under the bot in the left column; click one to watch its conversation.
+- **Bots hand work to subagents by default.** Managers give building, fixing and research to
+  subagents and stay free to answer you. A bot stays awake while one works, and in a group chat
+  it waits for it to report before answering the group.
+- **Projects from chat.** The main bot adds folders as projects; `folder/*` means every folder
+  inside, `folder/**` every project below. One card asks for all of them.
+- **Settings** (gear at the bottom of the left column): today's API cost and tokens per bot, the
+  last 30 days, the daily budget, plugins and developer mode. Tokens are counted from 1.4.0 on.
+- **A daily budget.** Once today's is used up, routines, handed-over work and teams wait (a card
+  offers more for today), never your own messages.
+- **Ignore an item** waiting on you with ×; Settings can show it again.
+- **Unread counts** in the left column, and chats ordered by their latest message.
+- **Developer mode** (Settings, off by default), for working on ClaudeCodeBot itself: one
+  project is its source; its manager may install a new build after you confirm (one that does
+  not come up within 90 seconds is rolled back), look at the app's window, and gets replies you
+  mark "Not right".
+
+### Changed
+
+- You come first: writing to a bot busy with handed-over work or a routine pauses that work; it
+  answers you, then carries on. Adding to a message before the bot answers asks again with all of it.
+- A wake-up brings the chat's last 20 lines, and every message is archived by month for bots to search.
+- Every bot has the same tools; bots outside a project folder ask before running commands.
+- Component reports take pictures.
+
+### Fixed
+
+- The left column no longer redraws in a loop that froze the app.
+- A relay line no longer draws two borders.
+
 ## 1.3.0
 
 ### Changed

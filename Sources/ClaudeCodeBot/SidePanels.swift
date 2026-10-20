@@ -7,6 +7,7 @@ import SwiftUI
 struct RailView: View {
     @ObservedObject var workspace: Workspace
     @State private var makingBot = false
+    @State private var showingSettings = false
     @State private var removing: Workspace.Project?
     /// The group being made (a new one) or changed, in the sheet.
     @State private var editingGroup: ChatGroup?
@@ -141,6 +142,16 @@ struct RailView: View {
                 }
                 .buttonStyle(.plain)
                 .help("A bot of its own, with its own memory and routines (a morning news bot, say)")
+                Button { showingSettings = true } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.faint)
+                        .frame(width: 32, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Settings: usage and cost, budget, plugins")
+                .accessibilityLabel("Settings")
             }
         }
         .padding(.horizontal, 12)
@@ -169,6 +180,9 @@ struct RailView: View {
             Button("Delete group", role: .destructive) { workspace.deleteGroup(group.id) }
         } message: { _ in
             Text("Its conversation is deleted. The bots in it keep their own chats and memory.")
+        }
+        .sheet(isPresented: $showingSettings) {
+            AppSettingsSheet(workspace: workspace)
         }
         .sheet(item: $editingGroup) { group in
             GroupForm(workspace: workspace, group: group) { name, members in
@@ -417,21 +431,36 @@ struct WaitingList: View {
     var body: some View {
         VStack(spacing: 6) {
             ForEach(items) { item in
-                Button { workspace.select(item.groupID ?? (item.projectID == Workspace.mainBotID ? nil : item.projectID)) } label: {
-                    HStack(spacing: 12) {
-                        AvatarView(kind: workspace.avatar(for: item.projectID) ?? .cloud, size: 26)
-                        Text(item.text).lineLimit(2).multilineTextAlignment(.leading)
-                        Spacer(minLength: 4)
-                        Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(Theme.orange)
+                HStack(spacing: 0) {
+                    Button { workspace.select(item.groupID ?? (item.projectID == Workspace.mainBotID ? nil : item.projectID)) } label: {
+                        HStack(spacing: 12) {
+                            AvatarView(kind: workspace.avatar(for: item.projectID) ?? .cloud, size: 26)
+                            Text(item.text).lineLimit(2).multilineTextAlignment(.leading)
+                            Spacer(minLength: 4)
+                            Image(systemName: "chevron.right").font(.system(size: 12)).foregroundStyle(Theme.orange)
+                        }
+                        .padding(.leading, 14)
+                        .padding(.vertical, 10)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .frame(minHeight: 52)
-                    .background(RoundedRectangle(cornerRadius: 14).fill(Color(hex: 0x2A2116)))
-                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: 0x6B4A1F)))
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    Button { workspace.ignoreWaiting(item) } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.faint)
+                            .frame(width: 36, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Ignore: take it off this list without answering")
+                    .accessibilityLabel("Ignore")
                 }
-                .buttonStyle(.plain)
+                .frame(minHeight: 52)
+                .background(RoundedRectangle(cornerRadius: 14).fill(Color(hex: 0x2A2116)))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: 0x6B4A1F)))
+                .contextMenu {
+                    Button("Ignore") { workspace.ignoreWaiting(item) }
+                }
             }
         }
     }
@@ -640,7 +669,7 @@ struct DetailPanel: View {
             if let key = openPanel {
                 panelPage(key)
             } else if showingSettings {
-                SettingsPage(bot: bot, plugins: bot.profile.role == .main ? workspace.plugins : nil, workspace: workspace) { showingSettings = false }
+                SettingsPage(bot: bot) { showingSettings = false }
             } else {
                 overview
             }
@@ -810,11 +839,10 @@ private struct SleepCountdown: View {
     }
 }
 
+/// One bot's settings: its model, routines and the tools it may use. ClaudeCodeBot's own are
+/// in `AppSettingsSheet`.
 private struct SettingsPage: View {
     @ObservedObject var bot: Bot
-    /// ClaudeCodeBot's plugins, on the main bot's settings only.
-    var plugins: PluginRegistry?
-    var workspace: Workspace?
     var close: () -> Void
     @State private var adding = false
 
@@ -926,15 +954,6 @@ private struct SettingsPage: View {
                     .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
                     .help("Tools you let this bot use without asking. Takes effect the next time it wakes.")
                 }
-            }
-
-            if let plugins {
-                PluginsSection(registry: plugins, host: workspace?.pluginHost, workspace: workspace)
-            }
-
-            if let workspace, plugins != nil {
-                BudgetSection(workspace: workspace)
-                DeveloperSection(workspace: workspace)
             }
 
             Spacer()
@@ -1256,6 +1275,117 @@ private struct SettingControl: View {
         }
         .font(.system(size: 13))
         .accessibilityLabel(setting.title)
+    }
+}
+
+/// ClaudeCodeBot's own settings, from the gear under the chat list: what the bots used, the
+/// daily budget, plugins, ignored items, developer mode.
+private struct AppSettingsSheet: View {
+    @ObservedObject var workspace: Workspace
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Settings").font(.system(size: 15, weight: .semibold))
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            .padding(20)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    UsageSection(workspace: workspace)
+                    BudgetSection(workspace: workspace)
+                    if workspace.ignoredWaitingCount > 0 {
+                        PanelSection("Ignored") {
+                            HStack {
+                                Text("\(workspace.ignoredWaitingCount) item(s) taken off \"Waiting on you\"")
+                                Spacer()
+                                Button("Show again") { workspace.showIgnoredWaiting() }
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(Theme.blue)
+                            }
+                            .font(.system(size: 14))
+                            .padding(.horizontal, 14)
+                            .frame(height: 44)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+                        }
+                    }
+                    PluginsSection(registry: workspace.plugins, host: workspace.pluginHost, workspace: workspace)
+                    DeveloperSection(workspace: workspace)
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
+            }
+            .scrollIndicators(.never)
+        }
+        .frame(width: 480, height: 640)
+        .background(Theme.side)
+    }
+}
+
+/// Cost and tokens: today in all and by bot, and the days before.
+private struct UsageSection: View {
+    @ObservedObject var workspace: Workspace
+
+    var body: some View {
+        let spending = workspace.spending
+        let isToday = spending.day == Spending.today()
+        let tokens = isToday ? spending.tokens : TokenUsage()
+        PanelSection("Usage today") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    tile("Cost", Workspace.dollars(isToday ? spending.spent : 0))
+                    tile("Tokens", Workspace.tokenCount(tokens.total))
+                }
+                Text("In \(Workspace.tokenCount(tokens.input)) · out \(Workspace.tokenCount(tokens.output)) · cache write \(Workspace.tokenCount(tokens.cacheWrite)) · cache read \(Workspace.tokenCount(tokens.cacheRead))")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.faint)
+                let bots = isToday ? Set(spending.byBot.keys).union(spending.tokensByBot.keys).sorted {
+                    (spending.byBot[$0] ?? 0, spending.tokensByBot[$0]?.total ?? 0) > (spending.byBot[$1] ?? 0, spending.tokensByBot[$1]?.total ?? 0)
+                } : []
+                if !bots.isEmpty {
+                    VStack(spacing: 0) {
+                        ForEach(bots, id: \.self) { name in
+                            row(name, spending.byBot[name] ?? 0, spending.tokensByBot[name]?.total ?? 0)
+                        }
+                    }
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+                }
+            }
+        }
+        if !spending.history.isEmpty {
+            PanelSection("Earlier days") {
+                VStack(spacing: 0) {
+                    ForEach(spending.history.reversed(), id: \.day) { day in
+                        row(day.day, day.spent, day.tokens.total)
+                    }
+                }
+                .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+            }
+        }
+    }
+
+    private func tile(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.system(size: 12)).foregroundStyle(Theme.faint)
+            Text(value).font(.system(size: 22, weight: .semibold)).monospacedDigit()
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+    }
+
+    private func row(_ name: String, _ cost: Double, _ tokens: Int) -> some View {
+        HStack {
+            Text(name).lineLimit(1)
+            Spacer()
+            Text("\(Workspace.tokenCount(tokens)) tokens").foregroundStyle(Theme.faint).monospacedDigit()
+            Text(Workspace.dollars(cost)).monospacedDigit().frame(width: 70, alignment: .trailing)
+        }
+        .font(.system(size: 13))
+        .padding(.horizontal, 14)
+        .frame(height: 36)
     }
 }
 

@@ -187,6 +187,7 @@ public final class Workspace: ObservableObject {
         }
         mainBot.onRequests = { [weak self] requests in self?.handle(requests, from: nil) }
         mainBot.onSpend = { [weak self] amount in self?.record(amount, by: "Main bot") }
+        mainBot.onTokens = { [weak self] tokens in self?.record(0, tokens: tokens, by: "Main bot") }
         // Asked during a group turn, the main bot's question shows in that group too.
         mainBot.onQuestion = { [weak self] message in
             guard let self else { return }
@@ -949,9 +950,9 @@ public final class Workspace: ObservableObject {
             var reported = false
             for await event in process.events {
                 switch event {
-                case let .usage(total):
+                case let .usage(total, tokens):
                     // A team runs one turn, so its running total is what it cost.
-                    self?.record(total, by: spec.title)
+                    self?.record(total, tokens: tokens, by: spec.title)
                 case .trace, .permission, .permissionCancelled:
                     // Teams are started without asking (asksPermission is off), so nothing waits.
                     break
@@ -1177,12 +1178,37 @@ public final class Workspace: ObservableObject {
                 Waiting(projectID: $0.sourceID ?? group.id, text: Self.firstLine(of: $0.text), messageID: $0.id, groupID: group.id)
             }
         }
-        waiting = own + main + inGroups
+        let ignored = Set(settings.ignoredWaiting ?? [])
+        waiting = (own + main + inGroups).filter { !ignored.contains($0.id) }
     }
 
-    /// A group's chat holds a question waiting for you.
+    /// A group's chat holds a question waiting for you (and not ignored).
     public func groupHasQuestion(_ id: UUID) -> Bool {
-        groupChats[id]?.messages.contains(where: \.isOpenQuestion) == true
+        let ignored = Set(settings.ignoredWaiting ?? [])
+        return groupChats[id]?.messages.contains {
+            $0.isOpenQuestion && !ignored.contains(Waiting(projectID: $0.sourceID ?? id, text: Self.firstLine(of: $0.text)).id)
+        } == true
+    }
+
+    /// Takes an item off "Waiting on you" (and its dot and the Dock count) without answering it.
+    public func ignoreWaiting(_ item: Waiting) {
+        var ignored = settings.ignoredWaiting ?? []
+        guard !ignored.contains(item.id) else { return }
+        ignored.append(item.id)
+        // Only the last 200: old ones are long answered or gone.
+        settings.ignoredWaiting = Array(ignored.suffix(200))
+        settings.save(to: settingsURL)
+        refreshWaiting()
+    }
+
+    /// How many items you ignored.
+    public var ignoredWaitingCount: Int { settings.ignoredWaiting?.count ?? 0 }
+
+    /// Brings every ignored item back.
+    public func showIgnoredWaiting() {
+        settings.ignoredWaiting = nil
+        settings.save(to: settingsURL)
+        refreshWaiting()
     }
 
     /// The single place a pick is made, from any chat. A pick on a copy of a bot's question
@@ -1495,6 +1521,7 @@ public final class Workspace: ObservableObject {
         let bot = makeBot(profile, store)
         bot.onRequests = { [weak self] requests in self?.handle(requests, from: project) }
         bot.onSpend = { [weak self] amount in self?.record(amount, by: project.name) }
+        bot.onTokens = { [weak self] tokens in self?.record(0, tokens: tokens, by: project.name) }
         bot.wakeNote = { [weak self] in
             guard let self else { return "" }
             return [componentBriefing(), developerBriefing(for: project)].filter { !$0.isEmpty }.joined(separator: "\n\n")

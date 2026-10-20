@@ -18,6 +18,49 @@ struct BudgetTests {
         #expect(StreamEvent.events(in: line) == [.usage(totalCost: 0.0077), .reply("OK", isError: false)])
     }
 
+    @Test func theResultLineCarriesTheTurnsTokens() {
+        let line = #"{"type":"result","is_error":false,"result":"OK","total_cost_usd":0.01,"usage":{"input_tokens":2,"output_tokens":77,"cache_creation_input_tokens":100,"cache_read_input_tokens":400}}"#
+        #expect(StreamEvent.events(in: line).first == .usage(totalCost: 0.01, tokens: TokenUsage(input: 2, output: 77, cacheWrite: 100, cacheRead: 400)))
+    }
+
+    @Test func tokensAddUpByBotAndPastDaysAreKept() {
+        var spending = Spending(day: "2026-10-19", spent: 1)
+        spending.tokens = TokenUsage(input: 10)
+        spending.add(0, tokens: TokenUsage(output: 5), by: "garden")
+        spending.add(0, tokens: TokenUsage(output: 5), by: "garden")
+        #expect(spending.day == Spending.today())
+        #expect(spending.tokens == TokenUsage(output: 10) && spending.tokensByBot["garden"] == TokenUsage(output: 10))
+        #expect(spending.history == [DayTotal(day: "2026-10-19", spent: 1, tokens: TokenUsage(input: 10))])
+    }
+
+    @Test func anIgnoredWaitingItemLeavesTheListAndStaysGone() throws {
+        let fake = FakeLauncher()
+        let workspace = makeWorkspace(fake)
+        let folder = root.appending(path: "code/garden")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let project = workspace.addProject(folder: folder)
+        let memory = project.notesFolder.appending(path: "memory.md")
+        try FileManager.default.createDirectory(at: project.notesFolder, withIntermediateDirectories: true)
+        try "## Waiting on you\n- Pick a cover\n- Approve the logo\n".write(to: memory, atomically: true, encoding: .utf8)
+        workspace.refreshWaiting()
+        #expect(workspace.waiting.map(\.text) == ["Pick a cover", "Approve the logo"])
+
+        workspace.ignoreWaiting(workspace.waiting[0])
+        #expect(workspace.waiting.map(\.text) == ["Approve the logo"])
+        #expect(AppSettings.load(from: workspace.settingsURL).ignoredWaiting?.count == 1)
+
+        workspace.showIgnoredWaiting()
+        #expect(workspace.waiting.count == 2)
+    }
+
+    @Test func aSpendingFileFromBeforeTokensStillLoads() throws {
+        let url = root.appending(path: "spending.json")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try Data(#"{"day":"\#(Spending.today())","spent":2,"allowance":0,"byBot":{"x":2},"warned":false}"#.utf8).write(to: url)
+        let loaded = Spending.load(from: url)
+        #expect(loaded.spent == 2 && loaded.tokens == TokenUsage())
+    }
+
     @Test func eachTurnCountsWhatItAddedToTheRunningTotal() async throws {
         let fake = FakeLauncher()
         fake.respond = { _ in nil }

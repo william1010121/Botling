@@ -12,9 +12,9 @@ extension Workspace {
     }
 
     /// Adds what a bot or team spent; the first time today's budget is used up, says so.
-    func record(_ amount: Double, by name: String, on date: Date = Date()) {
+    func record(_ amount: Double, tokens: TokenUsage = TokenUsage(), by name: String, on date: Date = Date()) {
         let wasOver = isOverBudget
-        spending.add(amount, by: name, on: date)
+        spending.add(amount, tokens: tokens, by: name, on: date)
         spending.save(to: spendingURL)
         guard !wasOver, isOverBudget, let budget = settings.dailyBudget else { return }
         warnBudget(budget)
@@ -50,5 +50,14 @@ extension Workspace {
 
     public static func dollars(_ amount: Double) -> String {
         "$" + String(format: "%.2f", amount)
+    }
+
+    /// "1.2M", "34.5K", "812".
+    public static func tokenCount(_ count: Int) -> String {
+        switch count {
+        case 1_000_000...: String(format: "%.1fM", Double(count) / 1_000_000)
+        case 1_000...: String(format: "%.1fK", Double(count) / 1_000)
+        default: "\(count)"
+        }
     }
 }
