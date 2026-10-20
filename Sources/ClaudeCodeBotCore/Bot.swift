@@ -17,6 +17,10 @@ public final class Bot: ObservableObject, Identifiable {
     @Published public private(set) var subagentModel: BotModel?
     /// How hard it (and its subagents) think; nil: the model's default.
     @Published public private(set) var effort: EffortLevel?
+    /// Whether Codex reviews its subagents' work, how many fix rounds, what goes back.
+    @Published public private(set) var codexSettings: CodexSettings
+    /// Called when you change `codexSettings`, so an awake bot hears the new rules.
+    public var onCodexSettings: ((CodexSettings) -> Void)?
     /// When the bot will tidy and fall asleep if nothing else happens; nil unless idle and awake.
     @Published public private(set) var sleepsAt: Date?
     /// A reply arrived that the user has not looked at.
@@ -189,6 +193,7 @@ public final class Bot: ObservableObject, Identifiable {
         model = store?.loadModel() ?? defaultModel
         subagentModel = store?.loadSubagentModel()
         effort = store?.loadEffort()
+        codexSettings = store?.loadCodexSettings() ?? CodexSettings()
         routineFile = RoutineFile(url: profile.routinesURL)
         // The main bot starts with a daily summary; managers with none. Routines saved the old way
         // move into the file.
@@ -338,6 +343,14 @@ public final class Bot: ObservableObject, Identifiable {
             text += "\n\n(Attachments:\n" + attachments.map { "- " + $0.url.path }.joined(separator: "\n") + ")"
         }
         route(Outgoing(text: text, images: attachments.filter { $0.kind == .image }, messageID: message.id))
+    }
+
+    /// Something only the app says (no line in the chat): wakes it like a message. A report it
+    /// was waiting for (Codex's review of its subagent's work) arrives this way.
+    public func appMessage(_ text: String) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        route(Outgoing(text: text))
     }
 
     /// The user picked a button: mark it, then send its label as their answer. A question can be
@@ -516,7 +529,8 @@ public final class Bot: ObservableObject, Identifiable {
             turnInput = outgoing.fromUser ? outgoing : nil
             let note = wakeNote?() ?? ""
             let recent = recentChat(leavingOut: outgoing.messageID)
-            process.send([prompts.wake, note, recent, outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n"), images: outgoing.images)
+            let wakeLine = profile.keepsMemory ? prompts.wake : ""
+            process.send([wakeLine, note, recent, outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n"), images: outgoing.images)
         } catch {
             append(ChatMessage(role: .error, text: "Couldn't wake up: \(error.localizedDescription)"))
         }
@@ -931,7 +945,7 @@ public final class Bot: ObservableObject, Identifiable {
         switch step {
         case let .toolUse(_, _, _, _, parent), let .toolResult(_, _, _, parent), let .text(_, parent): parent
         case let .subagentStarted(id, _, _, _, _): id
-        case .subagentEnded: nil
+        case .subagentEnded, .subagentNamed: nil
         }
     }
 
@@ -1134,7 +1148,8 @@ public final class Bot: ObservableObject, Identifiable {
         }
         cancelIdle()
         phase = .tidying
-        _ = await ask(prompts.tidy)
+        // A bot with no memory (Codex) has nothing to write down.
+        if profile.keepsMemory { _ = await ask(prompts.tidy) }
         guard !removed else { return }
         await finishProcess()
         phase = .asleep
@@ -1205,6 +1220,15 @@ public final class Bot: ObservableObject, Identifiable {
         effort = newEffort
         store?.save(effort: newEffort)
         await restart(divider: "Handoff → \(newEffort?.displayName ?? "default") effort")
+    }
+
+    /// Codex review of its subagents' work. Takes effect at once: an awake bot is told with its
+    /// next message, an asleep one reads it when it wakes.
+    public func setCodexSettings(_ settings: CodexSettings) {
+        guard settings != codexSettings else { return }
+        codexSettings = settings
+        store?.save(codexSettings: settings)
+        onCodexSettings?(settings)
     }
 
     /// Plugins' Claude parts changed. Asleep: the next wake loads them. Awake: hand over and

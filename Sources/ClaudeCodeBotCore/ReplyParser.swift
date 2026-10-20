@@ -26,6 +26,9 @@ public enum BotRequest: Equatable, Sendable {
     /// `<open-question from="project name"/>`: main bot only. Shows, in the main bot's chat, the
     /// card a project or bot is already asking in its own chat (the same decision, not a new card).
     case openQuestion(from: String)
+    /// `<codex-review agent="fix-login" folder="/…/worktree" base="main">what it does</codex-review>`:
+    /// have Codex review a subagent's change; what it finds goes back to that subagent.
+    case codexReview(agent: String, folder: String, base: String?, note: String)
 }
 
 /// Splits a bot's reply into the text to show, the buttons to draw, and the requests to act on.
@@ -63,6 +66,10 @@ public enum ReplyParser {
     private static let installTag = try! NSRegularExpression(pattern: #"<install>\s*(.*?)\s*</install>"#, options: .dotMatchesLineSeparators)
     private static let buildTag = try! NSRegularExpression(
         pattern: #"<install-build\s+path\s*=\s*"([^"]+)"\s*(?:/>|>\s*(.*?)\s*</install-build>)"#,
+        options: .dotMatchesLineSeparators
+    )
+    private static let codexTag = try! NSRegularExpression(
+        pattern: #"<codex-review((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(?:/>|>\s*(.*?)\s*</codex-review>)"#,
         options: .dotMatchesLineSeparators
     )
     private static let screenshotTag = try! NSRegularExpression(pattern: #"<app-screenshot\s*/?>(?:\s*</app-screenshot>)?"#)
@@ -176,6 +183,15 @@ public enum ReplyParser {
             if !name.isEmpty { openQuestions.insert(.openQuestion(from: name), at: 0) }
         }
         requests += openQuestions
+        var reviews: [BotRequest] = []
+        take(codexTag) { groups in
+            let attributes = attributes(groups[0])
+            let folder = (attributes["folder"] ?? "").trimmingCharacters(in: .whitespaces)
+            guard !folder.isEmpty else { return }
+            let base = attributes["base"].map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
+            reviews.insert(.codexReview(agent: (attributes["agent"] ?? "").trimmingCharacters(in: .whitespaces), folder: folder, base: base, note: groups[1]), at: 0)
+        }
+        requests += reviews
 
         var choices: [Choice]?
         take(choicesBlock, first: true) { groups in

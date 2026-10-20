@@ -28,6 +28,8 @@ public struct BotStore: Sendable {
         var alwaysAllowed: [String]?
         /// Lines the user has not looked at yet.
         var unread: Int?
+        /// Codex review of its subagents' work.
+        var codex: CodexSettings?
     }
 
     private struct LegacyRoutine: Codable {
@@ -120,6 +122,17 @@ public struct BotStore: Sendable {
     public func save(unread: Int) {
         var settings = loadSettings()
         settings.unread = unread
+        write(settings, to: settingsURL)
+    }
+
+    /// Codex review of its subagents' work; off when never set.
+    public func loadCodexSettings() -> CodexSettings {
+        loadSettings().codex ?? CodexSettings()
+    }
+
+    public func save(codexSettings: CodexSettings) {
+        var settings = loadSettings()
+        settings.codex = codexSettings
         write(settings, to: settingsURL)
     }
 

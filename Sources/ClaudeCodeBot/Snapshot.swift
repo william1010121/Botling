@@ -15,6 +15,10 @@ enum Snapshot {
         if let icon = ProcessInfo.processInfo.environment["CCB_ICON"] {
             drawIcon(to: icon)
         }
+        if let path = ProcessInfo.processInfo.environment["CCB_CODEX_SNAPSHOT"] {
+            drawCodex(to: path)
+            return true
+        }
         if let (chat, path) = chatRequest() {
             drawChat(chat, to: path)
             return true
@@ -124,6 +128,69 @@ enum Snapshot {
         view.loadFileURL(page, allowingReadAccessTo: URL(filePath: "/"))
         self.window = window
         self.handler = handler
+    }
+
+    /// `CCB_CODEX_SNAPSHOT=/path/out.png`: the left column with Codex and a subagent in a review
+    /// loop, a project's panel with its Codex reviews, and a report, from sample reviews.
+    private static func drawCodex(to path: String) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
+        let folder = root.appending(path: "code/ClaudeCodeBot")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let projectID = UUID()
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let project = Workspace.Project(id: projectID, name: "ClaudeCodeBot", folder: folder, avatar: "square")
+        try? JSONEncoder().encode([project]).write(to: root.appending(path: "projects.json"))
+        let item = { (file: String, line: Int, severity: CodexSeverity, title: String) in
+            CodexOutput.Item(file: file, line: line, severity: severity, title: title, scenario: "Two quick taps on Send start two runs; the second overwrites the first one's result.")
+        }
+        var loop = CodexReview(kind: .loop, ownerID: projectID, agent: "fix-login", title: "Codex review · fix-login", folder: folder.path, base: "main", note: "Stop the sign-in loop")
+        loop.absorb(CodexOutput(summary: "Two real problems in the session handling.", findings: [
+            item("Sources/ClaudeCodeBotCore/Codex.swift", 120, .high, "Token is never refreshed after the first expiry"),
+            item("Sources/ClaudeCodeBotCore/GitDiff.swift", 60, .medium, "Session leaks on logout"),
+            item("Web/src/main.ts", 17, .low, "Log line misspells the user id")
+        ]))
+        loop.markSent(Set(loop.findings.filter { $0.severity != .low }.map(\.id)))
+        loop.absorb(CodexOutput(summary: "One left.", findings: [item("Sources/ClaudeCodeBotCore/Codex.swift", 122, .high, "Token is never refreshed after the first expiry")]))
+        loop.markSent([loop.findings[0].id])
+        loop.state = .fixing
+        var single = CodexReview(kind: .single, ownerID: projectID, title: "Codex review · bot/codex", folder: folder.path, base: "main")
+        single.absorb(CodexOutput(summary: "The loop logic holds up; two edge cases.", findings: [item("Sources/ClaudeCodeBotCore/CodexReview.swift", 150, .medium, "A skipped finding reported again stays skipped")]))
+        single.state = .open
+        CodexReviewStore(url: root.appending(path: "codex/reviews.json")).save([single, loop])
+        let subagents = [Subagent(id: "toolu_1", description: "Fix login loop", prompt: "Fix it", startedAt: Date())]
+        var named = subagents
+        named[0].name = "fix-login"
+        BotStore(directory: root.appending(path: "projects/\(projectID.uuidString)")).save(subagents: named)
+
+        let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
+            Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
+        }
+        guard let bot = workspace.bot(for: project) else { exit(1) }
+        let content = HStack(alignment: .top, spacing: 0) {
+            RailView(workspace: workspace, settings: SettingsNavigator()).frame(width: 240)
+            DetailPanel(workspace: workspace, bot: bot).frame(width: 340)
+            CodexReportView(workspace: workspace, reviewID: loop.id) {}
+                .padding(20).frame(width: 340).background(Theme.side)
+            CodexReportView(workspace: workspace, reviewID: single.id)
+                .padding(20).frame(width: 560).background(Theme.side)
+        }
+        .frame(width: 1480, height: 900)
+        .foregroundStyle(Theme.text)
+        .background(Theme.ground)
+        .preferredColorScheme(.dark)
+        let frame = NSRect(x: 0, y: 0, width: 1480, height: 900)
+        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: .darkAqua)
+        let host = NSHostingView(rootView: content)
+        host.frame = frame
+        window.contentView = host
+        self.window = window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
+            exit(0)
+        }
     }
 
     /// `CCB_ICON=/path/icon.png`: the app icon (the main bot's face on a dark tile), 1024 px.

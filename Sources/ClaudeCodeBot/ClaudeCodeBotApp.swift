@@ -88,7 +88,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A run that only draws a snapshot or checks a plugin, then quits.
     static var isHeadless: Bool {
         let environment = ProcessInfo.processInfo.environment
-        return environment["CCB_SNAPSHOT"] != nil || environment["CCB_ICON"] != nil
+        return environment["CCB_SNAPSHOT"] != nil || environment["CCB_ICON"] != nil || environment["CCB_CODEX_SNAPSHOT"] != nil
             || CommandLine.arguments.contains("--check-plugin") || Snapshot.isChatRequest
     }
 
