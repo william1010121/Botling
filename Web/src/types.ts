@@ -51,7 +51,17 @@ export interface DisplayView {
   name: string;
   data: string;
   at?: number | null;
+  /** Set when its data comes from a command, run in `folder`. */
+  command?: string | null;
+  folder?: string | null;
+  /** How the command's run is going; "failed" also marks a component shown with no data. */
+  status?: CommandStatus | null;
+  error?: string | null;
+  /** When it last ran ("10:42"). */
+  ranAt?: string | null;
 }
+
+export type CommandStatus = "approve" | "idle" | "running" | "done" | "failed";
 
 /** One line of work: a tool call, words between calls, or a subagent. */
 export interface StepView {
@@ -119,6 +129,7 @@ export type Action =
   | { type: "addFileData"; name: string; base64: string }
   | { type: "componentReport"; name: string; text: string; images: { name: string; base64: string }[]; rect: { x: number; y: number; width: number; height: number } | null }
   | { type: "componentRevert"; name: string }
+  | { type: "componentCommand"; messageID: string; index: number; approve?: boolean; force?: boolean }
   | { type: "pluginError"; name: string; message: string }
   | { type: "pluginNotice"; name: string; text: string }
   | { type: "pluginLoaded"; name: string; version: string }

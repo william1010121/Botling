@@ -117,6 +117,8 @@ public final class Workspace: ObservableObject {
     }
     public private(set) var managers: [UUID: Bot] = [:]
     public let components: ComponentLibrary
+    /// Components whose data comes from a command: what the user allowed, and each card's run.
+    public let componentCommands: ComponentCommands
     /// Plugins for ClaudeCodeBot itself: `~/.claudecodebot/plugins/` and the ones shipped with the app.
     public let plugins: PluginRegistry
     /// Runs plugins' program parts (Node), when a script for it was given.
@@ -174,6 +176,7 @@ public final class Workspace: ObservableObject {
         plugins = PluginRegistry(library: library, builtIns: builtInPlugins, validateClaudePart: validateClaudePart, git: git, secrets: secrets)
         pluginHost = pluginHostScript.map { PluginHostClient(script: $0, locateNode: locateNode) }
         components = ComponentLibrary(folder: componentFolder)
+        componentCommands = ComponentCommands(approvalsURL: root.appending(path: "approved-commands.json"))
         components.git = git.isAvailable ? git : nil
         self.checkCommand = checkCommand
         let mainHome = root.appending(path: "main")
@@ -848,7 +851,31 @@ public final class Workspace: ObservableObject {
 
     /// The components a bot can draw or ask to change.
     func componentBriefing() -> String {
-        "(App: Components in the chat. <show name=\"name\">JSON</show> draws one; <component name=\"name\">request</component> asks Maintainer to change one.)\n" + components.catalog()
+        "(App: Components in the chat. <show name=\"name\">JSON</show> draws one; <show name=\"name\" command=\"git diff --stat\"></show> fills it with what that command prints instead (run in your project folder once the user allows it; JSON output is used as the data, other output as one string; the card has a refresh button). A component whose usage has a \"Command:\" line needs only <show name=\"name\"></show>. <component name=\"name\">request</component> asks Maintainer to change one.)\n" + components.catalog()
+    }
+
+    /// The folder a message's component commands run in: the project of the bot that wrote it
+    /// (a group chat's lines say who), else the chat's own bot's.
+    public func commandFolder(for message: ChatMessage, in bot: Bot) -> URL {
+        if let source = message.sourceID, let writer = member(source) { return writer.profile.workingDirectory }
+        return bot.profile.workingDirectory
+    }
+
+    /// What drawing this chat's component commands needs.
+    public func commandContext(for bot: Bot) -> ChatPayload.CommandContext {
+        ChatPayload.CommandContext(runs: componentCommands) { [unowned self] message in commandFolder(for: message, in: bot) }
+    }
+
+    /// A component card's command: `approve` is the user allowing it (remembered for that
+    /// folder); `force` runs it again (the refresh button). A command not allowed never runs.
+    public func runComponentCommand(messageID: UUID, index: Int, in bot: Bot, approve: Bool = false, force: Bool = false) async {
+        guard let message = bot.messages.first(where: { $0.id == messageID }),
+              message.shown.indices.contains(index) else { return }
+        let instance = message.shown[index]
+        guard let command = ChatPayload.command(of: instance, in: message, library: components) else { return }
+        let folder = commandFolder(for: message, in: bot)
+        if approve { componentCommands.approve(command, in: folder) }
+        await componentCommands.run(card: "\(message.id.uuidString)/\(index)", command: command, in: folder, force: force)
     }
 
     /// Someone asked for a component change: the user beside a component, or a bot with a

@@ -1,6 +1,6 @@
 import { post } from "./bridge";
 import { escapeHTML } from "./util";
-import type { ChoiceView, ComponentInfo } from "./types";
+import type { ChoiceView, ComponentInfo, DisplayView } from "./types";
 
 /**
  * A component template inside its own iframe, so one template cannot break another or the chat.
@@ -95,6 +95,105 @@ export function componentElement(
   frame.srcdoc = componentPage(info.template, data);
   wrap.append(frame, reportControl(name, info));
   return wrap;
+}
+
+/** Cards whose command was asked to run once allowed, so a redraw does not ask again. */
+const requestedRuns = new Set<string>();
+
+const refreshIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>`;
+
+/**
+ * A component whose data comes from a CLI command. Above it a bar names the command, when it
+ * last ran, and a button to run it again. Until the user allows that command for the project
+ * the card only asks (Swift remembers the answer); a failed run shows why instead of the
+ * component. `draw` draws the component itself with the data the command gave.
+ */
+export function commandCard(display: DisplayView, messageID: string, index: number, draw: () => HTMLElement | null): HTMLElement {
+  const card = document.createElement("div");
+  card.className = "command-card";
+  const status = display.status ?? "approve";
+  card.dataset.status = status;
+  const run = (extra: { approve?: boolean; force?: boolean }) =>
+    post({ type: "componentCommand", messageID, index, ...extra });
+  const hasData = display.data !== "null" && display.data !== "";
+
+  if (display.command) {
+    const bar = document.createElement("div");
+    bar.className = "command-bar";
+    const text = document.createElement("code");
+    text.className = "command-text";
+    text.textContent = display.command;
+    text.title = display.folder ? `Runs in ${display.folder}` : display.command;
+    bar.append(text);
+    const when = document.createElement("span");
+    when.className = "command-when";
+    when.textContent = status === "running" ? "Running…" : display.ranAt ? `Ran ${display.ranAt}` : "";
+    bar.append(when);
+    if (status !== "approve") {
+      const refresh = document.createElement("button");
+      refresh.className = "command-refresh" + (status === "running" ? " spinning" : "");
+      refresh.setAttribute("aria-label", "Run the command again");
+      refresh.title = "Run again";
+      refresh.innerHTML = refreshIcon;
+      refresh.disabled = status === "running" || status === "idle";
+      refresh.addEventListener("click", () => run({ force: true }));
+      bar.append(refresh);
+    }
+    card.append(bar);
+  }
+
+  if (status === "approve") {
+    const ask = document.createElement("div");
+    ask.className = "command-approve";
+    const line = document.createElement("div");
+    line.textContent = "This card gets its data by running a command in";
+    const folder = document.createElement("code");
+    folder.className = "command-folder";
+    folder.textContent = display.folder ?? "the project folder";
+    const command = document.createElement("pre");
+    command.className = "command-full";
+    command.textContent = display.command ?? "";
+    const actions = document.createElement("div");
+    actions.className = "command-actions";
+    const allow = document.createElement("button");
+    allow.className = "primary command-allow";
+    allow.textContent = "Allow and run";
+    allow.addEventListener("click", () => {
+      allow.disabled = true;
+      run({ approve: true });
+    });
+    const note = document.createElement("span");
+    note.className = "command-note";
+    note.textContent = "Remembered for this command in this project.";
+    actions.append(allow, note);
+    ask.append(line, folder, command, actions);
+    card.append(ask);
+  } else if (status === "failed") {
+    const problem = document.createElement("div");
+    problem.className = "command-error";
+    problem.setAttribute("role", "alert");
+    const title = document.createElement("strong");
+    title.textContent = display.command ? "The command failed" : "Nothing to show";
+    const detail = document.createElement("pre");
+    detail.textContent = display.error ?? "";
+    problem.append(title, detail);
+    card.append(problem);
+  } else if (status === "done" || (status === "running" && hasData)) {
+    const component = draw();
+    if (component) card.append(component);
+  } else {
+    // Allowed and not run yet (ask once), or running for the first time.
+    const key = `${messageID}/${index}`;
+    if (status === "idle" && !requestedRuns.has(key)) {
+      requestedRuns.add(key);
+      run({});
+    }
+    const waiting = document.createElement("div");
+    waiting.className = "command-waiting";
+    waiting.innerHTML = `<span class="spinner" aria-hidden="true"></span><span>Running the command…</span>`;
+    card.append(waiting);
+  }
+  return card;
 }
 
 /** Plain buttons, for when the 「choices」 template is missing. */

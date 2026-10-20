@@ -77,6 +77,25 @@ public struct ChatPayload: Encodable, Equatable {
         var data: String
         /// Where in the message's text (UTF-16 offset); nil: after it.
         var at: Int?
+        /// Set when its data comes from a command: the command, the folder it runs in, and how
+        /// its run is going (see `ComponentCommands.Status`), with the error or when it last ran.
+        var command: String?
+        var folder: String?
+        var status: String?
+        var error: String?
+        var ranAt: String?
+    }
+
+    /// What drawing components with commands needs: their runs, and the folder each message's
+    /// commands run in (the project of the bot that wrote it).
+    public struct CommandContext {
+        public var runs: ComponentCommands
+        public var folder: (ChatMessage) -> URL
+
+        public init(runs: ComponentCommands, folder: @escaping (ChatMessage) -> URL) {
+            self.runs = runs
+            self.folder = folder
+        }
     }
 
     public struct Reply: Encodable, Equatable {
@@ -152,6 +171,7 @@ public struct ChatPayload: Encodable, Equatable {
         group: GroupView? = nil,
         callIn: GroupView? = nil,
         feedback: Bool = false,
+        commands: CommandContext? = nil,
         avatar: (_ projectID: UUID?) -> String
     ) -> ChatPayload {
         let own = avatar(nil)
@@ -178,7 +198,9 @@ public struct ChatPayload: Encodable, Equatable {
                 chosen: message.chosen,
                 answer: message.answer,
                 open: message.isOpenQuestion,
-                displays: message.shown.isEmpty ? nil : message.shown.map(display),
+                displays: message.shown.isEmpty ? nil : message.shown.enumerated().map { index, instance in
+                    display(instance, card: "\(message.id.uuidString)/\(index)", in: message, library: library, commands: commands, fallbackFolder: bot.profile.workingDirectory)
+                },
                 attachments: message.attachments?.map(file),
                 replyTo: message.replyTo?.uuidString,
                 replyPreview: message.replyPreview,
@@ -315,6 +337,42 @@ public struct ChatPayload: Encodable, Equatable {
     /// A component in a message; a 「網頁預覽卡片」 gets where to load its page from.
     static func display(_ instance: ComponentInstance) -> Display {
         Display(name: instance.name, data: instance.name == PagePreview.component ? PagePreview.cardData(instance.data) : instance.data, at: instance.at)
+    }
+
+    /// The command a component in a message takes its data from: its own, or, when it was
+    /// written with no data, the one its about.md declares. Only a bot's lines run commands.
+    @MainActor
+    static func command(of instance: ComponentInstance, in message: ChatMessage, library: ComponentLibrary?) -> String? {
+        guard message.role == .bot else { return nil }
+        return instance.command ?? (instance.data == "null" ? library?.command(of: instance.name) : nil)
+    }
+
+    /// A component in a bot's message, with its command's run when its data comes from one.
+    /// `card` names this one (the message and its place) for its run.
+    @MainActor
+    static func display(_ instance: ComponentInstance, card: String, in message: ChatMessage, library: ComponentLibrary?, commands: CommandContext?, fallbackFolder: URL) -> Display {
+        var shown = display(instance)
+        guard let command = command(of: instance, in: message, library: library) else {
+            if instance.data == "null" {
+                shown.status = ComponentCommands.Status.failed.rawValue
+                shown.error = "This component was shown without data, and it has no command to get data from."
+            }
+            return shown
+        }
+        let folder = commands?.folder(message) ?? fallbackFolder
+        shown.command = command
+        shown.folder = folder.path
+        guard let state = commands?.runs.state(for: card, command: command, in: folder) else {
+            shown.status = ComponentCommands.Status.approve.rawValue
+            return shown
+        }
+        shown.status = state.status.rawValue
+        shown.error = state.error
+        shown.ranAt = state.ranAt.map { $0.formatted(date: .omitted, time: .shortened) }
+        if let data = state.data {
+            shown.data = instance.name == PagePreview.component ? PagePreview.cardData(data) : data
+        }
+        return shown
     }
 
     /// Cards for the result pages a bot's line or a notice links to, when the card component is

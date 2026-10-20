@@ -1,5 +1,5 @@
 import { post } from "./bridge";
-import { choicesData, componentElement, fallbackChoices } from "./components";
+import { choicesData, commandCard, componentElement, fallbackChoices } from "./components";
 import { mediaHTML, renderMarkdown } from "./markdown";
 import { acceptPictures } from "./pictures";
 import type { ComponentRender } from "./plugins";
@@ -286,6 +286,14 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
  * first keeps the message's id as its key (its height survives a redraw), the rest add their place.
  */
 function componentView(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>): HTMLElement | null {
+  // Data from a command: the card around it asks to allow it, runs it, or says why it failed.
+  if (display.command || display.status) {
+    return commandCard(display, message.id, index, () => drawComponent(message, display, index, components));
+  }
+  return drawComponent(message, display, index, components);
+}
+
+function drawComponent(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>): HTMLElement | null {
   const answer = (value: number | string) =>
     post(typeof value === "number"
       ? { type: "choose", messageID: message.id, index: value }

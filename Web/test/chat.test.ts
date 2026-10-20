@@ -20,6 +20,9 @@ function state(overrides: Partial<ChatState> = {}): ChatState {
   };
 }
 
+// jsdom has no ResizeObserver; the report box and preview cards use one.
+globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
+
 beforeEach(() => {
   sent.length = 0;
   document.body.innerHTML = "";
@@ -129,6 +132,48 @@ describe("messages", () => {
     // Without the template the link is all there is.
     const bare = messageElement(message({ id: "m21", text: "[A](file:///p/.bot/artifacts/a.html)", previews: [{ name: "網頁預覽卡片", data }] }), {});
     expect(bare.querySelector(".component-frame")).toBeNull();
+  });
+
+  it("ask before running a component's command, then run, refresh and show failures", () => {
+    const components = { table: { template: "<pre id=t></pre>", version: 0, working: false, updated: false, hasPrevious: false } };
+    const display = { name: "table", data: "null", at: null, command: "git diff --stat", folder: "/p/garden" };
+    // Not allowed yet: only the ask, with the command and folder, no component.
+    const asking = messageElement(message({ id: "c1", displays: [{ ...display, status: "approve" }] }), components);
+    expect(asking.querySelector(".component-frame")).toBeNull();
+    expect(asking.querySelector(".command-full")?.textContent).toBe("git diff --stat");
+    expect(asking.querySelector(".command-folder")?.textContent).toBe("/p/garden");
+    expect(asking.querySelector(".command-refresh")).toBeNull();
+    asking.querySelector<HTMLButtonElement>(".command-allow")!.click();
+    expect(sent).toEqual([{ type: "componentCommand", messageID: "c1", index: 0, approve: true }]);
+    sent.length = 0;
+    // Allowed but not run yet: asks for a run once, however often it is drawn.
+    const idle = message({ id: "c2", displays: [{ ...display, status: "idle" }] });
+    messageElement(idle, components);
+    messageElement(idle, components);
+    expect(sent).toEqual([{ type: "componentCommand", messageID: "c2", index: 0 }]);
+    sent.length = 0;
+    // Done: the component with the output, and a refresh button that runs it again.
+    const done = messageElement(message({ id: "c3", displays: [{ ...display, data: JSON.stringify(" 2 files changed"), status: "done", ranAt: "10:42" }] }), components);
+    expect(done.querySelector<HTMLIFrameElement>(".component-frame")!.srcdoc).toContain("2 files changed");
+    expect(done.querySelector(".command-when")?.textContent).toBe("Ran 10:42");
+    done.querySelector<HTMLButtonElement>(".command-refresh")!.click();
+    expect(sent).toEqual([{ type: "componentCommand", messageID: "c3", index: 0, force: true }]);
+    // Running again keeps the last output, with the button busy.
+    const again = messageElement(message({ id: "c3", displays: [{ ...display, data: "[1]", status: "running" }] }), components);
+    expect(again.querySelector(".component-frame")).not.toBeNull();
+    expect(again.querySelector<HTMLButtonElement>(".command-refresh")!.disabled).toBe(true);
+    // Failed: why, instead of the component; it can be tried again.
+    const failed = messageElement(message({ id: "c4", displays: [{ ...display, status: "failed", error: "The command failed (exit code 128).\nnot a git repository" }] }), components);
+    expect(failed.querySelector(".component-frame")).toBeNull();
+    expect(failed.querySelector("[role=alert]")?.textContent).toContain("not a git repository");
+    expect(failed.querySelector<HTMLButtonElement>(".command-refresh")!.disabled).toBe(false);
+  });
+
+  it("draw a component without a command as before", () => {
+    const components = { table: { template: "<p></p>", version: 0, working: false, updated: false, hasPrevious: false } };
+    const row = messageElement(message({ displays: [{ name: "table", data: "[1]", at: null }] }), components);
+    expect(row.querySelector(".command-card")).toBeNull();
+    expect(row.querySelector(".component-frame")).not.toBeNull();
   });
 
   it("name who said a line in the group chat", () => {

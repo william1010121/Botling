@@ -8,11 +8,15 @@ public struct ComponentInstance: Codable, Equatable, Sendable {
     public var data: String
     /// Where in the message's text it is drawn (a UTF-16 offset); nil: after the text.
     public var at: Int?
+    /// A shell command whose output is the data instead (`<show name="x" command="git diff --stat">`),
+    /// run in the bot's project folder once the user allows it. See `ComponentCommands`.
+    public var command: String?
 
-    public init(name: String, data: String, at: Int? = nil) {
+    public init(name: String, data: String, at: Int? = nil, command: String? = nil) {
         self.name = name
         self.data = data
         self.at = at
+        self.command = command
     }
 }
 
@@ -129,6 +133,28 @@ public final class ComponentLibrary: ObservableObject {
         guard !named.isEmpty else { return nil }
         let list = named.map { "\"\($0)\"" }.joined(separator: ", ")
         return "(App: With / the user names the in-chat component\(named.count == 1 ? "" : "s") \(list): they mean \(named.count == 1 ? "that component" : "those components") of the app's chat. <show name=\"name\">JSON</show> draws one; <component name=\"name\">request</component> asks Maintainer to change one. How to use \(named.count == 1 ? "it" : "them"):\n\(catalog(of: named)))"
+    }
+
+    /// The command a component takes its data from, when its about.md has a line
+    /// `Command: npx ccusage daily --json` (backticks around it are fine). A `<show>` of it
+    /// with no JSON and no command of its own runs this one (see `ComponentCommands`).
+    public func command(of name: String) -> String? {
+        guard let about = try? String(contentsOf: aboutURL(name), encoding: .utf8) else { return nil }
+        return Self.command(inAbout: about)
+    }
+
+    static func command(inAbout about: String) -> String? {
+        for line in about.split(separator: "\n") {
+            var text = line.trimmingCharacters(in: .whitespaces)
+            if text.hasPrefix("- ") || text.hasPrefix("* ") { text = String(text.dropFirst(2)) }
+            guard text.lowercased().hasPrefix("command:") else { continue }
+            let command = text.dropFirst("command:".count)
+                .trimmingCharacters(in: .whitespaces)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+                .trimmingCharacters(in: .whitespaces)
+            if !command.isEmpty { return command }
+        }
+        return nil
     }
 
     func aboutURL(_ name: String) -> URL {

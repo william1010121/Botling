@@ -68,10 +68,30 @@ public enum ReplyParser {
         options: .dotMatchesLineSeparators
     )
 
+    /// `<show name="x">JSON</show>`, or with `command="…"` (JSON optional, `<show … />` too).
+    /// Attributes may be in either order and quoted with " or '.
     private static let showTag = try! NSRegularExpression(
-        pattern: #"<show\s+name\s*=\s*"([^"]+)"\s*>\s*(.*?)\s*</show>"#,
+        pattern: #"<show((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*(?:/>|>\s*(.*?)\s*</show>)"#,
         options: .dotMatchesLineSeparators
     )
+    private static let attribute = try! NSRegularExpression(pattern: #"([A-Za-z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')"#)
+
+    /// A tag's attributes, names lowercased, with &quot; &#39; &lt; &gt; &amp; read back.
+    static func attributes(_ text: String) -> [String: String] {
+        var found: [String: String] = [:]
+        let ns = text as NSString
+        for match in attribute.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let valueRange = match.range(at: 2).location != NSNotFound ? match.range(at: 2) : match.range(at: 3)
+            let value = ns.substring(with: valueRange)
+                .replacingOccurrences(of: "&quot;", with: "\"")
+                .replacingOccurrences(of: "&#39;", with: "'")
+                .replacingOccurrences(of: "&lt;", with: "<")
+                .replacingOccurrences(of: "&gt;", with: ">")
+                .replacingOccurrences(of: "&amp;", with: "&")
+            found[ns.substring(with: match.range(at: 1)).lowercased()] = value
+        }
+        return found
+    }
 
     /// Code in a reply (```fenced``` or `inline`): tags in it are examples, not requests.
     private static let codeRegion = try! NSRegularExpression(pattern: #"(?s)(`{3,}|~{3,}).*?(?:\1|\z)|`[^`\n]+`"#)
@@ -107,10 +127,16 @@ public enum ReplyParser {
         // Every <show> with good JSON is kept, its place marked with a character of its own
         // (from the private use area) until the rest is taken out, so it can be found again.
         for match in showTag.matches(in: mask as String, range: NSRange(location: 0, length: mask.length)).reversed() {
-            let name = text.substring(with: match.range(at: 1)), data = text.substring(with: match.range(at: 2))
+            let attributes = attributes(text.substring(with: match.range(at: 1)))
+            let body = match.range(at: 2).location == NSNotFound ? "" : text.substring(with: match.range(at: 2))
+            let name = attributes["name"] ?? ""
+            let command = attributes["command"].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.flatMap { $0.isEmpty ? nil : $0 }
             var marker = ""
-            if (try? JSONSerialization.jsonObject(with: Data(data.utf8))) != nil {
-                displays.insert(ComponentInstance(name: name, data: data), at: 0)
+            // A command's data comes from its output, so nothing need be written inside: the
+            // command is the tag's own, or the one the component's about.md declares.
+            let data = body.isEmpty ? "null" : body
+            if !name.isEmpty, body.isEmpty || (try? JSONSerialization.jsonObject(with: Data(data.utf8))) != nil {
+                displays.insert(ComponentInstance(name: name, data: data, command: command), at: 0)
                 marker = "\u{E000}"
             }
             text.replaceCharacters(in: match.range, with: marker)

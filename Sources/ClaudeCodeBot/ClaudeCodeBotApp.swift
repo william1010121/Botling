@@ -37,7 +37,7 @@ struct RootView: View {
         HStack(spacing: 0) {
             RailView(workspace: workspace).frame(width: 240)
             // One web view for every bot: switching bots redraws it instead of reloading.
-            ChatSurface(bot: bot, workspace: workspace, components: workspace.components, plugins: workspace.plugins, inputs: inputs)
+            ChatSurface(bot: bot, workspace: workspace, components: workspace.components, commands: workspace.componentCommands, plugins: workspace.plugins, inputs: inputs)
                 .frame(minWidth: 480, maxWidth: .infinity)
             Group {
                 if let group = workspace.group(of: bot) {

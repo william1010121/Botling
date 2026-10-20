@@ -167,6 +167,34 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* A component whose data comes from a command: its bar, the ask to allow it, its error. */
+.command-card { margin-top: 10px; min-width: 280px; border: 1px solid var(--line); border-radius: 12px; padding: 6px 8px 8px; }
+.command-card > .component { margin-top: 4px; }
+.command-bar { display: flex; align-items: center; gap: 8px; min-height: 32px; font-size: 12px; color: var(--muted); }
+.command-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint); }
+.command-text::before { content: "$ "; }
+.command-when { flex: none; }
+.command-refresh {
+  flex: none; width: 32px; height: 32px; border: none; border-radius: 8px; background: transparent; color: var(--muted);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.command-refresh:hover:not(:disabled), .command-refresh:focus-visible { background: var(--chip); color: var(--text); }
+.command-refresh:disabled { cursor: default; opacity: 0.5; }
+.command-refresh.spinning svg { animation: spin 0.8s linear infinite; }
+.command-approve { display: flex; flex-direction: column; gap: 6px; padding: 4px 4px 2px; font-size: 13px; }
+.command-folder { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--faint); word-break: break-all; }
+.command-full, .command-error pre {
+  margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--code); white-space: pre-wrap; word-break: break-word;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; max-height: 180px; overflow: auto;
+}
+.command-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.command-allow { min-height: 36px; }
+.command-note { font-size: 12px; color: var(--muted); }
+.command-error { display: flex; flex-direction: column; gap: 6px; padding: 4px; font-size: 13px; color: var(--error); }
+.command-error pre { color: var(--text); }
+.command-waiting { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); }
+.command-waiting .spinner { margin: 4px; }
+
 .choices { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; min-width: 280px; }
 .choice {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;

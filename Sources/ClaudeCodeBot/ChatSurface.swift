@@ -16,6 +16,8 @@ struct ChatSurface: NSViewRepresentable {
     @ObservedObject var bot: Bot
     @ObservedObject var workspace: Workspace
     @ObservedObject var components: ComponentLibrary
+    /// Component cards' command runs: a run finishing redraws the chat.
+    @ObservedObject var commands: ComponentCommands
     @ObservedObject var plugins: PluginRegistry
     @ObservedObject var inputs: ChatInputs
 
@@ -85,6 +87,7 @@ struct ChatSurface: NSViewRepresentable {
             },
             callIn: workspace.callInView(for: bot),
             feedback: workspace.developerProject != nil,
+            commands: workspace.commandContext(for: bot),
             avatar: { projectID in
                 if let projectID, let kind = workspace.avatar(for: projectID) {
                     return AvatarImages.dataURL(kind, eyes: .open)
@@ -214,6 +217,15 @@ struct ChatSurface: NSViewRepresentable {
                             workspace.mainBot.notice("Couldn't revert component \"\(name)\": \(problem)")
                         }
                     }
+                }
+            case "componentCommand":
+                // A card whose data comes from a command: allowed by the user (Allow), run again
+                // (refresh), or drawn for the first time once allowed. Only the chat page itself
+                // sends this, never a component's frame.
+                if let messageID = id("messageID"), let index = body["index"] as? Int {
+                    let approve = body["approve"] as? Bool ?? false
+                    let force = body["force"] as? Bool ?? false
+                    Task { await workspace.runComponentCommand(messageID: messageID, index: index, in: bot, approve: approve, force: force) }
                 }
             case "pluginLoaded":
                 if let name = body["name"] as? String { surface.plugins.markLoaded(name) }
