@@ -4,6 +4,52 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## 1.7.0
+
+### Added
+
+- **Codex reviews your work.** Codex is a global bot in the left column under Maintainer: it
+  keeps no memory, each message is one fresh read-only `codex exec`, and @Codex calls it into
+  any bot's chat to read that chat's folder. A project's right column has Review with Codex,
+  which opens a report (in the column, or full size in a window): findings by file with the
+  diff around each, filters, pick and send to the bot, mark fixed or skipped, run again, and
+  copy as Markdown.
+- **A subagent review loop.** Each bot can have Codex review its subagents' work: findings go
+  back through the bot to the same subagent (with SendMessage), and Codex looks again until it
+  is clean or the round limit is reached, where a card asks Fix once more or Accept as is. Per
+  bot: Off, Ask each time or Always, the most fix rounds, and which severities go back.
+  Subagent rows show their loop's round.
+- **Carrying on after the network drops.** A turn or subagent cut off by a connection error
+  shows 網路中斷 and waits instead of tidying up. When the network is back within 50 minutes,
+  the same session carries on and cut-off subagents are continued; later than that, they
+  start over in their worktree with their prompt.
+- **A reminder about quiet runs.** A run with no new step for 15 minutes gets a reminder in
+  its chat (`stallReminderMinutes` in settings.json).
+- **A usage card.** The gear opens with today's tokens and, for subscription accounts, a ring
+  each for the 5-hour and weekly limits: the share used and when it starts over. The numbers
+  come from the rate-limit events claude reports while a bot runs (nothing is polled); an
+  old reading says "as of N min ago", and with an API key the rings are hidden. No cost is
+  shown.
+
+### Changed
+
+- **Settling a subagent instead of hiding it.** Each subagent row has one icon: a blue dot
+  while it works, and a clock that settles it, badged with how it ended (a check when done, a
+  cross when stopped, an orange ! when it failed). Settling moves the row to a new Settled
+  section in the right column, where a click opens its conversation and the arrow brings it
+  back. Settling never stops a subagent; rows hidden in 1.6 show as settled.
+- **One decision, one choices card.** When the main bot brings up a decision a project is
+  already asking in its own chat, it shows that project's card instead of writing a new one;
+  an answer on either copy goes to the project and both show it.
+- **Interrupting a bot no longer stops its background subagents.** Only the turn stops; the
+  subagents keep working and still report back.
+- **Bots may message their own subagents** with SendMessage without asking first.
+- **Bot settings:** Model, Subagent model and Thinking effort are dropdowns in one card.
+
+### Fixed
+
+- Videos and audio beside artifact pages play, in the preview card and in the full window.
+
 ## 1.6.0
 
 ### Added
