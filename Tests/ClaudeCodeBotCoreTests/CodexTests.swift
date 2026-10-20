@@ -309,7 +309,7 @@ struct CodexLoopTests {
         let review = try #require(workspace.codexReviews.first)
         #expect(review.kind == .loop && review.ownerID == project.id && review.agent == "fix-login")
         #expect(review.base == "main" && review.note == "Stop the sign-in loop")
-        #expect(codex.requests.count == 1)
+        try #require(codex.requests.count == 1)
         #expect(codex.requests[0].folder.standardizedFileURL.path == folder.standardizedFileURL.path)
         #expect(codex.requests[0].prompt.contains("git diff main...HEAD"))
         #expect(review.findings.map(\.status) == [.sent])

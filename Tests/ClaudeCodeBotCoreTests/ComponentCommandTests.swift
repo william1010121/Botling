@@ -67,23 +67,25 @@ struct ComponentCommandTests {
         #expect(ComponentCommands.data(fromOutput: "a/b \"c\"\nd\n") == #""a/b \"c\"\nd""#)
     }
 
-    @Test func commandsRunInTheFolderWithLimits() throws {
+    @Test func commandsRunInTheFolderWithLimits() async throws {
         let folder = root.appending(path: "project")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        func run(_ command: String, timeout: TimeInterval = 10, limit: Int = 100_000) -> CommandOutcome {
-            ComponentCommands.execute(command, in: folder, timeout: timeout, limit: limit)
+        // Off the main actor: each run starts a login shell and blocks until it ends, and the
+        // other tests (which all share the main actor) would wait out every one of them.
+        func run(_ command: String, timeout: TimeInterval = 10, limit: Int = 100_000) async -> CommandOutcome {
+            await Task.detached { ComponentCommands.execute(command, in: folder, timeout: timeout, limit: limit) }.value
         }
-        #expect(run(#"printf '{"ok":true}'"#).data == #"{"ok":true}"#)
-        let pwd = try #require(run("pwd -P").data)
+        #expect(await run(#"printf '{"ok":true}'"#).data == #"{"ok":true}"#)
+        let pwd = try #require(await run("pwd -P").data)
         #expect(pwd.hasSuffix("\(root.lastPathComponent)/project\""))
-        let failed = run("echo nope >&2; exit 3")
+        let failed = await run("echo nope >&2; exit 3")
         #expect(failed.data == nil)
         #expect(failed.error?.contains("exit code 3") == true)
         #expect(failed.error?.contains("nope") == true)
-        let slow = run("sleep 5", timeout: 0.5)
+        let slow = await run("sleep 5", timeout: 0.5)
         #expect(slow.data == nil)
         #expect(slow.error?.contains("took longer") == true)
-        let loud = run("yes | head -c 50000", limit: 1_000)
+        let loud = await run("yes | head -c 50000", limit: 1_000)
         #expect(loud.data == nil)
         #expect(loud.error?.contains("printed more than") == true)
         #expect(ComponentCommands.execute("true", in: folder.appending(path: "gone"), timeout: 5, limit: 100).error?.contains("not there") == true)

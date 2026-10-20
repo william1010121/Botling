@@ -98,8 +98,10 @@ func isAppOnly(_ text: String) -> Bool {
 }
 
 @MainActor
-/// Waits for `condition`. Generous by default: the whole suite runs in parallel on the main actor.
-func eventually(_ condition: @MainActor () -> Bool, timeout: TimeInterval = 5) async {
+/// Waits for `condition`. Generous by default: the whole suite runs in parallel on the main actor,
+/// and on a small CI runner a test can wait many seconds for its turn. It returns as soon as the
+/// condition holds, so a long limit only costs time when a test is failing anyway.
+func eventually(_ condition: @MainActor () -> Bool, timeout: TimeInterval = 60) async {
     let deadline = Date().addingTimeInterval(timeout)
     while !condition(), Date() < deadline {
         try? await Task.sleep(for: .milliseconds(20))
@@ -163,7 +165,7 @@ struct BotTests {
         #expect(bot.messages.map(\.role) == [.user, .bot])
     }
 
-    @Test func nextMessageAfterSleepStartsAFreshSession() async {
+    @Test func nextMessageAfterSleepStartsAFreshSession() async throws {
         let fake = FakeLauncher()
         let bot = makeBot(fake, idle: 0.05)
 
@@ -172,7 +174,7 @@ struct BotTests {
         bot.send("Do you remember?")
         await eventually { bot.messages.count == 4 }
 
-        #expect(fake.agents.count == 2)
+        try #require(fake.agents.count == 2)
         #expect(fake.agents[1].launch.sessionID != fake.agents[0].launch.sessionID)
         #expect(fake.agents[1].sent.first?.hasPrefix(bot.prompts.wake) == true)
     }
