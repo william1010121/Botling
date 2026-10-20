@@ -343,7 +343,8 @@ function choicesElement(message: MessageView, components: Record<string, Compone
   fold.addEventListener("click", () => {
     unfolded.delete(message.id);
     const folded = foldedChoices(message, components);
-    wrap.replaceWith(folded);
+    // The drawn one, which may be an earlier wrap kept around its frame on a redraw.
+    (fold.closest(".unfolded") ?? wrap).replaceWith(folded);
     folded.focus();
   });
   wrap.append(options, fold);

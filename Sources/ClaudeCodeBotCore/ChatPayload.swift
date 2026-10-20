@@ -332,7 +332,9 @@ public struct ChatPayload: Encodable, Equatable {
 
     public func json() -> String {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.withoutEscapingSlashes]
+        // Sorted, so the same chat is the same text every time (dictionaries have no order):
+        // the page is only sent a state that changed, and redraws only messages that did.
+        encoder.outputFormatting = [.withoutEscapingSlashes, .sortedKeys]
         guard let data = try? encoder.encode(self) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
     }

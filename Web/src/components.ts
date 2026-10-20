@@ -129,7 +129,11 @@ export interface ComponentAnswer {
 }
 
 type AnswerHandler = (answer: ComponentAnswer) => void;
-type ComponentFrame = HTMLIFrameElement & { ccbAnswer?: AnswerHandler | null; ccbKey?: string };
+/**
+ * A component's frame: its answer handler, the use it is (`ccbKey`), and what it was drawn from
+ * (`ccbDrawn`), so a redrawn message can keep a frame whose component did not change.
+ */
+type ComponentFrame = HTMLIFrameElement & { ccbAnswer?: AnswerHandler | null; ccbKey?: string; ccbDrawn?: string };
 
 /**
  * The height each component last had, by message and component. A redrawn frame starts at it
@@ -205,9 +209,76 @@ export function componentElement(
     const height = frameHeights.get(frame.ccbKey);
     if (height) frame.style.height = `${height}px`;
   }
+  // What it shows; the order of the pictures does not count (a Swift dictionary has none).
+  const pictures = Object.entries(images ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  frame.ccbDrawn = JSON.stringify([name, info.template, info.version, data, pictures]);
   frame.srcdoc = componentPage(info.template, data, images ?? {});
   wrap.append(frame, reportControl(name, info));
   return wrap;
+}
+
+/**
+ * Brings the drawn message `old` up to its redraw `fresh` while keeping the component frames
+ * that show the same thing, since a frame given a new page, or taken out of the page even for a
+ * moment, loads again (it flickered on every streamed word or status change). Everything else
+ * is `fresh`'s, with its own click handlers. Returns the element to keep: `old` (still where it
+ * was) if any frame was kept, otherwise `fresh`, which the caller puts in its place.
+ */
+export function keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement {
+  if (old.tagName !== fresh.tagName) return fresh;
+  const oldFrames = new Map<string, ComponentFrame>();
+  for (const frame of old.querySelectorAll<ComponentFrame>("iframe.component-frame")) {
+    if (frame.ccbKey && frame.ccbDrawn && !oldFrames.has(frame.ccbKey)) oldFrames.set(frame.ccbKey, frame);
+  }
+  if (!oldFrames.size) return fresh;
+  // Each fresh element kept as its old one: the frames, and the elements around them.
+  const kept = new Map<Element, Element>([[fresh, old]]);
+  const keptFrames = new Set<Element>();
+  for (const frame of fresh.querySelectorAll<ComponentFrame>("iframe.component-frame")) {
+    const before = frame.ccbKey ? oldFrames.get(frame.ccbKey) : undefined;
+    if (!before || before.ccbDrawn !== frame.ccbDrawn) continue;
+    // Only where it sits the same way in both, so nothing around it has to move.
+    const pairs: [Element, Element][] = [];
+    let a: Element | null = frame;
+    let b: Element | null = before;
+    while (a && b && a !== fresh && b !== old && a.tagName === b.tagName) {
+      pairs.push([a, b]);
+      a = a.parentElement;
+      b = b.parentElement;
+    }
+    if (a !== fresh || b !== old) continue;
+    if (pairs.some(([x, y]) => (kept.has(x) && kept.get(x) !== y) || (!kept.has(x) && [...kept.values()].includes(y)))) continue;
+    for (const [x, y] of pairs) kept.set(x, y);
+    keptFrames.add(frame);
+    oldFrames.delete(frame.ccbKey!);
+    (before as ComponentFrame).ccbAnswer = frame.ccbAnswer;
+  }
+  if (!keptFrames.size) return fresh;
+  const patch = (target: Element, source: Element) => {
+    for (const { name } of [...target.attributes]) {
+      if (!source.hasAttribute(name)) target.removeAttribute(name);
+    }
+    for (const { name, value } of [...source.attributes]) {
+      if (target.getAttribute(name) !== value) target.setAttribute(name, value);
+    }
+    const wanted = [...source.childNodes].map((child) => {
+      const match = child instanceof Element ? kept.get(child) : undefined;
+      if (!match) return child;
+      if (!keptFrames.has(child as Element)) patch(match, child as Element);
+      return match;
+    });
+    const keep = new Set<Node>(wanted);
+    for (const child of [...target.childNodes]) {
+      if (!keep.has(child)) child.remove();
+    }
+    let cursor = target.firstChild;
+    for (const node of wanted) {
+      if (node === cursor) cursor = cursor.nextSibling;
+      else target.insertBefore(node, cursor);
+    }
+  };
+  patch(old, fresh);
+  return old;
 }
 
 /** Cards whose command was asked to run once allowed, so a redraw does not ask again. */

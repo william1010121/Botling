@@ -1,4 +1,5 @@
 import { post } from "./bridge";
+import { keepFrames } from "./components";
 import { Composer, sendFile } from "./composer";
 import { extensions, feedback, messageElement, typingElement } from "./messages";
 import { statusWord } from "./steps";
@@ -94,8 +95,13 @@ class Chat {
       const key = JSON.stringify([message, message.choices || message.displays || message.display || message.previews ? state.components : null]);
       let entry = this.drawn.get(message.id);
       if (!entry || entry.key !== key) {
-        const element = this.render(message, state);
-        if (entry) entry.element.replaceWith(element);
+        let element = this.render(message, state);
+        if (entry) {
+          // Components that did not change keep their frames, so they do not load again.
+          const kept = keepFrames(entry.element, element);
+          if (kept === element) entry.element.replaceWith(element);
+          element = kept;
+        }
         entry = { key, element };
         this.drawn.set(message.id, entry);
       }

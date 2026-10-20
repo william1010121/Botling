@@ -53,6 +53,14 @@ struct ChatPayloadTests {
         let components = try #require(object["components"] as? [String: Any])
         let choicesComponent = try #require(components["choices"] as? [String: Any])
         #expect((choicesComponent["template"] as? String)?.contains("ccb.answer") == true)
+
+        // The same chat is the same text every time (keys sorted, though dictionaries have no
+        // order), so the page is not sent it again and its components do not load again.
+        let text = payload.json()
+        #expect(text == payload.json())
+        let names = components.keys.sorted()
+        let places = names.compactMap { text.range(of: "\"\($0)\":{")?.lowerBound }
+        #expect(places.count == names.count && places == places.sorted())
     }
 
     @Test func noticesShowTheirProjectsFace() throws {
