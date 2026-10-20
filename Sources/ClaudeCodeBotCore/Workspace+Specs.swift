@@ -1,15 +1,17 @@
 import Foundation
 
-/// "Make into component": a bot's reply (or the result page it links to) becomes a component
-/// spec. In the chat the spec is a quiet chip under the reply; pressed, it opens in the right
-/// panel, where the user and Maintainer shape it (a side conversation; edits by either show in
-/// the fields). Test run and the component's Command go through the component command allow flow
+/// "Make into component": a bot's reply (or the result page it links to) becomes a component.
+/// Pressed, the reply goes to Maintainer, which infers the spec and builds the first version right
+/// away (or reuses a library component), asking nothing; the chip under the reply says Building…,
+/// then the component itself shows there, on the bot's list. The panel does not open by itself:
+/// the component's "Edit spec" opens the spec in the right panel, where the user and Maintainer
+/// change it (a side conversation; edits by either show in the fields) and Build it makes a new
+/// version. Test run and the component's Command go through the component command allow flow
 /// (`ComponentCommands`): the exact command and folder are shown and nothing runs until the user
-/// allows it. Build it hands it to Maintainer (or reuses a library component), then the app adds
-/// it to the chosen bots' lists.
+/// allows it; nothing runs by itself when it lands.
 ///
-/// A bot may suggest one with `<suggest-component>`: that only adds the chip. Nothing opens, runs
-/// or is built until the user presses it (Maintainer drafts it then) and presses Build it.
+/// A bot may suggest one with `<suggest-component>`: that only adds the chip. Nothing runs or is
+/// built until the user presses it (then the first version is built, as above).
 extension Workspace {
     /// The spec `id`, and the chat whose reply it is made from.
     func specLocation(_ id: UUID) -> (chat: Bot, spec: ComponentSpec)? {
@@ -28,7 +30,9 @@ extension Workspace {
     // MARK: Making one
 
     /// The reply's "Make into component" (or "Add to another bot…"), or an HTML result card's
-    /// (`preview`: which card): adds the chip and opens it. Pressed again, the same spec opens.
+    /// (`preview`: which card): adds the chip and has Maintainer build the first version now. A
+    /// reply that already is a library component has nothing to build: its spec opens to pick the
+    /// bots. Pressed again, nothing more is sent.
     @discardableResult
     public func makeComponent(from messageID: UUID, preview: Int? = nil, in chat: Bot) -> ComponentSpec? {
         guard let message = chat.messages.first(where: { $0.id == messageID }), message.role == .bot || message.role == .notice else { return nil }
@@ -39,14 +43,48 @@ extension Workspace {
             page = url.path
         }
         if let found = chat.specs.first(where: { $0.messageID == messageID && $0.page == page }) {
-            openSpec(found.id, in: chat)
+            if found.existing != nil { openSpec(found.id, in: chat) } else if isUnstarted(found) { startSpec(found.id, in: chat) }
             return chat.specs.first { $0.id == found.id }
         }
         let writer = message.sourceID.flatMap(member) ?? chat
         let spec = ComponentSpecs.draft(from: message, bot: writer.name, folder: commandFolder(for: message, in: chat), library: components, page: page)
         chat.editSpecs { $0.append(spec) }
-        openSpec(spec.id, in: chat)
+        if spec.existing != nil { openSpec(spec.id, in: chat) } else { startSpec(spec.id, in: chat) }
         return chat.specs.first { $0.id == spec.id }
+    }
+
+    /// A spec nothing has been asked or built for yet (a bot's suggestion not pressed).
+    private func isUnstarted(_ spec: ComponentSpec) -> Bool {
+        spec.status == .draft && !spec.asked && spec.existing == nil && spec.built == nil
+    }
+
+    /// The first version: Maintainer infers the spec from the reply and builds it now (or reuses a
+    /// library component), asking nothing. The panel stays shut; the chip says Building….
+    func startSpec(_ id: UUID, in chat: Bot) {
+        guard var spec = chat.specs.first(where: { $0.id == id }), isUnstarted(spec) else { return }
+        let reply = chat.messages.first { $0.id == spec.messageID }?.text ?? ""
+        let writer = spec.bots.first ?? chat.name
+        spec.status = .building
+        spec.asked = true
+        spec.conversation.append(.init(kind: .event, text: "Sent to Maintainer to build the first version"))
+        store(spec, in: chat)
+        let had = components.names.contains(spec.name)
+        specBuilds[spec.name] = (chat.id, id, had ? components.versions[spec.name, default: 0] : nil)
+        components.markWorking(spec.name, change: "built from a reply")
+        handToMaintainer(ComponentSpecs.firstBuildRequest(spec, reply: reply, from: writer))
+    }
+
+    /// A spec's chip pressed: a bot's suggestion not started yet is built (its first version);
+    /// otherwise the spec opens in the right panel, or folds back if it shows there.
+    public func pressSpec(_ id: UUID, in chat: Bot) {
+        guard let spec = chat.specs.first(where: { $0.id == id }) else { return }
+        if isUnstarted(spec) {
+            startSpec(id, in: chat)
+        } else if openSpecID == id {
+            closeSpec()
+        } else {
+            openSpec(id, in: chat)
+        }
     }
 
     /// A bot's `<suggest-component>`: a chip under its reply, nothing more. One per reply.
@@ -94,9 +132,10 @@ extension Workspace {
     }
 
     /// The user changed a value in the panel (marked theirs, told to Maintainer with the next word).
+    /// A built one can be changed too (Build it then makes a new version); not while it builds.
     public func editSpec(_ id: UUID, key: String, value: String, in chat: Bot) {
         chat.editSpecs { specs in
-            guard let at = specs.firstIndex(where: { $0.id == id }), specs[at].status == .draft else { return }
+            guard let at = specs.firstIndex(where: { $0.id == id }), specs[at].status != .building else { return }
             ComponentSpecs.edit(key, to: value, in: &specs[at])
         }
     }
@@ -104,7 +143,7 @@ extension Workspace {
     /// The user picked an answer to one of Maintainer's questions.
     public func answerSpec(_ id: UUID, question: String, option: Int, in chat: Bot) {
         chat.editSpecs { specs in
-            guard let at = specs.firstIndex(where: { $0.id == id }), specs[at].status == .draft else { return }
+            guard let at = specs.firstIndex(where: { $0.id == id }), specs[at].status != .building else { return }
             ComponentSpecs.answer(question, option: option, in: &specs[at])
         }
     }
@@ -124,19 +163,31 @@ extension Workspace {
     }
 
     /// Maintainer's `<component-spec id>`: its values go into the spec, its words into the side
-    /// conversation. An id no spec has is said back to it.
+    /// conversation. While it is being built these say what Maintainer built: a question it asked
+    /// anyway takes its suggested answer, a new name is the one the build waits for, and a library
+    /// component it chose to reuse is added at once. An id no spec has is said back to it.
     func applySpecUpdate(id: String, json: String, said: String) {
-        guard let uuid = UUID(uuidString: id.trimmingCharacters(in: .whitespaces)), let (chat, _) = specLocation(uuid) else {
+        guard let uuid = UUID(uuidString: id.trimmingCharacters(in: .whitespaces)), let (chat, before) = specLocation(uuid) else {
             maintainer.queueNote("(App: No component spec has the id \(id); nothing changed.)")
             return
         }
         let words = said.trimmingCharacters(in: .whitespacesAndNewlines)
         chat.editSpecs { specs in
             guard let at = specs.firstIndex(where: { $0.id == uuid }) else { return }
-            if specs[at].status == .draft { ComponentSpecs.update(&specs[at], with: json) }
+            ComponentSpecs.update(&specs[at], with: json)
+            if specs[at].status == .building { ComponentSpecs.answerOpenQuestions(in: &specs[at]) }
             if !words.isEmpty, specs[at].conversation.last?.text != words {
                 specs[at].conversation.append(.init(kind: .maintainer, text: words))
             }
+        }
+        guard before.status == .building, let spec = chat.specs.first(where: { $0.id == uuid }) else { return }
+        if spec.reuse, let similar = spec.similar, components.names.contains(similar) {
+            for (name, build) in specBuilds where build.spec == uuid { specBuilds[name] = nil }
+            finish(uuid, component: similar, in: chat)
+        } else if spec.name != before.name, let build = specBuilds.removeValue(forKey: before.name) {
+            // Built under another name: that one is waited for (a new one, or a change to it).
+            specBuilds[spec.name] = (build.chat, build.spec, components.names.contains(spec.name) ? components.versions[spec.name, default: 0] : nil)
+            components.markWorking(spec.name, change: "built from a reply")
         }
     }
 
@@ -163,12 +214,29 @@ extension Workspace {
         keepTestRun(of: id, command: command, in: chat)
     }
 
+    /// The built component's card under the reply: Allow and run (with the command and folder it
+    /// showed), ↻, or its first draw once allowed, as for any component card. Nothing runs that
+    /// the user has not allowed in that folder; its output is kept on the spec.
+    public func runSpecComponent(_ id: UUID, in chat: Bot, command shown: String? = nil, folder shownFolder: String? = nil, approve: Bool = false, force: Bool = false) async {
+        guard let spec = chat.specs.first(where: { $0.id == id }), let name = spec.built,
+              let command = ChatPayload.specCommand(spec, component: name, library: components) else { return }
+        let folder = URL(filePath: spec.folder)
+        if approve, shown == nil || shownFolder == nil { return }
+        if let shown, shown != command { return }
+        if let shownFolder, URL(filePath: shownFolder).standardizedFileURL.path != folder.standardizedFileURL.path { return }
+        if approve { componentCommands.approve(command, in: folder) }
+        guard componentCommands.isApproved(command, in: folder) else { return }
+        await componentCommands.run(card: spec.card, command: command, in: folder, force: force)
+        keepTestRun(of: id, command: command, in: chat)
+    }
+
     /// A finished test run, kept on the spec: its output, whether it fits the fields, a sample.
     private func keepTestRun(of id: UUID, command: String, in chat: Bot) {
         guard let card = chat.specs.first(where: { $0.id == id })?.card, let state = componentCommands.runs[card],
               state.status == .done || state.status == .failed else { return }
         chat.editSpecs { specs in
-            guard let at = specs.firstIndex(where: { $0.id == id }), specs[at].command == command else { return }
+            guard let at = specs.firstIndex(where: { $0.id == id }),
+                  specs[at].command == command || specs[at].built.flatMap({ ChatPayload.specCommand(specs[at], component: $0, library: components) }) == command else { return }
             var run = ComponentSpec.TestRun(command: command, folder: specs[at].folder)
             run.output = state.data
             run.error = state.error
@@ -187,11 +255,12 @@ extension Workspace {
 
     // MARK: Build it
 
-    /// Build it: open questions take their suggested answers; a component that already exists
-    /// (the reply's own, or a similar one the user chose to reuse) goes straight onto the chosen
-    /// bots' lists; otherwise Maintainer builds it and the app adds it once it is in the library.
+    /// Build it (a draft, or a built one changed in the panel: its new version): open questions
+    /// take their suggested answers; a component that already exists (the reply's own, or a
+    /// similar one the user chose to reuse) goes straight onto the chosen bots' lists; otherwise
+    /// Maintainer builds it and the app adds it once it is in the library.
     public func buildSpec(_ id: UUID, in chat: Bot) {
-        guard var spec = chat.specs.first(where: { $0.id == id }), spec.status == .draft else { return }
+        guard var spec = chat.specs.first(where: { $0.id == id }), spec.status != .building else { return }
         ComponentSpecs.answerOpenQuestions(in: &spec)
         if let existing = spec.existing ?? (spec.reuse ? spec.similar.flatMap { components.names.contains($0) ? $0 : nil } : nil) {
             store(spec, in: chat)
@@ -199,7 +268,8 @@ extension Workspace {
             return
         }
         spec.status = .building
-        spec.conversation.append(.init(kind: .event, text: "Sent to Maintainer to build"))
+        spec.asked = true
+        spec.conversation.append(.init(kind: .event, text: spec.built == nil ? "Sent to Maintainer to build" : "Sent to Maintainer to build a new version"))
         let request = ComponentSpecs.buildRequest(spec)
         spec.pendingEdits = []
         store(spec, in: chat)
@@ -227,7 +297,8 @@ extension Workspace {
     }
 
     /// The component is in the library: on each chosen bot's list (a full list is said, not
-    /// forced), the spec done, and the chat told where it went.
+    /// forced), the spec done (drawn under its reply from now on), and the chat told where it
+    /// went. Nothing runs: its command, if any, waits for the user on the card.
     private func finish(_ id: UUID, component name: String, in chat: Bot) {
         guard let spec = chat.specs.first(where: { $0.id == id }) else { return }
         var added: [String] = []
@@ -245,16 +316,13 @@ extension Workspace {
             guard let at = specs.firstIndex(where: { $0.id == id }) else { return }
             specs[at].status = .done
             specs[at].name = name
+            specs[at].built = name
             specs[at].bots = added
             specs[at].conversation.append(.init(kind: .event, text: added.isEmpty ? "\(name) is in the library" : "\(name) added to \(added.joined(separator: ", "))"))
         }
         var text = added.isEmpty ? "\(name) is in the library, but on no bot's list yet." : "\(name) added to \(added.joined(separator: ", "))."
         if !full.isEmpty { text += " Not added to \(full.joined(separator: ", ")): \(full.count == 1 ? "its list is" : "their lists are") full (\(ComponentLibrary.limit) components); take one off first." }
         tell(chat, text)
-        // The preview becomes the real thing: its first real run, if that command is allowed.
-        if let command = spec.command, componentCommands.isApproved(command, in: URL(filePath: spec.folder)) {
-            Task { await testRunSpec(id, in: chat) }
-        }
     }
 
     /// Cancel: the chip goes away (a build already handed over is Maintainer's to finish).
@@ -269,7 +337,8 @@ extension Workspace {
     /// The open spec as the right panel's page draws it.
     public func specPayload(_ id: UUID) -> SpecPayload? {
         guard let (chat, spec) = specLocation(id) else { return nil }
-        let preview: String? = if spec.status == .done, components.names.contains(spec.name) { spec.name }
+        let preview: String? = if let built = spec.built, components.names.contains(built) { built }
+            else if spec.status == .done, components.names.contains(spec.name) { spec.name }
             else if let existing = spec.existing, components.names.contains(existing) { existing }
             else if spec.reuse, let similar = spec.similar, components.names.contains(similar) { similar }
             else if let shown = spec.shownAs, components.names.contains(shown) { shown }

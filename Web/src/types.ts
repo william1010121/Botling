@@ -51,7 +51,10 @@ export interface MessageView {
   component?: string | null;
 }
 
-/** A component spec's chip under its reply; pressed, it opens in the right panel. */
+/**
+ * A component made from a reply, under it: a chip while it is a suggestion (pressed: its first
+ * version is built) or being built, then the component itself with "Edit spec".
+ */
 export interface SpecChipView {
   id: string;
   name: string;
@@ -60,6 +63,10 @@ export interface SpecChipView {
   suggested: boolean;
   /** It shows in the right panel now. */
   open: boolean;
+  /** The library component it became, drawn under the reply (also while a new version builds). */
+  component?: string | null;
+  /** That component as drawn, with its command's run as for any card. */
+  display?: DisplayView | null;
 }
 
 export type SpecStatus = "draft" | "building" | "done";
@@ -243,6 +250,8 @@ export type Action =
   | { type: "setPinRefresh"; id: string; refresh: PinRefresh; minutes: number }
   | { type: "makeComponent"; messageID: string; preview?: number }
   | { type: "openSpec"; id: string }
+  | { type: "pressSpec"; id: string }
+  | { type: "specCommand"; id: string; command: string; folder: string; approve?: boolean; force?: boolean }
   | { type: "specEdit"; id: string; key: string; value: string }
   | { type: "specAnswer"; id: string; question: string; option: number }
   | { type: "specSay"; id: string; text: string }

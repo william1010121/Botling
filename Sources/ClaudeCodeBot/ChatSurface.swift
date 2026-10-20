@@ -277,12 +277,28 @@ struct ChatSurface: NSViewRepresentable {
                     Task { await workspace.runPin(pinID, in: bot, command: command, folder: folder, approve: approve, force: force) }
                 }
             case "makeComponent":
-                // A reply's "Make into component" (or an HTML result card's): its chip, opened.
+                // A reply's "Make into component" (or an HTML result card's): its first version is
+                // built right away; the chip says Building…, the panel stays shut.
                 if let messageID = id("messageID") {
                     let preview = body["preview"] as? Int
                     withAnimation(.easeInOut(duration: 0.2)) { _ = workspace.makeComponent(from: messageID, preview: preview, in: bot) }
                 }
+            case "pressSpec":
+                // A chip: a bot's suggestion starts its build; otherwise the spec opens (or folds).
+                if let specID = id("id") {
+                    withAnimation(.easeInOut(duration: 0.2)) { workspace.pressSpec(specID, in: bot) }
+                }
+            case "specCommand":
+                // A built component's card under its reply: Allow and run (with the command and
+                // folder it showed), ↻, or its first draw once allowed.
+                if let specID = id("id") {
+                    let approve = body["approve"] as? Bool ?? false
+                    let force = body["force"] as? Bool ?? false
+                    let command = body["command"] as? String, folder = body["folder"] as? String
+                    Task { await workspace.runSpecComponent(specID, in: bot, command: command, folder: folder, approve: approve, force: force) }
+                }
             case "openSpec":
+                // "Edit spec": the spec in the right panel (pressed again, folded back).
                 if let specID = id("id") {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         if workspace.openSpecID == specID { workspace.closeSpec() } else { workspace.openSpec(specID, in: bot) }

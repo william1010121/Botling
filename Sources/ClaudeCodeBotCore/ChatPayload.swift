@@ -48,7 +48,9 @@ public struct ChatPayload: Encodable, Equatable {
         var component: String? = nil
     }
 
-    /// A component spec's chip under its reply; pressed, the spec opens in the right panel.
+    /// A component made from a reply, under it: a chip while it is a suggestion or being built
+    /// (pressed: a suggestion starts its build, otherwise the spec opens in the right panel), then
+    /// the component itself with "Edit spec".
     public struct SpecChip: Encodable, Equatable {
         var id: String
         var name: String
@@ -57,6 +59,10 @@ public struct ChatPayload: Encodable, Equatable {
         var suggested: Bool
         /// It shows in the right panel now.
         var open: Bool
+        /// The library component it became, drawn under the reply (also while a new version
+        /// builds), with its command's run as for any card.
+        var component: String? = nil
+        var display: Display? = nil
     }
 
     public struct Feedback: Encodable, Equatable {
@@ -303,7 +309,7 @@ public struct ChatPayload: Encodable, Equatable {
                 feedback: message.role == .relay
                     ? (message.feedback ?? FeedbackNote.parse(message.text)).map { Feedback(about: $0.about, words: $0.words) }
                     : nil,
-                specs: specs ? specChips(for: message, in: bot, open: openSpec) : nil,
+                specs: specs ? specChips(for: message, in: bot, open: openSpec, library: library, commands: commands) : nil,
                 component: specs && message.role == .bot
                     ? message.shown.first { $0.name != "choices" && $0.name != PagePreview.component && library?.names.contains($0.name) == true }?.name
                     : nil
@@ -362,13 +368,59 @@ public struct ChatPayload: Encodable, Equatable {
         )
     }
 
-    /// The chips of the specs made from `message`.
+    /// The chips of the specs made from `message`, each built one with its component.
     @MainActor
-    static func specChips(for message: ChatMessage, in bot: Bot, open: UUID?) -> [SpecChip]? {
-        let chips = bot.specs.filter { $0.messageID == message.id }.map {
-            SpecChip(id: $0.id.uuidString, name: $0.name, status: $0.status.rawValue, suggested: $0.suggestedBy != nil && $0.status == .draft, open: $0.id == open)
+    static func specChips(for message: ChatMessage, in bot: Bot, open: UUID?, library: ComponentLibrary? = nil, commands: CommandContext? = nil) -> [SpecChip]? {
+        let chips = bot.specs.filter { $0.messageID == message.id }.map { spec in
+            var chip = SpecChip(id: spec.id.uuidString, name: spec.name, status: spec.status.rawValue, suggested: spec.suggestedBy != nil && spec.status == .draft && spec.built == nil, open: spec.id == open)
+            if let shown = specDisplay(spec, library: library, runs: commands?.runs) {
+                chip.component = shown.name
+                chip.display = shown
+            }
+            return chip
         }
         return chips.isEmpty ? nil : chips
+    }
+
+    /// The command a built spec's component takes its data from: Maintainer's (the spec's), else
+    /// the one its about.md declares; a reused component's own comes first.
+    @MainActor
+    static func specCommand(_ spec: ComponentSpec, component name: String, library: ComponentLibrary?) -> String? {
+        let declared = library?.command(of: name)
+        return spec.reuse ? (declared ?? spec.command) : (spec.command ?? declared)
+    }
+
+    /// A built spec's component as drawn under its reply: the data its command gave (only once
+    /// the user allowed it; until then the card asks), else what was kept from its last run, else
+    /// its sample.
+    @MainActor
+    static func specDisplay(_ spec: ComponentSpec, library: ComponentLibrary?, runs: ComponentCommands?) -> Display? {
+        guard let name = spec.built, let library, library.names.contains(name) else { return nil }
+        let command = specCommand(spec, component: name, library: library)
+        let kept = spec.testRun.flatMap { $0.command == command ? $0.output : nil }
+        let sample = spec.samples.first { $0.label == "Test run" } ?? spec.samples.first
+        var shown = display(ComponentInstance(name: name, data: kept ?? sample?.data ?? "null"))
+        guard let command else { return shown }
+        let folder = URL(filePath: spec.folder)
+        shown.command = command
+        shown.folder = folder.path
+        guard let runs else {
+            shown.status = ComponentCommands.Status.approve.rawValue
+            return shown
+        }
+        let state = runs.state(for: spec.card, command: command, in: folder)
+        var status = state.status
+        // Kept from before (a restart): shown until ↻, unless it refreshes when shown.
+        if status == .idle, kept != nil, spec.refresh != .shown { status = .done }
+        shown.status = status.rawValue
+        shown.error = state.error
+        shown.ranAt = (state.ranAt ?? spec.testRun?.ranAt).map { $0.formatted(date: .omitted, time: .shortened) }
+        if let data = state.data {
+            shown.data = name == PagePreview.component ? PagePreview.cardData(data) : data
+            let images = ComponentImages.urls(in: shown.data)
+            shown.images = images.isEmpty ? nil : images
+        }
+        return shown
     }
 
     /// A pin as the page draws it. A pin with a command whose output was kept and that is not

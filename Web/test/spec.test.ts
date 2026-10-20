@@ -83,21 +83,63 @@ describe("make into component, in the chat", () => {
     expect(sent).toEqual([{ type: "makeComponent", messageID: "m1", preview: 0 }]);
   });
 
-  it("the spec is a small, quiet chip under the reply; pressing it opens the panel", () => {
-    const row = messageElement(reply({ specs: [{ id: "S1", name: "test-summary", status: "draft", suggested: false, open: false }] }), components);
+  it("a chip being built says Building…; pressing it shows its progress", () => {
+    const row = messageElement(reply({ specs: [{ id: "S1", name: "test-summary", status: "building", suggested: false, open: false }] }), components);
     const chip = row.querySelector<HTMLButtonElement>(".spec-chip")!;
-    expect(chip.textContent).toContain("Component spec · test-summary");
+    expect(chip.textContent).toContain("Building… · test-summary");
+    expect(chip.querySelector(".spinner")).not.toBeNull();
     expect(chip.getAttribute("aria-expanded")).toBe("false");
     click(chip);
+    expect(sent).toEqual([{ type: "pressSpec", id: "S1" }]);
+  });
+
+  it("a bot's suggestion is only a chip; pressing it starts the build", () => {
+    const row = messageElement(reply({ specs: [{ id: "S1", name: "test-summary", status: "draft", suggested: true, open: false }] }), components);
+    const chip = row.querySelector<HTMLButtonElement>(".spec-chip")!;
+    expect(chip.textContent).toContain("Suggested component · test-summary");
+    expect(row.querySelector(".spec-edit")).toBeNull();
+    // Nothing runs or is drawn until pressed.
+    expect(row.querySelector(".spec-built")).toBeNull();
+    expect(sent).toEqual([]);
+    click(chip);
+    expect(sent).toEqual([{ type: "pressSpec", id: "S1" }]);
+  });
+
+  it("once built, the component itself shows under the reply, with Edit spec", () => {
+    const row = messageElement(reply({ specs: [{
+      id: "S1", name: "test-summary", status: "done", suggested: false, open: false,
+      component: "test-summary", display: { name: "test-summary", data: '{"total":382}', at: null },
+    }] }), components);
+    expect(row.querySelector(".spec-chip")).toBeNull();
+    const built = row.querySelector(".spec-built")!;
+    expect(built.textContent).toContain("test-summary");
+    expect(built.querySelector<HTMLIFrameElement>("iframe")!.srcdoc).toContain("<div>tests</div>");
+    click(built.querySelector(".spec-edit"));
     expect(sent).toEqual([{ type: "openSpec", id: "S1" }]);
   });
 
-  it("a bot's suggestion and a built one say so on the chip", () => {
-    const suggested = messageElement(reply({ specs: [{ id: "S1", name: "test-summary", status: "draft", suggested: true, open: false }] }), components);
-    expect(suggested.querySelector(".spec-chip")!.textContent).toContain("Suggested component · test-summary");
-    const done = messageElement(reply({ specs: [{ id: "S1", name: "test-summary", status: "done", suggested: false, open: true }] }), components);
-    expect(done.querySelector(".spec-chip")!.textContent).toContain("Component · test-summary");
-    expect(done.querySelector(".spec-chip")!.getAttribute("aria-expanded")).toBe("true");
+  it("a built component whose command isn't allowed asks with the exact command and folder", () => {
+    const row = messageElement(reply({ specs: [{
+      id: "S1", name: "test-summary", status: "done", suggested: false, open: false, component: "test-summary",
+      display: { name: "test-summary", data: "null", at: null, command: "swift test --parallel", folder: "/Users/me/p", status: "approve" },
+    }] }), components);
+    const ask = row.querySelector(".spec-built .command-approve")!;
+    expect(ask.textContent).toContain("/Users/me/p");
+    expect(ask.querySelector(".command-full")?.textContent).toBe("swift test --parallel");
+    // Nothing runs on its own.
+    expect(sent).toEqual([]);
+    click(ask.querySelector(".command-allow"));
+    expect(sent).toEqual([{ type: "specCommand", id: "S1", command: "swift test --parallel", folder: "/Users/me/p", approve: true }]);
+  });
+
+  it("a new version being built keeps the component, saying so", () => {
+    const row = messageElement(reply({ specs: [{
+      id: "S1", name: "test-summary", status: "building", suggested: false, open: true,
+      component: "test-summary", display: { name: "test-summary", data: '{"total":382}', at: null },
+    }] }), components);
+    const built = row.querySelector(".spec-built")!;
+    expect(built.textContent).toContain("Building a new version");
+    expect(built.querySelector(".spec-edit")?.getAttribute("aria-expanded")).toBe("true");
   });
 });
 
@@ -205,6 +247,16 @@ describe("the spec workspace in the right panel", () => {
     const done = panel(spec({ status: "done", preview: "test-summary", bots: [{ name: "ClaudeCodeBot", on: true }, { name: "Arbor", on: true }] }));
     expect(done.querySelector(".spec-title")?.textContent).toContain("test-summary");
     expect(done.querySelector(".spec-added")?.textContent).toContain("Added to ClaudeCodeBot, Arbor");
+  });
+
+  it("Edit spec on a built one: its fields can be changed and Build it makes a new version", () => {
+    const root = panel(spec({ status: "done", preview: "test-summary", questions: [] }));
+    expect(root.querySelector("input[data-key='command']")).not.toBeNull();
+    expect(root.querySelector(".spec-cancel")).toBeNull();
+    const build = root.querySelector<HTMLButtonElement>(".spec-build")!;
+    expect(build.textContent).toBe("Build a new version");
+    click(build);
+    expect(sent).toEqual([{ type: "specBuild", id: "S1" }]);
   });
 
   it("an existing component only asks which bots", () => {

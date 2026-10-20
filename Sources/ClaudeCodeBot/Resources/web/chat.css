@@ -603,6 +603,21 @@ body.viewer { display: block; overflow-y: auto; height: auto; min-height: 100%; 
 .spec-chip:hover, .spec-chip:focus-visible, .spec-chip.open { background: rgba(123, 75, 196, 0.14); color: #C4A8F0; }
 .spec-chip.done { color: #9AD9B8; }
 .spec-chip-arrow { font-size: 13px; }
+.spec-chip .spinner { width: 10px; height: 10px; margin: 0 1px; border-width: 1.5px; border-top-color: #C4A8F0; }
+.spec-chip.building { color: #C4A8F0; }
+.spec-edit {
+  height: 24px; padding: 0 8px; border: none; border-radius: 12px; background: transparent;
+  color: var(--faint); font-size: 12px; cursor: pointer;
+}
+.spec-edit:hover, .spec-edit:focus-visible, .spec-edit[aria-expanded="true"] { background: rgba(123, 75, 196, 0.14); color: #C4A8F0; }
+/* A component made from the reply, drawn under it once built. */
+.spec-built { flex: 1 1 100%; min-width: 0; display: flex; flex-direction: column; gap: 2px; margin-left: -4px; }
+.spec-built-head { display: flex; align-items: center; gap: 6px; min-height: 24px; padding-left: 6px; }
+.spec-built-name { display: inline-flex; align-items: center; gap: 6px; flex: 1; min-width: 0; color: #9AD9B8; font-size: 12px; }
+.spec-built.building .spec-built-name { color: #C4A8F0; }
+.spec-built-name .spinner { width: 10px; height: 10px; margin: 0 1px; border-width: 1.5px; border-top-color: #C4A8F0; }
+.spec-built > .command-card { margin-top: 0; }
+.spec-built > .component { margin-top: 0; }
 .preview-holder { position: relative; }
 .preview-bar {
   position: absolute; top: 18px; right: 8px; z-index: 3; display: flex; gap: 2px; padding: 2px;

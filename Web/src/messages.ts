@@ -6,7 +6,7 @@ import { mediaHTML, renderMarkdown } from "./markdown";
 import { acceptPictures } from "./pictures";
 import type { ComponentRender } from "./plugins";
 import { liveElement, stepsElement } from "./steps";
-import type { ComponentInfo, DisplayView, FileView, MessageView, StepView } from "./types";
+import type { ComponentInfo, DisplayView, FileView, MessageView, SpecChipView, StepView } from "./types";
 import { escapeHTML } from "./util";
 
 /** What plugins add to how messages are drawn. */
@@ -55,7 +55,7 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
     case "notice": {
       const body = botBody(message, components);
       const actions = message.role === "bot" && (feedback.enabled || makeComponents.enabled) ? actionColumn(message) : replyButton(message);
-      const chips = message.specs?.length ? specChips(message) : null;
+      const chips = message.specs?.length ? specChips(message, components) : null;
       if (message.speaker || chips) {
         // The group chat: who said it, above what they said. A spec's chip goes under it.
         const column = document.createElement("div");
@@ -168,7 +168,7 @@ function actionColumn(message: MessageView): HTMLElement {
     const make = document.createElement("button");
     make.className = "reply-button make-component";
     make.setAttribute("aria-label", label);
-    make.title = message.component ? label : `${label}: reuse this kind of reply. Maintainer drafts a spec first`;
+    make.title = message.component ? label : `${label}: Maintainer builds it from this reply right away`;
     make.innerHTML = cubeIcon;
     make.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -180,22 +180,71 @@ function actionColumn(message: MessageView): HTMLElement {
   return column;
 }
 
-/** The quiet chips of the component specs made from a reply; pressed, one opens in the right panel. */
-function specChips(message: MessageView): HTMLElement {
+/**
+ * Components made from a reply, under it. A bot's suggestion is a quiet chip until pressed (then
+ * its first version is built); while building the chip says Building…; once built the component
+ * itself shows, with "Edit spec" to open its spec in the right panel. A command it runs asks first
+ * (Allow and run, with the exact command and folder), as on any card.
+ */
+function specChips(message: MessageView, components: Record<string, ComponentInfo>): HTMLElement {
   const strip = document.createElement("div");
   strip.className = "spec-chips";
   for (const spec of message.specs ?? []) {
+    const built = spec.component && spec.display ? builtSpec(spec, components) : null;
+    if (built) {
+      strip.append(built);
+      continue;
+    }
     const chip = document.createElement("button");
     chip.className = `spec-chip ${spec.status}${spec.suggested ? " suggested" : ""}${spec.open ? " open" : ""}`;
     chip.setAttribute("aria-expanded", String(spec.open));
-    const words = spec.status === "done" ? "Component" : spec.status === "building" ? "Building component" : spec.suggested ? "Suggested component" : "Component spec";
-    chip.innerHTML = `${cubeIcon}<span></span><span class="spec-chip-arrow" aria-hidden="true">›</span>`;
-    chip.querySelector("span")!.textContent = `${words} · ${spec.name}`;
-    chip.title = spec.open ? "Showing in the right panel" : "Open in the right panel";
-    chip.addEventListener("click", () => post({ type: "openSpec", id: spec.id }));
+    const building = spec.status === "building";
+    const words = spec.status === "done" ? "Component" : building ? "Building…" : spec.suggested ? "Suggested component" : "Component spec";
+    chip.innerHTML = `${building ? `<span class="spinner" aria-hidden="true"></span>` : cubeIcon}<span></span><span class="spec-chip-arrow" aria-hidden="true">›</span>`;
+    chip.querySelector("span:not(.spinner)")!.textContent = `${words} · ${spec.name}`;
+    chip.title = spec.suggested ? "Make it into a component: Maintainer builds it now" : building ? "Maintainer is building it; show its progress" : spec.open ? "Showing in the right panel" : "Open in the right panel";
+    chip.addEventListener("click", () => post({ type: "pressSpec", id: spec.id }));
     strip.append(chip);
+    if (spec.status === "done") strip.append(editSpecButton(spec));
   }
   return strip;
+}
+
+function editSpecButton(spec: SpecChipView): HTMLButtonElement {
+  const edit = document.createElement("button");
+  edit.className = "spec-edit";
+  edit.textContent = "Edit spec";
+  edit.setAttribute("aria-expanded", String(spec.open));
+  edit.title = spec.open ? "Showing in the right panel" : "Change it in the right panel; Build it makes a new version";
+  edit.addEventListener("click", (event) => {
+    event.stopPropagation();
+    post({ type: "openSpec", id: spec.id });
+  });
+  return edit;
+}
+
+/** A built component under its reply: its name, Edit spec, and the component itself. */
+function builtSpec(spec: SpecChipView, components: Record<string, ComponentInfo>): HTMLElement | null {
+  const display = spec.display!;
+  const name = spec.component!;
+  const draw = () => componentElement(name, components[name], display.data, null, `spec-${spec.id}`, display.images);
+  const card = display.command
+    ? commandCard(display, `spec:${spec.id}`, 0, draw, {
+        send: (request) => post({ type: "specCommand", id: spec.id, ...request }),
+      })
+    : draw();
+  if (!card) return null;
+  const box = document.createElement("div");
+  box.className = `spec-built ${spec.status}${spec.open ? " open" : ""}`;
+  const head = document.createElement("div");
+  head.className = "spec-built-head";
+  const label = document.createElement("span");
+  label.className = "spec-built-name";
+  label.innerHTML = spec.status === "building" ? `<span class="spinner" aria-hidden="true"></span><span></span>` : `${cubeIcon}<span></span>`;
+  label.querySelector("span:not(.spinner)")!.textContent = spec.status === "building" ? `Building a new version · ${name}` : `Component · ${name}`;
+  head.append(label, editSpecButton(spec));
+  box.append(head, card);
+  return box;
 }
 
 /** The "not right" flag, for developer mode. */
