@@ -379,7 +379,8 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
   }
   appendText(message.text.length);
   if (message.choices) {
-    const answered = message.chosen !== null || message.answer !== null;
+    // Loose: the app leaves out a nil chosen or answer (undefined), not only null.
+    const answered = message.chosen != null || message.answer != null;
     bubble.append(answered && !unfolded.has(message.id) ? foldedChoices(message, components) : choicesElement(message, components));
   }
   // Ones at the end, or with no place (saved before places were kept), come after the text.
@@ -471,8 +472,8 @@ function choicesElement(message: MessageView, components: Record<string, Compone
         if (action) post(action);
       }
     : null;
-  const component = componentElement("choices", components.choices, choicesData(choices, message.chosen, message.answer), onAnswer, message.id);
-  const options = component ?? fallbackChoices(choices, message.chosen, message.answer, onAnswer ? (index) => onAnswer({ index }) : null);
+  const component = componentElement("choices", components.choices, choicesData(choices, message.chosen ?? null, message.answer ?? null), onAnswer, message.id);
+  const options = component ?? fallbackChoices(choices, message.chosen ?? null, message.answer ?? null, onAnswer ? (index) => onAnswer({ index }) : null);
   if (message.open) return options;
   // Opened again after answering: a way to fold it back.
   const wrap = document.createElement("div");
@@ -497,7 +498,7 @@ function choicesElement(message: MessageView, components: Record<string, Compone
  * the answer may as well be "Don't allow" or "No longer needed".
  */
 export function foldedChoices(message: MessageView, components: Record<string, ComponentInfo>): HTMLElement {
-  const picked = message.chosen !== null ? message.choices?.[message.chosen]?.label : null;
+  const picked = message.chosen != null ? message.choices?.[message.chosen]?.label : null;
   const label = picked ?? message.answer ?? "Answered";
   const button = document.createElement("button");
   button.className = "folded-choice";
