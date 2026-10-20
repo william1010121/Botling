@@ -26,12 +26,18 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./
  *   1×2 "tall", 2×2 "large", 4×2 "xlarge". Also `<html data-size="2x1">`, for CSS. A card on the
  *   Board has the size the user picked; in the chat it is 2×2 (or the largest the component has).
  * - `onSize(fn)`: calls `fn(size)` whenever the user resizes its card; returns a function that stops.
+ * - `surface`: where it is drawn, "chat" or "board"; also `<html data-surface="board">`. On the
+ *   Board the component is the whole tile, like a home-screen widget: the tile gives the rounded
+ *   corners and background, so it draws no frame of its own (no border, background or radius, at
+ *   most ~12px padding) and fills the tile; the page itself is the tile's height and scrolls.
  * The frame reports its height and answers to this page, which passes answers on to Swift.
  */
-export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2"): string {
+export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2", surface: Surface = "chat"): string {
   const safe = (json: string) => json.replace(/</g, "\\u003c");
-  return `<!doctype html><html data-size="${size}"><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
-<style>:root{color-scheme:dark}html,body{margin:0;padding:0;background:transparent;color:#EDEDF0;font:14px -apple-system,"PingFang TC",sans-serif;overflow:hidden}</style>
+  return `<!doctype html><html data-size="${size}" data-surface="${surface}"><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
+<style>:root{color-scheme:dark}html,body{margin:0;padding:0;background:transparent;color:#EDEDF0;font:14px -apple-system,"PingFang TC",sans-serif;overflow:hidden}
+html[data-surface="board"],html[data-surface="board"] body,html[data-surface="board"] #ccb-root{height:100%}
+html[data-surface="board"] body{overflow-y:auto;scrollbar-width:none}html[data-surface="board"] body::-webkit-scrollbar{display:none}</style>
 <script>
 (() => {
   const images = ${safe(JSON.stringify(images))};
@@ -88,6 +94,7 @@ export function componentPage(template: string, data: string, images: Record<str
   window.ccb = {
     data: ${safe(data)},
     size: Object.freeze(${JSON.stringify(sizeInfo(size))}),
+    surface: ${JSON.stringify(surface)},
     onSize(fn) {
       if (typeof fn !== 'function') return () => {};
       sizeWatchers.add(fn);
@@ -169,8 +176,14 @@ const ccbRoot = document.getElementById('ccb-root');
 const ccbSize = () => parent.postMessage({ccb: 'size', height: Math.ceil(ccbRoot.getBoundingClientRect().height)}, '*');
 new ResizeObserver(ccbSize).observe(ccbRoot);
 window.addEventListener('load', ccbSize);
+// The pointer over it, for the Board tile's controls (a parent page cannot always see it).
+document.documentElement.addEventListener('mouseenter', () => parent.postMessage({ccb: 'hover', on: true}, '*'));
+document.documentElement.addEventListener('mouseleave', () => parent.postMessage({ccb: 'hover', on: false}, '*'));
 </script></body></html>`;
 }
+
+/** Where a component is drawn: in the chat (and a pin's sheet), or as a tile on the Board. */
+export type Surface = "chat" | "board";
 
 /** Every Board size, smallest first. */
 export const pinSizes: PinSize[] = ["1x1", "2x1", "1x2", "2x2", "4x2"];
@@ -303,6 +316,9 @@ window.addEventListener("message", (event) => {
   if (message.ccb === "size" && typeof message.height === "number" && message.height > 0) {
     frame.style.height = `${message.height}px`;
     if (frame.ccbKey) frameHeights.set(frame.ccbKey, message.height);
+  } else if (message.ccb === "hover") {
+    // The pointer is over the component: its Board tile shows its controls.
+    frame.closest(".board-card")?.classList.toggle("hovered", !!(message as { on?: unknown }).on);
   } else if (message.ccb === "answer" && frame.ccbAnswer) {
     const images = answerImages(message.images);
     if (typeof message.index === "number") frame.ccbAnswer({ index: message.index });
@@ -359,6 +375,7 @@ export function componentElement(
   images?: Record<string, string> | null,
   detail?: DetailTarget | null,
   size?: PinSize,
+  surface: Surface = "chat",
 ): HTMLElement | null {
   if (!info) return null;
   const wrap = document.createElement("div");
@@ -379,7 +396,7 @@ export function componentElement(
   frame.ccbDrawn = JSON.stringify([name, info.template, info.version, data, pictures]);
   const drawnSize = size ?? chatSize(info);
   frame.ccbSize = drawnSize;
-  frame.srcdoc = componentPage(info.template, data, images ?? {}, drawnSize);
+  frame.srcdoc = componentPage(info.template, data, images ?? {}, drawnSize, surface);
   // Resized before its page ran: tell it once it has loaded.
   frame.addEventListener("load", () => {
     if (frame.ccbSize && frame.ccbSize !== drawnSize) resizeFrame(frame, frame.ccbSize);

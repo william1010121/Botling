@@ -193,7 +193,7 @@ describe("messages", () => {
   it("tell a component its size: ccb.size, <html data-size> and ccb.onSize", async () => {
     const { componentPage } = await import("../src/components");
     const page = componentPage("<p>hi</p>", "{}", {}, "2x1");
-    expect(page).toContain('<html data-size="2x1">');
+    expect(page).toContain('<html data-size="2x1" data-surface="chat">');
     const script = page.slice(page.indexOf("<script>") + 8, page.indexOf("</script>"));
     let hear: (event: { source: unknown; data: unknown }) => void = () => {};
     const parent = { postMessage() {} };
@@ -212,6 +212,19 @@ describe("messages", () => {
     hear({ source: parent, data: { ccbSize: { w: 2, h: 2, name: "large" } } });
     expect(heard).toHaveLength(1);
     delete document.documentElement.dataset.size;
+  });
+
+  it("tell a component it is a Board tile: ccb.surface and <html data-surface>", async () => {
+    const { componentPage } = await import("../src/components");
+    const page = componentPage("<p>hi</p>", "{}", {}, "1x1", "board");
+    expect(page).toContain('<html data-size="1x1" data-surface="board">');
+    // On the Board the page is the tile's height, so a layout can fill it.
+    expect(page).toContain('html[data-surface="board"] #ccb-root{height:100%}');
+    const script = page.slice(page.indexOf("<script>") + 8, page.indexOf("</script>"));
+    const frame = { addEventListener() {} } as unknown as { ccb: { surface: string } };
+    new Function("window", "parent", script)(frame, { postMessage() {} });
+    expect(frame.ccb.surface).toBe("board");
+    expect(componentPage("<p>hi</p>", "{}")).toContain('surface: "chat"');
   });
 
   it("let a component load details on demand with ccb.runDetail", async () => {

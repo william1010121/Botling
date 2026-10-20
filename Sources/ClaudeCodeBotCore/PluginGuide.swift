@@ -133,6 +133,10 @@ enum PluginGuide {
           tall = a vertical list, large = the full view. `ccb.size` is `{ w, h, name }` (name "small", "wide", "tall", "large" or "xlarge"),
           `<html data-size="2x1">` is there for CSS, and `ccb.onSize((size) => redraw(size))` runs when the user resizes the card (returns a
           function that stops it). In the chat a component is drawn 2x2 (or its largest size).
+          On the Board the component is the whole tile, like a home-screen widget: no header, the app's controls (size, ↻, ⋯) float over
+          the top-right corner on hover. There `ccb.surface` is "board" and `<html data-surface="board">` is set (in the chat: "chat"), so
+          drop your own card frame: no border, no background (transparent, or the tile's), no border-radius, no outer padding beyond about
+          12px, and fill the tile, e.g. `html[data-surface="board"] .card { border: 0; background: none; border-radius: 0; padding: 12px; height: 100%; }`.
         - about.md: usage notes for the bots. The first line says in one sentence what it is, followed by the data format (with an example JSON) and what the bot receives when the user answers.
 
         ## Check and release

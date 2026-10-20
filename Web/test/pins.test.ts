@@ -254,31 +254,54 @@ describe("the Board", () => {
       expect(done.querySelector(".component-frame")).not.toBeNull();
       const detail = failed.querySelector<HTMLElement>(".command-error pre")!;
       expect(getComputedStyle(detail).whiteSpace).toBe("pre-wrap");
-      // The header gives way by shortening the name, not by squeezing the command to one letter.
-      const title = document.querySelector<HTMLElement>(".board-card-title")!;
-      expect(getComputedStyle(title).textOverflow).toBe("ellipsis");
-      expect(getComputedStyle(document.querySelector<HTMLElement>(".board-card-head .pin-command")!).minWidth).not.toMatch(/^(0|0px|auto)$/);
     } finally {
       style.remove();
     }
   });
 
-  it("a card gives its component the whole width, and a narrow header drops what it can", () => {
+  it("a tile is its component, like a widget: no header, controls float over it on hover", () => {
     const css = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
     const style = document.createElement("style");
     style.textContent = css;
     document.head.append(style);
     try {
       const area = setUp();
-      area.update(state({ board: true, pins: [pin()] }));
+      area.update(state({ board: true, pins: [
+        pin(),
+        pin({ id: "P2", display: { name: "提交紀錄", data: "", command: "git log", folder: "/p", status: "approve" } }),
+      ] }));
+      const [card, asking] = [...document.querySelectorAll<HTMLElement>(".board-card")];
+      // No header row: the body, then the floating tools.
+      expect(card.querySelector(".board-card-head, .board-card-title, .pin-when")).toBeNull();
+      expect([...card.children].map((child) => child.className)).toEqual(["board-card-body", "board-card-tools"]);
+      // The component's frame fills the tile with no padding around it.
+      const body = card.querySelector<HTMLElement>(".board-card-body")!;
+      expect(getComputedStyle(body).padding).toMatch(/^(0px|)$/);
+      const frame = card.querySelector<HTMLIFrameElement>(".component-frame")!;
+      expect(frame.srcdoc).toContain('data-surface="board"');
+      expect(frame.srcdoc).toContain('surface: "board"');
+      // The tools are hidden until hovered or focused, and keyboard reachable buttons.
+      const tools = card.querySelector<HTMLElement>(".board-card-tools")!;
+      expect(getComputedStyle(tools).position).toBe("absolute");
+      expect(getComputedStyle(tools).opacity).toBe("0");
+      expect(css).toMatch(/\.board-card:hover > \.board-card-tools, \.board-card\.hovered > \.board-card-tools, \.board-card-tools:focus-within/);
+      // The pointer over the component (inside its frame) shows them too.
+      window.dispatchEvent(new MessageEvent("message", { data: { ccb: "hover", on: true }, source: frame.contentWindow }));
+      expect(card.classList.contains("hovered")).toBe(true);
+      window.dispatchEvent(new MessageEvent("message", { data: { ccb: "hover", on: false }, source: frame.contentWindow }));
+      expect(card.classList.contains("hovered")).toBe(false);
+      expect([...tools.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual(["Size: Large 2×2", "Refresh (Updated 10:42)", "More"]);
+      // When it ran is in the ⋯ menu, with its name and command.
+      click(tools.querySelector("[aria-label='More']"));
+      expect(document.querySelector(".pin-menu-heading")?.textContent).toBe("提交紀錄");
+      expect([...document.querySelectorAll(".pin-menu-note")].map((n) => n.textContent)).toEqual(["Updated 10:42", "$ python3 git-log-json.py 20"]);
+      expect(document.activeElement?.closest(".pin-menu")).not.toBeNull();
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      expect(document.querySelector(".pin-menu")).toBeNull();
+      // Allow and run is in sight without hovering, filling the tile.
+      expect(asking.querySelector(".board-card-body .command-allow")).not.toBeNull();
       // The report flag sits over the corner instead of keeping a strip beside the component.
-      const side = document.querySelector<HTMLElement>(".board-card-body .component-side")!;
-      expect(getComputedStyle(side).position).toBe("absolute");
-      // A narrow card drops the command, then the time, then the size button from its header.
-      expect(getComputedStyle(document.querySelector<HTMLElement>(".board-card")!).getPropertyValue("container-type")).toBe("inline-size");
-      expect(css).toMatch(/@container \(max-width: 439px\) \{ \.board-card-head \.pin-command \{ display: none; \} \}/);
-      expect(css).toMatch(/@container \(max-width: 299px\) \{ \.board-card-head \.pin-when \{ display: none; \} \}/);
-      expect(css).toMatch(/@container \(max-width: 199px\) \{ \.board-card-head \.board-size \{ display: none; \}/);
+      expect(getComputedStyle(card.querySelector<HTMLElement>(".board-card-body .component-side")!).position).toBe("absolute");
     } finally {
       style.remove();
     }
@@ -322,7 +345,7 @@ describe("the Board", () => {
     const area = setUp();
     area.update(state({ board: true, pins: [pin({ size: "2x2" })] }));
     const frame = document.querySelector<HTMLIFrameElement>(".board-card .component-frame")!;
-    expect(frame.srcdoc).toContain('<html data-size="2x2">');
+    expect(frame.srcdoc).toContain('<html data-size="2x2" data-surface="board">');
     expect(frame.srcdoc).toContain('{"w":2,"h":2,"name":"large"}');
     const told: unknown[] = [];
     frame.contentWindow!.postMessage = ((data: unknown) => told.push(data)) as Window["postMessage"];
@@ -337,7 +360,7 @@ describe("the Board", () => {
   it("a component in the chat is drawn 2×2, or the largest size it has", () => {
     const at = (info: ComponentInfo) => componentElement("x", info, "{}", null)!.querySelector<HTMLIFrameElement>("iframe")!.srcdoc;
     const info = components.提交紀錄;
-    expect(at(info)).toContain('data-size="2x2"');
+    expect(at(info)).toContain('data-size="2x2" data-surface="chat"');
     expect(at({ ...info, sizes: ["1x1", "2x1", "1x2"] })).toContain('data-size="2x1"');
     expect(chatSize({ ...info, sizes: ["1x1", "4x2", "2x2"] })).toBe("2x2");
   });
