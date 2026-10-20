@@ -98,6 +98,21 @@ public final class Bot: ObservableObject, Identifiable {
     private var permissionAsks: [UUID: (request: PermissionRequest, process: AgentProcess)] = [:] {
         didSet { if waitingForPermission != !permissionAsks.isEmpty { waitingForPermission = !permissionAsks.isEmpty } }
     }
+    /// Calls auto mode blocked that wait in the chat for your Allow, by message id. Nothing waits
+    /// on them: claude already got the refusal; allowing lets the call through and tells it to retry.
+    private var denialAsks: [UUID: Denial] = [:]
+    private struct Denial {
+        var tool: String
+        var summary: String
+        /// What lets that call through: "Bash(rm -rf build)".
+        var rule: String
+    }
+    /// Blocked calls allowed once: rules for this run of the app (each new session starts with them).
+    private var sessionRules: [String] = []
+    /// Recent tool calls by id (tool, what it ran or touched), to show and allow a blocked one.
+    private var toolCalls: [String: (tool: String, detail: String)] = [:]
+    /// Blocked calls already shown (claude says so twice: its frame and the tool result).
+    private var deniedCalls: Set<String> = []
     /// A tool question waits for you (the row says so instead of "Working").
     @Published public private(set) var waitingForPermission = false
     /// A tool question was settled without you answering it here (it timed out, claude went
@@ -387,6 +402,7 @@ public final class Bot: ObservableObject, Identifiable {
         guard let message = messages.first(where: { $0.id == messageID }),
               message.isOpenQuestion,
               let choice = message.choices?[safe: index] else { return false }
+        if denialAsks[messageID] != nil { return decideDenial(index, in: message) }
         if message.permissionTool != nil { return decide(index, in: message) }
         markChosen(index, in: messageID)
         let wasRelay = message.role == .bot && turnFromRelay
@@ -407,6 +423,11 @@ public final class Bot: ObservableObject, Identifiable {
               let message = messages.first(where: { $0.id == messageID }),
               message.isOpenQuestion else { return false }
         let shown = Self.answerLabel(text, files: files)
+        if let denial = denialAsks.removeValue(forKey: messageID) {
+            markAnswered(shown, in: messageID)
+            appMessage("(App: The user did not allow `\(denial.summary)` (\(denial.tool)), which auto mode blocked, and said: \(shown))")
+            return true
+        }
         if message.permissionTool != nil {
             // Words instead of a button: not allowed, and Claude hears why.
             guard let ask = permissionAsks.removeValue(forKey: messageID), ask.process === process else {
@@ -605,7 +626,8 @@ public final class Bot: ObservableObject, Identifiable {
             resume: resuming != nil,
             workingDirectory: profile.workingDirectory,
             systemPrompt: prompts.system,
-            tools: profile.tools + alwaysAllowed.filter { !profile.tools.contains($0) },
+            // "Bash(rm -rf build)" is a rule, not a tool name, and may hold commas: it goes in --settings.
+            tools: profile.tools + alwaysAllowed.filter { !profile.tools.contains($0) && !Self.isRule($0) },
             extraDirectories: extraDirectories?() ?? [],
             pluginDirectories: pluginDirectories?() ?? [],
             pluginTools: pluginTools?() ?? [],
@@ -613,6 +635,7 @@ public final class Bot: ObservableObject, Identifiable {
             asksPermission: true,
             disallowedTools: profile.disallowedTools,
             autoMode: autoMode?() ?? false,
+            allowRules: allowRules,
             effort: effort,
             subagentModel: subagentModel
         ))
@@ -752,9 +775,9 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// The question, with what would run shown as code so nothing in it renders as a link,
     /// a picture or formatting.
-    static func permissionText(_ request: PermissionRequest) -> String {
+    static func permissionText(_ request: PermissionRequest, lead: String = "Wants to use") -> String {
         let fence = String(repeating: "~", count: max(3, longestRun(of: "~", in: request.summary) + 1))
-        return "Wants to use `\(request.tool.replacingOccurrences(of: "`", with: "'"))`:\n\n\(fence)\n\(request.summary)\n\(fence)"
+        return "\(lead) `\(request.tool.replacingOccurrences(of: "`", with: "'"))`:\n\n\(fence)\n\(request.summary)\n\(fence)"
     }
 
     private static func longestRun(of character: Character, in text: String) -> Int {
@@ -805,6 +828,93 @@ public final class Bot: ObservableObject, Identifiable {
         return true
     }
 
+    // MARK: Calls auto mode blocked
+
+    /// Auto mode's classifier refused a call: the same card as a tool question, for that very call
+    /// (its command, file or site) and the classifier's reason. Allowing it adds a rule that lets
+    /// exactly that through, then tells it to try again.
+    private func showDenial(_ denial: PermissionDenial) {
+        guard internalReply == nil, deniedCalls.insert(denial.toolUseID).inserted else { return }
+        let call = toolCalls[denial.toolUseID]
+        guard let tool = denial.tool ?? call?.tool,
+              let rule = Self.allowRule(tool: tool, detail: call?.detail ?? "") else { return }
+        let summary = call?.detail ?? tool
+        // Allowed already (a rule from before this session reached claude late): nothing to ask.
+        guard !allowRules.contains(rule) else { return }
+        let always = switch tool {
+        case "Bash": "Always allow this command"
+        case "Write", "Edit", "MultiEdit", "NotebookEdit": "Always allow editing this file"
+        case "WebFetch": "Always allow this site"
+        default: "Always allow \(tool)"
+        }
+        let choices = [
+            Choice(label: "Allow once", detail: nil, recommended: true),
+            Choice(label: always, detail: "For \(name), from now on", recommended: false),
+            Choice(label: "Don't allow", detail: nil, recommended: false)
+        ]
+        let request = PermissionRequest(id: denial.toolUseID, tool: tool, summary: summary, input: "{}")
+        let reason = denial.reason.isEmpty ? "" : "\n\nReason: " + denial.reason.replacingOccurrences(of: "\n", with: " ")
+        var message = ChatMessage(role: .bot, text: Self.permissionText(request, lead: "Auto mode blocked") + reason, choices: choices)
+        message.permissionTool = tool
+        append(message)
+        denialAsks[message.id] = Denial(tool: tool, summary: summary, rule: rule)
+        unreadCount += 1
+        onQuestion?(message)
+    }
+
+    /// Your pick on a blocked call: allowed, the rule goes to claude and it is told to retry;
+    /// not, it is told so.
+    private func decideDenial(_ index: Int, in message: ChatMessage) -> Bool {
+        guard let denial = denialAsks.removeValue(forKey: message.id) else { return false }
+        markChosen(index, in: message.id)
+        guard index <= 1 else {
+            appMessage("(App: The user did not allow `\(denial.summary)` (\(denial.tool)), which auto mode blocked. Do not try it again; carry on without it, or ask the user what to do instead.)")
+            return true
+        }
+        if index == 1 {
+            if !alwaysAllowed.contains(denial.rule) {
+                alwaysAllowed.append(denial.rule)
+                store?.save(alwaysAllowed: alwaysAllowed)
+            }
+        } else if !sessionRules.contains(denial.rule) {
+            sessionRules.append(denial.rule)
+        }
+        process?.allow(rules: allowRules)
+        appMessage("(App: The user allowed `\(denial.summary)` (\(denial.tool)), which auto mode blocked. It is allowed now: run it again as it was, then carry on.)")
+        return true
+    }
+
+    /// Rules for calls you allowed after auto mode blocked them: always, then this run's.
+    private var allowRules: [String] {
+        let always = alwaysAllowed.filter(Self.isRule)
+        return always + sessionRules.filter { !always.contains($0) }
+    }
+
+    static func isRule(_ entry: String) -> Bool {
+        entry.contains("(") && entry.hasSuffix(")")
+    }
+
+    /// The permission rule that lets exactly this call through: the command, the file (as
+    /// `//absolute/path`; Edit rules cover every file tool), the site. Nil when there is nothing
+    /// narrow to allow (a command we did not see).
+    static func allowRule(tool: String, detail: String) -> String? {
+        let detail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch tool {
+        case "Bash":
+            return detail.isEmpty ? nil : "Bash(\(detail))"
+        case "Write", "Edit", "MultiEdit", "NotebookEdit":
+            guard detail.hasPrefix("/") else { return nil }
+            return "Edit(/\(detail))"
+        case "WebFetch":
+            guard let host = URL(string: detail)?.host, !host.isEmpty else { return nil }
+            return "WebFetch(domain:\(host))"
+        default:
+            // A tool with no narrower rule (MCP tools, Skill…): the tool itself, like the tool
+            // question's "Always allow".
+            return neverAlways.contains(tool) ? nil : tool
+        }
+    }
+
     /// Lets it ask for this tool again (Settings).
     public func forget(alwaysAllowed tool: String) {
         alwaysAllowed.removeAll { $0 == tool }
@@ -833,6 +943,10 @@ public final class Bot: ObservableObject, Identifiable {
             if spent > 0 { onSpend?(spent) }
             if tokens.total > 0 { onTokens?(tokens) }
         case let .trace(step):
+            if case let .toolUse(id, tool, _, detail, _) = step {
+                if toolCalls.count > 500 { toolCalls.removeAll() }
+                toolCalls[id] = (tool, detail)
+            }
             if trace.apply(step) { store?.save(subagents: trace.subagents) }
             noteSubagentEnd(step)
             switch step {
@@ -859,6 +973,8 @@ public final class Bot: ObservableObject, Identifiable {
             }
         case let .permission(request):
             ask(permission: request, from: source)
+        case let .permissionDenied(denial):
+            showDenial(denial)
         case let .permissionCancelled(requestID):
             if let id = permissionAsks.first(where: { $0.value.request.id == requestID })?.key {
                 permissionAsks[id] = nil

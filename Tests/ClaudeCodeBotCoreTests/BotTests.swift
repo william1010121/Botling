@@ -72,6 +72,14 @@ final class FakeAgent: AgentProcess, @unchecked Sendable {
     func answer(_ request: PermissionRequest, allow: Bool, message: String?) {
         lock.withLock { _answers.append((request.id, allow, message)) }
     }
+
+    /// Each set of permission rules it was told to allow from then on (apply_flag_settings).
+    private var _allowedRules: [[String]] = []
+    var allowedRules: [[String]] { lock.withLock { _allowedRules } }
+
+    func allow(rules: [String]) {
+        lock.withLock { _allowedRules.append(rules) }
+    }
 }
 
 final class FakeLauncher: @unchecked Sendable {
