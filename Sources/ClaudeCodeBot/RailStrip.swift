@@ -84,7 +84,9 @@ struct RailToggle: View {
 /// it has lines you have not read, a dimmed face while it sleeps. Hover for name and status.
 struct RailStrip: View {
     @ObservedObject var workspace: Workspace
+    /// The pinned ones first (`pinnedCount` of them), then the rest.
     let entries: [RailView.Entry]
+    var pinnedCount = 0
     @Binding var tip: RailTip?
     @Binding var showingQuickSettings: Bool
     let addProject: () -> Void
@@ -131,7 +133,11 @@ struct RailStrip: View {
 
             ScrollView {
                 VStack(spacing: 4) {
-                    ForEach(entries) { entry in
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                        // A short line between the pinned faces and the rest.
+                        if index == pinnedCount, pinnedCount > 0 {
+                            Rectangle().fill(Theme.chip).frame(width: 16, height: 1).padding(.vertical, 3)
+                        }
                         switch entry.kind {
                         case .group(let group, let chat):
                             GroupIcon(group: group, chat: chat, workspace: workspace, selected: workspace.selection == group.id, tip: $tip) {
@@ -146,7 +152,9 @@ struct RailStrip: View {
                                 workspace.select(project.id)
                             }
                             .contextMenu {
+                                Button(workspace.isPinned(project.id) ? "Unpin" : "Pin") { workspace.togglePin(project.id) }
                                 if project.isBot {
+                                    Divider()
                                     Button("Remove bot…", role: .destructive) { removeBot(project) }
                                 }
                             }

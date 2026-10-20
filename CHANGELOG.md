@@ -4,6 +4,22 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+### Added
+
+- **Pin bots to the top of the left column.** Right-click a project or bot and choose Pin (or
+  Unpin), or click the pin glyph that shows at the row's end on hover. Pinned rows sit in a
+  "Pinned" section above Chats, in the order they were pinned, and come first in the folded
+  strip (⌃⌘S) too, with a short line under them. Pins are kept in settings.json
+  (`pinnedBots`) across launches; a removed bot's pin is dropped, and so are ids of bots that
+  are gone when the app opens.
+- **Search bots (⌘K).** A search field at the top of the left column keeps, as you type, the
+  rows whose name or project folder name contains what you typed (ignoring case and accents);
+  Enter opens the first, Esc empties it and puts the cursor back in the input box. Nothing kept
+  says "No bots match". ⌘K works from anywhere, the input box included, and opens a folded
+  column first. `CCB_RAIL_PINS_SNAPSHOT=out.png` draws both.
+
 ## 1.10.0
 
 ### Added

@@ -23,6 +23,10 @@ enum Snapshot {
             drawRail(to: path)
             return true
         }
+        if let path = ProcessInfo.processInfo.environment["CCB_RAIL_PINS_SNAPSHOT"] {
+            drawRailPins(to: path)
+            return true
+        }
         if let path = ProcessInfo.processInfo.environment["CCB_RIGHT_SNAPSHOT"] {
             drawRightPanel(to: path)
             return true
@@ -268,6 +272,76 @@ enum Snapshot {
             .background(Color(hex: 0x0A0A0C))
             .preferredColorScheme(.dark)
         let frame = NSRect(x: 0, y: 0, width: 1140, height: 620)
+        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: .darkAqua)
+        let host = NSHostingView(rootView: content)
+        host.frame = frame
+        window.contentView = host
+        self.window = window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
+            exit(0)
+        }
+    }
+
+    /// `CCB_RAIL_PINS_SNAPSHOT=/path/out.png`: the left column with two bots pinned on top
+    /// (open and folded), then searching it: "news" keeps two rows, "zzz" none.
+    private static func drawRailPins(to path: String) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let samples: [(String, String, String, Int)] = [
+            ("ClaudeCodeBot", "square", "ClaudeCodeBot", 0), ("Arbor", "triangle", "arbor", 0), ("Morning news", "star", "morning-news", 5),
+            ("Paper research", "hexagon", "papers", 0), ("Home server", "pill", "home-server", 0), ("News digest", "circle", "digest", 1),
+        ]
+        let projects = samples.map { name, avatar, folder, _ in
+            Workspace.Project(id: UUID(), name: name, folder: root.appending(path: "code/\(folder)"), avatar: avatar)
+        }
+        try? JSONEncoder().encode(projects).write(to: root.appending(path: "projects.json"))
+        for (project, sample) in zip(projects, samples) where sample.3 > 0 {
+            BotStore(directory: root.appending(path: "projects/\(project.id.uuidString)")).save(unread: sample.3)
+        }
+        var settings = AppSettings()
+        // Pinned Home server first, then Arbor.
+        settings.pinnedBots = [projects[4].id, projects[1].id]
+        if let data = try? JSONEncoder().encode(settings) { try? data.write(to: root.appending(path: "settings.json")) }
+        let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
+            Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
+        }
+        let pane = { (collapsed: Bool, query: String, label: String) in
+            VStack(alignment: .leading, spacing: 8) {
+                Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.muted)
+                HStack(spacing: 0) {
+                    RailView(workspace: workspace, settings: SettingsNavigator(), collapsed: collapsed, query: query)
+                        .frame(width: RailLayout.width(collapsed: collapsed))
+                        .overlay(alignment: .trailing) { Rectangle().fill(Theme.line).frame(width: 1) }
+                    VStack(alignment: .leading, spacing: 10) {
+                        RoundedRectangle(cornerRadius: 12).fill(Theme.bubble).frame(height: 34)
+                        RoundedRectangle(cornerRadius: 12).fill(Theme.userBubble).frame(width: 60, height: 34).frame(maxWidth: .infinity, alignment: .trailing)
+                        Spacer()
+                        RoundedRectangle(cornerRadius: 10).stroke(Theme.chip).frame(height: 36)
+                    }
+                    .padding(EdgeInsets(top: 44, leading: 12, bottom: 16, trailing: 12))
+                }
+                .frame(width: collapsed ? 200 : 340, height: 640)
+                .background(Theme.ground)
+                .overlay(alignment: .topLeading) { RailChrome(collapsed: collapsed, tip: nil) {} }
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+        }
+        let content = HStack(alignment: .top, spacing: 30) {
+            pane(false, "", "(a) Two bots pinned on top")
+            pane(true, "", "(a) Folded: pinned first")
+            pane(false, "news", "(b) Search \"news\"")
+            pane(false, "zzz", "(b) Search \"zzz\"")
+        }
+            .padding(30)
+            .frame(width: 1430, height: 740)
+            .foregroundStyle(Theme.text)
+            .background(Color(hex: 0x0A0A0C))
+            .preferredColorScheme(.dark)
+        let frame = NSRect(x: 0, y: 0, width: 1430, height: 740)
         let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: content)

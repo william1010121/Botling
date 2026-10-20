@@ -18,4 +18,31 @@ public enum RailLayout {
         if unread > 0 { parts.append("\(unread > 99 ? "99+" : "\(unread)") unread") }
         return parts.joined(separator: " · ")
     }
+
+    /// What the search field says when nothing in the column matches.
+    public static let noMatches = "No bots match"
+    /// Puts the cursor in the column's search field (and opens a folded column).
+    public static let searchShortcut = "⌘K"
+
+    /// Rows split into the pinned ones, in the order they were pinned, and the rest, in the
+    /// order they came in. Pinned ids with no row are skipped.
+    public static func pinnedFirst<Row>(_ rows: [Row], id: (Row) -> UUID, pinned: [UUID]) -> (pinned: [Row], rest: [Row]) {
+        let order = Dictionary(pinned.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
+        var top: [(Int, Row)] = []
+        var rest: [Row] = []
+        for row in rows {
+            if let place = order[id(row)] { top.append((place, row)) } else { rest.append(row) }
+        }
+        return (top.sorted { $0.0 < $1.0 }.map(\.1), rest)
+    }
+
+    /// Whether a row is kept while searching: its name or its project folder's name contains
+    /// the query, ignoring case and accents. An empty query keeps every row.
+    public static func matches(_ query: String, name: String, folder: String?) -> Bool {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return true }
+        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        return name.range(of: query, options: options) != nil
+            || (folder?.range(of: query, options: options) != nil)
+    }
 }

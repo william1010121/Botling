@@ -289,6 +289,7 @@ public final class Workspace: ObservableObject {
         }
         loadGroups()
         setUpCodex()
+        dropStalePins()
         refreshWaiting()
     }
 
@@ -728,6 +729,7 @@ public final class Workspace: ObservableObject {
         projects.removeAll { $0.id == id }
         if selection == id { select(nil) }
         saveProjects()
+        dropStalePins()
         if let plugin = project.plugin {
             removedPluginBots.insert(Self.removalKey(plugin: plugin, name: project.name))
             try? JSONEncoder().encode(removedPluginBots.sorted()).write(to: removedBotsURL, options: .atomic)
@@ -1443,6 +1445,33 @@ public final class Workspace: ObservableObject {
     /// The button by the window's lights and ⌃⌘S.
     public func toggleRail() {
         setRailCollapsed(!railCollapsed)
+    }
+
+    /// Projects and bots pinned to the top of the left column, in the order they were pinned;
+    /// remembered across launches.
+    public var pinnedBots: [UUID] {
+        (settings.pinnedBots ?? []).filter { id in projects.contains { $0.id == id } }
+    }
+
+    public func isPinned(_ id: UUID) -> Bool { pinnedBots.contains(id) }
+
+    /// Pins a project's row (at the end of the pinned ones) or unpins it.
+    public func setPinned(_ id: UUID, _ pinned: Bool) {
+        guard pinned != isPinned(id), projects.contains(where: { $0.id == id }) else { return }
+        settings.pinnedBots = pinned ? pinnedBots + [id] : pinnedBots.filter { $0 != id }
+        settings.save(to: settingsURL)
+    }
+
+    /// The row's "Pin" / "Unpin".
+    public func togglePin(_ id: UUID) {
+        setPinned(id, !isPinned(id))
+    }
+
+    /// Forgets pins of projects and bots that are gone.
+    private func dropStalePins() {
+        guard let saved = settings.pinnedBots, saved != pinnedBots else { return }
+        settings.pinnedBots = pinnedBots
+        settings.save(to: settingsURL)
     }
 
     /// Whether the right panel is folded into a strip of icons: a view's hold if one holds it,

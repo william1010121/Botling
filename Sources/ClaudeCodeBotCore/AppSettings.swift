@@ -30,6 +30,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// means open.
     public var rightPanelCollapsed: Bool?
 
+    /// Projects and bots pinned to the top of the left column, in the order they were pinned.
+    /// Nil (a settings file from before it) means none.
+    public var pinnedBots: [UUID]?
+
     public init(developerMode: Bool = false, developerProjectID: UUID? = nil) {
         self.developerMode = developerMode
         self.developerProjectID = developerProjectID

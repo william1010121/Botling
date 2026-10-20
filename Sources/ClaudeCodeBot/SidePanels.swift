@@ -19,12 +19,16 @@ struct RailView: View {
     @State private var deletingGroup: ChatGroup?
     /// Bumped when any chat gets a line, so the list sorts again.
     @State private var activity = 0
+    /// What the search field at the top holds (⌘K puts the cursor there).
+    @State private var query: String
+    @FocusState private var searchFocused: Bool
 
-    init(workspace: Workspace, settings: SettingsNavigator, collapsed: Bool = false, tip: Binding<RailTip?> = .constant(nil)) {
+    init(workspace: Workspace, settings: SettingsNavigator, collapsed: Bool = false, tip: Binding<RailTip?> = .constant(nil), query: String = "") {
         self.workspace = workspace
         self.settings = settings
         self.collapsed = collapsed
         _tip = tip
+        _query = State(initialValue: query)
     }
 
     /// One row of the list: a group or a project's bot.
@@ -53,12 +57,79 @@ struct RailView: View {
             .map(\.element)
     }
 
+    /// The pinned rows first, in the order they were pinned, then the rest by newest line.
+    private var arranged: (pinned: [Entry], rest: [Entry]) {
+        RailLayout.pinnedFirst(entries, id: \.id, pinned: workspace.pinnedBots)
+    }
+
+    /// One row the search kept, in the order the column shows them.
+    private enum Hit: Identifiable {
+        case main
+        case codex
+        case entry(Entry)
+
+        var id: UUID {
+            switch self {
+            case .main: Workspace.mainBotID
+            case .codex: Workspace.codexID
+            case .entry(let entry): entry.id
+            }
+        }
+    }
+
+    private var isSearching: Bool { !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    /// The main bot, Codex, then the pinned rows and the rest, kept when the name (or the
+    /// project's folder name) has what the search field holds.
+    private var hits: [Hit] {
+        var hits: [Hit] = []
+        if RailLayout.matches(query, name: workspace.mainBot.name, folder: nil) { hits.append(.main) }
+        if RailLayout.matches(query, name: workspace.codexBot.name, folder: nil) { hits.append(.codex) }
+        let (pinned, rest) = arranged
+        for entry in pinned + rest {
+            switch entry.kind {
+            case .group(let group, _):
+                if RailLayout.matches(query, name: group.name, folder: nil) { hits.append(.entry(entry)) }
+            case .project(let project, let bot):
+                if RailLayout.matches(query, name: bot.name, folder: project.isBot ? nil : project.folder.lastPathComponent) {
+                    hits.append(.entry(entry))
+                }
+            }
+        }
+        return hits
+    }
+
+    private func open(_ hit: Hit) {
+        switch hit {
+        case .main: workspace.select(nil)
+        case .codex: workspace.select(Workspace.codexID)
+        case .entry(let entry): workspace.select(entry.id)
+        }
+        endSearch()
+    }
+
+    /// ⌘K: the cursor in the search field, opening a folded column first.
+    private func startSearch() {
+        if collapsed { workspace.setRailCollapsed(false) }
+        // After the open column (and its field) is drawn.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { searchFocused = true }
+    }
+
+    /// Esc, or a row opened from the results: the field emptied and the cursor back in the
+    /// input box.
+    private func endSearch() {
+        query = ""
+        searchFocused = false
+        NotificationCenter.default.post(name: .focusComposer, object: nil)
+    }
+
     var body: some View {
         Group {
             if collapsed {
                 RailStrip(
                     workspace: workspace,
-                    entries: entries,
+                    entries: arranged.pinned + arranged.rest,
+                    pinnedCount: arranged.pinned.count,
                     tip: $tip,
                     showingQuickSettings: $showingQuickSettings,
                     addProject: addProject,
@@ -76,6 +147,13 @@ struct RailView: View {
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.side)
+        .background {
+            Button("Search bots", action: startSearch)
+                .keyboardShortcut("k", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+        }
         // Only new lines count: @Published sends its current value as soon as it is subscribed
         // to, and this is subscribed to again on every redraw, so taking that first value too
         // would bump `activity`, redraw, subscribe again, and never stop (a frozen app).
@@ -116,75 +194,62 @@ struct RailView: View {
         DispatchQueue.main.async { settings.open(section) }
     }
 
-    /// The open column: a row per bot with its name, status and subagents.
+    /// The open column: the search field, then a row per bot with its name, status and
+    /// subagents, the pinned ones first.
     private var list: some View {
         VStack(alignment: .leading, spacing: 2) {
-            BotRow(bot: workspace.mainBot, selected: workspace.selection == nil && workspace.viewingSubagent == nil, waiting: workspace.waiting.contains { $0.projectID == Workspace.mainBotID }) {
-                workspace.select(nil)
-            }
-            SubagentRows(bot: workspace.mainBot, workspace: workspace)
+            searchField.padding(.bottom, 6)
 
-            Rectangle().fill(Theme.line).frame(height: 1).padding(10)
-
-            MaintainerRow(
-                bot: workspace.maintainer,
-                library: workspace.components,
-                selected: workspace.selection == Workspace.maintainerID,
-                waiting: workspace.waiting.contains { $0.projectID == Workspace.maintainerID }
-            ) {
-                workspace.select(Workspace.maintainerID)
-            }
-            CodexRow(bot: workspace.codexBot, workspace: workspace, selected: workspace.selection == Workspace.codexID) {
-                workspace.select(Workspace.codexID)
-            }
-
-            ScrollView {
-                VStack(spacing: 2) {
-                    HStack {
-                        Text("Chats").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.faint)
-                        Spacer()
-                        Button { editingGroup = ChatGroup(name: "", members: []) } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 12))
-                                .foregroundStyle(Theme.faint)
-                                .frame(width: 28, height: 28)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("New group: pick the bots you want in one conversation")
-                        .accessibilityLabel("New group")
-                    }
-                    .padding(.leading, 10)
-                    ForEach(entries) { entry in
-                        switch entry.kind {
-                        case .group(let group, let chat):
-                            GroupRow(group: group, chat: chat, workspace: workspace, selected: workspace.selection == group.id) {
-                                workspace.select(group.id)
-                            }
-                            .contextMenu {
-                                Button("Edit group…") { editingGroup = group }
-                                Button("Delete group…", role: .destructive) { deletingGroup = group }
-                            }
-                        case .project(let project, let bot):
-                            BotRow(
-                                bot: bot,
-                                selected: workspace.selection == project.id && workspace.viewingSubagent == nil,
-                                waiting: workspace.waiting.contains { $0.projectID == project.id }
-                            ) {
-                                workspace.select(project.id)
-                            }
-                            .contextMenu {
-                                if project.isBot {
-                                    Button("Remove bot…", role: .destructive) { removing = project }
-                                }
-                            }
-                            SubagentRows(bot: bot, workspace: workspace)
-                        }
-                    }
+            if isSearching {
+                searchResults
+            } else {
+                BotRow(bot: workspace.mainBot, selected: workspace.selection == nil && workspace.viewingSubagent == nil, waiting: workspace.waiting.contains { $0.projectID == Workspace.mainBotID }) {
+                    workspace.select(nil)
                 }
-                .animation(.easeInOut(duration: 0.25), value: entries.map(\.id))
+                SubagentRows(bot: workspace.mainBot, workspace: workspace)
+
+                Rectangle().fill(Theme.line).frame(height: 1).padding(10)
+
+                MaintainerRow(
+                    bot: workspace.maintainer,
+                    library: workspace.components,
+                    selected: workspace.selection == Workspace.maintainerID,
+                    waiting: workspace.waiting.contains { $0.projectID == Workspace.maintainerID }
+                ) {
+                    workspace.select(Workspace.maintainerID)
+                }
+                CodexRow(bot: workspace.codexBot, workspace: workspace, selected: workspace.selection == Workspace.codexID) {
+                    workspace.select(Workspace.codexID)
+                }
+
+                ScrollView {
+                    let (pinned, rest) = arranged
+                    VStack(spacing: 2) {
+                        if !pinned.isEmpty {
+                            sectionTitle("Pinned").frame(height: 28)
+                            ForEach(pinned) { entryRow($0) }
+                        }
+                        HStack {
+                            sectionTitle("Chats")
+                            Button { editingGroup = ChatGroup(name: "", members: []) } label: {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Theme.faint)
+                                    .frame(width: 28, height: 28)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("New group: pick the bots you want in one conversation")
+                            .accessibilityLabel("New group")
+                        }
+                        .padding(.top, pinned.isEmpty ? 0 : 6)
+                        ForEach(rest) { entryRow($0) }
+                    }
+                    .animation(.easeInOut(duration: 0.25), value: entries.map(\.id))
+                    .animation(.easeInOut(duration: 0.25), value: workspace.pinnedBots)
+                }
+                .scrollIndicators(.never)
             }
-            .scrollIndicators(.never)
 
             if makingBot {
                 NewBotForm { name, job in
@@ -242,6 +307,119 @@ struct RailView: View {
         .padding(.horizontal, 12)
         .padding(.top, 36)
         .padding(.bottom, 12)
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.faint)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 10)
+    }
+
+    /// The search field at the top of the column (⌘K): rows are kept as you type, Enter opens
+    /// the first, Esc empties it.
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.faint)
+            TextField("Search bots", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .focused($searchFocused)
+                .onSubmit { if let first = hits.first { open(first) } }
+                .onExitCommand(perform: endSearch)
+                .accessibilityLabel("Search bots")
+            if query.isEmpty {
+                Text(RailLayout.searchShortcut)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.faint)
+                    .accessibilityHidden(true)
+            } else {
+                Button(action: endSearch) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.faint)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Clear search (Esc)")
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 30)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.bubble))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(searchFocused ? Theme.blue.opacity(0.6) : Theme.line, lineWidth: 1))
+        .help("Search bots by name or project folder (\(RailLayout.searchShortcut))")
+    }
+
+    /// What the search kept, or "No bots match".
+    @ViewBuilder private var searchResults: some View {
+        let hits = hits
+        if hits.isEmpty {
+            Text(RailLayout.noMatches)
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.faint)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 24)
+            Spacer(minLength: 0)
+        } else {
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(hits) { hit in
+                        switch hit {
+                        case .main:
+                            BotRow(bot: workspace.mainBot, selected: workspace.selection == nil && workspace.viewingSubagent == nil, waiting: workspace.waiting.contains { $0.projectID == Workspace.mainBotID }) {
+                                open(hit)
+                            }
+                        case .codex:
+                            CodexRow(bot: workspace.codexBot, workspace: workspace, selected: workspace.selection == Workspace.codexID) {
+                                open(hit)
+                            }
+                        case .entry(let entry):
+                            entryRow(entry, subagents: false) { open(hit) }
+                        }
+                    }
+                }
+            }
+            .scrollIndicators(.never)
+        }
+    }
+
+    /// A group's or a project's row, with its menu (Pin / Unpin for a project).
+    @ViewBuilder
+    private func entryRow(_ entry: Entry, subagents: Bool = true, action: (() -> Void)? = nil) -> some View {
+        switch entry.kind {
+        case .group(let group, let chat):
+            GroupRow(group: group, chat: chat, workspace: workspace, selected: workspace.selection == group.id) {
+                if let action { action() } else { workspace.select(group.id) }
+            }
+            .contextMenu {
+                Button("Edit group…") { editingGroup = group }
+                Button("Delete group…", role: .destructive) { deletingGroup = group }
+            }
+        case .project(let project, let bot):
+            let pinned = workspace.isPinned(project.id)
+            BotRow(
+                bot: bot,
+                selected: workspace.selection == project.id && workspace.viewingSubagent == nil,
+                waiting: workspace.waiting.contains { $0.projectID == project.id },
+                pinned: pinned,
+                togglePin: { workspace.togglePin(project.id) }
+            ) {
+                if let action { action() } else { workspace.select(project.id) }
+            }
+            .contextMenu {
+                Button(pinned ? "Unpin" : "Pin") { workspace.togglePin(project.id) }
+                if project.isBot {
+                    Divider()
+                    Button("Remove bot…", role: .destructive) { removing = project }
+                }
+            }
+            if subagents { SubagentRows(bot: bot, workspace: workspace) }
+        }
     }
 
     private func addProject() {
@@ -668,7 +846,15 @@ private struct BotRow: View {
     @ObservedObject var bot: Bot
     let selected: Bool
     let waiting: Bool
+    /// Nil for a row that cannot be pinned (the main bot).
+    var pinned: Bool?
+    var togglePin: () -> Void = {}
     let action: () -> Void
+
+    @State private var hovering = false
+
+    /// The pin glyph shows at the row's end while the pointer is on it.
+    private var showsPin: Bool { pinned != nil && hovering }
 
     var body: some View {
         Button(action: action) {
@@ -685,13 +871,32 @@ private struct BotRow: View {
                     UnreadBadge(count: bot.unreadCount)
                 }
             }
-            .padding(.horizontal, 10)
+            .padding(.leading, 10)
+            // Room for the pin glyph drawn over the row's end.
+            .padding(.trailing, showsPin ? 36 : 10)
             .frame(height: 48)
-            .background(RoundedRectangle(cornerRadius: 12).fill(selected ? Theme.selected : .clear))
+            .background(RoundedRectangle(cornerRadius: 12).fill(selected ? Theme.selected : hovering && pinned != nil ? Theme.hover : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(bot.name), \(bot.statusText)\(waiting ? ", waiting on you" : "")")
+        .overlay(alignment: .trailing) {
+            if showsPin, let pinned {
+                Button(action: togglePin) {
+                    Image(systemName: pinned ? "pin.slash" : "pin")
+                        .font(.system(size: 12))
+                        .foregroundStyle(pinned ? Theme.text : Theme.faint)
+                        .frame(width: 24, height: 24)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Theme.chip))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 8)
+                .help(pinned ? "Unpin" : "Pin to the top")
+                .accessibilityLabel(pinned ? "Unpin \(bot.name)" : "Pin \(bot.name)")
+            }
+        }
+        .onHover { hovering = $0 }
+        .accessibilityLabel("\(bot.name), \(bot.statusText)\(waiting ? ", waiting on you" : "")\(pinned == true ? ", pinned" : "")")
     }
 }
 

@@ -4,6 +4,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WebKit
 
+extension Notification.Name {
+    /// Puts the cursor back in the chat's input box.
+    static let focusComposer = Notification.Name("ClaudeCodeBot.focusComposer")
+}
+
 /// Files and reply targets waiting in each bot's composer, kept while you switch between bots.
 @MainActor
 final class ChatInputs: ObservableObject {
@@ -42,6 +47,14 @@ struct ChatSurface: NSViewRepresentable {
             view.loadFileURL(page, allowingReadAccessTo: URL(filePath: "/"))
         }
         context.coordinator.view = view
+        // The left column's search gives the cursor back to the input box (Esc, or a row opened).
+        context.coordinator.focusObserver = NotificationCenter.default.addObserver(forName: .focusComposer, object: nil, queue: .main) { [weak view] _ in
+            MainActor.assumeIsolated {
+                guard let view else { return }
+                view.window?.makeFirstResponder(view)
+                view.evaluateJavaScript("ccb.focus()")
+            }
+        }
         return view
     }
 
@@ -52,6 +65,7 @@ struct ChatSurface: NSViewRepresentable {
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
         view.configuration.userContentController.removeScriptMessageHandler(forName: "ccb")
+        if let observer = coordinator.focusObserver { NotificationCenter.default.removeObserver(observer) }
     }
 
     static var pageURL: URL? {
@@ -112,6 +126,7 @@ struct ChatSurface: NSViewRepresentable {
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
         var surface: ChatSurface?
         weak var view: WKWebView?
+        var focusObserver: NSObjectProtocol?
         private var ready = false
         private var lastJSON = ""
         private var pluginRevision = -1
