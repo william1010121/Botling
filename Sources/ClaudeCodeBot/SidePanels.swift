@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import ClaudeCodeBotCore
 import SwiftUI
 
@@ -10,12 +11,41 @@ struct RailView: View {
     /// The group being made (a new one) or changed, in the sheet.
     @State private var editingGroup: ChatGroup?
     @State private var deletingGroup: ChatGroup?
+    /// Bumped when any chat gets a line, so the list sorts again.
+    @State private var activity = 0
+
+    /// One row of the list: a group or a project's bot.
+    private struct Entry: Identifiable {
+        enum Kind {
+            case group(ChatGroup, Bot)
+            case project(Workspace.Project, Bot)
+        }
+
+        let id: UUID
+        let kind: Kind
+        let bot: Bot
+    }
+
+    /// Groups and projects together, the one with the newest line first, as in Messages.
+    private var entries: [Entry] {
+        _ = activity
+        var all = workspace.groups.compactMap { group in
+            workspace.groupChats[group.id].map { Entry(id: group.id, kind: .group(group, $0), bot: $0) }
+        }
+        all += workspace.projects.filter { !$0.isMaintainer }.compactMap { project in
+            workspace.bot(for: project).map { Entry(id: project.id, kind: .project(project, $0), bot: $0) }
+        }
+        return all.enumerated()
+            .sorted { ($0.element.bot.lastActivity, $1.offset) > ($1.element.bot.lastActivity, $0.offset) }
+            .map(\.element)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            BotRow(bot: workspace.mainBot, selected: workspace.selection == nil, waiting: workspace.waiting.contains { $0.projectID == Workspace.mainBotID }) {
+            BotRow(bot: workspace.mainBot, selected: workspace.selection == nil && workspace.viewingSubagent == nil, waiting: workspace.waiting.contains { $0.projectID == Workspace.mainBotID }) {
                 workspace.select(nil)
             }
+            SubagentRows(bot: workspace.mainBot, workspace: workspace)
 
             Rectangle().fill(Theme.line).frame(height: 1).padding(10)
 
@@ -31,7 +61,7 @@ struct RailView: View {
             ScrollView {
                 VStack(spacing: 2) {
                     HStack {
-                        Text("Groups").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.faint)
+                        Text("Chats").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.faint)
                         Spacer()
                         Button { editingGroup = ChatGroup(name: "", members: []) } label: {
                             Image(systemName: "plus")
@@ -45,8 +75,9 @@ struct RailView: View {
                         .accessibilityLabel("New group")
                     }
                     .padding(.leading, 10)
-                    ForEach(workspace.groups) { group in
-                        if let chat = workspace.groupChats[group.id] {
+                    ForEach(entries) { entry in
+                        switch entry.kind {
+                        case .group(let group, let chat):
                             GroupRow(group: group, chat: chat, workspace: workspace, selected: workspace.selection == group.id) {
                                 workspace.select(group.id)
                             }
@@ -54,16 +85,10 @@ struct RailView: View {
                                 Button("Edit group…") { editingGroup = group }
                                 Button("Delete group…", role: .destructive) { deletingGroup = group }
                             }
-                        }
-                    }
-                    if !workspace.groups.isEmpty || !workspace.projects.isEmpty {
-                        Rectangle().fill(Theme.line).frame(height: 1).padding(.horizontal, 10).padding(.vertical, 6)
-                    }
-                    ForEach(workspace.projects.filter { !$0.isMaintainer }) { project in
-                        if let bot = workspace.bot(for: project) {
+                        case .project(let project, let bot):
                             BotRow(
                                 bot: bot,
-                                selected: workspace.selection == project.id,
+                                selected: workspace.selection == project.id && workspace.viewingSubagent == nil,
                                 waiting: workspace.waiting.contains { $0.projectID == project.id }
                             ) {
                                 workspace.select(project.id)
@@ -73,9 +98,11 @@ struct RailView: View {
                                     Button("Remove bot…", role: .destructive) { removing = project }
                                 }
                             }
+                            SubagentRows(bot: bot, workspace: workspace)
                         }
                     }
                 }
+                .animation(.easeInOut(duration: 0.25), value: entries.map(\.id))
             }
             .scrollIndicators(.never)
 
@@ -121,6 +148,7 @@ struct RailView: View {
         .padding(.bottom, 12)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.side)
+        .onReceive(Publishers.MergeMany(entries.map { $0.bot.$messages.map { _ in () } })) { _ in activity &+= 1 }
         .confirmationDialog(
             "Remove \"\(removing?.name ?? "")\"?",
             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
@@ -163,6 +191,21 @@ struct RailView: View {
     }
 }
 
+/// How many lines you have not read, as in Messages.
+private struct UnreadBadge: View {
+    let count: Int
+
+    var body: some View {
+        Text(count > 99 ? "99+" : "\(count)")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .frame(minWidth: 20, minHeight: 20)
+            .background(Capsule().fill(Theme.blue))
+            .accessibilityLabel("\(count) unread")
+    }
+}
+
 /// A group you made: its name, and who is writing or how many are in it.
 private struct GroupRow: View {
     let group: ChatGroup
@@ -197,7 +240,7 @@ private struct GroupRow: View {
                 if workspace.groupHasQuestion(group.id) {
                     Circle().fill(Theme.orange).frame(width: 9, height: 9)
                 } else if chat.hasUnread && !selected {
-                    Circle().fill(Theme.blue).frame(width: 9, height: 9)
+                    UnreadBadge(count: chat.unreadCount)
                 }
             }
             .padding(.horizontal, 10)
@@ -470,7 +513,7 @@ private struct MaintainerRow: View {
                     if waiting {
                         Circle().fill(Theme.orange).frame(width: 9, height: 9)
                     } else if bot.hasUnread && !selected {
-                        Circle().fill(Theme.blue).frame(width: 9, height: 9)
+                        UnreadBadge(count: bot.unreadCount)
                     }
                 }
                 .padding(.horizontal, 10)
@@ -510,7 +553,7 @@ private struct BotRow: View {
                 if waiting {
                     Circle().fill(Theme.orange).frame(width: 9, height: 9)
                 } else if bot.hasUnread && !selected {
-                    Circle().fill(Theme.blue).frame(width: 9, height: 9)
+                    UnreadBadge(count: bot.unreadCount)
                 }
             }
             .padding(.horizontal, 10)
@@ -520,6 +563,56 @@ private struct BotRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(bot.name), \(bot.statusText)\(waiting ? ", waiting on you" : "")")
+    }
+}
+
+/// Under a bot: the subagents it sent off that are running or ended in the last half hour, the
+/// way Claude Code lists a session's subagents. Click one to watch its conversation.
+private struct SubagentRows: View {
+    @ObservedObject var bot: Bot
+    @ObservedObject var workspace: Workspace
+    static let recent: TimeInterval = 30 * 60
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let shown = bot.subagents.filter { $0.parentID == nil && ($0.isRunning || ($0.endedAt ?? .distantPast) > context.date.addingTimeInterval(-Self.recent)) }.suffix(4)
+            ForEach(Array(shown)) { subagent in
+                let selected = workspace.selectedBot === bot && workspace.viewingSubagent == subagent.id
+                Button { workspace.view(subagent: subagent.id, of: bot) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.turn.down.right")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.faint)
+                        Text(subagent.description.isEmpty ? "Subagent" : subagent.description)
+                            .font(.system(size: 13))
+                            .foregroundStyle(subagent.isRunning ? Theme.text : Theme.muted)
+                            .lineLimit(1)
+                        Spacer(minLength: 4)
+                        Circle()
+                            .fill(Self.color(subagent.status))
+                            .frame(width: 7, height: 7)
+                            .opacity(subagent.isRunning ? 0.9 : 0.6)
+                    }
+                    .padding(.leading, 26)
+                    .padding(.trailing, 10)
+                    .frame(height: 30)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(selected ? Theme.selected : .clear))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(subagent.prompt)
+                .accessibilityLabel("Subagent of \(bot.name): \(subagent.description), \(subagent.status.rawValue)")
+            }
+        }
+    }
+
+    static func color(_ status: Subagent.Status) -> Color {
+        switch status {
+        case .running: Theme.blue
+        case .completed: Theme.green
+        case .failed: Theme.orange
+        case .stopped: Theme.faint
+        }
     }
 }
 

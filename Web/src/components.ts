@@ -135,22 +135,84 @@ function reportControl(name: string, info: ComponentInfo): HTMLElement {
   return side;
 }
 
+/**
+ * Say what to change, in words, pictures or both: a screenshot of the component as it is now
+ * goes along unless you untick it, and pictures pasted (⌘V) or dropped on the box go too.
+ */
 function openReport(anchor: HTMLElement, name: string, info: ComponentInfo): void {
   document.querySelector(".report")?.remove();
+  const component = anchor.closest(".component")?.querySelector<HTMLElement>(".component-frame") ?? null;
   const box = document.createElement("div");
   box.className = "report";
   box.innerHTML = `<div class="report-title">How should this component change?</div>
-<textarea rows="3" placeholder="e.g. put the options in a row"></textarea>
+<textarea rows="3" placeholder="e.g. put the options in a row. Paste or drop a picture to show it."></textarea>
+<div class="report-images" hidden></div>
+${component ? `<label class="report-shot"><input type="checkbox" checked> Attach a screenshot of it as it is now</label>` : ""}
 <div class="report-actions">${info.hasPrevious ? `<button class="plain revert">Revert to previous version</button>` : ""}<span></span><button class="primary send">Send</button></div>`;
   const textarea = box.querySelector("textarea")!;
   const send = box.querySelector<HTMLButtonElement>(".send")!;
-  send.disabled = true;
-  textarea.addEventListener("input", () => {
-    send.disabled = textarea.value.trim() === "";
+  const strip = box.querySelector<HTMLElement>(".report-images")!;
+  const shot = box.querySelector<HTMLInputElement>(".report-shot input");
+  const images: { name: string; base64: string }[] = [];
+  // The screenshot alone is not a request: words or a picture of your own are.
+  const refresh = () => {
+    send.disabled = textarea.value.trim() === "" && images.length === 0;
+    strip.hidden = images.length === 0;
+  };
+  const addImage = (file: File) => {
+    if (!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const url = String(reader.result ?? "");
+      const image = { name: file.name || `Pasted image.${file.type.split("/")[1] ?? "png"}`, base64: url.slice(url.indexOf(",") + 1) };
+      images.push(image);
+      const item = document.createElement("div");
+      item.className = "report-image";
+      item.innerHTML = `<img alt=""><button class="remove" aria-label="Remove picture">×</button>`;
+      item.querySelector("img")!.src = url;
+      item.querySelector("img")!.alt = image.name;
+      item.querySelector(".remove")!.addEventListener("click", () => {
+        images.splice(images.indexOf(image), 1);
+        item.remove();
+        refresh();
+      });
+      strip.append(item);
+      refresh();
+    };
+    reader.readAsDataURL(file);
+  };
+  textarea.addEventListener("paste", (event) => {
+    const files = [...(event.clipboardData?.files ?? [])].filter((file) => file.type.startsWith("image/"));
+    if (!files.length) return;
+    event.preventDefault();
+    files.forEach(addImage);
   });
+  box.addEventListener("dragover", (event) => {
+    if (!event.dataTransfer?.types.includes("Files")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    box.classList.add("dropping");
+  });
+  box.addEventListener("dragleave", () => box.classList.remove("dropping"));
+  box.addEventListener("drop", (event) => {
+    if (!event.dataTransfer?.files.length) return;
+    // Pictures dropped here go with the report, not into the chat's input box.
+    event.preventDefault();
+    event.stopPropagation();
+    box.classList.remove("dropping");
+    [...event.dataTransfer.files].forEach(addImage);
+  });
+  refresh();
+  textarea.addEventListener("input", refresh);
   send.addEventListener("click", () => {
-    post({ type: "componentReport", name, text: textarea.value.trim() });
+    let rect: { x: number; y: number; width: number; height: number } | null = null;
+    if (component && shot?.checked) {
+      const bounds = component.getBoundingClientRect();
+      rect = { x: bounds.left, y: bounds.top, width: bounds.width, height: bounds.height };
+    }
+    // Out of the way first, so the screenshot shows the component and not this box.
     box.remove();
+    requestAnimationFrame(() => post({ type: "componentReport", name, text: textarea.value.trim(), images, rect }));
   });
   box.querySelector(".revert")?.addEventListener("click", () => {
     post({ type: "componentRevert", name });
@@ -158,7 +220,12 @@ function openReport(anchor: HTMLElement, name: string, info: ComponentInfo): voi
   });
   document.body.append(box);
   const rect = anchor.getBoundingClientRect();
-  box.style.top = `${Math.max(12, rect.top - 8)}px`;
+  // Beside the flag, but inside the window, also once pictures make it taller.
+  const place = () => {
+    box.style.top = `${Math.max(12, Math.min(rect.top - 8, window.innerHeight - box.offsetHeight - 12))}px`;
+  };
+  place();
+  new ResizeObserver(place).observe(box);
   box.style.left = `${Math.min(rect.right + 8, window.innerWidth - 316)}px`;
   textarea.focus();
   const close = (event: MouseEvent) => {

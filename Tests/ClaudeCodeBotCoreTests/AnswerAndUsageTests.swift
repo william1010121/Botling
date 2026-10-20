@@ -33,7 +33,7 @@ struct AnswerAndUsageTests {
         #expect(!workspace.choose(0, in: asked.id, of: manager))
         await eventually { manager.messages.last?.text == "OK." }
 
-        #expect(fake.agents[0].sent.last == "Only cacti")
+        #expect(fake.agents[0].sent.last == "(Replying to what you said earlier: \"Should we support succulents?\")\n\nOnly cacti")
         #expect(manager.messages.first { $0.id == asked.id }?.answer == "Only cacti")
         #expect(manager.openQuestion == nil)
         #expect(workspace.waiting.isEmpty)

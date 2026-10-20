@@ -73,13 +73,13 @@ struct ReportingTests {
         await eventually { manager.messages.last?.text == "OK, doing that." }
 
         #expect(manager.messages.first { $0.id == asked.id }?.chosen == 1)
-        #expect(fake.agents[0].sent.last == "Not yet")
+        #expect(fake.agents[0].sent.last == "(Replying to what you said earlier: \"Should we support succulents?\")\n\nNot yet")
         #expect(manager.openQuestion == nil)
     }
 
     @Test func aQuestionStaysInTheManagersChatAndWaitsForYou() async throws {
         let fake = FakeLauncher()
-        fake.respond = { text in text.contains("succulents") ? question : "OK, doing that." }
+        fake.respond = { text in text.contains("Let the user decide") ? question : "OK, doing that." }
         let (workspace, project, manager) = try setUp(fake)
         workspace.select(nil)
 
@@ -96,7 +96,7 @@ struct ReportingTests {
         let asked = try #require(manager.openQuestion)
         #expect(workspace.choose(0, in: asked.id, of: manager))
         await eventually { manager.messages.last?.text == "OK, doing that." }
-        #expect(fake.agents[0].sent.last == "Support them")
+        #expect(fake.agents[0].sent.last == "(Replying to what you said earlier: \"Should we support succulents?\")\n\nSupport them")
         #expect(workspace.waiting.isEmpty)
     }
 

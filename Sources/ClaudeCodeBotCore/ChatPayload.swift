@@ -33,6 +33,32 @@ public struct ChatPayload: Encodable, Equatable {
         var openable: Bool
         /// Who said it, above the bubble (a group chat).
         var speaker: String?
+        /// What the bot did on the way to this reply.
+        var steps: [StepView]?
+    }
+
+    /// One line of work, as the page draws it. A subagent's line carries how it is doing.
+    public struct StepView: Encodable, Equatable {
+        var id: String
+        var kind: String
+        var tool: String?
+        var title: String
+        var detail: String?
+        var output: String?
+        var failed: Bool
+        var done: Bool
+        /// For a subagent: running, completed, failed or stopped, and its tool calls so far.
+        var status: String?
+        var count: Int?
+    }
+
+    /// The top of the page while you look at a subagent (no input box: you only watch it).
+    public struct SubagentHeader: Encodable, Equatable {
+        var id: String
+        var title: String
+        var owner: String
+        var status: String
+        var type: String?
     }
 
     public struct Display: Encodable, Equatable {
@@ -65,6 +91,10 @@ public struct ChatPayload: Encodable, Equatable {
     var components: [String: Component]
     /// Names you can @ (a group chat), for completing them as you type.
     var mentions: [String]
+    /// What it is doing right now, while it works.
+    var live: [StepView]
+    /// Set while you look at one of its subagents instead of the chat.
+    var subagent: SubagentHeader?
 
     /// What a group chat adds: who is typing, and names for who said each line.
     public struct GroupView {
@@ -127,7 +157,8 @@ public struct ChatPayload: Encodable, Equatable {
                 replyTo: message.replyTo?.uuidString,
                 replyPreview: message.replyPreview,
                 openable: message.role == .notice && message.sourceID != nil,
-                speaker: message.role == .bot ? message.sourceID.flatMap { id in group.map { $0.speaker(id) ?? "A removed bot" } } : nil
+                speaker: message.role == .bot ? message.sourceID.flatMap { id in group.map { $0.speaker(id) ?? "A removed bot" } } : nil,
+                steps: message.steps.map { $0.map { stepView($0, in: bot) } }
             )
         }
         let reply = replyingTo.flatMap { id in bot.messages.first { $0.id == id } }.map {
@@ -163,7 +194,82 @@ public struct ChatPayload: Encodable, Equatable {
                 return entry
             },
             components: components,
-            mentions: group?.names ?? []
+            mentions: group?.names ?? [],
+            live: group == nil && bot.isWorking ? bot.liveSteps.map { stepView($0, in: bot) } : [],
+            subagent: nil
+        )
+    }
+
+    /// A subagent's conversation, the way Claude Code shows one: its task as your line, then what
+    /// it said, each with the tool calls before it folded above; the ones still going show live.
+    @MainActor
+    public static func make(subagent: Subagent, of bot: Bot, components library: ComponentLibrary?, avatar: String) -> ChatPayload {
+        var messages: [Message] = []
+        func message(_ id: String, role: String, text: String, steps: [Step]) -> Message {
+            Message(
+                id: "\(subagent.id)-\(id)", role: role, text: text, stamp: nil, avatar: role == "bot" ? avatar : nil,
+                choices: nil, chosen: nil, answer: nil, open: false, display: nil, attachments: nil,
+                replyTo: nil, replyPreview: nil, openable: false, speaker: nil,
+                steps: steps.isEmpty ? nil : steps.map { stepView($0, in: bot) }
+            )
+        }
+        messages.append(message("task", role: "user", text: subagent.prompt, steps: []))
+        var pending: [Step] = []
+        var said = ""
+        for step in subagent.steps {
+            if step.kind == .text {
+                messages.append(message(step.id, role: "bot", text: step.title, steps: pending))
+                pending = []
+                said = step.title
+            } else {
+                pending.append(step)
+            }
+        }
+        if !subagent.isRunning {
+            // Its result, unless the last thing it said already is it.
+            let result = subagent.result?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !pending.isEmpty || (!result.isEmpty && result != said) {
+                let text = result.isEmpty ? (subagent.status == .completed ? "Done." : "It \(subagent.status.rawValue).") : result
+                messages.append(message("result", role: subagent.status == .completed ? "bot" : "error", text: text, steps: pending))
+            }
+            pending = []
+        }
+        return ChatPayload(
+            botID: "\(bot.id.uuidString)/\(subagent.id)",
+            botName: subagent.description,
+            messages: messages,
+            working: subagent.isRunning,
+            avatar: avatar,
+            placeholder: "",
+            replyingTo: nil,
+            pendingFiles: [],
+            components: [:],
+            mentions: [],
+            live: subagent.isRunning ? pending.map { stepView($0, in: bot) } : [],
+            subagent: SubagentHeader(
+                id: subagent.id,
+                title: subagent.description.isEmpty ? "Subagent" : subagent.description,
+                owner: bot.name,
+                status: subagent.status.rawValue,
+                type: subagent.type
+            )
+        )
+    }
+
+    @MainActor
+    static func stepView(_ step: Step, in bot: Bot) -> StepView {
+        let subagent = step.kind == .subagent ? bot.trace.subagent(step.id) : nil
+        return StepView(
+            id: step.id,
+            kind: step.kind.rawValue,
+            tool: step.tool,
+            title: subagent.map { $0.description.isEmpty ? step.title : $0.description } ?? step.title,
+            detail: step.detail,
+            output: step.output,
+            failed: step.failed,
+            done: step.done,
+            status: subagent?.status.rawValue,
+            count: subagent?.toolCount
         )
     }
 

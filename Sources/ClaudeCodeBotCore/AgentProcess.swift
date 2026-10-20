@@ -13,6 +13,8 @@ public protocol AgentProcess: AnyObject, Sendable {
     func stop()
     /// Answers a `.permission` request: let the tool run, or not (`message` says why to Claude).
     func answer(_ request: PermissionRequest, allow: Bool, message: String?)
+    /// Stops the turn under way; it ends with an error result, and the session goes on.
+    func interrupt()
 }
 
 extension AgentProcess {
@@ -21,6 +23,8 @@ extension AgentProcess {
     }
 
     public func answer(_ request: PermissionRequest, allow: Bool, message: String?) {}
+
+    public func interrupt() {}
 }
 
 /// Claude wants to use a tool it is not allowed to use without asking (with
@@ -45,8 +49,8 @@ public struct PermissionRequest: Equatable, Sendable {
 public enum AgentEvent: Equatable, Sendable {
     /// The final text of one turn.
     case reply(String, isError: Bool)
-    /// What it is doing right now, from a tool call: "Edit template.html".
-    case activity(String)
+    /// What it is doing on the way: a tool call, its result, a subagent.
+    case trace(TraceEvent)
     /// It is waiting for the user to allow a tool.
     case permission(PermissionRequest)
     /// It no longer needs the answer to that permission request (its id).
@@ -71,6 +75,8 @@ public struct AgentLaunch: Equatable, Sendable {
     /// Ask (a `.permission` event) before using a tool that is not allowed, instead of being
     /// refused. Only bots, which have a chat to ask in; temporary teams are not.
     public var asksPermission = false
+    /// Tools it does not have at all (it cannot even ask for them).
+    public var disallowedTools: [String] = []
 }
 
 public typealias AgentLauncher = @Sendable (AgentLaunch) throws -> AgentProcess
@@ -109,7 +115,11 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         if launch.asksPermission {
             // Bots ask in the chat with <choices>; AskUserQuestion would arrive as a permission
             // request that cannot carry the user's answer.
-            arguments += ["--permission-prompt-tool", "stdio", "--disallowedTools", "AskUserQuestion"]
+            arguments += ["--permission-prompt-tool", "stdio"]
+        }
+        let disallowed = (launch.asksPermission ? ["AskUserQuestion"] : []) + launch.disallowedTools
+        if !disallowed.isEmpty {
+            arguments += ["--disallowedTools", disallowed.joined(separator: ",")]
         }
         for directory in launch.extraDirectories {
             arguments += ["--add-dir", directory.path]
@@ -218,6 +228,22 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         let line: [String: Any] = [
             "type": "control_response",
             "response": ["subtype": "success", "request_id": request.id, "response": decision]
+        ]
+        guard var data = try? JSONSerialization.data(withJSONObject: line) else { return }
+        data.append(0x0A)
+        lock.withLock {
+            guard !closed else { return }
+            try? stdin.write(contentsOf: data)
+        }
+    }
+
+    /// `{"type":"control_request","request":{"subtype":"interrupt"}}`: claude answers with a
+    /// control_response, then ends the turn with an `error_during_execution` result.
+    public func interrupt() {
+        let line: [String: Any] = [
+            "type": "control_request",
+            "request_id": "interrupt-\(UUID().uuidString.lowercased())",
+            "request": ["subtype": "interrupt"]
         ]
         guard var data = try? JSONSerialization.data(withJSONObject: line) else { return }
         data.append(0x0A)

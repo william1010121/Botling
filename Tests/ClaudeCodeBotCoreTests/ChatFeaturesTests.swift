@@ -43,11 +43,11 @@ struct MarkdownTests {
         #expect(Attachment(url: URL(filePath: "/a/b.pdf")).kind == .file)
     }
 
-    @Test func toolCallsBecomeActivityLines() {
+    @Test func toolCallsBecomeTraceLines() {
         let line = #"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Edit","input":{"file_path":"/x/choices/template.html"}}]}}"#
-        #expect(StreamEvent.events(in: line) == [.activity("Edit template.html")])
+        #expect(StreamEvent.events(in: line) == [.trace(.toolUse(id: "t1", tool: "Edit", title: "Edit template.html", detail: "/x/choices/template.html", parent: nil))])
         let bash = #"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"swift build\nswift test"}}]}}"#
-        #expect(StreamEvent.events(in: bash) == [.activity("Run swift build")])
+        #expect(StreamEvent.events(in: bash) == [.trace(.toolUse(id: "t2", tool: "Bash", title: "Run swift build", detail: "swift build\nswift test", parent: nil))])
     }
 }
 
@@ -76,6 +76,25 @@ final class ImageAgent: AgentProcess, @unchecked Sendable {
 @MainActor
 struct AttachmentAndReplyTests {
     let root = FileManager.default.temporaryDirectory.appending(path: "ccb-chat-\(UUID().uuidString)")
+
+    @Test func handedOverWorkCanCarryPictures() async throws {
+        let agent = ImageAgent()
+        let home = root.appending(path: "maintainer")
+        let bot = Bot(profile: .manager(name: "Maintainer", avatar: "diamond", folder: home), launcher: { _ in agent })
+        let shot = root.appending(path: "in/choices-screenshot.png")
+        try FileManager.default.createDirectory(at: shot.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: shot)
+
+        bot.relay("The user's request for the component \"choices\": see the attached picture", files: [shot])
+        await eventually { bot.messages.last?.role == .bot }
+        let relay = try #require(bot.messages.first)
+        #expect(relay.role == .relay)
+        let kept = try #require(relay.attachments?.first)
+        #expect(kept.url.path.hasPrefix(home.appending(path: ".bot/attachments").path))
+        let (text, images) = try #require(agent.sent.first)
+        #expect(text.contains("(Attachments:\n- \(kept.url.path))"))
+        #expect(images.map(\.url) == [kept.url])
+    }
 
     @Test func filesAreKeptInTheBotsFolderAndImagesGoToClaude() async throws {
         let agent = ImageAgent()

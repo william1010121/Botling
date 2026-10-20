@@ -16,9 +16,16 @@ public final class Bot: ObservableObject, Identifiable {
     /// When the bot will tidy and fall asleep if nothing else happens; nil unless idle and awake.
     @Published public private(set) var sleepsAt: Date?
     /// A reply arrived that the user has not looked at.
-    @Published public private(set) var hasUnread = false
+    @Published public private(set) var unreadCount = 0 {
+        didSet { if unreadCount != oldValue { store?.save(unread: unreadCount) } }
+    }
+    public var hasUnread: Bool { unreadCount > 0 }
+    /// When the newest line in this chat was said; the left column lists the newest first.
+    public var lastActivity: Date { messages.last?.date ?? .distantPast }
     /// The jobs in its routines.cron, which the bot and the settings page both edit.
     @Published public private(set) var routines: [Routine]
+    /// What it is doing in the turn under way, and the subagents it sent off (newest last).
+    @Published public private(set) var trace: TraceBook
     private let routineFile: RoutineFile
     private var routineRuns: [String: Date]
 
@@ -99,7 +106,16 @@ public final class Bot: ObservableObject, Identifiable {
     private struct Outgoing {
         var text: String
         var images: [Attachment] = []
+        /// You typed it here (not handed over, not a routine): you may add to it before the reply.
+        var fromUser = false
+        /// Its line in this chat, left out of the recent chat a wake-up brings along.
+        var messageID: UUID?
     }
+    /// What you said in the turn under way, while nothing but you started it.
+    private var turnInput: Outgoing?
+    /// Turns interrupted to take in what you added whose error results have not come back yet;
+    /// those are not shown. (You may add twice before the first one comes back.)
+    private var interruptions = 0
     private var pendingModel: BotModel?
     /// It should restart (new plugins, a new folder) once free, with this divider.
     private var pendingRestart: String?
@@ -123,8 +139,18 @@ public final class Bot: ObservableObject, Identifiable {
         for index in loaded.indices where loaded[index].permissionTool != nil && loaded[index].isOpenQuestion {
             loaded[index].answer = Self.noLongerNeeded
         }
+        // The app's own cards (add these projects? install this?) are answered by the app run that
+        // asked; after a restart nobody would act on a pick.
+        for index in loaded.indices where loaded[index].role == .notice && loaded[index].sourceMessageID == nil && loaded[index].isOpenQuestion {
+            loaded[index].answer = Self.askAgain
+        }
         messages = loaded
+        // A chat from before there was an archive goes into it once, so all of it can be searched.
+        if !loaded.isEmpty, !FileManager.default.fileExists(atPath: profile.archiveURL.path) {
+            Self.archiveAll(loaded, in: profile.archiveURL)
+        }
         alwaysAllowed = store?.loadAlwaysAllowed() ?? []
+        unreadCount = store?.loadUnread() ?? 0
         model = store?.loadModel() ?? defaultModel
         routineFile = RoutineFile(url: profile.routinesURL)
         // The main bot starts with a daily summary; managers with none. Routines saved the old way
@@ -132,7 +158,21 @@ public final class Bot: ObservableObject, Identifiable {
         routineFile.create(with: store?.legacyRoutineLines() ?? (profile.role == .main ? [RoutineFile.dailySummary] : []))
         routines = routineFile.load()
         routineRuns = store?.loadRoutineRuns() ?? [:]
+        // Subagents that ran when the app quit went away with their process.
+        // Background shell commands an earlier build took for subagents (no kind, no task) go.
+        let saved = store?.loadSubagents() ?? []
+        let real = saved.filter { $0.type != nil || !$0.prompt.isEmpty || !$0.steps.isEmpty }
+        var book = TraceBook(subagents: real)
+        if real.count != saved.count { store?.save(subagents: real) }
+        if book.stopRunning() { store?.save(subagents: book.subagents) }
+        trace = book
     }
+
+    /// The steps of the turn under way.
+    public var liveSteps: [Step] { trace.steps }
+
+    /// The subagents it sent off, newest last.
+    public var subagents: [Subagent] { trace.subagents }
 
     public var name: String { profile.name }
 
@@ -151,7 +191,7 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     public func markRead() {
-        if hasUnread { hasUnread = false }
+        if unreadCount != 0 { unreadCount = 0 }
     }
 
     /// The newest question still waiting for the user's pick.
@@ -169,6 +209,12 @@ public final class Bot: ObservableObject, Identifiable {
     /// Files are copied into the bot's attachments folder so it can open them again later;
     /// images also go to Claude directly.
     public func send(_ text: String, files: [URL], replyingTo replyID: UUID?) {
+        send(text, files: files, replyingTo: replyID, appNote: nil)
+    }
+
+    /// `appNote` goes to Claude ahead of your words without showing in the chat (what the app
+    /// did about a card you answered).
+    func send(_ text: String, files: [URL], replyingTo replyID: UUID?, appNote: String?) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !files.isEmpty else { return }
         let attachments = files.compactMap(keep)
@@ -183,14 +229,20 @@ public final class Bot: ObservableObject, Identifiable {
         turnFromRelay = false
 
         var lines: [String] = []
+        if let appNote { lines.append(appNote) }
         if let quoted {
-            lines.append("(Replying to what \(quoted.role == .user ? "I" : "you") said earlier: \"\(Self.preview(of: quoted))\")")
+            let whose = switch quoted.role {
+            case .user: "what I said earlier"
+            case .notice: "the app's message"
+            default: "what you said earlier"
+            }
+            lines.append("(Replying to \(whose): \"\(Self.preview(of: quoted))\")")
         }
         if !text.isEmpty { lines.append(text) }
         if !attachments.isEmpty {
             lines.append("(Attachments:\n" + attachments.map { "- " + $0.url.path }.joined(separator: "\n") + ")")
         }
-        route(Outgoing(text: lines.joined(separator: "\n\n"), images: attachments.filter { $0.kind == .image }))
+        route(Outgoing(text: lines.joined(separator: "\n\n"), images: attachments.filter { $0.kind == .image }, fromUser: true, messageID: message.id))
     }
 
     /// Copies a file the user sent into the bot's own attachments folder.
@@ -220,12 +272,21 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     /// Work the main bot handed over. Shown as a relay line; wakes the bot like a message.
-    public func relay(_ instruction: String) {
+    /// `files` (screenshots with a report) are kept in its attachments folder; images also go to
+    /// Claude directly.
+    public func relay(_ instruction: String, files: [URL] = []) {
         let instruction = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !instruction.isEmpty else { return }
-        append(ChatMessage(role: .relay, text: instruction))
+        let attachments = files.compactMap(keep)
+        var message = ChatMessage(role: .relay, text: instruction)
+        message.attachments = attachments.isEmpty ? nil : attachments
+        append(message)
         turnFromRelay = true
-        route(Outgoing(text: BotPrompts.relayPrefix + instruction))
+        var text = BotPrompts.relayPrefix + instruction
+        if !attachments.isEmpty {
+            text += "\n\n(Attachments:\n" + attachments.map { "- " + $0.url.path }.joined(separator: "\n") + ")"
+        }
+        route(Outgoing(text: text, images: attachments.filter { $0.kind == .image }, messageID: message.id))
     }
 
     /// The user picked a button: mark it, then send its label as their answer. A question can be
@@ -238,7 +299,8 @@ public final class Bot: ObservableObject, Identifiable {
         if message.permissionTool != nil { return decide(index, in: message) }
         markChosen(index, in: messageID)
         let wasRelay = message.role == .bot && turnFromRelay
-        send(choice.label)
+        // As a reply to the question, so it knows which one you answered, even after a sleep.
+        send(choice.label, files: [], replyingTo: messageID)
         // Picking answers the manager's own question; its next report still goes back up.
         turnFromRelay = wasRelay
         return true
@@ -264,7 +326,7 @@ public final class Bot: ObservableObject, Identifiable {
         }
         markAnswered(text, in: messageID)
         let wasRelay = message.role == .bot && turnFromRelay
-        send(text)
+        send(text, files: [], replyingTo: messageID)
         turnFromRelay = wasRelay
         return true
     }
@@ -286,7 +348,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// A line from a project manager or a team in this (the main bot's) chat. Does not wake anyone.
     public func notice(_ text: String, choices: [Choice]? = nil, sourceID: UUID? = nil, sourceMessageID: UUID? = nil) {
         append(ChatMessage(role: .notice, text: text, choices: choices, sourceID: sourceID, sourceMessageID: sourceMessageID))
-        hasUnread = true
+        unreadCount += 1
     }
 
     private func route(_ outgoing: Outgoing) {
@@ -300,15 +362,46 @@ public final class Bot: ObservableObject, Identifiable {
         case .asleep:
             wake(with: outgoing)
         case .awake:
+            if let merged = merging(outgoing) {
+                // You added to what you said before it answered: stop that turn and ask again
+                // with all of it, so one reply answers the whole thing.
+                process?.interrupt()
+                interruptions += 1
+                trace.dropSteps()
+                deliver(merged)
+                return
+            }
             deliver(outgoing)
         case .tidying, .switching:
             queued.append(outgoing)
         }
     }
 
+    /// Your earlier words and these as one message, when the turn under way only answers you
+    /// and stopping it loses nothing: no question waits on you, no subagent is at work.
+    private func merging(_ outgoing: Outgoing) -> Outgoing? {
+        guard outgoing.fromUser, isWorking, let earlier = turnInput, internalReply == nil, groupReply == nil,
+              permissionAsks.isEmpty, !trace.subagents.contains(where: \.isRunning) else { return nil }
+        return Outgoing(
+            text: Self.partsNote + Self.withoutPartsNote(earlier.text) + "\n\n" + outgoing.text,
+            images: earlier.images + outgoing.images,
+            fromUser: true,
+            messageID: outgoing.messageID
+        )
+    }
+
+    private static let partsNote = "(I sent this in parts before you answered; here is all of it:)\n\n"
+
+    /// A third part joins the first two, not a message that already says "in parts".
+    private static func withoutPartsNote(_ text: String) -> String {
+        text.hasPrefix(partsNote) ? String(text.dropFirst(partsNote.count)) : text
+    }
+
     private func deliver(_ outgoing: Outgoing) {
         guard let process else { return }
         cancelIdle()
+        // A turn you started, or one you are adding to; anything else is not yours to add to.
+        turnInput = outgoing.fromUser && (!isWorking || turnInput != nil) ? outgoing : nil
         isWorking = true
         var text = outgoing.text
         if let note = pendingNote {
@@ -331,11 +424,38 @@ public final class Bot: ObservableObject, Identifiable {
             let process = try start()
             phase = .awake
             isWorking = true
+            turnInput = outgoing.fromUser ? outgoing : nil
             let note = wakeNote?() ?? ""
-            process.send([prompts.wake, note, outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n"), images: outgoing.images)
+            let recent = recentChat(leavingOut: outgoing.messageID)
+            process.send([prompts.wake, note, recent, outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n"), images: outgoing.images)
         } catch {
             append(ChatMessage(role: .error, text: "Couldn't wake up: \(error.localizedDescription)"))
         }
+    }
+
+    /// How many of the chat's last lines a wake-up brings along, and how long each may be.
+    static let recentLines = 20
+    static let recentLineLength = 600
+
+    /// The chat's last lines, so a bot that just woke up (a new session: it remembers nothing
+    /// but memory.md) knows what you were just talking about. Empty in a new chat.
+    func recentChat(leavingOut id: UUID? = nil) -> String {
+        let lines = messages.filter { $0.id != id }.suffix(Self.recentLines).compactMap { message -> String? in
+            var text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.count > Self.recentLineLength { text = String(text.prefix(Self.recentLineLength)) + "…" }
+            if let files = message.attachments, !files.isEmpty {
+                text += (text.isEmpty ? "" : " ") + "(files: " + files.map(\.url.path).joined(separator: ", ") + ")"
+            }
+            if let choices = message.choices, !choices.isEmpty {
+                let picked = message.chosen.flatMap { choices[safe: $0]?.label } ?? message.answer
+                text += " [options: " + choices.map(\.label).joined(separator: " / ") + "]" + (picked.map { " → picked: \($0)" } ?? " (not answered yet)")
+            }
+            guard !text.isEmpty else { return nil }
+            let stamp = message.date.formatted(.dateTime.month(.twoDigits).day(.twoDigits).hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+            return "[\(stamp)] \(Self.speaker(message.role)): \(text)"
+        }
+        guard !lines.isEmpty else { return "" }
+        return "(App: The last messages in this chat, oldest first. You were asleep since; for anything older, Grep your chat archive in \(profile.archiveURL.path):)\n" + lines.joined(separator: "\n")
     }
 
     private func start() throws -> AgentProcess {
@@ -350,7 +470,8 @@ public final class Bot: ObservableObject, Identifiable {
             pluginDirectories: pluginDirectories?() ?? [],
             pluginTools: pluginTools?() ?? [],
             environment: pluginEnvironment?() ?? [:],
-            asksPermission: true
+            asksPermission: true,
+            disallowedTools: profile.disallowedTools
         ))
         self.process = process
         Task { [weak self] in
@@ -366,8 +487,9 @@ public final class Bot: ObservableObject, Identifiable {
         let parsed = ReplyParser.parseAll(text)
         var message = ChatMessage(role: isError ? .error : .bot, text: parsed.body, choices: parsed.choices)
         message.display = parsed.display
+        message.steps = trace.takeSteps()
         append(message)
-        hasUnread = true
+        unreadCount += 1
         // It may have edited its routines.cron.
         reloadRoutines()
         onReply?(message, turnFromRelay)
@@ -420,7 +542,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// A line in this chat that is not part of its own conversation (a group chat's lines).
     public func post(_ message: ChatMessage, unread: Bool = true) {
         append(message)
-        if unread { hasUnread = true }
+        if unread { unreadCount += 1 }
     }
 
     /// Puts earlier lines in, in date order (notices moving over from another chat).
@@ -433,6 +555,7 @@ public final class Bot: ObservableObject, Identifiable {
     // MARK: Asking to use a tool
 
     static let noLongerNeeded = "No longer needed"
+    static let askAgain = "Closed when ClaudeCodeBot restarted; ask again"
     static let allowOnce = 0
 
     /// Claude wants a tool it may not use without asking: allowed already if you said always,
@@ -457,7 +580,7 @@ public final class Bot: ObservableObject, Identifiable {
         message.permissionTool = request.tool
         append(message)
         permissionAsks[message.id] = (request, source)
-        hasUnread = true
+        unreadCount += 1
         onQuestion?(message)
         let id = message.id
         let timeout = permissionTimeout
@@ -541,8 +664,14 @@ public final class Bot: ObservableObject, Identifiable {
     private func handle(_ event: AgentEvent, from source: AgentProcess) {
         guard source === process else { return }
         switch event {
-        case .activity:
-            break
+        case let .trace(step):
+            if trace.apply(step) { store?.save(subagents: trace.subagents) }
+            // It started a turn of its own (a subagent in the background finished): it is at
+            // work again, and the reply will show.
+            if !isWorking, internalReply == nil, groupReply == nil, Self.startsATurn(step) {
+                cancelIdle()
+                isWorking = true
+            }
         case let .permission(request):
             ask(permission: request, from: source)
         case let .permissionCancelled(requestID):
@@ -551,12 +680,25 @@ public final class Bot: ObservableObject, Identifiable {
                 settle(id)
             }
         case let .reply(text, isError):
+            // The turn stopped to take in what you added: the next one answers it all.
+            if interruptions > 0 {
+                if isError {
+                    interruptions -= 1
+                    return
+                }
+                // A turn that ended well before the interrupt reached it: nothing more is coming
+                // back for the interrupts sent so far.
+                interruptions = 0
+            }
+            turnInput = nil
             if let waiter = internalReply {
                 internalReply = nil
+                trace.dropSteps()
                 waiter.resume(returning: text)
                 return
             }
             if groupReply != nil || dropNextReply {
+                trace.dropSteps()
                 isWorking = false
                 dropNextReply = false
                 // It may have edited its routines.cron.
@@ -576,6 +718,9 @@ public final class Bot: ObservableObject, Identifiable {
             }
         case let .exited(status, stderr):
             process = nil
+            turnInput = nil
+            interruptions = 0
+            if trace.stopRunning() { store?.save(subagents: trace.subagents) }
             dropPermissionAsks()
             dropNextReply = false
             finishGroupReply(.failed(stderr.isEmpty ? "It stopped (\(status))." : stderr))
@@ -597,6 +742,14 @@ public final class Bot: ObservableObject, Identifiable {
             }
             // What you said here while a group turn ran still gets an answer.
             if !queued.isEmpty { Task { [weak self] in await self?.flushQueue() } }
+        }
+    }
+
+    /// Something the bot itself does (not one of its subagents), which only happens in a turn.
+    static func startsATurn(_ event: TraceEvent) -> Bool {
+        switch event {
+        case let .toolUse(_, _, _, _, parent), let .text(_, parent): parent == nil
+        default: false
         }
     }
 
@@ -705,6 +858,11 @@ public final class Bot: ObservableObject, Identifiable {
     /// Writes memory.md, then ends the process. Also used when the app quits.
     public func goToSleep() async {
         guard phase == .awake, !isWorking, process != nil else { return }
+        // A subagent still at work in the background would stop with the process: wait for it.
+        if trace.subagents.contains(where: \.isRunning), !removed {
+            scheduleIdle()
+            return
+        }
         cancelIdle()
         phase = .tidying
         _ = await ask(prompts.tidy)
@@ -856,5 +1014,59 @@ public final class Bot: ObservableObject, Identifiable {
     private func append(_ message: ChatMessage) {
         messages.append(message)
         store?.save(messages: messages)
+        archive(message)
+    }
+
+    /// Adds a line to this month's file in its archive (the bot greps it for older talk).
+    private func archive(_ message: ChatMessage) {
+        guard let entry = Self.archiveEntry(message) else { return }
+        let folder = profile.archiveURL
+        let month = message.date.formatted(.verbatim("\(year: .defaultDigits)-\(month: .twoDigits)", timeZone: .current, calendar: .current))
+        let file = folder.appending(path: "\(month).md")
+        let data = Data((entry + "\n\n").utf8)
+        if let handle = try? FileHandle(forWritingTo: file) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? data.write(to: file)
+        }
+    }
+
+    /// Writes a whole chat into a new archive, a file per month.
+    static func archiveAll(_ messages: [ChatMessage], in folder: URL) {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let months = Dictionary(grouping: messages.compactMap { message in
+            archiveEntry(message).map { (month: message.date.formatted(.verbatim("\(year: .defaultDigits)-\(month: .twoDigits)", timeZone: .current, calendar: .current)), entry: $0) }
+        }, by: \.month)
+        for (month, entries) in months {
+            try? Data(entries.map { $0.entry + "\n\n" }.joined().utf8).write(to: folder.appending(path: "\(month).md"))
+        }
+    }
+
+    /// "[2026-10-20 13:16] User: …", with files and options, the way a wake-up shows lines.
+    static func archiveEntry(_ message: ChatMessage) -> String? {
+        var text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let files = message.attachments, !files.isEmpty {
+            text += (text.isEmpty ? "" : " ") + "(files: " + files.map(\.url.path).joined(separator: ", ") + ")"
+        }
+        if let choices = message.choices, !choices.isEmpty {
+            text += " [options: " + choices.map(\.label).joined(separator: " / ") + "]"
+        }
+        guard !text.isEmpty else { return nil }
+        let stamp = message.date.formatted(.verbatim("\(year: .defaultDigits)-\(month: .twoDigits)-\(day: .twoDigits) \(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased)):\(minute: .twoDigits)", timeZone: .current, calendar: .current))
+        return "[\(stamp)] \(speaker(message.role)): \(text)"
+    }
+
+    static func speaker(_ role: ChatMessage.Role) -> String {
+        switch role {
+        case .user: "User"
+        case .bot: "You"
+        case .relay: "Handed to you"
+        case .notice: "App notice"
+        case .divider: "—"
+        case .error: "Error"
+        }
     }
 }

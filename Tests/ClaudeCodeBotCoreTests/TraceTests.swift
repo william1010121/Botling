@@ -1,0 +1,222 @@
+import Foundation
+import Testing
+@testable import ClaudeCodeBotCore
+
+/// Lines as `claude -p --output-format stream-json --verbose` (2.1.304) wrote them for a bot that
+/// sent a subagent off in the background, trimmed to the fields the app reads.
+enum SubagentRun {
+    static let spawn = #"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","id":"toolu_A","name":"Agent","input":{"description":"Read a.txt and report content","subagent_type":"general-purpose","prompt":"Read the file named a.txt and report it."}}]}}"#
+    static let started = #"{"type":"system","subtype":"task_started","task_id":"a35","tool_use_id":"toolu_A","description":"Read a.txt and report content","subagent_type":"general-purpose","is_backgrounded":true,"prompt":"Read the file named a.txt and report it."}"#
+    static let launched = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_A","type":"tool_result","content":[{"type":"text","text":"Async agent launched successfully."}]}]}}"#
+    static let subagentSays = #"{"type":"assistant","parent_tool_use_id":"toolu_A","message":{"content":[{"type":"text","text":"Looking for it."}]}}"#
+    static let subagentReads = #"{"type":"assistant","parent_tool_use_id":"toolu_A","message":{"content":[{"type":"tool_use","id":"toolu_R","name":"Read","input":{"file_path":"/tmp/probe/a.txt"}}]}}"#
+    static let readResult = #"{"type":"user","parent_tool_use_id":"toolu_A","message":{"role":"user","content":[{"tool_use_id":"toolu_R","type":"tool_result","content":"1\thello world"}]}}"#
+    static let notification = #"{"type":"system","subtype":"task_notification","task_id":"a35","tool_use_id":"toolu_A","status":"completed","summary":"It says hello world."}"#
+
+    static var lines: [String] { [spawn, started, launched, subagentSays, subagentReads, readResult, notification] }
+}
+
+@MainActor
+struct TraceTests {
+    @Test func streamLinesBecomeTraceEvents() {
+        #expect(StreamEvent.events(in: SubagentRun.spawn) == [.trace(.toolUse(id: "toolu_A", tool: "Agent", title: "Delegate Read a.txt and report content", detail: "Read the file named a.txt and report it.", parent: nil))])
+        #expect(StreamEvent.events(in: SubagentRun.started) == [.trace(.subagentStarted(id: "toolu_A", description: "Read a.txt and report content", type: "general-purpose", prompt: "Read the file named a.txt and report it.", background: true))])
+        #expect(StreamEvent.events(in: SubagentRun.launched) == [.trace(.toolResult(id: "toolu_A", output: "Async agent launched successfully.", failed: false, parent: nil))])
+        #expect(StreamEvent.events(in: SubagentRun.subagentSays) == [.trace(.text("Looking for it.", parent: "toolu_A"))])
+        #expect(StreamEvent.events(in: SubagentRun.readResult) == [.trace(.toolResult(id: "toolu_R", output: "1\thello world", failed: false, parent: "toolu_A"))])
+        #expect(StreamEvent.events(in: SubagentRun.notification) == [.trace(.subagentEnded(id: "toolu_A", status: "completed", summary: "It says hello world."))])
+    }
+
+    @Test func aBackgroundShellCommandIsNoSubagent() {
+        let bash = #"{"type":"system","subtype":"task_started","task_id":"b1","tool_use_id":"toolu_B","description":"cd /Users/me/app; swift build","task_type":"local_bash","is_backgrounded":true}"#
+        #expect(StreamEvent.events(in: bash).isEmpty)
+        let older = #"{"type":"system","subtype":"task_started","tool_use_id":"toolu_C","description":"swift test"}"#
+        #expect(StreamEvent.events(in: older).isEmpty)
+    }
+
+    @Test func shellCommandsSavedAsSubagentsAreDroppedOnLoad() {
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-bash-\(UUID().uuidString)")
+        let store = BotStore(directory: home.appending(path: "store"))
+        var bash = Subagent(id: "B", description: "cd /Users/me/app; swift build", prompt: "")
+        bash.status = .completed
+        var agent = Subagent(id: "A", description: "Read a.txt", type: "general-purpose", prompt: "Read it")
+        agent.status = .completed
+        store.save(subagents: [bash, agent])
+        let bot = Bot(profile: .main(home: home), launcher: FakeLauncher().launcher, store: store)
+        #expect(bot.subagents.map(\.id) == ["A"])
+        #expect(store.loadSubagents().map(\.id) == ["A"])
+    }
+
+    @Test func aBackgroundSubagentRunsUntilItsNotification() {
+        var book = TraceBook()
+        for line in SubagentRun.lines.dropLast() {
+            for case let .trace(event) in StreamEvent.events(in: line) { book.apply(event) }
+        }
+        // The call returned at once, but the subagent is still at work.
+        let running = book.subagent("toolu_A")!
+        #expect(running.isRunning)
+        #expect(running.background)
+        #expect(running.description == "Read a.txt and report content")
+        #expect(running.steps.map(\.kind) == [.text, .tool])
+        #expect(running.steps[1].output == "1\thello world")
+        #expect(running.steps[1].done)
+        #expect(book.steps.map(\.kind) == [.subagent])
+        #expect(!book.steps[0].done)
+
+        for case let .trace(event) in StreamEvent.events(in: SubagentRun.notification) { book.apply(event) }
+        let ended = book.subagent("toolu_A")!
+        #expect(ended.status == .completed)
+        #expect(ended.result == "It says hello world.")
+        #expect(book.steps[0].done)
+    }
+
+    @Test func aSubagentInTheForegroundEndsWithItsToolResult() {
+        var book = TraceBook()
+        book.apply(.toolUse(id: "A", tool: "Task", title: "Delegate Check the tests", detail: "Run the tests", parent: nil))
+        book.apply(.toolUse(id: "B", tool: "Bash", title: "Run swift test", detail: "swift test", parent: "A"))
+        book.apply(.toolResult(id: "B", output: "fail", failed: true, parent: "A"))
+        book.apply(.toolResult(id: "A", output: "Two tests fail.", failed: false, parent: nil))
+        let subagent = book.subagent("A")!
+        #expect(subagent.status == .completed)
+        #expect(subagent.result == "Two tests fail.")
+        #expect(subagent.description == "Check the tests")
+        #expect(subagent.steps.first?.failed == true)
+        #expect(book.steps.first?.done == true)
+    }
+
+    @Test func aReplyKeepsItsStepsButNotTheWordsThatAreTheReply() {
+        var book = TraceBook()
+        book.apply(.text("Let me look.", parent: nil))
+        book.apply(.toolUse(id: "1", tool: "Read", title: "Read a.txt", detail: "/a.txt", parent: nil))
+        book.apply(.toolResult(id: "1", output: "hi", failed: false, parent: nil))
+        book.apply(.text("It says hi.", parent: nil))
+        let steps = book.takeSteps()
+        #expect(steps?.map(\.title) == ["Let me look.", "Read a.txt"])
+        #expect(book.steps.isEmpty)
+        book.apply(.text("Just words.", parent: nil))
+        let none = book.takeSteps()
+        #expect(none == nil)
+    }
+
+    @Test func runningSubagentsStopWithTheProcess() {
+        var book = TraceBook()
+        book.apply(.toolUse(id: "A", tool: "Agent", title: "Delegate x", detail: "x", parent: nil))
+        let stopped = book.stopRunning()
+        #expect(stopped)
+        #expect(book.subagent("A")?.status == .stopped)
+        let again = book.stopRunning()
+        #expect(!again)
+    }
+
+    @Test func oldEndedSubagentsAreForgottenButRunningOnesStay() {
+        var book = TraceBook()
+        book.apply(.toolUse(id: "keep", tool: "Agent", title: "Delegate long", detail: "", parent: nil))
+        for index in 0..<(TraceBook.keptSubagents + 5) {
+            book.apply(.toolUse(id: "s\(index)", tool: "Agent", title: "Delegate \(index)", detail: "", parent: nil))
+            book.apply(.toolResult(id: "s\(index)", output: "done", failed: false, parent: nil))
+        }
+        #expect(book.subagents.filter { !$0.isRunning }.count == TraceBook.keptSubagents)
+        #expect(book.subagent("keep")?.isRunning == true)
+        #expect(book.subagent("s0") == nil)
+    }
+
+    @Test func stoppingManyRunningOnesAtOnceKeepsTheNewest() {
+        var book = TraceBook()
+        for index in 0..<(TraceBook.keptSubagents + 3) {
+            book.apply(.toolUse(id: "s\(index)", tool: "Agent", title: "Delegate \(index)", detail: "", parent: nil))
+        }
+        let stopped = book.stopRunning()
+        #expect(stopped)
+        #expect(book.subagents.count == TraceBook.keptSubagents)
+        #expect(book.subagents.allSatisfy { $0.status == .stopped })
+        #expect(book.subagents.last?.id == "s\(TraceBook.keptSubagents + 2)")
+    }
+
+    @Test func theBotShowsStepsLiveThenFoldsThemIntoItsReply() async {
+        let fake = FakeLauncher()
+        fake.respond = { text in isAppOnly(text) ? "OK" : nil }
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-trace-\(UUID().uuidString)")
+        let store = BotStore(directory: home.appending(path: "store"))
+        let bot = Bot(profile: .main(home: home), launcher: fake.launcher, store: store)
+
+        bot.send("What does a.txt say?")
+        await eventually { fake.agents.count == 1 }
+        let agent = fake.agents[0]
+        for line in SubagentRun.lines.prefix(3) {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+        await eventually { bot.liveSteps.count == 1 }
+        #expect(bot.subagents.first?.isRunning == true)
+
+        agent.reply("Sent a subagent to read it.")
+        await eventually { bot.messages.last?.role == .bot }
+        #expect(bot.messages.last?.steps?.map(\.kind) == [.subagent])
+        #expect(bot.liveSteps.isEmpty)
+
+        // It finishes after the reply; the card in the reply follows it, and it is saved.
+        for line in SubagentRun.lines.dropFirst(3) {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+        await eventually { bot.subagents.first?.status == .completed }
+        #expect(store.loadSubagents().first?.status == .completed)
+        let payload = ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil) { _ in "" }
+        #expect(payload.messages.last?.steps?.first?.status == "completed")
+        #expect(payload.messages.last?.steps?.first?.count == 1)
+
+        // A new start of the app finds it, not running any more.
+        let again = Bot(profile: .main(home: home), launcher: fake.launcher, store: store)
+        #expect(again.subagents.first?.steps.count == 2)
+    }
+
+    @Test func aTurnItStartsItselfShowsAsWorkAndItWaitsForSubagentsBeforeSleeping() async {
+        let fake = FakeLauncher()
+        let bot = makeBot(fake, idle: 0.05)
+        fake.respond = { text in isAppOnly(text) ? "OK" : nil }
+        bot.send("Send a subagent off")
+        await eventually { fake.agents.count == 1 }
+        let agent = fake.agents[0]
+        for line in SubagentRun.lines.prefix(3) {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+        agent.reply("Sent it off.")
+        await eventually { !bot.isWorking }
+
+        // Idle well past its nap: it stays awake while the subagent works.
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect(bot.phase == .awake)
+
+        // The subagent's own steps do not count as the bot working.
+        for line in SubagentRun.lines.dropFirst(3).dropLast() {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(!bot.isWorking)
+
+        // It finishes; the bot starts a turn of its own to report.
+        for event in StreamEvent.events(in: SubagentRun.notification) { agent.emit(event) }
+        agent.emit(.trace(.text("Reporting back.", parent: nil)))
+        await eventually { bot.isWorking }
+        agent.reply("It says hello world.")
+        await eventually { bot.messages.last?.text == "It says hello world." }
+        await eventually { bot.phase == .asleep }
+    }
+
+    @Test func aSubagentReadsLikeAConversation() {
+        var subagent = Subagent(id: "A", description: "Read a.txt", type: "general-purpose", prompt: "Read a.txt")
+        subagent.steps = [
+            Step(id: "t", kind: .text, title: "Looking for it.", done: true),
+            Step(id: "r", kind: .tool, tool: "Read", title: "Read a.txt", detail: "/a.txt", output: "hi", done: true),
+        ]
+        subagent.status = .completed
+        subagent.result = "It says hi."
+        let fake = FakeLauncher()
+        let bot = makeBot(fake)
+        let payload = ChatPayload.make(subagent: subagent, of: bot, components: nil, avatar: "")
+        #expect(payload.messages.map(\.role) == ["user", "bot", "bot"])
+        #expect(payload.messages.map(\.text) == ["Read a.txt", "Looking for it.", "It says hi."])
+        #expect(payload.messages[2].steps?.map(\.title) == ["Read a.txt"])
+        #expect(payload.subagent?.status == "completed")
+        #expect(payload.subagent?.owner == bot.name)
+        #expect(!payload.working)
+    }
+}

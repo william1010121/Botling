@@ -58,6 +58,8 @@ public struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var replyPreview: String?
     /// It asks to let the bot use this tool; answered by the running `claude`, not as a message.
     public var permissionTool: String?
+    /// What the bot did on the way to this reply (tool calls, subagents), folded above it.
+    public var steps: [Step]?
 
     public init(
         id: UUID = UUID(),
@@ -153,6 +155,8 @@ public struct BotProfile: Equatable, Sendable {
     public var instructions: String?
     /// A bot of its own rather than a project's manager (a morning news bot): what it is for.
     public var job: String?
+    /// Tools it does not get at all, not even by asking.
+    public var disallowedTools: [String] = []
 
     public init(name: String, role: Role, avatar: String, workingDirectory: URL, memoryPath: String, tools: [String], instructions: String? = nil, job: String? = nil) {
         self.name = name
@@ -179,16 +183,27 @@ public struct BotProfile: Equatable, Sendable {
     public var routinesPath: String { role == .main ? "routines.cron" : ".bot/routines.cron" }
     public var routinesURL: URL { workingDirectory.appending(path: routinesPath) }
 
+    /// The whole chat, one markdown file a month, for the bot to search when it needs something
+    /// older than the lines a wake-up brings along.
+    public var archiveURL: URL {
+        workingDirectory.appending(path: role == .main ? "archive" : ".bot/archive")
+    }
+
     /// Where its result pages go: next to its memory.
     public var artifactsURL: URL {
         workingDirectory.appending(path: role == .main ? "artifacts" : ".bot/artifacts")
     }
 
+    /// Every bot has the same tools; what differs is where it sits and what its job is. These
+    /// it uses without asking; anything else it asks you for first.
+    public static let toolbox = ["Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch", "Agent", "Task"]
+
+    /// The main bot asks before each command: its folder is no project to build or test in.
     public static func main(home: URL) -> BotProfile {
-        BotProfile(name: "Main bot", role: .main, avatar: "circle", workingDirectory: home, memoryPath: "memory.md", tools: ["Read", "Write", "Edit"])
+        BotProfile(name: "Main bot", role: .main, avatar: "circle", workingDirectory: home, memoryPath: "memory.md", tools: toolbox)
     }
 
-    /// A manager keeps its notes in `<project>/.bot/` and may use the usual coding tools.
+    /// A manager keeps its notes in `<project>/.bot/` and runs commands in its project freely.
     public static func manager(name: String, avatar: String, folder: URL) -> BotProfile {
         BotProfile(
             name: name,
@@ -196,13 +211,13 @@ public struct BotProfile: Equatable, Sendable {
             avatar: avatar,
             workingDirectory: folder,
             memoryPath: ".bot/memory.md",
-            tools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash"]
+            tools: toolbox + ["Bash"]
         )
     }
 
-    /// A bot of its own: it lives in its own folder under `~/.claudecodebot/bots/`, works like a
-    /// manager (memory, inbox, routines in `.bot/`) and may also look things up on the web. As it
-    /// reads the web, running commands (Bash) is not allowed up front; it asks each time.
+    /// A bot of its own: it lives in its own folder under `~/.claudecodebot/bots/` and works like
+    /// a manager (memory, inbox, routines in `.bot/`). Its folder is no project, so it asks
+    /// before each command.
     public static func standalone(name: String, avatar: String, folder: URL, job: String) -> BotProfile {
         BotProfile(
             name: name,
@@ -210,12 +225,12 @@ public struct BotProfile: Equatable, Sendable {
             avatar: avatar,
             workingDirectory: folder,
             memoryPath: ".bot/memory.md",
-            tools: ["Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch"],
+            tools: toolbox,
             job: job
         )
     }
 
-    /// Maintainer: the manager of the plugin library, which may also hand small jobs to agents.
+    /// Maintainer: the manager of the plugin library.
     public static func maintainer(folder: URL, instructions: String) -> BotProfile {
         BotProfile(
             name: "Maintainer",
@@ -223,7 +238,7 @@ public struct BotProfile: Equatable, Sendable {
             avatar: "diamond",
             workingDirectory: folder,
             memoryPath: ".bot/memory.md",
-            tools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash", "Task", "Agent"],
+            tools: toolbox + ["Bash"],
             instructions: instructions
         )
     }

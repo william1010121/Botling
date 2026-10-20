@@ -1,22 +1,87 @@
 import Foundation
 
-/// Reads `claude --output-format stream-json` lines. The bot only needs each turn's final
-/// text, which arrives as the `result` line.
+/// Reads `claude --output-format stream-json` lines: each turn's final text (the `result` line),
+/// questions about tools, and what it did on the way (a trace).
 enum StreamEvent {
-    /// The result line as a reply, and each tool call as an activity line.
+    /// The result line as a reply; tool calls, their results, words between them and
+    /// subagents as trace events.
     static func events(in line: String) -> [AgentEvent] {
         if let reply = reply(in: line) { return [reply] }
         if let request = permission(in: line) { return [.permission(request)] }
         if let id = cancelledRequest(in: line) { return [.permissionCancelled(id)] }
         guard let data = line.data(using: .utf8),
-              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              object["type"] as? String == "assistant",
-              let message = object["message"] as? [String: Any],
-              let blocks = message["content"] as? [[String: Any]] else { return [] }
-        return blocks.compactMap { block in
-            guard block["type"] as? String == "tool_use", let name = block["name"] as? String else { return nil }
-            return .activity(activity(tool: name, input: block["input"] as? [String: Any] ?? [:]))
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return [] }
+        let parent = object["parent_tool_use_id"] as? String
+        switch object["type"] as? String {
+        case "assistant":
+            guard let blocks = (object["message"] as? [String: Any])?["content"] as? [[String: Any]] else { return [] }
+            return blocks.compactMap { block in
+                switch block["type"] as? String {
+                case "tool_use":
+                    guard let id = block["id"] as? String, let name = block["name"] as? String else { return nil }
+                    let input = block["input"] as? [String: Any] ?? [:]
+                    return .trace(.toolUse(id: id, tool: name, title: activity(tool: name, input: input), detail: detail(tool: name, input: input), parent: parent))
+                case "text":
+                    guard let text = block["text"] as? String, !text.isEmpty else { return nil }
+                    return .trace(.text(text, parent: parent))
+                default:
+                    return nil
+                }
+            }
+        case "user":
+            guard let blocks = (object["message"] as? [String: Any])?["content"] as? [[String: Any]] else { return [] }
+            return blocks.compactMap { block in
+                guard block["type"] as? String == "tool_result", let id = block["tool_use_id"] as? String else { return nil }
+                return .trace(.toolResult(id: id, output: text(of: block["content"]), failed: block["is_error"] as? Bool ?? false, parent: parent))
+            }
+        case "system":
+            switch object["subtype"] as? String {
+            case "task_started":
+                // Background shell commands start tasks too ("local_bash"); only agents are subagents.
+                let type = object["task_type"] as? String
+                guard let id = object["tool_use_id"] as? String,
+                      type == "local_agent" || (type == nil && object["subagent_type"] != nil) else { return [] }
+                return [.trace(.subagentStarted(
+                    id: id,
+                    description: object["description"] as? String ?? "",
+                    type: object["subagent_type"] as? String,
+                    prompt: object["prompt"] as? String ?? "",
+                    background: object["is_backgrounded"] as? Bool ?? false
+                ))]
+            case "task_notification":
+                guard let id = object["tool_use_id"] as? String else { return [] }
+                return [.trace(.subagentEnded(id: id, status: object["status"] as? String ?? "completed", summary: object["summary"] as? String))]
+            default:
+                return []
+            }
+        default:
+            return []
         }
+    }
+
+    /// A tool result's content: a string, or text blocks (images say so in words).
+    static func text(of content: Any?) -> String {
+        if let text = content as? String { return text }
+        guard let blocks = content as? [[String: Any]] else { return "" }
+        return blocks.compactMap { block -> String? in
+            switch block["type"] as? String {
+            case "text": block["text"] as? String
+            case "image": "(image)"
+            default: nil
+            }
+        }.joined(separator: "\n")
+    }
+
+    /// What went into a tool call, in full: the command, the path, the subagent's task.
+    static func detail(tool: String, input: [String: Any]) -> String {
+        for key in ["command", "prompt", "file_path", "notebook_path", "url", "query", "pattern"] {
+            if let value = input[key] as? String, !value.isEmpty {
+                if key == "pattern", let path = input["path"] as? String { return "\(value)  in \(path)" }
+                return value
+            }
+        }
+        let json = (try? JSONSerialization.data(withJSONObject: input, options: [.sortedKeys, .prettyPrinted])).map { String(decoding: $0, as: UTF8.self) }
+        return json ?? ""
     }
 
     /// "Edit template.html", "Run swift build", "Search GitHub API": the verb, then what.

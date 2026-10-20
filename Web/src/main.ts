@@ -1,8 +1,10 @@
 import { post } from "./bridge";
 import { Composer, sendFile } from "./composer";
 import { extensions, messageElement, typingElement } from "./messages";
+import { statusWord } from "./steps";
 import { PluginHost, type PluginSpec } from "./plugins";
 import type { ChatState, MessageView } from "./types";
+import { escapeHTML } from "./util";
 
 /** How close to the bottom (px) still counts as being at the bottom. */
 const bottomSlack = 80;
@@ -98,9 +100,10 @@ class Chat {
     }
 
     this.typing?.remove();
-    this.typing = state.working ? typingElement(state.avatar) : null;
+    this.typing = state.working ? typingElement(state.avatar, state.live ?? []) : null;
     if (this.typing) this.list.append(this.typing);
 
+    this.showSubagentHeader(state);
     this.composer.update(state);
     // Something you just sent always shows, even if you had scrolled up.
     const newest = state.messages[state.messages.length - 1];
@@ -111,6 +114,30 @@ class Chat {
 
   focus(): void {
     this.composer.focus();
+  }
+
+  /**
+   * Watching a subagent: a bar on top saying whose it is and how it is doing, with the way back.
+   * There is nothing to type to a subagent, so the input box goes away meanwhile.
+   */
+  private showSubagentHeader(state: ChatState): void {
+    let bar = document.getElementById("subagent-bar");
+    document.body.classList.toggle("watching", !!state.subagent);
+    if (!state.subagent) {
+      bar?.remove();
+      return;
+    }
+    if (!bar) {
+      bar = document.createElement("header");
+      bar.id = "subagent-bar";
+      document.body.prepend(bar);
+    }
+    const { title, owner, status, type } = state.subagent;
+    bar.className = status;
+    bar.innerHTML = `<button class="back" aria-label="Back to ${escapeHTML(owner)}'s chat">‹ ${escapeHTML(owner)}</button><div class="subagent-heading"><span class="title"></span><span class="meta"></span></div>`;
+    bar.querySelector(".title")!.textContent = title;
+    bar.querySelector(".meta")!.textContent = [`Subagent of ${owner}`, type, statusWord(status), "watch only"].filter(Boolean).join(" · ");
+    bar.querySelector(".back")!.addEventListener("click", () => post({ type: "closeSubagent" }));
   }
 
   private render(message: MessageView, state: ChatState): HTMLElement {

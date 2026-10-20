@@ -36,6 +36,24 @@ export interface MessageView {
   openable: boolean;
   /** Who said it, shown above the bubble (the group chat). */
   speaker?: string | null;
+  /** What the bot did on the way to this reply. */
+  steps?: StepView[] | null;
+}
+
+/** One line of work: a tool call, words between calls, or a subagent. */
+export interface StepView {
+  id: string;
+  kind: "tool" | "text" | "subagent";
+  tool: string | null;
+  title: string;
+  detail: string | null;
+  output: string | null;
+  failed: boolean;
+  done: boolean;
+  /** A subagent's: running, completed, failed or stopped. */
+  status: string | null;
+  /** A subagent's tool calls so far. */
+  count: number | null;
 }
 
 export interface ComponentInfo {
@@ -59,6 +77,10 @@ export interface ChatState {
   components: Record<string, ComponentInfo>;
   /** Names you can @ in this chat (the group chat), to complete as you type. */
   mentions?: string[];
+  /** What it is doing right now, while it works. */
+  live?: StepView[];
+  /** Set while you watch one of its subagents: the page has no input box then. */
+  subagent?: { id: string; title: string; owner: string; status: string; type: string | null } | null;
 }
 
 export type Action =
@@ -70,10 +92,12 @@ export type Action =
   | { type: "cancelReply" }
   | { type: "openURL"; url: string; label: string }
   | { type: "openSource"; messageID: string }
+  | { type: "openSubagent"; id: string }
+  | { type: "closeSubagent" }
   | { type: "pickFiles" }
   | { type: "removeFile"; id: string }
   | { type: "addFileData"; name: string; base64: string }
-  | { type: "componentReport"; name: string; text: string }
+  | { type: "componentReport"; name: string; text: string; images: { name: string; base64: string }[]; rect: { x: number; y: number; width: number; height: number } | null }
   | { type: "componentRevert"; name: string }
   | { type: "pluginError"; name: string; message: string }
   | { type: "pluginNotice"; name: string; text: string }

@@ -117,6 +117,22 @@ struct ComponentTests {
         #expect(workspace.componentBriefing().contains("- choices: "))
     }
 
+    @Test func aReportMayBeJustAPicture() async throws {
+        let fake = FakeLauncher()
+        let workspace = makeWorkspace(fake)
+        await workspace.pluginLibraryReady.value
+        let shot = FileManager.default.temporaryDirectory.appending(path: "ccb-shot-\(UUID().uuidString).png")
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: shot)
+        defer { try? FileManager.default.removeItem(at: shot) }
+
+        workspace.requestComponentChange("choices", request: "  ", from: "The user", files: [shot])
+        #expect(workspace.components.working["choices"] == "see the attached picture")
+        let relay = try #require(workspace.maintainer.messages.last { $0.role == .relay })
+        #expect(relay.text == "The user's request for the component \"choices\": see the attached picture (Attached: a picture of how it looks now or should look.)")
+        #expect(relay.attachments?.count == 1)
+        await eventually { fake.agents.last?.sent.first?.contains("(Attachments:") == true }
+    }
+
     @Test func reportGoesToMaintainerWhichEditsAndLandsAsUpdated() async throws {
         let fake = FakeLauncher()
         let workspace = makeWorkspace(fake)

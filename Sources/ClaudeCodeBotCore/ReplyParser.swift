@@ -15,6 +15,9 @@ public enum BotRequest: Equatable, Sendable {
     case install(source: String)
     /// `<new-bot name="Morning news">job</new-bot>`: a bot of its own, added to the left column.
     case newBot(name: String, job: String)
+    /// `<new-project folder="/path">first task</new-project>`: make a folder a project with its
+    /// own manager (ClaudeCodeBot asks the user first), then hand it the task, if any.
+    case newProject(folder: String, task: String)
 }
 
 /// Splits a bot's reply into the text to show, the buttons to draw, and the requests to act on.
@@ -49,6 +52,10 @@ public enum ReplyParser {
     private static let pluginTag = try! NSRegularExpression(pattern: #"<plugin>\s*(.*?)\s*</plugin>"#, options: .dotMatchesLineSeparators)
     private static let folderTag = try! NSRegularExpression(pattern: #"<need-folder>\s*(.*?)\s*</need-folder>"#, options: .dotMatchesLineSeparators)
     private static let installTag = try! NSRegularExpression(pattern: #"<install>\s*(.*?)\s*</install>"#, options: .dotMatchesLineSeparators)
+    private static let projectTag = try! NSRegularExpression(
+        pattern: #"<new-project\s+folder\s*=\s*"([^"]+)"\s*(?:/>|>\s*(.*?)\s*</new-project>)"#,
+        options: .dotMatchesLineSeparators
+    )
 
     private static let showTag = try! NSRegularExpression(
         pattern: #"<show\s+name\s*=\s*"([^"]+)"\s*>\s*(.*?)\s*</show>"#,
@@ -79,7 +86,8 @@ public enum ReplyParser {
             var matches = pattern.matches(in: mask as String, range: NSRange(location: 0, length: mask.length))
             if only { matches = Array(matches.prefix(1)) }
             for match in matches.reversed() {
-                found((1..<match.numberOfRanges).map { text.substring(with: match.range(at: $0)) })
+                // A group that took no part in the match (an optional one) reads as empty.
+                found((1..<match.numberOfRanges).map { match.range(at: $0).location == NSNotFound ? "" : text.substring(with: match.range(at: $0)) })
                 text.replaceCharacters(in: match.range, with: "")
                 mask.replaceCharacters(in: match.range, with: "")
             }
@@ -104,6 +112,9 @@ public enum ReplyParser {
         requests += tagged
         take(pluginTag) { requests.append(.plugin(request: $0[0])) }
         take(installTag) { requests.append(.install(source: $0[0])) }
+        var projects: [BotRequest] = []
+        take(projectTag) { projects.insert(.newProject(folder: $0[0].trimmingCharacters(in: .whitespaces), task: $0[1]), at: 0) }
+        requests += projects
         take(folderTag) { requests.append(.folder(path: $0[0])) }
 
         var choices: [Choice]?

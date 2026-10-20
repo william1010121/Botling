@@ -146,6 +146,57 @@ describe("messages", () => {
     expect(row.querySelector(".updated")?.textContent).toBe("Updated");
   });
 
+  it("send a component report with a screenshot of it unless you untick it", async () => {
+    const row = messageElement(message({
+      open: true, choices: [{ label: "A", detail: null, recommended: false }],
+    }), { choices: { template: "<button>A</button>", version: 0, working: false, updated: false, hasPrevious: false } });
+    document.body.append(row);
+    row.querySelector<HTMLButtonElement>(".flag")!.click();
+    const box = document.querySelector(".report")!;
+    const send = box.querySelector<HTMLButtonElement>(".send")!;
+    // The screenshot alone is no request.
+    expect(send.disabled).toBe(true);
+    expect(box.querySelector<HTMLInputElement>(".report-shot input")!.checked).toBe(true);
+    const textarea = box.querySelector("textarea")!;
+    textarea.value = "Put them in a row";
+    textarea.dispatchEvent(new Event("input"));
+    expect(send.disabled).toBe(false);
+    send.click();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect(document.querySelector(".report")).toBeNull();
+    expect(sent).toEqual([{ type: "componentReport", name: "choices", text: "Put them in a row", images: [], rect: { x: 0, y: 0, width: 0, height: 0 } }]);
+  });
+
+  it("show the pictures handed over with work under the relay line", () => {
+    const row = messageElement(message({ role: "relay", text: "Fix the card", attachments: [{ name: "shot.png", kind: "image", url: "file:///tmp/shot.png" }] }), {});
+    expect(row.querySelector(".relay")?.textContent).toContain("Fix the card");
+    expect(row.querySelector<HTMLImageElement>(".attachments img")?.getAttribute("src")).toBe("file:///tmp/shot.png");
+  });
+
+  it("fold a reply's steps and open a subagent from its card", () => {
+    const step = (id: string, kind: "tool" | "text" | "subagent", title: string, extra: Partial<import("../src/types").StepView> = {}) =>
+      ({ id, kind, tool: null, title, detail: null, output: null, failed: false, done: true, status: null, count: null, ...extra });
+    const row = messageElement(message({ id: "r1", text: "Done.", steps: [
+      step("s1", "tool", "Run swift test", { detail: "swift test", output: "ok" }),
+      step("toolu_A", "subagent", "Check the form", { status: "running", count: 2, done: false }),
+    ] }), {});
+    document.body.append(row);
+    expect(row.querySelector(".steps-toggle")?.textContent).toBe("Worked · 2 steps · 1 subagent (1 running)");
+    // Folded: the step lines are hidden, the subagent card is not.
+    const lists = row.querySelectorAll<HTMLElement>(".steps .step-list");
+    expect(lists[0].hidden).toBe(true);
+    expect(lists[1].hidden).toBe(false);
+    lists[1].querySelector<HTMLButtonElement>(".subagent-card")!.click();
+    expect(sent).toEqual([{ type: "openSubagent", id: "toolu_A" }]);
+    row.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
+    expect(lists[0].hidden).toBe(false);
+    expect(lists[1].hidden).toBe(true);
+    const head = lists[0].querySelector<HTMLButtonElement>(".step-head")!;
+    head.click();
+    expect(lists[0].querySelector<HTMLElement>(".step-body")!.hidden).toBe(false);
+    expect(lists[0].querySelector("pre")?.textContent).toBe("swift test");
+  });
+
   it("let a notice open its project", () => {
     const row = messageElement(message({ role: "notice", text: "garden: done", openable: true }), {});
     row.querySelector<HTMLButtonElement>(".open-source")!.click();

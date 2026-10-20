@@ -73,7 +73,7 @@ struct StandaloneBotTests {
         let briefing = workspace.projectBriefing()
         #expect(briefing.contains("Bots of their own"))
         #expect(briefing.contains("- Morning news (Tech news at 08:00): memory file \(bot.notesFolder.appending(path: "memory.md").path); inbox file \(bot.inboxURL.path)"))
-        #expect(briefing.contains("- blog: memory file"))
+        #expect(briefing.contains("- blog (folder \(folder.standardizedFileURL.path)): memory file"))
     }
 
     @Test func aNewBotTagFromTheMainBotMakesOneThatSetsItselfUp() async throws {

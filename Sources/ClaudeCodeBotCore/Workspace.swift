@@ -67,6 +67,8 @@ public final class Workspace: ObservableObject {
     @Published public private(set) var projects: [Project] = []
     /// nil = the main bot; else a project's, a bot's, Maintainer's or a group's id.
     @Published public private(set) var selection: UUID?
+    /// The subagent of the selected bot you are watching instead of its chat (its id).
+    @Published public private(set) var viewingSubagent: String?
     @Published public private(set) var waiting: [Waiting] = []
     /// Temporary teams at work right now.
     @Published public private(set) var runningTeams: [TeamRun] = []
@@ -273,6 +275,8 @@ public final class Workspace: ObservableObject {
     public private(set) var approvedFolders: [URL] = []
     /// Open "may it read this folder?" questions in Maintainer's chat, by message id.
     private var folderQuestions: [UUID: URL] = [:]
+    /// Folders the main bot asked to make projects, waiting for your "Add", by the question's id.
+    private var projectQuestions: [UUID: [(folder: URL, task: String)]] = [:]
     private var foldersURL: URL { root.appending(path: "folders.json") }
 
     private func loadApprovedFolders() -> [URL] {
@@ -322,9 +326,9 @@ public final class Workspace: ObservableObject {
     }
 
     /// Gives Maintainer a job, the way the main bot hands work to a manager.
-    public func handToMaintainer(_ text: String) {
+    public func handToMaintainer(_ text: String, files: [URL] = []) {
         prepareLibrary()
-        maintainer.relay(text)
+        maintainer.relay(text, files: files)
     }
 
     public var selectedBot: Bot {
@@ -341,23 +345,201 @@ public final class Workspace: ObservableObject {
 
     public func select(_ projectID: UUID?) {
         selection = projectID
+        viewingSubagent = nil
         selectedBot.markRead()
     }
 
+    /// Shows what `bot`'s subagent did, like a conversation; nil goes back to the bot's chat.
+    public func view(subagent id: String?, of bot: Bot) {
+        if selectedBot !== bot {
+            select(bot === mainBot ? nil : managers.first { $0.value === bot }?.key)
+        }
+        viewingSubagent = id.flatMap { bot.trace.subagent($0) == nil ? nil : $0 }
+    }
+
     /// Makes `folder` a project with its own manager, or selects it if it already is one.
+    /// `select` false leaves you in the chat you are in (adding it from the main bot's chat).
     @discardableResult
-    public func addProject(folder: URL) -> Project {
+    public func addProject(folder: URL, select selecting: Bool = true) -> Project {
         let folder = folder.standardizedFileURL
-        if let existing = projects.first(where: { $0.folder.standardizedFileURL == folder }) {
-            select(existing.id)
+        if let existing = projects.first(where: { $0.folder.standardizedFileURL.path == folder.path }) {
+            if selecting { select(existing.id) }
             return existing
         }
         let project = Project(id: UUID(), name: folder.lastPathComponent, folder: folder, avatar: nextAvatar())
         prepareNotesFolder(for: project)
         attach(project)
         saveProjects()
-        select(project.id)
+        if selecting { select(project.id) }
         return project
+    }
+
+    /// The main bot asked to make folders projects: one card in its chat asks you first, since
+    /// each new manager may read and change everything in its folder. Folders that are projects
+    /// already just get their task; ones that are missing or too broad are said and left out.
+    func proposeProjects(_ asked: [(path: String, task: String)]) {
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+        let own = root.standardizedFileURL.path
+        var adding: [(folder: URL, task: String)] = []
+        var missing: [String] = []
+        var tooBroad: [String] = []
+        var handed: [String] = []
+        // "~/tool/*": every folder inside (not hidden ones); "~/tool/**": every project below,
+        // however deep. Found here, so the bot need not look at the disk.
+        var expanded: [(String, String)] = []
+        for (path, task) in asked {
+            let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasSuffix("/**") {
+                let parent = String(trimmed.dropLast(3))
+                guard let folder = Self.folderURL(parent), FileManager.default.fileExists(atPath: folder.path) else {
+                    missing.append(parent)
+                    continue
+                }
+                let found = Self.projectFolders(in: folder)
+                if found.isEmpty { missing.append(trimmed) }
+                expanded += found.map { ($0.path, task) }
+                continue
+            }
+            guard trimmed.hasSuffix("/*") else {
+                expanded.append((path, task))
+                continue
+            }
+            let parent = String(trimmed.dropLast(2))
+            guard let folder = Self.folderURL(parent),
+                  let inside = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else {
+                missing.append(parent)
+                continue
+            }
+            let folders = inside
+                .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+                .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            if folders.isEmpty { missing.append(trimmed) }
+            expanded += folders.map { ($0.path, task) }
+        }
+        for (path, task) in expanded {
+            let task = task.trimmingCharacters(in: .whitespacesAndNewlines)
+            var isFolder: ObjCBool = false
+            guard let folder = Self.folderURL(path), FileManager.default.fileExists(atPath: folder.path, isDirectory: &isFolder), isFolder.boolValue else {
+                missing.append(path)
+                continue
+            }
+            if ["/", home].contains(folder.path) || folder.path == own || folder.path.hasPrefix(own + "/") {
+                tooBroad.append(folder.path)
+                continue
+            }
+            if let existing = projects.first(where: { $0.folder.standardizedFileURL.path == folder.path }) {
+                if !task.isEmpty { managers[existing.id]?.relay(task) }
+                handed.append(existing.name)
+                continue
+            }
+            if !adding.contains(where: { $0.folder.path == folder.path }) { adding.append((folder, task)) }
+        }
+        var notes: [String] = []
+        if !missing.isEmpty {
+            tell(mainBot, "Couldn't add a project: there is no folder at \(missing.joined(separator: ", ")).")
+            notes.append("There is no folder at \(missing.joined(separator: ", ")); nothing was added for it. Ask the user for the full path.")
+        }
+        if !tooBroad.isEmpty {
+            tell(mainBot, "Couldn't add \(tooBroad.joined(separator: ", ")) as a project: a manager there could change far more than one project.")
+            notes.append("\(tooBroad.joined(separator: ", ")) was not added: a whole disk, the home folder or ClaudeCodeBot's own folder cannot be a project. Ask for the project's own folder.")
+        }
+        if !handed.isEmpty {
+            tell(mainBot, "\(handed.joined(separator: ", ")) \(handed.count == 1 ? "is" : "are") already a project; any task went to \(handed.count == 1 ? "its manager" : "their managers").")
+        }
+        guard !adding.isEmpty else {
+            if !notes.isEmpty { mainBot.queueNote("(App: " + notes.joined(separator: " ") + ")") }
+            return
+        }
+
+        let text: String
+        let add: String
+        if adding.count == 1, let only = adding.first {
+            let first = only.task.isEmpty ? "" : "\n\nThen its manager starts on: \(only.task)"
+            text = "Add **\(only.folder.lastPathComponent)** as a project?\n\n`\(only.folder.path)`\n\nIts manager can read and change the files in this folder.\(first)"
+            add = "Add as project"
+        } else {
+            // The same task for all of them is said once, under the list.
+            let tasks = Set(adding.map(\.task))
+            let shared = tasks.count == 1 ? tasks.first ?? "" : nil
+            let list = adding.map { "- **\($0.folder.lastPathComponent)** `\($0.folder.path)`" + (shared != nil || $0.task.isEmpty ? "" : " — then: \($0.task)") }
+            let then = shared.map { $0.isEmpty ? "" : "\n\nThen each manager starts on: \($0)" } ?? ""
+            text = "Add these \(adding.count) folders as projects?\n\n" + list.joined(separator: "\n") + then + "\n\nEach gets a manager that can read and change the files in its folder. To leave some out, tell the main bot instead."
+            add = "Add all \(adding.count)"
+        }
+        let question = tell(mainBot, text, choices: [Choice(label: add, detail: nil, recommended: true), Choice(label: "Don't add", detail: nil, recommended: false)])
+        projectQuestions[question] = adding
+        // So it can answer "is that all of them?" without seeing the card.
+        notes.append("The user now sees a card asking to add \(adding.count == 1 ? "this folder" : "these \(adding.count) folders") as projects: \(adding.map(\.folder.path).joined(separator: ", ")). Nothing is added until they pick.")
+        mainBot.queueNote("(App: " + notes.joined(separator: " ") + ")")
+    }
+
+    /// What marks a folder as a project's own.
+    static let projectMarkers: Set<String> = [".git", "package.json", "Package.swift", "pyproject.toml", "setup.py", "Cargo.toml", "go.mod", "pom.xml", "build.gradle", "Gemfile", "composer.json", "CMakeLists.txt", "Makefile", "manifest.json"]
+    /// Folders never looked into for projects.
+    static let skippedFolders: Set<String> = ["node_modules", "build", "dist", "target", "DerivedData", "Pods", "vendor", "venv"]
+
+    /// The projects below `folder`: the outermost folders with a project marker (an Xcode
+    /// project counts too), sorted by path. A project's own subfolders are not projects again.
+    static func projectFolders(in folder: URL, depth: Int = 5) -> [URL] {
+        let files = FileManager.default
+        guard depth > 0, let inside = try? files.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else { return [] }
+        var found: [URL] = []
+        for child in inside.sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }) {
+            guard (try? child.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+                  !skippedFolders.contains(child.lastPathComponent), child.pathExtension != "xcodeproj", child.pathExtension != "app" else { continue }
+            let names = (try? files.contentsOfDirectory(atPath: child.path)) ?? []
+            if names.contains(where: { projectMarkers.contains($0) || $0.hasSuffix(".xcodeproj") || $0.hasSuffix(".xcworkspace") }) {
+                found.append(child.standardizedFileURL)
+            } else {
+                found += projectFolders(in: child, depth: depth - 1)
+            }
+        }
+        return found
+    }
+
+    /// An absolute path, `~`, or a `file://` URL, as a folder URL; nil for anything relative.
+    static func folderURL(_ path: String) -> URL? {
+        var path = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        if path.hasPrefix("file://") { path = URL(string: path)?.path ?? path }
+        path = (path as NSString).expandingTildeInPath
+        guard path.hasPrefix("/") else { return nil }
+        return URL(filePath: path, directoryHint: .isDirectory).standardizedFileURL
+    }
+
+    /// Forgets an app card that was answered in words, undoing what it waited to do; says what
+    /// the card was about. Nil if `id` is no app card waiting for a pick.
+    private func closeAppCard(_ id: UUID) -> String? {
+        if let folders = projectQuestions.removeValue(forKey: id) {
+            return "asking to add \(folders.map(\.folder.lastPathComponent).joined(separator: ", ")) as projects"
+        }
+        if let proposal = installQuestions.removeValue(forKey: id) {
+            try? FileManager.default.removeItem(at: proposal.folder)
+            return "asking to install the plugin \"\(proposal.manifest.title)\""
+        }
+        if let folder = folderQuestions.removeValue(forKey: id) {
+            answerFolder(folder, allowed: false)
+            return "asking to let Maintainer read \(folder.path)"
+        }
+        return nil
+    }
+
+    /// Your pick on a "make them projects?" card.
+    private func answerProjects(_ folders: [(folder: URL, task: String)], add: Bool) {
+        let paths = folders.map(\.folder.path).joined(separator: ", ")
+        guard add else {
+            mainBot.queueNote("(App: The user chose not to add \(paths) as projects.)")
+            return
+        }
+        var added: [Project] = []
+        for (folder, task) in folders {
+            let project = addProject(folder: folder, select: false)
+            if !task.isEmpty { managers[project.id]?.relay(task) }
+            added.append(project)
+        }
+        let names = added.map(\.name).joined(separator: ", ")
+        let anyTask = folders.contains { !$0.task.isEmpty }
+        tell(mainBot, "Added \(names) as \(added.count == 1 ? "a project" : "projects")\(anyTask ? "; the managers with a task are on it" : "").", sourceID: added.count == 1 ? added.first?.id : nil)
+        mainBot.queueNote("(App: The user added \(names) as projects (\(paths)); they are in the project list now.)")
     }
 
     /// The first shape no project or bot has yet.
@@ -533,7 +715,7 @@ public final class Workspace: ObservableObject {
         let projectLines = folders.isEmpty
             ? "(No projects yet.)"
             : folders.map { project in
-                "- \(project.name): memory file \(project.notesFolder.appending(path: "memory.md").path); inbox file \(project.inboxURL.path)"
+                "- \(project.name) (folder \(project.folder.path)): memory file \(project.notesFolder.appending(path: "memory.md").path); inbox file \(project.inboxURL.path)"
             }.joined(separator: "\n")
         let bots = standaloneBots
         let botLines = bots.isEmpty ? "" : "\n(App: Bots of their own, which you reach the same way.)\n" + bots.map { bot in
@@ -637,20 +819,31 @@ public final class Workspace: ObservableObject {
 
     /// Someone asked for a component change: the user beside a component, or a bot with a
     /// <component> tag. Maintainer does it (or hands it to its component-editor agent).
-    public func requestComponentChange(_ name: String, request: String, from asker: String) {
+    public func requestComponentChange(_ name: String, request: String, from asker: String, files: [URL] = []) {
         let name = ComponentLibrary.safeName(name)
         guard !name.isEmpty else { return }
-        components.markWorking(name, change: request)
+        let request = request.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Pictures alone say it: what is wrong is in them.
+        let said = request.isEmpty ? "see the attached picture\(files.count == 1 ? "" : "s")" : request
+        components.markWorking(name, change: said)
         let exists = components.names.contains(name)
+        let pictures = files.isEmpty ? "" : " (Attached: \(files.count == 1 ? "a picture" : "\(files.count) pictures") of how it looks now or should look.)"
         handToMaintainer(exists
-            ? "\(asker)'s request for the component \"\(name)\": \(request)"
-            : "\(asker) wants a new component \"\(name)\": \(request)")
+            ? "\(asker)'s request for the component \"\(name)\": \(said)\(pictures)"
+            : "\(asker) wants a new component \"\(name)\": \(said)\(pictures)", files: files)
     }
 
     // MARK: Temporary teams
 
     /// Acts on the tags in a bot's reply. `project` is the manager that asked, nil for the main bot.
     func handle(_ requests: [BotRequest], from project: Project?) {
+        // Folders asked for in one reply are asked about on one card.
+        let folders = requests.compactMap { request -> (String, String)? in
+            if case let .newProject(folder, task) = request { return (folder, task) }
+            return nil
+        }
+        // Only the main bot adds projects; managers stay in their own folder.
+        if project == nil, !folders.isEmpty { proposeProjects(folders) }
         for request in requests {
             switch request {
             case let .team(name, task):
@@ -673,6 +866,8 @@ public final class Workspace: ObservableObject {
                 case .made, .empty, .removedByUser:
                     break
                 }
+            case .newProject:
+                break
             case let .plugin(request):
                 if project?.isMaintainer != true {
                     handToMaintainer("\(project?.name ?? mainBot.name)'s request for ClaudeCodeBot: \(request)")
@@ -716,7 +911,7 @@ public final class Workspace: ObservableObject {
             var reported = false
             for await event in process.events {
                 switch event {
-                case .activity, .permission, .permissionCancelled:
+                case .trace, .permission, .permissionCancelled:
                     // Teams are started without asking (asksPermission is off), so nothing waits.
                     break
                 case let .reply(text, _):
@@ -965,6 +1160,13 @@ public final class Workspace: ObservableObject {
             }
             return true
         }
+        if let proposal = projectQuestions[messageID] {
+            guard message.isOpenQuestion else { return false }
+            projectQuestions[messageID] = nil
+            bot.markChosen(index, in: messageID)
+            answerProjects(proposal, add: index == 0)
+            return true
+        }
         if let folder = folderQuestions[messageID] {
             guard message.isOpenQuestion else { return false }
             folderQuestions[messageID] = nil
@@ -1014,6 +1216,13 @@ public final class Workspace: ObservableObject {
                 return answerInGroup(group.id, message, with: "The user answered with the component: \(text)")
             }
             bot.send(text)
+            return true
+        }
+        // Words on one of the app's own cards (add these projects? install this?) instead of a
+        // pick: the card closes with nothing done, and the bot is told so plainly.
+        if message.role == .notice, message.sourceMessageID == nil, let card = closeAppCard(messageID) {
+            bot.markAnswered(text, in: messageID)
+            bot.send(text, files: [], replyingTo: messageID, appNote: "(App: The user wrote this on the app's card \(card) instead of picking an option. That card is closed and nothing was done. To ask again, put the tag in your reply again; never say the app has it unless your reply carries the tag.)")
             return true
         }
         if let group, message.role == .bot {

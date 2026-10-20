@@ -2,7 +2,8 @@ import { post } from "./bridge";
 import { choicesData, componentElement, fallbackChoices } from "./components";
 import { mediaHTML, renderMarkdown } from "./markdown";
 import type { ComponentRender } from "./plugins";
-import type { ComponentInfo, FileView, MessageView } from "./types";
+import { liveElement, stepsElement } from "./steps";
+import type { ComponentInfo, FileView, MessageView, StepView } from "./types";
 import { escapeHTML } from "./util";
 
 /** What plugins add to how messages are drawn. */
@@ -59,7 +60,15 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
       relay.className = "relay";
       relay.innerHTML = `${message.avatar ? `<img class="mini-avatar" src="${message.avatar}" alt="">` : ""}<span>${escapeHTML(message.text)}</span>`;
       relay.setAttribute("aria-label", `From the main bot: ${message.text}`);
-      row.append(relay);
+      if (message.attachments?.length) {
+        // Pictures handed over with the work (a report's screenshots), under the line.
+        const column = document.createElement("div");
+        column.className = "relay-column";
+        column.append(relay, attachmentStrip(message.attachments));
+        row.append(column);
+      } else {
+        row.append(relay);
+      }
       break;
     }
     case "divider":
@@ -112,6 +121,7 @@ function userBody(message: MessageView): HTMLElement {
 function botBody(message: MessageView, components: Record<string, ComponentInfo>): HTMLElement {
   const bubble = document.createElement("div");
   bubble.className = message.role === "notice" ? `bubble notice-bubble${message.open ? " open" : ""}` : "bubble bot-bubble";
+  if (message.steps?.length) bubble.append(stepsElement(message.id, message.steps));
   if (message.text) {
     const text = document.createElement("div");
     text.className = "markdown";
@@ -236,14 +246,23 @@ export function jumpTo(id: string): void {
   setTimeout(() => target.classList.remove("flash"), 1200);
 }
 
-export function typingElement(avatarSrc: string): HTMLElement {
+/** The bot at work: what it is doing right now, if it has started on tools, then the dots. */
+export function typingElement(avatarSrc: string, live: StepView[] = []): HTMLElement {
   const row = document.createElement("div");
   row.className = "row bot typing";
   row.append(avatar(avatarSrc));
+  const dots = document.createElement("div");
+  dots.className = "dots";
+  dots.setAttribute("aria-label", "Working");
+  dots.innerHTML = "<span></span><span></span><span></span>";
+  if (!live.length) {
+    dots.classList.add("bubble", "bot-bubble");
+    row.append(dots);
+    return row;
+  }
   const bubble = document.createElement("div");
-  bubble.className = "bubble bot-bubble dots";
-  bubble.setAttribute("aria-label", "Working");
-  bubble.innerHTML = "<span></span><span></span><span></span>";
+  bubble.className = "bubble bot-bubble working";
+  bubble.append(liveElement(live), dots);
   row.append(bubble);
   return row;
 }

@@ -46,6 +46,15 @@ final class FakeAgent: AgentProcess, @unchecked Sendable {
         finish()
     }
 
+    private var _interrupts = 0
+    var interrupts: Int { lock.withLock { _interrupts } }
+
+    /// Like claude: the turn ends with an error result.
+    func interrupt() {
+        lock.withLock { _interrupts += 1 }
+        continuation.yield(.reply("", isError: true))
+    }
+
     /// Answers to permission requests: (request id, allowed, message).
     private var _answers: [(String, Bool, String?)] = []
     var answers: [(String, Bool, String?)] { lock.withLock { _answers } }

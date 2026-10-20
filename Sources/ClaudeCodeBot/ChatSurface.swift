@@ -66,7 +66,10 @@ struct ChatSurface: NSViewRepresentable {
     }
 
     var payload: ChatPayload {
-        ChatPayload.make(
+        if let id = workspace.viewingSubagent, let subagent = bot.trace.subagent(id) {
+            return ChatPayload.make(subagent: subagent, of: bot, components: components, avatar: AvatarImages.dataURL(bot.avatarKind, eyes: .open))
+        }
+        return ChatPayload.make(
             bot: bot,
             components: components,
             pending: inputs.files[bot.id] ?? [],
@@ -149,6 +152,10 @@ struct ChatSurface: NSViewRepresentable {
                     let label = (body["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? url.lastPathComponent
                     ResultWindows.open(Chip(label: label, url: url))
                 }
+            case "openSubagent":
+                if let subagent = body["id"] as? String { workspace.view(subagent: subagent, of: bot) }
+            case "closeSubagent":
+                workspace.view(subagent: nil, of: bot)
             case "openSource":
                 if let messageID = id("messageID"),
                    let source = bot.messages.first(where: { $0.id == messageID })?.sourceID {
@@ -171,8 +178,20 @@ struct ChatSurface: NSViewRepresentable {
                     inputs.files[bot.id, default: []].append(ChatPayload.Pending(url: url))
                 }
             case "componentReport":
-                if let name = body["name"] as? String, let text = body["text"] as? String {
-                    workspace.requestComponentChange(name, request: text, from: "The user")
+                guard let name = body["name"] as? String else { break }
+                let text = body["text"] as? String ?? ""
+                var files = (body["images"] as? [[String: Any]] ?? []).compactMap { image -> URL? in
+                    guard let name = image["name"] as? String, let base64 = image["base64"] as? String else { return nil }
+                    return Self.save(base64, named: name)
+                }
+                let rect = (body["rect"] as? [String: Any]).flatMap(Self.rect)
+                Task { @MainActor [weak view] in
+                    // The component as it looks now, so Maintainer sees what you saw.
+                    if let rect, let view, let shot = await Self.snapshot(of: view, in: rect, named: name) {
+                        files.insert(shot, at: 0)
+                    }
+                    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty else { return }
+                    workspace.requestComponentChange(name, request: text, from: "The user", files: files)
                 }
             case "componentRevert":
                 if let name = body["name"] as? String {
@@ -193,6 +212,24 @@ struct ChatSurface: NSViewRepresentable {
         /// The page itself is the only thing that loads here; links open through actions.
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction) async -> WKNavigationActionPolicy {
             action.request.url == ChatSurface.pageURL || action.targetFrame?.isMainFrame == false ? .allow : .cancel
+        }
+
+        static func rect(_ value: [String: Any]) -> CGRect? {
+            guard let x = value["x"] as? Double, let y = value["y"] as? Double,
+                  let width = value["width"] as? Double, let height = value["height"] as? Double,
+                  width >= 1, height >= 1 else { return nil }
+            return CGRect(x: x, y: y, width: width, height: height)
+        }
+
+        /// A PNG of part of the page (CSS pixels are the view's points), saved like a pasted file.
+        static func snapshot(of view: WKWebView, in rect: CGRect, named name: String) async -> URL? {
+            let configuration = WKSnapshotConfiguration()
+            configuration.rect = rect.intersection(view.bounds)
+            guard !configuration.rect.isEmpty,
+                  let image = try? await view.takeSnapshot(configuration: configuration),
+                  let tiff = image.tiffRepresentation,
+                  let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return nil }
+            return save(png.base64EncodedString(), named: "\(name)-screenshot.png")
         }
 
         /// A pasted or dropped file, saved where the bot's copy will be made from.

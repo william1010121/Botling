@@ -38,6 +38,129 @@ struct LiveClaudeTests {
         #expect(answer.lowercased().contains("teal"))
     }
 
+    /// A bot sends a subagent off: the subagent's own steps are recorded under it, it ends with a
+    /// result, and the reply carries the card that opens it.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func aSubagentsWorkIsRecorded() async throws {
+        let executable = try #require(ClaudeExecutableLocator().locate())
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try "hello from the probe\n".write(to: home.appending(path: "a.txt"), atomically: true, encoding: .utf8)
+
+        let profile = BotProfile(name: "Probe", role: .manager, avatar: "square", workingDirectory: home, memoryPath: ".bot/memory.md", tools: ["Read", "Glob", "Agent", "Task"])
+        let bot = Bot(profile: profile, defaultModel: .haiku, launcher: ClaudeAgentProcess.launcher(executable: executable))
+
+        bot.send("Use the Agent tool to send one general-purpose subagent to read a.txt in your working folder and report what it says. Do not read it yourself. Tell me what it says once the subagent is done.")
+        await eventually({ bot.subagents.first.map { !$0.isRunning } == true }, timeout: 240)
+        await eventually({ bot.messages.last?.role == .bot && !bot.isWorking }, timeout: 120)
+        // A subagent in the background reports after the turn that sent it ended.
+        await eventually({ bot.messages.filter { $0.role == .bot }.count >= 2 }, timeout: 90)
+        for message in bot.messages {
+            print("[\(message.role)] \(message.text.prefix(200)) steps=\(message.steps?.map(\.title) ?? [])")
+        }
+        let subagent = try #require(bot.subagents.first)
+        print("subagent:", subagent.description, subagent.status, subagent.background, "steps:", subagent.steps.map(\.title), "result:", subagent.result?.prefix(200) ?? "")
+        #expect(subagent.status == .completed)
+        #expect(subagent.steps.contains { $0.tool == "Read" })
+        #expect(bot.messages.contains { $0.steps?.contains { $0.kind == .subagent && $0.id == subagent.id } == true })
+        #expect(bot.messages.contains { $0.role == .bot && $0.text.contains("hello from the probe") })
+        await bot.goToSleep()
+    }
+
+    /// Asked in words to add a folder, the main bot asks for it with the tag, and the app shows
+    /// the card instead of adding it straight away.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func theMainBotAsksToAddAProject() async throws {
+        let executable = try #require(ClaudeExecutableLocator().locate())
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appending(path: "code/garden")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let real = ClaudeAgentProcess.launcher(executable: executable)
+        let workspace = Workspace(root: root.appending(path: "ccb")) { profile, store in
+            Bot(profile: profile, defaultModel: .haiku, launcher: real, store: store)
+        }
+
+        workspace.mainBot.send("請把 \(folder.path) 加成一個專案，然後請它的負責人列出裡面有哪些檔案。")
+        await eventually({ workspace.mainBot.messages.contains { $0.isOpenQuestion } }, timeout: 120)
+        for message in workspace.mainBot.messages { print("[\(message.role)] \(message.text)") }
+        let card = try #require(workspace.mainBot.messages.last { $0.isOpenQuestion })
+        #expect(workspace.projects.isEmpty)
+        #expect(workspace.choose(0, in: card.id, of: workspace.mainBot))
+        let project = try #require(workspace.projects.first)
+        #expect(project.folder.path == folder.path)
+        let manager = try #require(workspace.bot(for: project))
+        await eventually({ manager.messages.first?.role == .relay }, timeout: 10)
+        print("handed over:", manager.messages.first?.text ?? "")
+        await eventually({ manager.messages.contains { $0.role == .bot } }, timeout: 120)
+        await workspace.mainBot.goToSleep()
+        await manager.goToSleep()
+    }
+
+    /// The conversation from 2026-10-20: a wish sent in two parts gets one answer, and the main
+    /// bot asks for every folder in ~/tool on one card, without looking at the disk itself.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func aWishInTwoPartsBecomesOneCardForEveryFolder() async throws {
+        let executable = try #require(ClaudeExecutableLocator().locate())
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let tool = root.appending(path: "tool")
+        for name in ["alpha", "beta", "gamma"] {
+            try FileManager.default.createDirectory(at: tool.appending(path: name), withIntermediateDirectories: true)
+        }
+        let real = ClaudeAgentProcess.launcher(executable: executable)
+        let workspace = Workspace(root: root.appending(path: "ccb")) { profile, store in
+            Bot(profile: profile, defaultModel: .haiku, launcher: real, store: store)
+        }
+        let main = workspace.mainBot
+
+        main.send("你建立 newbot 的時候可以指定他們的位置嗎。\n\n我想要讓 \(tool.path) 底下的")
+        try? await Task.sleep(for: .seconds(3))
+        main.send("都有一個bot")
+        await eventually({ !main.isWorking && main.messages.last?.role != .user }, timeout: 180)
+        try? await Task.sleep(for: .seconds(2))
+        for message in main.messages {
+            print("[\(message.role)] \(message.text) steps=\(message.steps?.map(\.title) ?? [])")
+        }
+        let replies = main.messages.filter { $0.role == .bot }
+        #expect(replies.count == 1)
+        #expect(!main.messages.contains { $0.permissionTool != nil })
+        let cards = main.messages.filter(\.isOpenQuestion)
+        #expect(cards.count == 1)
+        #expect(cards.first?.text.contains("alpha") == true && cards.first?.text.contains("gamma") == true)
+        await main.goToSleep()
+    }
+
+    /// "Every project under ~/tool" finds the projects inside the category folders.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func everyProjectMeansProjectsNotTopFolders() async throws {
+        let executable = try #require(ClaudeExecutableLocator().locate())
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let tool = root.appending(path: "tool")
+        for path in ["MacOSApp/ClaudeCodeBot/.git", "MacOSApp/TODO/NotchDo/.git", "cli/token-speed/.git", "website/diary/.git"] {
+            try FileManager.default.createDirectory(at: tool.appending(path: path), withIntermediateDirectories: true)
+        }
+        let real = ClaudeAgentProcess.launcher(executable: executable)
+        let workspace = Workspace(root: root.appending(path: "ccb")) { profile, store in
+            Bot(profile: profile, defaultModel: .haiku, launcher: real, store: store)
+        }
+        let main = workspace.mainBot
+        let handle = main.onRequests
+        main.onRequests = { requests in
+            print("requests:", requests)
+            handle?(requests)
+        }
+        main.send("\(tool.path) 底下每一個專案都要一個 bot")
+        await eventually({ main.messages.contains(where: \.isOpenQuestion) }, timeout: 180)
+        for message in main.messages { print("[\(message.role)] \(message.text)") }
+        let card = try #require(main.messages.last { $0.isOpenQuestion })
+        #expect(card.text.contains("Add these 4 folders"))
+        #expect(card.text.contains("**NotchDo**") && !card.text.contains("**MacOSApp**"))
+        await main.goToSleep()
+    }
+
     /// M2 acceptance: the main bot answers from a sleeping manager's memory.md without waking it,
     /// and hands work over through inbox.md.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))

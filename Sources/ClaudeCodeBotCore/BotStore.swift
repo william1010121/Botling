@@ -12,6 +12,7 @@ public struct BotStore: Sendable {
 
     private var chatURL: URL { directory.appending(path: "chat.json") }
     private var settingsURL: URL { directory.appending(path: "bot.json") }
+    private var subagentsURL: URL { directory.appending(path: "subagents.json") }
 
     private struct Settings: Codable {
         var model: BotModel?
@@ -21,6 +22,8 @@ public struct BotStore: Sendable {
         var routineRuns: [String: Date]?
         /// Tools you said it may always use.
         var alwaysAllowed: [String]?
+        /// Lines the user has not looked at yet.
+        var unread: Int?
     }
 
     private struct LegacyRoutine: Codable {
@@ -38,6 +41,16 @@ public struct BotStore: Sendable {
 
     public func save(messages: [ChatMessage]) {
         write(Array(messages.suffix(Self.historyLimit)), to: chatURL)
+    }
+
+    /// The subagents it sent off, with everything they did.
+    public func loadSubagents() -> [Subagent] {
+        guard let data = try? Data(contentsOf: subagentsURL) else { return [] }
+        return (try? JSONDecoder().decode([Subagent].self, from: data)) ?? []
+    }
+
+    public func save(subagents: [Subagent]) {
+        write(subagents, to: subagentsURL)
     }
 
     public func loadModel() -> BotModel? {
@@ -71,6 +84,16 @@ public struct BotStore: Sendable {
     public func save(alwaysAllowed: [String]) {
         var settings = loadSettings()
         settings.alwaysAllowed = alwaysAllowed
+        write(settings, to: settingsURL)
+    }
+
+    public func loadUnread() -> Int {
+        loadSettings().unread ?? 0
+    }
+
+    public func save(unread: Int) {
+        var settings = loadSettings()
+        settings.unread = unread
         write(settings, to: settingsURL)
     }
 
