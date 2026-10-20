@@ -551,32 +551,50 @@ describe("composer", () => {
     expect(list.hidden).toBe(true);
   });
 
-  it("offers commands and components after / at the start of a word, and puts the picked one in", () => {
+  it("offers commands after a bare /, components only once a letter follows, and puts the picked one in", () => {
     const composer = new Composer(document.body);
     composer.update(state({
       mentions: ["garden"],
       slashCommands: [{ name: "design", about: "Make a Claude Design" }],
-      slashComponents: ["choices", "網頁預覽卡片", "design"],
+      slashComponents: ["choices", "網頁預覽卡片", "design", "dash", "diff", "deck", "demo", "dial", "dot"],
     }));
     const list = document.querySelector<HTMLElement>(".mention-list")!;
+    const names = () => [...list.querySelectorAll("button")].map((b) => b.querySelector(".mention-name")?.textContent);
     composer.insert("/");
+    // A bare / is quiet: the app's commands only, no components.
     expect(list.hidden).toBe(false);
-    const options = [...list.querySelectorAll("button")];
-    // Commands first; a component named like a command is offered once, as the command.
-    expect(options.map((b) => b.querySelector(".mention-name")?.textContent)).toEqual(["/design", "/choices", "/網頁預覽卡片"]);
-    expect(options.map((b) => b.querySelector(".mention-kind")?.textContent)).toEqual(["指令", "組件", "組件"]);
+    expect(list.classList.contains("slash")).toBe(true);
+    expect(names()).toEqual(["/design"]);
+    // No tag on the row; the kind is at most a faint hint.
+    expect(list.querySelector(".mention-kind")).toBeNull();
+    // A letter after it brings in the matching components; a component named like a command is
+    // offered once, as the command; five at most.
+    composer.insert("d");
+    expect(names()).toEqual(["/design", "/dash", "/diff", "/deck", "/demo"]);
+    composer.setText("");
+    composer.insert("/網");
+    expect(names()).toEqual(["/網頁預覽卡片"]);
     // Up/Down move, Return puts it in.
     const key = (k: string) => composer.view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
-    key("ArrowDown");
-    key("ArrowDown");
-    expect(list.querySelector("button.active .mention-name")?.textContent).toBe("/網頁預覽卡片");
+    composer.setText("");
+    composer.insert("/c");
+    expect(names()).toEqual(["/choices"]);
     key("Enter");
-    expect(composer.text).toBe("/網頁預覽卡片 ");
+    expect(composer.text).toBe("/choices ");
     expect(sent).toEqual([]);
+    composer.setText("");
+    composer.insert("/d");
+    key("ArrowDown");
+    key("ArrowDown");
+    expect(list.querySelector("button.active .mention-name")?.textContent).toBe("/diff");
+    key("ArrowUp");
+    expect(list.querySelector("button.active .mention-name")?.textContent).toBe("/dash");
+    key("Enter");
+    expect(composer.text).toBe("/dash ");
     // Typed after other words, and filtered by what follows the slash; Tab picks too.
     composer.setText("");
-    composer.insert("請做 /de");
-    expect([...list.querySelectorAll("button")].map((b) => b.querySelector(".mention-name")?.textContent)).toEqual(["/design"]);
+    composer.insert("請做 /des");
+    expect(names()).toEqual(["/design"]);
     key("Tab");
     expect(composer.text).toBe("請做 /design ");
     // Inside a word or a path it is just a slash; Escape closes the list.
@@ -590,10 +608,21 @@ describe("composer", () => {
     composer.insert("/");
     key("Escape");
     expect(list.hidden).toBe(true);
-    // @ still offers the bots, not components.
+    // @ still offers the bots, not components, in the ordinary list.
     composer.setText("");
     composer.insert("@");
-    expect([...list.querySelectorAll("button")].map((b) => b.querySelector(".mention-name")?.textContent)).toEqual(["@garden"]);
+    expect(names()).toEqual(["@garden"]);
+    expect(list.classList.contains("slash")).toBe(false);
+  });
+
+  it("keeps a bare / silent when there are components but no commands", () => {
+    const composer = new Composer(document.body);
+    composer.update(state({ slashComponents: ["choices"] }));
+    const list = document.querySelector<HTMLElement>(".mention-list")!;
+    composer.insert("/");
+    expect(list.hidden).toBe(true);
+    composer.insert("c");
+    expect(list.hidden).toBe(false);
   });
 
   it("leaves Return to the input method while it is composing", () => {

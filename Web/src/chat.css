@@ -91,7 +91,14 @@ button { font: inherit; color: inherit; }
 .mention-list button.active, .mention-list button:hover { background: #2B3B5C; }
 .mention-list button { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .mention-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mention-kind { flex: none; font-size: 11px; color: var(--muted); padding: 1px 6px; border: 1px solid #3A3A42; border-radius: 6px; }
+.mention-hint { min-width: 0; flex: 0 1 auto; font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The / list is meant to go unnoticed: small rows, a flat box, no shadow. */
+.mention-list.slash {
+  min-width: 160px; max-width: 280px; padding: 2px; border-color: #29292F; border-radius: 8px;
+  box-shadow: none; background: #1C1C20;
+}
+.mention-list.slash button { padding: 3px 8px; font-size: 12.5px; border-radius: 5px; color: var(--muted); gap: 10px; }
+.mention-list.slash button.active, .mention-list.slash button:hover { background: #26262C; color: var(--text); }
 .composer { position: relative; }
 .user-body { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 460px; min-width: 0; }
 .user-bubble { background: var(--user-bubble); padding: 10px 16px; }

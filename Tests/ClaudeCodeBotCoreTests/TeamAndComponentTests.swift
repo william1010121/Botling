@@ -301,6 +301,50 @@ struct ComponentTests {
         await workspace.putEveryoneToSleep()
     }
 
+    /// At most 20 components: bots see "N / 20", and at the limit Maintainer makes no new one
+    /// but asks the user which to delete first. More than 20 already there still all load.
+    @Test func componentsAreCappedAtTwentyButMoreStillLoad() async throws {
+        #expect(ComponentLibrary.limit == 20)
+        let fake = FakeLauncher()
+        let workspace = makeWorkspace(fake)
+        await workspace.pluginLibraryReady.value
+        let library = workspace.components
+        #expect(!library.isFull)
+        #expect(workspace.componentBriefing().contains("2 / 20 installed"))
+
+        let rules = workspace.maintainerInstructions()
+        #expect(rules.contains("At most 20 components"))
+        #expect(rules.contains("do not make a new one"))
+        #expect(rules.contains("ask which one to delete first"))
+        #expect(rules.contains("組件使用統計"))
+
+        for index in 0..<19 {
+            let folder = library.folder.appending(path: "extra-\(index)")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try "<p>\(index)</p>".write(to: folder.appending(path: "template.html"), atomically: true, encoding: .utf8)
+            try "Extra \(index).".write(to: folder.appending(path: "about.md"), atomically: true, encoding: .utf8)
+        }
+        library.rescan()
+        #expect(library.names.count == 21)
+        #expect(library.isFull)
+        #expect(library.template("extra-18") == "<p>18</p>")
+        #expect(workspace.componentBriefing().contains("21 / 20 installed"))
+        #expect(workspace.componentBriefing().contains("- extra-18: Extra 18."))
+
+        workspace.requestComponentChange("toast", request: "Make an error toast", from: "The user")
+        let full = try #require(workspace.maintainer.messages.last { $0.role == .relay })
+        #expect(full.text.hasPrefix("The user wants a new component \"toast\": Make an error toast"))
+        #expect(full.text.contains("21 / 20"))
+        #expect(full.text.contains("Do not make it"))
+        #expect(full.text.contains("which component to delete first"))
+
+        // Changing one that is there is still fine.
+        workspace.requestComponentChange("choices", request: "Lay the options out in a row", from: "The user")
+        let change = try #require(workspace.maintainer.messages.last { $0.role == .relay })
+        #expect(change.text == "The user's request for the component \"choices\": Lay the options out in a row")
+        await workspace.putEveryoneToSleep()
+    }
+
     @Test func editingATemplateByHandBumpsItsVersion() throws {
         let workspace = makeWorkspace(FakeLauncher())
         let library = workspace.components

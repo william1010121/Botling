@@ -35,6 +35,16 @@ public final class ComponentLibrary: ObservableObject {
     @Published public private(set) var updated: Set<String> = []
     @Published public private(set) var names: [String] = []
 
+    /// At most this many components: at the limit Maintainer makes no new one and asks the user
+    /// which to delete first. Only new ones are held back; more than this already there all load.
+    public static let limit = 20
+
+    /// There are `limit` components or more: no room for a new one.
+    public var isFull: Bool { names.count >= Self.limit }
+
+    /// "N / 20", how full the library is.
+    public var usage: String { "\(names.count) / \(Self.limit)" }
+
     /// Where new components are made: the ccb-components plugin.
     public let folder: URL
     /// Component folders from other plugins, searched after `folder`.

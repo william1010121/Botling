@@ -944,7 +944,7 @@ public final class Workspace: ObservableObject {
 
     /// The components a bot can draw or ask to change.
     func componentBriefing() -> String {
-        "(App: Components in the chat. <show name=\"name\">JSON</show> draws one; <show name=\"name\" command=\"git diff --stat\"></show> fills it with what that command prints instead (run in your project folder once the user allows it; JSON output is used as the data, other output as one string; the card has a refresh button). A component whose usage has a \"Command:\" line needs only <show name=\"name\"></show>. <component name=\"name\">request</component> asks Maintainer to change one.)\n" + components.catalog()
+        "(App: Components in the chat, \(components.usage) installed (at most \(ComponentLibrary.limit)). <show name=\"name\">JSON</show> draws one; <show name=\"name\" command=\"git diff --stat\"></show> fills it with what that command prints instead (run in your project folder once the user allows it; JSON output is used as the data, other output as one string; the card has a refresh button). A component whose usage has a \"Command:\" line needs only <show name=\"name\"></show>. <component name=\"name\">request</component> asks Maintainer to change one.)\n" + components.catalog()
     }
 
     /// The folder a message's component commands run in: the project of the bot that wrote it
@@ -989,9 +989,13 @@ public final class Workspace: ObservableObject {
         components.markWorking(name, change: said)
         let exists = components.names.contains(name)
         let pictures = files.isEmpty ? "" : " (Attached: \(files.count == 1 ? "a picture" : "\(files.count) pictures") of how it looks now or should look.)"
+        // A new one with the library full: Maintainer asks what to delete instead.
+        let full = !exists && components.isFull
+            ? " (App: There are already \(components.usage) components, the limit. Do not make it: tell the user the library is full and ask which component to delete first.)"
+            : ""
         handToMaintainer(exists
             ? "\(asker)'s request for the component \"\(name)\": \(said)\(pictures)"
-            : "\(asker) wants a new component \"\(name)\": \(said)\(pictures)", files: files)
+            : "\(asker) wants a new component \"\(name)\": \(said)\(pictures)\(full)", files: files)
     }
 
     // MARK: Temporary teams
@@ -1140,6 +1144,7 @@ public final class Workspace: ObservableObject {
           every component request (a new component or a change) goes to a ccb-core:component-editor agent with the Agent tool, run in the background, one agent per component, so several components can be worked on at once. Give it the component folder's path and the request (and any attached pictures).
           Two editors never work on the same component folder at once: if another request comes for a component already being edited, send it to that running editor with SendMessage, or keep it until that editor returns.
           While editors run, stay free for new requests. When an editor returns, review its change, then do the rest yourself, one component at a time: bump the ccb-components version, run the check, then git add, commit and tag as above.
+        - At most \(ComponentLibrary.limit) components. The components note says how many there are ("N / \(ComponentLibrary.limit) installed"). When there are already \(ComponentLibrary.limit) or more, do not make a new one and hand nothing to an editor: tell the user the library is at the limit and, with a choices block of the components, ask which one to delete first (the 組件使用統計 card shows which are used least). Make the new one only after a deletion leaves room. Changes to existing components are always fine; never delete one the user did not pick.
         - When a component request says /design or asks for designs to choose from, first make them a Claude Design: with the Artifact tool, quickstart with intent "design", publish from the Design type, using the look of ccb-components (its templates' colours, type and spacing) as the design system, and reply with the claude.ai link. Build the chosen one into ccb-components only after the user picks.
         - Plugins built into the app are not here and cannot be edited directly: to change one, copy its whole folder into the plugin library; a plugin with the same name overrides the built-in one (paths in PLUGINS.md).
         - To read a folder outside the plugin library (for example to turn an existing project into a plugin): end your reply with <need-folder>full path</need-folder>, say in one sentence why you need it, then stop and wait.

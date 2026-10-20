@@ -24,8 +24,9 @@ export class Composer {
   private popover: HTMLElement | null = null;
   /**
    * What the list offers as you type: after @ the bots (a group's members, or in a bot's own chat
-   * the bots you can call in); after / at the start of a word the app's commands, then the
-   * components (the bot is told you mean that component).
+   * the bots you can call in); after / at the start of a word the app's commands, and once a
+   * letter follows the slash the components that match (the bot is told you mean that component).
+   * The / list stays quiet: a few small rows, no tags.
    */
   private mentions: Mention[] = [];
   private allMentions: Mention[] = [];
@@ -159,7 +160,9 @@ export class Composer {
     const slash = !atAt && !at && this.slashItems.length ? /(?:^|[\s([{"'\u0080-\uffff])\/([^\s/]{0,40})$/.exec(before) : null;
     const match = atAt ?? at ?? slash;
     const query = match ? match[1].toLowerCase() : null;
-    const items = atAt || (at && query) ? this.allMentions : at ? this.mentions : this.slashItems;
+    // A bare / offers only the app's commands; the components wait for a letter.
+    const items = atAt || (at && query) ? this.allMentions : at ? this.mentions
+      : query ? this.slashItems : this.slashItems.filter((item) => item.kind === "command");
     // A name typed in full needs no list (Return then sends).
     const complete = !atAt && query !== null && items.some((mention) => mention.name.toLowerCase() === query);
     const found = query === null || complete ? [] : items.filter((mention) => mention.name.toLowerCase().startsWith(query));
@@ -168,10 +171,11 @@ export class Composer {
       const short = new Set(this.mentions.map((mention) => mention.name.toLowerCase()));
       found.sort((a, b) => Number(short.has(b.name.toLowerCase())) - Number(short.has(a.name.toLowerCase())));
     }
-    this.mentionMatches = atAt ? found : found.slice(0, 8);
+    this.mentionMatches = atAt ? found : found.slice(0, slash ? SLASH_ROWS : 8);
     this.mentionFrom = match ? head - match[1].length - (atAt ? 2 : 1) : -1;
     this.mentionActive = Math.min(this.mentionActive, Math.max(0, this.mentionMatches.length - 1));
     this.mentionList.hidden = this.mentionMatches.length === 0;
+    this.mentionList.classList.toggle("slash", !!slash);
     this.mentionList.innerHTML = "";
     this.mentionMatches.forEach((mention, index) => {
       const option = document.createElement("button");
@@ -182,12 +186,15 @@ export class Composer {
       label.textContent = sigil(mention) + mention.name;
       option.append(label);
       if (mention.kind !== "bot") {
-        const kind = document.createElement("span");
-        kind.className = "mention-kind";
-        kind.textContent = mention.kind === "command" ? "指令" : "組件";
-        option.append(kind);
+        // No tag: a command keeps a faint hint of what it does, a component only its name.
+        if (mention.about) {
+          const hint = document.createElement("span");
+          hint.className = "mention-hint";
+          hint.textContent = mention.about;
+          option.append(hint);
+          option.title = mention.about;
+        }
         option.setAttribute("aria-label", `/${mention.name}, ${mention.kind}`);
-        if (mention.about) option.title = mention.about;
       }
       option.addEventListener("mousedown", (event) => {
         event.preventDefault();
@@ -295,6 +302,9 @@ export class Composer {
     return true;
   }
 }
+
+/** How many rows the / list shows at most. */
+const SLASH_ROWS = 5;
 
 /** Something the list offers: a bot (after @), or a command or component (after /). */
 interface Mention {
