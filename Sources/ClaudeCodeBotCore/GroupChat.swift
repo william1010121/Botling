@@ -210,7 +210,7 @@ extension Workspace {
 
     /// A file you sent to a group, copied where it stays (the original or a temporary paste may
     /// go away).
-    private func keep(_ file: URL, in chat: Bot) -> Attachment? {
+    func keep(_ file: URL, in chat: Bot) -> Attachment? {
         let folder = chat.profile.workingDirectory.appending(path: "attachments")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let target = folder.appending(path: "\(UUID().uuidString.prefix(8))-\(file.lastPathComponent)")

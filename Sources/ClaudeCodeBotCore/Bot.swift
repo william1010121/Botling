@@ -267,7 +267,7 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     /// Copies a file the user sent into the bot's own attachments folder.
-    private func keep(_ file: URL) -> Attachment? {
+    func keep(_ file: URL) -> Attachment? {
         let folder = profile.attachmentsURL
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let stamp = Date().formatted(.verbatim("\(year: .defaultDigits)\(month: .twoDigits)\(day: .twoDigits)-\(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased))\(minute: .twoDigits)\(second: .twoDigits)", timeZone: .current, calendar: .current))
@@ -330,28 +330,38 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     /// The user answered a question in their own words instead of picking: mark it, then send
-    /// the words as their answer. A question can be answered once.
+    /// the words as their answer. A question can be answered once. `files` (pictures attached in
+    /// the component, e.g. in "Other") go along like a message's attachments.
     @discardableResult
-    public func answer(_ text: String, in messageID: UUID) -> Bool {
+    public func answer(_ text: String, files: [URL] = [], in messageID: UUID) -> Bool {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty,
+        guard !text.isEmpty || !files.isEmpty,
               let message = messages.first(where: { $0.id == messageID }),
               message.isOpenQuestion else { return false }
+        let shown = Self.answerLabel(text, files: files)
         if message.permissionTool != nil {
             // Words instead of a button: not allowed, and Claude hears why.
             guard let ask = permissionAsks.removeValue(forKey: messageID), ask.process === process else {
                 markAnswered(Self.noLongerNeeded, in: messageID)
                 return false
             }
-            markAnswered(text, in: messageID)
-            ask.process.answer(ask.request, allow: false, message: "The user did not allow it and said: \(text)")
+            markAnswered(shown, in: messageID)
+            ask.process.answer(ask.request, allow: false, message: "The user did not allow it and said: \(shown)")
             return true
         }
-        markAnswered(text, in: messageID)
+        markAnswered(shown, in: messageID)
         let wasRelay = message.role == .bot && turnFromRelay
-        send(text, files: [], replyingTo: messageID)
+        send(text, files: files, replyingTo: messageID)
         turnFromRelay = wasRelay
         return true
+    }
+
+    /// What an answer shows on the question: the words, or, for pictures alone, that pictures
+    /// were sent.
+    public static func answerLabel(_ text: String, files: [URL]) -> String {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty || files.isEmpty { return text }
+        return files.count == 1 ? "(picture)" : "(\(files.count) pictures)"
     }
 
     /// Shows a typed answer on a message without sending anything (the notice mirroring a question).

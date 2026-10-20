@@ -73,7 +73,7 @@ enum PluginGuide {
           `onKeyDown(handler)` (return true to swallow the key). All of these return a dispose function.
         - `ccb.codemirror`: `{ state, view, commands }`; use this one and do not bundle your own CodeMirror (versions must match).
         - `ccb.messages.use(markdownItPlugin)`: adds a markdown-it plugin. `ccb.messages.afterRender((element, message) => …)`: changes the DOM after a message is drawn.
-        - `ccb.components.register(name, (root, data, answer) => …)`: a component the bot calls up with `<show name="name">JSON</show>`.
+        - `ccb.components.register(name, (root, data, answer) => …)`: a component the bot calls up with `<show name="name">JSON</show>`. `answer(index)`, `answer(text)`, or `answer({ text, images: [{ name, base64 }] })` to send pictures back.
         - `ccb.panels.register(id, (root) => …)`: draws a panel declared in contributes.panels (runs in a separate page in the right column that loads only this plugin).
         - `ccb.commands.register(id, run)`, `ccb.commands.execute(id)`; commands with a key in the manifest get a keyboard shortcut.
         - `ccb.settings.get(key)`, `ccb.settings.onChange(key, fn)`.
@@ -112,6 +112,10 @@ enum PluginGuide {
 
         - template.html: a piece of HTML (may include style and script), drawn on the dark background #1B1B1F. The data is in `window.ccb.data`;
           the user's answer calls `ccb.answer(number or text)`. Do not load outside resources. Check `event.isComposing` before sending on Enter.
+          Pictures back: `ccb.answer({ text, images })`, where images come from `await ccb.pickImage({ multiple: true })` (from a click; `[]` if cancelled),
+          `await ccb.readImage(file)` for a pasted or dropped File, or data: URLs; each picture has `dataURL` for a thumbnail. The bot receives the text
+          and the pictures as files saved in the chat's attachments folder, listed like a message's attachments.
+          Pictures shown: data may name local pictures by file path; load them with `img.src = ccb.image(path)` (file: URLs do not load in the frame).
         - about.md: usage notes for the bots. The first line says in one sentence what it is, followed by the data format (with an example JSON) and what the bot receives when the user answers.
 
         ## Check and release

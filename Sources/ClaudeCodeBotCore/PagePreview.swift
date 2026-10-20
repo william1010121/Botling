@@ -71,7 +71,7 @@ public enum PagePreview {
         let file = URL(filePath: path).standardizedFileURL
         // Through symlinks too: a link inside artifacts must not lead out of it.
         let real = file.resolvingSymlinksInPath()
-        return artifactsFolder(of: real) != nil || Shown.contains(real) ? real : nil
+        return artifactsFolder(of: real) != nil || Shown.contains(real) || ComponentImages.allows(real) ? real : nil
     }
 
     /// Pages named in `<show>` cards outside an `artifacts` folder: just those files are served.
@@ -167,7 +167,63 @@ public enum PagePreview {
         "html": "text/html", "htm": "text/html", "css": "text/css", "js": "application/javascript",
         "mjs": "application/javascript", "json": "application/json", "txt": "text/plain", "csv": "text/plain",
         "svg": "image/svg+xml", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif",
-        "webp": "image/webp", "ico": "image/x-icon", "mp4": "video/mp4", "mov": "video/quicktime", "webm": "video/webm",
+        "webp": "image/webp", "ico": "image/x-icon", "heic": "image/heic", "heif": "image/heif", "avif": "image/avif",
+        "bmp": "image/bmp", "tif": "image/tiff", "tiff": "image/tiff", "mp4": "video/mp4", "mov": "video/quicktime", "webm": "video/webm",
         "woff": "font/woff", "woff2": "font/woff2", "ttf": "font/ttf", "otf": "font/otf", "wasm": "application/wasm",
     ]
+}
+
+/// Pictures a component's data names by file path (`"/Users/me/p/chart.png"`, `~/…`, `file://…`).
+/// Its sandboxed frame cannot open `file:` URLs, so each picture that is there on disk is served
+/// through `ccb-preview:` like a result page, and the page hands the template a map from the path
+/// as written to the URL to load (`ccb.image(path)`). Only those picture files are served.
+public enum ComponentImages {
+    static let extensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "heif", "avif", "bmp", "tif", "tiff", "ico"]
+
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var pictures: Set<String> = []
+
+    public static func isImage(_ url: URL) -> Bool {
+        extensions.contains(url.pathExtension.lowercased())
+    }
+
+    /// The pictures `data` (a component's JSON) names that exist, each from the text as written
+    /// to the `ccb-preview:` URL its frame loads it from. Empty when it names none.
+    public static func urls(in data: String) -> [String: String] {
+        guard data.contains("/"), let object = try? JSONSerialization.jsonObject(with: Data(data.utf8), options: [.fragmentsAllowed]) else { return [:] }
+        var found: [String: String] = [:]
+        func visit(_ value: Any) {
+            switch value {
+            case let text as String:
+                guard found[text] == nil, text.count < 4096, let file = PagePreview.fileURL(from: text), isImage(file) else { return }
+                let real = file.resolvingSymlinksInPath()
+                guard let attributes = try? FileManager.default.attributesOfItem(atPath: real.path),
+                      (attributes[.type] as? FileAttributeType) != .typeDirectory else { return }
+                allow(real)
+                found[text] = PagePreview.previewURL(for: real, version: attributes[.modificationDate] as? Date).absoluteString
+            case let list as [Any]:
+                list.forEach(visit)
+            case let object as [String: Any]:
+                object.values.forEach(visit)
+            default:
+                break
+            }
+        }
+        visit(object)
+        return found
+    }
+
+    static func allow(_ file: URL) {
+        lock.lock()
+        defer { lock.unlock() }
+        pictures.insert(file.path)
+    }
+
+    /// `file` (symlinks resolved) is a picture some component's data named.
+    static func allows(_ file: URL) -> Bool {
+        guard isImage(file) else { return false }
+        lock.lock()
+        defer { lock.unlock() }
+        return pictures.contains(file.path)
+    }
 }

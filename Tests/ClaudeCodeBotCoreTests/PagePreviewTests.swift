@@ -81,6 +81,32 @@ struct PagePreviewTests {
         #expect(PagePreview.response(for: PagePreview.previewURL(for: picture))?.mimeType == "image/svg+xml")
     }
 
+    @Test func picturesAComponentNamesByPathAreServedToItsFrame() throws {
+        let chart = try write("p/charts/chart.png", "png")
+        let photo = try write("p/photos/me.JPG", "jpg")
+        let notes = try write("p/notes.txt", "secret")
+        let unnamed = try write("p/charts/other.png", "png")
+        let data = #"{"title":"Sales","image":"\#(chart.path)","more":[{"src":"\#(photo.absoluteString)"},{"src":"\#(root.path)/p/gone.png"}],"notes":"\#(notes.path)","n":3}"#
+        let urls = ComponentImages.urls(in: data)
+        #expect(Set(urls.keys) == [chart.path, photo.absoluteString])
+        let src = try #require(urls[chart.path].flatMap(URL.init(string:)))
+        #expect(src.scheme == PagePreview.scheme)
+        #expect(PagePreview.file(forPreview: src) == chart)
+        #expect(PagePreview.response(for: src)?.mimeType == "image/png")
+        #expect(PagePreview.file(forPreview: try #require(urls[photo.absoluteString].flatMap(URL.init(string:)))) == photo)
+        // Only the pictures named: not a text file, not another picture beside them.
+        #expect(PagePreview.file(forPreview: PagePreview.previewURL(for: notes)) == nil)
+        #expect(PagePreview.file(forPreview: PagePreview.previewURL(for: unnamed)) == nil)
+        #expect(ComponentImages.urls(in: #"{"title":"none"}"#).isEmpty)
+        #expect(ComponentImages.urls(in: "not json /x.png").isEmpty)
+
+        // The payload hands them to the page with the component.
+        var shown = ChatMessage(role: .bot, text: "Chart:")
+        shown.displays = [ComponentInstance(name: "chart", data: data)]
+        #expect(ChatPayload.display(shown.displays![0]).images?[chart.path] == urls[chart.path])
+        #expect(ChatPayload.display(ComponentInstance(name: "chart", data: "{}")).images == nil)
+    }
+
     @Test func cardDataSaysWhereToLoadAndOpenThePage() throws {
         let page = try write("p/.bot/artifacts/competitor-report.html")
         let card = try object(PagePreview.cardData(#"{"path":"\#(page.absoluteString)","title":"競品比較"}"#))

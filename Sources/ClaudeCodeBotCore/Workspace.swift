@@ -1334,62 +1334,74 @@ public final class Workspace: ObservableObject {
         return true
     }
 
-    /// What a component sent back in words: an answer to the question in that message (from
-    /// any chat, kept in step like a pick), or, for a message that asks nothing, just a reply.
+    /// What a component sent back in words, with any pictures the user attached in it (`files`,
+    /// e.g. in choices' "Other"): an answer to the question in that message (from any chat, kept
+    /// in step like a pick), or, for a message that asks nothing, just a reply. The pictures are
+    /// kept in the chat's attachments folder and reach the bot as a message's attachments do.
     @discardableResult
-    public func answer(_ text: String, in messageID: UUID, of bot: Bot) -> Bool {
+    public func answer(_ text: String, files: [URL] = [], in messageID: UUID, of bot: Bot) -> Bool {
         defer { refreshWaiting() }
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || !files.isEmpty else { return false }
         guard let message = bot.messages.first(where: { $0.id == messageID }) else { return false }
         let group = group(of: bot)
+        let shown = Bot.answerLabel(text, files: files)
+        /// For a bot told in words (a group or a called-in bot): the pictures, kept in `bot`'s
+        /// folder, as a line it reads and as attachments on your line.
+        func kept() -> (note: String, attachments: [Attachment]) {
+            let attachments = files.compactMap { group != nil ? keep($0, in: bot) : bot.keep($0) }
+            let note = attachments.isEmpty ? "" : "\n(Attachments:\n" + attachments.map { "- " + $0.url.path }.joined(separator: "\n") + ")"
+            return (note, attachments)
+        }
         guard message.isOpenQuestion else {
             // A question already answered stays answered.
             if message.choices?.isEmpty == false { return false }
-            if let group {
+            if group != nil || isCalledIn(message, in: bot) {
                 // A component on a bot's line answers that bot, not everyone.
-                guard message.role == .bot, message.sourceID != nil else { return false }
-                bot.post(ChatMessage(role: .user, text: text), unread: false)
-                return answerInGroup(group.id, message, with: "The user answered with the component: \(text)")
+                if group != nil { guard message.role == .bot, message.sourceID != nil else { return false } }
+                let (note, attachments) = kept()
+                var line = ChatMessage(role: .user, text: text)
+                line.attachments = attachments.isEmpty ? nil : attachments
+                bot.post(line, unread: false)
+                let said = "The user answered with the component: \(shown)\(note)"
+                return group.map { answerInGroup($0.id, message, with: said) } ?? answerCallIn(message, in: bot, with: said)
             }
-            if isCalledIn(message, in: bot) {
-                bot.post(ChatMessage(role: .user, text: text), unread: false)
-                return answerCallIn(message, in: bot, with: "The user answered with the component: \(text)")
-            }
-            bot.send(text)
+            bot.send(text, files: files, replyingTo: nil)
             return true
         }
         // Words on one of the app's own cards (add these projects? install this?) instead of a
         // pick: the card closes with nothing done, and the bot is told so plainly.
         if message.role == .notice, message.sourceMessageID == nil, let card = closeAppCard(messageID) {
-            bot.markAnswered(text, in: messageID)
-            bot.send(text, files: [], replyingTo: messageID, appNote: "(App: The user wrote this on the app's card \(card) instead of picking an option. That card is closed and nothing was done. To ask again, put the tag in your reply again; never say the app has it unless your reply carries the tag.)")
+            bot.markAnswered(shown, in: messageID)
+            bot.send(text, files: files, replyingTo: messageID, appNote: "(App: The user wrote this on the app's card \(card) instead of picking an option. That card is closed and nothing was done. To ask again, put the tag in your reply again; never say the app has it unless your reply carries the tag.)")
             return true
         }
         if let group, message.role == .bot {
-            guard answerInGroup(group.id, message, with: "The user answered: \(text)") else {
+            guard answerInGroup(group.id, message, with: "The user answered: \(shown)\(kept().note)") else {
                 bot.markAnswered(Bot.noLongerNeeded, in: messageID)
                 return false
             }
-            bot.markAnswered(text, in: messageID)
+            bot.markAnswered(shown, in: messageID)
             return true
         }
         if isCalledIn(message, in: bot) {
-            guard answerCallIn(message, in: bot, with: "The user answered: \(text)") else {
+            guard answerCallIn(message, in: bot, with: "The user answered: \(shown)\(kept().note)") else {
                 bot.markAnswered(Bot.noLongerNeeded, in: messageID)
                 return false
             }
-            bot.markAnswered(text, in: messageID)
+            bot.markAnswered(shown, in: messageID)
             return true
         }
         if message.role == .notice, let questionID = message.sourceMessageID {
-            guard let original = message.sourceID.flatMap(member), original.answer(text, in: questionID) else {
+            guard let original = message.sourceID.flatMap(member), original.answer(text, files: files, in: questionID) else {
                 closeCopy(of: message, in: bot)
                 return false
             }
-            bot.markAnswered(text, in: messageID)
+            bot.markAnswered(shown, in: messageID)
             return true
         }
-        guard bot.answer(text, in: messageID) else { return false }
-        forEachCopy(of: messageID) { chat, copy in chat.markAnswered(text, in: copy.id) }
+        guard bot.answer(text, files: files, in: messageID) else { return false }
+        forEachCopy(of: messageID) { chat, copy in chat.markAnswered(shown, in: copy.id) }
         return true
     }
 

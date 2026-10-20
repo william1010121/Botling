@@ -1,6 +1,7 @@
 import AppKit
 import ClaudeCodeBotCore
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 
 /// Files and reply targets waiting in each bot's composer, kept while you switch between bots.
@@ -33,6 +34,8 @@ struct ChatSurface: NSViewRepresentable {
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
         view.navigationDelegate = context.coordinator
+        // A component's picture picker (ccb.pickImage) is a file input: WebKit asks the delegate.
+        view.uiDelegate = context.coordinator
         if let page = Self.pageURL {
             view.loadFileURL(page, allowingReadAccessTo: URL(filePath: "/"))
         }
@@ -100,7 +103,7 @@ struct ChatSurface: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate, WKUIDelegate {
         var surface: ChatSurface?
         weak var view: WKWebView?
         private var ready = false
@@ -146,8 +149,10 @@ struct ChatSurface: NSViewRepresentable {
                     workspace.choose(index, in: messageID, of: bot)
                 }
             case "answer":
-                if let messageID = id("messageID"), let text = body["text"] as? String {
-                    workspace.answer(text, in: messageID, of: bot)
+                // Words, pictures the user attached in the component, or both.
+                if let messageID = id("messageID") {
+                    let text = body["text"] as? String ?? ""
+                    workspace.answer(text, files: Self.pictures(body["images"]), in: messageID, of: bot)
                 }
             case "reply":
                 if let messageID = id("messageID") { inputs.replies[bot.id] = messageID }
@@ -232,6 +237,17 @@ struct ChatSurface: NSViewRepresentable {
             default:
                 PluginBridge.handle(type, body, workspace: workspace, view: view)
             }
+        }
+
+        /// A file input in the page or a component (ccb.pickImage): pictures, from an open panel.
+        func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = false
+            panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+            panel.allowedContentTypes = [.image]
+            panel.prompt = "Attach"
+            panel.begin { response in completionHandler(response == .OK ? panel.urls : nil) }
         }
 
         /// The page itself is the only thing that loads here; links open through actions.

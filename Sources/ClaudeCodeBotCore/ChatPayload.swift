@@ -84,6 +84,9 @@ public struct ChatPayload: Encodable, Equatable {
         var status: String?
         var error: String?
         var ranAt: String?
+        /// Pictures its data names by file path, each to the URL its frame loads it from
+        /// (`ccb.image(path)` in the template).
+        var images: [String: String]? = nil
     }
 
     /// What drawing components with commands needs: their runs, and the folder each message's
@@ -336,7 +339,9 @@ public struct ChatPayload: Encodable, Equatable {
 
     /// A component in a message; a 「網頁預覽卡片」 gets where to load its page from.
     static func display(_ instance: ComponentInstance) -> Display {
-        Display(name: instance.name, data: instance.name == PagePreview.component ? PagePreview.cardData(instance.data) : instance.data, at: instance.at)
+        let data = instance.name == PagePreview.component ? PagePreview.cardData(instance.data) : instance.data
+        let images = ComponentImages.urls(in: data)
+        return Display(name: instance.name, data: data, at: instance.at, images: images.isEmpty ? nil : images)
     }
 
     /// The command a component in a message takes its data from: its own, or, when it was
@@ -371,6 +376,8 @@ public struct ChatPayload: Encodable, Equatable {
         shown.ranAt = state.ranAt.map { $0.formatted(date: .omitted, time: .shortened) }
         if let data = state.data {
             shown.data = instance.name == PagePreview.component ? PagePreview.cardData(data) : data
+            let images = ComponentImages.urls(in: shown.data)
+            shown.images = images.isEmpty ? nil : images
         }
         return shown
     }

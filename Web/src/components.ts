@@ -1,29 +1,105 @@
 import { post } from "./bridge";
 import { escapeHTML } from "./util";
-import type { ChoiceView, ComponentInfo, DisplayView } from "./types";
+import type { Action, ChoiceView, ComponentInfo, DisplayView } from "./types";
 
 /**
  * A component template inside its own iframe, so one template cannot break another or the chat.
- * The template sees `window.ccb` (data, answer, choose, send, and open(url, label) to show a
- * page or file full-size, as a link chip does) as before; the frame reports its
- * height and answers to this page, which passes answers on to Swift.
+ * The template sees `window.ccb` (also `window.deck`):
+ * - `data`: what the bot gave.
+ * - `answer(value)`: a number picks an option by index, text is a typed answer, and
+ *   `{text, images}` sends words with pictures (`images`: File/Blob objects, data: URLs, or
+ *   `{name, base64}`); the bot gets the pictures as saved files, like a message's attachments.
+ *   Returns a promise that settles once it is sent.
+ * - `pickImage({multiple})`: opens the picture picker; resolves to the pictures picked
+ *   (`{name, type, base64, dataURL}` each, [] if cancelled). Call it from a click.
+ * - `readImage(file)`: a pasted or dropped File as such a picture.
+ * - `image(path)`: the URL to load a picture the data names by file path (`<img src>`).
+ * - `open(url, label)`: show a page or file full-size, as a link chip does.
+ * The frame reports its height and answers to this page, which passes answers on to Swift.
  */
-export function componentPage(template: string, data: string): string {
+export function componentPage(template: string, data: string, images: Record<string, string> = {}): string {
+  const safe = (json: string) => json.replace(/</g, "\\u003c");
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
 <style>:root{color-scheme:dark}html,body{margin:0;padding:0;background:transparent;color:#EDEDF0;font:14px -apple-system,"PingFang TC",sans-serif;overflow:hidden}</style>
 <script>
-window.ccb = {
-  data: ${data.replace(/</g, "\\u003c")},
-  answer(value) {
-    if (typeof value === 'number') parent.postMessage({ccb: 'answer', index: value}, '*');
-    else parent.postMessage({ccb: 'answer', text: String(value)}, '*');
-  },
-  choose(index) { this.answer(Number(index)); },
-  send(text) { this.answer(String(text)); },
-  open(url, label) { parent.postMessage({ccb: 'open', url: String(url), label: label == null ? '' : String(label)}, '*'); }
-};
-// Templates written while the app was called Deck call deck.answer(...).
-window.deck = window.ccb;
+(() => {
+  const images = ${safe(JSON.stringify(images))};
+  const read = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataURL = String(reader.result || '');
+      const type = file.type || (dataURL.match(/^data:([^;,]+)/) || [])[1] || 'image/png';
+      resolve({name: file.name || ('Pasted image.' + (type.split('/')[1] || 'png')), type, base64: dataURL.slice(dataURL.indexOf(',') + 1), dataURL});
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  // Any way a template holds a picture, as {name, base64}.
+  const picture = async (item, index) => {
+    if (item instanceof Blob) item = await read(item);
+    else if (typeof item === 'string') item = {dataURL: item};
+    if (!item || typeof item !== 'object') return null;
+    let base64 = typeof item.base64 === 'string' ? item.base64 : '';
+    let type = item.type || '';
+    if (!base64 && typeof item.dataURL === 'string' && item.dataURL.startsWith('data:')) {
+      base64 = item.dataURL.slice(item.dataURL.indexOf(',') + 1);
+      type = type || (item.dataURL.match(/^data:([^;,]+)/) || [])[1] || '';
+    }
+    if (!base64) return null;
+    const name = typeof item.name === 'string' && item.name ? item.name : 'Picture ' + (index + 1) + '.' + ((type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg'));
+    return {name, base64};
+  };
+  window.ccb = {
+    data: ${safe(data)},
+    answer(value) {
+      if (typeof value === 'number') {
+        parent.postMessage({ccb: 'answer', index: value}, '*');
+        return Promise.resolve();
+      }
+      if (value && typeof value === 'object' && !(value instanceof String)) {
+        const text = value.text == null ? '' : String(value.text);
+        return Promise.all([...(value.images || [])].map(picture)).then((list) => {
+          parent.postMessage({ccb: 'answer', text, images: list.filter(Boolean)}, '*');
+        });
+      }
+      parent.postMessage({ccb: 'answer', text: String(value)}, '*');
+      return Promise.resolve();
+    },
+    choose(index) { return this.answer(Number(index)); },
+    send(text) { return this.answer(String(text)); },
+    pickImage(options) {
+      return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.multiple = !!(options && options.multiple);
+        input.style.display = 'none';
+        let settled = false;
+        const done = (files) => {
+          if (settled) return;
+          settled = true;
+          input.remove();
+          Promise.all(files.filter((file) => file.type.startsWith('image/')).map(read)).then(resolve, () => resolve([]));
+        };
+        input.addEventListener('change', () => done([...(input.files || [])]));
+        input.addEventListener('cancel', () => done([]));
+        document.body.append(input);
+        input.click();
+      });
+    },
+    readImage(file) { return read(file); },
+    image(path) {
+      if (path == null) return '';
+      const text = String(path);
+      if (images[text]) return images[text];
+      if (images[text.trim()]) return images[text.trim()];
+      return /^(data:|blob:|ccb-preview:)/.test(text) ? text : '';
+    },
+    open(url, label) { parent.postMessage({ccb: 'open', url: String(url), label: label == null ? '' : String(label)}, '*'); }
+  };
+  // Templates written while the app was called Deck call deck.answer(...).
+  window.deck = window.ccb;
+})();
 </script></head><body><div id="ccb-root">
 ${template}
 </div><script>
@@ -39,7 +115,20 @@ export function choicesData(choices: ChoiceView[], chosen: number | null, answer
   return JSON.stringify({ options: choices, chosen, answer });
 }
 
-type AnswerHandler = (answer: { index?: number; text?: string }) => void;
+/** A picture a component sends back, as the Swift side saves it. */
+export interface AnswerImage {
+  name: string;
+  base64: string;
+}
+
+/** What a component answered: an option, words, or words with pictures. */
+export interface ComponentAnswer {
+  index?: number;
+  text?: string;
+  images?: AnswerImage[];
+}
+
+type AnswerHandler = (answer: ComponentAnswer) => void;
 type ComponentFrame = HTMLIFrameElement & { ccbAnswer?: AnswerHandler | null; ccbKey?: string };
 
 /**
@@ -51,7 +140,7 @@ const frameHeights = new Map<string, number>();
 // Frames are found by their window when they speak, so a message sent before the frame's own
 // load event is not lost.
 window.addEventListener("message", (event) => {
-  const message = event.data as { ccb?: string; height?: number; index?: number; text?: string; url?: string; label?: string };
+  const message = event.data as { ccb?: string; height?: number; index?: number; text?: string; images?: unknown; url?: string; label?: string };
   if (!message?.ccb) return;
   const frame = [...document.querySelectorAll<ComponentFrame>("iframe.component-frame")]
     .find((candidate) => candidate.contentWindow === event.source);
@@ -60,13 +149,36 @@ window.addEventListener("message", (event) => {
     frame.style.height = `${message.height}px`;
     if (frame.ccbKey) frameHeights.set(frame.ccbKey, message.height);
   } else if (message.ccb === "answer" && frame.ccbAnswer) {
+    const images = answerImages(message.images);
     if (typeof message.index === "number") frame.ccbAnswer({ index: message.index });
+    else if (images.length) frame.ccbAnswer({ text: typeof message.text === "string" ? message.text : "", images });
     else if (typeof message.text === "string" && message.text.trim() !== "") frame.ccbAnswer({ text: message.text });
   } else if (message.ccb === "open" && typeof message.url === "string" && message.url !== "") {
     // Opened full-size the way a link chip is: a file in a window of its own.
     post({ type: "openURL", url: message.url, label: typeof message.label === "string" ? message.label : "" });
   }
 });
+
+/** The pictures in a component's answer that are well formed; anything else is dropped. */
+export function answerImages(value: unknown): AnswerImage[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is AnswerImage => !!item && typeof item.name === "string" && typeof item.base64 === "string" && item.base64 !== "")
+    .map((item) => ({ name: item.name.trim() || "Picture.png", base64: item.base64 }));
+}
+
+/**
+ * What an answer posts to Swift for message `messageID`: a pick, or words (with any pictures).
+ * Nothing for an empty answer.
+ */
+export function answerAction(messageID: string, answer: ComponentAnswer): Action | null {
+  if (answer.index !== undefined) return { type: "choose", messageID, index: answer.index };
+  const text = answer.text ?? "";
+  const images = answer.images ?? [];
+  if (images.length) return { type: "answer", messageID, text, images };
+  if (text.trim() !== "") return { type: "answer", messageID, text };
+  return null;
+}
 
 /**
  * A component with its report flag beside it (shown on hover), or nothing if no template.
@@ -78,6 +190,7 @@ export function componentElement(
   data: string,
   onAnswer: AnswerHandler | null,
   key?: string,
+  images?: Record<string, string> | null,
 ): HTMLElement | null {
   if (!info) return null;
   const wrap = document.createElement("div");
@@ -92,7 +205,7 @@ export function componentElement(
     const height = frameHeights.get(frame.ccbKey);
     if (height) frame.style.height = `${height}px`;
   }
-  frame.srcdoc = componentPage(info.template, data);
+  frame.srcdoc = componentPage(info.template, data, images ?? {});
   wrap.append(frame, reportControl(name, info));
   return wrap;
 }

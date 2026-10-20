@@ -51,6 +51,60 @@ struct AnswerAndUsageTests {
         #expect(workspace.mainBot.messages.last { $0.role == .user }?.text == "A bit more")
     }
 
+    /// A picture saved where the page leaves pasted files.
+    func picture(_ name: String = "sketch.png") throws -> URL {
+        let url = root.appending(path: "incoming/\(UUID().uuidString.prefix(4))-\(name)")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: url)
+        return url
+    }
+
+    @Test func anAnswerCanCarryPicturesThatReachTheBotAsAttachments() async throws {
+        let fake = FakeLauncher()
+        fake.respond = { text in text.hasSuffix("Ask me") ? question : "OK." }
+        let (workspace, _, manager) = try setUp(fake)
+        manager.send("Ask me")
+        await eventually { manager.openQuestion != nil }
+        let asked = try #require(manager.openQuestion)
+
+        let sketch = try picture()
+        #expect(!workspace.answer("  ", files: [], in: asked.id, of: manager))
+        #expect(workspace.answer("Like this", files: [sketch], in: asked.id, of: manager))
+        await eventually { manager.messages.last?.text == "OK." }
+
+        #expect(manager.messages.first { $0.id == asked.id }?.answer == "Like this")
+        let line = try #require(manager.messages.last { $0.role == .user })
+        let kept = try #require(line.attachments?.first)
+        #expect(kept.kind == .image)
+        #expect(kept.url.path.hasPrefix(manager.profile.attachmentsURL.path))
+        #expect(FileManager.default.fileExists(atPath: kept.url.path))
+        let told = try #require(fake.agents[0].sent.last)
+        #expect(told.contains("Like this"))
+        #expect(told.contains("(Attachments:\n- \(kept.url.path))"))
+        #expect(manager.openQuestion == nil)
+    }
+
+    @Test func aPictureAloneAnswersAndAComponentThatAsksNothingCanSendOne() async throws {
+        let fake = FakeLauncher()
+        fake.respond = { text in text.hasSuffix("Ask me") ? question : "OK." }
+        let (workspace, _, manager) = try setUp(fake)
+        manager.send("Ask me")
+        await eventually { manager.openQuestion != nil }
+        let asked = try #require(manager.openQuestion)
+
+        #expect(workspace.answer("", files: [try picture()], in: asked.id, of: manager))
+        #expect(manager.messages.first { $0.id == asked.id }?.answer == "(picture)")
+        #expect(Bot.answerLabel("", files: [try picture(), try picture()]) == "(2 pictures)")
+        await eventually { manager.messages.last?.text == "OK." }
+
+        // A component on a line that asks nothing: the picture goes as a reply.
+        let reply = try #require(manager.messages.last)
+        #expect(workspace.answer("", files: [try picture("b.jpg")], in: reply.id, of: manager))
+        let line = try #require(manager.messages.last { $0.role == .user })
+        #expect(line.text == "")
+        #expect(line.attachments?.first?.name.hasSuffix("b.jpg") == true)
+    }
+
     // MARK: ② Every bot knows how to use every component
 
     @Test func botsGetEachComponentsWholeUsage() throws {
@@ -107,7 +161,29 @@ struct AnswerAndUsageTests {
         #expect(library.template("choices") == "<p>my own edit</p>")
     }
 
+    @Test func shippedChoicesTakeWordsAndPicturesInOther() throws {
+        let template = ComponentDefaults.choicesTemplate
+        #expect(template.contains("ccb.pickImage({ multiple: true })"))
+        #expect(template.contains("ccb.readImage(file)"))
+        #expect(template.contains("ccb.answer(pictures.length ? { text, images: pictures } : text)"))
+        #expect(template.contains("event.isComposing"))
+        #expect(ComponentDefaults.choicesAbout.contains("(Attachments: …)"))
+
+        // A choices template from 1.5 nobody edited is brought up to the new one.
+        let folder = root.appending(path: "components15")
+        let choices = folder.appending(path: "choices")
+        try FileManager.default.createDirectory(at: choices, withIntermediateDirectories: true)
+        try ComponentDefaults.choicesTemplateV1.write(to: choices.appending(path: "template.html"), atomically: true, encoding: .utf8)
+        try ComponentDefaults.olderChoicesAbouts.last!.write(to: choices.appending(path: "about.md"), atomically: true, encoding: .utf8)
+        let library = ComponentLibrary(folder: folder)
+        #expect(library.template("choices") == template)
+        #expect(try String(contentsOf: library.aboutURL("choices"), encoding: .utf8) == ComponentDefaults.choicesAbout)
+    }
+
     @Test func componentTeamIsToldTheAnswerContract() {
+        #expect(ComponentPrompts.system.contains("ccb.answer({text, images})"))
+        #expect(ComponentPrompts.system.contains("ccb.pickImage"))
+        #expect(ComponentPrompts.system.contains("ccb.image(path)"))
         #expect(ComponentPrompts.system.contains("ccb.answer"))
         #expect(ComponentPrompts.system.contains("about.md is the usage guide every bot reads"))
         #expect(ComponentDefaults.choicesTemplate.contains("ccb.answer(index)"))

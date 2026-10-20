@@ -317,6 +317,8 @@ enum ComponentPrompts {
     You are ClaudeCodeBot's component editor (component-editor). You look after one component in the chat: its folder holds template.html, and how to use it is written in about.md.
     - template.html is a piece of HTML (it may include <style> and <script>), drawn on the dark background #1B1B1F; its width follows the frame and its height follows the content.
     - The data is in window.ccb.data. The user's answer always calls ccb.answer(...): a number picks an option by index (from 0), text is an answer the user typed (for example an "Other" input box). The app treats both as answered and passes the answer to the bot that asked.
+    - Pictures back: ccb.answer({text, images}) sends words with pictures; images are what ccb.pickImage({multiple: true}) resolves to (call it from a click; [] if cancelled), what ccb.readImage(file) makes of a pasted or dropped File, or data: URLs. Each picked picture has dataURL for a thumbnail. The bot gets the pictures as saved files, like pictures sent with a message.
+    - Pictures shown: when the data names a local picture by file path, set img.src = ccb.image(path) (a file: URL does not load in the frame); ccb.image returns "" for a file that is not there.
     - In choice-style data, chosen is the index already picked and answer is a typed answer; if either is not null the question is answered, so show the answer and disable the buttons.
     - Text color #EDEDF0, secondary text #A0A0A8, accent blue #4C8DFF, recommended orange #F7C27F; font -apple-system, "PingFang TC", sans-serif.
     - Do not load any outside resources. Use real <button> and <input> elements, buttons at least 44px tall, with enough contrast.
@@ -340,27 +342,33 @@ enum ComponentDefaults {
     資料：{"options":[{"label":"用預設圖補上","detail":"今天做完","recommended":true},{"label":"先留白","detail":null,"recommended":false}],"chosen":null,"answer":null}
     chosen 是已選的第幾個（從 0 開始），answer 是使用者自己打的回答，都還沒有就是 null。
     使用者回答時，bot 會收到他選的那一項文字，或他自己打的字。
+    """, """
+    Choices: a row of buttons for the user to pick one; the recommended one is marked. Bots do not draw it directly: end the reply with a <choices> block and the app uses this component.
+    Data: {"options":[{"label":"Fill in with a placeholder image","detail":"Done today","recommended":true},{"label":"Leave it blank for now","detail":null,"recommended":false}],"chosen":null,"answer":null}
+    chosen is the index picked (from 0), answer is an answer the user typed; both are null until answered.
+    When the user answers, the bot receives the text of the option picked, or what the user typed.
     """]
 
     static var olderChoicesTemplates: [String] {
         // Older builds shipped the same markup with Chinese labels (kept as data, see above).
-        let chinese = choicesTemplate
+        let chinese = choicesTemplateV1
             .replacingOccurrences(of: "'Recommended · '", with: "'建議 · '")
             .replacingOccurrences(of: ": 'Recommended')", with: ": '建議')")
-        return [chinese, chinese
+        return [choicesTemplateV1, chinese, chinese
             .replacingOccurrences(of: "button.addEventListener('click', () => ccb.answer(index));", with: "button.addEventListener('click', () => ccb.choose(index));")
             .replacingOccurrences(of: "button.disabled = data.chosen != null || data.answer != null;", with: "button.disabled = data.chosen != null;")
             .replacingOccurrences(of: "+ ((data.chosen != null || data.answer != null) && !picked ? ' faded' : '');", with: "+ (data.chosen != null && !picked ? ' faded' : '');")]
     }
 
     static let choicesAbout = """
-    Choices: a row of buttons for the user to pick one; the recommended one is marked. Bots do not draw it directly: end the reply with a <choices> block and the app uses this component.
+    Choices: a row of buttons for the user to pick one; the recommended one is marked, and an "Other" box at the end takes the user's own words and pictures. Bots do not draw it directly: end the reply with a <choices> block and the app uses this component.
     Data: {"options":[{"label":"Fill in with a placeholder image","detail":"Done today","recommended":true},{"label":"Leave it blank for now","detail":null,"recommended":false}],"chosen":null,"answer":null}
-    chosen is the index picked (from 0), answer is an answer the user typed; both are null until answered.
-    When the user answers, the bot receives the text of the option picked, or what the user typed.
+    options lists only the choices; the component adds "Other" itself. chosen is the index picked (from 0), answer is an answer the user typed; both are null until answered.
+    When the user answers, the bot receives the text of the option picked, or what the user wrote in "Other"; pictures attached there come as saved files listed under (Attachments: …), like pictures sent with a message.
     """
 
-    static let choicesTemplate = """
+    /// The choices template up to 1.5 (buttons only, no "Other" box).
+    static let choicesTemplateV1 = """
     <style>
       .list { display: flex; flex-direction: column; gap: 8px; }
       .option {
@@ -405,6 +413,165 @@ enum ComponentDefaults {
         button.addEventListener('click', () => ccb.answer(index));
         list.append(button);
       });
+    </script>
+    """
+
+    static let choicesTemplate = """
+    <style>
+      .list { display: flex; flex-direction: column; gap: 8px; }
+      .option {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        min-height: 48px; padding: 10px 14px; box-sizing: border-box; width: 100%;
+        border-radius: 12px; border: 1px solid #303037; background: #232328;
+        color: #EDEDF0; font: inherit; font-size: 14px; text-align: left; cursor: pointer;
+      }
+      .option.recommended { border-color: #6B4A1F; }
+      .option.picked { border-color: #4C8DFF; background: #1E2A44; }
+      .option.faded, .other.faded { opacity: 0.4; }
+      .option:disabled { cursor: default; }
+      .detail { font-size: 12px; color: #A0A0A8; white-space: nowrap; }
+      .recommended .detail { color: #F7C27F; }
+      .check { color: #4C8DFF; font-weight: 600; }
+      .other { display: flex; flex-direction: column; gap: 8px; padding: 8px; border-radius: 12px; border: 1px solid #303037; background: #232328; }
+      .other.dropping, .other:focus-within { border-color: #4C8DFF; }
+      .other.picked { border-color: #4C8DFF; background: #1E2A44; }
+      .row { display: flex; gap: 8px; align-items: center; }
+      .other input[type=text] {
+        flex: 1; min-width: 0; min-height: 44px; padding: 0 10px; box-sizing: border-box;
+        border: 0; border-radius: 8px; background: transparent; color: #EDEDF0; font: inherit; font-size: 14px; outline: none;
+      }
+      .other input::placeholder { color: #A0A0A8; }
+      .other button {
+        flex: none; min-width: 44px; min-height: 44px; padding: 0 12px; border-radius: 10px;
+        border: 1px solid #303037; background: #1B1B1F; color: #EDEDF0; font: inherit; font-size: 13px; cursor: pointer;
+      }
+      .other button.send { border-color: #2F4F8F; background: #1E2A44; }
+      .other button:disabled { opacity: 0.4; cursor: default; }
+      .pictures { display: flex; flex-wrap: wrap; gap: 6px; }
+      .pictures:empty { display: none; }
+      .picture { position: relative; }
+      .picture img { display: block; width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid #303037; }
+      .picture .remove { position: absolute; top: -6px; right: -6px; min-width: 22px; min-height: 22px; padding: 0; border-radius: 11px; font-size: 13px; line-height: 1; }
+    </style>
+    <div class="list" id="list"></div>
+    <script>
+      const data = window.ccb.data;
+      const list = document.getElementById('list');
+      const answered = data.chosen != null || data.answer != null;
+      data.options.forEach((option, index) => {
+        const picked = data.chosen === index;
+        const button = document.createElement('button');
+        button.className = 'option'
+          + (option.recommended && data.chosen == null ? ' recommended' : '')
+          + (picked ? ' picked' : '')
+          + ((data.chosen != null || data.answer != null) && !picked ? ' faded' : '');
+        button.disabled = data.chosen != null || data.answer != null;
+        const label = document.createElement('span');
+        label.textContent = option.label;
+        const side = document.createElement('span');
+        if (picked) {
+          side.className = 'check';
+          side.textContent = '✓';
+        } else {
+          side.className = 'detail';
+          side.textContent = option.recommended
+            ? (option.detail ? 'Recommended · ' + option.detail : 'Recommended')
+            : (option.detail || '');
+        }
+        button.append(label, side);
+        button.addEventListener('click', () => ccb.answer(index));
+        list.append(button);
+      });
+
+      // "Other": words, pictures (attach, paste or drop), or both.
+      const other = document.createElement('div');
+      other.className = 'other' + (data.answer != null ? ' picked' : '') + (data.chosen != null ? ' faded' : '');
+      const row = document.createElement('div');
+      row.className = 'row';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = 'Other… (paste or drop a picture too)';
+      input.setAttribute('aria-label', 'Other answer');
+      input.value = data.answer || '';
+      const attach = document.createElement('button');
+      attach.className = 'attach';
+      attach.textContent = 'Picture';
+      attach.setAttribute('aria-label', 'Attach a picture');
+      const send = document.createElement('button');
+      send.className = 'send';
+      send.textContent = 'Send';
+      const strip = document.createElement('div');
+      strip.className = 'pictures';
+      row.append(input, attach, send);
+      other.append(row, strip);
+      list.append(other);
+
+      const pictures = [];
+      let sent = false;
+      const refresh = () => {
+        const off = answered || sent;
+        input.disabled = off;
+        attach.disabled = off;
+        send.disabled = off || (!input.value.trim() && pictures.length === 0);
+        strip.querySelectorAll('.remove').forEach((button) => { button.disabled = off; });
+      };
+      const add = (picture) => {
+        pictures.push(picture);
+        const item = document.createElement('div');
+        item.className = 'picture';
+        const img = document.createElement('img');
+        img.src = picture.dataURL;
+        img.alt = picture.name;
+        const remove = document.createElement('button');
+        remove.className = 'remove';
+        remove.textContent = '×';
+        remove.setAttribute('aria-label', 'Remove picture');
+        remove.addEventListener('click', () => {
+          pictures.splice(pictures.indexOf(picture), 1);
+          item.remove();
+          refresh();
+        });
+        item.append(img, remove);
+        strip.append(item);
+        refresh();
+      };
+      const addFiles = (files) => {
+        [...files].filter((file) => file.type.startsWith('image/')).forEach((file) => ccb.readImage(file).then(add));
+      };
+      const submit = () => {
+        const text = input.value.trim();
+        if (answered || sent || (!text && pictures.length === 0)) return;
+        sent = true;
+        refresh();
+        ccb.answer(pictures.length ? { text, images: pictures } : text);
+      };
+      attach.addEventListener('click', () => ccb.pickImage({ multiple: true }).then((picked) => picked.forEach(add)));
+      send.addEventListener('click', submit);
+      input.addEventListener('input', refresh);
+      input.addEventListener('keydown', (event) => {
+        if (event.isComposing || event.keyCode === 229 || event.key !== 'Enter') return;
+        event.preventDefault();
+        submit();
+      });
+      input.addEventListener('paste', (event) => {
+        const files = [...((event.clipboardData && event.clipboardData.files) || [])];
+        if (!files.some((file) => file.type.startsWith('image/'))) return;
+        event.preventDefault();
+        addFiles(files);
+      });
+      other.addEventListener('dragover', (event) => {
+        if (answered || sent || !event.dataTransfer || !event.dataTransfer.types.includes('Files')) return;
+        event.preventDefault();
+        other.classList.add('dropping');
+      });
+      other.addEventListener('dragleave', () => other.classList.remove('dropping'));
+      other.addEventListener('drop', (event) => {
+        other.classList.remove('dropping');
+        if (answered || sent || !event.dataTransfer || !event.dataTransfer.files.length) return;
+        event.preventDefault();
+        addFiles(event.dataTransfer.files);
+      });
+      refresh();
     </script>
     """
 

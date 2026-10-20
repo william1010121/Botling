@@ -59,6 +59,8 @@ export interface DisplayView {
   error?: string | null;
   /** When it last ran ("10:42"). */
   ranAt?: string | null;
+  /** Pictures its data names by file path, each to the URL its frame loads (`ccb.image(path)`). */
+  images?: Record<string, string> | null;
 }
 
 export type CommandStatus = "approve" | "idle" | "running" | "done" | "failed";
@@ -116,7 +118,7 @@ export type Action =
   | { type: "ready" }
   | { type: "send"; text: string }
   | { type: "choose"; messageID: string; index: number }
-  | { type: "answer"; messageID: string; text: string }
+  | { type: "answer"; messageID: string; text: string; images?: { name: string; base64: string }[] }
   | { type: "reply"; messageID: string }
   | { type: "cancelReply" }
   | { type: "openURL"; url: string; label: string }

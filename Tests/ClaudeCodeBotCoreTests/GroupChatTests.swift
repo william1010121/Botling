@@ -119,6 +119,32 @@ struct GroupChatTests {
         #expect(!workspace.groupHasQuestion(group.id))
     }
 
+    @Test func aPictureAnsweredOnABotsLineGoesBackToThatBotAsAFile() async throws {
+        let fake = FakeLauncher()
+        fake.respond = { text in
+            guard text.contains("(App: Group chat") else { return isAppOnly(text) ? "OK" : "Got it" }
+            if text.contains("The user answered: Like this\n(Attachments:\n- ") { return "Got the picture." }
+            return "Which look?\n<choices>\n* Round\n- Square\n</choices>"
+        }
+        let workspace = makeWorkspace(fake)
+        let garden = workspace.addProject(folder: try folder("garden"))
+        let (group, chat) = try makeGroup(workspace, members: [garden.id])
+        await workspace.send("@garden pick a look", to: chat)
+        await workspace.groupQueues[group.id]?.value
+        let question = try #require(chat.messages.last)
+        #expect(question.isOpenQuestion)
+
+        let sketch = root.appending(path: "incoming/sketch.png")
+        try FileManager.default.createDirectory(at: sketch.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([0x89, 0x50]).write(to: sketch)
+        #expect(workspace.answer("Like this", files: [sketch], in: question.id, of: chat))
+        await workspace.groupQueues[group.id]?.value
+        #expect(chat.messages.last?.text == "Got the picture.")
+        #expect(chat.messages.first { $0.id == question.id }?.answer == "Like this")
+        let kept = try FileManager.default.contentsOfDirectory(atPath: chat.profile.workingDirectory.appending(path: "attachments").path)
+        #expect(kept.contains { $0.hasSuffix("-sketch.png") })
+    }
+
     @Test func groupsAreKeptAcrossRestartsAndCanBeChangedAndDeleted() throws {
         let workspace = makeWorkspace(FakeLauncher())
         let garden = workspace.addProject(folder: try folder("garden"))

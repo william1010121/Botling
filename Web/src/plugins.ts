@@ -21,8 +21,15 @@ export interface PluginSpec {
 
 type Dispose = () => void;
 
-/** Rendering a component a plugin registered: draw into `root`, answer through `answer`. */
-export type ComponentRender = (root: HTMLElement, data: unknown, answer: (value: number | string) => void) => void | Dispose;
+/**
+ * Rendering a component a plugin registered: draw into `root`, answer through `answer` (an
+ * option's index, words, or `{text, images}` with pictures as `{name, base64}`).
+ */
+export type ComponentRender = (
+  root: HTMLElement,
+  data: unknown,
+  answer: (value: number | string | { text?: string; images?: { name: string; base64: string }[] }) => void,
+) => void | Dispose;
 
 /** What the chat lends the plugin host: the input box and redrawing. */
 export interface ChatHooks {

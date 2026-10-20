@@ -1,5 +1,6 @@
 import { post } from "./bridge";
-import { choicesData, commandCard, componentElement, fallbackChoices } from "./components";
+import { answerAction, answerImages, choicesData, commandCard, componentElement, fallbackChoices } from "./components";
+import type { ComponentAnswer } from "./components";
 import { mediaHTML, renderMarkdown } from "./markdown";
 import { acceptPictures } from "./pictures";
 import type { ComponentRender } from "./plugins";
@@ -294,23 +295,25 @@ function componentView(message: MessageView, display: DisplayView, index: number
 }
 
 function drawComponent(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>): HTMLElement | null {
-  const answer = (value: number | string) =>
-    post(typeof value === "number"
-      ? { type: "choose", messageID: message.id, index: value }
-      : { type: "answer", messageID: message.id, text: value });
+  const answer = (value: ComponentAnswer) => {
+    const action = answerAction(message.id, value);
+    if (action) post(action);
+  };
   const pluginComponent = extensions.components.get(display.name);
   if (pluginComponent) {
     const root = document.createElement("div");
     root.className = "plugin-component";
     let data: unknown = null;
     try { data = JSON.parse(display.data); } catch { /* left null */ }
-    extensions.guard(pluginComponent.plugin, () => pluginComponent.render(root, data, answer));
+    extensions.guard(pluginComponent.plugin, () => pluginComponent.render(root, data, (value) => answer(
+      typeof value === "number" ? { index: value }
+        : typeof value === "string" ? { text: value }
+        : { text: value?.text ?? "", images: answerImages(value?.images) },
+    )));
     return root;
   }
-  return componentElement(display.name, components[display.name], display.data, (value) => {
-    if (value.index !== undefined) answer(value.index);
-    else if (value.text !== undefined) answer(value.text);
-  }, index === 0 ? message.id : `${message.id}/show-${index}`);
+  return componentElement(display.name, components[display.name], display.data, answer,
+    index === 0 ? message.id : `${message.id}/show-${index}`, display.images);
 }
 
 /** Answered questions you opened again, by message id; the rest stay folded to one line. */
@@ -322,9 +325,9 @@ const chevron = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" str
 function choicesElement(message: MessageView, components: Record<string, ComponentInfo>): HTMLElement {
   const choices = message.choices!;
   const onAnswer = message.open
-    ? (answer: { index?: number; text?: string }) => {
-        if (answer.index !== undefined) post({ type: "choose", messageID: message.id, index: answer.index });
-        else if (answer.text !== undefined) post({ type: "answer", messageID: message.id, text: answer.text });
+    ? (answer: ComponentAnswer) => {
+        const action = answerAction(message.id, answer);
+        if (action) post(action);
       }
     : null;
   const component = componentElement("choices", components.choices, choicesData(choices, message.chosen, message.answer), onAnswer, message.id);

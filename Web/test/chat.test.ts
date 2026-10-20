@@ -113,6 +113,60 @@ describe("messages", () => {
     expect(page).toContain("\\u003c/script>");
   });
 
+  it("send pictures a component attaches with its words, and a picture alone", () => {
+    const choices = { template: "<p>pick</p>", version: 0, working: false, updated: false, hasPrevious: false };
+    const row = messageElement(message({ id: "q1", open: true, choices: [{ label: "A", detail: null, recommended: false }] }), { choices });
+    document.body.append(row);
+    const source = row.querySelector<HTMLIFrameElement>(".component-frame")!.contentWindow;
+    const say = (data: unknown) => window.dispatchEvent(new MessageEvent("message", { data, source }));
+    say({ ccb: "answer", text: "Like this", images: [{ name: "a.png", base64: "AA==" }, { name: "bad" }, "nope"] });
+    say({ ccb: "answer", text: "", images: [{ name: "b.jpg", base64: "BB==" }] });
+    say({ ccb: "answer", text: "  ", images: [] });
+    say({ ccb: "answer", index: 0 });
+    expect(sent).toEqual([
+      { type: "answer", messageID: "q1", text: "Like this", images: [{ name: "a.png", base64: "AA==" }] },
+      { type: "answer", messageID: "q1", text: "", images: [{ name: "b.jpg", base64: "BB==" }] },
+      { type: "choose", messageID: "q1", index: 0 },
+    ]);
+  });
+
+  it("hand a shown component the pictures its data names, and its pictures back", () => {
+    const gallery = { template: "<img id=\"i\">", version: 0, working: false, updated: false, hasPrevious: false };
+    const row = messageElement(message({
+      id: "s1", text: "Here:",
+      displays: [{ name: "gallery", data: JSON.stringify({ image: "/p/chart.png" }), images: { "/p/chart.png": "ccb-preview://page/p/chart.png?v=1" } }],
+    }), { gallery });
+    document.body.append(row);
+    const frame = row.querySelector<HTMLIFrameElement>(".component-frame")!;
+    expect(frame.srcdoc).toContain("ccb-preview://page/p/chart.png?v=1");
+    window.dispatchEvent(new MessageEvent("message", { data: { ccb: "answer", text: "Brighter", images: [{ name: "x.png", base64: "AA==" }] }, source: frame.contentWindow }));
+    expect(sent).toEqual([{ type: "answer", messageID: "s1", text: "Brighter", images: [{ name: "x.png", base64: "AA==" }] }]);
+  });
+
+  it("give templates answer({text, images}), image(path) and the old ways to answer", async () => {
+    const { componentPage } = await import("../src/components");
+    const page = componentPage("<p>hi</p>", JSON.stringify({ image: "/p/a.png" }), { "/p/a.png": "ccb-preview://page/p/a.png" });
+    // The frame's own script, run against a stand-in window and parent.
+    const script = page.slice(page.indexOf("<script>") + 8, page.indexOf("</script>"));
+    const posted: unknown[] = [];
+    const frame = {} as { ccb: Record<string, (...args: unknown[]) => unknown>; deck: unknown };
+    new Function("window", "parent", script)(frame, { postMessage: (data: unknown) => posted.push(data) });
+    expect(frame.deck).toBe(frame.ccb);
+    expect(frame.ccb.image("/p/a.png")).toBe("ccb-preview://page/p/a.png");
+    expect(frame.ccb.image("/p/not-named.png")).toBe("");
+    expect(frame.ccb.image("data:image/png;base64,AA==")).toBe("data:image/png;base64,AA==");
+    await frame.ccb.answer({ text: "Like this", images: ["data:image/jpeg;base64,QUJD", { name: "mine.png", base64: "AA==" }, null] });
+    await frame.ccb.answer(2);
+    await frame.ccb.answer("words");
+    expect(posted).toEqual([
+      { ccb: "answer", text: "Like this", images: [{ name: "Picture 1.jpg", base64: "QUJD" }, { name: "mine.png", base64: "AA==" }] },
+      { ccb: "answer", index: 2 },
+      { ccb: "answer", text: "words" },
+    ]);
+    expect(typeof frame.ccb.pickImage).toBe("function");
+    expect(typeof frame.ccb.readImage).toBe("function");
+  });
+
   it("draw linked result pages as preview cards that open full-size", () => {
     const preview = { template: "<button onclick=\"ccb.open(ccb.data.url, ccb.data.title)\">open</button>", version: 0, working: false, updated: false, hasPrevious: false };
     const data = JSON.stringify({ path: "/p/.bot/artifacts/a.html", title: "A", url: "file:///p/.bot/artifacts/a.html", src: "ccb-preview://page/p/.bot/artifacts/a.html" });
