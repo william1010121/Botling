@@ -1393,7 +1393,8 @@ public final class Workspace: ObservableObject {
         if let group = group(of: bot) {
             postToGroup(group.id, text, files: files, replyingTo: replyID)
         } else {
-            bot.send(text, files: files, replyingTo: replyID)
+            // Components you named with @ (picked from the input box's list) are explained to it.
+            bot.send(text, files: files, replyingTo: replyID, appNote: components.mentionNote(for: text))
         }
     }
 

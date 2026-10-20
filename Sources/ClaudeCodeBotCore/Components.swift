@@ -94,6 +94,10 @@ public final class ComponentLibrary: ObservableObject {
     /// Every component with its whole about.md (what it is, its data, what it answers), so a bot
     /// can use one correctly without opening the folder.
     public func catalog() -> String {
+        catalog(names)
+    }
+
+    private func catalog(_ names: [String]) -> String {
         names.map { name in
             let about = ((try? String(contentsOf: aboutURL(name), encoding: .utf8)) ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -102,6 +106,26 @@ public final class ComponentLibrary: ObservableObject {
             let rest = lines.dropFirst().map { "  " + $0 }.joined(separator: "\n")
             return "- \(name): \(first)" + (rest.isEmpty ? "" : "\n" + rest)
         }.joined(separator: "\n")
+    }
+
+    /// The catalog lines of just these components.
+    public func catalog(of only: [String]) -> String {
+        let wanted = Set(only)
+        return catalog(names.filter(wanted.contains))
+    }
+
+    /// The components `text` names with @Name (the user picked one from the input box's list),
+    /// in the order they are named.
+    public func mentioned(in text: String) -> [String] {
+        ComponentMentions.names(in: text, among: names)
+    }
+
+    /// What goes to the bot, unseen, with a message that names components with @.
+    public func mentionNote(for text: String) -> String? {
+        let named = mentioned(in: text)
+        guard !named.isEmpty else { return nil }
+        let list = named.map { "\"\($0)\"" }.joined(separator: ", ")
+        return "(App: With @ the user names the in-chat component\(named.count == 1 ? "" : "s") \(list): they mean \(named.count == 1 ? "that component" : "those components") of the app's chat. <show name=\"name\">JSON</show> draws one; <component name=\"name\">request</component> asks Maintainer to change one. How to use \(named.count == 1 ? "it" : "them"):\n\(catalog(of: named)))"
     }
 
     func aboutURL(_ name: String) -> URL {
@@ -189,12 +213,16 @@ public final class ComponentLibrary: ObservableObject {
     // MARK: Setup
 
     private func seedDefaults() {
-        for (name, template, about) in [("choices", ComponentDefaults.choicesTemplate, ComponentDefaults.choicesAbout)] {
+        let defaults = [
+            ("choices", ComponentDefaults.choicesTemplate, ComponentDefaults.choicesAbout, ComponentDefaults.olderChoicesTemplates, ComponentDefaults.olderChoicesAbouts),
+            (PagePreview.component, ComponentDefaults.previewTemplate, ComponentDefaults.previewAbout, [], [])
+        ]
+        for (name, template, about, olderTemplates, olderAbouts) in defaults {
             let componentFolder = folder.appending(path: name)
             try? FileManager.default.createDirectory(at: componentFolder, withIntermediateDirectories: true)
             for (file, text, older) in [
-                ("template.html", template, ComponentDefaults.olderChoicesTemplates),
-                ("about.md", about, ComponentDefaults.olderChoicesAbouts)
+                ("template.html", template, olderTemplates),
+                ("about.md", about, olderAbouts)
             ] {
                 let url = componentFolder.appending(path: file)
                 let current = try? String(contentsOf: url, encoding: .utf8)
@@ -209,6 +237,33 @@ public final class ComponentLibrary: ObservableObject {
     static func safeName(_ name: String) -> String {
         String(name.lowercased().map { $0.isLetter || $0.isNumber || $0 == "-" ? $0 : "-" })
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    }
+}
+
+/// Components named with @ in what the user typed (the input box offers them after @, beside
+/// the bots of a group chat).
+public enum ComponentMentions {
+    /// The names `text` has as `@name`, in the order they come. Longer names win, so a name that
+    /// starts another is not read inside it; only ASCII letters, digits, _ and - end a name, so
+    /// "@網頁預覽卡片請看" and "看@choices。" both count, but "me@choices.dev" does not.
+    public static func names(in text: String, among names: [String]) -> [String] {
+        let lower = text.lowercased()
+        let wordCharacter = { (c: Character) in c.isASCII && (c.isLetter || c.isNumber || c == "_" || c == "-") }
+        var found: [(at: String.Index, name: String)] = []
+        var taken: [Range<String.Index>] = []
+        for name in Set(names).sorted(by: { $0.count > $1.count }) where !name.isEmpty {
+            let needle = "@" + name.lowercased()
+            var from = lower.startIndex
+            while let range = lower.range(of: needle, range: from..<lower.endIndex) {
+                from = range.upperBound
+                let startsWord = range.lowerBound == lower.startIndex || !wordCharacter(lower[lower.index(before: range.lowerBound)])
+                let endsWord = range.upperBound == lower.endIndex || !wordCharacter(lower[range.upperBound])
+                guard startsWord, endsWord, !taken.contains(where: { $0.overlaps(range) }) else { continue }
+                taken.append(range)
+                if !found.contains(where: { $0.name == name }) { found.append((range.lowerBound, name)) }
+            }
+        }
+        return found.sorted { $0.at < $1.at }.map(\.name)
     }
 }
 
@@ -306,6 +361,116 @@ enum ComponentDefaults {
         button.addEventListener('click', () => ccb.answer(index));
         list.append(button);
       });
+    </script>
+    """
+
+    /// 「網頁預覽卡片」: written in Traditional Chinese like the user's own components.
+    static let previewAbout = """
+    網頁預覽卡片：把一頁式 HTML 結果直接縮小預覽在對話裡，附上標題和「開啟」按鈕，按下就用自己的視窗開成全尺寸。用 `<show name="網頁預覽卡片">JSON</show>` 叫出來。
+
+    ## 資料格式（window.ccb.data）
+
+    ```json
+    {
+      "path": "/Users/me/project/.bot/artifacts/competitor-report.html",
+      "title": "競品比較報告"
+    }
+    ```
+
+    - `path`：HTML 檔的完整路徑，也可以寫 `file://` 網址或 `~/` 開頭的路徑。
+    - `title`：卡片上的標題；省略時用檔名。
+    - `src`、`url`、`name`、`missing` 由 App 自己補上，不用寫。檔案不存在時卡片會顯示「找不到這個檔案」。
+
+    ## 什麼時候用
+
+    - 回覆裡連到 `artifacts` 資料夾裡 .html 的連結，例如 `[競品比較](file:///…/.bot/artifacts/report.html)`，App 會自動畫成這張卡片，照常附連結就好，不必另外寫 `<show>`。
+    - 想換卡片標題，或頁面不在 `artifacts` 資料夾時，才用 `<show>`。不在 `artifacts` 裡的頁面只會載入那一個檔案，旁邊的圖片不會顯示。
+    - 一則回覆只能有一個 `<show>`。
+    - 不需要使用者回答，不會呼叫 `ccb.answer`。
+    """
+
+    static let previewTemplate = """
+    <style>
+      :root { --bg:#232328; --line:#303037; --text:#EDEDF0; --muted:#A0A0A8; --accent:#4C8DFF; --button:#1E2A44; --button-line:#2F4F8F; --empty:#1B1B1F; }
+      @media (prefers-color-scheme: light) {
+        :root { --bg:#FFFFFF; --line:#DCDCE3; --text:#1D1D22; --muted:#6A6A74; --accent:#2F6FE0; --button:#EAF1FF; --button-line:#B9CEF5; --empty:#F4F4F7; }
+      }
+      .card { box-sizing:border-box; width:100%; max-width:480px; border-radius:14px; border:1px solid var(--line); background:var(--bg); color:var(--text); overflow:hidden; }
+      .shot { position:relative; display:block; width:100%; height:270px; overflow:hidden; background:#FFFFFF; border-bottom:1px solid var(--line); cursor:pointer; }
+      .shot:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+      .shot iframe { position:absolute; top:0; left:0; width:1280px; height:800px; border:0; background:#FFFFFF; transform-origin:0 0; pointer-events:none; }
+      .empty { display:flex; align-items:center; justify-content:center; height:96px; padding:0 16px; background:var(--empty); color:var(--muted); font-size:13px; text-align:center; border-bottom:1px solid var(--line); }
+      .foot { display:flex; align-items:center; gap:12px; padding:8px 8px 8px 14px; }
+      .names { flex:1; min-width:0; }
+      .title { font-size:14px; font-weight:600; line-height:1.35; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .file { margin-top:2px; font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .open { flex:none; min-height:44px; padding:0 14px; border-radius:10px; border:1px solid var(--button-line); background:var(--button); color:var(--text); font:inherit; font-size:13px; cursor:pointer; }
+      .open:disabled { opacity:0.45; cursor:default; }
+    </style>
+    <div class="card" id="card"></div>
+    <script>
+      const data = window.ccb.data || {};
+      const card = document.getElementById('card');
+      // The page is drawn at a desktop width, then scaled down to the card.
+      const pageWidth = 1280, pageHeight = 800;
+      const title = data.title || data.name || '網頁預覽';
+      const canOpen = !!data.url && !data.missing;
+      const open = () => { if (canOpen) ccb.open(data.url, title); };
+
+      if (data.src && !data.missing) {
+        const shot = document.createElement('div');
+        shot.className = 'shot';
+        shot.tabIndex = 0;
+        shot.setAttribute('role', 'button');
+        shot.setAttribute('aria-label', '開啟完整頁面：' + title);
+        const frame = document.createElement('iframe');
+        frame.src = data.src;
+        frame.setAttribute('sandbox', 'allow-scripts');
+        frame.setAttribute('aria-hidden', 'true');
+        frame.tabIndex = -1;
+        shot.append(frame);
+        shot.addEventListener('click', open);
+        shot.addEventListener('keydown', (event) => {
+          if (event.isComposing) return;
+          if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); }
+        });
+        card.append(shot);
+        const fit = () => {
+          const scale = shot.clientWidth / pageWidth;
+          if (!scale) return;
+          frame.style.transform = 'scale(' + scale + ')';
+          shot.style.height = Math.round(pageHeight * scale) + 'px';
+        };
+        new ResizeObserver(fit).observe(card);
+        fit();
+      } else {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = data.missing ? '找不到這個檔案' : '這個頁面無法預覽';
+        card.append(empty);
+      }
+
+      const foot = document.createElement('div');
+      foot.className = 'foot';
+      const names = document.createElement('div');
+      names.className = 'names';
+      const heading = document.createElement('div');
+      heading.className = 'title';
+      heading.textContent = title;
+      names.append(heading);
+      if (data.name && data.name !== title) {
+        const file = document.createElement('div');
+        file.className = 'file';
+        file.textContent = data.name;
+        names.append(file);
+      }
+      const button = document.createElement('button');
+      button.className = 'open';
+      button.textContent = '開啟完整頁面';
+      button.disabled = !canOpen;
+      button.addEventListener('click', open);
+      foot.append(names, button);
+      card.append(foot);
     </script>
     """
 }

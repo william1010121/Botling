@@ -111,7 +111,7 @@ struct ComponentTests {
     @Test func choicesShipsAsATemplate() {
         let workspace = makeWorkspace(FakeLauncher())
         let library = workspace.components
-        #expect(library.names == ["choices"])
+        #expect(library.names == ["choices", PagePreview.component])
         #expect(library.template("choices")?.contains("ccb.answer(index)") == true)
         #expect(library.catalog().hasPrefix("- choices: Choices"))
         #expect(workspace.componentBriefing().contains("- choices: "))

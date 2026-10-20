@@ -203,6 +203,11 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
       if (component) bubble.append(component);
     }
   }
+  // Result pages it links to, as preview cards under the text (the links stay chips too).
+  message.previews?.forEach((preview, index) => {
+    const card = componentElement(preview.name, components[preview.name], preview.data, null, `${message.id}/preview-${index}`);
+    if (card) bubble.append(card);
+  });
   if (message.openable) {
     const open = document.createElement("button");
     open.className = "open-source";

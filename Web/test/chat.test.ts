@@ -110,6 +110,27 @@ describe("messages", () => {
     expect(page).toContain("\\u003c/script>");
   });
 
+  it("draw linked result pages as preview cards that open full-size", () => {
+    const preview = { template: "<button onclick=\"ccb.open(ccb.data.url, ccb.data.title)\">open</button>", version: 0, working: false, updated: false, hasPrevious: false };
+    const data = JSON.stringify({ path: "/p/.bot/artifacts/a.html", title: "A", url: "file:///p/.bot/artifacts/a.html", src: "ccb-preview://page/p/.bot/artifacts/a.html" });
+    const row = messageElement(message({
+      id: "m20", text: "Done: [A](file:///p/.bot/artifacts/a.html)",
+      previews: [{ name: "網頁預覽卡片", data }],
+    }), { "網頁預覽卡片": preview });
+    document.body.append(row);
+    // The link stays a chip; the card comes under it.
+    expect(row.querySelector(".chip")).not.toBeNull();
+    const frame = row.querySelector<HTMLIFrameElement>(".component-frame")!;
+    expect(frame.title).toBe("網頁預覽卡片");
+    expect(frame.srcdoc).toContain("ccb-preview://page/p/.bot/artifacts/a.html");
+    expect(frame.srcdoc).toContain("open(url, label)");
+    window.dispatchEvent(new MessageEvent("message", { data: { ccb: "open", url: "file:///p/.bot/artifacts/a.html", label: "A" }, source: frame.contentWindow }));
+    expect(sent).toEqual([{ type: "openURL", url: "file:///p/.bot/artifacts/a.html", label: "A" }]);
+    // Without the template the link is all there is.
+    const bare = messageElement(message({ id: "m21", text: "[A](file:///p/.bot/artifacts/a.html)", previews: [{ name: "網頁預覽卡片", data }] }), {});
+    expect(bare.querySelector(".component-frame")).toBeNull();
+  });
+
   it("name who said a line in the group chat", () => {
     const row = messageElement(message({ text: "Garden is green.", speaker: "garden" }), {});
     expect(row.querySelector(".speaker")?.textContent).toBe("garden");
@@ -292,6 +313,27 @@ describe("composer", () => {
     expect(list.hidden).toBe(false);
     composer.update(state({ mentions: [] }));
     expect(list.hidden).toBe(true);
+  });
+
+  it("offers components after @ in any chat, after the group's bots, and puts the picked one in", () => {
+    const composer = new Composer(document.body);
+    composer.update(state({ componentMentions: ["choices", "網頁預覽卡片", "天氣卡片"] }));
+    const list = document.querySelector<HTMLElement>(".mention-list")!;
+    composer.insert("看這個@網");
+    expect(list.hidden).toBe(false);
+    const options = [...list.querySelectorAll("button")];
+    expect(options.map((b) => b.querySelector(".mention-name")?.textContent)).toEqual(["@網頁預覽卡片"]);
+    expect(options[0].querySelector(".mention-kind")?.textContent).toBe("組件");
+    composer.view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    expect(composer.text).toBe("看這個@網頁預覽卡片 ");
+    expect(sent).toEqual([]);
+    // In a group chat the bots come first; a component named like a bot is offered once, as the bot.
+    composer.setText("");
+    composer.update(state({ mentions: ["garden", "choices"], componentMentions: ["choices", "網頁預覽卡片"] }));
+    composer.insert("@");
+    const all = [...list.querySelectorAll("button")];
+    expect(all.map((b) => b.querySelector(".mention-name")?.textContent)).toEqual(["@garden", "@choices", "@網頁預覽卡片"]);
+    expect(all.map((b) => b.querySelector(".mention-kind") !== null)).toEqual([false, false, true]);
   });
 
   it("leaves Return to the input method while it is composing", () => {

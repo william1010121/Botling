@@ -35,6 +35,8 @@ public struct ChatPayload: Encodable, Equatable {
         var speaker: String?
         /// What the bot did on the way to this reply.
         var steps: [StepView]?
+        /// Result pages it links to, drawn as 「網頁預覽卡片」 cards under it.
+        var previews: [Display]?
     }
 
     /// One line of work, as the page draws it. A subagent's line carries how it is doing.
@@ -91,6 +93,8 @@ public struct ChatPayload: Encodable, Equatable {
     var components: [String: Component]
     /// Names you can @ (a group chat), for completing them as you type.
     var mentions: [String]
+    /// Components you can @ (every chat you can type in), offered after the names.
+    var componentMentions: [String] = []
     /// What it is doing right now, while it works.
     var live: [StepView]
     /// Set while you look at one of its subagents instead of the chat.
@@ -155,13 +159,14 @@ public struct ChatPayload: Encodable, Equatable {
                 chosen: message.chosen,
                 answer: message.answer,
                 open: message.isOpenQuestion,
-                display: message.display.map { Display(name: $0.name, data: $0.data) },
+                display: message.display.map(display),
                 attachments: message.attachments?.map(file),
                 replyTo: message.replyTo?.uuidString,
                 replyPreview: message.replyPreview,
                 openable: message.role == .notice && message.sourceID != nil,
                 speaker: message.role == .bot ? message.sourceID.flatMap { id in group.map { $0.speaker(id) ?? "A removed bot" } } : nil,
-                steps: message.steps.map { $0.map { stepView($0, in: bot) } }
+                steps: message.steps.map { $0.map { stepView($0, in: bot) } },
+                previews: previews(for: message, in: library)
             )
         }
         let reply = replyingTo.flatMap { id in bot.messages.first { $0.id == id } }.map {
@@ -198,6 +203,7 @@ public struct ChatPayload: Encodable, Equatable {
             },
             components: components,
             mentions: group?.names ?? [],
+            componentMentions: library?.names ?? [],
             live: group == nil && bot.isWorking ? bot.liveSteps.map { stepView($0, in: bot) } : [],
             subagent: nil,
             feedback: feedback
@@ -282,6 +288,23 @@ public struct ChatPayload: Encodable, Equatable {
         encoder.outputFormatting = [.withoutEscapingSlashes]
         guard let data = try? encoder.encode(self) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    /// A component in a message; a 「網頁預覽卡片」 gets where to load its page from.
+    static func display(_ instance: ComponentInstance) -> Display {
+        Display(name: instance.name, data: instance.name == PagePreview.component ? PagePreview.cardData(instance.data) : instance.data)
+    }
+
+    /// Cards for the result pages a bot's line or a notice links to, when the card component is
+    /// there to draw them (without it the links stay chips, as before).
+    @MainActor
+    static func previews(for message: ChatMessage, in library: ComponentLibrary?) -> [Display]? {
+        guard message.role == .bot || message.role == .notice,
+              library?.names.contains(PagePreview.component) == true,
+              message.text.contains("](file:") else { return nil }
+        let shown = message.display.flatMap { $0.name == PagePreview.component ? PagePreview.page(inCard: $0.data) : nil }
+        let cards = PagePreview.linkedCards(in: message.text, skipping: shown)
+        return cards.isEmpty ? nil : cards.map { Display(name: PagePreview.component, data: $0) }
     }
 
     private static func file(_ attachment: Attachment) -> File {

@@ -24,6 +24,14 @@ enum Snapshot {
         let now = Date()
         let picture = URL(filePath: #filePath).deletingLastPathComponent()
             .appending(path: "../../docs/flowcharts/flow-4-lifecycle.png").standardizedFileURL
+        // A result page, so the sample shows it as a 「網頁預覽卡片」 card.
+        let page = root.appending(path: "main/artifacts/portfolio.html")
+        try? FileManager.default.createDirectory(at: page.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? Data("""
+        <!doctype html><meta charset="utf-8"><body style="margin:0;font:28px -apple-system,sans-serif;background:#F6F4EF;color:#222">
+        <header style="padding:56px 72px;background:#1F3B57;color:#fff"><h1 style="margin:0;font-size:64px">作品集</h1><p style="margin:12px 0 0;opacity:.8">Portfolio section · 3 projects</p></header>
+        <main style="display:flex;gap:32px;padding:48px 72px">\(["NotchDo", "blog-site", "scheduling"].map { "<section style=\"flex:1;height:360px;border-radius:24px;background:#fff;box-shadow:0 8px 24px rgba(0,0,0,.08);padding:32px\"><h2 style=\"margin:0\">\($0)</h2></section>" }.joined())</main>
+        """.utf8).write(to: page)
         let answered = UUID()
         var mine = ChatMessage(role: .user, text: "What is this? And work out $\\int_0^1 x^2\\,dx$", date: now.addingTimeInterval(-50))
         mine.attachments = [Attachment(url: picture)]
@@ -43,7 +51,7 @@ enum Snapshot {
             |---|---|
             | blog-site | Waiting on you |
 
-            Result: [Portfolio section](file:///tmp/portfolio.html)
+            Result: [Portfolio section](\(page.absoluteString))
             """, date: now.addingTimeInterval(-40)),
             ChatMessage(role: .notice, text: "blog-site: 40 old posts have no cover image. What should we do?", date: now.addingTimeInterval(-30), choices: [
                 Choice(label: "Fill in with a placeholder image", detail: "Done today", recommended: true),
@@ -109,6 +117,7 @@ enum Snapshot {
         let handler = Handler(path: path, json: json, plugins: ChatSurface.setPluginsScript(workspace.plugins))
         configuration.userContentController.add(handler, name: "ccb")
         configuration.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
+        configuration.setURLSchemeHandler(PreviewSchemeHandler.shared, forURLScheme: PagePreview.scheme)
         let view = WKWebView(frame: frame, configuration: configuration)
         handler.view = view
         window.contentView = view
