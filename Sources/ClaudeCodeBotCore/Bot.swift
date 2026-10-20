@@ -67,6 +67,8 @@ public final class Bot: ObservableObject, Identifiable {
     public var onSpend: ((Double) -> Void)?
     /// Called with the tokens each turn used.
     public var onTokens: ((TokenUsage) -> Void)?
+    /// The API reported the subscription's limits.
+    public var onRateLimits: ((RateLimits) -> Void)?
     /// What the running session has cost so far (claude reports a running total).
     private var sessionCost = 0.0
     /// Called with the tags a reply carried (pull up a team, ask the component team).
@@ -786,6 +788,8 @@ public final class Bot: ObservableObject, Identifiable {
         guard source === process else { return }
         noteProgress(of: event)
         switch event {
+        case let .rateLimits(limits):
+            onRateLimits?(limits)
         case .connectionTrouble:
             if !retryingConnection { retryingConnection = true }
         case let .usage(total, tokens):
@@ -926,7 +930,7 @@ public final class Bot: ObservableObject, Identifiable {
 
     private func noteProgress(of event: AgentEvent) {
         switch event {
-        case .connectionTrouble, .exited:
+        case .connectionTrouble, .rateLimits, .exited:
             return
         case let .trace(step):
             if let id = Self.subagentID(of: step) {

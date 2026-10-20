@@ -8,6 +8,15 @@ extension Workspace {
         spending.save(to: spendingURL)
     }
 
+    /// Keeps the latest reading of each subscription limit.
+    func note(_ limits: RateLimits) {
+        var next = rateLimits
+        next.merge(limits)
+        guard next != rateLimits else { return }
+        rateLimits = next
+        rateLimits.save(to: rateLimitsURL)
+    }
+
     public static func dollars(_ amount: Double) -> String {
         "$" + String(format: "%.2f", amount)
     }

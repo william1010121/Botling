@@ -133,6 +133,9 @@ public final class Workspace: ObservableObject {
     @Published public internal(set) var spending: Spending
     var settingsURL: URL { root.appending(path: "settings.json") }
     var spendingURL: URL { root.appending(path: "spending.json") }
+    /// The subscription's 5-hour and weekly limits, as a bot's `claude` last reported them.
+    @Published public internal(set) var rateLimits: RateLimits
+    var rateLimitsURL: URL { root.appending(path: "rate-limits.json") }
     /// The ClaudeCodeBot build running now; nil when not run from an app bundle (`swift run`).
     public var runningBuild: BuildInfo?
     /// Runs the install script, detached, and quits the app (the app sets it).
@@ -178,6 +181,7 @@ public final class Workspace: ObservableObject {
         self.launcher = launcher
         settings = AppSettings.load(from: root.appending(path: "settings.json"))
         spending = Spending.load(from: root.appending(path: "spending.json"))
+        rateLimits = RateLimits.load(from: root.appending(path: "rate-limits.json"))
         let library = root.appending(path: "plugins")
         Self.migrateFromDeck(library: library, root: root)
         let componentFolder = Self.prepareComponentPlugin(in: library, movingFrom: root.appending(path: "components"))
@@ -219,6 +223,7 @@ public final class Workspace: ObservableObject {
         mainBot.onCodexSettings = { [weak self] _ in self?.retellCodexRules(to: Self.mainBotID) }
         mainBot.onSpend = { [weak self] amount in self?.record(amount, by: "Main bot") }
         mainBot.onTokens = { [weak self] tokens in self?.record(0, tokens: tokens, by: "Main bot") }
+        mainBot.onRateLimits = { [weak self] limits in self?.note(limits) }
         // Asked during a group turn, the main bot's question shows in that group too.
         mainBot.onQuestion = { [weak self] message in
             guard let self else { return }
@@ -1074,6 +1079,8 @@ public final class Workspace: ObservableObject {
                 case let .usage(total, tokens):
                     // A team runs one turn, so its running total is what it cost.
                     self?.record(total, tokens: tokens, by: spec.title)
+                case let .rateLimits(limits):
+                    self?.note(limits)
                 case .trace, .permission, .permissionCancelled, .connectionTrouble:
                     // Teams are started without asking (asksPermission is off), so nothing waits.
                     break
@@ -1716,6 +1723,7 @@ public final class Workspace: ObservableObject {
         bot.onCodexSettings = { [weak self] _ in self?.retellCodexRules(to: project.id) }
         bot.onSpend = { [weak self] amount in self?.record(amount, by: project.name) }
         bot.onTokens = { [weak self] tokens in self?.record(0, tokens: tokens, by: project.name) }
+        bot.onRateLimits = { [weak self] limits in self?.note(limits) }
         bot.wakeNote = { [weak self] in
             guard let self else { return "" }
             return [componentBriefing(), developerBriefing(for: project), managers[project.id].map(codexBriefing(for:)) ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n")

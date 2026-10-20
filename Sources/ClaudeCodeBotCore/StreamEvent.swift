@@ -39,6 +39,8 @@ enum StreamEvent {
                 guard block["type"] as? String == "tool_result", let id = block["tool_use_id"] as? String else { return nil }
                 return .trace(.toolResult(id: id, output: text(of: block["content"]), failed: block["is_error"] as? Bool ?? false, parent: parent))
             }
+        case "rate_limit_event":
+            return RateLimits.parse(object, seen: Date()).map { [.rateLimits($0)] } ?? []
         case "system":
             switch object["subtype"] as? String {
             case "task_started":
