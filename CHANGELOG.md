@@ -8,6 +8,14 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **A plugin update no longer cuts off a bot's background work.** When a plugin's Claude part
+  changed (Maintainer editing ccb-core, say), every awake bot handed off and restarted as soon as
+  no turn was under way, even with a subagent still at work in the background, which ended that
+  subagent; and the changed part dropped out while it was checked again, so one edit made two
+  handoffs (the first without the plugin at all). A bot now waits until it is free — no turn and
+  no subagent at work — and loads the new plugins once, however many changes came in meanwhile;
+  a part being checked is not a change of its own; and a bot whose session already has the
+  current plugins does not hand off.
 - **A narrow window no longer cuts off the left column or the right panel.** The rail, the chat
   and the right panel always add up to the window's width: a panel that wants more room than is
   left (Make into component spread wide in a half-screen window) narrows, down to 340pt, then

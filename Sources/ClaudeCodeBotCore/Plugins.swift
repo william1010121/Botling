@@ -481,6 +481,25 @@ public final class PluginRegistry: ObservableObject {
         }
     }
 
+    /// The Claude parts `claudeDirectories()` gives, each with the fingerprint of its files: a
+    /// session started with a different stamp has older skills, agents or MCP servers.
+    public func claudeStamp() -> [String] {
+        plugins.compactMap { plugin in
+            guard plugin.enabled, let claude = plugin.manifest.ccb?.claude, let print = fingerprints[plugin.name],
+                  let check = claudeChecks[plugin.name], check.fingerprint == print, check.problem == nil else { return nil }
+            return plugin.url(claude).standardizedFileURL.path + "#" + print
+        }
+    }
+
+    /// A Claude part changed and is still waiting for (or in) its check: it is left out of
+    /// `claudeDirectories()` only until the check is done.
+    public var checkingClaudeParts: Bool {
+        plugins.contains { plugin in
+            guard plugin.enabled, plugin.manifest.ccb?.claude != nil, let print = fingerprints[plugin.name] else { return false }
+            return claudeChecks[plugin.name]?.fingerprint != print
+        }
+    }
+
     /// Tools bots may use from plugins' MCP servers (`mcp__plugin_<plugin>_<server>`), for the
     /// Claude parts that passed their check.
     public func claudeTools() -> [String] {
