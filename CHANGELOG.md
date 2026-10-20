@@ -87,6 +87,20 @@ app and publishes it on GitHub Releases.
   press it; then its first version is built as above. Maintainer answers with
   `<component-spec id="…">JSON</component-spec>`.
 
+### Fixed
+
+- **Choice buttons no longer go missing when a bot keeps working after asking.** A reply made of
+  several parts (words with `<choices>`, then a tool call such as saving its memory, then a short
+  last line) showed no buttons: claude's result holds only the words after the last tool call,
+  so the question in the earlier part was lost. Every app tag in the turn's earlier parts
+  (`<choices>`, `<show>`, `<component>`, `<team>`, `<new-bot>`, `<plugin>`, `<install>`,
+  `<install-build>`, `<new-project>`, `<need-folder>`, `<app-screenshot>`, `<open-question>`,
+  `<codex-review>`, `<give-component>`, `<take-component>`, `<suggest-component>`,
+  `<component-spec>`) now counts as part of the reply, in chats, group chats, call-ins and
+  handoffs: one choices card at the end of the reply (the last block wins when there are
+  several), requests acted on, and the step list keeps the words without the raw tags, so the
+  saved chat and archive match what was shown and a pick goes back to the bot as usual.
+
 ## 1.8.0
 
 ### Added

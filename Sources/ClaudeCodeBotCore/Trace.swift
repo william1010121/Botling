@@ -257,6 +257,32 @@ public struct TraceBook: Equatable, Sendable {
         return taken.isEmpty ? nil : taken
     }
 
+    /// Takes the app's tags out of the bot's own words before its last tool call (the words
+    /// after it are the reply itself, which has its own) and returns them, in order. A part
+    /// that was only tags is left out of the steps.
+    public mutating func liftReplyTags() -> [String] {
+        guard let lastTool = steps.lastIndex(where: { $0.kind != .text }) else { return [] }
+        var tags: [String] = []
+        var kept: [Step] = []
+        for (index, step) in steps.enumerated() {
+            guard index < lastTool, step.kind == .text else {
+                kept.append(step)
+                continue
+            }
+            let lifted = ReplyParser.liftTags(step.title)
+            tags += lifted.tags
+            if lifted.tags.isEmpty {
+                kept.append(step)
+            } else if !lifted.rest.isEmpty {
+                var changed = step
+                changed.title = lifted.rest
+                kept.append(changed)
+            }
+        }
+        steps = kept
+        return tags
+    }
+
     /// Forgets the turn's steps (a turn nobody sees: tidying, a group turn).
     public mutating func dropSteps() {
         steps = []

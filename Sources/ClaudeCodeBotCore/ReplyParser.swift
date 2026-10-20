@@ -238,14 +238,55 @@ public enum ReplyParser {
         }
         requests += specs
 
+        // Several blocks (an earlier part of the turn asked, then a later one): the last one
+        // is the question; every block comes out of the text.
         var choices: [Choice]?
-        take(choicesBlock, first: true) { groups in
+        take(choicesBlock) { groups in
+            guard choices == nil else { return }
             let parsed = groups[0].split(separator: "\n").compactMap(choice(from:))
             choices = parsed.isEmpty ? nil : parsed
         }
         let (body, places) = placing(text as String, count: displays.count)
         for index in displays.indices { displays[index].at = places[index] }
         return Parsed(body: body, choices: choices, requests: requests, displays: displays)
+    }
+
+    /// Every tag the app acts on, in the order `parseAll` knows them.
+    private static var replyTags: [NSRegularExpression] {
+        [showTag, requestTag, pluginTag, installTag, projectTag, buildTag, screenshotTag, folderTag,
+         openQuestionTag, codexTag, listTag, suggestTag, specTag, choicesBlock]
+    }
+
+    /// Takes the app's tags (`<choices>`, `<show>`, `<plugin>`, …) out of one earlier part of a
+    /// turn: claude's `result` holds only the words after the last tool call, so a tag written
+    /// before a tool call would be lost. Returns the words left and the tags, as written, in
+    /// order; they go in front of the reply (`lifting(_:into:)`). Tags in code stay.
+    public static func liftTags(_ segment: String) -> (rest: String, tags: [String]) {
+        let mask = masked(segment)
+        let whole = NSRange(location: 0, length: mask.length)
+        let ranges = replyTags.flatMap { $0.matches(in: mask as String, range: whole).map(\.range) }
+            .sorted { $0.location < $1.location }
+        var kept: [NSRange] = []
+        for range in ranges where kept.last.map({ NSMaxRange($0) <= range.location }) ?? true {
+            kept.append(range)
+        }
+        guard !kept.isEmpty else { return (segment, []) }
+        let text = NSMutableString(string: segment)
+        let tags = kept.map { text.substring(with: $0) }
+        for range in kept.reversed() { text.replaceCharacters(in: range, with: "") }
+        let rest = (text as String).replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (rest, tags)
+    }
+
+    /// The reply with tags lifted from earlier parts of its turn in front, so they count as if
+    /// written in it: requests are acted on, a `<show>` is drawn first (it came first), and its
+    /// own `<choices>`, if any, still win over earlier ones (the last block is the question).
+    /// A tag the reply already has word for word is not added twice.
+    public static func lifting(_ tags: [String], into reply: String) -> String {
+        let new = tags.filter { !reply.contains($0) }
+        guard !new.isEmpty else { return reply }
+        return new.joined(separator: "\n") + "\n\n" + reply
     }
 
     /// The reply without its markers, trimmed, and where each marker was in it (UTF-16 offsets,

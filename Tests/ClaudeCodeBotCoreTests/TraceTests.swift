@@ -460,4 +460,84 @@ struct TraceTests {
         #expect(payload.subagent?.owner == bot.name)
         #expect(!payload.working)
     }
+
+    // MARK: Tags in an earlier part of the reply
+
+    /// A turn as claude streams it: words with a question, a tool call (it notes the question in
+    /// its memory), and a short last line. The `result` line holds only that last line.
+    enum AskThenSave {
+        static let asks = #"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"text","text":"Which one should I do first?\n\n<choices>\n* Fix the login | Today\n- Write the docs | Later\n</choices>\n<plugin>Remember the last tab</plugin>"}]}}"#
+        static let saves = #"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","id":"toolu_M","name":"Edit","input":{"file_path":"/tmp/bot/memory.md","old_string":"a","new_string":"b"}}]}}"#
+        static let saved = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_M","type":"tool_result","content":"The file has been updated."}]}}"#
+        static let last = #"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"text","text":"Noted it in my memory."}]}}"#
+        static let result = #"{"type":"result","subtype":"success","is_error":false,"result":"Noted it in my memory.","total_cost_usd":0.01}"#
+
+        static var lines: [String] { [asks, saves, saved, last, result] }
+    }
+
+    @Test func choicesWrittenBeforeAToolCallStillEndTheReply() async {
+        let fake = FakeLauncher()
+        fake.respond = { text in isAppOnly(text) ? "OK" : nil }
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-trace-\(UUID().uuidString)")
+        let store = BotStore(directory: home.appending(path: "store"))
+        let bot = Bot(profile: .main(home: home), launcher: fake.launcher, store: store)
+        var requests: [BotRequest] = []
+        bot.onRequests = { requests += $0 }
+
+        bot.send("What next?")
+        await eventually { fake.agents.count == 1 }
+        let agent = fake.agents[0]
+        for line in AskThenSave.lines {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+        await eventually { bot.messages.last?.role == .bot }
+        let reply = bot.messages.last
+        #expect(reply?.text == "Noted it in my memory.")
+        #expect(reply?.choices?.map(\.label) == ["Fix the login", "Write the docs"])
+        #expect(reply?.choices?.first?.recommended == true)
+        #expect(requests == [.plugin(request: "Remember the last tab")])
+        // The steps keep the words, not the tags that became the card and the request.
+        let words = reply?.steps?.filter { $0.kind == .text }.map(\.title)
+        #expect(words == ["Which one should I do first?"])
+        #expect(reply?.steps?.contains { $0.title.contains("<choices>") || $0.title.contains("<plugin>") } == false)
+
+        // Saved with it, so it reads the same after a restart.
+        let again = Bot(profile: .main(home: home), launcher: fake.launcher, store: store)
+        #expect(again.messages.last?.choices?.map(\.label) == ["Fix the login", "Write the docs"])
+
+        // Picking one goes back to the bot as the answer.
+        let id = reply!.id
+        #expect(bot.choose(1, in: id))
+        await eventually { agent.sent.contains { $0.contains("Write the docs") } }
+    }
+
+    @Test func aGroupTurnGetsChoicesFromAnEarlierPartToo() async {
+        let fake = FakeLauncher()
+        fake.respond = { text in isAppOnly(text) ? "OK" : nil }
+        let bot = makeBot(fake)
+        bot.send("hi")
+        await eventually { fake.agents.count == 1 }
+        let agent = fake.agents[0]
+        agent.reply("Hello")
+        await eventually { !bot.isWorking }
+
+        let answer = Task { await bot.groupTurn("What next?") }
+        await eventually { agent.sent.contains("What next?") }
+        for line in AskThenSave.lines {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+        guard case let .reply(text) = await answer.value else {
+            Issue.record("no reply")
+            return
+        }
+        let parsed = ReplyParser.parseAll(text)
+        #expect(parsed.body == "Noted it in my memory.")
+        #expect(parsed.choices?.map(\.label) == ["Fix the login", "Write the docs"])
+    }
+
+    @Test func theLastChoicesOfATurnWin() {
+        let parsed = ReplyParser.parseAll("First?\n<choices>\n- A\n- B\n</choices>\nOr rather:\n<choices>\n- C\n- D\n</choices>")
+        #expect(parsed.choices?.map(\.label) == ["C", "D"])
+        #expect(!parsed.body.contains("<choices>"))
+    }
 }

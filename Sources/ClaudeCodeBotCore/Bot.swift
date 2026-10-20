@@ -833,7 +833,7 @@ public final class Bot: ObservableObject, Identifiable {
                 permissionAsks[id] = nil
                 settle(id)
             }
-        case let .reply(text, isError):
+        case .reply(var text, let isError):
             // The turn stopped to take in what you added: the next one answers it all.
             if interruptions > 0 {
                 if isError {
@@ -845,6 +845,10 @@ public final class Bot: ObservableObject, Identifiable {
                 interruptions = 0
             }
             turnInput = nil
+            // `<choices>` and other tags written before a tool call are not in claude's result
+            // (only the words after the last call are): they count as part of the reply.
+            let lifted = trace.liftReplyTags()
+            if !isError { text = ReplyParser.lifting(lifted, into: text) }
             if let waiter = internalReply {
                 internalReply = nil
                 trace.dropSteps()
