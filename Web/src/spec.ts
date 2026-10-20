@@ -215,9 +215,11 @@ export class SpecPanel {
 
   private chosenSample(state: SpecState, samples: { label: string; data: string }[]): { label: string; data: string } | undefined {
     const picked = this.sample.get(state.id);
-    // Done: the real run first, if there was one.
-    const fallback = state.status === "done" ? samples.find((s) => s.label === "Test run") : undefined;
-    return samples.find((s) => s.label === picked) ?? fallback ?? samples[0];
+    // Done with a command (live data): the real run first, if there was one. Otherwise the
+    // reply's own content, as it shows under the reply.
+    const fallback = state.status === "done" && state.command ? samples.find((s) => s.label === "Test run") : undefined;
+    const reply = samples.find((s) => s.label === "This reply") ?? samples.find((s) => s.label === "This page");
+    return samples.find((s) => s.label === picked) ?? fallback ?? reply ?? samples[0];
   }
 
   // MARK: Fields

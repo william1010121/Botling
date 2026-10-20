@@ -207,6 +207,10 @@ struct AnswerAndUsageTests {
         #expect(ComponentPrompts.system.contains("ccb.setStatus({text: \"3 new\", tone: \"good\"})"))
         #expect(PluginGuide.text(builtIns: "/x").contains("`Icon: chart.pie.fill`"))
         #expect(PluginGuide.text(builtIns: "/x").contains("ccb.setStatus({ text: \"3 new\", tone: \"good\" })"))
+        // Opened above the input box it is frameless too, and told so.
+        #expect(ComponentPrompts.system.contains("ccb.surface = \"pinned\""))
+        #expect(ComponentPrompts.system.contains("html:not([data-surface=\"chat\"]) .card"))
+        #expect(PluginGuide.text(builtIns: "/x").contains("`<html data-surface=\"pinned\">`"))
         #expect(ComponentDefaults.choicesTemplate.contains("ccb.answer(index)"))
     }
 }

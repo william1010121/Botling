@@ -117,14 +117,57 @@ describe("the chips above the input box", () => {
     chips[0].click();
     const sheet = document.querySelector<HTMLElement>(".pin-sheet")!;
     expect(sheet.hidden).toBe(false);
-    expect(sheet.querySelector(".pin-sheet-title")?.textContent).toBe("提交紀錄");
+    expect(sheet.getAttribute("aria-label")).toBe("提交紀錄");
     expect(sheet.querySelector("iframe.component-frame")).not.toBeNull();
     expect(sent).toEqual([{ type: "pinShown", ids: ["P1"] }]);
     // ↻ on the sheet runs it again.
-    click(sheet.querySelector("[aria-label='Refresh']"));
+    click(sheet.querySelector("[aria-label^='Refresh']"));
     expect(sent[1]).toEqual({ type: "pinCommand", id: "P1", command: "python3 git-log-json.py 20", folder: "/p", force: true });
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect(sheet.hidden).toBe(true);
+  });
+
+  it("an opened pin is its component, like a Board tile: no header, controls float over it on hover", () => {
+    const css = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    const style = document.createElement("style");
+    style.textContent = css;
+    document.head.append(style);
+    try {
+      const area = setUp();
+      area.update(state({ pins: [pin()] }));
+      click(document.querySelector(".pin-chip"));
+      const sheet = document.querySelector<HTMLElement>(".pin-sheet")!;
+      // No header row (title, command, when it ran): the body, then the floating tools.
+      expect(sheet.querySelector(".pin-sheet-head, .pin-sheet-title, .pin-command, .pin-when")).toBeNull();
+      expect([...sheet.children].map((child) => child.className)).toEqual(["pin-sheet-body", "pin-sheet-tools"]);
+      // The component's frame fills the panel with no padding around it, and draws no frame of its own.
+      const body = sheet.querySelector<HTMLElement>(".pin-sheet-body")!;
+      expect(getComputedStyle(body).padding).toMatch(/^(0px|)$/);
+      const frame = sheet.querySelector<HTMLIFrameElement>(".component-frame")!;
+      expect(frame.srcdoc).toContain('data-surface="pinned"');
+      expect(frame.srcdoc).toContain('surface: "pinned"');
+      // The tools are hidden until hovered or focused: refresh, more and collapse.
+      const tools = sheet.querySelector<HTMLElement>(".pin-sheet-tools")!;
+      expect(getComputedStyle(tools).position).toBe("absolute");
+      expect(getComputedStyle(tools).opacity).toBe("0");
+      expect(css).toMatch(/\.pin-sheet:hover > \.pin-sheet-tools, \.pin-sheet\.hovered > \.pin-sheet-tools, \.pin-sheet-tools:focus-within/);
+      expect([...tools.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual(["Refresh (Updated 10:42)", "More", "Collapse"]);
+      // The pointer over the component (inside its frame) shows them too.
+      window.dispatchEvent(new MessageEvent("message", { data: { ccb: "hover", on: true }, source: frame.contentWindow }));
+      expect(sheet.classList.contains("hovered")).toBe(true);
+      window.dispatchEvent(new MessageEvent("message", { data: { ccb: "hover", on: false }, source: frame.contentWindow }));
+      expect(sheet.classList.contains("hovered")).toBe(false);
+      // Its name, when it ran and its command are in the more menu.
+      click(tools.querySelector("[aria-label='More']"));
+      expect(document.querySelector(".pin-menu-heading")?.textContent).toBe("提交紀錄");
+      expect([...document.querySelectorAll(".pin-menu-note")].map((n) => n.textContent)).toEqual(["Updated 10:42", "$ python3 git-log-json.py 20"]);
+      document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      // Collapse puts it away.
+      click(tools.querySelector("[aria-label='Collapse']"));
+      expect(sheet.hidden).toBe(true);
+    } finally {
+      style.remove();
+    }
   });
 
   it("no pins, no chips", () => {

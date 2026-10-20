@@ -193,19 +193,22 @@ public enum ComponentSpecs {
     // MARK: The first draft
 
     /// What the app can tell from a reply alone: the data a component in it was drawn with (its
-    /// fields and a sample), the command that gave it (the card's own, else the last shell command
-    /// the bot ran for it), a name, the bot's folder, and a library component about the same thing.
+    /// fields and a sample), the command that gave that card its data (the card's own), a name, the
+    /// bot's folder, and a library component about the same thing. The reply's own content is the
+    /// data: a shell command the bot ran while writing it (reading a file, running the tests) is
+    /// only a hint for Maintainer (`lastCommand`), never the component's command by itself.
     @MainActor
     public static func draft(from message: ChatMessage, bot: String, folder: URL, library: ComponentLibrary?, page: String? = nil) -> ComponentSpec {
         let names = Set(library?.names ?? [])
         let shown = message.shown.filter { $0.name != "choices" && $0.name != PagePreview.component }
         let existing = page == nil ? shown.first(where: { names.contains($0.name) })?.name : nil
         let first = shown.first
-        let command = page == nil ? (first?.command ?? lastCommand(in: message)) : nil
+        let command = page == nil ? first?.command : nil
+        let ran = command ?? lastCommand(in: message)
         let name: String = if let existing { existing }
             else if let page { slug((page as NSString).lastPathComponent.replacingOccurrences(of: ".html", with: "")) }
             else if let first { slug(first.name) }
-            else if let command { slug(command) }
+            else if let ran { slug(ran) }
             else { slug(message.text) }
         var spec = ComponentSpec(messageID: message.id, name: name.isEmpty ? "component" : name, folder: folder.path, bots: [bot], createdAt: Date())
         spec.existing = existing
@@ -223,7 +226,7 @@ public enum ComponentSpecs {
             spec.samples = [ComponentSpec.Sample(label: "This reply", data: jsonString(["text": text]))]
         }
         if existing == nil, let library {
-            spec.similar = similar(to: spec.name, command: command, text: message.text, in: library)
+            spec.similar = similar(to: spec.name, command: ran, text: message.text, in: library)
         }
         return spec
     }
@@ -527,13 +530,93 @@ public enum ComponentSpecs {
         "Answer in one or two sentences, then <component-spec id=\"\(spec.id.uuidString)\">JSON</component-spec> with only what you set or change (name, about, fields [{name, type}], command, refresh: shown|interval|manual, minutes, similar, reuse, samples [{label, data}], questions [{id, key, text, options [{label, value}], suggested}]). Build nothing yet, and never run the command yourself: the user test-runs it from the panel."
     }
 
+    /// How much of a reply Maintainer is sent, and of each result page it links (as text).
+    static let replyLimit = 12_000
+    static let pageLimit = 12_000
+
+    /// A result page the reply links to, shows, or is made from, as Maintainer reads it.
+    public struct ReplyPage: Equatable, Sendable {
+        public var path: String
+        public var text: String
+    }
+
+    /// The result pages (`.html` in an `artifacts` folder) a reply is made from, shows or links to,
+    /// each as its words, at most `PagePreview.perMessage`: what the bot organised there is part
+    /// of the reply's content.
+    public static func pages(of message: ChatMessage, page: String? = nil) -> [ReplyPage] {
+        var urls: [URL] = page.map { [URL(filePath: $0)] } ?? []
+        urls += message.shown.filter { $0.name == PagePreview.component }.compactMap { PagePreview.page(inCard: $0.data) }
+        urls += PagePreview.linkedCards(in: message.text).compactMap { PagePreview.page(inCard: $0) }
+        var seen = Set<String>()
+        var pages: [ReplyPage] = []
+        for url in urls where pages.count < PagePreview.perMessage {
+            let file = url.standardizedFileURL
+            guard PagePreview.isArtifactPage(file), seen.insert(file.path).inserted,
+                  let html = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let text = pageText(String(html.prefix(2_000_000)))
+            if !text.isEmpty { pages.append(ReplyPage(path: file.path, text: clip(text, pageLimit))) }
+        }
+        return pages
+    }
+
+    private static func replacing(_ pattern: String, in text: String, with template: String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) else { return text }
+        return regex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: template)
+    }
+
+    /// A page's words: no scripts, styles or tags; list items as "- ", table cells split by " | ".
+    static func pageText(_ html: String) -> String {
+        var text = replacing(#"<(script|style|head|template|svg)\b.*?</\1\s*>|<!--.*?-->"#, in: html, with: "")
+        text = replacing(#"<li\b[^>]*>"#, in: text, with: "\n- ")
+        text = replacing(#"</t[dh]\s*>"#, in: text, with: " | ")
+        text = replacing(#"<(br|/p|/div|/tr|/h[1-6]|/li|/ul|/ol|/table|/section|/article|/header|/footer|/summary|/details|/pre|/blockquote)\b[^>]*>"#, in: text, with: "\n")
+        text = replacing(#"<h([1-6])\b[^>]*>"#, in: text, with: "\n\n")
+        text = replacing(#"<[^>]+>"#, in: text, with: "")
+        for (entity, character) in [("&nbsp;", " "), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"), ("&amp;", "&")] {
+            text = text.replacingOccurrences(of: entity, with: character)
+        }
+        if let numeric = try? NSRegularExpression(pattern: #"&#(x?)([0-9a-fA-F]+);"#) {
+            for match in numeric.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+                guard let whole = Range(match.range, in: text), let hex = Range(match.range(at: 1), in: text), let digits = Range(match.range(at: 2), in: text),
+                      let code = UInt32(text[digits], radix: text[hex].isEmpty ? 10 : 16), let scalar = Unicode.Scalar(code) else { continue }
+                text.replaceSubrange(whole, with: String(Character(scalar)))
+            }
+        }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.split(whereSeparator: { $0 == " " || $0 == "\t" }).joined(separator: " ") }
+        var kept: [String] = []
+        for line in lines where !(line.isEmpty && (kept.last?.isEmpty ?? true)) { kept.append(line) }
+        return kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The reply as Maintainer reads it: its words, then the words of each result page it links.
+    static func replyBlock(_ reply: String, pages: [ReplyPage]) -> String {
+        var text = "The reply:\n" + clip(reply, replyLimit)
+        for page in pages {
+            text += "\nThe result page it links, \(page.path), says:\n" + page.text
+        }
+        return text
+    }
+
+    /// Where its data comes from: the reply's own content, a command only for live data.
+    static func dataNote(_ spec: ComponentSpec, ran: String?, from bot: String) -> String {
+        var text = "Its data is the reply's own content: what \(bot) wrote and organised above (and on the result page it links), in its words and language, drawn as a component instead of text or a web page. Put all of it, not a shortened example, into a \"This reply\" sample in the fields' shape: that sample is what shows under the reply."
+        if let command = spec.command {
+            text += " The component in the reply got its data by running `\(command)` in the bot's folder, so it is live data: keep that as its Command (about.md gets the line \"Command: \(command)\" so the app fills it by running that in the bot's folder, only once the user allows it on the card)."
+        } else {
+            text += " Give it a Command only when the user clearly wants live data that changes (test results, git status, a queue) rather than what \(bot) wrote; a summary, table or write-up needs none, and then the command stays empty and about.md says how a bot gives the data with <show>."
+            if let ran { text += " (\(bot) ran `\(ran)` while writing the reply: that is how it read its sources, not the component's data, unless the data is clearly live.)" }
+        }
+        return text
+    }
+
     /// The first ask: fill in what can be inferred, ask only what cannot.
-    static func draftRequest(_ spec: ComponentSpec, reply: String, from bot: String) -> String {
+    static func draftRequest(_ spec: ComponentSpec, reply: String, pages: [ReplyPage] = [], ran: String? = nil, from bot: String) -> String {
         """
-        (Component spec \(spec.id.uuidString)) The user wants to make \(bot)'s reply into a component and is shaping it in a side panel. The reply:
-        \(clip(reply, 1500))
+        (Component spec \(spec.id.uuidString)) The user wants to make \(bot)'s reply into a component and is shaping it in a side panel. \(replyBlock(reply, pages: pages))
         The app's first draft:
         \(summary(of: spec))
+        \(dataNote(spec, ran: ran, from: bot))
         Fill in what you can infer (from the reply and the library), and ask only what you cannot, at most 3 questions, each with 2 or 3 short answers and the one you suggest. If a component in the library already does this, say so in "similar". Add a sample or two (say "Failing run", "Empty") so the preview shows other cases.
         \(tagNote(spec))
         """
@@ -541,23 +624,22 @@ public enum ComponentSpecs {
 
     /// "Make into component" (or a suggestion chip) pressed: Maintainer infers the whole spec and
     /// builds the first version now, asking nothing; it may reuse a library component instead.
-    static func firstBuildRequest(_ spec: ComponentSpec, reply: String, from bot: String) -> String {
+    /// It is sent the whole reply and the words of each result page the reply links: the
+    /// component shows that content (its "This reply" sample) under the reply.
+    static func firstBuildRequest(_ spec: ComponentSpec, reply: String, pages: [ReplyPage] = [], ran: String? = nil, from bot: String) -> String {
         var text = """
-        (Component spec \(spec.id.uuidString)) Build the first version now: the user pressed "Make into component" on \(bot)'s reply and wants the component built right away. The reply:
-        \(clip(reply, 1500))
+        (Component spec \(spec.id.uuidString)) Build the first version now: the user pressed "Make into component" on \(bot)'s reply and wants the component built right away. \(replyBlock(reply, pages: pages))
         The app's first draft:
         \(summary(of: spec))
         """
         if spec.suggestedBy != nil, !spec.about.isEmpty { text += "\n\(bot) suggested it as: \(spec.about)" }
+        text += "\n" + dataNote(spec, ran: ran, from: bot)
         text += """
 
-        Infer the rest from the reply and the library, and ask nothing: wherever you are unsure, use your best guess (the answer you would have suggested). If a component in the library already does this, reuse it: build nothing and set "similar" to it and "reuse" to true. Otherwise have the component editor write template.html and about.md under a name not already in the library
+        Infer the rest from the reply and the library, and ask nothing: wherever you are unsure, use your best guess (the answer you would have suggested). If a component in the library already does this, reuse it: build nothing and set "similar" to it and "reuse" to true. Otherwise have the component editor write template.html and about.md under a name not already in the library.
         """
-        if let command = spec.command {
-            text += "; about.md gets the line \"Command: <the command>\" (likely \(command)) so the app fills it by running that in the bot's folder, only once the user allows it on the card"
-        }
-        text += ". Never run the command yourself. Once it is in the library the app adds it to " + spec.bots.joined(separator: ", ") + " and shows it under the reply; do not add it to lists yourself."
-        text += "\nAnswer in one or two sentences, then <component-spec id=\"\(spec.id.uuidString)\">JSON</component-spec> with what you used: name (the component's name as built), about, fields [{name, type}], command, refresh: shown|interval|manual, minutes, similar, reuse, samples [{label, data}] (a \"This reply\" sample holding this reply's data in the fields' shape). No questions."
+        text += " Never run the command yourself. Once it is in the library the app adds it to " + spec.bots.joined(separator: ", ") + " and shows it under the reply; do not add it to lists yourself."
+        text += "\nAnswer in one or two sentences, then <component-spec id=\"\(spec.id.uuidString)\">JSON</component-spec> with what you used: name (the component's name as built), about, fields [{name, type}], command (only for live data), refresh: shown|interval|manual, minutes, similar, reuse, samples [{label, data}] (the \"This reply\" sample with all of this reply's content in the fields' shape, required). No questions."
         return text
     }
 

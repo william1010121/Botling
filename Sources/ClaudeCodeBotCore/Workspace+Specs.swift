@@ -62,7 +62,7 @@ extension Workspace {
     /// library component), asking nothing. The panel stays shut; the chip says Building….
     func startSpec(_ id: UUID, in chat: Bot) {
         guard var spec = chat.specs.first(where: { $0.id == id }), isUnstarted(spec) else { return }
-        let reply = chat.messages.first { $0.id == spec.messageID }?.text ?? ""
+        let message = chat.messages.first { $0.id == spec.messageID }
         let writer = spec.bots.first ?? chat.name
         spec.status = .building
         spec.asked = true
@@ -71,7 +71,8 @@ extension Workspace {
         let had = components.names.contains(spec.name)
         specBuilds[spec.name] = (chat.id, id, had ? components.versions[spec.name, default: 0] : nil)
         components.markWorking(spec.name, change: "built from a reply")
-        handToMaintainer(ComponentSpecs.firstBuildRequest(spec, reply: reply, from: writer))
+        handToMaintainer(ComponentSpecs.firstBuildRequest(spec, reply: message?.text ?? "", pages: message.map { ComponentSpecs.pages(of: $0, page: spec.page) } ?? [],
+                                                          ran: message.flatMap(ComponentSpecs.lastCommand(in:)), from: writer))
     }
 
     /// A spec's chip pressed: a bot's suggestion not started yet is built (its first version);
@@ -116,9 +117,10 @@ extension Workspace {
             if ask { specs[at].asked = true }
         }
         guard ask else { return }
-        let reply = chat.messages.first { $0.id == spec.messageID }?.text ?? ""
+        let message = chat.messages.first { $0.id == spec.messageID }
         let writer = spec.bots.first ?? chat.name
-        handToMaintainer(ComponentSpecs.draftRequest(spec, reply: reply, from: writer))
+        handToMaintainer(ComponentSpecs.draftRequest(spec, reply: message?.text ?? "", pages: message.map { ComponentSpecs.pages(of: $0, page: spec.page) } ?? [],
+                                                     ran: message.flatMap(ComponentSpecs.lastCommand(in:)), from: writer))
     }
 
     /// Collapses the panel back to the chip; the spec stays as it is.

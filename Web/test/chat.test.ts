@@ -227,6 +227,18 @@ describe("messages", () => {
     expect(componentPage("<p>hi</p>", "{}")).toContain('surface: "chat"');
   });
 
+  it("tell a component it is pinned above the input box: ccb.surface pinned, as tall as its content", async () => {
+    const { componentPage } = await import("../src/components");
+    const page = componentPage("<p>hi</p>", "{}", {}, "2x2", "pinned");
+    expect(page).toContain('<html data-size="2x2" data-surface="pinned">');
+    // Not the Board's fixed height: the panel follows the component's own height.
+    expect(page).not.toContain('html[data-surface="pinned"] #ccb-root{height:100%}');
+    const script = page.slice(page.indexOf("<script>") + 8, page.indexOf("</script>"));
+    const frame = { addEventListener() {} } as unknown as { ccb: { surface: string } };
+    new Function("window", "parent", script)(frame, { postMessage() {} });
+    expect(frame.ccb.surface).toBe("pinned");
+  });
+
   it("let a component load details on demand with ccb.runDetail", async () => {
     const { componentPage, detailReply } = await import("../src/components");
     // The frame's side: a promise per call, settled by the page's answer (only from its parent).

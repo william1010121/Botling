@@ -121,7 +121,8 @@ enum PluginGuide {
           and must be in the repository. `spec` (optional): a .md/.txt/.html file in the bot's folder or home that Codex checks the change against point by point.
           The report shows in the right column and a line in the chat; a call that does not check out is ignored.
           Data from a command: about.md's `Command: <command>` line fills the component with what it prints (run in the bot's folder after the user
-          presses "Allow and run" on the card; JSON output is the data, other output one string; at most 1 MB and 60 seconds).
+          presses "Allow and run" on the card; JSON output is the data, other output one string; at most 1 MB and 60 seconds). It is optional,
+          only for live data that changes: most components draw the data a bot gives them with `<show>`, and one made from a bot's reply shows that reply.
           Details on demand: when the data would be too big to give at once (every commit's whole diff), keep the Command's output small and add
           `Detail command: git show --patch --stat {hash}` to about.md. `await ccb.runDetail({ hash: "2aed630" })` (from a click) runs it with each
           `{name}` filled in as one quoted argument, in the same folder with the same limits, and resolves to its output (parsed if JSON, else text);
@@ -137,11 +138,14 @@ enum PluginGuide {
           the top-right corner on hover. There `ccb.surface` is "board" and `<html data-surface="board">` is set (in the chat: "chat"), so
           drop your own card frame: no border, no background (transparent, or the tile's), no border-radius, no outer padding beyond about
           12px, and fill the tile, e.g. `html[data-surface="board"] .card { border: 0; background: none; border-radius: 0; padding: 12px; height: 100%; }`.
+          A pin opened from its chip above the input box is frameless the same way: `ccb.surface` is "pinned" and `<html data-surface="pinned">`
+          is set, the panel gives the corners and background and its controls (↻, ⋯, collapse) float over the top-right corner on hover, but the
+          page is as tall as its content (as in the chat). Drop the frame on both with `html:not([data-surface="chat"]) .card { … }`.
           Pin chip: a pinned component also shows as a small chip above the input box, an icon with a short status (its name in the tooltip).
           about.md's `Icon: chart.pie.fill` (an SF Symbol name) or `Icon: 📊` (one emoji) gives the icon (missing: a generic one).
           `ccb.setStatus({ text: "3 new", tone: "good" })` sets the status: a short value (about 14 characters show) and a tone, "good", "warning",
           "bad" or "neutral" (a coloured dot on the icon unless neutral); text alone is fine, `ccb.setStatus(null)` clears it. Without it the chip
-          shows the start of a summary of the data. Only a pinned copy (its sheet or Board tile) sets the chip, which keeps the last status.
+          shows the start of a summary of the data. Only a pinned copy (opened from its chip, or its Board tile) sets the chip, which keeps the last status.
         - about.md: usage notes for the bots. The first line says in one sentence what it is, followed by the data format (with an example JSON) and what the bot receives when the user answers.
 
         ## Check and release

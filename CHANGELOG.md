@@ -19,6 +19,53 @@ app and publishes it on GitHub Releases.
   short. A command waiting for your OK shows "Allow?", a failed one "Failed" in red.
   ComponentPrompts (the component editor), PLUGINS.md and the Maintainer describe both.
 
+### Changed
+
+- **An opened pin is its component, like a Board tile.** Clicking a pin's chip above the input
+  box no longer shows a card in a card: the header row (name, command, "Updated 3:32", ↻, ⋯,
+  collapse) and the padding are gone, the component's frame fills the panel and its rounded
+  corners clip it. ↻, ⋯ and collapse float over the top-right corner as a small pill on hover or
+  keyboard focus (and while its command runs); the ⋯ menu starts with the name, when it last ran
+  and its command. Components are told: `ccb.surface` is `"pinned"` and
+  `<html data-surface="pinned">` there, and the page stays as tall as its content.
+  ComponentPrompts, PLUGINS.md and the Maintainer say to draw no card of one's own there either:
+  `html:not([data-surface="chat"]) .card { … }` drops it on the Board and when pinned.
+
+### Fixed
+
+- **A plugin update no longer cuts off a bot's background work.** When a plugin's Claude part
+  changed (Maintainer editing ccb-core, say), every awake bot handed off and restarted as soon as
+  no turn was under way, even with a subagent still at work in the background, which ended that
+  subagent; and the changed part dropped out while it was checked again, so one edit made two
+  handoffs (the first without the plugin at all). A bot now waits until it is free — no turn and
+  no subagent at work — and loads the new plugins once, however many changes came in meanwhile;
+  a part being checked is not a change of its own; and a bot whose session already has the
+  current plugins does not hand off.
+- **A narrow window no longer cuts off the left column or the right panel.** The rail, the chat
+  and the right panel always add up to the window's width: a panel that wants more room than is
+  left (Make into component spread wide in a half-screen window) narrows, down to 340pt, then
+  the chat gives up some of its 480pt, instead of the whole window's content running off both
+  edges. Spread wide but squeezed below 720pt, the component panel stacks Preview above its
+  progress, as when narrow. Chat | Board now sits in a bar of its own above the chat, so
+  messages no longer scroll under it.
+- **A bot waiting on a background subagent no longer keeps saying "still running".** A subagent
+  that watches its own long job (a Monitor, a background command) stops each time that job
+  reports, and claude then wakes the bot with "is waiting on its own background work" — every
+  30 seconds or so. Each wake was a turn of its own whose few words ("Still transcribing.")
+  showed as a new reply. Such a turn now shows nothing and leaves nothing unread; the subagent
+  stays running in its card until it really reports, and that report, or anything you ask in
+  between, still gets its answer.
+- **A component made from a reply shows that reply.** Make into component took the last shell
+  command the bot ran while writing the reply (such as `head -c 200000 CHANGELOG.md`) as the
+  component's data source, and Maintainer saw only the reply's first 1,500 characters, so a reply
+  that summed up every release in Chinese became a card of the raw English CHANGELOG. Now
+  Maintainer gets the whole reply and the words of each result page it links (up to 12,000
+  characters each), and is told the reply's own content is the data: all of it goes in the
+  "This reply" sample, drawn under the reply and in Edit spec's preview. A Command is optional,
+  only when live data that changes is clearly wanted; the command the bot ran is passed as a hint,
+  and a component whose about.md has a Command no longer runs it under a reply whose spec has none.
+  The component editor and PLUGINS.md say a Command is only for live data.
+
 ## 1.9.0
 
 ### Added

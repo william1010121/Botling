@@ -392,12 +392,13 @@ function openPicker(): void {
 
 /**
  * The pinned component, with its command's ask, error or wait as in the chat, without the bar.
- * Given a size it is a Board tile: drawn at that size, told it is on the Board.
+ * Given a size it is a Board tile: drawn at that size, told it is on the Board. Without, it is
+ * opened above the input box, told it is "pinned" (frameless there too).
  */
 function pinBody(pin: PinView, size?: PinSize): HTMLElement {
   const key = size ? `board-${pin.id}` : `pin-${pin.id}`;
   const draw = () => {
-    const drawn = componentElement(pin.name, current.components[pin.name], pin.display.data, null, key, pin.display.images, detailTarget(pin.display), size, size ? "board" : "chat");
+    const drawn = componentElement(pin.name, current.components[pin.name], pin.display.data, null, key, pin.display.images, detailTarget(pin.display), size, size ? "board" : "pinned");
     // Its ccb.setStatus sets this pin's chip.
     markPinFrames(drawn, pin.id);
     return drawn;
@@ -428,37 +429,24 @@ function whenWords(pin: PinView): string {
   return pin.display.command ? refreshWords(pin.refresh, pin.minutes) : "Snapshot";
 }
 
-/** Name, command, when it ran, ↻ and ⋯: the top of a pin's sheet. */
-function pinHeader(pin: PinView, className: string, extra: HTMLElement[] = [], sizes = false): HTMLElement {
-  const head = document.createElement("div");
-  head.className = className;
-  const title = document.createElement("span");
-  title.className = className === "pin-sheet-head" ? "pin-sheet-title" : "board-card-title";
-  title.textContent = pin.name;
-  head.append(title);
-  if (pin.display.command) {
-    const code = document.createElement("code");
-    code.className = "pin-command";
-    code.textContent = pin.display.command;
-    code.title = pin.display.folder ? `Runs in ${pin.display.folder}` : pin.display.command;
-    head.append(code);
-  }
-  const fill = document.createElement("span");
-  fill.className = "pin-fill";
-  head.append(fill);
-  const when = document.createElement("span");
-  when.className = "pin-when";
+/**
+ * An opened pin's controls, floating over its top-right corner on hover or keyboard focus, as on
+ * a Board tile: ↻, ⋯ (name, when it ran, its command, refresh, move, unpin) and collapse.
+ */
+function sheetTools(pin: PinView, collapse: () => void): HTMLElement {
+  const tools = document.createElement("div");
+  tools.className = "pin-sheet-tools";
+  tools.setAttribute("role", "toolbar");
+  tools.setAttribute("aria-label", `${pin.name}: ${whenWords(pin)}`);
   const status = pin.display.status;
-  when.textContent = whenWords(pin);
-  head.append(when);
   if (pin.display.command) {
-    const refresh = button("pin-tool" + (status === "running" ? " spinning" : ""), "Refresh", icons.refresh, () => refreshPin(pin));
+    const refresh = button("pin-tool" + (status === "running" ? " spinning" : ""), `Refresh (${whenWords(pin)})`, icons.refresh, () => refreshPin(pin));
     refresh.disabled = status === "running" || status === "approve";
-    head.append(refresh);
+    tools.append(refresh);
   }
-  const more = button("pin-tool", "More", icons.more, () => pinMenu(more, pin, { sizes }));
-  head.append(more, ...extra);
-  return head;
+  const more = button("pin-tool", "More", icons.more, () => pinMenu(more, pin, { about: true }));
+  tools.append(more, button("pin-tool", "Collapse", icons.close, collapse));
+  return tools;
 }
 
 // MARK: Chips, the sheet, the Board
@@ -667,11 +655,14 @@ export class PinArea {
     this.sheetKey = key;
     this.sheet.innerHTML = "";
     this.sheet.setAttribute("aria-label", pin.name);
-    const close = button("pin-tool", "Close", icons.close, () => this.close());
+    // Like a Board tile: the component fills the panel, its controls float over it on hover
+    // (and stay in sight while its command runs).
+    this.sheet.classList.remove("hovered");
+    this.sheet.classList.toggle("running", pin.display.status === "running");
     const body = document.createElement("div");
     body.className = "pin-sheet-body";
     body.append(pinBody(pin));
-    this.sheet.append(pinHeader(pin, "pin-sheet-head", [close]), body);
+    this.sheet.append(body, sheetTools(pin, () => this.close()));
   }
 
   private drawBoard(state: ChatState): void {
