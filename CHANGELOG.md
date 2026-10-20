@@ -36,6 +36,15 @@ app and publishes it on GitHub Releases.
   layout (CSS grid auto-fill columns, container queries, a summary when short, the key number when
   tiny) instead of a layout per size. `CCB_SNAPSHOT_JS` runs a script in a `--snapshot` page before
   the picture is taken.
+- **A bot hears back about the component it asked for.** Once Maintainer builds a component a bot
+  asked for with `<component name="…">`, hands over one already in the library (`<give-component>`,
+  or the app does so at once when the library has it), or changes one the bot already has, the bot
+  is woken with the component's usage and what the user had asked it, and answers that with
+  `<show>` from its own data; its chat gets a short line ("Maintainer added 今日對話次數 (…) to
+  your components."). When Maintainer replies naming the request without doing it, the bot is
+  told what Maintainer said and tells the user, instead of waiting. A request made while the bot's
+  list is full arrives once one is taken off. A new version of a component made from a reply
+  (Build it) is filled again by the bot that wrote the reply, its old data set aside meanwhile.
 
 ### Fixed
 

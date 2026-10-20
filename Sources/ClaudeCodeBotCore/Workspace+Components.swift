@@ -71,30 +71,91 @@ extension Workspace {
 
     /// What Maintainer is told about the bot that asked for `name`, after giving it at once
     /// when the library already has it. Empty when no bot with a list asked.
-    func componentAskNote(_ name: String, exists: Bool, from bot: Bot?) -> String {
+    /// The bot hears back either way (`ComponentAsk`): at once when the app gave it, else once
+    /// Maintainer gives, builds or changes it, or answers without doing so.
+    func componentAskNote(_ name: String, request: String, exists: Bool, from bot: Bot?) -> String {
         guard let bot, bot.componentList != nil else { return "" }
         let own = ownComponents(of: bot)
         let limit = ComponentLibrary.limit
+        // What the user had asked the bot for, which the component is to answer.
+        let userAsked = bot.messages.last { $0.role == .user || $0.role == .relay }.map { Self.shortened($0.text, to: 300) } ?? ""
+        var ask = ComponentAsk(name: name, botID: bot.id, request: request, userAsked: userAsked, stamp: components.stamp(of: name), changing: exists && own.contains(name))
+        let answerBack = " If you will not or cannot do it, say so in your reply, naming \"\(name)\"; the app passes your answer on to \(bot.name)."
         let full = " (App: \(bot.name) already has \(own.count) / \(limit) components. Add or build nothing for it: with a choices block of its components, ask the user which one to remove from \(bot.name)'s list first, then <take-component bot=\"\(bot.name)\">that name</take-component>.)"
-        if exists {
-            guard !own.contains(name) else { return "" }
-            return giveComponent(name, to: bot)
-                ? " (App: \"\(name)\" is already in the library, so the app added it to \(bot.name)'s list; nothing to build. Change it only if the request asks for a change.)"
-                : full
+        if exists, !own.contains(name) {
+            guard giveComponent(name, to: bot) else {
+                componentAsks.append(ask)
+                return full
+            }
+            ask.changing = false
+            componentArrived(name, for: ask, to: bot, by: nil)
+            return " (App: \"\(name)\" is already in the library, so the app added it to \(bot.name)'s list and told \(bot.name); nothing to build. Change it only if the request asks for a change.)"
         }
+        componentAsks.removeAll { $0.botID == bot.id && $0.name == name }
+        componentAsks.append(ask)
+        if exists { return " (App: \(bot.name) asked for this change.\(answerBack))" }
         guard own.count < limit else { return full }
-        componentAsks[name, default: []].insert(bot.id)
-        return " (App: \(bot.name) has \(own.count) / \(limit) components. Check the library first: if a component there already does this, build nothing and reply with <give-component bot=\"\(bot.name)\">its name</give-component>. Otherwise build it; once it is in the library the app adds it to \(bot.name)'s list.)"
+        return " (App: \(bot.name) has \(own.count) / \(limit) components. Check the library first: if a component there already does this, build nothing and reply with <give-component bot=\"\(bot.name)\">its name</give-component>. Otherwise build it; once it is in the library the app adds it to \(bot.name)'s list.\(answerBack))"
     }
 
-    /// Components bots asked for that are now in the library go on their lists.
+    /// Components bots asked for that are now in the library go on their lists, and each bot
+    /// hears it.
     func deliverAskedComponents() {
-        for (name, ids) in componentAsks where components.names.contains(name) {
-            componentAsks[name] = nil
-            for bot in botsWithComponents where ids.contains(bot.id) {
-                giveComponent(name, to: bot)
+        for ask in componentAsks where !ask.changing && components.names.contains(ask.name) {
+            guard let bot = botsWithComponents.first(where: { $0.id == ask.botID }) else {
+                componentAsks.removeAll { $0 == ask }
+                continue
             }
+            // Full: Maintainer is asking the user what to drop; it arrives after the take.
+            guard giveComponent(ask.name, to: bot) else { continue }
+            componentAsks.removeAll { $0 == ask }
+            componentArrived(ask.name, for: ask, to: bot, by: "Maintainer")
         }
+    }
+
+    /// `bot` asked (`ask`) and now has `name` on its list (`by` Maintainer, or nil: the app gave
+    /// it from the library at once). The bot is woken to answer what the user wanted with it; the
+    /// user sees a line about it in that chat.
+    func componentArrived(_ name: String, for ask: ComponentAsk, to bot: Bot, by maker: String?, changed: Bool = false) {
+        let title = components.shortTitle(of: name).map { "\($0) (\(name))" } ?? name
+        let what = changed ? "changed the component \"\(name)\" as you asked" : "added the component \"\(name)\" to your list"
+        let instead = ask.name == name ? "" : " in place of the \"\(ask.name)\" you asked for"
+        let request = ask.request.isEmpty ? "" : " (your request: \(Self.shortened(ask.request, to: 200)))"
+        let user = ask.userAsked.isEmpty ? "" : " The user had asked you: \"\(ask.userAsked)\"."
+        let usage = components.catalog(of: [name])
+        bot.queueNote("(App: Here are your components now.)\n" + componentBriefing(for: bot))
+        bot.appMessage("(App: Maintainer \(what)\(instead)\(request).\(user) Answer that now: draw it with <show name=\"\(name)\">…</show> as its usage says, with one short sentence in the user's language. Do not ask Maintainer for it again.)\n\(usage)")
+        tell(bot, changed
+            ? "\(maker ?? "Maintainer") changed \(title) as \(bot.name) asked."
+            : "\(maker ?? "Maintainer") added \(title) to your components.", sourceID: Self.maintainerID)
+    }
+
+    /// Maintainer replied: a request it answered without giving, building or changing the
+    /// component goes back to the bot that asked, with what Maintainer said, so the bot tells the
+    /// user instead of waiting. Only once its background work is done, only for a request the
+    /// reply names, and not while it asks the user something.
+    func settleComponentAsks(after reply: ChatMessage) {
+        guard reply.role == .bot || reply.role == .error, !reply.isOpenQuestion,
+              !maintainer.trace.subagents.contains(where: \.isRunning) else { return }
+        // A component it just committed may not have been seen yet.
+        components.rescan()
+        let said = reply.text.lowercased()
+        for ask in componentAsks where said.contains(ask.name.lowercased()) {
+            componentAsks.removeAll { $0 == ask }
+            guard let bot = botsWithComponents.first(where: { $0.id == ask.botID }) else { continue }
+            if ask.changing, components.stamp(of: ask.name) != ask.stamp {
+                componentArrived(ask.name, for: ask, to: bot, by: "Maintainer", changed: true)
+                continue
+            }
+            let user = ask.userAsked.isEmpty ? "" : " The user had asked you: \"\(ask.userAsked)\"."
+            bot.appMessage("(App: Maintainer did not add the component \"\(ask.name)\" you asked for\(ask.changing ? " (or change it)" : ""). Maintainer said: \"\(Self.shortened(reply.text, to: 500))\".\(user) Tell the user in one or two sentences, in their language, that it is not available and why, then answer their request as well as you can without it. Do not ask Maintainer for it again.)")
+            tell(bot, "Maintainer did not \(ask.changing ? "change" : "add") \(ask.name): \(Self.shortened(Self.firstLine(of: reply.text), to: 160))", sourceID: Self.maintainerID)
+        }
+    }
+
+    static func shortened(_ text: String, to limit: Int) -> String {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.count > limit ? String(text.prefix(limit)) + "…" : text
     }
 
     /// Maintainer's `<give-component>` / `<take-component>`.
@@ -113,9 +174,19 @@ extension Workspace {
                 maintainer.queueNote("(App: \(bot.name) already has \(ownComponents(of: bot).count) / \(ComponentLibrary.limit) components, so \"\(name)\" was not added. Ask the user which one to remove from \(bot.name)'s list first.)")
                 return
             }
-            bot.queueNote("(App: Maintainer gave you the component \"\(name)\"; here are your components now.)\n" + componentBriefing(for: bot))
+            // Its answer to a bot's request (maybe a component in place of the one asked for).
+            let asked = componentAsks.first { $0.botID == bot.id && $0.name == name }
+                ?? componentAsks.first { $0.botID == bot.id && !$0.changing }
+            if let asked {
+                componentAsks.removeAll { $0 == asked }
+                componentArrived(name, for: asked, to: bot, by: "Maintainer")
+            } else {
+                bot.queueNote("(App: Maintainer gave you the component \"\(name)\"; here are your components now.)\n" + componentBriefing(for: bot))
+            }
         } else if takeComponent(name, from: bot) {
             bot.queueNote("(App: \"\(name)\" was taken off your components; it stays in the shared library.)\n" + componentBriefing(for: bot))
+            // Room now for one it asked for while its list was full.
+            deliverAskedComponents()
         }
     }
 
@@ -138,4 +209,18 @@ extension Workspace {
             tell(chat, "\"\(name)\" is not on \(owner.name)'s components; nothing changed.")
         }
     }
+}
+
+/// A bot's `<component>` request Maintainer has not answered yet: which component, what the bot
+/// asked, and what the user had asked the bot, so the bot can answer the user once it arrives.
+struct ComponentAsk: Equatable {
+    let id = UUID()
+    let name: String
+    let botID: UUID
+    let request: String
+    let userAsked: String
+    /// When the component last changed as it was asked for (to see whether a change was made).
+    let stamp: [Date?]
+    /// A change to a component the bot already has, not one to add to its list.
+    var changing: Bool
 }

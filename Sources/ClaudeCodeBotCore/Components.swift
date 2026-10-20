@@ -76,6 +76,23 @@ public final class ComponentLibrary: ObservableObject {
         home(of: name).appending(path: "\(name)/template.html")
     }
 
+    /// A short human name from the first line of its about.md ("今日對話次數（圓餅圖）：…" gives
+    /// "今日對話次數"), or nil when that line has none.
+    public func shortTitle(of name: String) -> String? {
+        let about = (try? String(contentsOf: aboutURL(name), encoding: .utf8)) ?? ""
+        let first = about.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        let cut = first.firstIndex { "：:（(—,，。".contains($0) }.map { String(first[..<$0]) } ?? ""
+        let title = cut.trimmingCharacters(in: .whitespaces)
+        return title.isEmpty || title.count > 24 || title == name ? nil : title
+    }
+
+    /// When its template and about.md last changed, to tell whether it changed since.
+    func stamp(of name: String) -> [Date?] {
+        [templateURL(name), aboutURL(name)].map {
+            (try? FileManager.default.attributesOfItem(atPath: $0.path)[.modificationDate]) as? Date
+        }
+    }
+
     public func template(_ name: String) -> String? {
         try? String(contentsOf: templateURL(name), encoding: .utf8)
     }
