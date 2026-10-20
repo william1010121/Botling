@@ -182,6 +182,7 @@ extension Workspace {
                 specs[at].conversation.append(.init(kind: .maintainer, text: words))
             }
         }
+        askForAllItems(of: uuid, json: json, in: chat)
         guard before.status == .building, let spec = chat.specs.first(where: { $0.id == uuid }) else { return }
         if spec.reuse, let similar = spec.similar, components.names.contains(similar) {
             for (name, build) in specBuilds where build.spec == uuid { specBuilds[name] = nil }
@@ -191,6 +192,21 @@ extension Workspace {
             specBuilds[spec.name] = (build.chat, build.spec, components.names.contains(spec.name) ? components.versions[spec.name, default: 0] : nil)
             components.markWorking(spec.name, change: "built from a reply")
         }
+    }
+
+    /// Maintainer's "This reply" sample is what shows under the reply, so it carries every item
+    /// the reply lists. One that leaves some out (a few as an example) is asked for again, once.
+    private func askForAllItems(of id: UUID, json: String, in chat: Bot) {
+        guard let spec = chat.specs.first(where: { $0.id == id }), spec.askedForAllItems != true,
+              let reply = chat.messages.first(where: { $0.id == spec.messageID }),
+              let (listed, missing) = ComponentSpecs.missingItems(from: json, reply: reply.text, in: spec),
+              !missing.isEmpty else { return }
+        chat.editSpecs { specs in
+            guard let at = specs.firstIndex(where: { $0.id == id }) else { return }
+            specs[at].askedForAllItems = true
+            specs[at].conversation.append(.init(kind: .event, text: "Asked Maintainer for all \(listed.count) items of the reply"))
+        }
+        handToMaintainer(ComponentSpecs.allItemsRequest(spec, listed: listed, missing: missing))
     }
 
     // MARK: Test run

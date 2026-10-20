@@ -4,6 +4,17 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+### Fixed
+
+- **A component made from a reply shows every item the reply lists.** A reply listing 12
+  features made into a component showed only 4 of them under it: Maintainer was sent the whole
+  reply but wrote its "This reply" sample as a short example. The first-version request now says
+  how many items the reply lists (its numbered and bulleted lines and table rows) and names them,
+  and when Maintainer's sample still leaves some out, the app asks it once to send the sample
+  again with all of them, naming the missing ones; the full one then shows under the reply.
+
 ## 1.10.0
 
 ### Added
