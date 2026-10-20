@@ -75,7 +75,8 @@ enum Snapshot {
         return true
     }
 
-    /// `ClaudeCodeBot --snapshot "<chat name>" out.png`: the chat as this build draws it.
+    /// `ClaudeCodeBot --snapshot "<chat name>" out.png`: the chat as this build draws it, with its
+    /// pinned components (`--pins file.json` for others, `--board` for its Board).
     static func chatRequest() -> (String, String)? {
         let arguments = CommandLine.arguments
         guard let at = arguments.firstIndex(of: "--snapshot"), arguments.count > at + 2 else { return nil }
@@ -107,19 +108,32 @@ enum Snapshot {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         let copy = root.appending(path: "main")
         try? FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
-        for file in ["chat.json", "subagents.json"] {
+        for file in ["chat.json", "subagents.json", "pins.json"] {
             try? FileManager.default.copyItem(at: folder.appending(path: file), to: copy.appending(path: file))
         }
-        draw(root: root, to: path)
+        // `--pins file.json`: pins to draw instead of the chat's own (to look at them without pinning).
+        let arguments = CommandLine.arguments
+        if let at = arguments.firstIndex(of: "--pins"), arguments.count > at + 1 {
+            try? FileManager.default.removeItem(at: copy.appending(path: "pins.json"))
+            try? FileManager.default.copyItem(at: URL(filePath: arguments[at + 1]), to: copy.appending(path: "pins.json"))
+        }
+        // The components as installed, so cards and pins draw as they do in the app (a copy).
+        let installed = data.appending(path: "plugins/ccb-components/components")
+        let components = root.appending(path: "plugins/ccb-components/components")
+        try? FileManager.default.createDirectory(at: components.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? FileManager.default.copyItem(at: installed, to: components)
+        draw(root: root, to: path, pins: true)
     }
 
     /// Draws the main bot's chat under `root` in an offscreen window, saves it as a PNG, quits.
-    private static func draw(root: URL, to path: String) {
+    /// `pins`: with the chat's pinned components (chips; `--board` draws its Board instead).
+    private static func draw(root: URL, to path: String, pins: Bool = false) {
         guard let page = ChatSurface.pageURL else { exit(1) }
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
-        let json = ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil) { projectID in
+        let board = CommandLine.arguments.contains("--board")
+        let json = ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, pins: pins ? workspace.pinContext(for: workspace.mainBot, board: board) : nil) { projectID in
             AvatarImages.dataURL(projectID == nil ? .circle : .triangle, eyes: .open)
         }.json()
 

@@ -19,6 +19,8 @@ public final class Bot: ObservableObject, Identifiable {
     @Published public private(set) var effort: EffortLevel?
     /// Whether Codex reviews its subagents' work, how many fix rounds, what goes back.
     @Published public private(set) var codexSettings: CodexSettings
+    /// Components pinned to it: the chips above its input box and its Board (`pins.json`).
+    @Published public private(set) var pins: [PinnedComponent] = []
     /// Called when you change `codexSettings`, so an awake bot hears the new rules.
     public var onCodexSettings: ((CodexSettings) -> Void)?
     /// The components it has from the shared library (at most `ComponentLibrary.limit`); its
@@ -203,6 +205,7 @@ public final class Bot: ObservableObject, Identifiable {
         effort = store?.loadEffort()
         codexSettings = store?.loadCodexSettings() ?? CodexSettings()
         componentList = store?.loadComponentList()
+        pins = store?.loadPins() ?? []
         routineFile = RoutineFile(url: profile.routinesURL)
         // The main bot starts with a daily summary; managers with none. Routines saved the old way
         // move into the file.
@@ -1252,6 +1255,15 @@ public final class Bot: ObservableObject, Identifiable {
         guard names != componentList else { return }
         componentList = names
         store?.save(componentList: names)
+    }
+
+    /// Changes its pins (see `Workspace+Pins`) and saves them, if anything changed.
+    public func editPins(_ change: (inout [PinnedComponent]) -> Void) {
+        var edited = pins
+        change(&edited)
+        guard edited != pins else { return }
+        pins = edited
+        store?.save(pins: edited)
     }
 
     /// Plugins' Claude parts changed. Asleep: the next wake loads them. Awake: hand over and

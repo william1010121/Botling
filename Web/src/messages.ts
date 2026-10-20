@@ -1,4 +1,5 @@
 import { post } from "./bridge";
+import { pinBar } from "./pins";
 import { answerAction, answerImages, choicesData, commandCard, componentElement, fallbackChoices } from "./components";
 import type { ComponentAnswer } from "./components";
 import { mediaHTML, renderMarkdown } from "./markdown";
@@ -288,10 +289,15 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
  */
 function componentView(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>): HTMLElement | null {
   // Data from a command: the card around it asks to allow it, runs it, or says why it failed.
-  if (display.command || display.status) {
-    return commandCard(display, message.id, index, () => drawComponent(message, display, index, components));
-  }
-  return drawComponent(message, display, index, components);
+  const element = display.command || display.status
+    ? commandCard(display, message.id, index, () => drawComponent(message, display, index, components))
+    : drawComponent(message, display, index, components);
+  // In a chat that can pin, hovering it shows pin / ↻ / ⋯.
+  if (!element || display.pinned === undefined || display.pinned === null) return element;
+  const holder = document.createElement("div");
+  holder.className = "pin-holder" + (display.pinned ? " pinned" : "");
+  holder.append(element, pinBar(display, message.id, index));
+  return holder;
 }
 
 function drawComponent(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>): HTMLElement | null {

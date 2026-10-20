@@ -299,6 +299,9 @@ export function keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement {
   return old;
 }
 
+/** Where a card's command requests go instead of a chat card's (a pinned card's). */
+export type CommandSend = (request: { command: string; folder: string; approve?: boolean; force?: boolean }) => void;
+
 /** Cards whose command was asked to run once allowed, so a redraw does not ask again. */
 const requestedRuns = new Set<string>();
 
@@ -310,7 +313,13 @@ const refreshIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"
  * the card only asks (Swift remembers the answer); a failed run shows why instead of the
  * component. `draw` draws the component itself with the data the command gave.
  */
-export function commandCard(display: DisplayView, messageID: string, index: number, draw: () => HTMLElement | null): HTMLElement {
+export function commandCard(
+  display: DisplayView,
+  messageID: string,
+  index: number,
+  draw: () => HTMLElement | null,
+  options: { send?: CommandSend; bar?: boolean } = {},
+): HTMLElement {
   const card = document.createElement("div");
   card.className = "command-card";
   const status = display.status ?? "approve";
@@ -318,10 +327,10 @@ export function commandCard(display: DisplayView, messageID: string, index: numb
   // With the command and folder this card shows: Swift allows and runs only what you saw.
   const shown = { command: display.command ?? "", folder: display.folder ?? "" };
   const run = (extra: { approve?: boolean; force?: boolean }) =>
-    post({ type: "componentCommand", messageID, index, ...shown, ...extra });
+    options.send ? options.send({ ...shown, ...extra }) : post({ type: "componentCommand", messageID, index, ...shown, ...extra });
   const hasData = display.data !== "null" && display.data !== "";
 
-  if (display.command) {
+  if (display.command && options.bar !== false) {
     const bar = document.createElement("div");
     bar.className = "command-bar";
     const text = document.createElement("code");

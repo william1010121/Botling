@@ -3,6 +3,7 @@ import { keepFrames } from "./components";
 import { Composer, sendFile } from "./composer";
 import { extensions, feedback, messageElement, typingElement } from "./messages";
 import { statusWord } from "./steps";
+import { PinArea } from "./pins";
 import { PluginHost, type PluginSpec } from "./plugins";
 import type { ChatState, MessageView } from "./types";
 import { escapeHTML } from "./util";
@@ -20,6 +21,8 @@ class Chat {
   private readonly scroller: HTMLElement;
   private readonly list: HTMLElement;
   private readonly composer: Composer;
+  /** Pinned components: chips above the input box, and the Board. */
+  private readonly pins: PinArea;
   private readonly drawn = new Map<string, { key: string; element: HTMLElement }>();
   private typing: HTMLElement | null = null;
   private botID: string | null = null;
@@ -36,6 +39,7 @@ class Chat {
     this.scroller = document.getElementById("scroller")!;
     this.list = document.getElementById("messages")!;
     this.composer = new Composer(document.getElementById("composer-slot")!);
+    this.pins = new PinArea(slot("pin-area", "div"), slot("board", "section"));
     const composer = this.composer;
     this.plugins = new PluginHost({
       composer: {
@@ -118,6 +122,7 @@ class Chat {
     if (this.typing) this.list.append(this.typing);
 
     this.showSubagentHeader(state);
+    this.pins.update(state);
     this.composer.update(state);
     // Something you just sent always shows, even if you had scrolled up.
     const newest = state.messages[state.messages.length - 1];
@@ -227,6 +232,18 @@ class Chat {
       for (const file of event.dataTransfer.files) sendFile(file);
     });
   }
+}
+
+/** An element of the page by id, made before the input box when the page has none. */
+function slot(id: string, tag: string): HTMLElement {
+  const found = document.getElementById(id);
+  if (found) return found;
+  const made = document.createElement(tag);
+  made.id = id;
+  const composer = document.getElementById("composer-slot");
+  if (composer) composer.before(made);
+  else document.body.append(made);
+  return made;
 }
 
 declare global {

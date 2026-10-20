@@ -61,6 +61,32 @@ export interface DisplayView {
   ranAt?: string | null;
   /** Pictures its data names by file path, each to the URL its frame loads (`ccb.image(path)`). */
   images?: Record<string, string> | null;
+  /** In a chat that can pin: whether it is pinned to the bot. Absent where nothing can be pinned. */
+  pinned?: boolean | null;
+}
+
+export type PinRefresh = "shown" | "interval" | "manual";
+export type PinSize = "s" | "m" | "l";
+
+/** A component pinned to the bot: a chip above the input box and a card on its Board. */
+export interface PinView {
+  id: string;
+  name: string;
+  /** One line for its chip. */
+  headline: string;
+  size: PinSize;
+  refresh: PinRefresh;
+  minutes: number;
+  /** The component, with its command's run as for a card in the chat. */
+  display: DisplayView;
+}
+
+/** A component the pin picker offers: one this bot drew, or one with a Command. */
+export interface PinChoiceView {
+  name: string;
+  command?: string | null;
+  uses: number;
+  pinned: boolean;
 }
 
 export type CommandStatus = "approve" | "idle" | "running" | "done" | "failed";
@@ -124,6 +150,11 @@ export interface ChatState {
   subagent?: { id: string; title: string; owner: string; status: string; type: string | null } | null;
   /** Developer mode: a bot's replies can be flagged as not right. */
   feedback?: boolean;
+  /** The bot's pinned components; absent where nothing can be pinned (a subagent). */
+  pins?: PinView[] | null;
+  pinChoices?: PinChoiceView[] | null;
+  /** The Board shows instead of the messages. */
+  board?: boolean | null;
 }
 
 export type Action =
@@ -145,6 +176,13 @@ export type Action =
   | { type: "componentReport"; name: string; text: string; images: { name: string; base64: string }[]; rect: { x: number; y: number; width: number; height: number } | null }
   | { type: "componentRevert"; name: string }
   | { type: "componentCommand"; messageID: string; index: number; command: string; folder: string; approve?: boolean; force?: boolean }
+  | { type: "pin"; id: string; messageID?: string; index?: number; name?: string; refresh: PinRefresh; minutes: number }
+  | { type: "unpin"; id: string }
+  | { type: "pinCommand"; id: string; command: string; folder: string; approve?: boolean; force?: boolean }
+  | { type: "pinShown"; ids: string[] | null }
+  | { type: "movePin"; id: string; to: number }
+  | { type: "resizePin"; id: string; size: PinSize }
+  | { type: "setPinRefresh"; id: string; refresh: PinRefresh; minutes: number }
   | { type: "pluginError"; name: string; message: string }
   | { type: "pluginNotice"; name: string; text: string }
   | { type: "pluginLoaded"; name: string; version: string }

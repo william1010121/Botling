@@ -28,6 +28,19 @@ app and publishes it on GitHub Releases.
   components first, then the library's, marked "library". On the first start existing bots
   get the components they have used (by `component-usage.json` and the cards in their chat)
   plus choices and 網頁預覽卡片.
+- **Pin components to a bot.** Hover a component in the chat for pin, ↻ and ⋯. Pin asks how it
+  should refresh (when shown, every N minutes, or only when you press ↻), shows the command that
+  redraws it, and offers Undo. The + chip opens a picker of the components this bot has drawn,
+  then its own others that have a Command (those with a Command are marked; the others pin as
+  their last drawing). Pins are kept per bot
+  in `pins.json` beside its chat, with their order, size, refresh and last output. A pinned
+  command runs only once you have allowed it for the bot's folder, as in the chat.
+- **Pinned chips above the input box.** One chip per pin with a one-line summary of its data;
+  click it and the full component rises from the bottom (↻, ⋯, Esc to close). Drag chips to
+  reorder; right-click one to unpin, move it or change how it refreshes.
+- **Board view per bot.** Chat | Board at the top of the chat (⌃⌘B) shows every pin as a card,
+  sized S, M or L, with Refresh all, Add component, drag to reorder, and ⋯ to resize or unpin. A
+  slim input box stays at the bottom, and the right panel folds to its strip while it shows.
 
 ## 1.8.0
 
