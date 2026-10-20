@@ -180,7 +180,7 @@ struct AnswerAndUsageTests {
         #expect(try String(contentsOf: library.aboutURL("choices"), encoding: .utf8) == ComponentDefaults.choicesAbout)
     }
 
-    @Test func componentTeamIsToldTheAnswerContract() {
+    @Test func componentTeamIsToldTheAnswerContract() throws {
         #expect(ComponentPrompts.system.contains("ccb.answer({text, images})"))
         #expect(ComponentPrompts.system.contains("ccb.pickImage"))
         #expect(ComponentPrompts.system.contains("ccb.image(path)"))
@@ -202,6 +202,14 @@ struct AnswerAndUsageTests {
         #expect(ComponentPrompts.system.contains("<html data-surface=\"board\">"))
         #expect(ComponentPrompts.system.contains("no outer padding beyond about 12px"))
         #expect(PluginGuide.text(builtIns: "/x").contains("`<html data-surface=\"board\">`"))
+        // In the chat it is drawn at its widest size across the reply, frameless as on the Board.
+        #expect(ComponentPrompts.system.contains("ccb.surface = \"chat\""))
+        #expect(ComponentPrompts.system.contains("<html data-surface=\"chat\">"))
+        #expect(ComponentPrompts.system.contains("In the chat it is drawn at its widest size"))
+        #expect(!ComponentPrompts.system.contains("In the chat it is drawn 2x2"))
+        #expect(PluginGuide.text(builtIns: "/x").contains("`<html data-surface=\"chat\">`"))
+        #expect(PluginGuide.text(builtIns: "/x").contains("In the chat a component is drawn at its widest size"))
+        #expect(try setUp(FakeLauncher()).0.maintainerInstructions().contains("in the chat ccb.surface is \"chat\""))
         #expect(ComponentDefaults.choicesTemplate.contains("ccb.answer(index)"))
     }
 }

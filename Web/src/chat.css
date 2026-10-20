@@ -677,6 +677,27 @@ body.viewer { display: block; overflow-y: auto; height: auto; min-height: 100%; 
 }
 .preview-make:hover { background: #3A3A42; color: var(--text); }
 
+/* In the chat a component is drawn wide and frameless, like a Board tile. A reply that shows one
+   takes the whole message column, and the component runs edge to edge across its bubble, which is
+   its frame (so a command's card draws no border of its own); one made from a reply gets a tile
+   of its own. Its report flag floats over its bottom-right corner on hover instead of taking a
+   column beside it. The component is told it is in the chat (<html data-surface="chat">), at its
+   widest size, so it draws no card of its own either. */
+.bubble.wide { flex: 1 1 auto; max-width: none; }
+.bot-column.wide, .speaker-column.wide { flex: 1 1 auto; max-width: none; align-items: flex-start; }
+.bot-column.wide > .bubble.wide, .speaker-column.wide > .bubble.wide, .bot-column.wide > .spec-chips { align-self: stretch; }
+.bubble.wide > .wide-part { margin-left: -16px; margin-right: -16px; }
+.notice-bubble.wide > .wide-part { margin-left: -15px; margin-right: -15px; }
+.wide-part.command-card, .wide-part > .command-card { border: 0; border-radius: 0; padding: 0; }
+.wide-part.command-card > :not(.component), .wide-part > .command-card > :not(.component) { padding-left: 16px; padding-right: 16px; }
+.pin-holder.wide-part > .pin-bar { right: 8px; }
+.spec-built > .component, .spec-built > .command-card { background: var(--bubble); border: 0; border-radius: 18px; padding: 12px 0; }
+.spec-built > .command-card > :not(.component) { padding-left: 16px; padding-right: 16px; }
+.wide-part .component, .spec-built .component { position: relative; }
+.wide-part .component-frame, .spec-built .component-frame { min-width: 0; }
+.wide-part .component-side, .spec-built .component-side { position: absolute; right: 4px; bottom: 4px; min-width: 0; z-index: 1; }
+.wide-part .component:hover .flag, .spec-built .component:hover .flag { background: rgba(43, 43, 49, 0.92); }
+
 /* Spec mode: the component spec workspace in the right panel instead of the chat */
 body.spec-mode #scroller, body.spec-mode #composer-slot, body.spec-mode #board, body.spec-mode #pin-area { display: none; }
 body.spec-mode { background: #141417; }

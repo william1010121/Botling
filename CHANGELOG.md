@@ -4,6 +4,23 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+### Changed
+
+- **Components in the chat are wide and frameless, like a Board tile.** A reply that shows a
+  component (`<show>`, a command's card, a result page's preview) now takes the whole message
+  column instead of shrinking to a narrow card, and the component runs edge to edge across the
+  bubble, which is its frame: a command's card loses its border, and the report flag floats over
+  the component's bottom-right corner on hover instead of taking a column beside it. A component
+  made from a reply ("Make into component") is drawn under it the same width, on a tile of its
+  own. In the chat a component is drawn at its widest size: the widest in its about.md's `Sizes:`
+  line (4×2 when listed; of two as wide, the taller), still 2×2 without the line. It is told so
+  with `ccb.size`, `<html data-size="4x2">` and `ccb.surface` / `<html data-surface="chat">`.
+  ComponentPrompts (the component editor), PLUGINS.md and the Maintainer now say a component
+  draws no card of its own in the chat either (no border, background or radius, at most about
+  12px padding), only as tall as its content there, and give one rule for both places.
+
 ## 1.9.0
 
 ### Added

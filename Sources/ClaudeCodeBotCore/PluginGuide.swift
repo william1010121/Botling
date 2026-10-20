@@ -132,11 +132,16 @@ enum PluginGuide {
           the card's size button offers those. Give each size its own layout: small = the one key number or status, wide = a short row or list,
           tall = a vertical list, large = the full view. `ccb.size` is `{ w, h, name }` (name "small", "wide", "tall", "large" or "xlarge"),
           `<html data-size="2x1">` is there for CSS, and `ccb.onSize((size) => redraw(size))` runs when the user resizes the card (returns a
-          function that stops it). In the chat a component is drawn 2x2 (or its largest size).
+          function that stops it).
           On the Board the component is the whole tile, like a home-screen widget: no header, the app's controls (size, ↻, ⋯) float over
-          the top-right corner on hover. There `ccb.surface` is "board" and `<html data-surface="board">` is set (in the chat: "chat"), so
+          the top-right corner on hover. There `ccb.surface` is "board" and `<html data-surface="board">` is set, so
           drop your own card frame: no border, no background (transparent, or the tile's), no border-radius, no outer padding beyond about
           12px, and fill the tile, e.g. `html[data-surface="board"] .card { border: 0; background: none; border-radius: 0; padding: 12px; height: 100%; }`.
+          In the chat a component is drawn at its widest size (the widest in `Sizes:`, so 4x2 when listed; 2x2 without the line) across the
+          whole width of the reply, edge to edge, with its report flag floating over its bottom-right corner on hover. There `ccb.surface`
+          is "chat" and `<html data-surface="chat">` is set; the reply's bubble (or, under a reply, a tile like the Board's) is its frame,
+          so draw no card frame there either (same rules), only let it be as tall as its content: `.card { border: 0; background: none;
+          border-radius: 0; padding: 12px; }` with `html[data-surface="board"] .card { height: 100%; }`.
         - about.md: usage notes for the bots. The first line says in one sentence what it is, followed by the data format (with an example JSON) and what the bot receives when the user answers.
 
         ## Check and release

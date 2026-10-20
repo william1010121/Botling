@@ -24,12 +24,15 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./
  *   else the text) or rejects with an Error saying why.
  * - `size`: the size it is drawn at, `{w, h, name}` in Board cells: 1×1 "small", 2×1 "wide",
  *   1×2 "tall", 2×2 "large", 4×2 "xlarge". Also `<html data-size="2x1">`, for CSS. A card on the
- *   Board has the size the user picked; in the chat it is 2×2 (or the largest the component has).
+ *   Board has the size the user picked; in the chat it is the widest the component has (4×2 when
+ *   it has that; 2×2 when its about.md names no sizes), drawn across the whole reply.
  * - `onSize(fn)`: calls `fn(size)` whenever the user resizes its card; returns a function that stops.
- * - `surface`: where it is drawn, "chat" or "board"; also `<html data-surface="board">`. On the
- *   Board the component is the whole tile, like a home-screen widget: the tile gives the rounded
- *   corners and background, so it draws no frame of its own (no border, background or radius, at
- *   most ~12px padding) and fills the tile; the page itself is the tile's height and scrolls.
+ * - `surface`: where it is drawn, "chat" or "board"; also `<html data-surface="chat">`. Either
+ *   way it draws no frame of its own (no border, background or radius, at most ~12px padding):
+ *   on the Board the component is the whole tile, like a home-screen widget, whose rounded corners
+ *   and background frame it, and it fills the tile (the page is the tile's height and scrolls); in
+ *   the chat the reply's bubble (or, under a reply, a tile like the Board's) frames it, edge to
+ *   edge across the message column, and the page is as tall as its content.
  * The frame reports its height and answers to this page, which passes answers on to Swift.
  */
 export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2", surface: Surface = "chat"): string {
@@ -202,12 +205,17 @@ export function componentSizes(info: ComponentInfo | undefined): PinSize[] {
   return sizes.length ? sizes : ["2x2"];
 }
 
-/** The size a component is drawn at in the chat: 2×2 when it has that layout, else its largest. */
+/**
+ * The size a component is drawn at in the chat, where it spans the reply: the widest it has a
+ * layout for (of two as wide, the taller), so 4×2 when it has one; 2×2, its one layout, when its
+ * about.md names no sizes.
+ */
 export function chatSize(info: ComponentInfo | undefined): PinSize {
-  const sizes = componentSizes(info);
-  if (sizes.includes("2x2")) return "2x2";
-  const area = (size: PinSize) => sizeInfo(size).w * sizeInfo(size).h;
-  return sizes.reduce((best, size) => (area(size) > area(best) ? size : best));
+  const wider = (a: PinSize, b: PinSize) => {
+    const [x, y] = [sizeInfo(a), sizeInfo(b)];
+    return x.w !== y.w ? x.w > y.w : x.h > y.h;
+  };
+  return componentSizes(info).reduce((best, size) => (wider(size, best) ? size : best));
 }
 
 /** Tells a component's frame its card now has `size` (its `ccb.onSize` watchers run). */
@@ -380,6 +388,7 @@ export function componentElement(
   if (!info) return null;
   const wrap = document.createElement("div");
   wrap.className = "component";
+  wrap.dataset.surface = surface;
   const frame = document.createElement("iframe") as ComponentFrame;
   frame.className = "component-frame";
   frame.setAttribute("sandbox", "allow-scripts");
