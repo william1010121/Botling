@@ -428,17 +428,17 @@ public final class Bot: ObservableObject, Identifiable {
         case .awake:
             if let merged = merging(outgoing) {
                 // You added to what you said before it answered: stop that turn and ask again
-                // with all of it, so one reply answers the whole thing.
-                process?.interrupt()
-                interruptions += 1
+                // with all of it, so one reply answers the whole thing. The message goes first:
+                // the interrupt stops the turn for it (and leaves background subagents running).
                 trace.dropSteps()
                 deliver(merged)
+                process?.interrupt()
+                interruptions += 1
                 return
             }
             if pausing(for: outgoing) {
-                // You come first: what it was doing waits until it has answered you.
-                process?.interrupt()
-                interruptions += 1
+                // You come first: what it was doing waits until it has answered you. Its
+                // subagents in the background carry on and still report back.
                 trace.dropSteps()
                 pausedWork = turnFromRelay
                 turnFromRelay = false
@@ -447,6 +447,8 @@ public final class Bot: ObservableObject, Identifiable {
                 deliver(mine)
                 // Yours now: what you add before it answers joins it.
                 turnInput = mine
+                process?.interrupt()
+                interruptions += 1
                 return
             }
             deliver(outgoing)

@@ -65,6 +65,29 @@ struct ConversationTests {
         #expect(!bot.messages.contains { $0.role == .error })
     }
 
+    /// Claude stops a turn for a message already waiting (`send_now`), which leaves its
+    /// background subagents running; a plain interrupt would kill them. So the message goes
+    /// first, then the interrupt.
+    @Test func theMessageGoesBeforeTheInterruptThatMakesRoomForIt() async throws {
+        let fake = FakeLauncher()
+        fake.respond = { _ in nil }
+        let bot = makeBot(fake)
+        bot.relay("Fix the login page")
+        await eventually { fake.agents.count == 1 }
+        let agent = fake.agents[0]
+        agent.emit(.trace(.subagentStarted(id: "A", description: "Check the tests", type: nil, prompt: "run them", background: true)))
+        await eventually { bot.subagents.first?.isRunning == true }
+
+        bot.send("How is it going?")
+        #expect(agent.log == ["send", "send", "interrupt"])
+        #expect(agent.sent.last == Bot.pauseNote + "\n\nHow is it going?")
+        #expect(bot.subagents.first?.isRunning == true)
+        let request = ClaudeAgentProcess.interruptRequest()
+        let body = try #require(request["request"] as? [String: Any])
+        #expect(body["subtype"] as? String == "interrupt")
+        #expect(body["send_now"] as? Bool == true)
+    }
+
     @Test func aRoutineWaitsForYouToo() async {
         let fake = FakeLauncher()
         fake.respond = { _ in nil }

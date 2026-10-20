@@ -481,3 +481,43 @@ final class LaunchLog: @unchecked Sendable {
 
     var directories: [URL] { lock.withLock { _directories } }
 }
+
+extension LiveClaudeTests {
+    /// You write while it works on handed-over work with a subagent in the background: the turn
+    /// stops to answer you, but the subagent keeps going and its report still reaches the bot.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func stoppingATurnLeavesBackgroundSubagentsRunning() async throws {
+        let executable = try #require(ClaudeExecutableLocator().locate())
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        // Plain sleeps are refused by claude's Bash; scripts that wait are not.
+        try "import time; time.sleep(45); open('bg-done.txt', 'w').write('done')\n"
+            .write(to: home.appending(path: "bgjob.py"), atomically: true, encoding: .utf8)
+        try "import time; time.sleep(60)\n".write(to: home.appending(path: "fgjob.py"), atomically: true, encoding: .utf8)
+        let marker = home.appending(path: "bg-done.txt")
+
+        let profile = BotProfile(name: "Probe", role: .manager, avatar: "square", workingDirectory: home, memoryPath: ".bot/memory.md", tools: ["Read", "Glob", "Bash", "Agent", "Task"])
+        let bot = Bot(profile: profile, defaultModel: .haiku, launcher: ClaudeAgentProcess.launcher(executable: executable))
+
+        bot.relay("Use the Agent tool with run_in_background: true to start one general-purpose subagent with this prompt: \"Run the Bash command `python3 bgjob.py` in the foreground (not in the background, timeout 120000), then reply BG-DONE.\" Right after starting it, run the Bash command `python3 fgjob.py` yourself in the foreground (timeout 120000) and wait for it. When the subagent reports back, say BG-REPORTED.")
+        await eventually({ bot.subagents.first?.isRunning == true && bot.isWorking }, timeout: 120)
+        // Give the turn time to be inside its own long command.
+        try await Task.sleep(for: .seconds(8))
+        #expect(bot.subagents.first?.isRunning == true)
+
+        bot.send("Quick question: reply with only the word PONG.")
+        await eventually({ bot.messages.contains { $0.role == .bot && $0.text.contains("PONG") } }, timeout: 120)
+        await eventually({ bot.subagents.first.map { !$0.isRunning } == true }, timeout: 180)
+        for message in bot.messages {
+            print("[\(message.role)] \(message.text.prefix(200))")
+        }
+        let subagent = try #require(bot.subagents.first)
+        print("subagent:", subagent.description, subagent.status, subagent.background, "result:", subagent.result?.prefix(200) ?? "")
+        #expect(subagent.status == .completed)
+        #expect(FileManager.default.fileExists(atPath: marker.path))
+        // Its report comes back to the bot after the turn you stopped.
+        await eventually({ bot.messages.contains { $0.role == .bot && $0.text.contains("BG-REPORTED") } }, timeout: 180)
+        bot.stop()
+    }
+}

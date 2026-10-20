@@ -21,8 +21,15 @@ final class FakeAgent: AgentProcess, @unchecked Sendable {
     var sent: [String] { lock.withLock { _sent } }
     var finished: Bool { lock.withLock { _finished } }
 
+    /// What reached it, in order: "send" for a message, "interrupt" for an interrupt.
+    private var _log: [String] = []
+    var log: [String] { lock.withLock { _log } }
+
     func send(_ text: String) {
-        lock.withLock { _sent.append(text) }
+        lock.withLock {
+            _sent.append(text)
+            _log.append("send")
+        }
         if let reply = respond(text) {
             continuation.yield(.reply(reply, isError: false))
         }
@@ -51,7 +58,10 @@ final class FakeAgent: AgentProcess, @unchecked Sendable {
 
     /// Like claude: the turn ends with an error result.
     func interrupt() {
-        lock.withLock { _interrupts += 1 }
+        lock.withLock {
+            _interrupts += 1
+            _log.append("interrupt")
+        }
         continuation.yield(.reply("", isError: true))
     }
 
