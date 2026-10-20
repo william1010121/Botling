@@ -4,6 +4,21 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+### Fixed
+
+- **A component made from a reply shows that reply.** Make into component took the last shell
+  command the bot ran while writing the reply (such as `head -c 200000 CHANGELOG.md`) as the
+  component's data source, and Maintainer saw only the reply's first 1,500 characters, so a reply
+  that summed up every release in Chinese became a card of the raw English CHANGELOG. Now
+  Maintainer gets the whole reply and the words of each result page it links (up to 12,000
+  characters each), and is told the reply's own content is the data: all of it goes in the
+  "This reply" sample, drawn under the reply and in Edit spec's preview. A Command is optional,
+  only when live data that changes is clearly wanted; the command the bot ran is passed as a hint,
+  and a component whose about.md has a Command no longer runs it under a reply whose spec has none.
+  The component editor and PLUGINS.md say a Command is only for live data.
+
 ## 1.9.0
 
 ### Added
