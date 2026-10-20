@@ -218,7 +218,7 @@ describe("messages", () => {
     expect(lists[0].querySelector("pre")?.textContent).toBe("swift test");
   });
 
-  it("flag a bot's reply as not right in developer mode only", () => {
+  it("flag a bot's reply as not right in developer mode only", async () => {
     feedback.enabled = false;
     expect(messageElement(message({ text: "Hi" }), {}).querySelector(".feedback-button")).toBeNull();
     feedback.enabled = true;
@@ -229,7 +229,10 @@ describe("messages", () => {
     const box = document.querySelector(".report")!;
     box.querySelector("textarea")!.value = "It answered half";
     box.querySelector<HTMLButtonElement>(".send")!.click();
-    expect(sent).toEqual([{ type: "feedback", messageID: "r9", text: "It answered half" }]);
+    expect(sent).toEqual([]);
+    await new Promise((done) => requestAnimationFrame(() => done(null)));
+    expect(sent).toEqual([{ type: "feedback", messageID: "r9", text: "It answered half", images: [] }]);
+    expect(document.querySelector(".report")).toBeNull();
     feedback.enabled = false;
   });
 

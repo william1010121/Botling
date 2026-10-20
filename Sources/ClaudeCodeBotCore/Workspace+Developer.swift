@@ -168,26 +168,37 @@ extension Workspace {
     // MARK: Feedback
 
     /// You flagged a reply as not right: it goes to the developer project with the chat around
-    /// it, to become a test and a fix.
+    /// it, to become a test and a fix. `screenshot` is the chat as you saw it, centered on that
+    /// reply; `files` are pictures you added. Both are kept in the developer project's
+    /// attachments folder and listed in the report.
     @discardableResult
-    public func reportFeedback(_ text: String, on messageID: UUID, in chat: Bot) -> Bool {
+    public func reportFeedback(_ text: String, on messageID: UUID, in chat: Bot, screenshot: URL? = nil, files: [URL] = []) -> Bool {
         guard let developer = developerProject, let manager = managers[developer.id],
               let index = chat.messages.firstIndex(where: { $0.id == messageID }) else { return false }
         let message = chat.messages[index]
         let around = chat.messages[max(0, index - 12)...index].compactMap(Bot.archiveEntry).joined(separator: "\n")
         let steps = message.steps.map { "\n\nWhat it did on the way: " + $0.map(\.title).joined(separator: " → ") } ?? ""
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var pictures: [String] = []
+        if screenshot != nil {
+            pictures.append("The first attachment is a screenshot of the chat as the user saw it, centered on that reply.")
+        }
+        if !files.isEmpty {
+            pictures.append("With it the user added \(files.count) picture\(files.count == 1 ? "" : "s") of their own.")
+        }
+        let seen = pictures.isEmpty ? "" : "\n\n" + pictures.joined(separator: " ")
         let report = """
         Feedback: the user flagged a reply of \(chat.name) as not right.
         What is wrong, in their words: \(words.isEmpty ? "(they did not say)" : words)
 
         The chat up to that reply, oldest first:
-        \(around)\(steps)
+        \(around)\(steps)\(seen)
 
         First write a test that shows this, then fix it.
         """
-        manager.relay(report)
-        Self.appendFeedback(report, in: root)
+        manager.relay(report, files: [screenshot].compactMap { $0 } + files)
+        let kept = manager.messages.last { $0.role == .relay }?.attachments ?? []
+        Self.appendFeedback(kept.isEmpty ? report : report + "\n\nAttachments:\n" + kept.map { "- " + $0.url.path }.joined(separator: "\n"), in: root)
         tell(chat, "Sent to \(developer.name) as feedback.", sourceID: developer.id)
         return true
     }

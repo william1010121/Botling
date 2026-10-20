@@ -158,8 +158,16 @@ struct ChatSurface: NSViewRepresentable {
             case "openSubagent":
                 if let subagent = body["id"] as? String { workspace.view(subagent: subagent, of: bot) }
             case "feedback":
-                if let messageID = id("messageID") {
-                    workspace.reportFeedback(body["text"] as? String ?? "", on: messageID, in: bot)
+                guard let messageID = id("messageID") else { break }
+                let text = body["text"] as? String ?? ""
+                let files = Self.pictures(body["images"])
+                Task { @MainActor [weak view] in
+                    // The page has put the reply in the middle: the chat as you saw it goes along,
+                    // or the whole window if the page cannot be captured.
+                    var shot: URL?
+                    if let view { shot = await Self.snapshot(of: view, in: view.bounds, named: "feedback") }
+                    if shot == nil { shot = await workspace.captureWindow?() }
+                    workspace.reportFeedback(text, on: messageID, in: bot, screenshot: shot, files: files)
                 }
             case "closeSubagent":
                 workspace.view(subagent: nil, of: bot)
@@ -187,10 +195,7 @@ struct ChatSurface: NSViewRepresentable {
             case "componentReport":
                 guard let name = body["name"] as? String else { break }
                 let text = body["text"] as? String ?? ""
-                var files = (body["images"] as? [[String: Any]] ?? []).compactMap { image -> URL? in
-                    guard let name = image["name"] as? String, let base64 = image["base64"] as? String else { return nil }
-                    return Self.save(base64, named: name)
-                }
+                var files = Self.pictures(body["images"])
                 let rect = (body["rect"] as? [String: Any]).flatMap(Self.rect)
                 Task { @MainActor [weak view] in
                     // The component as it looks now, so Maintainer sees what you saw.
@@ -237,6 +242,14 @@ struct ChatSurface: NSViewRepresentable {
                   let tiff = image.tiffRepresentation,
                   let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return nil }
             return save(png.base64EncodedString(), named: "\(name)-screenshot.png")
+        }
+
+        /// Pictures pasted or dropped on a report box, saved.
+        static func pictures(_ value: Any?) -> [URL] {
+            (value as? [[String: Any]] ?? []).compactMap { image in
+                guard let name = image["name"] as? String, let base64 = image["base64"] as? String else { return nil }
+                return save(base64, named: name)
+            }
         }
 
         /// A pasted or dropped file, saved where the bot's copy will be made from.

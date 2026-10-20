@@ -100,7 +100,7 @@ export type Action =
   | { type: "openSource"; messageID: string }
   | { type: "openSubagent"; id: string }
   | { type: "closeSubagent" }
-  | { type: "feedback"; messageID: string; text: string }
+  | { type: "feedback"; messageID: string; text: string; images: { name: string; base64: string }[] }
   | { type: "pickFiles" }
   | { type: "removeFile"; id: string }
   | { type: "addFileData"; name: string; base64: string }

@@ -1,6 +1,7 @@
 import { post } from "./bridge";
 import { choicesData, componentElement, fallbackChoices } from "./components";
 import { mediaHTML, renderMarkdown } from "./markdown";
+import { acceptPictures } from "./pictures";
 import type { ComponentRender } from "./plugins";
 import { liveElement, stepsElement } from "./steps";
 import type { ComponentInfo, FileView, MessageView, StepView } from "./types";
@@ -111,22 +112,37 @@ function withFeedback(message: MessageView): HTMLElement {
   return column;
 }
 
-/** Say what was wrong with a reply; it goes to the developer project with the chat around it. */
+/**
+ * Say what was wrong with a reply; it goes to the developer project with the chat around it, a
+ * screenshot of the chat centered on the reply (taken by the app), and pictures pasted or dropped.
+ */
 function openFeedback(anchor: HTMLElement, message: MessageView): void {
   document.querySelector(".report")?.remove();
   const box = document.createElement("div");
   box.className = "report";
   box.innerHTML = `<div class="report-title">What was not right?</div>
-<textarea rows="3" placeholder="e.g. it answered only half of what I said"></textarea>
+<textarea rows="3" placeholder="e.g. it answered only half of what I said. Paste or drop a picture to show it."></textarea>
+<div class="report-images" hidden></div>
 <div class="report-actions"><span></span><button class="primary send">Send</button></div>`;
   const textarea = box.querySelector("textarea")!;
+  const images = acceptPictures(box, textarea, box.querySelector<HTMLElement>(".report-images")!, () => place());
   box.querySelector(".send")!.addEventListener("click", () => {
-    post({ type: "feedback", messageID: message.id, text: textarea.value.trim() });
+    // Out of the way and the reply in the middle first, so the app's screenshot shows the chat
+    // as you saw it around that reply.
     box.remove();
+    const row = anchor.closest<HTMLElement>(".row");
+    if (row) {
+      document.dispatchEvent(new CustomEvent("ccb-read-back"));
+      row.scrollIntoView?.({ block: row.offsetHeight > window.innerHeight ? "start" : "center" });
+    }
+    requestAnimationFrame(() => post({ type: "feedback", messageID: message.id, text: textarea.value.trim(), images }));
   });
   document.body.append(box);
   const rect = anchor.getBoundingClientRect();
-  box.style.top = `${Math.max(12, Math.min(rect.top - 8, window.innerHeight - box.offsetHeight - 12))}px`;
+  const place = () => {
+    box.style.top = `${Math.max(12, Math.min(rect.top - 8, window.innerHeight - box.offsetHeight - 12))}px`;
+  };
+  place();
   box.style.left = `${Math.max(12, Math.min(rect.left - 316, window.innerWidth - 316))}px`;
   textarea.focus();
   const close = (event: MouseEvent) => {

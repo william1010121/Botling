@@ -263,4 +263,35 @@ struct DeveloperModeTests {
         let log = try String(contentsOf: root.appending(path: "ccb/feedback.md"), encoding: .utf8)
         #expect(log.contains("It could have made projects"))
     }
+
+    @Test func feedbackCarriesAScreenshotOfTheChatAsTheUserSawIt() async throws {
+        let fake = FakeLauncher()
+        let (workspace, project, manager) = try developerSetUp(fake)
+        let main = workspace.mainBot
+        let reply = ChatMessage(role: .bot, text: "Here is the form.")
+        main.post(reply)
+        let shot = root.appending(path: "chat-shot.png")
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: shot)
+        let mine = root.appending(path: "what-i-meant.png")
+        try Data([0x89, 0x50, 0x4E, 0x47]).write(to: mine)
+
+        #expect(workspace.reportFeedback("The choices did not show", on: reply.id, in: main, screenshot: shot, files: [mine]))
+        await eventually { fake.agents.last?.sent.first?.contains("(Attachments:") == true }
+        let sent = try #require(fake.agents.last?.sent.first)
+        #expect(sent.contains("(From the main bot) Feedback: the user flagged a reply of Main bot as not right."))
+        let relay = try #require(manager.messages.first { $0.role == .relay })
+        let kept = try #require(relay.attachments)
+        #expect(kept.count == 2)
+        let folder = project.folder.appending(path: ".bot/attachments").path
+        for file in kept {
+            #expect(file.url.path.hasPrefix(folder))
+            #expect(FileManager.default.fileExists(atPath: file.url.path))
+            #expect(sent.contains("- \(file.url.path)"))
+        }
+        #expect(kept[0].url.lastPathComponent.hasSuffix("chat-shot.png"))
+        #expect(sent.contains("The first attachment is a screenshot of the chat as the user saw it, centered on that reply."))
+        #expect(sent.contains("the user added 1 picture of their own"))
+        let log = try String(contentsOf: root.appending(path: "ccb/feedback.md"), encoding: .utf8)
+        #expect(log.contains(kept[0].url.path))
+    }
 }
