@@ -110,13 +110,67 @@ public struct GitDiff: Equatable, Sendable {
     /// The change Codex reviewed: the work tree against where the branch left `base` (so
     /// commits and uncommitted edits both show), or against HEAD with no base.
     public static func load(folder: URL, base: String?) async -> GitDiff {
+        await load(folder: folder, scope: base.flatMap { $0.isEmpty ? nil : .branch(base: $0) } ?? .uncommitted)
+    }
+
+    /// The change in `scope`. Untracked files count as added for the scopes that take in what is
+    /// not committed.
+    public static func load(folder: URL, scope: CodexScope) async -> GitDiff {
         await Task.detached {
-            var from = "HEAD"
-            if let base, !base.isEmpty, let fork = git(["merge-base", base, "HEAD"], in: folder)?.trimmingCharacters(in: .whitespacesAndNewlines), !fork.isEmpty {
-                from = fork
+            switch scope {
+            case .uncommitted, .branch:
+                var from = "HEAD"
+                if case let .branch(base) = scope, let fork = git(["merge-base", base, "HEAD"], in: folder)?.trimmingCharacters(in: .whitespacesAndNewlines), !fork.isEmpty {
+                    from = fork
+                }
+                let tracked = parse(git(["diff", "--no-color", "--no-ext-diff", from], in: folder) ?? "")
+                return GitDiff(files: tracked.files + untracked(folder))
+            case .lastCommit:
+                return parse(git(["show", "--no-color", "--no-ext-diff", "--format=", "HEAD"], in: folder) ?? "")
+            case let .commit(hash):
+                return parse(git(["show", "--no-color", "--no-ext-diff", "--format=", hash], in: folder) ?? "")
             }
-            return parse(git(["diff", "--no-color", "--no-ext-diff", from], in: folder) ?? "")
         }.value
+    }
+
+    /// Files git does not track or ignore, as all-added files (the first lines of text ones).
+    static func untracked(_ folder: URL) -> [File] {
+        let paths = (git(["ls-files", "--others", "--exclude-standard", "-z"], in: folder) ?? "").split(separator: "\0").map(String.init)
+        return paths.map { path in
+            let text = (try? String(contentsOf: folder.appending(path: path), encoding: .utf8)) ?? ""
+            var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            if lines.last == "" { lines.removeLast() }
+            let added = lines.prefix(2000).enumerated().map { Line(kind: .added, old: nil, new: $0.offset + 1, text: $0.element) }
+            return File(path: path, hunks: added.isEmpty ? [] : [Hunk(lines: added)])
+        }
+    }
+
+    /// A commit in the "Review with Codex" picker.
+    public struct Commit: Equatable, Hashable, Sendable {
+        public var hash: String
+        public var subject: String
+    }
+
+    /// The newest commits on HEAD, short hash and subject.
+    public static func recentCommits(folder: URL, limit: Int = 10) -> [Commit] {
+        (git(["log", "-n", "\(limit)", "--format=%h%x09%s"], in: folder) ?? "").split(separator: "\n").map { line in
+            let parts = line.split(separator: "\t", maxSplits: 1).map(String.init)
+            return Commit(hash: parts[0], subject: parts.count > 1 ? parts[1] : "")
+        }
+    }
+
+    /// The short hash of `revision`; nil when there is none (no commits yet).
+    public static func shortHash(_ revision: String, folder: URL) -> String? {
+        git(["rev-parse", "--short", "--verify", "--quiet", revision], in: folder)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// The branch HEAD is on; nil when detached or no repository.
+    public static func currentBranch(folder: URL) -> String? {
+        git(["rev-parse", "--abbrev-ref", "HEAD"], in: folder)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .flatMap { $0.isEmpty || $0 == "HEAD" ? nil : $0 }
     }
 
     /// The branch to compare with: main or master when the folder is on another branch; nil

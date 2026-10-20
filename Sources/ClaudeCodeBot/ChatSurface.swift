@@ -165,6 +165,12 @@ struct ChatSurface: NSViewRepresentable {
                     let label = (body["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? url.lastPathComponent
                     ResultWindows.open(Chip(label: label, url: url))
                 }
+            case "codexReview":
+                // A component's ccb.reviewWithCodex: checked against the bot's repository (a
+                // commit that is not in it, a spec outside its folder or home); a bad call is dropped.
+                if let call = CodexComponentCall(body, folder: bot.profile.workingDirectory) {
+                    workspace.reviewWithCodex(bot, scope: call.scope, spec: call.spec)
+                }
             case "openSubagent":
                 if let subagent = body["id"] as? String { workspace.view(subagent: subagent, of: bot) }
             case "feedback":

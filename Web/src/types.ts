@@ -132,6 +132,7 @@ export type Action =
   | { type: "reply"; messageID: string }
   | { type: "cancelReply" }
   | { type: "openURL"; url: string; label: string }
+  | { type: "codexReview"; scope: string | null; commit: string | null; spec: string | null }
   | { type: "openSource"; messageID: string }
   | { type: "openSubagent"; id: string }
   | { type: "closeSubagent" }
