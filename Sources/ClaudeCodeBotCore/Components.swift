@@ -162,11 +162,30 @@ public final class ComponentLibrary: ObservableObject {
     }
 
     static func command(inAbout about: String) -> String? {
+        line(labelled: "command:", inAbout: about)
+    }
+
+    /// The command a component runs for more of its data on demand, when its about.md has a
+    /// line `Detail command: git show --stat {hash}`: the template `ccb.runDetail({hash: …})`
+    /// fills (see `ComponentCommands.runDetail`). Read anew each time, so only a template the
+    /// user allowed (as it is now) ever runs.
+    public func detailCommand(of name: String) -> String? {
+        guard let about = try? String(contentsOf: aboutURL(name), encoding: .utf8) else { return nil }
+        return Self.detailCommand(inAbout: about)
+    }
+
+    static func detailCommand(inAbout about: String) -> String? {
+        line(labelled: "detail command:", inAbout: about)
+    }
+
+    /// The text after `label` on the first about.md line that starts with it (a list item too),
+    /// without backticks around it.
+    private static func line(labelled label: String, inAbout about: String) -> String? {
         for line in about.split(separator: "\n") {
             var text = line.trimmingCharacters(in: .whitespaces)
             if text.hasPrefix("- ") || text.hasPrefix("* ") { text = String(text.dropFirst(2)) }
-            guard text.lowercased().hasPrefix("command:") else { continue }
-            let command = text.dropFirst("command:".count)
+            guard text.lowercased().hasPrefix(label) else { continue }
+            let command = text.dropFirst(label.count)
                 .trimmingCharacters(in: .whitespaces)
                 .trimmingCharacters(in: CharacterSet(charactersIn: "`"))
                 .trimmingCharacters(in: .whitespaces)
@@ -337,6 +356,8 @@ enum ComponentPrompts {
     - The data is in window.ccb.data. The user's answer always calls ccb.answer(...): a number picks an option by index (from 0), text is an answer the user typed (for example an "Other" input box). The app treats both as answered and passes the answer to the bot that asked.
     - Pictures back: ccb.answer({text, images}) sends words with pictures; images are what ccb.pickImage({multiple: true}) resolves to (call it from a click; [] if cancelled), what ccb.readImage(file) makes of a pasted or dropped File, or data: URLs. Each picked picture has dataURL for a thumbnail. The bot gets the pictures as saved files, like pictures sent with a message.
     - Codex review: ccb.reviewWithCodex({scope, commit, spec}) has Codex review the chat bot's repository once, read-only; scope is "uncommitted", "lastCommit", "branch" (against main or master, only off those) or "commit" (commit: a hash in the repository; a commit alone implies it); spec is an optional .md/.txt/.html file in the bot's folder or home that Codex checks the change against. Call it from a click. The report shows in the right column and a line in the chat; a call the app cannot check is ignored.
+    - Data from a command: an about.md line "Command: git log --format=..." makes the app fill the component with what that command prints (run in the bot's folder once the user presses "Allow and run" on its card; JSON output is the data, other output one string; at most 1 MB, 60 seconds).
+    - Details on demand: when the data would be too big to give all at once (each commit's whole diff, each file's contents), keep the Command's output small and add an about.md line "Detail command: git show --patch --stat {hash}". Then await ccb.runDetail({hash: "2aed630"}) (from a click) runs it with each {name} filled in, in the same folder, with the same limits, and resolves to its output (parsed when it is JSON, else the text); it rejects with an Error (show error.message) when the user has not allowed it yet, a value is missing or not allowed, or the command fails. Values may only hold letters, digits and . _ / - (up to 200, not starting with -); every {name} in the template needs one, and nothing else may be passed. It is allowed together with the Command on the card, so changing the Detail command line asks the user again. Cache what you fetched; show a spinner while waiting.
     - Pictures shown: when the data names a local picture by file path, set img.src = ccb.image(path) (a file: URL does not load in the frame); ccb.image returns "" for a file that is not there.
     - In choice-style data, chosen is the index already picked and answer is a typed answer; if either is not null the question is answered, so show the answer and disable the buttons.
     - Text color #EDEDF0, secondary text #A0A0A8, accent blue #4C8DFF, recommended orange #F7C27F; font -apple-system, "PingFang TC", sans-serif.

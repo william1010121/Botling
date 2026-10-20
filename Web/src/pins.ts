@@ -1,5 +1,5 @@
 import { post } from "./bridge";
-import { commandCard, componentElement } from "./components";
+import { commandCard, componentElement, detailTarget } from "./components";
 import type { ChatState, ComponentInfo, DisplayView, PinChoiceView, PinRefresh, PinSize, PinView } from "./types";
 
 /**
@@ -340,7 +340,7 @@ function openPicker(): void {
 
 /** The pinned component, with its command's ask, error or wait as in the chat, without the bar. */
 function pinBody(pin: PinView): HTMLElement {
-  const draw = () => componentElement(pin.name, current.components[pin.name], pin.display.data, null, `pin-${pin.id}`, pin.display.images);
+  const draw = () => componentElement(pin.name, current.components[pin.name], pin.display.data, null, `pin-${pin.id}`, pin.display.images, detailTarget(pin.display));
   if (pin.display.command || pin.display.status) {
     return commandCard(pin.display, `pin:${pin.id}`, 0, draw, {
       bar: false,

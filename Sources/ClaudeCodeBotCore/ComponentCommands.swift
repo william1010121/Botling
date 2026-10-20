@@ -103,9 +103,11 @@ public final class ComponentCommands: ObservableObject {
     // MARK: Running
 
     /// The card `card` (a message and its component's place) with `command` in `folder`.
-    public func state(for card: String, command: String, in folder: URL) -> State {
+    /// `detail` is its component's Detail command, when it has one: the card asks until that is
+    /// allowed too.
+    public func state(for card: String, command: String, detail: String? = nil, in folder: URL) -> State {
         // A command taken back asks again, even on a card that ran it before.
-        guard isApproved(command, in: folder) else { return State(status: .approve) }
+        guard isApproved(command, in: folder), isApproved(detail: detail, in: folder) else { return State(status: .approve) }
         return run(of: card, command: command, in: folder) ?? State(status: .idle)
     }
 
@@ -132,6 +134,115 @@ public final class ComponentCommands: ObservableObject {
         } else {
             runs[card] = State(status: .failed, data: nil, error: outcome.error ?? "The command failed.", ranAt: outcome.ranAt)
         }
+    }
+
+    // MARK: Detail commands
+
+    /// What allowing a component's Detail command stores beside the allowed commands (it shows
+    /// so in Settings > Permissions, where it can be taken back like any other).
+    public nonisolated static func detailKey(_ template: String) -> String { "Detail command: " + template }
+
+    /// Whether the Detail command `template` (as about.md had it when the user allowed it) is
+    /// allowed in `folder`; true when there is none.
+    public func isApproved(detail template: String?, in folder: URL) -> Bool {
+        guard let template else { return true }
+        return isApproved(Self.detailKey(template), in: folder)
+    }
+
+    public func approve(detail template: String, in folder: URL) {
+        approve(Self.detailKey(template), in: folder)
+    }
+
+    /// The placeholders a Detail command template names, `{hash}`, in order, each once.
+    public nonisolated static func placeholders(in template: String) -> [String] {
+        var names: [String] = []
+        for match in template.matches(of: placeholder) where !names.contains(String(match.1)) {
+            names.append(String(match.1))
+        }
+        return names
+    }
+
+    nonisolated(unsafe) private static let placeholder = #/\{([A-Za-z_][A-Za-z0-9_]*)\}/#
+
+    /// Why a value cannot go into a Detail command, or nil when it can: only letters, digits and
+    /// `. _ / -`, at most 200 of them, not starting with `-` (it would read as an option).
+    public nonisolated static func problem(withValue value: String, for name: String) -> String? {
+        if value.isEmpty { return "The value for {\(name)} is empty." }
+        if value.count > 200 { return "The value for {\(name)} is longer than 200 characters." }
+        if value.hasPrefix("-") { return "The value for {\(name)} starts with \"-\"." }
+        if value.unicodeScalars.contains(where: { !allowed.contains($0) }) {
+            return "The value for {\(name)} may only have letters, digits and . _ / -."
+        }
+        return nil
+    }
+
+    private nonisolated static let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/-")
+
+    /// The command line `template` makes with `values`: each `{name}` becomes its value as one
+    /// single-quoted shell argument. Every placeholder needs a value, every value a placeholder,
+    /// and each value must pass `problem(withValue:for:)`; otherwise the reason why.
+    public nonisolated static func detailCommand(_ template: String, values: [String: String]) -> Result<String, DetailProblem> {
+        let names = placeholders(in: template)
+        if let unknown = values.keys.sorted().first(where: { !names.contains($0) }) {
+            return .failure(DetailProblem("The Detail command has no {\(unknown)}."))
+        }
+        if let missing = names.first(where: { values[$0] == nil }) {
+            return .failure(DetailProblem("No value for {\(missing)}."))
+        }
+        for name in names {
+            if let problem = problem(withValue: values[name]!, for: name) { return .failure(DetailProblem(problem)) }
+        }
+        let command = template.replacing(placeholder) { match in "'" + values[String(match.1)]! + "'" }
+        return .success(command)
+    }
+
+    public struct DetailProblem: Error, Equatable, Sendable {
+        public var message: String
+        public init(_ message: String) { self.message = message }
+    }
+
+    /// Runs a component's Detail command `template` with `values` in `folder` (a card's
+    /// `ccb.runDetail`): only once the user has allowed that template there, with the same time
+    /// limit, output cap and stopping as the card's own command. The data is JSON as for a run.
+    public func runDetail(_ template: String, values: [String: String], in folder: URL) async -> CommandOutcome {
+        guard isApproved(detail: template, in: folder) else {
+            return CommandOutcome(error: "This component's Detail command is not allowed yet: press \"Allow and run\" on its card first.")
+        }
+        let command: String
+        switch Self.detailCommand(template, values: values) {
+        case .success(let line): command = line
+        case .failure(let problem): return CommandOutcome(error: problem.message)
+        }
+        let runner = runner
+        return await blocking { runner(command, folder) }
+    }
+
+    /// A runDetail call's values as text: strings, and whole numbers written out; nil when
+    /// anything else is there (the call is refused, not guessed at).
+    public nonisolated static func detailValues(_ value: Any?) -> [String: String]? {
+        guard let given = value as? [String: Any] else { return value == nil ? [:] : nil }
+        var values: [String: String] = [:]
+        for (key, item) in given {
+            if let text = item as? String {
+                values[key] = text
+            } else if let number = item as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                      number.doubleValue == number.doubleValue.rounded(), abs(number.doubleValue) < 1e15 {
+                values[key] = String(number.int64Value)
+            } else {
+                return nil
+            }
+        }
+        return values
+    }
+
+    /// The page's `ccb.detailReply(id, ok, value)` for a finished runDetail: the output's
+    /// JSON (as a JSON string the page parses), or why it did not run.
+    public nonisolated static func detailReplyScript(_ requestID: Int, _ outcome: CommandOutcome) -> String {
+        let ok = outcome.data != nil
+        let text = outcome.data ?? outcome.error ?? "The Detail command failed."
+        let quoted = (try? JSONSerialization.data(withJSONObject: text, options: [.fragmentsAllowed]))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
+        return "ccb.detailReply(\(requestID), \(ok), \(quoted))"
     }
 
     // MARK: Output

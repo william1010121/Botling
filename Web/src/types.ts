@@ -117,6 +117,11 @@ export interface DisplayView {
   /** Set when its data comes from a command, run in `folder`. */
   command?: string | null;
   folder?: string | null;
+  /**
+   * Its component's Detail command (about.md), which `ccb.runDetail(values)` fills and runs in
+   * `folder`; the card's Allow allows it with `command`.
+   */
+  detail?: string | null;
   /** How the command's run is going; "failed" also marks a component shown with no data. */
   status?: CommandStatus | null;
   error?: string | null;
@@ -240,10 +245,11 @@ export type Action =
   | { type: "addFileData"; name: string; base64: string }
   | { type: "componentReport"; name: string; text: string; images: { name: string; base64: string }[]; rect: { x: number; y: number; width: number; height: number } | null }
   | { type: "componentRevert"; name: string }
-  | { type: "componentCommand"; messageID: string; index: number; command: string; folder: string; approve?: boolean; force?: boolean }
+  | { type: "componentCommand"; messageID: string; index: number; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean }
+  | { type: "componentDetail"; requestID: number; name: string; folder: string; values: Record<string, string | number> }
   | { type: "pin"; id: string; messageID?: string; index?: number; name?: string; refresh: PinRefresh; minutes: number }
   | { type: "unpin"; id: string }
-  | { type: "pinCommand"; id: string; command: string; folder: string; approve?: boolean; force?: boolean }
+  | { type: "pinCommand"; id: string; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean }
   | { type: "pinShown"; ids: string[] | null }
   | { type: "movePin"; id: string; to: number }
   | { type: "resizePin"; id: string; size: PinSize }
@@ -251,7 +257,7 @@ export type Action =
   | { type: "makeComponent"; messageID: string; preview?: number }
   | { type: "openSpec"; id: string }
   | { type: "pressSpec"; id: string }
-  | { type: "specCommand"; id: string; command: string; folder: string; approve?: boolean; force?: boolean }
+  | { type: "specCommand"; id: string; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean }
   | { type: "specEdit"; id: string; key: string; value: string }
   | { type: "specAnswer"; id: string; question: string; option: number }
   | { type: "specSay"; id: string; text: string }

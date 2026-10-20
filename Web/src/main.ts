@@ -1,5 +1,5 @@
 import { post } from "./bridge";
-import { keepFrames } from "./components";
+import { detailReply, keepFrames } from "./components";
 import { Composer, sendFile } from "./composer";
 import { extensions, feedback, makeComponents, messageElement, typingElement } from "./messages";
 import { SpecPanel } from "./spec";
@@ -258,6 +258,7 @@ declare global {
       showPanel(key: string): void;
       setSpec(state: SpecState): void;
       hostReply(callID: number, ok: boolean, value: unknown): void;
+      detailReply(requestID: number, ok: boolean, value: string): void;
       focus(): void;
     };
   }
@@ -321,6 +322,7 @@ window.ccb = {
   setPlugins: (specs) => chat.plugins.sync(specs),
   runCommand: (id) => chat.plugins.execute(id),
   hostReply: (callID, ok, value) => chat.plugins.hostReply(callID, ok, value),
+  detailReply: (requestID, ok, value) => detailReply(requestID, ok, value),
   showPanel: (key) => showPanel(key),
   setSpec: (state) => setSpec(state),
   focus: () => chat.focus(),

@@ -150,7 +150,7 @@ describe("messages", () => {
     // The frame's own script, run against a stand-in window and parent.
     const script = page.slice(page.indexOf("<script>") + 8, page.indexOf("</script>"));
     const posted: unknown[] = [];
-    const frame = {} as { ccb: Record<string, (...args: unknown[]) => unknown>; deck: unknown };
+    const frame = { addEventListener() {} } as unknown as { ccb: Record<string, (...args: unknown[]) => unknown>; deck: unknown };
     new Function("window", "parent", script)(frame, { postMessage: (data: unknown) => posted.push(data) });
     expect(frame.deck).toBe(frame.ccb);
     expect(frame.ccb.image("/p/a.png")).toBe("ccb-preview://page/p/a.png");
@@ -173,7 +173,7 @@ describe("messages", () => {
     const page = componentPage("<p>hi</p>", "{}");
     const script = page.slice(page.indexOf("<script>") + 8, page.indexOf("</script>"));
     const posted: unknown[] = [];
-    const frame = {} as { ccb: Record<string, (...args: unknown[]) => unknown> };
+    const frame = { addEventListener() {} } as unknown as { ccb: Record<string, (...args: unknown[]) => unknown> };
     new Function("window", "parent", script)(frame, { postMessage: (data: unknown) => posted.push(data) });
     await frame.ccb.reviewWithCodex({ commit: "ee988b9", spec: "/p/plan.md" });
     await frame.ccb.reviewWithCodex();
@@ -188,6 +188,75 @@ describe("messages", () => {
     const shown = row.querySelector<HTMLIFrameElement>(".component-frame")!;
     window.dispatchEvent(new MessageEvent("message", { data: { ccb: "reviewWithCodex", scope: "uncommitted", commit: null, spec: null }, source: shown.contentWindow }));
     expect(sent).toEqual([{ type: "codexReview", scope: "uncommitted", commit: null, spec: null }]);
+  });
+
+  it("let a component load details on demand with ccb.runDetail", async () => {
+    const { componentPage, detailReply } = await import("../src/components");
+    // The frame's side: a promise per call, settled by the page's answer (only from its parent).
+    const page = componentPage("<p>hi</p>", "{}");
+    const script = page.slice(page.indexOf("<script>") + 8, page.indexOf("</script>"));
+    const posted: unknown[] = [];
+    let hear: (event: { source: unknown; data: unknown }) => void = () => {};
+    const parent = { postMessage: (data: unknown) => posted.push(data) };
+    const frame = { addEventListener: (_: string, listener: typeof hear) => { hear = listener; } } as unknown as { ccb: Record<string, (...args: unknown[]) => Promise<unknown>> };
+    new Function("window", "parent", script)(frame, parent);
+    const first = frame.ccb.runDetail({ hash: "2aed630", n: 3 });
+    const second = frame.ccb.runDetail({ hash: "-p" });
+    expect(posted).toEqual([
+      { ccb: "runDetail", id: 1, values: { hash: "2aed630", n: 3 } },
+      { ccb: "runDetail", id: 2, values: { hash: "-p" } },
+    ]);
+    hear({ source: {}, data: { ccbDetail: 1, ok: true, value: "forged" } });
+    hear({ source: parent, data: { ccbDetail: 2, ok: false, error: "The value for {hash} starts with \"-\"." } });
+    hear({ source: parent, data: { ccbDetail: 1, ok: true, value: { files: 2 } } });
+    await expect(first).resolves.toEqual({ files: 2 });
+    await expect(second).rejects.toThrow("starts with");
+
+    // The page's side: a card whose component has a Detail command passes calls on with its folder.
+    const info = { template: "<p></p>", version: 0, working: false, updated: false, hasPrevious: false };
+    const row = messageElement(message({
+      id: "m31",
+      displays: [
+        { name: "commits", data: "[]", at: null, command: "git log", folder: "/p", detail: "git show {hash}", status: "done" },
+        { name: "plain", data: "{}", at: null },
+      ],
+    }), { commits: info, plain: info });
+    document.body.append(row);
+    const [withDetail, without] = [...row.querySelectorAll<HTMLIFrameElement>(".component-frame")];
+    const replies: unknown[] = [];
+    withDetail.contentWindow!.postMessage = ((data: unknown) => replies.push(data)) as Window["postMessage"];
+    without.contentWindow!.postMessage = ((data: unknown) => replies.push(data)) as Window["postMessage"];
+    const ask = (frame: HTMLIFrameElement, data: unknown) => window.dispatchEvent(new MessageEvent("message", { data, source: frame.contentWindow }));
+    ask(withDetail, { ccb: "runDetail", id: 5, values: { hash: "2aed630" } });
+    expect(sent).toEqual([{ type: "componentDetail", requestID: expect.any(Number), name: "commits", folder: "/p", values: { hash: "2aed630" } }]);
+    const requestID = (sent[0] as { requestID: number }).requestID;
+    detailReply(requestID, true, '{"stat":"1 file changed"}');
+    detailReply(requestID, true, '"again"');
+    ask(withDetail, { ccb: "runDetail", id: 6, values: { hash: "x" } });
+    detailReply((sent[1] as { requestID: number }).requestID, true, "not json");
+    ask(withDetail, { ccb: "runDetail", id: 7, values: { hash: { nested: 1 } } });
+    ask(without, { ccb: "runDetail", id: 8, values: { hash: "2aed630" } });
+    expect(replies).toEqual([
+      { ccbDetail: 5, ok: true, value: { stat: "1 file changed" } },
+      { ccbDetail: 6, ok: true, value: "not json" },
+      { ccbDetail: 7, ok: false, error: "The value for {hash} must be text or a number." },
+      { ccbDetail: 8, ok: false, error: expect.stringContaining("no Detail command") },
+    ]);
+    expect(sent).toHaveLength(2);
+    detailReply(99, false, "nobody asked");
+    expect(replies).toHaveLength(4);
+  });
+
+  it("ask to allow a component's Detail command with its command", () => {
+    const info = { template: "<p></p>", version: 0, working: false, updated: false, hasPrevious: false };
+    const row = messageElement(message({
+      id: "m32",
+      displays: [{ name: "commits", data: "null", at: null, command: "git log", folder: "/p", detail: "git show {hash}", status: "approve" }],
+    }), { commits: info });
+    document.body.append(row);
+    expect([...row.querySelectorAll(".command-full")].map((pre) => pre.textContent)).toEqual(["git log", "git show {hash}"]);
+    row.querySelector<HTMLButtonElement>(".command-allow")!.click();
+    expect(sent).toEqual([{ type: "componentCommand", messageID: "m32", index: 0, command: "git log", folder: "/p", detail: "git show {hash}", approve: true }]);
   });
 
   it("draw linked result pages as preview cards that open full-size", () => {

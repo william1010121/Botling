@@ -217,14 +217,16 @@ extension Workspace {
     /// The built component's card under the reply: Allow and run (with the command and folder it
     /// showed), ↻, or its first draw once allowed, as for any component card. Nothing runs that
     /// the user has not allowed in that folder; its output is kept on the spec.
-    public func runSpecComponent(_ id: UUID, in chat: Bot, command shown: String? = nil, folder shownFolder: String? = nil, approve: Bool = false, force: Bool = false) async {
+    public func runSpecComponent(_ id: UUID, in chat: Bot, command shown: String? = nil, folder shownFolder: String? = nil, detail shownDetail: String? = nil, approve: Bool = false, force: Bool = false) async {
         guard let spec = chat.specs.first(where: { $0.id == id }), let name = spec.built,
               let command = ChatPayload.specCommand(spec, component: name, library: components) else { return }
         let folder = URL(filePath: spec.folder)
         if approve, shown == nil || shownFolder == nil { return }
         if let shown, shown != command { return }
         if let shownFolder, URL(filePath: shownFolder).standardizedFileURL.path != folder.standardizedFileURL.path { return }
-        if approve { componentCommands.approve(command, in: folder) }
+        if approve {
+            guard approveCard(command, detail: components.detailCommand(of: name), shownDetail: shownDetail, in: folder) else { return }
+        }
         guard componentCommands.isApproved(command, in: folder) else { return }
         await componentCommands.run(card: spec.card, command: command, in: folder, force: force)
         keepTestRun(of: id, command: command, in: chat)

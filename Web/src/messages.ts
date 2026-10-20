@@ -1,6 +1,6 @@
 import { post } from "./bridge";
 import { pinBar } from "./pins";
-import { answerAction, answerImages, choicesData, commandCard, componentElement, fallbackChoices } from "./components";
+import { answerAction, answerImages, choicesData, commandCard, componentElement, detailTarget, fallbackChoices } from "./components";
 import type { ComponentAnswer } from "./components";
 import { mediaHTML, renderMarkdown } from "./markdown";
 import { acceptPictures } from "./pictures";
@@ -227,7 +227,7 @@ function editSpecButton(spec: SpecChipView): HTMLButtonElement {
 function builtSpec(spec: SpecChipView, components: Record<string, ComponentInfo>): HTMLElement | null {
   const display = spec.display!;
   const name = spec.component!;
-  const draw = () => componentElement(name, components[name], display.data, null, `spec-${spec.id}`, display.images);
+  const draw = () => componentElement(name, components[name], display.data, null, `spec-${spec.id}`, display.images, detailTarget(display));
   const card = display.command
     ? commandCard(display, `spec:${spec.id}`, 0, draw, {
         send: (request) => post({ type: "specCommand", id: spec.id, ...request }),
@@ -437,7 +437,7 @@ function drawComponent(message: MessageView, display: DisplayView, index: number
     return root;
   }
   return componentElement(display.name, components[display.name], display.data, answer,
-    index === 0 ? message.id : `${message.id}/show-${index}`, display.images);
+    index === 0 ? message.id : `${message.id}/show-${index}`, display.images, detailTarget(display));
 }
 
 /** Answered questions you opened again, by message id; the rest stay folded to one line. */

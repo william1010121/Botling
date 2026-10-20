@@ -15,7 +15,7 @@ extension Workspace {
 
     /// What drawing a chat's pins needs.
     public func pinContext(for bot: Bot, board: Bool = false) -> ChatPayload.PinContext {
-        ChatPayload.PinContext(runs: componentCommands, folder: pinFolder(for: bot), board: board)
+        ChatPayload.PinContext(runs: componentCommands, folder: pinFolder(for: bot), board: board, library: components)
     }
 
     /// Pins the `index`th component of a message, with what it shows now (its command's last
@@ -92,13 +92,15 @@ extension Workspace {
     /// A pinned card's command: `approve` is the user allowing it (it needs the command and
     /// folder the card showed, as in the chat); `force` runs it again (↻). Nothing that is not
     /// allowed runs. What it prints is kept on the pin.
-    public func runPin(_ id: UUID, in bot: Bot, command shown: String? = nil, folder shownFolder: String? = nil, approve: Bool = false, force: Bool = false) async {
+    public func runPin(_ id: UUID, in bot: Bot, command shown: String? = nil, folder shownFolder: String? = nil, detail shownDetail: String? = nil, approve: Bool = false, force: Bool = false) async {
         guard let pin = bot.pins.first(where: { $0.id == id }), let command = pin.command else { return }
         let folder = pinFolder(for: bot)
         if approve, shown == nil || shownFolder == nil { return }
         if let shown, shown != command { return }
         if let shownFolder, URL(filePath: shownFolder).standardizedFileURL.path != folder.standardizedFileURL.path { return }
-        if approve { componentCommands.approve(command, in: folder) }
+        if approve {
+            guard approveCard(command, detail: components.detailCommand(of: pin.name), shownDetail: shownDetail, in: folder) else { return }
+        }
         guard componentCommands.isApproved(command, in: folder) else { return }
         await componentCommands.run(card: pin.card, command: command, in: folder, force: force)
         keepOutput(of: pin, in: bot)

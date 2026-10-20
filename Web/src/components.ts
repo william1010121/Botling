@@ -18,6 +18,10 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView } from "./types";
  * - `reviewWithCodex({scope, commit, spec})`: Codex reviews the chat bot's repository once
  *   ("uncommitted", "lastCommit", "branch" or "commit"; a commit hash implies "commit"), checked
  *   against a spec file if given. The app checks the call; the report shows in the right column.
+ * - `runDetail(values)`: runs the component's `Detail command:` (about.md) with its `{name}`
+ *   placeholders filled from `values` (`{hash: "2aed630"}`), in the folder its card's command
+ *   runs in, once the user has allowed it there. Resolves to the output (parsed when it is JSON,
+ *   else the text) or rejects with an Error saying why.
  * The frame reports its height and answers to this page, which passes answers on to Swift.
  */
 export function componentPage(template: string, data: string, images: Record<string, string> = {}): string {
@@ -52,6 +56,18 @@ export function componentPage(template: string, data: string, images: Record<str
     const name = typeof item.name === 'string' && item.name ? item.name : 'Picture ' + (index + 1) + '.' + ((type.split('/')[1] || 'png').replace('jpeg', 'jpg').replace('svg+xml', 'svg'));
     return {name, base64};
   };
+  // runDetail calls waiting for the page's answer, by number.
+  const details = new Map();
+  let detailCount = 0;
+  window.addEventListener('message', (event) => {
+    const message = event.data;
+    if (event.source !== parent || !message || typeof message.ccbDetail !== 'number') return;
+    const call = details.get(message.ccbDetail);
+    if (!call) return;
+    details.delete(message.ccbDetail);
+    if (message.ok) call.resolve(message.value);
+    else call.reject(new Error(String(message.error || 'The Detail command failed.')));
+  });
   window.ccb = {
     data: ${safe(data)},
     answer(value) {
@@ -104,6 +120,20 @@ export function componentPage(template: string, data: string, images: Record<str
       const text = (value) => value == null ? null : String(value);
       parent.postMessage({ccb: 'reviewWithCodex', scope: text(given.scope), commit: text(given.commit), spec: text(given.spec)}, '*');
       return Promise.resolve();
+    },
+    runDetail(values) {
+      return new Promise((resolve, reject) => {
+        const id = ++detailCount;
+        details.set(id, {resolve, reject});
+        let given = {};
+        if (values && typeof values === 'object') {
+          for (const key of Object.keys(values)) {
+            const value = values[key];
+            given[key] = typeof value === 'number' || typeof value === 'string' ? value : String(value);
+          }
+        }
+        parent.postMessage({ccb: 'runDetail', id, values: given}, '*');
+      });
     }
   };
   // Templates written while the app was called Deck call deck.answer(...).
@@ -142,7 +172,65 @@ type AnswerHandler = (answer: ComponentAnswer) => void;
  * A component's frame: its answer handler, the use it is (`ccbKey`), and what it was drawn from
  * (`ccbDrawn`), so a redrawn message can keep a frame whose component did not change.
  */
-type ComponentFrame = HTMLIFrameElement & { ccbAnswer?: AnswerHandler | null; ccbKey?: string; ccbDrawn?: string };
+type ComponentFrame = HTMLIFrameElement & { ccbAnswer?: AnswerHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDetail?: DetailTarget | null };
+
+/** Where a frame's `ccb.runDetail` goes: its component, and the folder its card showed. */
+export interface DetailTarget {
+  name: string;
+  folder: string;
+}
+
+/** The DetailTarget a card's display gives, when its component has a Detail command. */
+export function detailTarget(display: DisplayView): DetailTarget | null {
+  return display.detail && display.folder ? { name: display.name, folder: display.folder } : null;
+}
+
+/** runDetail calls sent to Swift, by request number: the frame that asked and its own number. */
+const detailCalls = new Map<number, { source: MessageEventSource; id: number }>();
+let detailRequests = 0;
+
+/** Swift's answer to a runDetail (`ccb.detailReply`): the output's JSON, or why it failed. */
+export function detailReply(requestID: number, ok: boolean, value: string): void {
+  const call = detailCalls.get(requestID);
+  if (!call) return;
+  detailCalls.delete(requestID);
+  let reply: { ccbDetail: number; ok: boolean; value?: unknown; error?: string };
+  if (ok) {
+    let parsed: unknown = value;
+    try { parsed = JSON.parse(value); } catch { /* text as it is */ }
+    reply = { ccbDetail: call.id, ok: true, value: parsed };
+  } else {
+    reply = { ccbDetail: call.id, ok: false, error: value };
+  }
+  (call.source as Window).postMessage(reply, "*");
+}
+
+/** A frame's runDetail: passed on to Swift with its card's folder, or refused at once. */
+function runDetail(frame: ComponentFrame, source: MessageEventSource, id: unknown, values: unknown): void {
+  if (typeof id !== "number") return;
+  const refuse = (error: string) => (source as Window).postMessage({ ccbDetail: id, ok: false, error }, "*");
+  const target = frame.ccbDetail;
+  if (!target) {
+    refuse("This component has no Detail command here (about.md needs a \"Detail command:\" line).");
+    return;
+  }
+  const given: Record<string, string | number> = {};
+  if (values && typeof values === "object" && !Array.isArray(values)) {
+    for (const [key, value] of Object.entries(values as Record<string, unknown>)) {
+      if (typeof value !== "string" && typeof value !== "number") {
+        refuse(`The value for {${key}} must be text or a number.`);
+        return;
+      }
+      given[key] = value;
+    }
+  } else if (values != null) {
+    refuse("ccb.runDetail takes an object, like {hash: \"2aed630\"}.");
+    return;
+  }
+  const requestID = ++detailRequests;
+  detailCalls.set(requestID, { source, id });
+  post({ type: "componentDetail", requestID, name: target.name, folder: target.folder, values: given });
+}
 
 /**
  * The height each component last had, by message and component. A redrawn frame starts at it
@@ -153,7 +241,7 @@ const frameHeights = new Map<string, number>();
 // Frames are found by their window when they speak, so a message sent before the frame's own
 // load event is not lost.
 window.addEventListener("message", (event) => {
-  const message = event.data as { ccb?: string; height?: number; index?: number; text?: string; images?: unknown; url?: string; label?: string; scope?: unknown; commit?: unknown; spec?: unknown };
+  const message = event.data as { ccb?: string; height?: number; index?: number; text?: string; images?: unknown; url?: string; label?: string; scope?: unknown; commit?: unknown; spec?: unknown; id?: unknown; values?: unknown };
   if (!message?.ccb) return;
   const frame = [...document.querySelectorAll<ComponentFrame>("iframe.component-frame")]
     .find((candidate) => candidate.contentWindow === event.source);
@@ -172,6 +260,8 @@ window.addEventListener("message", (event) => {
   } else if (message.ccb === "reviewWithCodex") {
     // Passed on as strings or null; Swift checks them against the bot's repository.
     post(codexReviewAction(message));
+  } else if (message.ccb === "runDetail" && event.source) {
+    runDetail(frame, event.source, message.id, message.values);
   }
 });
 
@@ -213,6 +303,7 @@ export function componentElement(
   onAnswer: AnswerHandler | null,
   key?: string,
   images?: Record<string, string> | null,
+  detail?: DetailTarget | null,
 ): HTMLElement | null {
   if (!info) return null;
   const wrap = document.createElement("div");
@@ -222,6 +313,7 @@ export function componentElement(
   frame.setAttribute("sandbox", "allow-scripts");
   frame.title = name;
   frame.ccbAnswer = onAnswer;
+  frame.ccbDetail = detail ?? null;
   if (key) {
     frame.ccbKey = `${key}/${name}`;
     const height = frameHeights.get(frame.ccbKey);
@@ -270,6 +362,7 @@ export function keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement {
     keptFrames.add(frame);
     oldFrames.delete(frame.ccbKey!);
     (before as ComponentFrame).ccbAnswer = frame.ccbAnswer;
+    (before as ComponentFrame).ccbDetail = frame.ccbDetail;
   }
   if (!keptFrames.size) return fresh;
   const patch = (target: Element, source: Element) => {
@@ -300,7 +393,7 @@ export function keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement {
 }
 
 /** Where a card's command requests go instead of a chat card's (a pinned card's). */
-export type CommandSend = (request: { command: string; folder: string; approve?: boolean; force?: boolean }) => void;
+export type CommandSend = (request: { command: string; folder: string; detail?: string; approve?: boolean; force?: boolean }) => void;
 
 /** Cards whose command was asked to run once allowed, so a redraw does not ask again. */
 const requestedRuns = new Set<string>();
@@ -325,7 +418,8 @@ export function commandCard(
   const status = display.status ?? "approve";
   card.dataset.status = status;
   // With the command and folder this card shows: Swift allows and runs only what you saw.
-  const shown = { command: display.command ?? "", folder: display.folder ?? "" };
+  const shown: { command: string; folder: string; detail?: string } = { command: display.command ?? "", folder: display.folder ?? "" };
+  if (display.detail) shown.detail = display.detail;
   const run = (extra: { approve?: boolean; force?: boolean }) =>
     options.send ? options.send({ ...shown, ...extra }) : post({ type: "componentCommand", messageID, index, ...shown, ...extra });
   const hasData = display.data !== "null" && display.data !== "";
@@ -379,7 +473,18 @@ export function commandCard(
     note.className = "command-note";
     note.textContent = "Remembered for this command in this project.";
     actions.append(allow, note);
-    ask.append(line, folder, command, actions);
+    ask.append(line, folder, command);
+    if (display.detail) {
+      // Allowed with it: the command the component runs for more data when you ask it to.
+      const also = document.createElement("div");
+      also.className = "command-detail-line";
+      also.textContent = "and, for details when you open one, with the {values} filled in:";
+      const detail = document.createElement("pre");
+      detail.className = "command-full command-detail";
+      detail.textContent = display.detail;
+      ask.append(also, detail);
+    }
+    ask.append(actions);
     card.append(ask);
   } else if (status === "failed") {
     const problem = document.createElement("div");
