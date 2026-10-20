@@ -174,6 +174,13 @@ private struct SettingSwitch: View {
 struct SettingsWindow: View {
     @ObservedObject var workspace: Workspace
     @ObservedObject var navigator: SettingsNavigator
+    /// Settings → Release planner's list; the snapshot hands in one with sample PRs.
+    var releasePlanner: ReleasePlanner?
+
+    /// Release planner only shows with developer mode on.
+    private var sections: [SettingsSection] {
+        SettingsSection.allCases.filter { $0 != .releases || workspace.settings.developerMode }
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -182,7 +189,7 @@ struct SettingsWindow: View {
                     .font(.system(size: 15, weight: .semibold))
                     .padding(.horizontal, 10)
                     .padding(.bottom, 14)
-                ForEach(SettingsSection.allCases) { section in
+                ForEach(sections) { section in
                     Button { navigator.section = section } label: {
                         Text(section.title)
                             .font(.system(size: 14))
@@ -218,6 +225,7 @@ struct SettingsWindow: View {
                         case .permissions: PermissionsSection(workspace: workspace, commands: workspace.componentCommands)
                         case .plugins: PluginsSection(registry: workspace.plugins, host: workspace.pluginHost, workspace: workspace)
                         case .developer: DeveloperSection(workspace: workspace)
+                        case .releases: ReleasesSection(workspace: workspace, planner: releasePlanner)
                         case .doctor: DoctorSection(model: workspace.doctor)
                         }
                     }

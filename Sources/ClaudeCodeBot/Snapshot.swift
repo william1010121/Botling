@@ -35,6 +35,10 @@ enum Snapshot {
             drawSettings(to: path)
             return true
         }
+        if let path = ProcessInfo.processInfo.environment["CCB_RELEASES_SNAPSHOT"] {
+            drawReleases(to: path)
+            return true
+        }
         if let path = ProcessInfo.processInfo.environment["CCB_SPEC_SNAPSHOT"] {
             drawSpec(to: path)
             return true
@@ -373,6 +377,54 @@ enum Snapshot {
             let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
             window.appearance = NSAppearance(named: .darkAqua)
             let host = NSHostingView(rootView: SettingsWindow(workspace: workspace, navigator: navigator).preferredColorScheme(.dark))
+            host.frame = frame
+            window.contentView = host
+            self.window = window
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+                host.cacheDisplay(in: host.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
+                exit(0)
+            }
+        }
+    }
+
+    /// `CCB_RELEASES_SNAPSHOT=/path/out.png`: Settings → Release planner with sample community PRs
+    /// from a pretend gh (nothing reaches GitHub), as the repo's owner with two picked;
+    /// `CCB_RELEASES_OWNER=0` draws it as someone who can only vote.
+    private static func drawReleases(to path: String) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
+        let code = root.appending(path: "code/ClaudeCodeBot")
+        try? FileManager.default.createDirectory(at: code, withIntermediateDirectories: true)
+        let workspace = Workspace(root: root.appending(path: "ccb"), builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
+            Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
+        }
+        let project = workspace.addProject(folder: code, select: false)
+        workspace.setDeveloperMode(true, project: project.id)
+        let owner = ProcessInfo.processInfo.environment["CCB_RELEASES_OWNER"] != "0"
+        let samples: [(Int, String, String, Int, Bool)] = [
+            (41, "Voice input in the composer", "amy-chen", 12, false),
+            (37, "Weekly spending report component", "kenji", 9, false),
+            (44, "Dark/light theme switch", "lin.yu", 6, false),
+            (39, "Drag files onto a bot to attach them", "mo", 3, false),
+            (45, "日曆組件：顯示今天的行程", "pei", 1, true)
+        ]
+        let json = "[" + samples.map { number, title, login, votes, draft in
+            #"{"number":\#(number),"title":"\#(title)","author":{"login":"\#(login)"},"url":"https://github.com/william1010121/ClaudeCodeBot/pull/\#(number)","isDraft":\#(draft),"reactionGroups":[{"content":"THUMBS_UP","users":{"totalCount":\#(votes)}}]}"#
+        }.joined(separator: ",") + "]"
+        let gitHub = GitHubCLI { arguments, _ in
+            arguments.first == "pr" ? (true, json) : (true, #"{"viewerPermission":"\#(owner ? "ADMIN" : "READ")"}"#)
+        }
+        ReleasePlan(picked: owner ? [41, 37] : []).save(to: workspace.releasePlanFile)
+        let planner = workspace.makeReleasePlanner(gitHub: gitHub)
+        let navigator = SettingsNavigator()
+        navigator.section = .releases
+        Task { @MainActor in
+            await planner.refresh()
+            let frame = NSRect(x: 0, y: 0, width: 760, height: 600)
+            let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.appearance = NSAppearance(named: .darkAqua)
+            let host = NSHostingView(rootView: SettingsWindow(workspace: workspace, navigator: navigator, releasePlanner: planner).preferredColorScheme(.dark))
             host.frame = frame
             window.contentView = host
             self.window = window
