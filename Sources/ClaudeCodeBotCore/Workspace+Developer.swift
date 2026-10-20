@@ -189,14 +189,14 @@ extension Workspace {
         let seen = pictures.isEmpty ? "" : "\n\n" + pictures.joined(separator: " ")
         let report = """
         Feedback: the user flagged a reply of \(chat.name) as not right.
-        What is wrong, in their words: \(words.isEmpty ? "(they did not say)" : words)
+        What is wrong, in their words: \(words.isEmpty ? FeedbackNote.noWords : words)
 
         The chat up to that reply, oldest first:
         \(around)\(steps)\(seen)
 
         First write a test that shows this, then fix it.
         """
-        manager.relay(report, files: [screenshot].compactMap { $0 } + files)
+        manager.relay(report, files: [screenshot].compactMap { $0 } + files, feedback: FeedbackNote(about: chat.name, words: words))
         let kept = manager.messages.last { $0.role == .relay }?.attachments ?? []
         Self.appendFeedback(kept.isEmpty ? report : report + "\n\nAttachments:\n" + kept.map { "- " + $0.url.path }.joined(separator: "\n"), in: root)
         tell(chat, "Sent to \(developer.name) as feedback.", sourceID: developer.id)

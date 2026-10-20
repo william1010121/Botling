@@ -259,6 +259,10 @@ struct DeveloperModeTests {
         #expect(text.contains("You: I can't set a folder for a new bot."))
         #expect(text.contains("What it did on the way: Read memory.md"))
         #expect(text.contains("First write a test that shows this"))
+        // Marked as feedback, so the chat shows it short; the text stays the whole report.
+        #expect(manager.messages.first?.feedback == FeedbackNote(about: "Main bot", words: "It could have made projects"))
+        await eventually { fake.agents.last?.sent.isEmpty == false }
+        #expect(fake.agents.last?.sent.first?.contains(text) == true)
         #expect(main.messages.last?.text.hasPrefix("Sent to ClaudeCodeBot as feedback") == true)
         let log = try String(contentsOf: root.appending(path: "ccb/feedback.md"), encoding: .utf8)
         #expect(log.contains("It could have made projects"))

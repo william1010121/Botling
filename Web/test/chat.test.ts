@@ -194,6 +194,31 @@ describe("messages", () => {
     expect(row.querySelector<HTMLImageElement>(".attachments img")?.getAttribute("src")).toBe("file:///tmp/shot.png");
   });
 
+  it("show a feedback relay short, with the full report folded behind a toggle", () => {
+    const text = "Feedback: the user flagged a reply of Maintainer as not right.\nWhat is wrong, in their words: Empty card\n\nThe chat up to that reply, oldest first:\n[2026-10-20 13:16] User: Show me";
+    const view = message({
+      id: "f1", role: "relay", text,
+      feedback: { about: "Maintainer", words: "Empty card" },
+      attachments: [{ name: "chat-shot.png", kind: "image", url: "file:///tmp/chat-shot.png" }],
+    });
+    const row = messageElement(view, {});
+    expect(row.querySelector(".feedback-title")?.textContent).toContain("Maintainer");
+    expect(row.querySelector(".feedback-words")?.textContent).toBe("Empty card");
+    expect(row.querySelector<HTMLImageElement>(".attachments img")?.getAttribute("src")).toBe("file:///tmp/chat-shot.png");
+    const full = row.querySelector<HTMLElement>(".feedback-full")!;
+    expect(full.hidden).toBe(true);
+    const toggle = row.querySelector<HTMLButtonElement>(".feedback-toggle")!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    toggle.click();
+    expect(full.hidden).toBe(false);
+    expect(full.textContent).toBe(text);
+    // Still open after the chat is drawn again.
+    expect(messageElement(view, {}).querySelector<HTMLElement>(".feedback-full")!.hidden).toBe(false);
+    toggle.click();
+    expect(full.hidden).toBe(true);
+    expect(messageElement(message({ ...view, id: "f2", feedback: { about: "Maintainer", words: "" } }), {}).querySelector(".feedback-words.empty")).not.toBeNull();
+  });
+
   it("fold a reply's steps and open a subagent from its card", () => {
     const step = (id: string, kind: "tool" | "text" | "subagent", title: string, extra: Partial<import("../src/types").StepView> = {}) =>
       ({ id, kind, tool: null, title, detail: null, output: null, failed: false, done: true, status: null, count: null, ...extra });

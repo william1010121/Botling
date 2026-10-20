@@ -38,6 +38,14 @@ public struct ChatPayload: Encodable, Equatable {
         var steps: [StepView]?
         /// Result pages it links to, drawn as 「網頁預覽卡片」 cards under it.
         var previews: [Display]?
+        /// A "not right" report handed over: shown as who it is about and the user's words, with
+        /// `text` (the chat around it) folded.
+        var feedback: Feedback?
+    }
+
+    public struct Feedback: Encodable, Equatable {
+        var about: String
+        var words: String
     }
 
     /// One line of work, as the page draws it. A subagent's line carries how it is doing.
@@ -177,7 +185,10 @@ public struct ChatPayload: Encodable, Equatable {
                 openable: message.role == .notice && message.sourceID != nil,
                 speaker: message.role == .bot ? message.sourceID.flatMap { id in speaker.map { $0(id) ?? "A removed bot" } } : nil,
                 steps: message.steps.map { $0.map { stepView($0, in: bot) } },
-                previews: previews(for: message, in: library)
+                previews: previews(for: message, in: library),
+                feedback: message.role == .relay
+                    ? (message.feedback ?? FeedbackNote.parse(message.text)).map { Feedback(about: $0.about, words: $0.words) }
+                    : nil
             )
         }
         let reply = replyingTo.flatMap { id in bot.messages.first { $0.id == id } }.map {

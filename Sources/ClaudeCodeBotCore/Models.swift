@@ -78,6 +78,9 @@ public struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var permissionTool: String?
     /// What the bot did on the way to this reply (tool calls, subagents), folded above it.
     public var steps: [Step]?
+    /// A relay that is a "not right" report: whose reply it was about and the user's own words.
+    /// Only for showing it short; `text` is the full report the bot got.
+    public var feedback: FeedbackNote?
 
     public init(
         id: UUID = UUID(),
@@ -101,6 +104,35 @@ public struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var isOpenQuestion: Bool {
         choices?.isEmpty == false && chosen == nil && answer == nil
     }
+}
+
+/// What a feedback relay is about, to show it as a short card with the chat around it folded.
+public struct FeedbackNote: Codable, Equatable, Sendable {
+    /// The chat whose reply was flagged.
+    public var about: String
+    /// What the user said was wrong; empty when they said nothing.
+    public var words: String
+
+    public init(about: String, words: String) {
+        self.about = about
+        self.words = words
+    }
+
+    /// Read back from a report's text, for relays saved before the note was kept.
+    public static func parse(_ text: String) -> FeedbackNote? {
+        let head = "Feedback: the user flagged a reply of "
+        let middle = " as not right.\nWhat is wrong, in their words: "
+        let tail = "\n\nThe chat up to that reply, oldest first:"
+        guard text.hasPrefix(head),
+              let said = text.range(of: middle),
+              let chat = text.range(of: tail, range: said.upperBound..<text.endIndex) else { return nil }
+        let about = String(text[text.index(text.startIndex, offsetBy: head.count)..<said.lowerBound])
+        let words = String(text[said.upperBound..<chat.lowerBound])
+        return FeedbackNote(about: about, words: words == noWords ? "" : words)
+    }
+
+    /// What the report says when the user wrote nothing.
+    static let noWords = "(they did not say)"
 }
 
 /// A file sent along with a message.

@@ -43,6 +43,8 @@ export interface MessageView {
   steps?: StepView[] | null;
   /** Result pages it links to, drawn as 「網頁預覽卡片」 cards under it. */
   previews?: { name: string; data: string }[] | null;
+  /** A relay that is a "not right" report: whose reply and the user's words; `text` folds away. */
+  feedback?: { about: string; words: string } | null;
 }
 
 export interface DisplayView {

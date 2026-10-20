@@ -70,6 +70,41 @@ struct ChatPayloadTests {
         #expect(messages.first?["openable"] as? Bool == true)
     }
 
+    @Test func feedbackRelaysCarryWhoAndTheUsersWordsOldOnesToo() throws {
+        let home = root.appending(path: "dev")
+        let store = BotStore(directory: home)
+        let report = """
+        Feedback: the user flagged a reply of Maintainer as not right.
+        What is wrong, in their words: The card was empty.
+
+        It had no rows.
+
+        The chat up to that reply, oldest first:
+        [2026-10-20 13:16] User: Show me the card
+        """
+        var marked = ChatMessage(role: .relay, text: report)
+        marked.feedback = FeedbackNote(about: "Main bot", words: "Kept words")
+        let silent = report.replacingOccurrences(of: "The card was empty.\n\nIt had no rows.", with: "(they did not say)")
+        store.save(messages: [
+            marked,
+            ChatMessage(role: .relay, text: report),
+            ChatMessage(role: .relay, text: silent),
+            ChatMessage(role: .relay, text: "Fix the card"),
+            ChatMessage(role: .user, text: report)
+        ])
+        let bot = Bot(profile: .main(home: home), launcher: FakeLauncher().launcher, store: store)
+
+        let messages = try #require(try json(ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil) { _ in "data:bot" })["messages"] as? [[String: Any]])
+        let notes = messages.map { $0["feedback"] as? [String: String] }
+        #expect(notes[0] == ["about": "Main bot", "words": "Kept words"])
+        #expect(notes[1] == ["about": "Maintainer", "words": "The card was empty.\n\nIt had no rows."])
+        #expect(notes[2] == ["about": "Maintainer", "words": ""])
+        #expect(notes[3] == nil)
+        #expect(notes[4] == nil)
+        // The page still gets the whole report, to show when you open it.
+        #expect(messages[1]["text"] as? String == report)
+    }
+
     @Test func stampsMarkNewStretchesOfTime() {
         let now = Date()
         let messages = [

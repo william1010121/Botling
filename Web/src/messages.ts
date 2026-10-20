@@ -63,6 +63,10 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
       break;
     }
     case "relay": {
+      if (message.feedback) {
+        row.append(feedbackRelay(message, message.feedback));
+        break;
+      }
       const relay = document.createElement("div");
       relay.className = "relay";
       relay.innerHTML = `${message.avatar ? `<img class="mini-avatar" src="${message.avatar}" alt="">` : ""}<span>${escapeHTML(message.text)}</span>`;
@@ -85,6 +89,50 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
       row.innerHTML = `<div class="error-text">${escapeHTML(message.text)}</div>`;
       break;
   }
+}
+
+/** Feedback relays whose whole report you opened, by message id; the rest stay short. */
+const openReports = new Set<string>();
+
+/**
+ * A "not right" report handed over: whose reply it was about, your words and the pictures; the
+ * full report the bot got (the chat around the reply) behind a toggle.
+ */
+function feedbackRelay(message: MessageView, note: { about: string; words: string }): HTMLElement {
+  const column = document.createElement("div");
+  column.className = "relay-column";
+  const card = document.createElement("div");
+  card.className = "relay feedback-relay";
+  card.innerHTML = `${message.avatar ? `<img class="mini-avatar" src="${message.avatar}" alt="">` : ""}<div class="feedback-body">
+<div class="feedback-title"></div>
+<div class="feedback-words"></div>
+<button class="feedback-toggle"><span></span>${chevron}</button>
+<div class="feedback-full"></div>
+</div>`;
+  card.querySelector(".feedback-title")!.textContent = `Feedback: a reply of ${note.about} was not right`;
+  const words = card.querySelector<HTMLElement>(".feedback-words")!;
+  words.textContent = note.words || "(No words, only the chat around it.)";
+  words.classList.toggle("empty", !note.words);
+  const toggle = card.querySelector<HTMLButtonElement>(".feedback-toggle")!;
+  const full = card.querySelector<HTMLElement>(".feedback-full")!;
+  full.textContent = message.text;
+  const show = (open: boolean) => {
+    full.hidden = !open;
+    toggle.setAttribute("aria-expanded", String(open));
+    toggle.querySelector("span")!.textContent = open ? "Hide the full report" : "Show the full report";
+    toggle.classList.toggle("open", open);
+  };
+  show(openReports.has(message.id));
+  toggle.addEventListener("click", () => {
+    const open = !openReports.has(message.id);
+    if (open) openReports.add(message.id);
+    else openReports.delete(message.id);
+    show(open);
+  });
+  card.setAttribute("aria-label", `Feedback on a reply of ${note.about}: ${note.words}`);
+  column.append(card);
+  if (message.attachments?.length) column.append(attachmentStrip(message.attachments));
+  return column;
 }
 
 function avatar(src: string | null): HTMLElement {

@@ -289,12 +289,14 @@ public final class Bot: ObservableObject, Identifiable {
     /// Work the main bot handed over. Shown as a relay line; wakes the bot like a message.
     /// `files` (screenshots with a report) are kept in its attachments folder; images also go to
     /// Claude directly.
-    public func relay(_ instruction: String, files: [URL] = []) {
+    /// `feedback` marks a "not right" report, so the chat shows it short.
+    public func relay(_ instruction: String, files: [URL] = [], feedback: FeedbackNote? = nil) {
         let instruction = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !instruction.isEmpty else { return }
         let attachments = files.compactMap(keep)
         var message = ChatMessage(role: .relay, text: instruction)
         message.attachments = attachments.isEmpty ? nil : attachments
+        message.feedback = feedback
         append(message)
         turnFromRelay = true
         var text = BotPrompts.relayPrefix + instruction
