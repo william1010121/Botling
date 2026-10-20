@@ -16,6 +16,10 @@ public enum TraceEvent: Equatable, Sendable {
     case subagentStarted(id: String, description: String, type: String?, prompt: String, background: Bool)
     /// A subagent finished (`task_notification`): "completed", "failed", "killed", …
     case subagentEnded(id: String, status: String, summary: String?)
+    /// A subagent stopped with background work of its own still running (a Monitor, a
+    /// background command) and has not reported: claude says so (a `completed`
+    /// `task_notification` without a report) each time that work wakes it, and it keeps going.
+    case subagentWaiting(id: String)
     /// The name the bot gave a subagent (the Agent call's `name`), to reach it again with
     /// SendMessage.
     case subagentNamed(id: String, name: String)
@@ -241,6 +245,8 @@ public struct TraceBook: Equatable, Sendable {
             end(index, status: ended, result: summary.map(Self.shorten) ?? subagents[index].result, at: date)
             trim()
             return true
+        case .subagentWaiting:
+            return false
         case let .subagentNamed(id, name):
             guard let index = subagentIndex(id), subagents[index].name != name else { return false }
             subagents[index].name = name

@@ -15,6 +15,13 @@ app and publishes it on GitHub Releases.
   edges. Spread wide but squeezed below 720pt, the component panel stacks Preview above its
   progress, as when narrow. Chat | Board now sits in a bar of its own above the chat, so
   messages no longer scroll under it.
+- **A bot waiting on a background subagent no longer keeps saying "still running".** A subagent
+  that watches its own long job (a Monitor, a background command) stops each time that job
+  reports, and claude then wakes the bot with "is waiting on its own background work" — every
+  30 seconds or so. Each wake was a turn of its own whose few words ("Still transcribing.")
+  showed as a new reply. Such a turn now shows nothing and leaves nothing unread; the subagent
+  stays running in its card until it really reports, and that report, or anything you ask in
+  between, still gets its answer.
 
 ## 1.9.0
 

@@ -146,6 +146,11 @@ public final class Bot: ObservableObject, Identifiable {
     /// Work it was doing (handed over, a routine) when you wrote: it answers you first, then is
     /// told to carry on. Holds whether that work reports up like handed-over work.
     private var pausedWork: Bool?
+    /// The turn under way was started by claude itself only to say a subagent is still waiting
+    /// on its own background work: nothing new, so its reply does not show.
+    private var quietTurn = false
+    /// That quiet turn was paused for you: the work it carries on with after stays quiet.
+    private var pausedQuiet = false
     static let pauseNote = "(App: I stopped what you were doing to ask you this. Answer me first; you will be told to carry on with it after.)"
     static let resumeNote = "(App: Now carry on with what you were doing before the user's message, where you left off.)"
 
@@ -472,6 +477,7 @@ public final class Bot: ObservableObject, Identifiable {
                 // subagents in the background carry on and still report back.
                 trace.dropSteps()
                 pausedWork = turnFromRelay
+                pausedQuiet = quietTurn
                 turnFromRelay = false
                 var mine = outgoing
                 mine.text = Self.pauseNote + "\n\n" + outgoing.text
@@ -521,6 +527,8 @@ public final class Bot: ObservableObject, Identifiable {
         cancelIdle()
         // A turn you started, or one you are adding to; anything else is not yours to add to.
         turnInput = outgoing.fromUser && (!isWorking || turnInput != nil) ? outgoing : nil
+        // You said something: the reply is yours to see.
+        if outgoing.fromUser { quietTurn = false }
         if !isWorking { noteProgress() }
         isWorking = true
         var text = outgoing.text
@@ -629,6 +637,8 @@ public final class Bot: ObservableObject, Identifiable {
             // It answered you; now back to what it was doing.
             pausedWork = nil
             turnFromRelay = fromRelay
+            quietTurn = pausedQuiet
+            pausedQuiet = false
             deliver(Outgoing(text: Self.resumeNote))
             return
         }
@@ -817,6 +827,18 @@ public final class Bot: ObservableObject, Identifiable {
         case let .trace(step):
             if trace.apply(step) { store?.save(subagents: trace.subagents) }
             noteSubagentEnd(step)
+            switch step {
+            case .subagentWaiting:
+                // claude wakes it to say a subagent is still waiting on its own work (each
+                // time a Monitor or background command of that subagent reports): a turn with
+                // nothing new for you, unless something else comes in it.
+                if !isWorking, internalReply == nil, groupReply == nil { quietTurn = true }
+            case .subagentEnded:
+                // A real report: the turn tells you about it.
+                quietTurn = false
+            default:
+                break
+            }
             // It started a turn of its own (a subagent in the background finished): it is at
             // work again, and the reply will show.
             if !isWorking, internalReply == nil, groupReply == nil, Self.startsATurn(step) {
@@ -846,6 +868,8 @@ public final class Bot: ObservableObject, Identifiable {
                 interruptions = 0
             }
             turnInput = nil
+            let quiet = quietTurn
+            quietTurn = false
             // `<choices>` and other tags written before a tool call are not in claude's result
             // (only the words after the last call are): they count as part of the reply.
             let lifted = trace.liftReplyTags()
@@ -872,6 +896,14 @@ public final class Bot: ObservableObject, Identifiable {
                 showNetworkLoss(text)
                 return
             }
+            if quiet, !isError {
+                // "Still running": no bubble, and nothing unread.
+                trace.dropSteps()
+                isWorking = false
+                reloadRoutines()
+                afterTurn()
+                return
+            }
             if !isError, let filter = replyFilter?() {
                 Task { [weak self] in
                     let changed = await filter(text)
@@ -891,6 +923,8 @@ public final class Bot: ObservableObject, Identifiable {
             turnInput = nil
             interruptions = 0
             if !lostToNetwork { pausedWork = nil }
+            quietTurn = false
+            pausedQuiet = false
             if trace.stopRunning() { store?.save(subagents: trace.subagents) }
             dropPermissionAsks()
             dropNextReply = false
@@ -974,6 +1008,7 @@ public final class Bot: ObservableObject, Identifiable {
         switch step {
         case let .toolUse(_, _, _, _, parent), let .toolResult(_, _, _, parent), let .toolImages(_, _, parent), let .text(_, parent): parent
         case let .subagentStarted(id, _, _, _, _): id
+        case let .subagentWaiting(id): id
         case .subagentEnded, .subagentNamed: nil
         }
     }
