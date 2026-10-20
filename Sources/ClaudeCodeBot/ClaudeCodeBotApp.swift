@@ -39,10 +39,14 @@ struct RootView: View {
     @ObservedObject var settings: SettingsNavigator
     @StateObject private var inputs = ChatInputs()
     @State private var railTip: RailTip?
+    @State private var rightTip: RightTip?
+    /// The folded strip's settings button: the panel opens on the bot's settings.
+    @State private var panelOpensSettings = false
 
     var body: some View {
         let bot = workspace.selectedBot
         let collapsed = workspace.railCollapsed
+        let rightCollapsed = workspace.rightPanelCollapsed
         HStack(spacing: 0) {
             RailView(workspace: workspace, settings: settings, collapsed: collapsed, tip: $railTip)
                 .frame(width: RailLayout.width(collapsed: collapsed))
@@ -51,18 +55,29 @@ struct RootView: View {
             ChatSurface(bot: bot, workspace: workspace, components: workspace.components, commands: workspace.componentCommands, plugins: workspace.plugins, inputs: inputs)
                 .frame(minWidth: 480, maxWidth: .infinity)
             Group {
-                if let group = workspace.group(of: bot) {
+                if rightCollapsed {
+                    RightStrip(workspace: workspace, bot: bot, group: workspace.group(of: bot), tip: $rightTip) {
+                        setRightPanel(collapsed: false)
+                    } openSettings: {
+                        panelOpensSettings = true
+                        setRightPanel(collapsed: false)
+                    }
+                } else if let group = workspace.group(of: bot) {
                     GroupPanel(workspace: workspace, group: group, chat: bot)
                 } else {
-                    DetailPanel(workspace: workspace, bot: bot)
+                    DetailPanel(workspace: workspace, bot: bot, showingSettings: panelOpensSettings)
+                        .onAppear { panelOpensSettings = false }
                 }
             }
-            .frame(width: 340)
+            .frame(width: RightPanelLayout.width(collapsed: rightCollapsed))
+            .overlay(alignment: .leading) { Rectangle().fill(Theme.line).frame(width: 1).opacity(rightCollapsed ? 1 : 0) }
             .id(bot.id)
         }
         .coordinateSpace(name: RailTip.space)
         .overlay(alignment: .topLeading) { RailChrome(collapsed: collapsed, tip: railTip) { toggleRail() } }
+        .overlay(alignment: .topTrailing) { RightChrome(collapsed: rightCollapsed, tip: rightTip) { toggleRightPanel() } }
         .onChange(of: collapsed) { _, _ in railTip = nil }
+        .onChange(of: rightCollapsed) { _, _ in rightTip = nil }
         // Chips and result rows: web links in the browser, local files in a window of their own.
         .environment(\.openURL, OpenURLAction { url in
             ResultWindows.open(Chip(label: Self.label(for: url, in: workspace), url: url))
@@ -82,6 +97,13 @@ extension RootView {
         withAnimation(.easeInOut(duration: 0.2)) { workspace.toggleRail() }
     }
 
+    private func toggleRightPanel() {
+        withAnimation(.easeInOut(duration: 0.2)) { workspace.toggleRightPanel() }
+    }
+
+    private func setRightPanel(collapsed: Bool) {
+        withAnimation(.easeInOut(duration: 0.2)) { workspace.setRightPanelCollapsed(collapsed) }
+    }
 
     /// The chip text a bot used for `url`, else its file name.
     static func label(for url: URL, in workspace: Workspace) -> String {
@@ -100,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A run that only draws a snapshot or checks a plugin, then quits.
     static var isHeadless: Bool {
         let environment = ProcessInfo.processInfo.environment
-        return environment["CCB_SNAPSHOT"] != nil || environment["CCB_ICON"] != nil || environment["CCB_CODEX_SNAPSHOT"] != nil || environment["CCB_RAIL_SNAPSHOT"] != nil
+        return environment["CCB_SNAPSHOT"] != nil || environment["CCB_ICON"] != nil || environment["CCB_CODEX_SNAPSHOT"] != nil || environment["CCB_RAIL_SNAPSHOT"] != nil || environment["CCB_RIGHT_SNAPSHOT"] != nil
             || CommandLine.arguments.contains("--check-plugin") || Snapshot.isChatRequest
     }
 

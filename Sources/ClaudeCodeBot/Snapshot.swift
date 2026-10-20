@@ -23,6 +23,10 @@ enum Snapshot {
             drawRail(to: path)
             return true
         }
+        if let path = ProcessInfo.processInfo.environment["CCB_RIGHT_SNAPSHOT"] {
+            drawRightPanel(to: path)
+            return true
+        }
         if let (chat, path) = chatRequest() {
             drawChat(chat, to: path)
             return true
@@ -242,6 +246,102 @@ enum Snapshot {
             .background(Color(hex: 0x0A0A0C))
             .preferredColorScheme(.dark)
         let frame = NSRect(x: 0, y: 0, width: 1140, height: 620)
+        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.appearance = NSAppearance(named: .darkAqua)
+        let host = NSHostingView(rootView: content)
+        host.frame = frame
+        window.contentView = host
+        self.window = window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
+            exit(0)
+        }
+    }
+
+    /// `CCB_RIGHT_SNAPSHOT=/path/out.png`: the right panel open and folded side by side, for a
+    /// sample project with results and settled subagents, with the folded one's hover tip on the
+    /// face and its Results popped out (drawn in place, as a popover is not in the picture).
+    private static func drawRightPanel(to path: String) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
+        let code = root.appending(path: "code/ClaudeCodeBot")
+        try? FileManager.default.createDirectory(at: code.appending(path: ".bot"), withIntermediateDirectories: true)
+        try? Data("## In progress\n- v1.9.0: fold the right panel into a strip of icons\n".utf8).write(to: code.appending(path: ".bot/memory.md"))
+        let project = Workspace.Project(id: UUID(), name: "ClaudeCodeBot", folder: code, avatar: "square")
+        try? JSONEncoder().encode([project]).write(to: root.appending(path: "projects.json"))
+        let store = BotStore(directory: root.appending(path: "projects/\(project.id.uuidString)"))
+        store.save(messages: [
+            ChatMessage(role: .bot, text: "Done: [Sidebar option A](file:///tmp/a.html), [Sidebar collapse](file:///tmp/b.html), [ClaudeCodeBot v1.7.1](file:///tmp/c.html)", date: Date())
+        ])
+        store.save(subagents: ["Fix choices block not rendering", "Fix markdown table column widths", "Design collapsible sidebar options", "Fix duplicate decision cards"].enumerated().map { index, title in
+            var subagent = Subagent(id: "s\(index)", description: title, prompt: title, status: .completed)
+            subagent.endedAt = Date()
+            subagent.settledAt = Date()
+            return subagent
+        })
+        let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
+            Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
+        }
+        workspace.select(project.id)
+        let bot = workspace.selectedBot
+        let tip = RightTip(
+            title: bot.name,
+            detail: RightPanelLayout.nowDetail(status: bot.statusText, doing: MemoryFile.items(at: bot.profile.memoryURL, section: "In progress").first),
+            color: bot.statusColor,
+            midY: 36 + 20
+        )
+        let chat = VStack(alignment: .leading, spacing: 10) {
+            RoundedRectangle(cornerRadius: 12).fill(Theme.userBubble).frame(width: 220, height: 34).frame(maxWidth: .infinity, alignment: .trailing)
+            RoundedRectangle(cornerRadius: 12).fill(Theme.bubble).frame(height: 120)
+            RoundedRectangle(cornerRadius: 12).fill(Theme.bubble).frame(height: 64)
+            Spacer()
+            RoundedRectangle(cornerRadius: 22).stroke(Theme.chip).frame(height: 44)
+        }
+        .padding(EdgeInsets(top: 44, leading: 16, bottom: 16, trailing: 16))
+        let pane = { (collapsed: Bool) in
+            HStack(spacing: 0) {
+                chat
+                Group {
+                    if collapsed {
+                        RightStrip(workspace: workspace, bot: bot, group: nil, tip: .constant(nil)) {} openSettings: {}
+                    } else {
+                        DetailPanel(workspace: workspace, bot: bot)
+                    }
+                }
+                .frame(width: RightPanelLayout.width(collapsed: collapsed))
+                .overlay(alignment: .leading) { Rectangle().fill(Theme.line).frame(width: 1).opacity(collapsed ? 1 : 0) }
+            }
+            .frame(width: 700, height: 860)
+            .background(Theme.ground)
+            .overlay(alignment: .topTrailing) { RightChrome(collapsed: collapsed, tip: collapsed ? tip : nil) {} }
+            .overlay(alignment: .topTrailing) {
+                if collapsed {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Results").font(.system(size: 12)).foregroundStyle(Theme.faint)
+                        ForEach(bot.results, id: \.self) { chip in
+                            Text(chip.label).fontWeight(.semibold).lineLimit(1)
+                                .padding(.horizontal, 12).frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                                .background(RoundedRectangle(cornerRadius: 10).fill(Theme.selected))
+                        }
+                    }
+                    .padding(12)
+                    .frame(width: 300)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.tipLine))
+                    .padding(.trailing, RightPanelLayout.collapsedWidth + 10)
+                    .padding(.top, 260)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+        let content = HStack(spacing: 40) { pane(false); pane(true) }
+            .padding(30)
+            .frame(width: 1500, height: 920)
+            .foregroundStyle(Theme.text)
+            .background(Color(hex: 0x0A0A0C))
+            .preferredColorScheme(.dark)
+        let frame = NSRect(x: 0, y: 0, width: 1500, height: 920)
         let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: content)
