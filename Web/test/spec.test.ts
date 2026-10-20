@@ -164,6 +164,20 @@ describe("the spec workspace in the right panel", () => {
     expect(root.querySelector(".spec-samples button[aria-pressed='true']")?.textContent).toBe("Failing run");
   });
 
+  it("a built component without a command previews with the reply's own data", () => {
+    const samples = [
+      { label: "Failing run", data: '{"total":382,"failed":2}' },
+      { label: "Test run", data: '"# Changelog"' },
+      { label: "This reply", data: '{"versions":["1.9.0 看板變成格子"]}' },
+    ];
+    const root = panel(spec({ status: "done", preview: "test-summary", command: null, samples, questions: [] }));
+    expect(root.querySelector(".spec-samples button[aria-pressed='true']")?.textContent).toBe("This reply");
+    expect(root.querySelector<HTMLIFrameElement>(".spec-preview iframe")!.srcdoc).toContain("看板變成格子");
+    // With a command (live data), the real run comes first.
+    const live = panel(spec({ id: "S2", status: "done", preview: "test-summary", samples, questions: [] }));
+    expect(live.querySelector(".spec-samples button[aria-pressed='true']")?.textContent).toBe("Test run");
+  });
+
   it("a built or existing component previews with its own template", () => {
     const root = panel(spec({ preview: "test-summary" }));
     expect(root.querySelector<HTMLIFrameElement>(".spec-preview iframe")!.srcdoc).toContain("<div>tests</div>");
