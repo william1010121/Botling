@@ -509,8 +509,17 @@ describe("messages", () => {
       step("b1", "tool", "Edit Trace.swift"),
     ] }), {});
     document.body.append(row);
-    const steps = row.querySelector<HTMLElement>(".steps")!;
-    expect(steps.classList.contains("with-text")).toBe(true);
+    const outer = row.querySelector<HTMLElement>(".steps")!;
+    expect(outer.classList.contains("with-text")).toBe(true);
+    // Folded by default to one line: only the final reply is in sight.
+    const fold = outer.querySelector<HTMLButtonElement>(":scope > .steps-toggle")!;
+    expect(fold.textContent).toBe("Worked · 2 notes · 3 steps");
+    const steps = outer.querySelector<HTMLElement>(":scope > .steps-body")!;
+    expect(steps.hidden).toBe(true);
+    expect(row.querySelector(".bubble")?.textContent).toContain("All green.");
+    fold.click();
+    expect(steps.hidden).toBe(false);
+    expect(outer.classList.contains("open")).toBe(true);
     // In order: words, a folded run, words, a folded run; the words are markdown, not step lines.
     const parts = [...steps.children].map((child) => child.className);
     expect(parts).toEqual(["step-prose markdown", "steps-run", "step-prose markdown", "steps-run"]);
@@ -531,9 +540,25 @@ describe("messages", () => {
       step("t0", "text", "First I'll look at the **tests**."), step("a1", "tool", "Read Package.swift"), step("a2", "tool", "Run swift test"),
       step("t1", "text", "Two failed; fixing them."), step("b1", "tool", "Edit Trace.swift"),
     ] }), {});
+    expect(again.querySelector<HTMLElement>(".steps-body")!.hidden).toBe(false);
     const lists = again.querySelectorAll<HTMLElement>(".steps-run > .step-list:first-of-type");
     expect(lists[0].hidden).toBe(false);
     expect(lists[1].hidden).toBe(true);
+  });
+
+  it("fold a finished turn's words and calls to one line, each reply remembering its own", () => {
+    const step = (id: string, kind: "tool" | "text", title: string) =>
+      ({ id, kind, tool: null, title, detail: null, output: null, failed: false, done: true, status: null, count: null });
+    const steps = [step("n0", "text", "Looking."), step("n1", "tool", "Read a.swift")];
+    const first = messageElement(message({ id: "fold-a", text: "Done.", steps }), {});
+    const second = messageElement(message({ id: "fold-b", text: "Done.", steps }), {});
+    expect(first.querySelector(".steps-toggle")?.textContent).toBe("Worked · 1 note · 1 step");
+    expect(first.querySelector(".step-prose")?.closest<HTMLElement>(".steps-body")?.hidden).toBe(true);
+    first.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
+    expect(messageElement(message({ id: "fold-a", text: "Done.", steps }), {}).querySelector<HTMLElement>(".steps-body")!.hidden).toBe(false);
+    expect(second.querySelector<HTMLElement>(".steps-body")!.hidden).toBe(true);
+    first.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
+    expect(messageElement(message({ id: "fold-a", text: "Done.", steps }), {}).querySelector<HTMLElement>(".steps-body")!.hidden).toBe(true);
   });
 
   it("show the words between tool calls while the bot is still at work", () => {
@@ -545,6 +570,9 @@ describe("messages", () => {
       step("l2", "tool", "Edit a.swift", false),
     ]);
     const steps = row.querySelector<HTMLElement>(".steps.live")!;
+    // While it works the whole process stays open, nothing folded behind one line.
+    expect(steps.querySelector(".steps-body")).toBeNull();
+    expect(steps.querySelector<HTMLElement>(".step-prose")!.closest("[hidden]")).toBeNull();
     expect(steps.querySelector(".step-prose")?.textContent).toContain("Found it; now the fix.");
     // Earlier calls fold to a chip; the calls under way stay in sight.
     const runs = steps.querySelectorAll<HTMLElement>(".steps-run");

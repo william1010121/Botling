@@ -17,8 +17,9 @@ const chevron = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" str
 
 /**
  * The steps above a reply. With nothing said between tool calls: one folded "Worked · 5 steps"
- * line that opens to every step. When the bot said something between calls, its words stay in
- * sight, in order, as its own words, and each run of tool calls between them folds to a chip.
+ * line that opens to every step. When the bot said something between calls, the whole process
+ * folds to one "Worked · 2 notes · 5 steps" line, so only the final reply is in sight; opened,
+ * its words show in order as its own words, and each run of tool calls between them folds to a chip.
  */
 export function stepsElement(listID: string, steps: StepView[]): HTMLElement {
   const parts = segments(steps);
@@ -29,7 +30,29 @@ export function stepsElement(listID: string, steps: StepView[]): HTMLElement {
   }
   const wrap = document.createElement("div");
   wrap.className = "steps with-text";
-  parts.forEach((part, index) => wrap.append(part.text ? prose(part.text) : foldedRun(`${listID}#${index}`, part.steps, false)));
+  const notes = parts.filter((part) => part.text).length;
+  const tools = steps.filter((step) => step.kind !== "text").length;
+  const toggle = document.createElement("button");
+  toggle.className = "steps-toggle";
+  toggle.innerHTML = `${chevron}<span></span>`;
+  toggle.querySelector("span")!.textContent = [
+    "Worked",
+    `${notes} note${notes === 1 ? "" : "s"}`,
+    ...(tools ? [`${tools} step${tools === 1 ? "" : "s"}`] : []),
+  ].join(" · ");
+  const body = document.createElement("div");
+  body.className = "steps-body";
+  parts.forEach((part, index) => body.append(part.text ? prose(part.text) : foldedRun(`${listID}#${index}`, part.steps, false)));
+  const setOpen = (open: boolean) => {
+    wrap.classList.toggle("open", open);
+    toggle.setAttribute("aria-expanded", String(open));
+    body.hidden = !open;
+    if (open) openLists.add(listID);
+    else openLists.delete(listID);
+  };
+  toggle.addEventListener("click", () => setOpen(body.hidden));
+  wrap.append(toggle, body);
+  setOpen(openLists.has(listID));
   return wrap;
 }
 

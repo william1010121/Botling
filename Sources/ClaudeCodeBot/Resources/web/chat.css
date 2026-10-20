@@ -332,10 +332,13 @@ body.panel-mode #scroller, body.panel-mode #composer-slot { display: none; }
 .steps-toggle:hover { color: var(--text); }
 .steps-toggle svg { transition: transform 0.15s; flex-shrink: 0; }
 .steps.open > .steps-toggle svg, .steps-run.open > .steps-toggle svg { transform: rotate(90deg); }
-/* The bot's own words between tool calls: always in sight, quieter than the reply below, with
-   each run of tool calls between them folded to a chip. A hairline sets it all off from the reply. */
-.steps.with-text { display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
-.steps.live.with-text { padding-bottom: 6px; margin-bottom: 6px; }
+/* The bot's own words between tool calls: folded with the calls to one line once the turn is done
+   (in sight while it works); opened, quieter than the reply below, with each run of tool calls
+   between them folded to a chip. A hairline sets the opened process off from the reply. */
+.steps-body { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.steps-body[hidden] { display: none; }
+.steps.with-text.open, .steps.live.with-text { padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--line); }
+.steps.live.with-text { display: flex; flex-direction: column; gap: 6px; padding-bottom: 6px; margin-bottom: 6px; }
 .step-prose { color: var(--muted); font-size: 13.5px; line-height: 1.55; overflow-wrap: anywhere; }
 .step-prose p { margin: 0 0 6px; }
 .step-prose code { font-size: 12px; }
