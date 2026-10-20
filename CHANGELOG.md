@@ -20,6 +20,12 @@ app and publishes it on GitHub Releases.
 - **Components can start a Codex review.** `ccb.reviewWithCodex({scope, commit, spec})` reviews
   the chat bot's repository once; the app checks the commit and spec and ignores a bad call.
 
+### Fixed
+
+- **Tables size their columns by what is in them.** A short column (a version, a name) gets
+  its natural width, up to 40%, before a long text column takes the rest, and a cell never
+  breaks inside a word, so "v1.6.0" no longer wraps as "v1. / 6. / 0". Cells line up at the top.
+
 ## 1.7.1
 
 1.7.0 was tagged but never published as a GitHub Release, so 1.7.1 is the first release with
