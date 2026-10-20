@@ -8,6 +8,11 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Markdown files open formatted.** A `.md` or `.markdown` file opened in its own window
+  (a result, an attachment) is drawn with the chat's Markdown and LaTeX instead of as raw text:
+  headings, lists, quotes, tables, code, `$…$` and `$$…$$` typeset, links opening like the
+  chat's, pictures beside the file shown. Raw HTML in the file is shown as text, never run. The
+  **Source** button at the top right shows the text as written. Files in Big5 read right too.
 - **Fold the right panel into a strip of icons.** The button at the window's top right (or
   ⌃⌘I) shrinks the right panel to 56 points, the mirror of the left one: the bot's face with
   its status dot (hover for what its Now card says), then an icon per section it would show

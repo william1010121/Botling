@@ -105,10 +105,20 @@ struct ResultViewer: View {
 struct PageView: NSViewRepresentable {
     let url: URL
 
-    final class Coordinator {
+    @MainActor
+    final class Coordinator: NSObject, WKScriptMessageHandler {
         var loaded: URL?
         /// What the view was pointed at for `loaded` (a `ccb-preview:` URL for a result page).
         var target: URL?
+
+        /// A .md file's window: its links and pictures open like the chat's.
+        func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any], body["type"] as? String == "openURL",
+                  let text = body["url"] as? String, let url = URL(string: text), let scheme = url.scheme?.lowercased(),
+                  ["http", "https", "file", "mailto"].contains(scheme) else { return }
+            let label = (body["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? url.lastPathComponent
+            ResultWindows.open(Chip(label: label, url: url))
+        }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -118,15 +128,44 @@ struct PageView: NSViewRepresentable {
         // Result pages in an `artifacts` folder load through `ccb-preview:`, so a video or sound
         // beside them plays (served in byte ranges); see `PagePreview.windowURL(for:)`.
         configuration.setURLSchemeHandler(PreviewSchemeHandler.shared, forURLScheme: PagePreview.scheme)
+        let markdown = MarkdownFile.isMarkdown(url) ? MarkdownFile.documentScript(for: url) : nil
+        if let markdown {
+            // A .md file is drawn by viewer.html (the chat's Markdown and LaTeX); the file's text
+            // goes in before the page's script runs. Pictures beside the file load as file: URLs.
+            configuration.userContentController.addUserScript(WKUserScript(source: markdown, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            configuration.userContentController.add(context.coordinator, name: "ccb")
+            configuration.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
+        }
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
-        load(url, in: view, context.coordinator)
+        if markdown != nil, let page = Self.viewerPage {
+            context.coordinator.loaded = url
+            context.coordinator.target = page
+            view.loadFileURL(page, allowingReadAccessTo: URL(filePath: "/"))
+        } else {
+            load(url, in: view, context.coordinator)
+        }
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
         // Opening the result again also brings it back from a page it linked to.
-        if context.coordinator.loaded != url || view.url != context.coordinator.target { load(url, in: view, context.coordinator) }
+        if context.coordinator.loaded != url || view.url != context.coordinator.target {
+            if context.coordinator.target == Self.viewerPage, let page = Self.viewerPage {
+                view.loadFileURL(page, allowingReadAccessTo: URL(filePath: "/"))
+            } else {
+                load(url, in: view, context.coordinator)
+            }
+        }
+    }
+
+    static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        view.configuration.userContentController.removeScriptMessageHandler(forName: "ccb")
+    }
+
+    /// The page that draws .md files.
+    static var viewerPage: URL? {
+        AppResources.bundle.url(forResource: "viewer", withExtension: "html", subdirectory: "web")
     }
 
     /// Text files WebKit would read as Latin-1 when nothing in them names an encoding.
