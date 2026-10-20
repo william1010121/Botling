@@ -8,6 +8,10 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Component usage is counted.** Each component card made for a new message (a bot's
+  `<show>`, a `<choices>` block, a linked result page's preview card) adds one use to
+  `~/.claudecodebot/component-usage.json`, with the bot and time, so rarely used components can
+  be found. Reopening or redrawing a chat does not count again.
 - **Tool steps show pictures.** When a tool call gives back an image (a Read of a .png, a
   screenshot), the step's OUT box shows it, fit to the box's width; click it to see it full
   size. The bot keeps the pictures as files beside the chat, so chat.json stays small.

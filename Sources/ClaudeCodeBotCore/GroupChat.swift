@@ -139,6 +139,7 @@ extension Workspace {
             launcher: { _ in throw CocoaError(.featureUnsupported) },
             store: BotStore(directory: home)
         )
+        groupChats[group.id].map(countComponents(of:))
     }
 
     /// 1.2.0 had one group chat of everyone, holding the app's notices. The notices go back to

@@ -56,6 +56,9 @@ public final class Bot: ObservableObject, Identifiable {
     public var pluginEnvironment: (() -> [String: String])?
     /// Whether it starts in Claude Code's auto mode, read at each wake (off when not set).
     public var autoMode: (() -> Bool)?
+    /// Called once for each new line added to the chat (not when a saved chat is loaded or
+    /// drawn again): where component cards are counted.
+    public var onNewMessage: ((ChatMessage) -> Void)?
     /// Called after each reply the user sees, with whether it answers work the main bot handed
     /// over (rather than something the user said in this chat).
     public var onReply: ((ChatMessage, _ answersRelay: Bool) -> Void)?
@@ -1342,6 +1345,7 @@ public final class Bot: ObservableObject, Identifiable {
         messages.append(message)
         store?.save(messages: messages)
         archive(message)
+        onNewMessage?(message)
     }
 
     /// Adds a line to this month's file in its archive (the bot greps it for older talk).
