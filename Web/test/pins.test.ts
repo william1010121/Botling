@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
 import { messageElement } from "../src/messages";
 import { PinArea } from "../src/pins";
-import type { ChatState, ComponentInfo, DisplayView, MessageView, PinView } from "../src/types";
+import { chatSize, componentElement } from "../src/components";
+import type { ChatState, ComponentInfo, DisplayView, MessageView, PinSize, PinView } from "../src/types";
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
 
@@ -24,7 +25,7 @@ function message(displays: DisplayView[]): MessageView {
 
 function pin(overrides: Partial<PinView> = {}): PinView {
   return {
-    id: "P1", name: "提交紀錄", headline: "f472a1c · Merge bot/sidebar-a · 20", size: "m", refresh: "shown", minutes: 15,
+    id: "P1", name: "提交紀錄", headline: "f472a1c · Merge bot/sidebar-a · 20", size: "2x2", refresh: "shown", minutes: 15,
     display: { name: "提交紀錄", data: "[]", command: "python3 git-log-json.py 20", folder: "/p", status: "done", ranAt: "10:42" },
     ...overrides,
   };
@@ -173,32 +174,43 @@ describe("the chips above the input box", () => {
 });
 
 describe("the Board", () => {
-  it("shows every pin as a card sized S/M/L, and refreshes those shown", () => {
+  it("shows every pin as a card of its size in cells, and refreshes those shown", () => {
     const area = setUp();
-    area.update(state({ board: true, pins: [pin({ size: "l" }), pin({ id: "P2", name: "天氣卡片", size: "s", refresh: "manual", display: { name: "天氣卡片", data: "{}" } })] }));
+    area.update(state({ board: true, pins: [pin({ size: "4x2" }), pin({ id: "P2", name: "天氣卡片", size: "1x1", refresh: "manual", display: { name: "天氣卡片", data: "{}" } })] }));
     expect(document.body.classList.contains("board")).toBe(true);
     const cards = document.querySelectorAll<HTMLElement>(".board-card");
     expect(cards).toHaveLength(2);
-    expect(cards[0].classList.contains("size-l")).toBe(true);
-    expect(cards[1].classList.contains("size-s")).toBe(true);
+    expect(cards[0].classList.contains("size-4x2")).toBe(true);
+    expect([cards[0].style.gridColumn, cards[0].style.gridRow]).toEqual(["span 4", "span 2"]);
+    expect([cards[1].style.gridColumn, cards[1].style.gridRow]).toEqual(["span 1", "span 1"]);
     expect(document.querySelector(".board-title")?.textContent).toBe("ClaudeCodeBot");
     expect(sent).toEqual([{ type: "pinShown", ids: null }]);
     // Drawn again with nothing changed: not asked again, and the card is the same element.
-    area.update(state({ board: true, pins: [pin({ size: "l" }), pin({ id: "P2", name: "天氣卡片", size: "s", refresh: "manual", display: { name: "天氣卡片", data: "{}" } })] }));
+    area.update(state({ board: true, pins: [pin({ size: "4x2" }), pin({ id: "P2", name: "天氣卡片", size: "1x1", refresh: "manual", display: { name: "天氣卡片", data: "{}" } })] }));
     expect(sent).toHaveLength(1);
     expect(document.querySelectorAll(".board-card")[0]).toBe(cards[0]);
   });
 
   it("each card's menu resizes, reorders and unpins it; Refresh all runs every command", () => {
     const area = setUp();
-    area.update(state({ board: true, pins: [pin(), pin({ id: "P2", name: "天氣卡片" })] }));
+    const sized = { ...components, 提交紀錄: { ...components.提交紀錄, sizes: ["1x1", "2x1", "2x2"] as PinSize[] } };
+    area.update(state({ board: true, components: sized, pins: [pin({ size: "2x2" }), pin({ id: "P2", name: "天氣卡片", size: "4x2" })] }));
     sent.length = 0;
     const menuOf = (index: number) => {
       click(document.querySelectorAll(".board-card")[index].querySelector("[aria-label='More']"));
       return [...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")];
     };
-    menuOf(0).find((b) => b.textContent === "Size L")!.click();
-    expect(sent.at(-1)).toEqual({ type: "resizePin", id: "P1", size: "l" });
+    // Only the sizes the component has a layout for (its about.md's Sizes: line)...
+    const sizesIn = (items: HTMLButtonElement[]) => items.filter((b) => /×/.test(b.textContent ?? "")).map((b) => b.textContent);
+    expect(sizesIn(menuOf(0))).toEqual(["Small 1×1", "Wide 2×1", "Large 2×2"]);
+    menuOf(0).find((b) => b.textContent === "Wide 2×1")!.click();
+    expect(sent.at(-1)).toEqual({ type: "resizePin", id: "P1", size: "2x1" });
+    // ...2×2 alone when it names none, and the size a card has now even if it is not one of them.
+    expect(sizesIn(menuOf(1))).toEqual(["Large 2×2", "Extra wide 4×2"]);
+    // The size button on the card offers the same.
+    click(document.querySelectorAll(".board-card")[0].querySelector(".board-size"));
+    expect([...document.querySelectorAll(".pin-menu button")].map((b) => b.textContent)).toEqual(["Small 1×1", "Wide 2×1", "Large 2×2"]);
+    expect(document.querySelector(".pin-menu button.checked")?.textContent).toBe("Large 2×2");
     menuOf(1).find((b) => b.textContent === "Move earlier")!.click();
     expect(sent.at(-1)).toEqual({ type: "movePin", id: "P2", to: 0 });
     menuOf(0).find((b) => b.textContent === "Every 15 min")!.click();
@@ -251,7 +263,7 @@ describe("the Board", () => {
     }
   });
 
-  it("a column is wide enough to read a component, and the card gives it the whole width", () => {
+  it("a card gives its component the whole width, and a narrow header drops what it can", () => {
     const css = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
     const style = document.createElement("style");
     style.textContent = css;
@@ -259,43 +271,75 @@ describe("the Board", () => {
     try {
       const area = setUp();
       area.update(state({ board: true, pins: [pin()] }));
-      // At 260px a component got under 200px: a commit's title broke a word per line.
-      const columns = getComputedStyle(document.querySelector<HTMLElement>(".board-grid")!).gridTemplateColumns;
-      expect(columns).toContain("min(320px, 100%)");
       // The report flag sits over the corner instead of keeping a strip beside the component.
       const side = document.querySelector<HTMLElement>(".board-card-body .component-side")!;
       expect(getComputedStyle(side).position).toBe("absolute");
-      // A narrow card drops the command from its header so the name and the time stay readable.
+      // A narrow card drops the command, then the time, then the size button from its header.
       expect(getComputedStyle(document.querySelector<HTMLElement>(".board-card")!).getPropertyValue("container-type")).toBe("inline-size");
       expect(css).toMatch(/@container \(max-width: 439px\) \{ \.board-card-head \.pin-command \{ display: none; \} \}/);
+      expect(css).toMatch(/@container \(max-width: 299px\) \{ \.board-card-head \.pin-when \{ display: none; \} \}/);
+      expect(css).toMatch(/@container \(max-width: 199px\) \{ \.board-card-head \.board-size \{ display: none; \}/);
     } finally {
       style.remove();
     }
   });
 
-  it("the cards share the Board's width instead of leaving empty columns", () => {
+  it("lays the Board out in square cells from its width, like home-screen widgets", () => {
     const style = document.createElement("style");
     style.textContent = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
     document.head.append(style);
     try {
       const area = setUp();
       const grid = () => document.querySelector<HTMLElement>(".board-grid")!;
-      // auto-fit collapses the empty tracks auto-fill kept, so two cards stretch across a wide Board,
-      // split between the cards' columns but no wider than 640px before another column fits.
-      const columns = getComputedStyle(grid()).gridTemplateColumns;
-      expect(columns).toMatch(/^repeat\(auto-fit, /);
-      expect(columns).toContain("min(640px, calc((100% - (var(--board-columns, 2) - 1) * 16px) / var(--board-columns, 2)))");
-      area.update(state({ board: true, pins: [pin(), pin({ id: "P2" })] }));
-      expect(grid().style.getPropertyValue("--board-columns")).toBe("2");
-      // A large card takes two columns; the add tile never counts, it wraps below.
-      area.update(state({ board: true, pins: [pin(), pin({ id: "P2", size: "l" }), pin({ id: "P3", size: "s" })] }));
-      expect(grid().style.getPropertyValue("--board-columns")).toBe("4");
-      // A lone card shares the row with the add tile instead of spanning the whole Board.
-      area.update(state({ board: true, pins: [pin()] }));
-      expect(grid().style.getPropertyValue("--board-columns")).toBe("2");
+      // Until measured: columns of at least 150px, rows 160px tall, gaps filled densely.
+      const look = getComputedStyle(grid());
+      expect(look.gridTemplateColumns).toBe("repeat(var(--board-cols, auto-fill), minmax(min(150px, 100%), 1fr))");
+      expect(look.gridAutoRows).toBe("var(--board-cell, 160px)");
+      expect(look.gridAutoFlow).toBe("dense");
+      let width = 1140;
+      Object.defineProperty(grid(), "clientWidth", { configurable: true, get: () => width });
+      const pins = [pin({ size: "4x2" }), pin({ id: "P2", size: "2x1" }), pin({ id: "P3", size: "1x2" }), pin({ id: "P4", size: "1x1" })];
+      area.update(state({ board: true, pins }));
+      // 1140px: seven columns of 150px (14px gaps), and rows as tall as a column is wide.
+      expect(grid().style.getPropertyValue("--board-cols")).toBe("7");
+      expect(grid().style.getPropertyValue("--board-cell")).toBe("150px");
+      const spans = () => [...document.querySelectorAll<HTMLElement>(".board-card")].map((card) => `${card.style.gridColumn}/${card.style.gridRow}`);
+      expect(spans()).toEqual(["span 4/span 2", "span 2/span 1", "span 1/span 2", "span 1/span 1"]);
+      // The add tile is one cell.
+      expect(document.querySelector<HTMLElement>(".board-add")!.style.gridColumn).toBe("");
+      // A narrow Board has fewer columns; a card wider than that spans them all, never more.
+      width = 330;
+      area.update(state({ board: true, pins }));
+      expect(grid().style.getPropertyValue("--board-cols")).toBe("2");
+      expect(grid().style.getPropertyValue("--board-cell")).toBe("158px");
+      expect(spans()[0]).toBe("span 2/span 2");
     } finally {
       style.remove();
     }
+  });
+
+  it("a resized card keeps its component and tells it the new size", () => {
+    const area = setUp();
+    area.update(state({ board: true, pins: [pin({ size: "2x2" })] }));
+    const frame = document.querySelector<HTMLIFrameElement>(".board-card .component-frame")!;
+    expect(frame.srcdoc).toContain('<html data-size="2x2">');
+    expect(frame.srcdoc).toContain('{"w":2,"h":2,"name":"large"}');
+    const told: unknown[] = [];
+    frame.contentWindow!.postMessage = ((data: unknown) => told.push(data)) as Window["postMessage"];
+    area.update(state({ board: true, pins: [pin({ size: "2x1" })] }));
+    expect(document.querySelector(".board-card .component-frame")).toBe(frame);
+    expect(told).toEqual([{ ccbSize: { w: 2, h: 1, name: "wide" } }]);
+    const card = document.querySelector<HTMLElement>(".board-card")!;
+    expect(card.classList.contains("size-2x1")).toBe(true);
+    expect(card.querySelector(".board-size")?.textContent).toBe("2×1");
+  });
+
+  it("a component in the chat is drawn 2×2, or the largest size it has", () => {
+    const at = (info: ComponentInfo) => componentElement("x", info, "{}", null)!.querySelector<HTMLIFrameElement>("iframe")!.srcdoc;
+    const info = components.提交紀錄;
+    expect(at(info)).toContain('data-size="2x2"');
+    expect(at({ ...info, sizes: ["1x1", "2x1", "1x2"] })).toContain('data-size="2x1"');
+    expect(chatSize({ ...info, sizes: ["1x1", "4x2", "2x2"] })).toBe("2x2");
   });
 
   it("an empty Board offers to add a component", () => {

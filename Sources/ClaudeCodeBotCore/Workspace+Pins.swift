@@ -39,7 +39,7 @@ extension Workspace {
         } else if data == "null" {
             return nil
         }
-        let pin = PinnedComponent(id: id, name: instance.name, command: command, data: data, ranAt: ranAt, refresh: refresh, minutes: minutes)
+        let pin = PinnedComponent(id: id, name: instance.name, command: command, data: data, ranAt: ranAt, refresh: refresh, minutes: minutes, size: .preferred(among: components.sizes(of: instance.name)))
         var added = false
         bot.editPins { added = Pins.add(pin, to: &$0) }
         return added ? pin : nil
@@ -53,7 +53,7 @@ extension Workspace {
             return pin(messageID: use.message, index: use.index, in: bot, id: id, refresh: refresh, minutes: minutes)
         }
         guard components.names.contains(name), let command = components.command(of: name) else { return nil }
-        let pin = PinnedComponent(id: id, name: name, command: command, data: "null", refresh: refresh, minutes: minutes)
+        let pin = PinnedComponent(id: id, name: name, command: command, data: "null", refresh: refresh, minutes: minutes, size: .preferred(among: components.sizes(of: name)))
         var added = false
         bot.editPins { added = Pins.add(pin, to: &$0) }
         return added ? pin : nil

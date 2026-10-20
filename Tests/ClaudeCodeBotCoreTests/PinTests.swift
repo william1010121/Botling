@@ -34,7 +34,7 @@ struct PinTests {
     @Test func pinsAreKeptPerBotBesideItsChat() throws {
         let folder = root.appending(path: "bot")
         let store = BotStore(directory: folder)
-        let pin = PinnedComponent(name: "提交紀錄", command: "git log -5", data: "[]", refresh: .interval, minutes: 10, size: .l)
+        let pin = PinnedComponent(name: "提交紀錄", command: "git log -5", data: "[]", refresh: .interval, minutes: 10, size: .extraLarge)
         store.save(pins: [pin, PinnedComponent(name: "天氣卡片", data: #"{"city":"台北"}"#)])
         #expect(FileManager.default.fileExists(atPath: folder.appending(path: "pins.json").path))
         let loaded = store.loadPins()
@@ -50,8 +50,41 @@ struct PinTests {
         let json = #"[{"id":"8E1B5D2C-3C55-4C6E-9C0B-6D7B0B8E4A11","name":"x","command":"ls","data":"1","refresh":"hourly","size":"xl","minutes":0}]"#
         let pins = try JSONDecoder().decode([PinnedComponent].self, from: Data(json.utf8))
         #expect(pins[0].refresh == .shown)
-        #expect(pins[0].size == .m)
+        #expect(pins[0].size == .large)
         #expect(pins[0].minutes == PinnedComponent.minimumMinutes)
+    }
+
+    @Test func oldSizesBecomeWidgetCells() throws {
+        let line = { (size: String) in #"{"id":"8E1B5D2C-3C55-4C6E-9C0B-6D7B0B8E4A11","name":"x","data":"1","size":"\#(size)"}"# }
+        let pins = try JSONDecoder().decode([PinnedComponent].self, from: Data("[\(["s", "m", "l", "2x1", "1x2"].map(line).joined(separator: ","))]".utf8))
+        #expect(pins.map(\.size) == [.small, .large, .extraLarge, .wide, .tall])
+        // Saved as the new spelling.
+        let saved = String(decoding: try JSONEncoder().encode(pins[0]), as: UTF8.self)
+        #expect(saved.contains(#""size":"1x1""#))
+        #expect(pins.map { [$0.size.columns, $0.size.rows] } == [[1, 1], [2, 2], [4, 2], [2, 1], [1, 2]])
+        #expect(pins.map(\.size.name) == ["small", "large", "xlarge", "wide", "tall"])
+    }
+
+    @Test func aboutMdSaysWhichSizesAComponentHas() throws {
+        #expect(ComponentLibrary.sizes(inAbout: "Commits.\nSizes: 1x1, 2x1, 2x2") == [.small, .wide, .large])
+        #expect(ComponentLibrary.sizes(inAbout: "- Sizes: `1×2`, wide, 4x2, 9x9, 2x1") == [.tall, .wide, .extraLarge])
+        // None given, or none it knows: 2×2 alone. The old S/M/L are not about.md's.
+        #expect(ComponentLibrary.sizes(inAbout: "Commits.\nCommand: git log") == [.large])
+        #expect(ComponentLibrary.sizes(inAbout: "Sizes: s, m") == [.large])
+        #expect(PinnedComponent.Size.preferred(among: [.small, .wide]) == .small)
+        #expect(PinnedComponent.Size.preferred(among: [.small, .large]) == .large)
+
+        // A pin starts at the size the component prefers, and the page hears its sizes.
+        let workspace = makeWorkspace()
+        try addComponent("weather", to: workspace)
+        let about = workspace.components.folder.appending(path: "weather/about.md")
+        try "Weather.\nCommand: echo 1\nSizes: 1x1, 2x1".write(to: about, atomically: true, encoding: .utf8)
+        let pin = try #require(workspace.pin(named: "weather", in: workspace.mainBot))
+        #expect(pin.size == .small)
+        let components = try #require(try payload(workspace)["components"] as? [String: [String: Any]])
+        #expect(components["weather"]?["sizes"] as? [String] == ["1x1", "2x1"])
+        let shown = try #require(try payload(workspace)["pins"] as? [[String: Any]])
+        #expect(shown.first?["size"] as? String == "1x1")
     }
 
     @Test func addingTheSamePinTwiceKeepsOne() {
@@ -129,9 +162,9 @@ struct PinTests {
         #expect(BotStore(directory: root.appending(path: "ccb/main")).loadPins().map(\.id) == bot.pins.map(\.id))
 
         workspace.movePin(snapshot.id, to: 0, in: bot)
-        workspace.resizePin(snapshot.id, to: .s, in: bot)
+        workspace.resizePin(snapshot.id, to: .wide, in: bot)
         #expect(bot.pins.map(\.name) == ["weather", "log"])
-        #expect(bot.pins[0].size == .s)
+        #expect(bot.pins[0].size == .wide)
         // A pin without a command has nothing to refresh.
         workspace.setPinRefresh(snapshot.id, to: .interval, in: bot)
         #expect(bot.pins[0].refresh == .manual)

@@ -127,6 +127,12 @@ enum PluginGuide {
           `{name}` filled in as one quoted argument, in the same folder with the same limits, and resolves to its output (parsed if JSON, else text);
           it rejects with an Error when not allowed yet, a value is missing, extra or not allowed (only letters, digits and `. _ / -`, at most 200,
           no leading `-`), or the command fails. The card's Allow covers both commands; editing the Detail command line asks the user again.
+          Board sizes: a pinned component is a card on the bot's Board in square cells (about 150–170px, like home-screen widgets): 1x1 small,
+          2x1 wide, 1x2 tall, 2x2 large, 4x2 xlarge. about.md's `Sizes: 1x1, 2x1, 2x2` line lists the sizes it has a layout for (missing: 2x2 only);
+          the card's size button offers those. Give each size its own layout: small = the one key number or status, wide = a short row or list,
+          tall = a vertical list, large = the full view. `ccb.size` is `{ w, h, name }` (name "small", "wide", "tall", "large" or "xlarge"),
+          `<html data-size="2x1">` is there for CSS, and `ccb.onSize((size) => redraw(size))` runs when the user resizes the card (returns a
+          function that stops it). In the chat a component is drawn 2x2 (or its largest size).
         - about.md: usage notes for the bots. The first line says in one sentence what it is, followed by the data format (with an example JSON) and what the bot receives when the user answers.
 
         ## Check and release

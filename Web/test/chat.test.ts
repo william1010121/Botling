@@ -190,6 +190,30 @@ describe("messages", () => {
     expect(sent).toEqual([{ type: "codexReview", scope: "uncommitted", commit: null, spec: null }]);
   });
 
+  it("tell a component its size: ccb.size, <html data-size> and ccb.onSize", async () => {
+    const { componentPage } = await import("../src/components");
+    const page = componentPage("<p>hi</p>", "{}", {}, "2x1");
+    expect(page).toContain('<html data-size="2x1">');
+    const script = page.slice(page.indexOf("<script>") + 8, page.indexOf("</script>"));
+    let hear: (event: { source: unknown; data: unknown }) => void = () => {};
+    const parent = { postMessage() {} };
+    const frame = { addEventListener: (_: string, listener: typeof hear) => { hear = listener; } } as unknown as { ccb: { size: unknown; onSize: (fn: (size: unknown) => void) => () => void } };
+    new Function("window", "parent", script)(frame, parent);
+    expect(frame.ccb.size).toEqual({ w: 2, h: 1, name: "wide" });
+    const heard: unknown[] = [];
+    const stop = frame.ccb.onSize((size) => heard.push(size));
+    hear({ source: {}, data: { ccbSize: { w: 1, h: 1, name: "small" } } });
+    hear({ source: parent, data: { ccbSize: { w: 2, h: 1, name: "wide" } } });
+    hear({ source: parent, data: { ccbSize: { w: 1, h: 2, name: "tall" } } });
+    expect(heard).toEqual([{ w: 1, h: 2, name: "tall" }]);
+    expect(frame.ccb.size).toEqual({ w: 1, h: 2, name: "tall" });
+    expect(document.documentElement.dataset.size).toBe("1x2");
+    stop();
+    hear({ source: parent, data: { ccbSize: { w: 2, h: 2, name: "large" } } });
+    expect(heard).toHaveLength(1);
+    delete document.documentElement.dataset.size;
+  });
+
   it("let a component load details on demand with ccb.runDetail", async () => {
     const { componentPage, detailReply } = await import("../src/components");
     // The frame's side: a promise per call, settled by the page's answer (only from its parent).

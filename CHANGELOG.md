@@ -8,6 +8,20 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **The Board is a widget grid.** Like home-screen widgets, the Board is split into square cells
+  (as many columns of at least 150px as its width holds, rows as tall as a column is wide, so
+  about 150–170px; fewer columns in a narrow window, never wider than it) and each pinned card
+  takes 1×1 small, 2×1 wide, 1×2 tall, 2×2 large or 4×2 extra wide (as many columns as there are,
+  when fewer). Cards pack densely, the Add component tile is one cell, and a card's size button
+  (and its ⋯ menu) offers the sizes its component has a layout for. The old S, M and L become 1×1,
+  2×2 and 4×2; a new pin starts at 2×2, or the component's first size when it has no 2×2.
+- **Components lay out per size.** about.md may say `Sizes: 1x1, 2x1, 2x2` (missing: 2x2 only).
+  The template reads `ccb.size` (`{w, h, name}`, name `small`, `wide`, `tall`, `large` or
+  `xlarge`), `<html data-size="2x1">` for CSS, and `ccb.onSize(fn)` hears a resize; the card keeps
+  its frame when resized. In the chat a component is drawn 2×2 (or its largest size). Maintainer,
+  the component editor and PLUGINS.md say to give each size its own layout: small the one key
+  number or status, wide a short row or list, tall a vertical list, large the full view.
+
 - **Components load details on demand.** A component's about.md may add a line
   `Detail command: git show --patch --stat {hash}` beside its `Command:`. The template then calls
   `await ccb.runDetail({hash: "2aed630"})`, which runs that template in the same folder as the

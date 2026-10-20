@@ -190,6 +190,13 @@ struct AnswerAndUsageTests {
         #expect(ComponentPrompts.system.contains("Detail command: git show --patch --stat {hash}"))
         #expect(ComponentPrompts.system.contains("ccb.runDetail({hash: \"2aed630\"})"))
         #expect(PluginGuide.text(builtIns: "/x").contains("ccb.runDetail({ hash: \"2aed630\" })"))
+        // Board sizes: the about.md line, the size it is drawn at, and a layout per size.
+        #expect(ComponentPrompts.system.contains("Sizes: 1x1, 2x1, 2x2"))
+        #expect(ComponentPrompts.system.contains("ccb.size = {w, h, name}"))
+        #expect(ComponentPrompts.system.contains("ccb.onSize("))
+        #expect(ComponentPrompts.system.contains("small = the one key number or status"))
+        #expect(PluginGuide.text(builtIns: "/x").contains("`Sizes: 1x1, 2x1, 2x2`"))
+        #expect(PluginGuide.text(builtIns: "/x").contains("ccb.onSize("))
         #expect(ComponentDefaults.choicesTemplate.contains("ccb.answer(index)"))
     }
 }
