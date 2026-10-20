@@ -27,6 +27,10 @@ enum Snapshot {
             drawRightPanel(to: path)
             return true
         }
+        if let path = ProcessInfo.processInfo.environment["CCB_SETTINGS_SNAPSHOT"] {
+            drawSettings(to: path)
+            return true
+        }
         if let path = ProcessInfo.processInfo.environment["CCB_SPEC_SNAPSHOT"] {
             drawSpec(to: path)
             return true
@@ -275,6 +279,34 @@ enum Snapshot {
             host.cacheDisplay(in: host.bounds, to: rep)
             try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
             exit(0)
+        }
+    }
+
+    /// `CCB_SETTINGS_SNAPSHOT=/path/out.png`: the settings window at Doctor, after the real
+    /// checks of this Mac's Claude Code and Codex (latest versions included) have run.
+    private static func drawSettings(to path: String) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
+            Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
+        }
+        let navigator = SettingsNavigator()
+        navigator.section = .doctor
+        Task { @MainActor in
+            await workspace.doctor.run(includeLatest: true)
+            let frame = NSRect(x: 0, y: 0, width: 760, height: 600)
+            let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            window.appearance = NSAppearance(named: .darkAqua)
+            let host = NSHostingView(rootView: SettingsWindow(workspace: workspace, navigator: navigator).preferredColorScheme(.dark))
+            host.frame = frame
+            window.contentView = host
+            self.window = window
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+                host.cacheDisplay(in: host.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
+                exit(0)
+            }
         }
     }
 

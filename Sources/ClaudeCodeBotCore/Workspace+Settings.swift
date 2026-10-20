@@ -7,6 +7,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Sendable {
     case permissions
     case plugins
     case developer
+    case doctor
 
     public var id: String { rawValue }
 
@@ -16,6 +17,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Sendable {
         case .permissions: "Permissions"
         case .plugins: "Plugins"
         case .developer: "Developer mode"
+        case .doctor: "Doctor"
         }
     }
 }

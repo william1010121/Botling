@@ -5,7 +5,7 @@ import Testing
 @MainActor
 struct SettingsNavigatorTests {
     @Test func sectionsAreListedInSidebarOrder() {
-        #expect(SettingsSection.allCases.map(\.title) == ["Usage", "Permissions", "Plugins", "Developer mode"])
+        #expect(SettingsSection.allCases.map(\.title) == ["Usage", "Permissions", "Plugins", "Developer mode", "Doctor"])
     }
 
     @Test func rowsOpenTheirSectionAndAllSettingsKeepsTheLastOne() {

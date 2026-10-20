@@ -133,7 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A run that only draws a snapshot or checks a plugin, then quits.
     static var isHeadless: Bool {
         let environment = ProcessInfo.processInfo.environment
-        return environment["CCB_SNAPSHOT"] != nil || environment["CCB_ICON"] != nil || environment["CCB_CODEX_SNAPSHOT"] != nil || environment["CCB_RAIL_SNAPSHOT"] != nil || environment["CCB_RIGHT_SNAPSHOT"] != nil || environment["CCB_SPEC_SNAPSHOT"] != nil
+        return environment["CCB_SNAPSHOT"] != nil || environment["CCB_ICON"] != nil || environment["CCB_CODEX_SNAPSHOT"] != nil || environment["CCB_RAIL_SNAPSHOT"] != nil || environment["CCB_RIGHT_SNAPSHOT"] != nil || environment["CCB_SPEC_SNAPSHOT"] != nil || environment["CCB_SETTINGS_SNAPSHOT"] != nil
             || CommandLine.arguments.contains("--check-plugin") || Snapshot.isChatRequest
     }
 
@@ -154,6 +154,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         workspace.startWatching()
         workspace.components.startWatching()
         workspace.plugins.startWatching()
+        // Only local commands (no npm): a missing or too old Claude Code puts a dot on the gear.
+        Task { await workspace.doctor.run(includeLatest: false) }
         // The Dock icon counts what is waiting for a decision.
         badge = workspace.$waiting.sink { waiting in
             NSApp.dockTile.badgeLabel = waiting.isEmpty ? nil : "\(waiting.count)"
