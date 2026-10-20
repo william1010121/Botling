@@ -128,12 +128,15 @@ enum PluginGuide {
           `{name}` filled in as one quoted argument, in the same folder with the same limits, and resolves to its output (parsed if JSON, else text);
           it rejects with an Error when not allowed yet, a value is missing, extra or not allowed (only letters, digits and `. _ / -`, at most 200,
           no leading `-`), or the command fails. The card's Allow covers both commands; editing the Detail command line asks the user again.
-          Board sizes: a pinned component is a card on the bot's Board in square cells (about 150–170px, like home-screen widgets): 1x1 small,
-          2x1 wide, 1x2 tall, 2x2 large, 4x2 xlarge. about.md's `Sizes: 1x1, 2x1, 2x2` line lists the sizes it has a layout for (missing: 2x2 only);
-          the card's size button offers those. Give each size its own layout: small = the one key number or status, wide = a short row or list,
-          tall = a vertical list, large = the full view. `ccb.size` is `{ w, h, name }` (name "small", "wide", "tall", "large" or "xlarge"),
-          `<html data-size="2x1">` is there for CSS, and `ccb.onSize((size) => redraw(size))` runs when the user resizes the card (returns a
-          function that stops it).
+          Board sizes: a pinned component is a card on the bot's Board in square cells (about 150–170px, like home-screen widgets). The user
+          drags its bottom-right corner (or picks in its size menu) to any size from 1x1 to 4x4 cells, and can drag an opened pin's panel taller.
+          So write ONE responsive layout that adapts to any width and height, like a responsive web page, not a layout per size: CSS grid with
+          auto-fill columns (`repeat(auto-fill, minmax(140px, 1fr))`), container queries (`#ccb-root` is a size container on the Board, an
+          inline-size one elsewhere: `@container (max-height: 200px) { … }`), collapse to a summary when short and to the key number when tiny.
+          `ccb.size` is `{ w, h, name, px: { width, height } }` (w and h in cells, name the nearest of "small", "wide", "tall", "large" or
+          "xlarge", px the frame's real size in pixels), `<html data-size="2x1">` is there for CSS, and `ccb.onSize((size) => redraw(size))`
+          runs on every resize, while dragging too (returns a function that stops it), for what CSS cannot do. about.md's `Sizes: 2x2` line is
+          optional: only a hint for the size a new pin starts at (missing: 2x2); any size can still be picked.
           On the Board the component is the whole tile, like a home-screen widget: no header, the app's controls (size, ↻, ⋯) float over
           the top-right corner on hover. There `ccb.surface` is "board" and `<html data-surface="board">` is set, so
           drop your own card frame: no border, no background (transparent, or the tile's), no border-radius, no outer padding beyond about
@@ -144,7 +147,8 @@ enum PluginGuide {
           so draw no card frame there either (same rules), only let it be as tall as its content.
           A pin opened from its chip above the input box is frameless the same way: `ccb.surface` is "pinned" and `<html data-surface="pinned">`
           is set, the panel gives the corners and background and its controls (↻, ⋯, collapse) show just above the panel on hover, so nothing
-          covers the component (Report is in that ⋯ menu), but the page is as tall as its content (as in the chat).
+          covers the component (Report is in that ⋯ menu), but the page is as tall as its content (as in the chat) until the user drags the panel's top edge to a height of their own, when
+          it fills that height as on the Board.
           So a component never draws a card frame of its own, and one rule covers every surface:
           `.card { border: 0; background: none; border-radius: 0; padding: 12px; box-sizing: border-box; }` with
           `html[data-surface="board"] .card { height: 100%; }` to fill a Board tile.

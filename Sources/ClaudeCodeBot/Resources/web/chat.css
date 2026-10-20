@@ -588,6 +588,30 @@ body.watching #composer-slot { display: none; }
 .pin-sheet-body .command-approve, .pin-sheet-body .command-error, .pin-sheet-body .command-waiting { padding: 12px 14px; }
 /* No report flag over the component (it covered the last row): Report is in the ⋯ menu. */
 .pin-sheet-body .component-side { display: none; }
+/* Dragged to a height of its own: the panel is that tall and the component fills it, as on a
+   Board tile (its page is told to fill, <html data-fill>). */
+.pin-sheet.sized { max-height: none; }
+.pin-sheet.sized .pin-sheet-body { display: flex; flex-direction: column; overflow-y: hidden; }
+.pin-sheet.sized .pin-sheet-body > .command-card { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; scrollbar-width: none; }
+.pin-sheet.sized .pin-sheet-body .component { flex: 1; min-height: 0; display: flex; align-items: stretch; }
+.pin-sheet.sized .pin-sheet-body .component-frame { flex: 1; height: auto !important; align-self: stretch; }
+
+/* Resize handles, shown on hover: a Board tile's bottom-right corner, an opened pin's top edge
+   (the panel rises from the input box, so it grows upward). */
+.resize-handle { position: absolute; z-index: 3; opacity: 0; transition: opacity 0.12s; touch-action: none; }
+.board-resize {
+  right: 0; bottom: 0; width: 26px; height: 26px; cursor: nwse-resize; border-bottom-right-radius: 20px;
+  background: linear-gradient(135deg, transparent 55%, rgba(237, 237, 240, 0.55) 55%, rgba(237, 237, 240, 0.55) 61%, transparent 61%, transparent 70%, rgba(237, 237, 240, 0.55) 70%, rgba(237, 237, 240, 0.55) 76%, transparent 76%);
+}
+.board-card:hover > .board-resize, .board-card.hovered > .board-resize, .board-card.resizing > .board-resize { opacity: 1; }
+.board-card.resizing { outline: 2px solid var(--blue); outline-offset: 1px; z-index: 5; }
+.board-card.resizing > .board-card-tools { opacity: 1; }
+.pin-sheet-resize { left: 50%; top: -1px; width: 64px; height: 14px; margin-left: -32px; cursor: ns-resize; display: flex; align-items: center; justify-content: center; }
+.pin-sheet-resize::before { content: ""; width: 36px; height: 4px; border-radius: 2px; background: rgba(237, 237, 240, 0.45); }
+.pin-sheet:hover > .pin-sheet-resize, .pin-sheet.hovered > .pin-sheet-resize, .pin-sheet.resizing > .pin-sheet-resize { opacity: 1; }
+/* While dragging, frames do not take the pointer, so the drag never stops over a component. */
+body.pin-resizing iframe { pointer-events: none; }
+body.pin-resizing { cursor: grabbing; user-select: none; }
 
 /* The Board: every pin as a card, in place of the messages. */
 #board { display: none; }
@@ -630,8 +654,8 @@ body.board .editor .cm-scroller { max-height: 72px; }
 .board-card-body > .command-error { flex: 1; overflow-y: auto; }
 .board-card-body .command-waiting { flex: 1; justify-content: center; }
 .board-card-body .command-full, .board-card-body .command-error pre { max-height: none; }
-/* The report flag over the bottom-right corner, on hover only. */
-.board-card-body .component-side { position: absolute; right: 4px; bottom: 4px; min-width: 0; z-index: 1; }
+/* The report flag near the bottom-right corner, on hover only, left of the resize handle. */
+.board-card-body .component-side { position: absolute; right: 28px; bottom: 4px; min-width: 0; z-index: 1; }
 .board-card-body .component:hover .flag { background: rgba(43, 43, 49, 0.92); }
 .board-card.hovered .flag { opacity: 1; background: rgba(43, 43, 49, 0.92); }
 /* Its controls float over the top-right corner as a small pill, on hover or keyboard focus (and
@@ -656,6 +680,17 @@ body.board .editor .cm-scroller { max-height: 72px; }
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; font-size: 13px; cursor: pointer; text-align: center;
 }
 .board-add-note { font-size: 11.5px; color: var(--faint); }
+/* The size picker in a card's menu: every size from 1×1 to 4×4 as cells, lit up to the one pointed at. */
+.pin-size-picker { padding: 6px 10px 8px; }
+.pin-size-grid { display: grid; grid-template-columns: repeat(4, 22px); grid-auto-rows: 22px; gap: 4px; }
+.pin-size-grid button {
+  width: 22px; height: 22px; padding: 0; border-radius: 5px; border: 1px solid #3A3A42; background: transparent; cursor: pointer;
+}
+.pin-size-grid button.hint { border-style: dashed; border-color: #5A5A64; }
+.pin-size-grid button.lit { background: rgba(76, 141, 255, 0.35); border-color: var(--blue); }
+.pin-size-grid button.checked { box-shadow: inset 0 0 0 2px var(--blue); }
+.pin-size-grid button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.pin-size-caption { margin-top: 6px; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* The file window for a .md file (viewer.html): the chat's Markdown at a readable width. */
 body.viewer { display: block; overflow-y: auto; height: auto; min-height: 100%; }

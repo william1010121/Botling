@@ -22,11 +22,15 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./
  *   placeholders filled from `values` (`{hash: "2aed630"}`), in the folder its card's command
  *   runs in, once the user has allowed it there. Resolves to the output (parsed when it is JSON,
  *   else the text) or rejects with an Error saying why.
- * - `size`: the size it is drawn at, `{w, h, name}` in Board cells: 1×1 "small", 2×1 "wide",
- *   1×2 "tall", 2×2 "large", 4×2 "xlarge". Also `<html data-size="2x1">`, for CSS. A card on the
- *   Board has the size the user picked; in the chat it is the widest the component has (4×2 when
- *   it has that; 2×2 when its about.md names no sizes), drawn across the whole reply.
- * - `onSize(fn)`: calls `fn(size)` whenever the user resizes its card; returns a function that stops.
+ * - `size`: the size it is drawn at, `{w, h, name, px: {width, height}}`: `w`×`h` Board cells
+ *   (any from 1×1 to 4×4), `name` the nearest of 1×1 "small", 2×1 "wide", 1×2 "tall", 2×2 "large",
+ *   4×2 "xlarge", and `px` the frame's real width and height. Also `<html data-size="2x1">`, for
+ *   CSS, and `#ccb-root` is a CSS container (a size container where the page fills its frame, an
+ *   inline-size one elsewhere), so container queries work. A card on the Board has the size the
+ *   user dragged or picked; in the chat it is the widest its about.md's `Sizes:` hint names (2×2
+ *   without one), drawn across the whole reply.
+ * - `onSize(fn)`: calls `fn(size)` whenever its cells or its frame's pixels change (each step of a
+ *   drag too); returns a function that stops.
  * - `setStatus({text, tone})`: what the chip of its pin (above the input box) shows beside its
  *   icon: a short value ("26°", "3 new"; about 14 characters show) and a tone ("good", "warning",
  *   "bad" or "neutral"), a dot on the icon unless neutral. Text alone is fine; `null` clears it (the
@@ -43,12 +47,14 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./
  *   padding: 12px }` with `html[data-surface="board"] .card { height: 100% }`.
  * The frame reports its height and answers to this page, which passes answers on to Swift.
  */
-export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2", surface: Surface = "chat"): string {
+export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2", surface: Surface = "chat", fill = surface === "board"): string {
   const safe = (json: string) => json.replace(/</g, "\\u003c");
-  return `<!doctype html><html data-size="${size}" data-surface="${surface}"><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
+  return `<!doctype html><html data-size="${size}" data-surface="${surface}"${fill ? " data-fill" : ""}><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
 <style>:root{color-scheme:dark}html,body{margin:0;padding:0;background:transparent;color:#EDEDF0;font:14px -apple-system,"PingFang TC",sans-serif;overflow:hidden}
-html[data-surface="board"],html[data-surface="board"] body,html[data-surface="board"] #ccb-root{height:100%}
-html[data-surface="board"] body{overflow-y:auto;scrollbar-width:none}html[data-surface="board"] body::-webkit-scrollbar{display:none}</style>
+#ccb-root{container-type:inline-size;container-name:ccb}
+html[data-surface="board"] #ccb-root{height:100%}
+html[data-fill],html[data-fill] body,html[data-fill] #ccb-root{height:100%}html[data-fill] #ccb-root{container-type:size}
+html[data-fill] body{overflow-y:auto;scrollbar-width:none}html[data-fill] body::-webkit-scrollbar{display:none}</style>
 <script>
 (() => {
   const images = ${safe(JSON.stringify(images))};
@@ -82,15 +88,34 @@ html[data-surface="board"] body{overflow-y:auto;scrollbar-width:none}html[data-s
   let detailCount = 0;
   // Who wants to hear when its card is resized.
   const sizeWatchers = new Set();
-  const resized = (next) => {
-    if (typeof next.w !== 'number' || typeof next.h !== 'number') return;
-    if (next.w === window.ccb.size.w && next.h === window.ccb.size.h) return;
-    window.ccb.size = Object.freeze({w: next.w, h: next.h, name: String(next.name)});
-    document.documentElement.dataset.size = next.w + 'x' + next.h;
+  // The frame's own width and height: what a responsive layout has to fit.
+  const pixels = () => Object.freeze({width: Math.round(Number(window.innerWidth) || 0), height: Math.round(Number(window.innerHeight) || 0)});
+  const sized = (cells, px) => Object.freeze({w: cells.w, h: cells.h, name: String(cells.name), px});
+  const tell = () => {
     for (const watcher of [...sizeWatchers]) {
       try { watcher(window.ccb.size); } catch (error) { console.error(error); }
     }
   };
+  // New cells from the page (the user resized its card).
+  const resized = (next) => {
+    if (typeof next.w !== 'number' || typeof next.h !== 'number') return;
+    const now = window.ccb.size;
+    const px = pixels();
+    if (next.w === now.w && next.h === now.h && px.width === now.px.width && px.height === now.px.height) return;
+    window.ccb.size = sized(next, px);
+    document.documentElement.dataset.size = next.w + 'x' + next.h;
+    tell();
+  };
+  // New pixels: a drag, a narrower window, the panel dragged taller.
+  const measured = () => {
+    const now = window.ccb.size;
+    const px = pixels();
+    if (px.width === now.px.width && px.height === now.px.height) return;
+    window.ccb.size = sized(now, px);
+    tell();
+  };
+  window.addEventListener('resize', measured);
+  window.addEventListener('load', measured);
   window.addEventListener('message', (event) => {
     const message = event.data;
     if (event.source !== parent || !message) return;
@@ -104,7 +129,7 @@ html[data-surface="board"] body{overflow-y:auto;scrollbar-width:none}html[data-s
   });
   window.ccb = {
     data: ${safe(data)},
-    size: Object.freeze(${JSON.stringify(sizeInfo(size))}),
+    size: sized(${JSON.stringify(sizeInfo(size))}, pixels()),
     surface: ${JSON.stringify(surface)},
     onSize(fn) {
       if (typeof fn !== 'function') return () => {};
@@ -205,20 +230,54 @@ document.documentElement.addEventListener('mouseleave', () => parent.postMessage
  */
 export type Surface = "chat" | "board" | "pinned";
 
-/** Every Board size, smallest first. */
-export const pinSizes: PinSize[] = ["1x1", "2x1", "1x2", "2x2", "4x2"];
+/** The most cells a Board card spans each way. */
+export const maxColumns = 4;
+export const maxRows = 4;
 
-const sizeNames: Record<PinSize, string> = { "1x1": "small", "2x1": "wide", "1x2": "tall", "2x2": "large", "4x2": "xlarge" };
+/** Every Board size, row by row: 1×1, 2×1, … 4×4. */
+export const pinSizes: PinSize[] = Array.from({ length: maxRows }, (_, row) =>
+  Array.from({ length: maxColumns }, (_, column) => `${column + 1}x${row + 1}` as PinSize)).flat();
 
-/** What a template sees in `ccb.size`. */
-export function sizeInfo(size: PinSize): { w: number; h: number; name: string } {
-  const [w, h] = size.split("x").map(Number);
-  return { w, h, name: sizeNames[size] };
+/** The five sizes that have a name, for templates written for them. */
+const namedSizes: [number, number, string][] = [[1, 1, "small"], [2, 1, "wide"], [1, 2, "tall"], [2, 2, "large"], [4, 2, "xlarge"]];
+
+/** A size of `w`×`h` cells, each kept within 1…4. */
+export function pinSize(w: number, h: number): PinSize {
+  const clamp = (value: number, most: number) => Math.min(most, Math.max(1, Math.round(value) || 1));
+  return `${clamp(w, maxColumns)}x${clamp(h, maxRows)}`;
 }
 
-/** The sizes a component has a layout for: its about.md's, else 2×2 alone. */
+/** A size as Swift or about.md spells it, or null when it is not one ("5x1", "big"). */
+export function parseSize(text: string | undefined | null): PinSize | null {
+  const match = /^\s*(\d+)\s*[x×]\s*(\d+)\s*$/i.exec(text ?? "");
+  if (!match) return null;
+  const [w, h] = [Number(match[1]), Number(match[2])];
+  return w >= 1 && w <= maxColumns && h >= 1 && h <= maxRows ? `${w}x${h}` : null;
+}
+
+/** The nearest named size to `w`×`h` ("small", "wide", "tall", "large", "xlarge"); of two as near, the earlier. */
+export function sizeName(w: number, h: number): string {
+  let best = namedSizes[0];
+  let distance = Infinity;
+  for (const named of namedSizes) {
+    const d = (named[0] - w) ** 2 + (named[1] - h) ** 2;
+    if (d < distance) {
+      best = named;
+      distance = d;
+    }
+  }
+  return best[2];
+}
+
+/** What a template sees in `ccb.size` (the frame adds `px`, its real width and height). */
+export function sizeInfo(size: PinSize): { w: number; h: number; name: string } {
+  const [w, h] = (parseSize(size) ?? "2x2").split("x").map(Number);
+  return { w, h, name: sizeName(w, h) };
+}
+
+/** The sizes its about.md's optional `Sizes:` line hints at, else 2×2 alone. */
 export function componentSizes(info: ComponentInfo | undefined): PinSize[] {
-  const sizes = (info?.sizes ?? []).filter((size) => pinSizes.includes(size));
+  const sizes = (info?.sizes ?? []).map(parseSize).filter((size): size is PinSize => size !== null);
   return sizes.length ? sizes : ["2x2"];
 }
 
@@ -416,6 +475,7 @@ export function componentElement(
   detail?: DetailTarget | null,
   size?: PinSize,
   surface: Surface = "chat",
+  fill = surface === "board",
 ): HTMLElement | null {
   if (!info) return null;
   const wrap = document.createElement("div");
@@ -434,10 +494,10 @@ export function componentElement(
   }
   // What it shows; the order of the pictures does not count (a Swift dictionary has none).
   const pictures = Object.entries(images ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  frame.ccbDrawn = JSON.stringify([name, info.template, info.version, data, pictures]);
+  frame.ccbDrawn = JSON.stringify([name, info.template, info.version, data, pictures, fill]);
   const drawnSize = size ?? chatSize(info);
   frame.ccbSize = drawnSize;
-  frame.srcdoc = componentPage(info.template, data, images ?? {}, drawnSize, surface);
+  frame.srcdoc = componentPage(info.template, data, images ?? {}, drawnSize, surface, fill);
   // Resized before its page ran: tell it once it has loaded.
   frame.addEventListener("load", () => {
     if (frame.ccbSize && frame.ccbSize !== drawnSize) resizeFrame(frame, frame.ccbSize);

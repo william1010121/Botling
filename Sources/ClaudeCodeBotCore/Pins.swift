@@ -15,25 +15,49 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         case manual
     }
 
-    /// Its card on the Board, in square cells like a home-screen widget: columns × rows.
-    public enum Size: String, Codable, CaseIterable, Sendable {
-        case small = "1x1", wide = "2x1", tall = "1x2", large = "2x2", extraLarge = "4x2"
+    /// Its card on the Board, in square cells like a home-screen widget: columns × rows, each
+    /// from 1 to 4, as the user drags its corner or picks it. The component is told the size and
+    /// its real width and height in pixels, and lays itself out for them.
+    public struct Size: Hashable, Codable, Sendable, CustomStringConvertible {
+        /// The most cells a card spans each way.
+        public static let maxColumns = 4
+        public static let maxRows = 4
 
-        public var columns: Int { Int(rawValue.prefix(1)) ?? 2 }
-        public var rows: Int { Int(rawValue.suffix(1)) ?? 2 }
-        /// What a template sees in `ccb.size.name`.
-        public var name: String {
-            switch self {
-            case .small: "small"
-            case .wide: "wide"
-            case .tall: "tall"
-            case .large: "large"
-            case .extraLarge: "xlarge"
-            }
+        public let columns: Int
+        public let rows: Int
+
+        /// A size of `columns` × `rows`, each kept within 1…4.
+        public init(columns: Int, rows: Int) {
+            self.columns = min(max(columns, 1), Self.maxColumns)
+            self.rows = min(max(rows, 1), Self.maxRows)
         }
 
-        /// A size as pins.json or an about.md `Sizes:` line spells it: "2x1", "2×1", a name, or
-        /// the old S/M/L (small, the 2×2 default, the widest).
+        public static let small = Size(columns: 1, rows: 1)
+        public static let wide = Size(columns: 2, rows: 1)
+        public static let tall = Size(columns: 1, rows: 2)
+        public static let large = Size(columns: 2, rows: 2)
+        public static let extraLarge = Size(columns: 4, rows: 2)
+
+        /// Every size a card can take, row by row: 1×1, 2×1, … 4×4.
+        public static let all: [Size] = (1...maxRows).flatMap { rows in (1...maxColumns).map { Size(columns: $0, rows: rows) } }
+
+        /// The five sizes that have a name, and what a template sees in `ccb.size.name`.
+        static let named: [(Size, String)] = [(.small, "small"), (.wide, "wide"), (.tall, "tall"), (.large, "large"), (.extraLarge, "xlarge")]
+
+        /// As pins.json and the page spell it: "3x2".
+        public var rawValue: String { "\(columns)x\(rows)" }
+        public var description: String { rawValue }
+
+        /// The nearest named size ("small", "wide", "tall", "large" or "xlarge"), for templates
+        /// written for the five fixed sizes; of two as near, the earlier.
+        public var name: String {
+            let distance = { (size: Size) in (size.columns - columns) * (size.columns - columns) + (size.rows - rows) * (size.rows - rows) }
+            return Self.named.min { distance($0.0) < distance($1.0) }?.1 ?? "large"
+        }
+
+        /// A size as pins.json or an about.md `Sizes:` line spells it: "3x2", "2×1", a name, or
+        /// the old S/M/L (small, the 2×2 default, the widest). Nil for anything else, or a size
+        /// past 4×4.
         public init?(spelled text: String) {
             let text = text.trimmingCharacters(in: .whitespaces).lowercased().replacingOccurrences(of: "×", with: "x").replacingOccurrences(of: " ", with: "")
             switch text {
@@ -41,12 +65,32 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
             case "m": self = .large
             case "l": self = .extraLarge
             default:
-                guard let size = Size(rawValue: text) ?? Size.allCases.first(where: { $0.name == text }) else { return nil }
-                self = size
+                if let named = Self.named.first(where: { $0.1 == text }) {
+                    self = named.0
+                    return
+                }
+                let parts = text.split(separator: "x", omittingEmptySubsequences: false)
+                guard parts.count == 2, let columns = Int(parts[0]), let rows = Int(parts[1]),
+                      (1...Self.maxColumns).contains(columns), (1...Self.maxRows).contains(rows) else { return nil }
+                self.init(columns: columns, rows: rows)
             }
         }
 
-        /// What a component gets when it is pinned: 2×2 when it has that layout, else its first.
+        public init(from decoder: Decoder) throws {
+            let text = try decoder.singleValueContainer().decode(String.self)
+            guard let size = Size(spelled: text) else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Not a size: \(text)"))
+            }
+            self = size
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.singleValueContainer()
+            try container.encode(rawValue)
+        }
+
+        /// What a component gets when it is pinned: 2×2 when its `Sizes:` hint names that (or
+        /// names none), else the first it names.
         public static func preferred(among sizes: [Size]) -> Size {
             sizes.contains(.large) ? .large : sizes.first ?? .large
         }
@@ -66,14 +110,23 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
     public var minutes: Int
     /// Its card on the Board.
     public var size: Size
+    /// How tall it opens above the input box, in points, once the user has dragged that panel's
+    /// edge; nil: as tall as its content (up to the panel's limit).
+    public var panelHeight: Int?
     /// What its chip says, as the component last set it (`ccb.setStatus`); nil: its headline.
     public var status: PinStatus?
 
     public static let defaultMinutes = 15
     /// A pin refreshed every so often runs at most this often.
     public static let minimumMinutes = 1
+    /// The heights an opened pin's panel may be dragged to.
+    public static let panelHeights = 120...1600
 
-    public init(id: UUID = UUID(), name: String, command: String? = nil, data: String, ranAt: Date? = nil, refresh: Refresh = .shown, minutes: Int = PinnedComponent.defaultMinutes, size: Size = .large, status: PinStatus? = nil) {
+    static func clampedPanelHeight(_ height: Int?) -> Int? {
+        height.map { min(max($0, panelHeights.lowerBound), panelHeights.upperBound) }
+    }
+
+    public init(id: UUID = UUID(), name: String, command: String? = nil, data: String, ranAt: Date? = nil, refresh: Refresh = .shown, minutes: Int = PinnedComponent.defaultMinutes, size: Size = .large, status: PinStatus? = nil, panelHeight: Int? = nil) {
         self.id = id
         self.name = name
         self.command = command
@@ -83,12 +136,14 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         self.minutes = max(Self.minimumMinutes, minutes)
         self.size = size
         self.status = status
+        self.panelHeight = Self.clampedPanelHeight(panelHeight)
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size, status }
+    private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size, status, panelHeight }
 
     // A value this build does not know (a newer refresh mode or size) falls back, so the rest
-    // of the file still loads. The old sizes S, M and L become 1×1, 2×2 and 4×2.
+    // of the file still loads. The old sizes S, M and L become 1×1, 2×2 and 4×2; any WxH up
+    // to 4×4 is kept as it is.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
@@ -103,6 +158,8 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         let size: String? = try? c.decodeIfPresent(String.self, forKey: .size)
         self.size = size.flatMap(Size.init(spelled:)) ?? .large
         status = try? c.decodeIfPresent(PinStatus.self, forKey: .status)
+        let height: Int? = try? c.decodeIfPresent(Int.self, forKey: .panelHeight)
+        panelHeight = Self.clampedPanelHeight(height)
     }
 
     /// The card key its command's runs go under (`ComponentCommands`), apart from chat cards.

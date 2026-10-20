@@ -134,8 +134,11 @@ export interface DisplayView {
 }
 
 export type PinRefresh = "shown" | "interval" | "manual";
-/** A Board card's size in square cells, columns × rows (like a home-screen widget). */
-export type PinSize = "1x1" | "2x1" | "1x2" | "2x2" | "4x2";
+/**
+ * A Board card's size in square cells, columns × rows (like a home-screen widget): any "WxH"
+ * from "1x1" to "4x4", as the user drags its corner or picks it.
+ */
+export type PinSize = `${number}x${number}`;
 
 /** A pin chip's short value and tone (a dot on its icon unless neutral). */
 export interface ChipStatus {
@@ -152,6 +155,8 @@ export interface PinView {
   /** What its chip shows beside its icon (what the component set, else `headline` cut short). */
   chip?: ChipStatus;
   size: PinSize;
+  /** How tall it opens above the input box, as the user dragged its panel; absent: its content's height. */
+  panelHeight?: number | null;
   refresh: PinRefresh;
   minutes: number;
   /** The component, with its command's run as for a card in the chat. */
@@ -198,7 +203,7 @@ export interface ComponentInfo {
   working: boolean;
   updated: boolean;
   hasPrevious: boolean;
-  /** The Board sizes it has a layout for (its about.md's `Sizes:` line); 2×2 when missing. */
+  /** The sizes its about.md's optional `Sizes:` line hints at (the first: a new pin's); 2×2 when missing. */
   sizes?: PinSize[];
   /** Its pin chip's icon (about.md's `Icon:`): an SF Symbol name or an emoji. */
   icon?: string | null;
@@ -268,6 +273,7 @@ export type Action =
   | { type: "pinShown"; ids: string[] | null }
   | { type: "movePin"; id: string; to: number }
   | { type: "resizePin"; id: string; size: PinSize }
+  | { type: "setPinHeight"; id: string; height: number | null }
   | { type: "setPinRefresh"; id: string; refresh: PinRefresh; minutes: number }
   | { type: "pinStatus"; id: string; text: string | null; tone: string | null }
   | { type: "makeComponent"; messageID: string; preview?: number }

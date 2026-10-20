@@ -1,5 +1,5 @@
 import { post } from "./bridge";
-import { commandCard, componentElement, componentSizes, detailTarget, markPinFrames, reportComponent, resizeFrame, sizeInfo } from "./components";
+import { commandCard, componentElement, componentSizes, detailTarget, markPinFrames, maxColumns, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
 import type { ChatState, ChipStatus, ComponentInfo, DisplayView, PinChoiceView, PinRefresh, PinSize, PinView } from "./types";
 
 /**
@@ -193,7 +193,55 @@ function showToast(text: string, undo: () => void): void {
 // MARK: Menus and popups
 
 /** A menu's entry; a heading or note is a line of text, not a button. */
-interface MenuItem { label: string; run: () => void; checked?: boolean; disabled?: boolean; heading?: boolean; note?: boolean; code?: boolean }
+interface MenuItem { label: string; run: () => void; checked?: boolean; disabled?: boolean; heading?: boolean; note?: boolean; code?: boolean; sizes?: SizeGrid }
+
+/** A menu's size picker: every size as a 4×4 grid of cells, the current one and the component's hints marked. */
+interface SizeGrid { current: PinSize; hints: PinSize[]; pick: (size: PinSize) => void }
+
+/**
+ * Every size from 1×1 to 4×4 as a grid of cells, like a table-size picker: pointing at a cell
+ * lights the cards it would span and says its size; clicking it picks that size.
+ */
+function sizeGrid(grid: SizeGrid, menu: HTMLElement): HTMLElement {
+  const holder = document.createElement("div");
+  holder.className = "pin-size-picker";
+  const caption = document.createElement("div");
+  caption.className = "pin-size-caption";
+  const cells = document.createElement("div");
+  cells.className = "pin-size-grid";
+  cells.setAttribute("role", "group");
+  cells.setAttribute("aria-label", "Size");
+  const light = (size: PinSize) => {
+    const { w, h } = sizeInfo(size);
+    for (const cell of cells.querySelectorAll<HTMLButtonElement>("button")) {
+      const at = sizeInfo(cell.dataset.size as PinSize);
+      cell.classList.toggle("lit", at.w <= w && at.h <= h);
+    }
+    caption.textContent = sizeLabel(size);
+  };
+  for (const size of pinSizes) {
+    const cell = document.createElement("button");
+    cell.setAttribute("role", "menuitemradio");
+    cell.dataset.size = size;
+    cell.setAttribute("aria-label", sizeLabel(size));
+    cell.setAttribute("aria-checked", String(size === grid.current));
+    cell.title = sizeLabel(size) + (grid.hints.includes(size) ? " · suggested" : "");
+    if (size === grid.current) cell.classList.add("checked");
+    if (grid.hints.includes(size)) cell.classList.add("hint");
+    cell.addEventListener("mouseenter", () => light(size));
+    cell.addEventListener("focus", () => light(size));
+    cell.addEventListener("click", (event) => {
+      event.stopPropagation();
+      menu.remove();
+      if (size !== grid.current) grid.pick(size);
+    });
+    cells.append(cell);
+  }
+  cells.addEventListener("mouseleave", () => light(grid.current));
+  holder.append(cells, caption);
+  light(grid.current);
+  return holder;
+}
 
 function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[]): void {
   closePopups();
@@ -205,6 +253,10 @@ function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[]): void {
       const line = document.createElement("div");
       line.className = "pin-menu-line";
       menu.append(line);
+      continue;
+    }
+    if (item.sizes) {
+      menu.append(sizeGrid(item.sizes, menu));
       continue;
     }
     if (item.heading || item.note) {
@@ -245,7 +297,8 @@ function place(popup: HTMLElement, anchor: HTMLElement): void {
   popup.style.top = `${Math.max(8, below ? rect.bottom + 6 : rect.top - height - 6)}px`;
   // Opened from the keyboard: its first entry has focus, Escape closes it and goes back.
   if (popup.classList.contains("pin-menu")) {
-    popup.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
+    // A size picker starts on the size the card has.
+    ((popup.firstElementChild?.classList.contains("pin-size-picker") ? popup.querySelector<HTMLButtonElement>(".pin-size-grid button.checked") : null) ?? popup.querySelector<HTMLButtonElement>("button:not(:disabled)"))?.focus({ preventScroll: true });
     popup.addEventListener("keydown", (event) => {
       const entries = [...popup.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
       const at = entries.indexOf(document.activeElement as HTMLButtonElement);
@@ -307,22 +360,22 @@ function pinMenu(anchor: HTMLElement, pin: PinView, options: { sizes?: boolean; 
   openMenu(anchor, items);
 }
 
-const sizeWords: Record<PinSize, string> = { "1x1": "Small", "2x1": "Wide", "1x2": "Tall", "2x2": "Large", "4x2": "Extra wide" };
+const sizeWords: Record<string, string> = { "1x1": "Small", "2x1": "Wide", "1x2": "Tall", "2x2": "Large", "4x2": "Extra wide" };
 
-/** A size as its card's button and menu show it: "Wide 2×1". */
+/** A size as its card's button and menu show it: "Wide 2×1", or "3×2" for one without a name. */
 export function sizeLabel(size: PinSize): string {
   const { w, h } = sizeInfo(size);
-  return `${sizeWords[size]} ${w}×${h}`;
+  const word = sizeWords[`${w}x${h}`];
+  return word ? `${word} ${w}×${h}` : `${w}×${h}`;
 }
 
 /**
- * The sizes a card can take: the ones its component has a layout for (about.md's `Sizes:`), and
- * the one it has now if that is not among them (an old pin, or the component dropped it).
+ * The sizes a card can take: every one from 1×1 to 4×4 (the component lays itself out for any),
+ * with the ones its about.md's `Sizes:` line hints at marked.
  */
 function sizeItems(pin: PinView): MenuItem[] {
-  const sizes = componentSizes(current.components[pin.name]);
-  const shown = sizes.includes(pin.size) ? sizes : [...sizes, pin.size];
-  return shown.map((size) => ({ label: sizeLabel(size), checked: pin.size === size, run: () => { if (size !== pin.size) post({ type: "resizePin", id: pin.id, size }); } }));
+  const hints = current.components[pin.name]?.sizes?.length ? componentSizes(current.components[pin.name]) : [];
+  return [{ label: "Size", run: () => {}, sizes: { current: pin.size, hints, pick: (size) => post({ type: "resizePin", id: pin.id, size }) } }];
 }
 
 /** "Pin a component": what this bot drew (with a Command marked), and components with a Command. */
@@ -402,12 +455,13 @@ function openPicker(): void {
 /**
  * The pinned component, with its command's ask, error or wait as in the chat, without the bar.
  * Given a size it is a Board tile: drawn at that size, told it is on the Board. Without, it is
- * opened above the input box, told it is "pinned" (frameless there too).
+ * opened above the input box, told it is "pinned" (frameless there too); `fill` when the user
+ * gave that panel a height, so the page is that height, as on the Board.
  */
-function pinBody(pin: PinView, size?: PinSize): HTMLElement {
+function pinBody(pin: PinView, size?: PinSize, fill = !!size): HTMLElement {
   const key = size ? `board-${pin.id}` : `pin-${pin.id}`;
   const draw = () => {
-    const drawn = componentElement(pin.name, current.components[pin.name], pin.display.data, null, key, pin.display.images, detailTarget(pin.display), size, size ? "board" : "pinned");
+    const drawn = componentElement(pin.name, current.components[pin.name], pin.display.data, null, key, pin.display.images, detailTarget(pin.display), size, size ? "board" : "pinned", fill);
     // Its ccb.setStatus sets this pin's chip.
     markPinFrames(drawn, pin.id);
     return drawn;
@@ -497,6 +551,13 @@ function drawnPart(pin: PinView): PinView {
 const boardCell = 150;
 const boardGap = 14;
 
+/** The heights an opened pin's panel may be dragged to (Swift keeps 120…1600 too), leaving the chat room above. */
+const panelMinimum = 120;
+function panelHeight(height: number): number {
+  const most = Math.max(panelMinimum, Math.min(1600, (window.innerHeight || 800) - 140));
+  return Math.round(Math.min(most, Math.max(panelMinimum, height)));
+}
+
 /**
  * The pins of the chat on show: chips above the input box with the sheet they raise, and the
  * Board in place of the messages. Drawn from each state; parts that did not change are kept, so
@@ -519,6 +580,8 @@ export class PinArea {
   private enabled = false;
   /** The Board's columns of square cells, from its width. */
   private columns = 0;
+  /** While the opened pin's panel is being dragged taller or shorter. */
+  private sheetDrag = false;
 
   constructor(area: HTMLElement, board: HTMLElement) {
     this.sheet = document.createElement("section");
@@ -659,7 +722,12 @@ export class PinArea {
       return;
     }
     this.sheet.hidden = false;
-    const key = JSON.stringify([drawnPart(pin), current.components[pin.name] ?? null]);
+    // Its height is not part of it: a panel dragged taller keeps its frame. Whether it has a
+    // height of its own is (the page then fills it).
+    const sized = typeof pin.panelHeight === "number" && pin.panelHeight > 0;
+    if (!this.sheetDrag) this.sheet.style.height = sized ? `${panelHeight(pin.panelHeight!)}px` : "";
+    this.sheet.classList.toggle("sized", sized || !!this.sheetDrag);
+    const key = JSON.stringify([{ ...drawnPart(pin), panelHeight: null }, sized, current.components[pin.name] ?? null]);
     if (key === this.sheetKey) return;
     this.sheetKey = key;
     this.sheet.innerHTML = "";
@@ -670,8 +738,53 @@ export class PinArea {
     this.sheet.classList.toggle("running", pin.display.status === "running");
     const body = document.createElement("div");
     body.className = "pin-sheet-body";
-    body.append(pinBody(pin));
-    this.sheet.append(body, sheetTools(pin, () => this.close(), body));
+    body.append(pinBody(pin, undefined, sized));
+    this.sheet.append(this.sheetHandle(pin), body, sheetTools(pin, () => this.close(), body));
+  }
+
+  /**
+   * The grab bar along an opened pin's top edge: the panel rises from the input box, so dragging
+   * it up makes it taller and down shorter, within `panelHeight`'s limits; a double-click gives
+   * it back its content's height. The component hears each step (`ccb.onSize`).
+   */
+  private sheetHandle(pin: PinView): HTMLElement {
+    const handle = document.createElement("div");
+    handle.className = "pin-sheet-resize resize-handle";
+    handle.title = "Drag to resize · double-click to fit its content";
+    handle.setAttribute("aria-hidden", "true");
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const startY = event.clientY;
+      const start = this.sheet.getBoundingClientRect().height || this.sheet.offsetHeight || 0;
+      let height = Math.round(start);
+      this.sheetDrag = true;
+      this.sheet.classList.add("sized", "resizing");
+      document.body.classList.add("pin-resizing");
+      handle.setPointerCapture?.(event.pointerId);
+      const move = (moved: PointerEvent) => {
+        height = panelHeight(start + startY - moved.clientY);
+        this.sheet.style.height = `${height}px`;
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", up);
+        this.sheetDrag = false;
+        this.sheet.classList.remove("resizing");
+        document.body.classList.remove("pin-resizing");
+        if (height !== Math.round(start)) post({ type: "setPinHeight", id: pin.id, height });
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", up);
+    });
+    handle.addEventListener("dblclick", (event) => {
+      event.stopPropagation();
+      if (current.pins.find((p) => p.id === pin.id)?.panelHeight != null) post({ type: "setPinHeight", id: pin.id, height: null });
+    });
+    return handle;
   }
 
   private drawBoard(state: ChatState): void {
@@ -752,17 +865,74 @@ export class PinArea {
     for (const card of this.grid.querySelectorAll<HTMLElement>(".board-card")) this.span(card);
   }
 
-  /** Its cells: its size's, as wide as the Board allows. */
+  /** Its cells: its size's (or the one it is being dragged to), as wide as the Board allows. */
   private span(card: HTMLElement): void {
-    const { w, h } = sizeInfo((card.dataset.size ?? "2x2") as PinSize);
+    const { w, h } = sizeInfo((card.dataset.preview ?? card.dataset.size ?? "2x2") as PinSize);
     card.style.gridColumn = `span ${this.columns ? Math.min(w, this.columns) : w}`;
     card.style.gridRow = `span ${h}`;
+  }
+
+  /**
+   * The handle over a tile's bottom-right corner (on hover): dragging it resizes the tile cell by
+   * cell, from 1×1 up to 4×4 (no wider than the Board's columns). The tile and its component
+   * follow the drag (`ccb.onSize` at each new cell); letting go keeps the size.
+   */
+  private resizeHandle(card: HTMLElement, pin: PinView): HTMLElement {
+    const handle = document.createElement("div");
+    handle.className = "board-resize resize-handle";
+    handle.title = "Drag to resize";
+    handle.setAttribute("aria-hidden", "true");
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const rect = card.getBoundingClientRect();
+      const cell = parseFloat(this.grid.style.getPropertyValue("--board-cell")) || boardCell;
+      const startX = event.clientX;
+      const startY = event.clientY;
+      // From where the tile is now, in cells (its rect is 0 before layout, as in a test).
+      const was = (card.dataset.size ?? pin.size) as PinSize;
+      const { w: startW, h: startH } = sizeInfo(was);
+      const width = rect.width || startW * cell + (startW - 1) * boardGap;
+      const height = rect.height || startH * cell + (startH - 1) * boardGap;
+      let size = was;
+      card.classList.add("resizing");
+      document.body.classList.add("pin-resizing");
+      handle.setPointerCapture?.(event.pointerId);
+      const move = (moved: PointerEvent) => {
+        const w = Math.round((width + moved.clientX - startX + boardGap) / (cell + boardGap));
+        const h = Math.round((height + moved.clientY - startY + boardGap) / (cell + boardGap));
+        const next = pinSize(Math.min(w, this.columns || maxColumns), h);
+        if (next === size) return;
+        size = next;
+        card.dataset.preview = next;
+        this.span(card);
+        const label = card.querySelector<HTMLElement>(".board-size");
+        if (label) label.textContent = next.replace("x", "×");
+        for (const frame of card.querySelectorAll<HTMLIFrameElement>("iframe.component-frame")) resizeFrame(frame, next);
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", up);
+        card.classList.remove("resizing");
+        document.body.classList.remove("pin-resizing");
+        // Kept at the new size until Swift's state says so; unchanged, as it was.
+        if (size !== was) post({ type: "resizePin", id: pin.id, size });
+        else delete card.dataset.preview;
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", up);
+    });
+    return handle;
   }
 
   /** Puts a card at its pin's new size, keeping the component's frame (it hears `ccb.onSize`). */
   private resize(card: HTMLElement, pin: PinView, index: number): void {
     card.className = this.cardClass(pin);
     card.dataset.size = pin.size;
+    delete card.dataset.preview;
     this.span(card);
     card.querySelector(".board-card-tools")?.replaceWith(this.cardTools(pin, index));
     for (const frame of card.querySelectorAll<HTMLIFrameElement>("iframe.component-frame")) resizeFrame(frame, pin.size);
@@ -829,7 +999,7 @@ export class PinArea {
     const body = document.createElement("div");
     body.className = "board-card-body";
     body.append(pinBody(pin, pin.size));
-    card.append(body, this.cardTools(pin, index));
+    card.append(body, this.cardTools(pin, index), this.resizeHandle(card, pin));
     return card;
   }
 }

@@ -65,9 +65,54 @@ struct PinTests {
         #expect(pins.map(\.size.name) == ["small", "large", "xlarge", "wide", "tall"])
     }
 
+    @Test func aCardTakesAnySizeUpToFourByFour() throws {
+        // Any columns × rows from 1×1 to 4×4, as dragged; the five old ones are among them.
+        #expect(PinnedComponent.Size.all.count == 16)
+        #expect(PinnedComponent.Size.all.first == .small && PinnedComponent.Size.all.last?.rawValue == "4x4")
+        #expect(PinnedComponent.Size(spelled: "3x4") == PinnedComponent.Size(columns: 3, rows: 4))
+        #expect(PinnedComponent.Size(spelled: "4 × 3")?.rawValue == "4x3")
+        #expect(PinnedComponent.Size(spelled: "5x1") == nil && PinnedComponent.Size(spelled: "0x2") == nil && PinnedComponent.Size(spelled: "x2") == nil)
+        #expect(PinnedComponent.Size(columns: 9, rows: 0).rawValue == "4x1")
+        // Its name is the nearest of the five, for templates written for them.
+        let names = ["1x1", "2x1", "1x2", "2x2", "4x2", "3x1", "4x1", "1x4", "2x4", "3x3", "4x4", "4x3"].compactMap(PinnedComponent.Size.init(spelled:)).map(\.name)
+        #expect(names == ["small", "wide", "tall", "large", "xlarge", "wide", "xlarge", "tall", "large", "large", "xlarge", "xlarge"])
+    }
+
+    @Test func aResizedPinIsKeptInPinsJson() throws {
+        let folder = root.appending(path: "bot")
+        let store = BotStore(directory: folder)
+        let pin = PinnedComponent(name: "gpu-status", command: "nvidia-smi", data: "{}", size: PinnedComponent.Size(columns: 4, rows: 3), panelHeight: 420)
+        store.save(pins: [pin])
+        let saved = try String(contentsOf: folder.appending(path: "pins.json"), encoding: .utf8)
+        #expect(saved.contains(#""size":"4x3""#))
+        #expect(saved.contains(#""panelHeight":420"#))
+        #expect(store.loadPins() == [pin])
+        // A height past the panel's limits is kept within them; a file without one has none.
+        #expect(PinnedComponent(name: "x", data: "1", panelHeight: 10).panelHeight == PinnedComponent.panelHeights.lowerBound)
+        let old = #"[{"id":"8E1B5D2C-3C55-4C6E-9C0B-6D7B0B8E4A11","name":"x","data":"1","size":"3x4","panelHeight":99999}]"#
+        let decoded = try JSONDecoder().decode([PinnedComponent].self, from: Data(old.utf8))
+        #expect(decoded[0].size.rawValue == "3x4")
+        #expect(decoded[0].panelHeight == PinnedComponent.panelHeights.upperBound)
+
+        // Resized and its panel dragged: the page hears both.
+        let workspace = makeWorkspace()
+        try addComponent("gpu-status", command: "echo {}", to: workspace)
+        let pinned = try #require(workspace.pin(named: "gpu-status", in: workspace.mainBot))
+        workspace.resizePin(pinned.id, to: PinnedComponent.Size(columns: 4, rows: 4), in: workspace.mainBot)
+        workspace.setPinPanelHeight(pinned.id, to: 380, in: workspace.mainBot)
+        var shown = try #require(try payload(workspace)["pins"] as? [[String: Any]])
+        #expect(shown.first?["size"] as? String == "4x4")
+        #expect(shown.first?["panelHeight"] as? Int == 380)
+        workspace.setPinPanelHeight(pinned.id, to: nil, in: workspace.mainBot)
+        shown = try #require(try payload(workspace)["pins"] as? [[String: Any]])
+        #expect(shown.first?["panelHeight"] == nil)
+    }
+
     @Test func aboutMdSaysWhichSizesAComponentHas() throws {
         #expect(ComponentLibrary.sizes(inAbout: "Commits.\nSizes: 1x1, 2x1, 2x2") == [.small, .wide, .large])
         #expect(ComponentLibrary.sizes(inAbout: "- Sizes: `1×2`, wide, 4x2, 9x9, 2x1") == [.tall, .wide, .extraLarge])
+        // Any WxH up to 4x4 is a hint too.
+        #expect(ComponentLibrary.sizes(inAbout: "Sizes: 3x2, 4x4").map(\.rawValue) == ["3x2", "4x4"])
         // None given, or none it knows: 2×2 alone. The old S/M/L are not about.md's.
         #expect(ComponentLibrary.sizes(inAbout: "Commits.\nCommand: git log") == [.large])
         #expect(ComponentLibrary.sizes(inAbout: "Sizes: s, m") == [.large])

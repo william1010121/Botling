@@ -665,6 +665,11 @@ enum Snapshot {
                 }, 500)
                 """)
             }
+            // CCB_SNAPSHOT_JS='…': run this in the page a moment after it is drawn (to show a
+            // tile hovered, a menu open, a panel resized), before the picture is taken.
+            if let script = ProcessInfo.processInfo.environment["CCB_SNAPSHOT_JS"], !script.isEmpty {
+                view.evaluateJavaScript("setTimeout(() => { \(script) }, 600)")
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [path] in
                 view.takeSnapshot(with: nil) { image, _ in
                     if let tiff = image?.tiffRepresentation,

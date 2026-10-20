@@ -127,6 +127,48 @@ describe("the chips above the input box", () => {
     expect(sheet.hidden).toBe(true);
   });
 
+  it("an opened pin's top edge drags it taller or shorter; then its component fills that height", () => {
+    const area = setUp();
+    area.update(state({ pins: [pin()] }));
+    click(document.querySelector(".pin-chip"));
+    sent.length = 0;
+    const sheet = document.querySelector<HTMLElement>(".pin-sheet")!;
+    const frame = sheet.querySelector<HTMLIFrameElement>(".component-frame")!;
+    // As tall as its content at first: no height of its own, the page not told to fill.
+    expect(sheet.style.height).toBe("");
+    expect(frame.srcdoc).not.toContain('data-surface="pinned" data-fill');
+    Object.defineProperty(sheet, "offsetHeight", { configurable: true, value: 300 });
+    const pointer = (type: string, y: number) => new PointerEvent(type, { clientX: 0, clientY: y, button: 0, bubbles: true });
+    sheet.querySelector<HTMLElement>(".pin-sheet-resize")!.dispatchEvent(pointer("pointerdown", 500));
+    // It rises from the input box: up is taller.
+    window.dispatchEvent(pointer("pointermove", 400));
+    expect(sheet.style.height).toBe("400px");
+    expect(sheet.classList.contains("sized")).toBe(true);
+    // Never shorter than 120px, never taller than the window leaves room for.
+    window.dispatchEvent(pointer("pointermove", 2000));
+    expect(sheet.style.height).toBe("120px");
+    window.dispatchEvent(pointer("pointermove", -5000));
+    expect(sheet.style.height).toBe(`${window.innerHeight - 140}px`);
+    window.dispatchEvent(pointer("pointermove", 380));
+    window.dispatchEvent(pointer("pointerup", 380));
+    expect(sent).toEqual([{ type: "setPinHeight", id: "P1", height: 420 }]);
+    // Swift keeps it: the panel is that tall and the component is drawn to fill it.
+    area.update(state({ pins: [pin({ panelHeight: 420 })] }));
+    expect(sheet.style.height).toBe("420px");
+    const filled = sheet.querySelector<HTMLIFrameElement>(".component-frame")!;
+    expect(filled.srcdoc).toContain('<html data-size="2x2" data-surface="pinned" data-fill>');
+    // Another height keeps the same frame (it hears the new size itself).
+    area.update(state({ pins: [pin({ panelHeight: 360 })] }));
+    expect(sheet.style.height).toBe("360px");
+    expect(sheet.querySelector(".component-frame")).toBe(filled);
+    // A double-click gives it back its content's height.
+    sheet.querySelector<HTMLElement>(".pin-sheet-resize")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(sent.at(-1)).toEqual({ type: "setPinHeight", id: "P1", height: null });
+    area.update(state({ pins: [pin({ panelHeight: null })] }));
+    expect(sheet.style.height).toBe("");
+    expect(sheet.classList.contains("sized")).toBe(false);
+  });
+
   it("an opened pin is its component, like a Board tile: no header, controls float over it on hover", () => {
     const css = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
     const style = document.createElement("style");
@@ -139,7 +181,7 @@ describe("the chips above the input box", () => {
       const sheet = document.querySelector<HTMLElement>(".pin-sheet")!;
       // No header row (title, command, when it ran): the body, then the floating tools.
       expect(sheet.querySelector(".pin-sheet-head, .pin-sheet-title, .pin-command, .pin-when")).toBeNull();
-      expect([...sheet.children].map((child) => child.className)).toEqual(["pin-sheet-body", "pin-sheet-tools"]);
+      expect([...sheet.children].map((child) => child.className)).toEqual(["pin-sheet-resize resize-handle", "pin-sheet-body", "pin-sheet-tools"]);
       // The component's frame fills the panel with no padding around it, and draws no frame of its own.
       const body = sheet.querySelector<HTMLElement>(".pin-sheet-body")!;
       expect(getComputedStyle(body).padding).toMatch(/^(0px|)$/);
@@ -364,17 +406,27 @@ describe("the Board", () => {
       click(document.querySelectorAll(".board-card")[index].querySelector("[aria-label='More']"));
       return [...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")];
     };
-    // Only the sizes the component has a layout for (its about.md's Sizes: line)...
-    const sizesIn = (items: HTMLButtonElement[]) => items.filter((b) => /×/.test(b.textContent ?? "")).map((b) => b.textContent);
-    expect(sizesIn(menuOf(0))).toEqual(["Small 1×1", "Wide 2×1", "Large 2×2"]);
-    menuOf(0).find((b) => b.textContent === "Wide 2×1")!.click();
-    expect(sent.at(-1)).toEqual({ type: "resizePin", id: "P1", size: "2x1" });
-    // ...2×2 alone when it names none, and the size a card has now even if it is not one of them.
-    expect(sizesIn(menuOf(1))).toEqual(["Large 2×2", "Extra wide 4×2"]);
+    // Every size from 1×1 to 4×4, whatever its about.md's Sizes: line says (only marked as hints).
+    const sizesIn = (items: HTMLButtonElement[]) => items.filter((b) => b.closest(".pin-size-grid")).map((b) => b.getAttribute("aria-label"));
+    const every = ["Small 1×1", "Wide 2×1", "3×1", "4×1", "Tall 1×2", "Large 2×2", "3×2", "Extra wide 4×2", "1×3", "2×3", "3×3", "4×3", "1×4", "2×4", "3×4", "4×4"];
+    expect(sizesIn(menuOf(0))).toEqual(every);
+    expect([...document.querySelectorAll(".pin-size-grid button.hint")].map((b) => b.getAttribute("aria-label"))).toEqual(["Small 1×1", "Wide 2×1", "Large 2×2"]);
+    expect(document.querySelector(".pin-size-grid button.checked")?.getAttribute("aria-label")).toBe("Large 2×2");
+    // Pointing at a cell lights the cells it would span and says its size.
+    const cell = (label: string) => [...document.querySelectorAll<HTMLButtonElement>(".pin-size-grid button")].find((b) => b.getAttribute("aria-label") === label)!;
+    cell("3×4").dispatchEvent(new MouseEvent("mouseenter"));
+    expect(document.querySelectorAll(".pin-size-grid button.lit")).toHaveLength(12);
+    expect(document.querySelector(".pin-size-caption")?.textContent).toBe("3×4");
+    cell("4×3").click();
+    expect(sent.at(-1)).toEqual({ type: "resizePin", id: "P1", size: "4x3" });
+    expect(document.querySelector(".pin-menu")).toBeNull();
+    // One whose about.md names no sizes may still be any size.
+    expect(sizesIn(menuOf(1))).toEqual(every);
+    expect(document.querySelectorAll(".pin-size-grid button.hint")).toHaveLength(0);
+    expect(document.querySelector(".pin-size-grid button.checked")?.getAttribute("aria-label")).toBe("Extra wide 4×2");
     // The size button on the card offers the same.
     click(document.querySelectorAll(".board-card")[0].querySelector(".board-size"));
-    expect([...document.querySelectorAll(".pin-menu button")].map((b) => b.textContent)).toEqual(["Small 1×1", "Wide 2×1", "Large 2×2"]);
-    expect(document.querySelector(".pin-menu button.checked")?.textContent).toBe("Large 2×2");
+    expect([...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")].map((b) => b.getAttribute("aria-label"))).toEqual(every);
     menuOf(1).find((b) => b.textContent === "Move earlier")!.click();
     expect(sent.at(-1)).toEqual({ type: "movePin", id: "P2", to: 0 });
     menuOf(0).find((b) => b.textContent === "Every 15 min")!.click();
@@ -437,7 +489,7 @@ describe("the Board", () => {
       const [card, asking] = [...document.querySelectorAll<HTMLElement>(".board-card")];
       // No header row: the body, then the floating tools.
       expect(card.querySelector(".board-card-head, .board-card-title, .pin-when")).toBeNull();
-      expect([...card.children].map((child) => child.className)).toEqual(["board-card-body", "board-card-tools"]);
+      expect([...card.children].map((child) => child.className)).toEqual(["board-card-body", "board-card-tools", "board-resize resize-handle"]);
       // The component's frame fills the tile with no padding around it.
       const body = card.querySelector<HTMLElement>(".board-card-body")!;
       expect(getComputedStyle(body).padding).toMatch(/^(0px|)$/);
@@ -509,7 +561,7 @@ describe("the Board", () => {
     const area = setUp();
     area.update(state({ board: true, pins: [pin({ size: "2x2" })] }));
     const frame = document.querySelector<HTMLIFrameElement>(".board-card .component-frame")!;
-    expect(frame.srcdoc).toContain('<html data-size="2x2" data-surface="board">');
+    expect(frame.srcdoc).toContain('<html data-size="2x2" data-surface="board" data-fill>');
     expect(frame.srcdoc).toContain('{"w":2,"h":2,"name":"large"}');
     const told: unknown[] = [];
     frame.contentWindow!.postMessage = ((data: unknown) => told.push(data)) as Window["postMessage"];
@@ -519,6 +571,55 @@ describe("the Board", () => {
     const card = document.querySelector<HTMLElement>(".board-card")!;
     expect(card.classList.contains("size-2x1")).toBe(true);
     expect(card.querySelector(".board-size")?.textContent).toBe("2×1");
+  });
+
+  it("dragging a tile's corner resizes it cell by cell, up to 4×4, and keeps the size", () => {
+    const area = setUp();
+    area.update(state({ board: true, pins: [pin({ size: "2x2" })] }));
+    sent.length = 0;
+    const card = document.querySelector<HTMLElement>(".board-card")!;
+    const handle = card.querySelector<HTMLElement>(".board-resize")!;
+    expect(handle).not.toBeNull();
+    const frame = card.querySelector<HTMLIFrameElement>(".component-frame")!;
+    const told: unknown[] = [];
+    frame.contentWindow!.postMessage = ((data: unknown) => told.push(data)) as Window["postMessage"];
+    // Cells of 150px with 14px gaps (until the Board has measured): a 2×2 tile is 314px square.
+    const pointer = (type: string, x: number, y: number) => new PointerEvent(type, { clientX: x, clientY: y, button: 0, bubbles: true });
+    handle.dispatchEvent(pointer("pointerdown", 0, 0));
+    expect(card.classList.contains("resizing")).toBe(true);
+    expect(document.body.classList.contains("pin-resizing")).toBe(true);
+    // Two cells wider and one taller: 4×3, the tile and its component follow at once.
+    window.dispatchEvent(pointer("pointermove", 2 * 164, 164));
+    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["span 4", "span 3"]);
+    expect(card.querySelector(".board-size")?.textContent).toBe("4×3");
+    expect(told).toEqual([{ ccbSize: { w: 4, h: 3, name: "xlarge" } }]);
+    // Past 4×4 it stops there; smaller than a cell, 1×1.
+    window.dispatchEvent(pointer("pointermove", 2000, 2000));
+    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["span 4", "span 4"]);
+    window.dispatchEvent(pointer("pointermove", -2000, -2000));
+    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["span 1", "span 1"]);
+    // Halfway into a cell snaps to the nearer.
+    window.dispatchEvent(pointer("pointermove", 164 + 90, 60));
+    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["span 4", "span 2"]);
+    expect(sent).toEqual([]);
+    window.dispatchEvent(pointer("pointerup", 164 + 90, 60));
+    expect(sent).toEqual([{ type: "resizePin", id: "P1", size: "4x2" }]);
+    expect(card.classList.contains("resizing")).toBe(false);
+    expect(document.body.classList.contains("pin-resizing")).toBe(false);
+    // Kept at that size until Swift says so, then it is the card's size, same frame.
+    expect(card.style.gridColumn).toBe("span 4");
+    area.update(state({ board: true, pins: [pin({ size: "4x2" })] }));
+    expect(document.querySelector(".board-card")).toBe(card);
+    expect(card.querySelector(".component-frame")).toBe(frame);
+    expect(card.dataset.preview).toBeUndefined();
+    expect(card.classList.contains("size-4x2")).toBe(true);
+    // A drag that ends where it began asks nothing.
+    sent.length = 0;
+    card.querySelector<HTMLElement>(".board-resize")!.dispatchEvent(pointer("pointerdown", 0, 0));
+    window.dispatchEvent(pointer("pointermove", 20, 20));
+    window.dispatchEvent(pointer("pointerup", 20, 20));
+    expect(sent).toEqual([]);
+    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["span 4", "span 2"]);
   });
 
   it("a component in the chat is drawn at the widest size it has, 2×2 when it names none", () => {
