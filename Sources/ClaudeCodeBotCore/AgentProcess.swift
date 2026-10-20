@@ -16,6 +16,9 @@ public protocol AgentProcess: AnyObject, Sendable {
     /// Stops the turn under way to take in the message just sent (send it first); the turn ends
     /// with an error result, and the session goes on. Subagents in the background keep running.
     func interrupt()
+    /// Lets these permission rules ("Bash(rm -rf build)") through from now on, in the running
+    /// session (`apply_flag_settings`). They add to what it has; one taken away goes next session.
+    func allow(rules: [String])
 }
 
 extension AgentProcess {
@@ -26,6 +29,25 @@ extension AgentProcess {
     public func answer(_ request: PermissionRequest, allow: Bool, message: String?) {}
 
     public func interrupt() {}
+
+    public func allow(rules: [String]) {}
+}
+
+/// Auto mode's classifier blocked a tool call (claude's `permission_denied` frame, or the tool
+/// result saying so). Only the classifier's own blocks: deny rules and safety checks are not
+/// the user's to wave through here.
+public struct PermissionDenial: Equatable, Sendable {
+    public var toolUseID: String
+    /// Nil when only the tool result said so (it does not name the tool).
+    public var tool: String?
+    /// The classifier's reason: "[Irreversible Local Destruction] …".
+    public var reason: String
+
+    public init(toolUseID: String, tool: String?, reason: String) {
+        self.toolUseID = toolUseID
+        self.tool = tool
+        self.reason = reason
+    }
 }
 
 /// Claude wants to use a tool it is not allowed to use without asking (with
@@ -56,6 +78,8 @@ public enum AgentEvent: Equatable, Sendable {
     case permission(PermissionRequest)
     /// It no longer needs the answer to that permission request (its id).
     case permissionCancelled(String)
+    /// Auto mode's classifier blocked a tool call; nothing waits for an answer.
+    case permissionDenied(PermissionDenial)
     /// What this session has cost so far, in US dollars (sent with each turn's result).
     /// With the tokens this turn used.
     case usage(totalCost: Double, tokens: TokenUsage = TokenUsage())
@@ -92,6 +116,9 @@ public struct AgentLaunch: Equatable, Sendable {
     /// sending data out, force pushes…), instead of asking about every tool not allowed. What it
     /// still asks about (ask rules, repeated blocks) comes as a `.permission` event as before.
     public var autoMode = false
+    /// Permission rules let through without asking ("Bash(rm -rf build)"): calls the user allowed
+    /// after auto mode blocked them. Passed in `--settings`, as a command may hold commas.
+    public var allowRules: [String] = []
     /// How hard it thinks (`--effort`); nil leaves the model's default.
     public var effort: EffortLevel? = nil
     /// The model its subagents use (`CLAUDE_CODE_SUBAGENT_MODEL`); nil: the same as its own.
@@ -150,10 +177,19 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         for directory in launch.pluginDirectories {
             arguments += ["--plugin-dir", directory.path]
         }
+        if !launch.allowRules.isEmpty {
+            arguments += ["--settings", Self.settingsJSON(allowing: launch.allowRules)]
+        }
         if let effort = launch.effort {
             arguments += ["--effort", effort.rawValue]
         }
         return arguments
+    }
+
+    /// `{"permissions":{"allow":[…]}}`: the flag settings layer's allow rules.
+    static func settingsJSON(allowing rules: [String]) -> String {
+        let settings: [String: Any] = ["permissions": ["allow": rules]]
+        return (try? JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
     }
 
     /// What it adds to the app's environment: plugins' secrets and the subagent model.
@@ -280,6 +316,22 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
     /// (`"send_now":"nothing_waiting"`), so the message goes first.
     public func interrupt() {
         let line = Self.interruptRequest()
+        guard var data = try? JSONSerialization.data(withJSONObject: line) else { return }
+        data.append(0x0A)
+        lock.withLock {
+            guard !closed else { return }
+            try? stdin.write(contentsOf: data)
+        }
+    }
+
+    /// `apply_flag_settings` merges into the same layer `--settings` set at launch; the rules
+    /// apply to the next tool call (checked against claude 2.1.304).
+    public func allow(rules: [String]) {
+        let line: [String: Any] = [
+            "type": "control_request",
+            "request_id": "allow-\(UUID().uuidString.lowercased())",
+            "request": ["subtype": "apply_flag_settings", "settings": ["permissions": ["allow": rules]]]
+        ]
         guard var data = try? JSONSerialization.data(withJSONObject: line) else { return }
         data.append(0x0A)
         lock.withLock {

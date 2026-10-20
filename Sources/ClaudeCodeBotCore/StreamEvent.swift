@@ -37,7 +37,12 @@ enum StreamEvent {
             guard let blocks = (object["message"] as? [String: Any])?["content"] as? [[String: Any]] else { return [] }
             return blocks.flatMap { block -> [AgentEvent] in
                 guard block["type"] as? String == "tool_result", let id = block["tool_use_id"] as? String else { return [] }
-                var events: [AgentEvent] = [.trace(.toolResult(id: id, output: text(of: block["content"]), failed: block["is_error"] as? Bool ?? false, parent: parent))]
+                let output = text(of: block["content"])
+                let failed = block["is_error"] as? Bool ?? false
+                var events: [AgentEvent] = [.trace(.toolResult(id: id, output: output, failed: failed, parent: parent))]
+                if failed, let reason = classifierReason(in: output) {
+                    events.append(.permissionDenied(PermissionDenial(toolUseID: id, tool: nil, reason: reason)))
+                }
                 let pictures = images(of: block["content"])
                 if !pictures.isEmpty { events.append(.trace(.toolImages(id: id, images: pictures, parent: parent))) }
                 return events
@@ -58,6 +63,14 @@ enum StreamEvent {
                     prompt: object["prompt"] as? String ?? "",
                     background: object["is_backgrounded"] as? Bool ?? false
                 ))]
+            case "permission_denied":
+                // Only the classifier's blocks; deny rules, modes and safety checks stand.
+                guard object["decision_reason_type"] as? String == "classifier",
+                      let id = object["tool_use_id"] as? String,
+                      let tool = object["tool_name"] as? String,
+                      let reason = classifierReason(in: object["message"] as? String ?? "") else { return [] }
+                let given = (object["decision_reason"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return [.permissionDenied(PermissionDenial(toolUseID: id, tool: tool, reason: given.isEmpty ? reason : given))]
             case "api_retry":
                 // An HTTP status means the API answered (overloaded, rate limit): not the network.
                 guard object["error_status"] == nil || object["error_status"] is NSNull else { return [] }
@@ -83,6 +96,25 @@ enum StreamEvent {
         default:
             return []
         }
+    }
+
+    /// How claude words the auto mode classifier's block (not its "gave no verdict", a passing
+    /// failure the bot just retries).
+    static let classifierDenialPrefix = "Permission for this action was denied by the Claude Code auto mode classifier."
+
+    /// The classifier's reason in a blocked call's message ("[Irreversible Local Destruction]"),
+    /// or nil when the message is not the classifier's block.
+    static func classifierReason(in message: String) -> String? {
+        let message = message.hasPrefix("Error: ") ? String(message.dropFirst(7)) : message
+        guard message.hasPrefix(classifierDenialPrefix) else { return nil }
+        var rest = message.dropFirst(classifierDenialPrefix.count).trimmingCharacters(in: .whitespaces)
+        if rest.hasPrefix("Reason: ") { rest = String(rest.dropFirst(8)) } else { return "" }
+        if let end = rest.range(of: " If you have other tasks") ?? rest.range(of: "\n") {
+            rest = String(rest[..<end.lowerBound])
+        }
+        rest = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+        if rest.hasSuffix(".") { rest = String(rest.dropLast()) }
+        return rest
     }
 
     /// claude's summary for a subagent that has not reported yet: "Agent "…" is waiting on its

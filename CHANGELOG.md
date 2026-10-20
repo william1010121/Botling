@@ -36,6 +36,20 @@ app and publishes it on GitHub Releases.
   prompt gains Maintainer's "Make it look good" line. Plugin changes count by what a Claude
   part's files hold, so a file written again with the same bytes, or a change outside the
   Claude part (package.json, the web part), restarts no bot.
+- **A call auto mode blocks gets a permission card instead of "edit your settings file".** When
+  Claude Code's auto mode classifier refuses a bot's tool call ("[Irreversible Local
+  Destruction]", "[Self-Modification]"…), the bot's chat now shows the usual card for that very
+  call: the command, file or site, and the classifier's reason, with "Allow once", "Always allow
+  this command" (or this file, this site) and "Don't allow". Allowing it adds a permission rule
+  for exactly that call to the running session (`apply_flag_settings`) and tells the bot to run
+  it again; "always" keeps the rule for the bot (listed with its always-allowed tools in Settings,
+  passed in `--settings` from then on). "Don't allow" tells the bot to carry on without it. The
+  app reads claude's `permission_denied` frame, or the tool result's wording on older versions;
+  deny rules, safety checks and the classifier's "no verdict" get no card. Bots are told not to
+  ask you to edit `.claude/settings.local.json` for a blocked call.
+- **An open question's buttons show at once instead of a folded "Answered".** The app leaves an
+  unanswered question's empty answer out of what it sends the chat, and the chat took that for
+  answered, so a new question (a permission card among them) showed folded until clicked.
 
 ## 1.10.0
 

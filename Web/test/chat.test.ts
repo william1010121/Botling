@@ -61,6 +61,17 @@ describe("messages", () => {
     expect(sent).toEqual([{ type: "choose", messageID: "m1", index: 1 }]);
   });
 
+  it("keep an open question's options pressable when the app leaves out its empty answer", () => {
+    // Swift's JSONEncoder drops nil fields: an open question arrives with no chosen or answer.
+    const view = message({ choices: [{ label: "Allow once", detail: null, recommended: true }], open: true }) as Partial<MessageView>;
+    delete view.chosen;
+    delete view.answer;
+    const row = messageElement(view as MessageView, {});
+    expect(row.querySelector(".folded-choice")).toBeNull();
+    row.querySelector<HTMLButtonElement>(".choice")!.click();
+    expect(sent).toEqual([{ type: "choose", messageID: "m1", index: 0 }]);
+  });
+
   it("fold answered choices to what was picked, and open them again disabled", () => {
     const row = messageElement(message({
       choices: [{ label: "A", detail: null, recommended: false }], chosen: null, answer: "Something else", open: false,

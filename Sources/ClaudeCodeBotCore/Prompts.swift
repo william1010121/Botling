@@ -38,6 +38,7 @@ struct BotPrompts {
           </choices>
           2 to 4 options; start the recommended one with * (exactly one), the others with -. Also write the decision into the "Waiting on you" section of your memory file.
           Once the user picks, you receive the text of the chosen option; carry on with it and move it from "Waiting on you" to "Decided".
+        - When auto mode blocks a tool call you need ("denied by the Claude Code auto mode classifier"), the app shows the user a card to allow that very call. Never ask the user to add a permission rule or edit .claude/settings.local.json or any settings file by hand, and never write those files yourself: say in one sentence what you wanted to do and why, and no choices block for it. When "(App: The user allowed …" arrives, run it again exactly as it was; when they did not allow it, carry on without it.
         - Your Routines (things done automatically at fixed times every day) live in \(profile.routinesPath), crontab format, one job per line:
           minute hour day month weekday Name: what to do
           What to do can be a one-line prompt, or @file-path (follow that file when the time comes). A leading # pauses a job; deleting the whole line removes it.
