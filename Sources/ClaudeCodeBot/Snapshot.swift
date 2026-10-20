@@ -365,7 +365,8 @@ enum Snapshot {
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
         let navigator = SettingsNavigator()
-        navigator.section = .doctor
+        // CCB_SETTINGS_SECTION=plugins draws another section.
+        navigator.section = ProcessInfo.processInfo.environment["CCB_SETTINGS_SECTION"].flatMap(SettingsSection.init(rawValue:)) ?? .doctor
         Task { @MainActor in
             await workspace.doctor.run(includeLatest: true)
             let frame = NSRect(x: 0, y: 0, width: 760, height: 600)

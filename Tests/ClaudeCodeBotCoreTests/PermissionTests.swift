@@ -232,9 +232,12 @@ struct PermissionTests {
         await eventually { fake.agents.count == 1 }
         #expect(fake.agents[0].launch.autoMode)
 
+        await eventually { !workspace.mainBot.isWorking }
         workspace.setAutoApprovesSafeActions(false)
         #expect(!AppSettings.load(from: workspace.settingsURL).autoApprovesSafeActions)
-        // An awake bot starts again (once free) in the new mode.
+        // An awake bot starts again in the new mode, before its next message.
+        try? await Task.sleep(for: .milliseconds(100))
+        workspace.mainBot.send("next")
         await eventually { fake.agents.count == 2 }
         #expect(fake.agents.last?.launch.autoMode == false)
 

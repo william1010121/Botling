@@ -215,21 +215,64 @@ struct ComponentTests {
         #expect(!maintainer.contains("Small jobs"))
     }
 
-    /// The editor's agent file follows the app: an old copy is rewritten, the rest of ccb-core stays.
+    /// The editor's agent file follows the app: an older app's copy is rewritten, the rest of
+    /// ccb-core stays; an edit is left alone and reported, so the user can be asked.
     @Test func theComponentEditorFileIsRefreshedWhenTheAppsTextChanges() throws {
         let library = FileManager.default.temporaryDirectory.appending(path: "ccb-core-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: library) }
-        Workspace.prepareCorePlugin(in: library)
+        #expect(Workspace.prepareCorePlugin(in: library) == nil)
         let editor = library.appending(path: "ccb-core/claude/agents/component-editor.md")
-        #expect(try String(contentsOf: editor, encoding: .utf8) == Workspace.componentEditorAgent)
-        #expect(Workspace.componentEditorAgent.contains("tools: Read, Write, Edit"))
+        let app = Workspace.componentEditorAgent()
+        #expect(try String(contentsOf: editor, encoding: .utf8) == app)
+        #expect(app.contains("tools: Read, Write, Edit"))
+        #expect(app.contains("model: sonnet"))
+        #expect(app.contains(ComponentPrompts.lookGood))
+        #expect(try String(contentsOf: library.appending(path: "ccb-core/package.json"), encoding: .utf8).contains("its model is set in Settings"))
 
+        // What 1.10.0 wrote is the app's own text: replaced without asking.
         let manifest = library.appending(path: "ccb-core/package.json")
         try "{ \"name\": \"ccb-core\", \"version\": \"1.0.7\" }".write(to: manifest, atomically: true, encoding: .utf8)
-        try "---\nname: component-editor\n---\nold text".write(to: editor, atomically: true, encoding: .utf8)
-        Workspace.prepareCorePlugin(in: library)
-        #expect(try String(contentsOf: editor, encoding: .utf8) == Workspace.componentEditorAgent)
+        try Workspace.legacyComponentEditorAgent.write(to: editor, atomically: true, encoding: .utf8)
+        #expect(!Workspace.legacyComponentEditorAgent.contains(ComponentPrompts.lookGood))
+        #expect(Workspace.prepareCorePlugin(in: library) == nil)
+        #expect(try String(contentsOf: editor, encoding: .utf8) == app)
         #expect(try String(contentsOf: manifest, encoding: .utf8).contains("1.0.7"))
+
+        // A model picked in Settings: the app's file is written again with it.
+        #expect(Workspace.prepareCorePlugin(in: library, model: .opus) == nil)
+        #expect(try String(contentsOf: editor, encoding: .utf8) == Workspace.componentEditorAgent(model: .opus))
+    }
+
+    /// Maintainer edited the file: the app neither overwrites it nor treats it as settled, every
+    /// launch, until the user chose; an edit chosen to keep stays without asking again.
+    @Test func anEditedComponentEditorFileIsKeptAndAskedAbout() throws {
+        let library = FileManager.default.temporaryDirectory.appending(path: "ccb-core-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: library) }
+        Workspace.prepareCorePlugin(in: library)
+        let editor = Workspace.componentEditorFile(in: library)
+        let edited = Workspace.componentEditorAgent().replacingOccurrences(of: "model: sonnet", with: "model: opus") + "- One more rule.\n"
+        try edited.write(to: editor, atomically: true, encoding: .utf8)
+
+        for _ in 0..<3 {
+            #expect(Workspace.prepareCorePlugin(in: library) == Workspace.textHash(edited))
+            #expect(try String(contentsOf: editor, encoding: .utf8) == edited)
+        }
+        // "Keep the edited version" remembers this very text.
+        let record = library.appending(path: ".component-editor.json")
+        var saved = Workspace.CoreEditorRecord.load(from: record)
+        saved.kept = Workspace.textHash(edited)
+        saved.save(to: record)
+        #expect(Workspace.prepareCorePlugin(in: library) == nil)
+        #expect(try String(contentsOf: editor, encoding: .utf8) == edited)
+        // Another edit is asked about again.
+        try (edited + "- And another.\n").write(to: editor, atomically: true, encoding: .utf8)
+        #expect(Workspace.prepareCorePlugin(in: library) != nil)
+    }
+
+    @Test func settingTheModelLineKeepsTheRestOfAnAgentFile() {
+        let text = "---\nname: x\nmodel: haiku\ntools: Read\n---\nBody\nmodel: not this\n"
+        #expect(Workspace.settingModel(.opus, in: text) == "---\nname: x\nmodel: opus\ntools: Read\n---\nBody\nmodel: not this\n")
+        #expect(Workspace.settingModel(.sonnet, in: "---\nname: x\n---\nBody") == "---\nname: x\nmodel: sonnet\n---\nBody")
     }
 
     @Test func aReportMayBeJustAPicture() async throws {

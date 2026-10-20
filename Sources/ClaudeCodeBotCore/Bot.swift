@@ -176,9 +176,18 @@ public final class Bot: ObservableObject, Identifiable {
     /// Turns interrupted to take in what you added whose error results have not come back yet;
     /// those are not shown. (You may add twice before the first one comes back.)
     private var interruptions = 0
-    private var pendingModel: BotModel?
-    /// It should restart (new plugins, a new folder) once free, with this divider.
+    /// It should restart (new plugins, a model, a new folder) before its next real message, with
+    /// this divider. Nothing restarts an idle bot: it costs nothing until someone writes.
     private var pendingRestart: String?
+    /// The restart waiting is only for plugins: when they changed back, it is not needed.
+    private var pendingRestartForPluginsOnly = false
+    /// Whether the session `sessionID` names can be `--resume`d (claude kept its transcript).
+    /// Tests stand in for it; without a transcript a restart writes a handoff instead.
+    public var sessionExists: (UUID, URL) -> Bool = { Bot.claudeSessionExists($0, in: $1) }
+    /// A session just went on with `--resume`: until it shows it is alive (a step or a reply),
+    /// an exit means the resume failed, and the first message it got goes to a fresh session.
+    private var resumeProbe = false
+    private var resumeRetry: Outgoing?
 
     /// Its run (or a subagent's) failed because the network went away; it waits for the
     /// network to come back (`networkRestored`) to carry on. The row says "網路中斷".
@@ -487,6 +496,13 @@ public final class Bot: ObservableObject, Identifiable {
         case .asleep:
             wake(with: outgoing)
         case .awake:
+            if restartsBeforeMessage {
+                // A restart was waiting for a message: done now, then this goes to the new process.
+                queued.insert(outgoing, at: 0)
+                phase = .switching(.stopping)
+                Task { [weak self] in await self?.restartWaiting() }
+                return
+            }
             if let merged = merging(outgoing) {
                 // You added to what you said before it answered: stop that turn and ask again
                 // with all of it, so one reply answers the whole thing. The message goes first:
@@ -556,6 +572,7 @@ public final class Bot: ObservableObject, Identifiable {
         if outgoing.fromUser { quietTurn = false }
         if !isWorking { noteProgress() }
         isWorking = true
+        if resumeProbe, resumeRetry == nil, groupReply == nil { resumeRetry = outgoing }
         var text = outgoing.text
         if let note = pendingNote {
             pendingNote = nil
@@ -619,6 +636,7 @@ public final class Bot: ObservableObject, Identifiable {
         // A new process loads what it starts with now (plugins, effort, folders): a restart
         // waiting for it is done.
         pendingRestart = nil
+        pendingRestartForPluginsOnly = false
         loadedPluginStamp = pluginStamp?()
         let process = try launcher(AgentLaunch(
             model: model,
@@ -691,6 +709,11 @@ public final class Bot: ObservableObject, Identifiable {
             try? await Task.sleep(for: .milliseconds(300))
         }
         guard !removed else { return .failed("It was removed.") }
+        if restartsBeforeMessage {
+            phase = .switching(.stopping)
+            await restartWaiting()
+            guard !removed else { return .failed("It was removed.") }
+        }
         return await withCheckedContinuation { continuation in
             groupReply = continuation
             if phase == .asleep {
@@ -932,6 +955,14 @@ public final class Bot: ObservableObject, Identifiable {
         guard source === process else { return }
         noteProgress(of: event)
         switch event {
+        case .reply, .trace, .permission, .usage:
+            // The resumed session is alive.
+            resumeProbe = false
+            resumeRetry = nil
+        default:
+            break
+        }
+        switch event {
         case let .rateLimits(limits):
             onRateLimits?(limits)
         case .connectionTrouble:
@@ -1042,6 +1073,10 @@ public final class Bot: ObservableObject, Identifiable {
             let lostToNetwork = exitWaiter == nil && (outage != nil || (status != 0 && NetworkResume.mentionsConnectionError(stderr)))
             let cutOff = lostToNetwork ? trace.subagents.filter(\.isRunning).map(\.id) : []
             let session = sessionID
+            let failedResume = resumeProbe && exitWaiter == nil && !lostToNetwork ? resumeRetry : nil
+            let resumeFailed = resumeProbe && exitWaiter == nil && !lostToNetwork
+            resumeProbe = false
+            resumeRetry = nil
             process = nil
             sessionID = nil
             turnInput = nil
@@ -1066,6 +1101,17 @@ public final class Bot: ObservableObject, Identifiable {
             cancelIdle()
             isWorking = false
             phase = .asleep
+            if resumeFailed {
+                // `--resume` did not take (claude lost the session): the old process is gone, so
+                // no handoff can be written; a fresh session reads memory and the recent chat.
+                append(ChatMessage(role: .divider, text: "Couldn't go on in the same session → new session"))
+                if let retry = failedResume {
+                    wake(with: retry)
+                } else if !queued.isEmpty {
+                    Task { [weak self] in await self?.flushQueue() }
+                }
+                return
+            }
             if lostToNetwork {
                 let shown = outage != nil
                 recordOutage(subagents: cutOff, lostSession: session)
@@ -1091,15 +1137,7 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     private func afterTurn() {
-        if let next = pendingModel {
-            pendingModel = nil
-            Task { await switchModel(to: next) }
-            return
-        }
-        if let divider = pendingRestart {
-            Task { await restart(divider: divider) }
-            return
-        }
+        // A restart waiting is done before the next message, not now: an idle bot costs nothing.
         scheduleIdle()
     }
 
@@ -1349,8 +1387,9 @@ public final class Bot: ObservableObject, Identifiable {
         removed = true
         cancelIdle()
         queued.removeAll()
-        pendingModel = nil
         pendingRestart = nil
+        resumeProbe = false
+        resumeRetry = nil
         let running = process
         process = nil
         running?.stop()
@@ -1372,28 +1411,21 @@ public final class Bot: ObservableObject, Identifiable {
 
     // MARK: Switching model
 
-    /// Handoff into memory.md, stop, start a new session on `newModel`. Waits for a running
-    /// turn, tidy or switch to end first.
+    /// Picks its model. Asleep: the next wake uses it. Awake: it goes on in the same session on
+    /// `newModel` (`--resume --model`) just before its next message, so a running turn or a
+    /// subagent at work is not cut off and nothing is written down or read back.
     public func switchModel(to newModel: BotModel) async {
-        guard newModel != model else {
-            pendingModel = nil
-            return
-        }
-        if isWorking || phase == .tidying || isSwitching {
-            pendingModel = newModel
-            return
-        }
-        guard phase == .awake else {
-            model = newModel
-            store?.save(model: newModel)
+        guard newModel != model else { return }
+        model = newModel
+        store?.save(model: newModel)
+        guard phase != .asleep else {
             append(ChatMessage(role: .divider, text: "Switched to \(newModel.displayName)"))
             return
         }
-
-        await handOver(to: newModel, divider: "Handoff → \(newModel.displayName)")
+        await restart(divider: "Handoff → \(newModel.displayName)")
     }
 
-    /// Picks the model its subagents use. Awake: hands over and restarts once free, like a model
+    /// Picks the model its subagents use. Awake: restarts before its next message, like a model
     /// switch; asleep: the next wake uses it.
     public func setSubagentModel(_ newModel: BotModel?) async {
         guard newModel != subagentModel else { return }
@@ -1402,7 +1434,7 @@ public final class Bot: ObservableObject, Identifiable {
         await restart(divider: "Handoff → subagents on \(newModel?.displayName ?? "the same model")")
     }
 
-    /// Picks how hard it thinks. Awake: hands over and restarts once free; asleep: the next wake.
+    /// Picks how hard it thinks. Awake: restarts before its next message; asleep: the next wake.
     public func setEffort(_ newEffort: EffortLevel?) async {
         guard newEffort != effort else { return }
         effort = newEffort
@@ -1444,48 +1476,120 @@ public final class Bot: ObservableObject, Identifiable {
         store?.save(specs: edited)
     }
 
-    /// Plugins' Claude parts changed. Asleep: the next wake loads them. Awake: hand over and
-    /// restart once it is free, so the new skills and agents are there.
+    /// Plugins' Claude parts changed. Asleep: the next wake loads them. Awake: it restarts just
+    /// before its next message, so the new skills and agents are there. Many changes make one
+    /// restart, and changes that come back to what its session has make none.
     public func reloadPlugins() async {
         // Its session already has these (they changed back, or it started after the change).
-        if let stamp = pluginStamp?(), stamp == loadedPluginStamp { return }
+        if let stamp = pluginStamp?(), stamp == loadedPluginStamp {
+            if pendingRestartForPluginsOnly {
+                pendingRestart = nil
+                pendingRestartForPluginsOnly = false
+            }
+            return
+        }
+        let waiting = pendingRestart != nil
         await restart(divider: "Handoff → loading new plugins")
+        if !waiting, pendingRestart != nil { pendingRestartForPluginsOnly = true }
     }
 
-    /// Hands over and starts a fresh session (same model) so it picks up what it starts with
-    /// (plugins, folders). Asleep: nothing to do, the next wake has it. Busy: once it is free.
-    /// A subagent at work in the background counts as busy: the handoff would end it. Several
-    /// restarts asked for while busy make one, after the turn that tells you its report.
+    /// Restarts it so it picks up what it starts with (plugins, folders, model, effort). Asleep:
+    /// nothing to do, the next wake has it. Awake: marked, and done just before its next real
+    /// message (see `restartsBeforeMessage`): an idle bot costs nothing, and a turn or a
+    /// subagent at work is never cut off. Several restarts asked for make one.
     public func restart(divider: String) async {
         guard phase != .asleep else {
             pendingRestart = nil
+            pendingRestartForPluginsOnly = false
             return
         }
-        if isWorking || phase == .tidying || isSwitching || phase != .awake
-            || trace.subagents.contains(where: \.isRunning) {
-            pendingRestart = divider
+        pendingRestart = divider
+        pendingRestartForPluginsOnly = false
+    }
+
+    /// A restart waits and nothing would be lost by doing it now: no turn, no subagent at work
+    /// (in the background too: the restart would end it), no question waiting.
+    private var restartsBeforeMessage: Bool {
+        pendingRestart != nil && phase == .awake && process != nil && !isWorking && internalReply == nil
+            && groupReply == nil && permissionAsks.isEmpty && outage == nil && !removed
+            && !trace.subagents.contains(where: \.isRunning)
+    }
+
+    /// Does the restart waiting: the same session again (`--resume`), or, when claude kept no
+    /// transcript of it, a handoff written into memory.md and a new session. Then the messages
+    /// that waited go on.
+    private func restartWaiting() async {
+        guard let divider = pendingRestart else {
+            if phase == .switching(.stopping) { phase = .awake }
+            await flushQueue()
             return
         }
         pendingRestart = nil
-        await handOver(to: model, divider: divider)
+        let pluginsOnly = pendingRestartForPluginsOnly
+        pendingRestartForPluginsOnly = false
+        if pluginsOnly, let stamp = pluginStamp?(), stamp == loadedPluginStamp {
+            // The plugins came back to what its session has.
+            phase = .awake
+            await flushQueue()
+            return
+        }
+        if let session = sessionID, sessionExists(session, profile.workingDirectory) {
+            await resume(session, divider: divider)
+        } else {
+            await handOver(divider: divider)
+        }
     }
 
-    /// Writes a handoff, stops, and starts again on `newModel` reading it.
-    private func handOver(to newModel: BotModel, divider: String) async {
+    static func resumedDivider(_ divider: String) -> String {
+        divider.hasPrefix("Handoff → ") ? "Restarted → " + divider.dropFirst("Handoff → ".count) : divider
+    }
+
+    /// Ends the process and goes on in the same session (`--resume`) with what it starts with
+    /// now: no handoff turn, no memory read back, the prompt cache stays warm. claude keeps the
+    /// session's first system prompt on `--resume` (a new `--append-system-prompt` is ignored),
+    /// so what may have changed since (the briefing) goes with the next message.
+    private func resume(_ session: UUID, divider: String) async {
         cancelIdle()
-        switchTarget = newModel
+        switchTarget = model
+        phase = .switching(.stopping)
+        await finishProcess()
+        guard !removed else { return }
+        phase = .switching(.starting)
+        do {
+            _ = try start(resuming: session)
+            phase = .awake
+            append(ChatMessage(role: .divider, text: Self.resumedDivider(divider)))
+            resumeProbe = true
+            resumeRetry = nil
+            let reason = divider.hasPrefix("Handoff → ") ? String(divider.dropFirst("Handoff → ".count)) : divider
+            let briefing = wakeNote?() ?? ""
+            let note = "(App: ClaudeCodeBot restarted you in this same conversation (\(reason)); carry on as before." + (briefing.isEmpty ? ")" : " What the app tells you at a wake, as it is now:)\n" + briefing)
+            pendingNote = [note, pendingNote].compactMap { $0 }.joined(separator: "\n\n")
+            scheduleIdle()
+        } catch {
+            // The old process is gone already: the messages waiting wake a fresh session.
+            phase = .asleep
+            append(ChatMessage(role: .error, text: "Restart failed: \(error.localizedDescription)"))
+        }
+        switchTarget = nil
+        await flushQueue()
+    }
+
+    /// Writes a handoff, stops, and starts a new session on its model reading it.
+    private func handOver(divider: String) async {
+        cancelIdle()
+        switchTarget = model
         phase = .switching(.writing)
         _ = await ask(prompts.handoff)
         guard !removed else { return }
         phase = .switching(.stopping)
         await finishProcess()
         phase = .switching(.starting)
-        model = newModel
-        store?.save(model: newModel)
         append(ChatMessage(role: .divider, text: divider))
         do {
             _ = try start()
-            let reply = await ask(prompts.resume)
+            let briefing = wakeNote?() ?? ""
+            let reply = await ask(briefing.isEmpty ? prompts.resume : prompts.resume + "\n\n" + briefing)
             guard !removed else { return }
             phase = process == nil ? .asleep : .awake
             if !BotPrompts.isPlainOK(reply) {
@@ -1506,6 +1610,21 @@ public final class Bot: ObservableObject, Identifiable {
         }
         switchTarget = nil
         await flushQueue()
+    }
+
+    /// Whether claude kept the transcript of `session`, started in `folder`: under
+    /// `~/.claude/projects/<folder with every other character as ->/<session>.jsonl` (or
+    /// `$CLAUDE_CONFIG_DIR/projects`), or, for a folder claude names differently (a long path,
+    /// a symlink), in any project folder there.
+    public nonisolated static func claudeSessionExists(_ session: UUID, in folder: URL, config: URL? = nil) -> Bool {
+        let config = config ?? ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(filePath: $0) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude")
+        let projects = config.appending(path: "projects")
+        let file = session.uuidString.lowercased() + ".jsonl"
+        let named = String(folder.standardizedFileURL.path.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+        if FileManager.default.fileExists(atPath: projects.appending(path: named).appending(path: file).path) { return true }
+        let folders = (try? FileManager.default.contentsOfDirectory(atPath: projects.path)) ?? []
+        return folders.contains { FileManager.default.fileExists(atPath: projects.appending(path: $0).appending(path: file).path) }
     }
 
     // MARK: Helpers
@@ -1533,16 +1652,14 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     private func flushQueue() async {
-        if let next = pendingModel {
-            pendingModel = nil
-            await switchModel(to: next)
-        }
-        if let divider = pendingRestart, phase == .awake {
-            await restart(divider: divider)
-        }
         guard !queued.isEmpty else { return }
         let waiting = queued
         queued.removeAll()
+        // One message goes as it is (yours stays yours to add to).
+        if waiting.count == 1 {
+            route(waiting[0])
+            return
+        }
         let text = waiting.map(\.text).joined(separator: "\n\n")
         route(Outgoing(text: text, images: waiting.flatMap(\.images)))
     }

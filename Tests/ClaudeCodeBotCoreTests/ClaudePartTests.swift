@@ -83,6 +83,10 @@ struct ClaudePartTests {
         // A new plugin with a Claude part arrives (Maintainer made one).
         _ = try claudePlugin("fresh", skill: "new-skill")
         workspace.plugins.rescan()
+        // Nothing happens while it is idle: the restart waits for its next message.
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect(fake.agents.count == 1)
+        bot.send("Next")
         await eventually({ bot.messages.contains { $0.role == .divider && $0.text == "Handoff → loading new plugins" } })
         await eventually { fake.agents.count == 2 && bot.phase == .awake }
         #expect(fake.agents[1].launch.pluginDirectories.contains { $0.path.contains("/fresh/") })
@@ -118,11 +122,16 @@ struct ClaudePartTests {
         #expect(!agent.finished)
         #expect(bot.subagents.first?.isRunning == true)
 
-        // The subagent reports and the bot tells you: now it is free, and loads them once.
+        // The subagent reports and the bot tells you: now it is free, and loads them once, before
+        // the next message.
         for event in StreamEvent.events(in: SubagentRun.notification) { agent.emit(event) }
         agent.emit(.trace(.text("Done.", parent: nil)))
         await eventually { bot.isWorking }
         agent.reply("It says hello world.")
+        await eventually { !bot.isWorking }
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(fake.agents.count == 1)
+        bot.send("Thanks")
         await eventually { fake.agents.count == 2 && bot.phase == .awake }
         try? await Task.sleep(for: .milliseconds(300))
         #expect(bot.messages.contains { $0.text == "It says hello world." })
@@ -150,11 +159,115 @@ struct ClaudePartTests {
 
         try "---\nname: secret-word\ndescription: test\n---\nhello again".write(to: claude.appending(path: "skills/secret-word/SKILL.md"), atomically: true, encoding: .utf8)
         workspace.plugins.rescan()
+        await eventually { workspace.plugins.claudeStamp().contains { $0.contains("/tools/") } && !workspace.plugins.checkingClaudeParts }
+        try? await Task.sleep(for: .milliseconds(300))
+        bot.send("Next")
         await eventually { fake.agents.count == 2 && bot.phase == .awake }
         try? await Task.sleep(for: .milliseconds(600))
         #expect(fake.agents.count == 2)
         #expect(bot.messages.filter { $0.role == .divider }.count == 1)
         #expect(fake.agents[1].launch.pluginDirectories.contains { $0.path.contains("/tools/") })
         await workspace.putEveryoneToSleep()
+    }
+
+    /// The 1.10.0 ping-pong: Maintainer edits component-editor.md, the app writes it back, again
+    /// and again, and files are written again with the same bytes. An awake bot restarts at most
+    /// once for all of it, before its next message, in the same session (no handoff turn).
+    @Test func anEditorFilePingPongRestartsEachBotAtMostOnce() async throws {
+        let fake = FakeLauncher()
+        let workspace = workspace(fake)
+        let library = root.appending(path: "ccb/plugins")
+        let editor = Workspace.componentEditorFile(in: library)
+        await eventually { workspace.plugins.claudeDirectories().contains { $0.path.contains("/ccb-core/") } }
+        let bot = workspace.mainBot
+        bot.sessionExists = { _, _ in true }
+        bot.send("Hi")
+        await eventually { bot.phase == .awake && !bot.isWorking }
+
+        let app = try String(contentsOf: editor, encoding: .utf8)
+        let edited = app.replacingOccurrences(of: "model: sonnet", with: "model: opus")
+        for _ in 0..<3 {
+            try edited.write(to: editor, atomically: true, encoding: .utf8)
+            workspace.plugins.rescan()
+            try? await Task.sleep(for: .milliseconds(60))
+            // What a launch does now: the edit is left alone (and asked about), not written over.
+            #expect(Workspace.prepareCorePlugin(in: library, record: root.appending(path: "ccb/component-editor.json")) != nil)
+            try app.write(to: editor, atomically: true, encoding: .utf8)
+            workspace.plugins.rescan()
+            try? await Task.sleep(for: .milliseconds(60))
+        }
+        try edited.write(to: editor, atomically: true, encoding: .utf8)
+        workspace.plugins.rescan()
+        try? await Task.sleep(for: .milliseconds(100))
+        // The same bytes again: only the date changes.
+        try edited.write(to: editor, atomically: true, encoding: .utf8)
+        workspace.plugins.rescan()
+        await eventually { !workspace.plugins.checkingClaudeParts }
+        try? await Task.sleep(for: .milliseconds(300))
+        #expect(fake.agents.count == 1)
+
+        bot.send("Next")
+        await eventually { fake.agents.count == 2 && bot.phase == .awake && !bot.isWorking }
+        #expect(fake.agents[1].launch.resume)
+        #expect(!fake.agents[0].sent.contains(bot.prompts.handoff))
+
+        // Written again with the same bytes, and more messages: no second restart.
+        try edited.write(to: editor, atomically: true, encoding: .utf8)
+        workspace.plugins.rescan()
+        await eventually { !workspace.plugins.checkingClaudeParts }
+        try? await Task.sleep(for: .milliseconds(300))
+        bot.send("More")
+        await eventually { fake.agents[1].sent.count == 2 }
+        bot.send("And more")
+        await eventually { fake.agents[1].sent.count == 3 }
+        #expect(fake.agents.count == 2)
+        #expect(bot.messages.filter { $0.role == .divider }.count == 1)
+        await workspace.putEveryoneToSleep()
+    }
+
+    /// An edited component-editor.md: the app asks in Maintainer's chat; the answer is kept for
+    /// that edit (not asked again at the next launch). The model comes from Settings.
+    @Test func anEditedEditorFileIsAskedAboutOnceAndTheModelIsASetting() async throws {
+        let first = workspace(FakeLauncher())
+        let library = root.appending(path: "ccb/plugins")
+        let editor = Workspace.componentEditorFile(in: library)
+        #expect(try String(contentsOf: editor, encoding: .utf8) == Workspace.componentEditorAgent(model: .sonnet))
+        #expect(first.settings.componentEditor == .sonnet)
+        #expect(!first.maintainer.messages.contains { $0.text.contains("component-editor.md") })
+        #expect(first.maintainerInstructions().contains("Never edit ccb-core/claude/agents/component-editor.md"))
+
+        // Settings picks Opus: the file follows.
+        first.setComponentEditorModel(.opus)
+        #expect(try String(contentsOf: editor, encoding: .utf8) == Workspace.componentEditorAgent(model: .opus))
+        #expect(AppSettings.load(from: first.settingsURL).componentEditorModel == .opus)
+
+        // Maintainer edits it; the next launch asks instead of writing over it.
+        let edited = Workspace.componentEditorAgent(model: .opus) + "- A rule of Maintainer's.\n"
+        try edited.write(to: editor, atomically: true, encoding: .utf8)
+        let second = workspace(FakeLauncher())
+        #expect(try String(contentsOf: editor, encoding: .utf8) == edited)
+        let card = try #require(second.maintainer.messages.last { $0.text.contains("component-editor.md") })
+        #expect(card.choices?.map(\.label) == ["Keep the edited version", "Use the app's version"])
+        #expect(second.choose(0, in: card.id, of: second.maintainer))
+        #expect(try String(contentsOf: editor, encoding: .utf8) == edited)
+
+        // Kept: not asked again for this edit. A new model keeps the edit, with the new model line.
+        let third = workspace(FakeLauncher())
+        #expect(!third.maintainer.messages.contains { $0.text.contains("component-editor.md") && $0.isOpenQuestion })
+        third.setComponentEditorModel(.haiku)
+        let now = try String(contentsOf: editor, encoding: .utf8)
+        #expect(now.contains("model: haiku"))
+        #expect(now.contains("- A rule of Maintainer's."))
+        let fourth = workspace(FakeLauncher())
+        #expect(!fourth.maintainer.messages.contains { $0.text.contains("component-editor.md") && $0.isOpenQuestion })
+
+        // Another edit, and "Use the app's version" this time.
+        try (now + "- Another.\n").write(to: editor, atomically: true, encoding: .utf8)
+        let fifth = workspace(FakeLauncher())
+        let again = try #require(fifth.maintainer.messages.last { $0.text.contains("component-editor.md") && $0.isOpenQuestion })
+        #expect(fifth.choose(1, in: again.id, of: fifth.maintainer))
+        #expect(try String(contentsOf: editor, encoding: .utf8) == Workspace.componentEditorAgent(model: .haiku))
+        let sixth = workspace(FakeLauncher())
+        #expect(!sixth.maintainer.messages.contains { $0.text.contains("component-editor.md") && $0.isOpenQuestion })
     }
 }

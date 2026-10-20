@@ -34,6 +34,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Nil (a settings file from before it) means none.
     public var pinnedBots: [UUID]?
 
+    /// The model of ccb-core's component editor (its agent file says it). Nil (a settings file
+    /// from before it) means Sonnet.
+    public var componentEditorModel: BotModel?
+
+    public var componentEditor: BotModel { componentEditorModel ?? .sonnet }
+
     public init(developerMode: Bool = false, developerProjectID: UUID? = nil) {
         self.developerMode = developerMode
         self.developerProjectID = developerProjectID

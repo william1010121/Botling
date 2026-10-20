@@ -187,9 +187,12 @@ struct BotTests {
         #expect(fake.agents[1].sent.first?.hasPrefix(bot.prompts.wake) == true)
     }
 
-    @Test func switchingModelWritesHandoffStopsAndRestarts() async {
+    /// With no transcript to resume (claude kept none), a model switch still writes a handoff,
+    /// but only when the next message comes: an idle bot costs nothing.
+    @Test func switchingModelWithoutATranscriptHandsOverBeforeTheNextMessage() async throws {
         let fake = FakeLauncher()
         let bot = makeBot(fake)
+        bot.sessionExists = { _, _ in false }
 
         bot.send("hi")
         await eventually { bot.messages.last?.role == .bot }
@@ -197,14 +200,21 @@ struct BotTests {
 
         #expect(bot.model == .opus)
         #expect(bot.phase == .awake)
+        #expect(fake.agents.count == 1)
+        #expect(!fake.agents[0].finished)
+        #expect(bot.messages.map(\.role) == [.user, .bot])
+
+        bot.send("next")
+        await eventually { fake.agents.count == 2 && bot.messages.last?.role == .bot }
         #expect(bot.switchTarget == nil)
-        #expect(fake.agents.count == 2)
         #expect(fake.agents[0].sent.last == bot.prompts.handoff)
         #expect(fake.agents[0].finished)
-        #expect(fake.agents[1].launch.model == .opus)
-        #expect(fake.agents[1].sent == [bot.prompts.resume])
+        let fresh = try #require(fake.agents.last)
+        #expect(fresh.launch.model == .opus)
+        #expect(!fresh.launch.resume)
+        #expect(fresh.sent == [bot.prompts.resume, "next"])
         // "OK" from the resume turn stays hidden; only the divider shows.
-        #expect(bot.messages.map(\.role) == [.user, .bot, .divider])
+        #expect(bot.messages.map(\.role) == [.user, .bot, .user, .divider, .bot])
     }
 
     @Test func resumeReplyAfterHandoffDrawsItsChoicesAsButtons() async throws {
@@ -223,11 +233,14 @@ struct BotTests {
             """
         }
 
+        bot.sessionExists = { _, _ in false }
         bot.send("hi")
         await eventually { bot.messages.last?.role == .bot }
         await bot.reloadPlugins()
+        bot.send("again")
+        await eventually { fake.agents.count == 2 && bot.messages.last?.text == "Got it" }
 
-        let resumed = try #require(bot.messages.last)
+        let resumed = try #require(bot.messages.last { $0.choices != nil })
         #expect(resumed.role == .bot)
         #expect(resumed.text == "目前正在等你決定是否 push。")
         #expect(resumed.choices?.map(\.label) == ["現在 push ed1f2ad", "先不 push，等你看過再說"])
@@ -253,11 +266,15 @@ struct BotTests {
         bot.send("Do something long")
         await eventually { fake.agents.count == 1 }
         await bot.switchModel(to: .opus)
-        #expect(bot.model == .sonnet)
+        // The turn under way goes on; the next message is on the new model.
+        #expect(bot.model == .opus)
+        #expect(!fake.agents[0].finished)
 
         fake.agents[0].reply("All done")
-        await eventually { bot.model == .opus && bot.phase == .awake }
-        #expect(bot.messages.map(\.role) == [.user, .bot, .divider])
+        await eventually { !bot.isWorking && bot.phase == .awake }
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(fake.agents.count == 1)
+        #expect(bot.messages.map(\.role) == [.user, .bot])
     }
 
     @Test func messageDuringTidyIsSentAfterSleeping() async {

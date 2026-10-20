@@ -185,10 +185,11 @@ struct StandaloneBotTests {
         let bot = try #require(workspace.bot(for: project))
         bot.send("hi")
         await eventually { bot.messages.contains { $0.text == "Done" } }
-        let switching = Task { await bot.switchModel(to: .opus) }
+        await bot.switchModel(to: .opus)
+        bot.send("next")
         await eventually { bot.isSwitching }
         workspace.removeBot(project.id)
-        await switching.value
+        try? await Task.sleep(for: .milliseconds(200))
         #expect(fake.agents.count == 1)
         #expect(bot.phase == .asleep)
     }
