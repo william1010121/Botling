@@ -1022,30 +1022,36 @@ private struct SettingsPage: View {
                 Text("Settings").font(.system(size: 15, weight: .semibold))
             }
 
-            PanelSection("Model") {
+            PanelSection("Model and thinking") {
                 VStack(spacing: 0) {
-                    ForEach(BotModel.allCases, id: \.self) { model in
-                        let chosen = (bot.switchTarget ?? bot.model) == model
-                        Button {
-                            Task { await bot.switchModel(to: model) }
-                        } label: {
-                            HStack {
-                                Text(model.displayName).foregroundStyle(chosen ? Theme.text : Theme.muted)
-                                Spacer()
-                                if chosen {
-                                    Image(systemName: "checkmark").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.blue)
-                                }
-                            }
-                            .padding(.horizontal, 16)
-                            .frame(height: 48)
-                            .background(chosen ? Color(hex: 0x22222A) : .clear)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(bot.isSwitching)
-                        if model != BotModel.allCases.last {
-                            Rectangle().fill(Theme.line).frame(height: 1)
-                        }
+                    DropdownRow(
+                        title: "Model",
+                        choices: BotModel.allCases,
+                        chosen: bot.switchTarget ?? bot.model,
+                        label: { $0.displayName },
+                        disabled: bot.isSwitching
+                    ) { model in
+                        Task { await bot.switchModel(to: model) }
+                    }
+                    Rectangle().fill(Theme.line).frame(height: 1)
+                    DropdownRow(
+                        title: "Subagent model",
+                        choices: [nil] + BotModel.allCases.map(Optional.some),
+                        chosen: bot.subagentModel,
+                        label: { $0?.displayName ?? "Same as bot" },
+                        disabled: bot.isSwitching
+                    ) { model in
+                        Task { await bot.setSubagentModel(model) }
+                    }
+                    Rectangle().fill(Theme.line).frame(height: 1)
+                    DropdownRow(
+                        title: "Thinking effort",
+                        choices: [nil] + EffortLevel.allCases.map(Optional.some),
+                        chosen: bot.effort,
+                        label: { $0?.displayName ?? "Default" },
+                        disabled: bot.isSwitching
+                    ) { level in
+                        Task { await bot.setEffort(level) }
                     }
                 }
                 .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
@@ -1068,30 +1074,8 @@ private struct SettingsPage: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
                 }
-            }
 
-            PanelSection("Subagent model") {
-                ChoiceList(
-                    choices: [nil] + BotModel.allCases.map(Optional.some),
-                    chosen: bot.subagentModel,
-                    title: { $0?.displayName ?? "Same as bot" },
-                    disabled: bot.isSwitching
-                ) { model in
-                    Task { await bot.setSubagentModel(model) }
-                }
-                SettingNote("The model the subagents it sends off use. An agent whose definition names a model keeps it.")
-            }
-
-            PanelSection("Thinking effort") {
-                ChoiceList(
-                    choices: [nil] + EffortLevel.allCases.map(Optional.some),
-                    chosen: bot.effort,
-                    title: { $0?.displayName ?? "Default" },
-                    disabled: bot.isSwitching
-                ) { level in
-                    Task { await bot.setEffort(level) }
-                }
-                SettingNote("How hard the bot thinks; its subagents think the same unless their definition says otherwise. Default leaves it to the model. Changing either setting hands over and restarts the bot, like a model switch; asleep, it applies when it wakes.")
+                SettingNote("Subagents use their own model and effort when their definition names one. Default effort leaves it to the model. Any change hands over and restarts the bot; asleep, it applies when it wakes.")
             }
 
             PanelSection("Routines") {
@@ -1152,42 +1136,32 @@ private struct SettingsPage: View {
     }
 }
 
-/// A short list to pick one from: 44pt rows, a blue checkmark on the one chosen.
-private struct ChoiceList<Choice: Hashable>: View {
+/// One setting in a card: its name on the left, a pop-up menu of the choices on the right.
+private struct DropdownRow<Choice: Hashable>: View {
+    let title: String
     let choices: [Choice]
     let chosen: Choice
-    let title: (Choice) -> String
+    let label: (Choice) -> String
     var disabled = false
     let pick: (Choice) -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(choices.enumerated()), id: \.offset) { index, choice in
-                let isChosen = choice == chosen
-                Button {
-                    if !isChosen { pick(choice) }
-                } label: {
-                    HStack {
-                        Text(title(choice)).foregroundStyle(isChosen ? Theme.text : Theme.muted)
-                        Spacer()
-                        if isChosen {
-                            Image(systemName: "checkmark").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.blue)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .frame(height: 44)
-                    .background(isChosen ? Color(hex: 0x22222A) : .clear)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .disabled(disabled)
-                if index < choices.count - 1 {
-                    Rectangle().fill(Theme.line).frame(height: 1)
+        HStack {
+            Text(title).foregroundStyle(Theme.text)
+            Spacer()
+            Picker(title, selection: Binding(get: { chosen }, set: { if $0 != chosen { pick($0) } })) {
+                ForEach(Array(choices.enumerated()), id: \.offset) { _, choice in
+                    Text(label(choice)).tag(choice)
                 }
             }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .fixedSize()
+            .disabled(disabled)
         }
-        .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .padding(.leading, 16)
+        .padding(.trailing, 10)
+        .frame(height: 44)
     }
 }
 
