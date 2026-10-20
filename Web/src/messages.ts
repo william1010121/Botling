@@ -69,9 +69,13 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
         column.append(body);
         if (chips) column.append(chips);
         // A component in the reply, or one made from it, takes the whole message column.
-        if (body.classList.contains("wide") || column.querySelector(".spec-built")) column.classList.add("wide");
+        if (body.classList.contains("wide") || column.querySelector(".spec-built")) {
+          column.classList.add("wide");
+          row.classList.add("wide");
+        }
         row.append(avatar(message.avatar), column, actions);
       } else {
+        if (body.classList.contains("wide")) row.classList.add("wide");
         row.append(avatar(message.avatar), body, actions);
       }
       break;

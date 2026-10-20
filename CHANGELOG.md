@@ -47,6 +47,15 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **A component in a reply sits inside its bubble.** A reply showing a component, a command's
+  card or a result page's preview pulled it 16px past the bubble's padding on both sides, so the
+  preview card (held to 480px) stuck out past the bubble's left edge and rounded corner and left a
+  gap on the right. Each now spans the bubble inside its padding, inset like the text on both
+  sides, with its frame rounded (12px); the preview card fills that width (an unedited shipped
+  card is upgraded), a command card's header lines up with the text, and a component made from a
+  reply is inset 16px in its tile the same way. The wide reply also reaches the input box's right
+  edge: its Reply / Make into component buttons float over its top-right corner on hover instead
+  of taking a column beside it.
 - **An opened pin's controls no longer cover its content.** On hover the ↻ ⋯ collapse pill
   sat over the component's top-right corner, hiding the first row's right-aligned time, and the
   report flag hid the last row's time at the bottom right. The pill now shows just above the

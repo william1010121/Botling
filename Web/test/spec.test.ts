@@ -136,7 +136,12 @@ describe("make into component, in the chat", () => {
       const built = row.querySelector<HTMLElement>(".spec-built")!;
       const shown = built.querySelector<HTMLElement>(":scope > .component")!;
       // The tile is the frame (the reply's bubble color, rounded); the component draws none.
-      expect(getComputedStyle(shown).borderRadius).toBe("18px");      expect(shown.querySelector<HTMLIFrameElement>("iframe")!.srcdoc).toContain('<html data-size="4x2" data-surface="chat">');
+      expect(getComputedStyle(shown).borderRadius).toBe("18px");
+      // Inset inside its tile as a reply's text is, the same on both sides.
+      expect(getComputedStyle(shown).paddingLeft).toBe("16px");
+      expect(getComputedStyle(shown).paddingRight).toBe("16px");
+      expect(row.classList.contains("wide")).toBe(true);
+      expect(shown.querySelector<HTMLIFrameElement>("iframe")!.srcdoc).toContain('<html data-size="4x2" data-surface="chat">');
     } finally {
       style.remove();
     }

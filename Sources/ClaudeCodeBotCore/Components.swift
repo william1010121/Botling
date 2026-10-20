@@ -312,7 +312,7 @@ public final class ComponentLibrary: ObservableObject {
     private func seedDefaults() {
         let defaults = [
             ("choices", ComponentDefaults.choicesTemplate, ComponentDefaults.choicesAbout, ComponentDefaults.olderChoicesTemplates, ComponentDefaults.olderChoicesAbouts),
-            (PagePreview.component, ComponentDefaults.previewTemplate, ComponentDefaults.previewAbout, [], [])
+            (PagePreview.component, ComponentDefaults.previewTemplate, ComponentDefaults.previewAbout, ComponentDefaults.olderPreviewTemplates, [])
         ]
         for (name, template, about, olderTemplates, olderAbouts) in defaults {
             let componentFolder = folder.appending(path: name)
@@ -673,13 +673,19 @@ enum ComponentDefaults {
     - 不需要使用者回答，不會呼叫 `ccb.answer`。
     """
 
+    /// The preview card up to 1.9, held to 480px: in a reply drawn wide it left a gap on the right.
+    static var olderPreviewTemplates: [String] {
+        [previewTemplate.replacingOccurrences(of: ".card { box-sizing:border-box; width:100%; border-radius:14px;",
+                                              with: ".card { box-sizing:border-box; width:100%; max-width:480px; border-radius:14px;")]
+    }
+
     static let previewTemplate = """
     <style>
       :root { --bg:#232328; --line:#303037; --text:#EDEDF0; --muted:#A0A0A8; --accent:#4C8DFF; --button:#1E2A44; --button-line:#2F4F8F; --empty:#1B1B1F; }
       @media (prefers-color-scheme: light) {
         :root { --bg:#FFFFFF; --line:#DCDCE3; --text:#1D1D22; --muted:#6A6A74; --accent:#2F6FE0; --button:#EAF1FF; --button-line:#B9CEF5; --empty:#F4F4F7; }
       }
-      .card { box-sizing:border-box; width:100%; max-width:480px; border-radius:14px; border:1px solid var(--line); background:var(--bg); color:var(--text); overflow:hidden; }
+      .card { box-sizing:border-box; width:100%; border-radius:14px; border:1px solid var(--line); background:var(--bg); color:var(--text); overflow:hidden; }
       .shot { position:relative; display:block; width:100%; height:270px; overflow:hidden; background:#FFFFFF; border-bottom:1px solid var(--line); cursor:pointer; }
       .shot:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
       .shot iframe { position:absolute; top:0; left:0; width:1280px; height:800px; border:0; background:#FFFFFF; transform-origin:0 0; pointer-events:none; }

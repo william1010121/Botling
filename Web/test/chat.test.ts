@@ -434,12 +434,35 @@ describe("messages", () => {
       // The reply spans the message column instead of shrinking to a narrow card.
       expect(bubble.classList.contains("wide")).toBe(true);
       expect(getComputedStyle(bubble).maxWidth).toBe("none");
-      // Each component runs edge to edge across it: the bubble is its frame, so a command's card
-      // draws no border of its own.
+      // Each component sits inside it, inset as its text is on both sides (never past its edge
+      // or its rounded corners), and as wide as the text: the bubble is its frame, so a command's
+      // card draws no border of its own, and its header lines up with the text too.
       const parts = [...bubble.querySelectorAll<HTMLElement>(":scope > .wide-part")];
       expect(parts).toHaveLength(3);
-      for (const part of parts) expect(getComputedStyle(part).marginLeft).toBe("-16px");
-      expect(getComputedStyle(bubble.querySelector<HTMLElement>(".command-card")!).borderTopStyle).toBe("none");
+      const padding = getComputedStyle(bubble);
+      expect(padding.paddingLeft).toBe("16px");
+      expect(padding.paddingRight).toBe(padding.paddingLeft);
+      for (const part of parts) {
+        const style = getComputedStyle(part);
+        expect(style.marginLeft).toBe("0px");
+        expect(style.marginRight).toBe("0px");
+      }
+      const card = bubble.querySelector<HTMLElement>(".command-card")!;
+      expect(getComputedStyle(card).borderTopStyle).toBe("none");
+      for (const inner of card.querySelectorAll<HTMLElement>(":scope > :not(.component)")) {
+        expect(getComputedStyle(inner).paddingLeft).toBe("0px");
+        expect(getComputedStyle(inner).paddingRight).toBe("0px");
+      }
+      // Its frame has its own rounded corners, so a component that paints to its edge is clipped clean.
+      for (const frame of bubble.querySelectorAll<HTMLElement>(".wide-part .component-frame")) {
+        expect(getComputedStyle(frame).borderRadius).toBe("12px");
+      }
+      // The reply reaches the column's right edge, as the input box does: its hover actions float
+      // over its top-right corner rather than taking a column beside it.
+      expect(row.classList.contains("wide")).toBe(true);
+      const actions = row.querySelector<HTMLElement>(":scope > .message-actions, :scope > .reply-button")!;
+      expect(getComputedStyle(actions).position).toBe("absolute");
+      expect(getComputedStyle(row).position).toBe("relative");
       // Told it is in the chat, at the widest size it has (2×2 when it names none).
       const frames = bubble.querySelectorAll<HTMLIFrameElement>(".component-frame");
       expect(frames[0].srcdoc).toContain('<html data-size="4x2" data-surface="chat">');
@@ -452,6 +475,7 @@ describe("messages", () => {
       // A reply of words alone keeps its own width.
       const words = messageElement(message({ id: "w2", text: "Just words." }), components);
       expect(words.querySelector(".bot-bubble")!.classList.contains("wide")).toBe(false);
+      expect(words.classList.contains("wide")).toBe(false);
       // A question's options are not a wide component.
       const asked = messageElement(message({ id: "w3", open: true, choices: [{ label: "A", detail: null, recommended: false }] }),
         { choices: info });
