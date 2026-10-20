@@ -4,10 +4,11 @@
 
 # ClaudeCodeBot
 
-**A front desk for your local Claude Code agents, on macOS.**
+**A team of Claude Code agents on your Mac, in one chat.**
 
-Talk to one main bot. It knows what every project is up to, hands work to the right one,
-and only interrupts you when something needs a decision.
+Hand off real work to background subagents running in parallel, see the results as live
+components you can pin, and change the app itself with plugins. All local, on the `claude` CLI
+you already have.
 
 [![Latest release](https://img.shields.io/github/v/release/william1010121/ClaudeCodeBot?label=release&color=4c8bf5)](https://github.com/william1010121/ClaudeCodeBot/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/william1010121/ClaudeCodeBot/total?color=4c8bf5)](https://github.com/william1010121/ClaudeCodeBot/releases)
@@ -32,17 +33,14 @@ and only interrupts you when something needs a decision.
 
 ## Why
 
-Running several Claude Code sessions means juggling terminals, remembering which one was doing
-what, and checking back on each. ClaudeCodeBot puts a messenger-style app in front of them:
-
-- **One place to ask.** The main bot answers "how is X going?" from the managers' memory files,
-  without waking them.
-- **Bots that sleep.** Each bot is a long-lived `claude` process that naps after 50 idle minutes,
-  writing down what matters first, and wakes when you (or a routine) need it.
-- **Interruptions that earn it.** Bots report in their own chats; when you need to decide, you
-  get buttons with a recommended option and what each one costs.
-- **Everything stays local.** It drives the `claude` CLI already on your Mac; chats and memory are
-  plain files in `~/.claudecodebot`.
+- **A team that works while you talk.** Real work goes to background subagents running in
+  parallel, so the bot is never too busy to answer you.
+- **Answers you can see.** Charts and cards drawn right in the chat, one click from becoming a
+  pinned chip or a Board tile.
+- **An app that changes itself.** Plugins hot-reload, and in developer mode the bot works on
+  ClaudeCodeBot's own source.
+- **Nothing leaves your Mac but Claude.** It drives the `claude` CLI you already have; chats and
+  memory are plain markdown files.
 
 ## Features
 
@@ -50,98 +48,107 @@ what, and checking back on each. ClaudeCodeBot puts a messenger-style app in fro
 <tr>
 <td width="50%" valign="top">
 
-### A main bot and one manager per project
+### 1. A background subagent team
 
-Add a folder and it gets a manager that works there. The main bot reads every manager's
-`memory.md`, hands work over through each project's inbox, and calls up a temporary research or
-prototype team for anything that belongs to no project. Make bots of your own too, like a
-morning news bot, with their own memory and routines.
+Real work (building, fixing, researching) is handed to subagents that run in the background and
+in parallel, so the bot stays free to talk to you. Subagents that change code work in a git
+worktree of their own and merge when their tests pass. The right panel shows each one running,
+then settled, and a dropped network does not lose them: they carry on where they stopped.
 
 </td>
 <td width="50%" valign="top">
 
-<img src="docs/images/sidebar.png" alt="The left column open and folded into a strip of faces">
+<img src="docs/images/right-panel.png" alt="The right panel: what the bot is doing now, its results and the subagents it settled">
 
 </td>
 </tr>
 <tr>
-<td valign="top">
-
-<img src="docs/images/chat.png" alt="A chat with LaTeX, a table, a result page preview card and an answered decision">
-
-</td>
-<td valign="top">
-
-### A chat that does more than text
-
-Markdown, LaTeX (KaTeX), tables, images and videos, attachments, replies to a message, and an
-input box that works with Chinese and Japanese input methods. Result pages show as preview
-cards and open in windows of their own. Each reply folds the tool steps behind it. Group chats
-work like a messenger: `@name` talks to one bot; without an @, every member reads and answers
-only if it has something to add.
-
-</td>
-</tr>
-<tr>
-<td valign="top">
-
-### Components, pins and a Board
-
-A bot can show a small HTML component in a reply, fed by a CLI command
-(`<show name="…" command="git diff --stat">`). Make any reply into a component, pin it above the
-input box as a status chip, or lay pins out on a per-bot **Board**, a widget grid.
-
-</td>
 <td valign="top">
 
 <img src="docs/images/component.png" alt="A test-summary component under a bot's reply, drawn from a CLI command">
 
 </td>
-</tr>
-<tr>
 <td valign="top">
 
-<img src="docs/images/codex-review.png" alt="Codex review reports: findings by file with severity filters">
+### 2. Components, pins and a Board in the chat
 
-</td>
-<td valign="top">
-
-### Code review by Codex (optional)
-
-With the [Codex CLI](https://github.com/openai/codex) installed, **Review with Codex** in a
-project's right panel runs a read-only review of uncommitted changes or a commit and opens a
-report: findings by file, filters by severity, send picked ones back to the bot, mark fixed,
-run again. A per-bot review loop can have Codex check subagents' work until it is clean.
+Bots draw small HTML components (charts, cards, test summaries) inside their replies, fed by
+their own data or a CLI command (`<show name="…" command="git diff --stat">`). Pin one above
+the input box as a status chip with its icon and a short status, or lay pins out as tiles on a
+per-bot **Board**, a widget grid.
 
 </td>
 </tr>
 <tr>
+<td colspan="2" valign="top">
+
+### 3. One click turns a reply into a component
+
+Press **Make into component** on any reply (or the suggestion chip a bot adds when it sees
+something you will ask for again) and the Maintainer builds the first version from that reply,
+asking nothing. It reuses a component from the library when one already does the job.
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
+### 4. `/design` gives you a Claude Design to pick from
+
+Say `/design` (or ask for designs to choose from) and the bot makes a
+[Claude Design](https://claude.ai) and replies with its shareable claude.ai link. Pick one and
+the Maintainer builds that one into the app.
+
+</td>
+</tr>
+<tr>
 <td valign="top">
 
-### What is going on, at a glance
+### 5. Plugins and developer mode: change the app itself
 
-The right panel shows what a bot is doing now, its results and the subagents it settled. Fold it
-(and the left column) into a strip of icons when you want the chat wide.
+Plugins change the app VS Code style (the input box, how messages are drawn, panels, hooks,
+skills and MCP servers) and **hot-reload** when their files change, keeping the last good version
+if a new one breaks. Ask the Maintainer to write one for you. Turn on **developer mode** and the
+bot works on ClaudeCodeBot's own source: builds, installs (with rollback) and fixes what you
+mark "Not right"; send the change back upstream as a [pull request](CONTRIBUTING.md).
 
 </td>
 <td valign="top">
 
-<img src="docs/images/right-panel.png" alt="The right panel open and folded into a strip of icons">
+<img src="docs/flowcharts/flow-5-plugins.png" alt="How plugins flow: the Maintainer edits the plugin library, the app hot-reloads it and hands it to every bot">
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
+### 6. Everything stays on your Mac
+
+ClaudeCodeBot drives the `claude` CLI already signed in on your Mac: no server, no account of
+its own. Chats, memory, routines and the plugin library are plain markdown and text files in
+`~/.claudecodebot`; each project's notes live in its git-ignored `.bot/` folder.
 
 </td>
 </tr>
 </table>
 
-And also:
+### Also
 
-- **Asks before using a tool it may not use**: Allow once / Always allow / Don't allow, in the chat.
-  Safe actions can be auto-approved (Claude Code's auto mode, on by default).
-- **Routines**: each bot has a crontab-style `routines.cron`, which bots edit themselves when you ask.
-- **Settings**: today's tokens and cost per bot, a daily budget, per-bot model and thinking effort,
-  permissions, plugins, and **Doctor**, which checks your Claude Code and Codex installs.
-- **The Maintainer**: a built-in project that keeps the plugin library (a git repo). Report a
-  problem next to a component, or ask in chat, and it edits, checks, commits and tags the
-  plugin; the app hot-reloads it and keeps the last good version if a new one breaks.
+- **A main bot and one manager per project.** The main bot answers "how is X going?" from each
+  manager's `memory.md`, hands work over through project inboxes, and calls up a temporary
+  research or prototype team for anything else. Make bots of your own too.
+- **Bots that sleep.** Each bot is a long-lived `claude` process that naps after 50 idle minutes,
+  writing down what matters first, and wakes when you or a routine need it.
+- **Decisions as buttons**, with a recommended option and what each one costs; tool permission
+  asks (Allow once / Always / Don't allow) in the chat, with Claude Code's auto mode on by default.
+- **Code review by Codex** (optional): review uncommitted changes or a commit from the right
+  panel, or have Codex check subagents' work in a loop until it is clean.
+- **A rich chat**: Markdown, LaTeX, tables, images, videos, attachments, replies, group chats with
+  `@name`, result pages as preview cards, and an input box that works with CJK input methods.
+- **Routines**: a crontab-style `routines.cron` per bot, which bots edit when you ask.
+- **Usage at a glance**: today's tokens per bot, rings for the 5-hour and weekly limits, a daily
+  budget, per-bot model and effort, and **Doctor** to check your Claude Code and Codex installs.
+- **Panels that fold**: the left column into a strip of faces, the right panel into icons.
 
 ## Install
 
