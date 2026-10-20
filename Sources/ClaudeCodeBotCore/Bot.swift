@@ -59,6 +59,10 @@ public final class Bot: ObservableObject, Identifiable {
     public var extraDirectories: (() -> [URL])?
     /// Plugins' Claude parts (skills, agents, MCP) it starts with.
     public var pluginDirectories: (() -> [URL])?
+    /// What those plugins' Claude parts are now (see `PluginRegistry.claudeStamp`).
+    public var pluginStamp: (() -> [String])?
+    /// The stamp its session started with: a plugin change it already has needs no handoff.
+    private var loadedPluginStamp: [String]?
     /// Plugins' MCP tools it may use, and the secrets their servers read.
     public var pluginTools: (() -> [String])?
     public var pluginEnvironment: (() -> [String: String])?
@@ -591,6 +595,10 @@ public final class Bot: ObservableObject, Identifiable {
     private func start(resuming: UUID? = nil) throws -> AgentProcess {
         guard !removed else { throw CocoaError(.userCancelled) }
         let session = resuming ?? UUID()
+        // A new process loads what it starts with now (plugins, effort, folders): a restart
+        // waiting for it is done.
+        pendingRestart = nil
+        loadedPluginStamp = pluginStamp?()
         let process = try launcher(AgentLaunch(
             model: model,
             sessionID: session,
@@ -1323,17 +1331,22 @@ public final class Bot: ObservableObject, Identifiable {
     /// Plugins' Claude parts changed. Asleep: the next wake loads them. Awake: hand over and
     /// restart once it is free, so the new skills and agents are there.
     public func reloadPlugins() async {
+        // Its session already has these (they changed back, or it started after the change).
+        if let stamp = pluginStamp?(), stamp == loadedPluginStamp { return }
         await restart(divider: "Handoff → loading new plugins")
     }
 
     /// Hands over and starts a fresh session (same model) so it picks up what it starts with
     /// (plugins, folders). Asleep: nothing to do, the next wake has it. Busy: once it is free.
+    /// A subagent at work in the background counts as busy: the handoff would end it. Several
+    /// restarts asked for while busy make one, after the turn that tells you its report.
     public func restart(divider: String) async {
         guard phase != .asleep else {
             pendingRestart = nil
             return
         }
-        if isWorking || phase == .tidying || isSwitching || phase != .awake {
+        if isWorking || phase == .tidying || isSwitching || phase != .awake
+            || trace.subagents.contains(where: \.isRunning) {
             pendingRestart = divider
             return
         }

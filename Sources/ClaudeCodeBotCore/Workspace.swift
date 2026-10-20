@@ -1340,6 +1340,7 @@ public final class Workspace: ObservableObject {
     /// those servers read.
     private func giveClaudeParts(to bot: Bot) {
         bot.pluginDirectories = { [weak self] in self?.plugins.claudeDirectories() ?? [] }
+        bot.pluginStamp = { [weak self] in self?.plugins.claudeStamp() ?? [] }
         bot.pluginTools = { [weak self] in self?.plugins.claudeTools() ?? [] }
         bot.pluginEnvironment = { [weak self] in self?.plugins.secretEnvironment() ?? [:] }
         bot.autoMode = { [weak self] in self?.settings.autoApprovesSafeActions ?? false }
@@ -1356,16 +1357,19 @@ public final class Workspace: ObservableObject {
     }
 
     /// Plugins' Claude parts changed: refresh the team list, and restart awake bots (once they
-    /// are free) so they get the new skills, agents and MCP servers.
+    /// are free: no turn and no subagent at work) so they get the new skills, agents and MCP
+    /// servers. A changed part is out of the list only while it is checked again; that moment
+    /// is not a change of its own, so one edit makes one handoff, after the check.
     private func followClaudeParts() {
-        var loaded = plugins.claudeDirectories()
+        var loaded = plugins.claudeStamp()
         plugins.$revision
             .dropFirst()
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     teams = loadTeams()
-                    let now = plugins.claudeDirectories()
+                    guard !plugins.checkingClaudeParts else { return }
+                    let now = plugins.claudeStamp()
                     guard now != loaded else { return }
                     loaded = now
                     for bot in [mainBot] + Array(managers.values) where bot.phase != .asleep {
