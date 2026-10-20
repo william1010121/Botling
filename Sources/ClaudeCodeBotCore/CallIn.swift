@@ -12,13 +12,19 @@ extension Workspace {
         return everyMember.filter { $0.bot !== chat }
     }
 
+    /// The bots the @ menu offers in `chat`: only the global ones (Main bot, Maintainer), not
+    /// every project's bot. A project bot typed by hand can still be called in.
+    public func offeredAfterAt(in chat: Bot) -> [Member] {
+        callable(into: chat).filter { $0.id == Self.mainBotID || $0.id == Self.maintainerID }
+    }
+
     /// What the chat page needs to show called-in bots: who is answering, their names, and the
-    /// names you can @.
+    /// names the @ menu offers.
     public func callInView(for chat: Bot) -> ChatPayload.GroupView? {
         guard let host = hostID(of: chat) else { return nil }
         return ChatPayload.GroupView(
             typing: callInSpeakers[host],
-            names: callable(into: chat).map(\.name),
+            names: offeredAfterAt(in: chat).map(\.name),
             speaker: { [weak self] id in self?.speakerName(for: id) }
         )
     }

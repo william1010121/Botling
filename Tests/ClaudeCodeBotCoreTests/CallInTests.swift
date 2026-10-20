@@ -33,6 +33,22 @@ struct CallInTests {
         #expect(workspace.callable(into: try #require(workspace.groupChats[group.id])).isEmpty)
     }
 
+    @Test func theAtMenuInABotsOwnChatListsOnlyMainBotAndMaintainer() throws {
+        let workspace = makeWorkspace(FakeLauncher())
+        let garden = workspace.addProject(folder: try folder("garden"))
+        let orchard = workspace.addProject(folder: try folder("orchard"))
+        let gardenChat = try #require(workspace.bot(for: garden))
+        // Other projects' bots are not offered after @, only the global bots.
+        #expect(workspace.callInView(for: gardenChat)?.names == ["Main bot", "Maintainer"])
+        #expect(workspace.callInView(for: workspace.mainBot)?.names == ["Maintainer"])
+        #expect(workspace.callInView(for: workspace.maintainer)?.names == ["Main bot"])
+        // A group's menu is its members only.
+        let group = try #require(workspace.createGroup(name: "Team", members: [garden.id, orchard.id]))
+        let groupChat = try #require(workspace.groupChats[group.id])
+        #expect(workspace.callInView(for: groupChat) == nil)
+        #expect(Set(workspace.members(of: group).map(\.name)) == ["garden", "orchard"])
+    }
+
     @Test func aBotNamedWithAtAnswersInThisChatUnderItsOwnName() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
