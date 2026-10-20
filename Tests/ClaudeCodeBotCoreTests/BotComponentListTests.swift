@@ -120,9 +120,10 @@ struct BotComponentListTests {
     @Test func aBotsRequestSaysWhichBotAskedAndAnExistingOneIsJustAdded() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
-            if isAppOnly(text) { return "OK" }
+            // A note queued before a message (its components changed) comes ahead of it.
             if text.hasSuffix("Show the weather") { return "I need a card.\n<component name=\"weather\">a weather card</component>" }
             if text.hasSuffix("Show a toast") { return "Needs a new one.\n<component name=\"toast\">an error toast</component>" }
+            if isAppOnly(text) { return "OK" }
             return "Got it"
         }
         let workspace = makeWorkspace(fake)
@@ -265,6 +266,106 @@ struct BotComponentListTests {
         #expect(bot.messages.last?.role == .notice)
         #expect(bot.messages.last?.text.contains("weather") == true)
         #expect(!bot.messages.contains { $0.role == .user && $0.text.contains("刪除組件") })
+        await workspace.putEveryoneToSleep()
+    }
+
+    // MARK: Hearing back
+
+    /// The user's case: the main bot asked for a component the library already had. The app put
+    /// it on its list, but the bot was never told, so it never showed the chart. Now it hears at
+    /// once, with the user's original request, answers it with <show>, and the chat says so.
+    @Test func aBotHearsBackWhenTheComponentItAskedForIsAddedAndShowsIt() async throws {
+        let fake = FakeLauncher()
+        fake.respond = { text in
+            if text.contains("Maintainer added the component \"daily-chats-pie\"") {
+                return "今天的統計：<show name=\"daily-chats-pie\">[]</show>"
+            }
+            if isAppOnly(text) { return "OK" }
+            if text.hasSuffix("今天對話次數統計") {
+                return "圖還不在我的清單裡，已請 Maintainer 加入。\n<component name=\"daily-chats-pie\">add it to my list</component>"
+            }
+            return "Got it"
+        }
+        let workspace = makeWorkspace(fake)
+        await workspace.pluginLibraryReady.value
+        try addComponent("daily-chats-pie", about: "今日對話次數（圓餅圖）：各 bot 今天的訊息數。\nData: []", to: workspace)
+        let main = workspace.mainBot
+
+        main.send("今天對話次數統計")
+        await eventually { main.messages.last?.shown.first?.name == "daily-chats-pie" }
+        #expect(main.componentList?.contains("daily-chats-pie") == true)
+        // What it was told names the component, the user's request, and its usage.
+        let told = try #require(fake.agents.flatMap(\.sent).first { $0.contains("Maintainer added the component") })
+        #expect(told.contains("今天對話次數統計"))
+        #expect(told.contains("<show name=\"daily-chats-pie\">"))
+        #expect(told.contains("各 bot 今天的訊息數"))
+        // The user sees a short line about it.
+        let notice = try #require(main.messages.last { $0.role == .notice })
+        #expect(notice.text.contains("Maintainer added"))
+        #expect(notice.text.contains("今日對話次數"))
+        #expect(notice.text.contains("your components"))
+        await workspace.putEveryoneToSleep()
+    }
+
+    /// A new component Maintainer built, or one it handed over in its place with <give-component>:
+    /// either way the bot that asked hears it, with what the user wanted, and shows it.
+    @Test func aBotHearsBackWhenMaintainerBuildsOrGivesOne() async throws {
+        let fake = FakeLauncher()
+        fake.respond = { text in
+            if text.contains("Maintainer added the component \"toast\"") { return "<show name=\"toast\">{}</show>" }
+            if text.contains("Maintainer added the component \"weather\"") { return "<show name=\"weather\">{}</show>" }
+            // A note queued before a message (its components changed) comes ahead of it.
+            if text.hasSuffix("Warn me on errors") { return "<component name=\"toast\">an error toast</component>" }
+            if text.hasSuffix("Forecast please") { return "<component name=\"forecast\">a forecast card</component>" }
+            if isAppOnly(text) { return "OK" }
+            return "Got it"
+        }
+        let workspace = makeWorkspace(fake)
+        await workspace.pluginLibraryReady.value
+        try addComponent("weather", to: workspace)
+        let (_, bot) = try garden(in: workspace)
+
+        bot.send("Warn me on errors")
+        await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text.contains("toast") } }
+        try addComponent("toast", to: workspace)
+        await eventually { bot.messages.last?.shown.first?.name == "toast" }
+        let built = try #require(fake.agents.flatMap(\.sent).first { $0.contains("Maintainer added the component \"toast\"") })
+        #expect(built.contains("Warn me on errors"))
+        #expect(bot.messages.contains { $0.role == .notice && $0.text.contains("Maintainer added toast") })
+
+        bot.send("Forecast please")
+        await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text.contains("forecast") } }
+        workspace.handle([.giveComponent(bot: "garden", name: "weather")], from: workspace.maintainerProject)
+        await eventually { bot.messages.last?.shown.first?.name == "weather" }
+        let given = try #require(fake.agents.flatMap(\.sent).first { $0.contains("Maintainer added the component \"weather\"") })
+        #expect(given.contains("Forecast please"))
+        #expect(given.contains("\"forecast\""))
+        await workspace.putEveryoneToSleep()
+    }
+
+    /// Maintainer will not (or could not) do it: the bot hears Maintainer's answer and tells the
+    /// user, instead of waiting for a component that never comes.
+    @Test func aBotHearsWhenMaintainerDeclines() async throws {
+        let fake = FakeLauncher()
+        fake.respond = { text in
+            if text.contains("Maintainer did not add") { return "抱歉，Maintainer 不做 toast。" }
+            if text.hasSuffix("Warn me on errors") { return "<component name=\"toast\">an error toast</component>" }
+            if isAppOnly(text) { return "OK" }
+            if text.contains("wants a new component \"toast\"") { return "I won't build toast: the app's own notices already do this." }
+            return "Got it"
+        }
+        let workspace = makeWorkspace(fake)
+        await workspace.pluginLibraryReady.value
+        let (_, bot) = try garden(in: workspace)
+
+        bot.send("Warn me on errors")
+        await eventually { bot.messages.last?.text == "抱歉，Maintainer 不做 toast。" }
+        let told = try #require(fake.agents.flatMap(\.sent).first { $0.contains("Maintainer did not add") })
+        #expect(told.contains("Warn me on errors"))
+        #expect(told.contains("the app's own notices already do this"))
+        #expect(told.contains("Tell the user"))
+        #expect(bot.messages.contains { $0.role == .notice && $0.text.contains("toast") && $0.text.contains("Maintainer") })
+        #expect(bot.componentList?.contains("toast") == false)
         await workspace.putEveryoneToSleep()
     }
 

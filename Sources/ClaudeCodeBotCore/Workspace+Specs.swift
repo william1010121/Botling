@@ -357,6 +357,8 @@ extension Workspace {
         chat.editSpecs { specs in
             guard let at = specs.firstIndex(where: { $0.id == id }) else { return }
             specs[at].filledBy = writer.name
+            // A new version's data may differ: the old fill waits for the new one.
+            specs[at].filled = nil
             specs[at].fillError = nil
             specs[at].conversation.append(.init(kind: .event, text: "Asked \(writer.name) to fill it from its reply"))
         }

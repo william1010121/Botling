@@ -385,6 +385,35 @@ struct ComponentSpecTests {
         #expect(bot.specs.first?.conversation.last?.text == "Filled by garden")
     }
 
+    /// Maintainer changes the reply's component (Build it, a new version): the bot that wrote the
+    /// reply hears it too, and draws the new version from its reply again, with the new usage.
+    @Test func aNewVersionIsFilledAgainByTheBotThatWroteTheReply() async throws {
+        let fake = fillingLauncher()
+        let workspace = makeWorkspace(fake)
+        let bot = try garden(in: workspace)
+        let reply = featureListReply(in: bot)
+        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        workspace.handle([.componentSpec(id: spec.id.uuidString, json: #"{"name":"multi-select"}"#)], from: workspace.maintainerProject)
+        try addComponent("multi-select", about: "Pick several options.\nData: {\"options\": [{\"title\": text}]}", to: workspace)
+        await eventually { bot.specs.first?.filled != nil }
+        let asks = { fake.agents.flatMap(\.sent).filter { $0.contains(Self.fillMarker) } }
+        #expect(asks().count == 1)
+
+        workspace.editSpec(spec.id, key: "about", value: "Group them by area", in: bot)
+        workspace.buildSpec(spec.id, in: bot)
+        try addComponent("multi-select", about: "Pick several options, grouped.\nData: {\"groups\": [{\"area\": text, \"options\": [{\"title\": text}]}]}", to: workspace)
+        workspace.finishSpecBuilds()
+        // Its old data was for the old version: the chip says it is being filled again.
+        #expect(bot.specs.first?.filling == true)
+        await eventually { asks().count == 2 }
+        let again = try #require(asks().last)
+        #expect(again.contains("<show name=\"multi-select\">"))
+        #expect(again.contains("\"groups\""))
+        #expect(again.contains("Routines 每日排程"))
+        await eventually { bot.specs.first?.filling == false && bot.specs.first?.filled != nil }
+        #expect(bot.specs.first?.filledBy == "garden")
+    }
+
     @Test func theFillWaitsUntilTheBotIsFree() async throws {
         let fake = fillingLauncher()
         let workspace = makeWorkspace(fake)

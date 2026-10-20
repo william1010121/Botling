@@ -123,8 +123,9 @@ public final class Workspace: ObservableObject {
     public let componentCommands: ComponentCommands
     /// How often each component card has been drawn (`component-usage.json`).
     public let componentUsage: ComponentUsage
-    /// New components bots asked for, by name: each goes on those bots' lists once it is built.
-    var componentAsks: [String: Set<UUID>] = [:]
+    /// Components bots asked Maintainer for and have not heard back about yet: each bot is told
+    /// once Maintainer gives, builds or changes it, or answers without doing so.
+    var componentAsks: [ComponentAsk] = []
     /// The component spec shown in the right panel (its chip pressed), if any.
     @Published public internal(set) var openSpecID: UUID?
     /// The spec workspace spread wide (its expand button), while it shows.
@@ -1128,7 +1129,7 @@ public final class Workspace: ObservableObject {
         let exists = components.names.contains(name)
         let pictures = files.isEmpty ? "" : " (Attached: \(files.count == 1 ? "a picture" : "\(files.count) pictures") of how it looks now or should look.)"
         // Which bot asked, and how full its own list is (the library has no cap).
-        let note = componentAskNote(name, exists: exists, from: bot)
+        let note = componentAskNote(name, request: request, exists: exists, from: bot)
         handToMaintainer(exists
             ? "\(asker)'s request for the component \"\(name)\": \(said)\(pictures)\(note)"
             : "\(asker) wants a new component \"\(name)\": \(said)\(pictures)\(note)", files: files)
@@ -2059,11 +2060,15 @@ public final class Workspace: ObservableObject {
         }
         giveClaudeParts(to: bot)
         countComponents(of: bot)
-        bot.onReply = { [weak self, weak bot] _, _ in
+        bot.onReply = { [weak self, weak bot] message, _ in
             guard let self else { return }
             if project.isMaintainer {
                 components.finishWorking()
                 finishSpecBuilds()
+                // After the reply's own tags (a <give-component>) are acted on.
+                if !componentAsks.isEmpty {
+                    Task { @MainActor [weak self] in self?.settleComponentAsks(after: message) }
+                }
             }
             refreshWaiting()
             if selection == project.id { bot?.markRead() }
