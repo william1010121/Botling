@@ -21,6 +21,9 @@ public final class Bot: ObservableObject, Identifiable {
     @Published public private(set) var codexSettings: CodexSettings
     /// Components pinned to it: the chips above its input box and its Board (`pins.json`).
     @Published public private(set) var pins: [PinnedComponent] = []
+    /// Components being made from its replies: a chip under each, a workspace in the right
+    /// panel once pressed (`specs.json`).
+    @Published public private(set) var specs: [ComponentSpec] = []
     /// Called when you change `codexSettings`, so an awake bot hears the new rules.
     public var onCodexSettings: ((CodexSettings) -> Void)?
     /// The components it has from the shared library (at most `ComponentLibrary.limit`); its
@@ -206,6 +209,7 @@ public final class Bot: ObservableObject, Identifiable {
         codexSettings = store?.loadCodexSettings() ?? CodexSettings()
         componentList = store?.loadComponentList()
         pins = store?.loadPins() ?? []
+        specs = store?.loadSpecs() ?? []
         routineFile = RoutineFile(url: profile.routinesURL)
         // The main bot starts with a daily summary; managers with none. Routines saved the old way
         // move into the file.
@@ -1264,6 +1268,15 @@ public final class Bot: ObservableObject, Identifiable {
         guard edited != pins else { return }
         pins = edited
         store?.save(pins: edited)
+    }
+
+    /// Changes its component specs (see `Workspace+Specs`) and saves them, if anything changed.
+    public func editSpecs(_ change: (inout [ComponentSpec]) -> Void) {
+        var edited = specs
+        change(&edited)
+        guard edited != specs else { return }
+        specs = edited
+        store?.save(specs: edited)
     }
 
     /// Plugins' Claude parts changed. Asleep: the next wake loads them. Awake: hand over and

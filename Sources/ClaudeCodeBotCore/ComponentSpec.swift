@@ -1,0 +1,567 @@
+import Foundation
+
+/// A component being made from a bot's reply ("Make into component", or a bot's own
+/// `<suggest-component>`): what it shows (its data fields), where the data comes from (a command
+/// run in the bot's folder), how it refreshes, which bots get it, and whether a component already
+/// in the library would do. In the chat it is a small chip under the reply; pressed, it opens as a
+/// workspace in the right panel, shaped with Maintainer in a side conversation. Nothing runs or
+/// is built until the user test-runs it (through the usual command allow flow) or presses Build.
+/// Saved per bot in `specs.json` beside its chat.
+public struct ComponentSpec: Codable, Equatable, Identifiable, Sendable {
+    /// Who set a value: the user (blue), Maintainer (purple), or the app's first draft.
+    public enum Origin: String, Codable, Sendable {
+        case user, maintainer, app
+    }
+
+    public enum Status: String, Codable, Sendable {
+        case draft, building, done
+    }
+
+    /// One field of the data the component draws.
+    public struct Field: Codable, Equatable, Sendable {
+        public var name: String
+        /// "int", "num", "text", "bool", "time", "[a, b]" (a list of such), "{…}".
+        public var type: String
+        public var by: Origin
+
+        public init(name: String, type: String, by: Origin = .app) {
+            self.name = name
+            self.type = type
+            self.by = by
+        }
+    }
+
+    /// Data to preview it with ("This reply", "Failing run", "Empty").
+    public struct Sample: Codable, Equatable, Sendable {
+        public var label: String
+        public var data: String
+
+        public init(label: String, data: String) {
+            self.label = label
+            self.data = data
+        }
+    }
+
+    /// Something Maintainer could not infer, with answers to pick (one suggested).
+    public struct Question: Codable, Equatable, Sendable {
+        public struct Option: Codable, Equatable, Sendable {
+            public var label: String
+            /// What picking it sets `key` to; nil: the label is only said to Maintainer.
+            public var value: String?
+
+            public init(label: String, value: String? = nil) {
+                self.label = label
+                self.value = value
+            }
+        }
+
+        public var id: String
+        /// The spec value it decides ("refresh", "reuse", "command", …), if any.
+        public var key: String?
+        public var text: String
+        public var options: [Option]
+        public var suggested: Int?
+
+        public init(id: String, key: String? = nil, text: String, options: [Option], suggested: Int? = nil) {
+            self.id = id
+            self.key = key
+            self.text = text
+            self.options = options
+            self.suggested = suggested
+        }
+    }
+
+    /// A line of the side conversation with Maintainer.
+    public struct Line: Codable, Equatable, Sendable {
+        public enum Kind: String, Codable, Sendable {
+            case user, maintainer, event
+        }
+
+        public var kind: Kind
+        public var text: String
+
+        public init(kind: Kind, text: String) {
+            self.kind = kind
+            self.text = text
+        }
+    }
+
+    /// The last test run of its command: what it printed, and whether that fits the fields.
+    public struct TestRun: Codable, Equatable, Sendable {
+        public var command: String
+        public var folder: String
+        public var output: String?
+        public var error: String?
+        public var ranAt: Date?
+        public var matches: Bool?
+
+        public init(command: String, folder: String, output: String? = nil, error: String? = nil, ranAt: Date? = nil, matches: Bool? = nil) {
+            self.command = command
+            self.folder = folder
+            self.output = output
+            self.error = error
+            self.ranAt = ranAt
+            self.matches = matches
+        }
+    }
+
+    public var id: UUID
+    /// The reply it is made from.
+    public var messageID: UUID?
+    /// The result page it is made from, when made from an HTML result card.
+    public var page: String?
+    public var name: String
+    /// What it shows, in a sentence (its about.md's first line).
+    public var about: String
+    public var fields: [Field]
+    /// What gives it its data, run in `folder`; nil: it draws the data a bot writes.
+    public var command: String?
+    public var folder: String
+    public var refresh: PinnedComponent.Refresh
+    public var minutes: Int
+    /// The bots whose lists it goes on.
+    public var bots: [String]
+    /// A component in the library that already does much of this, and whether to use it instead.
+    public var similar: String?
+    public var reuse: Bool
+    public var samples: [Sample]
+    public var questions: [Question]
+    public var conversation: [Line]
+    /// Who last set each value ("name", "about", "command", "refresh", "bots", "reuse", …).
+    public var origins: [String: Origin]
+    public var status: Status
+    /// Bumps each time Maintainer updates it.
+    public var draft: Int
+    /// The bot that suggested it with `<suggest-component>`; nil when the user made it.
+    public var suggestedBy: String?
+    /// It has been opened (the panel shown) at least once; Maintainer drafts it then.
+    public var opened: Bool
+    /// Maintainer was asked to draft it.
+    public var asked: Bool
+    /// The reply already is this library component: only which bots get it is left.
+    public var existing: String?
+    /// The component drawn in the reply, whose look the preview borrows before it is built.
+    public var shownAs: String?
+    public var testRun: TestRun?
+    /// The user's changes Maintainer has not heard yet (said with the next message or Build).
+    public var pendingEdits: [String]
+    public var createdAt: Date
+
+    public init(id: UUID = UUID(), messageID: UUID? = nil, name: String, about: String = "", folder: String, bots: [String], createdAt: Date = Date()) {
+        self.id = id
+        self.messageID = messageID
+        page = nil
+        self.name = name
+        self.about = about
+        fields = []
+        command = nil
+        self.folder = folder
+        refresh = .manual
+        minutes = PinnedComponent.defaultMinutes
+        self.bots = bots
+        similar = nil
+        reuse = false
+        samples = []
+        questions = []
+        conversation = []
+        origins = [:]
+        status = .draft
+        draft = 1
+        suggestedBy = nil
+        opened = false
+        asked = false
+        existing = nil
+        shownAs = nil
+        testRun = nil
+        pendingEdits = []
+        self.createdAt = createdAt
+    }
+
+    /// The card key its test runs go under (`ComponentCommands`), apart from chat cards and pins.
+    public var card: String { "spec/\(id.uuidString)" }
+}
+
+/// Making specs: the app's first draft from a reply, Maintainer's updates, the user's edits.
+@MainActor
+public enum ComponentSpecs {
+    // MARK: The first draft
+
+    /// What the app can tell from a reply alone: the data a component in it was drawn with (its
+    /// fields and a sample), the command that gave it (the card's own, else the last shell command
+    /// the bot ran for it), a name, the bot's folder, and a library component about the same thing.
+    @MainActor
+    public static func draft(from message: ChatMessage, bot: String, folder: URL, library: ComponentLibrary?, page: String? = nil) -> ComponentSpec {
+        let names = Set(library?.names ?? [])
+        let shown = message.shown.filter { $0.name != "choices" && $0.name != PagePreview.component }
+        let existing = page == nil ? shown.first(where: { names.contains($0.name) })?.name : nil
+        let first = shown.first
+        let command = page == nil ? (first?.command ?? lastCommand(in: message)) : nil
+        let name: String = if let existing { existing }
+            else if let page { slug((page as NSString).lastPathComponent.replacingOccurrences(of: ".html", with: "")) }
+            else if let first { slug(first.name) }
+            else if let command { slug(command) }
+            else { slug(message.text) }
+        var spec = ComponentSpec(messageID: message.id, name: name.isEmpty ? "component" : name, folder: folder.path, bots: [bot], createdAt: Date())
+        spec.existing = existing
+        spec.page = page
+        spec.command = command
+        if let first, first.data != "null" {
+            spec.fields = fields(fromJSON: first.data)
+            spec.samples = [ComponentSpec.Sample(label: "This reply", data: first.data)]
+            spec.shownAs = names.contains(first.name) ? first.name : nil
+        } else if let page {
+            spec.samples = [ComponentSpec.Sample(label: "This page", data: PagePreview.cardData(jsonString(["path": page])))]
+            spec.shownAs = names.contains(PagePreview.component) ? PagePreview.component : nil
+        } else {
+            let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            spec.samples = [ComponentSpec.Sample(label: "This reply", data: jsonString(["text": text]))]
+        }
+        if existing == nil, let library {
+            spec.similar = similar(to: spec.name, command: command, text: message.text, in: library)
+        }
+        return spec
+    }
+
+    /// The last shell command a reply's work ran that did not fail.
+    static func lastCommand(in message: ChatMessage) -> String? {
+        message.steps?.last { $0.tool == "Bash" && !$0.failed && !($0.detail ?? "").isEmpty }?.detail?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A short lower-case English name: the first few ASCII words, joined with "-".
+    public static func slug(_ text: String, words limit: Int = 2) -> String {
+        let words = text.lowercased()
+            .split { !($0.isASCII && ($0.isLetter || $0.isNumber)) }
+            .map(String.init)
+            .filter { !$0.isEmpty && !($0.first?.isNumber ?? false) }
+        return words.prefix(limit).joined(separator: "-")
+    }
+
+    /// The fields of a JSON object (or of a list's first object), each with a short type.
+    public static func fields(fromJSON json: String) -> [ComponentSpec.Field] {
+        guard let value = try? JSONSerialization.jsonObject(with: Data(json.utf8), options: .fragmentsAllowed) else { return [] }
+        let object: [String: Any]?
+        let order: [String]
+        switch value {
+        case let dictionary as [String: Any]:
+            object = dictionary
+            order = keyOrder(of: json, among: Array(dictionary.keys))
+        case let list as [Any]:
+            object = list.first as? [String: Any]
+            order = object.map { keyOrder(of: json, among: Array($0.keys)) } ?? []
+        default:
+            object = nil
+            order = []
+        }
+        guard let object else { return [] }
+        return order.map { ComponentSpec.Field(name: $0, type: type(of: object[$0] as Any, in: json)) }
+    }
+
+    /// Keys in the order the JSON text has them (a dictionary keeps none).
+    private static func keyOrder(of json: String, among keys: [String]) -> [String] {
+        var places: [String: Int] = [:]
+        for key in keys {
+            let quoted = "\"" + key + "\""
+            if let range = json.range(of: quoted) {
+                places[key] = json.distance(from: json.startIndex, to: range.lowerBound)
+            } else {
+                places[key] = Int.max
+            }
+        }
+        return keys.sorted { a, b in
+            let x = places[a] ?? Int.max, y = places[b] ?? Int.max
+            return x != y ? x < y : a < b
+        }
+    }
+
+    private static let isoDate = try! NSRegularExpression(pattern: #"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}.*)?$"#)
+
+    static func type(of value: Any, in json: String) -> String {
+        switch value {
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return "bool" }
+            return CFNumberIsFloatType(number) ? "num" : "int"
+        case let text as String:
+            let range = NSRange(location: 0, length: (text as NSString).length)
+            return isoDate.firstMatch(in: text, range: range) != nil ? "time" : "text"
+        case let list as [Any]:
+            if let first = list.first as? [String: Any] {
+                return "[" + keyOrder(of: json, among: Array(first.keys)).joined(separator: ", ") + "]"
+            }
+            return "[…]"
+        case is [String: Any]:
+            return "{…}"
+        default:
+            return "text"
+        }
+    }
+
+    private static let stopWords: Set<String> = ["the", "and", "for", "with", "from", "run", "runs", "this", "that", "into", "show", "shows", "card", "list", "json"]
+
+    /// A library component whose name or about.md shares words with this one's name and command,
+    /// the one sharing most. The question and preview cards are never offered.
+    @MainActor
+    static func similar(to name: String, command: String?, text: String, in library: ComponentLibrary) -> String? {
+        let words = Set((name + " " + (command ?? "")).lowercased()
+            .split { !($0.isASCII && ($0.isLetter || $0.isNumber)) }
+            .map(String.init)
+            .filter { $0.count >= 3 && !stopWords.contains($0) })
+        guard !words.isEmpty else { return nil }
+        var best: (String, Int)?
+        for candidate in library.names where candidate != "choices" && candidate != PagePreview.component && candidate != name {
+            let about = (try? String(contentsOf: library.aboutURL(candidate), encoding: .utf8)) ?? ""
+            let theirs = Set((candidate + " " + about).lowercased()
+                .split { !($0.isASCII && ($0.isLetter || $0.isNumber)) }
+                .map(String.init))
+            let score = words.intersection(theirs).count
+            if score > 0, score > (best?.1 ?? 0) { best = (candidate, score) }
+        }
+        return best?.0
+    }
+
+    // MARK: Changing it
+
+    /// The keys a user can edit, and their names in the panel.
+    static let labels = ["name": "Name", "about": "About", "fields": "Data fields", "command": "Command", "refresh": "Refresh", "bots": "Bots", "reuse": "Similar", "similar": "Similar"]
+
+    /// Sets one value from text, as the panel's fields send it. Returns whether it changed.
+    @discardableResult
+    static func set(_ key: String, to text: String, by origin: ComponentSpec.Origin, in spec: inout ComponentSpec) -> Bool {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let before = spec
+        switch key {
+        case "name":
+            let name = ComponentLibrary.safeName(value)
+            if !name.isEmpty, spec.existing == nil { spec.name = name }
+        case "about":
+            spec.about = value
+        case "command":
+            spec.command = value.isEmpty ? nil : value
+        case "refresh":
+            if let refresh = PinnedComponent.Refresh(rawValue: value) { spec.refresh = refresh }
+        case "minutes":
+            if let minutes = Int(value) { spec.minutes = max(PinnedComponent.minimumMinutes, minutes) }
+        case "bots":
+            var seen = Set<String>()
+            spec.bots = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
+        case "similar":
+            spec.similar = value.isEmpty ? nil : value
+        case "reuse":
+            spec.reuse = ["true", "yes", "1"].contains(value.lowercased())
+        case "fields":
+            spec.fields = parseFields(value).map { field in
+                var field = field
+                field.by = spec.fields.first { $0.name == field.name && $0.type == field.type }?.by ?? origin
+                return field
+            }
+        default:
+            return false
+        }
+        guard spec != before else { return false }
+        spec.origins[key == "minutes" ? "refresh" : key] = origin
+        if key == "command" { spec.testRun = nil }
+        return true
+    }
+
+    /// "total: int, failures: [suite, test]" as fields; a name alone is text.
+    static func parseFields(_ text: String) -> [ComponentSpec.Field] {
+        var fields: [ComponentSpec.Field] = []
+        var current = ""
+        var depth = 0
+        for character in text + "," {
+            if character == "[" || character == "{" { depth += 1 }
+            if character == "]" || character == "}" { depth -= 1 }
+            if character == ",", depth <= 0 {
+                let part = current.trimmingCharacters(in: .whitespaces)
+                current = ""
+                guard !part.isEmpty else { continue }
+                let pieces = part.split(separator: ":", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                guard let name = pieces.first, !name.isEmpty else { continue }
+                fields.append(ComponentSpec.Field(name: name, type: pieces.count > 1 && !pieces[1].isEmpty ? pieces[1] : "text"))
+            } else {
+                current.append(character)
+            }
+        }
+        return fields
+    }
+
+    /// The user changed a value in the panel: marked as theirs, said in the side conversation,
+    /// and kept to tell Maintainer with the next message.
+    @discardableResult
+    public static func edit(_ key: String, to value: String, in spec: inout ComponentSpec) -> Bool {
+        guard set(key, to: value, by: .user, in: &spec) else { return false }
+        let label = labels[key] ?? key.capitalized
+        let shown = key == "reuse" ? (spec.reuse ? "use \(spec.similar ?? "the similar one")" : "make a new one") : value
+        spec.conversation.append(.init(kind: .event, text: "You edited \(label) · \(clip(shown, 60))"))
+        spec.pendingEdits.removeAll { $0.hasPrefix("\(label): ") }
+        spec.pendingEdits.append("\(label): \(shown)")
+        return true
+    }
+
+    /// Picks an answer to one of Maintainer's questions: it sets the value it decides (as the
+    /// user's) and goes to the conversation as the user's words.
+    @discardableResult
+    public static func answer(_ questionID: String, option index: Int, in spec: inout ComponentSpec, by origin: ComponentSpec.Origin = .user) -> Bool {
+        guard let at = spec.questions.firstIndex(where: { $0.id == questionID }),
+              spec.questions[at].options.indices.contains(index) else { return false }
+        let question = spec.questions.remove(at: at)
+        let option = question.options[index]
+        if let key = question.key, let value = option.value {
+            set(key, to: value, by: origin, in: &spec)
+        }
+        if origin == .user {
+            spec.conversation.append(.init(kind: .user, text: option.label))
+        }
+        spec.pendingEdits.append("\(question.text) → \(option.label)")
+        return true
+    }
+
+    /// Open questions take their suggested answer (Build it with questions left).
+    static func answerOpenQuestions(in spec: inout ComponentSpec) {
+        for question in spec.questions {
+            answer(question.id, option: question.suggested ?? 0, in: &spec, by: .maintainer)
+        }
+        spec.questions = []
+    }
+
+    /// Maintainer's `<component-spec>` JSON: the values it sets (only those it names), its
+    /// questions (replacing the old ones) and samples. A value it repeats unchanged keeps who set
+    /// it. Returns whether anything changed.
+    @discardableResult
+    public static func update(_ spec: inout ComponentSpec, with json: String) -> Bool {
+        guard let object = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] else { return false }
+        let before = spec
+        for key in ["name", "about", "command", "refresh", "similar"] {
+            if let text = object[key] as? String { set(key, to: text, by: .maintainer, in: &spec) }
+        }
+        if let minutes = object["minutes"] as? Int { set("minutes", to: String(minutes), by: .maintainer, in: &spec) }
+        if let reuse = object["reuse"] as? Bool { set("reuse", to: reuse ? "true" : "false", by: .maintainer, in: &spec) }
+        if let fields = object["fields"] as? [Any] {
+            let parsed: [ComponentSpec.Field] = fields.compactMap { item in
+                if let entry = item as? [String: Any], let name = entry["name"] as? String, !name.isEmpty {
+                    return ComponentSpec.Field(name: name, type: (entry["type"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "text")
+                }
+                if let text = item as? String { return parseFields(text).first }
+                return nil
+            }
+            let merged = parsed.map { field in
+                var field = field
+                field.by = spec.fields.first { $0.name == field.name && $0.type == field.type }?.by ?? .maintainer
+                return field
+            }
+            if merged != spec.fields {
+                spec.fields = merged
+                spec.origins["fields"] = .maintainer
+            }
+        }
+        if let samples = object["samples"] as? [Any] {
+            for item in samples {
+                guard let entry = item as? [String: Any], let label = entry["label"] as? String, !label.isEmpty else { continue }
+                let data: String
+                if let text = entry["data"] as? String { data = text }
+                else if let value = entry["data"], let encoded = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed, .withoutEscapingSlashes]) { data = String(decoding: encoded, as: UTF8.self) }
+                else { continue }
+                if let at = spec.samples.firstIndex(where: { $0.label == label }) { spec.samples[at].data = data }
+                else { spec.samples.append(.init(label: label, data: data)) }
+            }
+        }
+        if let questions = object["questions"] as? [Any] {
+            spec.questions = questions.enumerated().compactMap { index, item in
+                guard let entry = item as? [String: Any], let text = entry["text"] as? String, !text.isEmpty else { return nil }
+                let options: [ComponentSpec.Question.Option] = (entry["options"] as? [Any] ?? []).compactMap { option in
+                    if let label = option as? String { return .init(label: label) }
+                    guard let choice = option as? [String: Any], let label = choice["label"] as? String else { return nil }
+                    let value = choice["value"].map { value -> String in
+                        if let bool = value as? Bool { return bool ? "true" : "false" }
+                        return "\(value)"
+                    }
+                    return .init(label: label, value: value)
+                }
+                guard !options.isEmpty else { return nil }
+                let suggested = (entry["suggested"] as? Int).flatMap { options.indices.contains($0) ? $0 : nil }
+                return .init(id: (entry["id"] as? String) ?? "q\(index + 1)", key: entry["key"] as? String, text: text, options: options, suggested: suggested)
+            }
+        }
+        guard spec != before else { return false }
+        spec.draft += 1
+        return true
+    }
+
+    // MARK: Checking a test run
+
+    /// Whether a command's output (as component data) has every field: a JSON object with each
+    /// field name, or a list whose first object has them. No fields: any output fits.
+    public static func outputMatches(_ output: String, fields: [ComponentSpec.Field]) -> Bool {
+        guard !fields.isEmpty else { return true }
+        guard let value = try? JSONSerialization.jsonObject(with: Data(output.utf8), options: .fragmentsAllowed) else { return false }
+        let object = (value as? [String: Any]) ?? ((value as? [Any])?.first as? [String: Any])
+        guard let object else { return false }
+        return fields.allSatisfy { object[$0.name] != nil }
+    }
+
+    // MARK: What Maintainer is told
+
+    /// The spec as Maintainer reads it.
+    static func summary(of spec: ComponentSpec) -> String {
+        var lines = ["- name: \(spec.name)"]
+        if !spec.about.isEmpty { lines.append("- about: \(spec.about)") }
+        lines.append("- data fields: " + (spec.fields.isEmpty ? "(none yet)" : spec.fields.map { "\($0.name): \($0.type)" }.joined(separator: ", ")))
+        lines.append("- command: " + (spec.command ?? "(none: a bot writes the data)"))
+        lines.append("- folder: \(spec.folder)")
+        lines.append("- refresh: \(spec.refresh == .interval ? "every \(spec.minutes) min" : spec.refresh.rawValue)")
+        lines.append("- bots: " + spec.bots.joined(separator: ", "))
+        if let similar = spec.similar { lines.append("- similar in the library: \(similar)" + (spec.reuse ? " (the user wants to reuse it)" : "")) }
+        if let run = spec.testRun, let output = run.output {
+            lines.append("- test run output: \(clip(output, 600))" + (run.matches == false ? " (it does not have every field)" : ""))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    static func tagNote(_ spec: ComponentSpec) -> String {
+        "Answer in one or two sentences, then <component-spec id=\"\(spec.id.uuidString)\">JSON</component-spec> with only what you set or change (name, about, fields [{name, type}], command, refresh: shown|interval|manual, minutes, similar, reuse, samples [{label, data}], questions [{id, key, text, options [{label, value}], suggested}]). Build nothing yet, and never run the command yourself: the user test-runs it from the panel."
+    }
+
+    /// The first ask: fill in what can be inferred, ask only what cannot.
+    static func draftRequest(_ spec: ComponentSpec, reply: String, from bot: String) -> String {
+        """
+        (Component spec \(spec.id.uuidString)) The user wants to make \(bot)'s reply into a component and is shaping it in a side panel. The reply:
+        \(clip(reply, 1500))
+        The app's first draft:
+        \(summary(of: spec))
+        Fill in what you can infer (from the reply and the library), and ask only what you cannot, at most 3 questions, each with 2 or 3 short answers and the one you suggest. If a component in the library already does this, say so in "similar". Add a sample or two (say "Failing run", "Empty") so the preview shows other cases.
+        \(tagNote(spec))
+        """
+    }
+
+    /// What the user said in the side panel, with their edits since.
+    static func sayRequest(_ spec: ComponentSpec, text: String) -> String {
+        var said = "(Component spec \(spec.id.uuidString)) "
+        said += text.isEmpty ? "The user changed the spec." : "The user says: \(text)"
+        if !spec.pendingEdits.isEmpty { said += "\nTheir edits: " + spec.pendingEdits.joined(separator: "; ") }
+        said += "\nThe spec now:\n\(summary(of: spec))\n\(tagNote(spec))"
+        return said
+    }
+
+    /// Build it.
+    static func buildRequest(_ spec: ComponentSpec) -> String {
+        var text = "(Component spec \(spec.id.uuidString)) Build it: make the component \"\(spec.name)\" now, as the spec says.\n\(summary(of: spec))"
+        if !spec.pendingEdits.isEmpty { text += "\nThe user's last edits: " + spec.pendingEdits.joined(separator: "; ") }
+        text += "\nHave the component editor write template.html and about.md"
+        if let command = spec.command {
+            text += "; about.md gets the line \"Command: \(command)\" so the app fills it by running that in the bot's folder (only once the user allows it)"
+        }
+        text += ". The data fields above are what the template reads. Once it is in the library the app adds it to " + spec.bots.joined(separator: ", ") + "; do not add it to lists yourself."
+        return text
+    }
+
+    // MARK: Helpers
+
+    static func jsonString(_ object: [String: String]) -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    static func clip(_ text: String, _ limit: Int) -> String {
+        text.count > limit ? String(text.prefix(limit - 1)) + "…" : text
+    }
+}

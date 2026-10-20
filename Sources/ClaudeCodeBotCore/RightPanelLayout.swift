@@ -10,6 +10,14 @@ public enum RightPanelLayout {
         collapsed ? collapsedWidth : expandedWidth
     }
 
+    /// While a component spec is open (its chip pressed): the workspace, or spread wide.
+    public static let specWidth: Double = 480
+    public static let specWideWidth: Double = 860
+
+    public static func specWidth(wide: Bool) -> Double {
+        wide ? specWideWidth : specWidth
+    }
+
     /// A section of the open panel that the strip has an icon for, in the panel's order.
     public enum Section: String, CaseIterable, Sendable {
         case waiting, members, codex, results, settled

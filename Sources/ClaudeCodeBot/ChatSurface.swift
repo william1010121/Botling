@@ -94,6 +94,8 @@ struct ChatSurface: NSViewRepresentable {
             feedback: workspace.developerProject != nil,
             commands: workspace.commandContext(for: bot),
             pins: bot === workspace.codexBot ? nil : workspace.pinContext(for: bot, board: inputs.boards.contains(bot.id)),
+            specs: bot !== workspace.codexBot,
+            openSpec: workspace.openSpecID,
             avatar: { projectID in
                 if let projectID, let kind = workspace.avatar(for: projectID) {
                     return AvatarImages.dataURL(kind, eyes: .open)
@@ -273,6 +275,18 @@ struct ChatSurface: NSViewRepresentable {
                     let force = body["force"] as? Bool ?? false
                     let command = body["command"] as? String, folder = body["folder"] as? String
                     Task { await workspace.runPin(pinID, in: bot, command: command, folder: folder, approve: approve, force: force) }
+                }
+            case "makeComponent":
+                // A reply's "Make into component" (or an HTML result card's): its chip, opened.
+                if let messageID = id("messageID") {
+                    let preview = body["preview"] as? Int
+                    withAnimation(.easeInOut(duration: 0.2)) { _ = workspace.makeComponent(from: messageID, preview: preview, in: bot) }
+                }
+            case "openSpec":
+                if let specID = id("id") {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        if workspace.openSpecID == specID { workspace.closeSpec() } else { workspace.openSpec(specID, in: bot) }
+                    }
                 }
             case "pinShown":
                 let ids = (body["ids"] as? [String])?.compactMap(UUID.init(uuidString:))

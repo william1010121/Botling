@@ -125,6 +125,13 @@ public final class Workspace: ObservableObject {
     public let componentUsage: ComponentUsage
     /// New components bots asked for, by name: each goes on those bots' lists once it is built.
     var componentAsks: [String: Set<UUID>] = [:]
+    /// The component spec shown in the right panel (its chip pressed), if any.
+    @Published public internal(set) var openSpecID: UUID?
+    /// The spec workspace spread wide (its expand button), while it shows.
+    @Published public internal(set) var specPanelWide = false
+    /// Specs being built, by component name: the chat and spec, and the template version the
+    /// library had when Build was pressed (nil: it had none).
+    var specBuilds: [String: (chat: UUID, spec: UUID, version: Int?)] = [:]
     /// Plugins for ClaudeCodeBot itself: `~/.claudecodebot/plugins/` and the ones shipped with the app.
     public let plugins: PluginRegistry
     /// Runs plugins' program parts (Node), when a script for it was given.
@@ -250,6 +257,7 @@ public final class Workspace: ObservableObject {
         components.onCatalogChanged = { [weak self] in
             guard let self else { return }
             deliverAskedComponents()
+            finishSpecBuilds()
             for bot in botsWithComponents {
                 bot.queueNote("(App: Components were updated; here is how to use them now.)\n" + componentBriefing(for: bot))
             }
@@ -1023,6 +1031,13 @@ public final class Workspace: ObservableObject {
                 if project?.isMaintainer == true { changeComponentList(give: true, name: name, bot: bot) }
             case let .takeComponent(bot, name):
                 if project?.isMaintainer == true { changeComponentList(give: false, name: name, bot: bot) }
+            case let .suggestComponent(name, draft):
+                suggestComponent(name: name, draft: draft, from: project.flatMap { managers[$0.id] } ?? mainBot)
+            case let .componentSpec(id, json):
+                // Only Maintainer shapes specs; its words go to that spec's side conversation.
+                if project?.isMaintainer == true {
+                    applySpecUpdate(id: id, json: json, said: maintainer.messages.last { $0.role == .bot }?.text ?? "")
+                }
             case let .install(source):
                 Task { await proposeInstall(source) }
             case let .folder(path):
@@ -1155,6 +1170,7 @@ public final class Workspace: ObservableObject {
           Check the library first: if a component there already does what the bot needs (the one-line list in your components note, and its about.md), build nothing: reply with <give-component bot="bot name">component name</give-component> and the app puts it on that bot's list. A request for a component already in the library by its own name is put on the bot's list by the app before it reaches you; change it only if the request asks for a change.
           Otherwise build the new one (as above); once it is in the library the app adds it to the asking bot's list.
           A bot already at \(ComponentLibrary.limit): add or build nothing for it; with a choices block of that bot's components, ask the user which one to remove from that bot's list first (the 組件使用統計 card shows which are used least), then <take-component bot="bot name">component name</take-component>. Removing from a list never deletes anything: the library copy stays. Deleting a component from the library itself is yours alone, only when the user asks for that, and never one the user did not pick. Changes to existing components are always fine. Never write these tags inside code or examples.
+        - A message starting "(Component spec <id>)" is a component the user is making from a bot's reply, in a panel beside the chat (not built yet). Fill in what you can infer from the reply and the library, ask only what you cannot (at most 3 questions, each with 2 or 3 short answers and the one you suggest), and answer in one or two sentences followed by <component-spec id="<id>">JSON</component-spec> holding only what you set or change: name, about, fields [{name, type}], command, refresh (shown, interval or manual), minutes, similar (a library component that already does this), reuse, samples [{label, data}], questions [{id, key, text, options [{label, value}], suggested}]. A question's key is the value its answer sets. Build nothing and never run the command yourself until a "(Component spec <id>) Build it" message: the user test-runs the command from the panel, after allowing it. Then build it as any new component (about.md gets its Command: line); the app adds it to the chosen bots once it is in the library. Never write these tags inside code or examples.
         - When a component request says /design or asks for designs to choose from, first make them a Claude Design: with the Artifact tool, quickstart with intent "design", publish from the Design type, using the look of ccb-components (its templates' colours, type and spacing) as the design system, and reply with the claude.ai link. Build the chosen one into ccb-components only after the user picks.
         - Plugins built into the app are not here and cannot be edited directly: to change one, copy its whole folder into the plugin library; a plugin with the same name overrides the built-in one (paths in PLUGINS.md).
         - To read a folder outside the plugin library (for example to turn an existing project into a plugin): end your reply with <need-folder>full path</need-folder>, say in one sentence why you need it, then stop and wait.
@@ -1816,7 +1832,10 @@ public final class Workspace: ObservableObject {
         countComponents(of: bot)
         bot.onReply = { [weak self, weak bot] _, _ in
             guard let self else { return }
-            if project.isMaintainer { components.finishWorking() }
+            if project.isMaintainer {
+                components.finishWorking()
+                finishSpecBuilds()
+            }
             refreshWaiting()
             if selection == project.id { bot?.markRead() }
         }
