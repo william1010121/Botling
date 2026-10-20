@@ -148,7 +148,10 @@ struct RailView: View {
         .padding(.bottom, 12)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.side)
-        .onReceive(Publishers.MergeMany(entries.map { $0.bot.$messages.map { _ in () } })) { _ in activity &+= 1 }
+        // Only new lines count: @Published sends its current value as soon as it is subscribed
+        // to, and this is subscribed to again on every redraw, so taking that first value too
+        // would bump `activity`, redraw, subscribe again, and never stop (a frozen app).
+        .onReceive(Publishers.MergeMany(entries.map { $0.bot.$messages.dropFirst().map { _ in () } })) { _ in activity &+= 1 }
         .confirmationDialog(
             "Remove \"\(removing?.name ?? "")\"?",
             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
