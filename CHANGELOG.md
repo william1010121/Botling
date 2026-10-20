@@ -4,7 +4,7 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
-## Unreleased
+## 1.5.0
 
 ### Added
 
@@ -18,6 +18,22 @@ app and publishes it on GitHub Releases.
 - **@ a bot into any chat.** In a bot's own chat, @ lists the other bots (Main bot, Maintainer,
   projects); the one you name reads the chat and answers there, under its own name and face, and
   picks on its line go back to it. The chat's own bot still gets your line.
+- **Several components in one reply.** Every `<show>` in a reply is drawn, in order, where it
+  was written; older replies that lost theirs are mended when loaded.
+- **Feedback carries a picture.** Marking a reply "Not right" sends a screenshot of the chat
+  around it, and you can paste or drop your own pictures into the feedback box.
+- **Auto-approve safe actions** (Settings, on by default): bots run in Claude Code's auto mode,
+  so harmless commands no longer ask; risky ones are still blocked or asked about.
+
+### Changed
+
+- Designing chat components goes to Maintainer and the component library; `/design` gives a
+  Claude Design link on claude.ai instead of a local page.
+
+### Fixed
+
+- Finished subagents no longer look active in the left column; they show a check and leave the
+  list after 10 minutes, and ones left over from before a restart stay gone.
 
 ## 1.4.0
 
