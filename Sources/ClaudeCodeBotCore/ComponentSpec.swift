@@ -150,6 +150,9 @@ public struct ComponentSpec: Codable, Equatable, Identifiable, Sendable {
     public var testRun: TestRun?
     /// The user's changes Maintainer has not heard yet (said with the next message or Build).
     public var pendingEdits: [String]
+    /// Maintainer was asked once to send the "This reply" sample again with every item the reply
+    /// lists (its first one left some out).
+    public var askedForAllItems: Bool?
     public var createdAt: Date
 
     public init(id: UUID = UUID(), messageID: UUID? = nil, name: String, about: String = "", folder: String, bots: [String], createdAt: Date = Date()) {
@@ -598,9 +601,14 @@ public enum ComponentSpecs {
         return text
     }
 
-    /// Where its data comes from: the reply's own content, a command only for live data.
-    static func dataNote(_ spec: ComponentSpec, ran: String?, from bot: String) -> String {
+    /// Where its data comes from: the reply's own content, a command only for live data. When
+    /// the reply lists items, how many: the sample holds every one, not a few as an example.
+    static func dataNote(_ spec: ComponentSpec, reply: String = "", ran: String?, from bot: String) -> String {
         var text = "Its data is the reply's own content: what \(bot) wrote and organised above (and on the result page it links), in its words and language, drawn as a component instead of text or a web page. Put all of it, not a shortened example, into a \"This reply\" sample in the fields' shape: that sample is what shows under the reply."
+        let items = spec.command == nil ? listedItems(in: reply) : []
+        if items.count >= minimumListed {
+            text += " The reply lists \(items.count) items (\(items.joined(separator: "; "))): the sample holds all \(items.count) of them, each in the reply's words, not the first few."
+        }
         if let command = spec.command {
             text += " The component in the reply got its data by running `\(command)` in the bot's folder, so it is live data: keep that as its Command (about.md gets the line \"Command: \(command)\" so the app fills it by running that in the bot's folder, only once the user allows it on the card)."
         } else {
@@ -616,7 +624,7 @@ public enum ComponentSpecs {
         (Component spec \(spec.id.uuidString)) The user wants to make \(bot)'s reply into a component and is shaping it in a side panel. \(replyBlock(reply, pages: pages))
         The app's first draft:
         \(summary(of: spec))
-        \(dataNote(spec, ran: ran, from: bot))
+        \(dataNote(spec, reply: reply, ran: ran, from: bot))
         Fill in what you can infer (from the reply and the library), and ask only what you cannot, at most 3 questions, each with 2 or 3 short answers and the one you suggest. If a component in the library already does this, say so in "similar". Add a sample or two (say "Failing run", "Empty") so the preview shows other cases.
         \(tagNote(spec))
         """
@@ -633,7 +641,7 @@ public enum ComponentSpecs {
         \(summary(of: spec))
         """
         if spec.suggestedBy != nil, !spec.about.isEmpty { text += "\n\(bot) suggested it as: \(spec.about)" }
-        text += "\n" + dataNote(spec, ran: ran, from: bot)
+        text += "\n" + dataNote(spec, reply: reply, ran: ran, from: bot)
         text += """
 
         Infer the rest from the reply and the library, and ask nothing: wherever you are unsure, use your best guess (the answer you would have suggested). If a component in the library already does this, reuse it: build nothing and set "similar" to it and "reuse" to true. Otherwise have the component editor write template.html and about.md under a name not already in the library.
@@ -662,6 +670,102 @@ public enum ComponentSpecs {
         }
         text += ". The data fields above are what the template reads. Once it is in the library the app adds it to " + spec.bots.joined(separator: ", ") + "; do not add it to lists yourself."
         return text
+    }
+
+    // MARK: Every item the reply lists
+
+    /// A list this long is data the sample must carry whole (shorter ones are left alone).
+    static let minimumListed = 3
+
+    /// The items a reply lists, each as its title: its top-level numbered or bulleted lines, and
+    /// its tables' rows (their first cell), outside code blocks. A title is the item's bold part,
+    /// else its words before a colon or dash, without Markdown marks.
+    static func listedItems(in text: String) -> [String] {
+        var items: [String] = []
+        var inCode = false
+        var tableHeader: Int?
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(raw)
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") { inCode.toggle(); continue }
+            if inCode { continue }
+            if trimmed.hasPrefix("|") {
+                let cells = trimmed.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+                if !cells.isEmpty, cells.allSatisfy({ $0.wholeMatch(of: #/:?-+:?/#) != nil }) {
+                    // The row above was the table's header, not an item.
+                    if let header = tableHeader { items.remove(at: header) }
+                    tableHeader = nil
+                    continue
+                }
+                tableHeader = nil
+                if let first = cells.first {
+                    let title = itemTitle(first)
+                    if !title.isEmpty {
+                        tableHeader = items.count
+                        items.append(title)
+                    }
+                }
+                continue
+            }
+            tableHeader = nil
+            // Nested items are details of the one above.
+            guard line.prefix(while: { $0 == " " || $0 == "\t" }).count < 2,
+                  let match = trimmed.wholeMatch(of: #/(?:\d{1,3}[.)、]|[-*+•])\s+(.+)/#) else { continue }
+            let title = itemTitle(String(match.1))
+            if !title.isEmpty { items.append(title) }
+        }
+        return items
+    }
+
+    private static func itemTitle(_ item: String) -> String {
+        var title = item
+        if let bold = item.firstMatch(of: #/\*\*(.+?)\*\*/#) {
+            title = String(bold.1)
+        } else if let cut = item.firstRange(of: #/[：:]|\s[—–-]\s/#) {
+            title = String(item[..<cut.lowerBound])
+        }
+        title = title.replacingOccurrences(of: "`", with: "").replacingOccurrences(of: "*", with: "")
+        return clip(title.trimmingCharacters(in: .whitespaces), 60)
+    }
+
+    /// The items the reply lists that Maintainer's "This reply" sample (sent in `json`) leaves
+    /// out. Nil when it sent no such sample, the spec takes live data, or the reply lists none.
+    static func missingItems(from json: String, reply: String, in spec: ComponentSpec) -> (listed: [String], missing: [String])? {
+        guard spec.command == nil,
+              let object = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any],
+              let samples = object["samples"] as? [Any],
+              samples.contains(where: { ($0 as? [String: Any])?["label"] as? String == "This reply" }),
+              let data = spec.samples.first(where: { $0.label == "This reply" })?.data else { return nil }
+        let listed = listedItems(in: reply)
+        guard listed.count >= minimumListed else { return nil }
+        let shown = squeezed(words(in: data))
+        return (listed, listed.filter { !shown.contains(squeezed($0)) })
+    }
+
+    /// Every key, string and number in a sample's JSON (its raw text when it is not JSON).
+    private static func words(in data: String) -> String {
+        guard let value = try? JSONSerialization.jsonObject(with: Data(data.utf8), options: [.fragmentsAllowed]) else { return data }
+        var found: [String] = []
+        func walk(_ value: Any) {
+            if let text = value as? String { found.append(text) }
+            else if let number = value as? NSNumber { found.append(number.stringValue) }
+            else if let array = value as? [Any] { array.forEach(walk) }
+            else if let object = value as? [String: Any] {
+                for (key, inner) in object { found.append(key); walk(inner) }
+            }
+        }
+        walk(value)
+        return found.joined(separator: "\n")
+    }
+
+    /// Lower case, without spaces or Markdown marks, so the sample's spelling of an item matches.
+    private static func squeezed(_ text: String) -> String {
+        String(text.lowercased().filter { !$0.isWhitespace && $0 != "*" && $0 != "`" })
+    }
+
+    /// Asked once when the sample leaves items out: send it again with every one.
+    static func allItemsRequest(_ spec: ComponentSpec, listed: [String], missing: [String]) -> String {
+        "(Component spec \(spec.id.uuidString)) The \"This reply\" sample you sent has only \(listed.count - missing.count) of the \(listed.count) items the reply lists; it leaves out: \(missing.joined(separator: "; ")). That sample is what shows under the reply, so it holds the reply's whole content. Answer in one sentence, then <component-spec id=\"\(spec.id.uuidString)\">{\"samples\":[{\"label\":\"This reply\",\"data\":…}]}</component-spec> with all \(listed.count) items in the fields' shape, in the reply's words; change nothing else and build nothing. If some of them are not the component's data, say so and send no tag."
     }
 
     // MARK: Helpers

@@ -259,6 +259,82 @@ struct ComponentSpecTests {
         #expect(again.display?.data == data)
     }
 
+    /// A reply listing 12 features to pick from, ending with a request for a multi-select
+    /// component (the tag is gone from its text, as the parser leaves it).
+    static let features = [
+        "一個主 bot 管所有專案", "只在需要你決定時才打擾你", "bot 會睡覺、不浪費 token", "背景 subagent 團隊",
+        "聊天裡的組件、釘選和 Board", "從回覆一鍵做成組件", "Codex code review", "Claude Design 設計稿",
+        "Routines 每日排程", "插件系統＋developer mode", "全部在本機", "用量一目了然",
+    ]
+
+    func featureListReply(in bot: Bot) -> ChatMessage {
+        let items = Self.features.enumerated().map { "\($0.offset + 1). **\($0.element)**：第 \($0.offset + 1) 項的說明。" }
+        let message = ChatMessage(role: .bot, text: "我先列出可以宣傳的功能，你直接回數字就好：\n\n\(items.joined(separator: "\n"))\n\n也可以補一句你自己最想講的賣點。")
+        bot.post(message, unread: false)
+        return message
+    }
+
+    func multiSelectSample(_ titles: ArraySlice<String>) throws -> String {
+        let data: [String: Any] = ["question": "想宣傳哪些功能？", "options": titles.map { ["title": $0, "detail": "說明"] }]
+        let sample = String(decoding: try JSONSerialization.data(withJSONObject: data), as: UTF8.self)
+        let update: [String: Any] = ["name": "multi-select", "samples": [["label": "This reply", "data": sample]]]
+        return String(decoding: try JSONSerialization.data(withJSONObject: update), as: UTF8.self)
+    }
+
+    @Test func theFirstVersionCarriesEveryItemTheReplyLists() throws {
+        let workspace = makeWorkspace()
+        let bot = workspace.mainBot
+        let reply = featureListReply(in: bot)
+        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        // Maintainer is told how many items the reply lists, and that the data holds every one.
+        let ask = try #require(relays(workspace).last).text
+        #expect(ask.contains("lists 12 items"))
+        for feature in Self.features { #expect(ask.contains(feature)) }
+
+        // It sends a sample with only 4 of them: the app asks again for every item, once.
+        workspace.handle([.componentSpec(id: spec.id.uuidString, json: try multiSelectSample(Self.features[0..<4]))], from: workspace.maintainerProject)
+        let again = try #require(relays(workspace).last).text
+        #expect(relays(workspace).count == 2)
+        #expect(again.hasPrefix("(Component spec \(spec.id.uuidString))"))
+        #expect(again.contains("4 of the 12"))
+        #expect(again.contains("Routines 每日排程"))
+        #expect(again.contains("用量一目了然"))
+        #expect(!again.contains("Codex code review、一個主 bot"))
+        #expect(again.contains("<component-spec id=\"\(spec.id.uuidString)\">"))
+
+        // The full sample replaces it, and that is what shows under the reply; nothing more is asked.
+        let full = try multiSelectSample(Self.features[...])
+        workspace.handle([.componentSpec(id: spec.id.uuidString, json: full)], from: workspace.maintainerProject)
+        #expect(relays(workspace).count == 2)
+        try addComponent("multi-select", to: workspace)
+        let chip = try #require(ChatPayload.specChips(for: reply, in: bot, open: nil, library: workspace.components)?.first)
+        let shown = try #require(chip.display?.data)
+        for feature in Self.features { #expect(shown.contains(feature)) }
+
+        // A short one again is not asked about a second time.
+        workspace.handle([.componentSpec(id: spec.id.uuidString, json: try multiSelectSample(Self.features[0..<4]))], from: workspace.maintainerProject)
+        #expect(relays(workspace).count == 2)
+    }
+
+    @Test func listedItemsAreTheReplysTopLevelListAndTableRows() {
+        let text = """
+        Intro line.
+
+        1. **Login**: sign in with Apple
+        2) Export — as CSV
+          - nested detail
+        - `Notify`: push
+        ```
+        - not an item
+        ```
+        | Version | Notes |
+        |---|---|
+        | 1.9.0 | grid |
+        """
+        #expect(ComponentSpecs.listedItems(in: text) == ["Login", "Export", "Notify", "1.9.0"])
+        #expect(ComponentSpecs.listedItems(in: "No list here.").isEmpty)
+    }
+
     @Test func theFirstVersionReusesALibraryComponentMaintainerPicks() throws {
         let workspace = makeWorkspace()
         try addComponent("build-status", about: "Whether the last swift test passed.", to: workspace)
