@@ -1,4 +1,6 @@
 /// <reference types="node" />
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
 import { messageElement } from "../src/messages";
@@ -216,6 +218,37 @@ describe("the Board", () => {
     area.update(state({ board: true, pins: [pin()] }));
     area.update(state({ board: false, pins: [pin()] }));
     expect(document.body.classList.contains("board")).toBe(false);
+  });
+
+  it("a card's content fits the card: no wider minimum, no sideways scroll, long errors wrap", () => {
+    const style = document.createElement("style");
+    style.textContent = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    document.head.append(style);
+    try {
+      const area = setUp();
+      area.update(state({ board: true, pins: [
+        pin(),
+        pin({ id: "P2", display: { name: "提交紀錄", data: "", command: "git log --oneline --decorate=short refs/heads/main", folder: "/p", status: "failed", error: "The command printed more than 512 KB, so it was stopped." } }),
+      ] }));
+      const [done, failed] = [...document.querySelectorAll<HTMLElement>(".board-card-body")];
+      // The column can be 260px wide; a 280px minimum inside it overflowed the card sideways and
+      // scrolled its start out of sight ("he command failed").
+      for (const body of [done, failed]) {
+        expect(getComputedStyle(body).overflowX).toBe("hidden");
+        for (const element of body.querySelectorAll<HTMLElement>(".command-card, .component-frame")) {
+          expect(["0", "0px"]).toContain(getComputedStyle(element).minWidth);
+        }
+      }
+      expect(done.querySelector(".component-frame")).not.toBeNull();
+      const detail = failed.querySelector<HTMLElement>(".command-error pre")!;
+      expect(getComputedStyle(detail).whiteSpace).toBe("pre-wrap");
+      // The header gives way by shortening the name, not by squeezing the command to one letter.
+      const title = document.querySelector<HTMLElement>(".board-card-title")!;
+      expect(getComputedStyle(title).textOverflow).toBe("ellipsis");
+      expect(getComputedStyle(document.querySelector<HTMLElement>(".board-card-head .pin-command")!).minWidth).not.toMatch(/^(0|0px|auto)$/);
+    } finally {
+      style.remove();
+    }
   });
 
   it("an empty Board offers to add a component", () => {

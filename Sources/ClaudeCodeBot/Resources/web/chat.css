@@ -567,7 +567,14 @@ body.board .editor .cm-scroller { max-height: 72px; }
 .board-card.size-m { grid-row: span 2; }
 .board-card.size-l { grid-row: span 3; grid-column: span 2; }
 .board-card-head { cursor: grab; padding-left: 14px; }
-.board-card-body { flex: 1; min-height: 0; }
+/* A column can be 260px wide: the header gives way by shortening its parts, never by pushing the
+   card wider; the body never scrolls sideways, and what is in it (280px wide in the chat) fits. */
+.board-card-title { min-width: 2em; overflow: hidden; text-overflow: ellipsis; }
+.board-card-head .pin-command { min-width: 3.5em; flex-shrink: 2; }
+.board-card-head .pin-when { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.board-card-body { flex: 1; min-height: 0; overflow-x: hidden; }
+.board-card-body .command-card, .board-card-body .component-frame { min-width: 0; }
+.board-card-body .component { min-width: 0; }
 .board-size { font-size: 10.5px; color: var(--faint); border: 1px solid #2A2A31; border-radius: 5px; padding: 0 5px; line-height: 16px; }
 .board-add {
   grid-row: span 1; border: 1.5px dashed #3A3A42; border-radius: 14px; background: transparent; color: var(--muted);
