@@ -4,6 +4,54 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## 1.6.0
+
+### Added
+
+- **Components can take data from a CLI command.** `<show name="…" command="git diff --stat">`
+  (or a `Command:` line in a component's about.md) fills the component with what the command
+  prints, run in the bot's project folder: JSON output is the data, anything else one string.
+  The first time, the card asks you to allow that command for that folder; it then runs with a
+  60-second limit and a 1 MB output cap, says why it failed if it did, and has a refresh button.
+- **Components can send pictures back.** `ccb.answer({text, images})` sends words with pictures,
+  and `ccb.pickImage()` / `ccb.readImage(file)` get them; the bot receives them like a message's
+  attachments. Component data may also name local pictures, shown with `ccb.image(path)`. The
+  shipped choices component gets an "Other" box that takes words and pictures.
+- **Hide a subagent's row** in the left column with ✕. A running subagent keeps working and
+  still reports back; the row stays hidden across restarts.
+- **Bot settings: Subagent model and Thinking effort.** Each bot can pick the model its
+  subagents use and how hard it thinks (low to max). Changing either restarts an awake bot.
+- **A new Settings.** The gear opens quick switches (today's cost and tokens, auto-approve,
+  developer mode) and a full settings window (also ⌘,) with Usage, Permissions, Plugins and
+  Developer mode. Permissions lists the component commands you allowed, each with Forget.
+
+### Changed
+
+- **Feedback reports fold.** A "Not right" report handed to a bot shows as a short card with
+  your words and the screenshot; the full report is one click away.
+- **Subagent rows** list running ones first, then the newest; past four, Show more lists the
+  rest and Show less folds them back.
+- **The @ menu is shorter.** A bare @ offers Main bot and Maintainer (or a group's members);
+  @ plus letters searches every bot, and @@ lists them all.
+- **Maintainer hands every component request to a background component editor** and reviews
+  and commits the results one at a time. The editor's instructions are refreshed when the app
+  starts, so existing installs get the new ones.
+
+### Removed
+
+- The daily budget. Spending is still tracked and shown in Settings, but nothing waits on it.
+
+### Fixed
+
+- Security fixes from review: Allow runs exactly the command and folder the card showed (a
+  command changed since is never run), a timeout or output overflow kills the command's whole
+  process group, and only the chat page itself, not a component, can press Allow.
+- Components no longer reload and flicker whenever the chat redraws, including while a
+  subagent runs.
+- A component's "Updated" label no longer wraps onto two lines.
+- Pictures sent with a refused permission are kept and passed on to the bot, and pictures
+  answering a group or called-in bot's question show in the chat.
+
 ## 1.5.0
 
 ### Added
