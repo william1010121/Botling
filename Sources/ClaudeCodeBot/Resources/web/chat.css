@@ -92,12 +92,19 @@ button { font: inherit; color: inherit; }
 .mention-list button { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .mention-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mention-hint { min-width: 0; flex: 0 1 auto; font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The / list is meant to go unnoticed: small rows, a flat box, no shadow. */
+/* The / list is meant to go unnoticed: small rows, a flat box, no shadow.
+   It is still wide enough to read: about 360px, up to the composer's width, the name whole and
+   the description on a second faint line that wraps rather than being cut. */
 .mention-list.slash {
-  min-width: 160px; max-width: 280px; padding: 2px; border-color: #29292F; border-radius: 8px;
-  box-shadow: none; background: #1C1C20;
+  width: max-content; min-width: min(360px, calc(100% - 24px)); max-width: calc(100% - 24px);
+  padding: 2px; border-color: #29292F; border-radius: 8px; box-shadow: none; background: #1C1C20;
 }
-.mention-list.slash button { padding: 3px 8px; font-size: 12.5px; border-radius: 5px; color: var(--muted); gap: 10px; }
+.mention-list.slash button {
+  flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 1px;
+  padding: 4px 8px; font-size: 12.5px; border-radius: 5px; color: var(--muted);
+}
+.mention-list.slash .mention-name { flex-shrink: 0; max-width: 100%; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; white-space: normal; }
+.mention-list.slash .mention-hint { max-width: 100%; overflow: visible; text-overflow: clip; white-space: normal; line-height: 1.35; }
 .mention-list.slash button.active, .mention-list.slash button:hover { background: #26262C; color: var(--text); }
 .composer { position: relative; }
 .user-body { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 460px; min-width: 0; }

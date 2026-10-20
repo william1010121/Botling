@@ -34,6 +34,9 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **The / menu is wide enough to read.** It was a narrow box that cut a command to "/des…"
+  and its description after a few words. It is now about 360 points wide, up to the composer's
+  width, with each name whole and its description on a second faint line that wraps.
 - **Tables size their columns by what is in them.** A short column (a version, a name) gets
   its natural width, up to 40%, before a long text column takes the rest, and a cell never
   breaks inside a word, so "v1.6.0" no longer wraps as "v1. / 6. / 0". Cells line up at the top.
