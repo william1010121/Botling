@@ -15,8 +15,11 @@ enum Snapshot {
         if let icon = ProcessInfo.processInfo.environment["CCB_ICON"] {
             drawIcon(to: icon)
         }
-        guard let path = ProcessInfo.processInfo.environment["CCB_SNAPSHOT"],
-              let page = ChatSurface.pageURL else { return false }
+        if let (chat, path) = chatRequest() {
+            drawChat(chat, to: path)
+            return true
+        }
+        guard let path = ProcessInfo.processInfo.environment["CCB_SNAPSHOT"] else { return false }
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         let now = Date()
         let picture = URL(filePath: #filePath).deletingLastPathComponent()
@@ -48,6 +51,51 @@ enum Snapshot {
             ], sourceID: UUID(), sourceMessageID: UUID()),
             ChatMessage(role: .divider, text: "Handoff → Opus", date: now.addingTimeInterval(-20))
         ])
+        draw(root: root, to: path)
+        return true
+    }
+
+    /// `ClaudeCodeBot --snapshot "<chat name>" out.png`: the chat as this build draws it.
+    static func chatRequest() -> (String, String)? {
+        let arguments = CommandLine.arguments
+        guard let at = arguments.firstIndex(of: "--snapshot"), arguments.count > at + 2 else { return nil }
+        return (arguments[at + 1], arguments[at + 2])
+    }
+
+    static var isChatRequest: Bool { CommandLine.arguments.contains("--snapshot") }
+
+    /// A real chat from `~/.claudecodebot`, copied first so nothing there is touched: the main bot
+    /// ("Main bot"), Maintainer, or a project or bot by name.
+    private static func drawChat(_ name: String, to path: String) {
+        let data = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claudecodebot")
+        let folder: URL?
+        switch name.lowercased() {
+        case "main bot", "main":
+            folder = data.appending(path: "main")
+        case "maintainer":
+            folder = data.appending(path: "projects/\(Workspace.maintainerID.uuidString)")
+        default:
+            let projects = (try? Data(contentsOf: data.appending(path: "projects.json")))
+                .flatMap { try? JSONDecoder().decode([Workspace.Project].self, from: $0) } ?? []
+            folder = projects.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+                .map { data.appending(path: "projects/\($0.id.uuidString)") }
+        }
+        guard let folder, FileManager.default.fileExists(atPath: folder.appending(path: "chat.json").path) else {
+            FileHandle.standardError.write(Data("No chat called \"\(name)\" in \(data.path).\n".utf8))
+            exit(1)
+        }
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
+        let copy = root.appending(path: "main")
+        try? FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
+        for file in ["chat.json", "subagents.json"] {
+            try? FileManager.default.copyItem(at: folder.appending(path: file), to: copy.appending(path: file))
+        }
+        draw(root: root, to: path)
+    }
+
+    /// Draws the main bot's chat under `root` in an offscreen window, saves it as a PNG, quits.
+    private static func draw(root: URL, to path: String) {
+        guard let page = ChatSurface.pageURL else { exit(1) }
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
@@ -67,7 +115,6 @@ enum Snapshot {
         view.loadFileURL(page, allowingReadAccessTo: URL(filePath: "/"))
         self.window = window
         self.handler = handler
-        return true
     }
 
     /// `CCB_ICON=/path/icon.png`: the app icon (the main bot's face on a dark tile), 1024 px.

@@ -18,6 +18,11 @@ export const extensions = {
   guard: <T>(_plugin: string, run: () => T): T | undefined => run(),
 };
 
+/** Developer mode: bot replies get a "not right" flag (set from the state before drawing). */
+export const feedback = { enabled: false };
+
+const flagIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4h11l-2 4 2 4H5"/></svg>`;
+
 const replyIcon = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>`;
 
 /** One message, as the element that goes in the chat. */
@@ -41,6 +46,7 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
     case "bot":
     case "notice": {
       const body = botBody(message, components);
+      const actions = message.role === "bot" && feedback.enabled ? withFeedback(message) : replyButton(message);
       if (message.speaker) {
         // The group chat: who said it, above what they said.
         const column = document.createElement("div");
@@ -49,9 +55,9 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
         name.className = "speaker";
         name.textContent = message.speaker;
         column.append(name, body);
-        row.append(avatar(message.avatar), column, replyButton(message));
+        row.append(avatar(message.avatar), column, actions);
       } else {
-        row.append(avatar(message.avatar), body, replyButton(message));
+        row.append(avatar(message.avatar), body, actions);
       }
       break;
     }
@@ -86,6 +92,50 @@ function avatar(src: string | null): HTMLElement {
   image.alt = "";
   if (src) image.src = src;
   return image;
+}
+
+/** The reply button with a "not right" flag under it, for developer mode. */
+function withFeedback(message: MessageView): HTMLElement {
+  const column = document.createElement("div");
+  column.className = "message-actions";
+  const flag = document.createElement("button");
+  flag.className = "reply-button feedback-button";
+  flag.setAttribute("aria-label", "Not right: send to the developer project");
+  flag.title = "Not right";
+  flag.innerHTML = flagIcon;
+  flag.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openFeedback(flag, message);
+  });
+  column.append(replyButton(message), flag);
+  return column;
+}
+
+/** Say what was wrong with a reply; it goes to the developer project with the chat around it. */
+function openFeedback(anchor: HTMLElement, message: MessageView): void {
+  document.querySelector(".report")?.remove();
+  const box = document.createElement("div");
+  box.className = "report";
+  box.innerHTML = `<div class="report-title">What was not right?</div>
+<textarea rows="3" placeholder="e.g. it answered only half of what I said"></textarea>
+<div class="report-actions"><span></span><button class="primary send">Send</button></div>`;
+  const textarea = box.querySelector("textarea")!;
+  box.querySelector(".send")!.addEventListener("click", () => {
+    post({ type: "feedback", messageID: message.id, text: textarea.value.trim() });
+    box.remove();
+  });
+  document.body.append(box);
+  const rect = anchor.getBoundingClientRect();
+  box.style.top = `${Math.max(12, Math.min(rect.top - 8, window.innerHeight - box.offsetHeight - 12))}px`;
+  box.style.left = `${Math.max(12, Math.min(rect.left - 316, window.innerWidth - 316))}px`;
+  textarea.focus();
+  const close = (event: MouseEvent) => {
+    if (!box.contains(event.target as Node)) {
+      box.remove();
+      document.removeEventListener("mousedown", close);
+    }
+  };
+  setTimeout(() => document.addEventListener("mousedown", close), 0);
 }
 
 function replyButton(message: MessageView): HTMLElement {

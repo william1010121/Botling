@@ -18,6 +18,11 @@ public enum BotRequest: Equatable, Sendable {
     /// `<new-project folder="/path">first task</new-project>`: make a folder a project with its
     /// own manager (ClaudeCodeBot asks the user first), then hand it the task, if any.
     case newProject(folder: String, task: String)
+    /// `<install-build path="/…/ClaudeCodeBot.app">what changed</install-build>`: developer mode
+    /// only. Install a new build of ClaudeCodeBot and restart (the user confirms first).
+    case installBuild(path: String, note: String)
+    /// `<app-screenshot/>`: developer mode only. A picture of the app's window, sent back.
+    case appScreenshot
 }
 
 /// Splits a bot's reply into the text to show, the buttons to draw, and the requests to act on.
@@ -52,6 +57,11 @@ public enum ReplyParser {
     private static let pluginTag = try! NSRegularExpression(pattern: #"<plugin>\s*(.*?)\s*</plugin>"#, options: .dotMatchesLineSeparators)
     private static let folderTag = try! NSRegularExpression(pattern: #"<need-folder>\s*(.*?)\s*</need-folder>"#, options: .dotMatchesLineSeparators)
     private static let installTag = try! NSRegularExpression(pattern: #"<install>\s*(.*?)\s*</install>"#, options: .dotMatchesLineSeparators)
+    private static let buildTag = try! NSRegularExpression(
+        pattern: #"<install-build\s+path\s*=\s*"([^"]+)"\s*(?:/>|>\s*(.*?)\s*</install-build>)"#,
+        options: .dotMatchesLineSeparators
+    )
+    private static let screenshotTag = try! NSRegularExpression(pattern: #"<app-screenshot\s*/?>(?:\s*</app-screenshot>)?"#)
     private static let projectTag = try! NSRegularExpression(
         pattern: #"<new-project\s+folder\s*=\s*"([^"]+)"\s*(?:/>|>\s*(.*?)\s*</new-project>)"#,
         options: .dotMatchesLineSeparators
@@ -115,6 +125,10 @@ public enum ReplyParser {
         var projects: [BotRequest] = []
         take(projectTag) { projects.insert(.newProject(folder: $0[0].trimmingCharacters(in: .whitespaces), task: $0[1]), at: 0) }
         requests += projects
+        take(buildTag, first: true) { requests.append(.installBuild(path: $0[0].trimmingCharacters(in: .whitespaces), note: $0[1])) }
+        var screenshot = false
+        take(screenshotTag) { _ in screenshot = true }
+        if screenshot { requests.append(.appScreenshot) }
         take(folderTag) { requests.append(.folder(path: $0[0])) }
 
         var choices: [Choice]?

@@ -5,6 +5,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="${1:-$(tr -d '[:space:]' < VERSION)}"
+# Which commit this build is, and whether it had uncommitted changes: the developer-mode install
+# card compares it with the running build to show what changes.
+COMMIT="$(git rev-parse HEAD 2>/dev/null || true)"
+DIRTY=0
+if [[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]]; then DIRTY=1; fi
 ARCHS=(--arch arm64 --arch x86_64)
 if [[ "${SINGLE_ARCH:-}" == "1" ]]; then ARCHS=(); fi
 
@@ -31,6 +36,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
+  <key>CCBGitCommit</key><string>${COMMIT}</string>
+  <key>CCBGitDirty</key><string>${DIRTY}</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>

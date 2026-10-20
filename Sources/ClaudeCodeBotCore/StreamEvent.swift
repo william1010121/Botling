@@ -6,7 +6,7 @@ enum StreamEvent {
     /// The result line as a reply; tool calls, their results, words between them and
     /// subagents as trace events.
     static func events(in line: String) -> [AgentEvent] {
-        if let reply = reply(in: line) { return [reply] }
+        if let reply = reply(in: line) { return (usage(in: line).map { [$0] } ?? []) + [reply] }
         if let request = permission(in: line) { return [.permission(request)] }
         if let id = cancelledRequest(in: line) { return [.permissionCancelled(id)] }
         guard let data = line.data(using: .utf8),
@@ -147,6 +147,15 @@ enum StreamEvent {
               let id = object["request_id"] as? String,
               (object["request"] as? [String: Any])?["subtype"] as? String != "can_use_tool" else { return nil }
         return id
+    }
+
+    /// The session's cost so far, from a result line.
+    static func usage(in line: String) -> AgentEvent? {
+        guard let data = line.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              object["type"] as? String == "result",
+              let cost = (object["total_cost_usd"] as? NSNumber)?.doubleValue else { return nil }
+        return .usage(totalCost: cost)
     }
 
     static func reply(in line: String) -> AgentEvent? {

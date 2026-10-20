@@ -77,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static var isHeadless: Bool {
         let environment = ProcessInfo.processInfo.environment
         return environment["CCB_SNAPSHOT"] != nil || environment["CCB_ICON"] != nil
-            || CommandLine.arguments.contains("--check-plugin")
+            || CommandLine.arguments.contains("--check-plugin") || Snapshot.isChatRequest
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -91,6 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
         workspace.prepareLibrary()
+        connectSelfUpdate()
         workspace.startRoutines()
         workspace.components.startWatching()
         workspace.plugins.startWatching()
@@ -98,6 +99,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         badge = workspace.$waiting.sink { waiting in
             NSApp.dockTile.badgeLabel = waiting.isEmpty ? nil : "\(waiting.count)"
         }
+    }
+
+    /// Developer mode's hooks: which build this is, how to install another (a script outside the
+    /// app does it once the app has quit), and a picture of the window. Then, if an install was
+    /// under way, how it went.
+    private func connectSelfUpdate() {
+        workspace.runningBuild = BuildInfo.read(Bundle.main.bundleURL)
+        let root = workspace.root
+        workspace.launchInstaller = { command in
+            let process = Process()
+            process.executableURL = URL(filePath: command[0])
+            process.arguments = Array(command.dropFirst())
+            let log = SelfUpdate.logURL(in: root)
+            FileManager.default.createFile(atPath: log.path, contents: nil)
+            if let handle = try? FileHandle(forWritingTo: log) {
+                process.standardOutput = handle
+                process.standardError = handle
+            }
+            do {
+                try process.run()
+            } catch {
+                return
+            }
+            // Bots write their memory as the app quits; the script waits for that.
+            NSApp.terminate(nil)
+        }
+        workspace.captureWindow = { await Self.captureMainWindow(into: root) }
+        workspace.checkSelfUpdate()
+    }
+
+    /// A PNG of the main window as it is on screen, saved under the update folder. The older
+    /// CoreGraphics call is used on purpose: for the app's own window it needs no Screen
+    /// Recording permission, where ScreenCaptureKit would ask every user first.
+    static func captureMainWindow(into root: URL) async -> URL? {
+        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil && $0.frame.width > 600 }),
+              let image = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming, .bestResolution]) else { return nil }
+        let folder = SelfUpdate.folder(in: root).appending(path: "screenshots")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let url = folder.appending(path: "window-\(Int(Date().timeIntervalSince1970)).png")
+        guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]),
+              (try? png.write(to: url)) != nil else { return nil }
+        return url
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

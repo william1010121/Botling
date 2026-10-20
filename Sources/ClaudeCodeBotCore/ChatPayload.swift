@@ -95,6 +95,8 @@ public struct ChatPayload: Encodable, Equatable {
     var live: [StepView]
     /// Set while you look at one of its subagents instead of the chat.
     var subagent: SubagentHeader?
+    /// Developer mode: replies can be flagged as not right.
+    var feedback = false
 
     /// What a group chat adds: who is typing, and names for who said each line.
     public struct GroupView {
@@ -130,6 +132,7 @@ public struct ChatPayload: Encodable, Equatable {
         replyingTo: UUID?,
         now: Date = Date(),
         group: GroupView? = nil,
+        feedback: Bool = false,
         avatar: (_ projectID: UUID?) -> String
     ) -> ChatPayload {
         let own = avatar(nil)
@@ -196,7 +199,8 @@ public struct ChatPayload: Encodable, Equatable {
             components: components,
             mentions: group?.names ?? [],
             live: group == nil && bot.isWorking ? bot.liveSteps.map { stepView($0, in: bot) } : [],
-            subagent: nil
+            subagent: nil,
+            feedback: feedback
         )
     }
 

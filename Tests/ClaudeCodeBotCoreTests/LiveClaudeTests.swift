@@ -161,6 +161,41 @@ struct LiveClaudeTests {
         await main.goToSleep()
     }
 
+    /// The developer bot asks for a screenshot and a build install with the tags.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func theDeveloperBotUsesItsTags() async throws {
+        let executable = try #require(ClaudeExecutableLocator().locate())
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appending(path: "ClaudeCodeBot")
+        let app = folder.appending(path: "dist/ClaudeCodeBot.app/Contents")
+        try FileManager.default.createDirectory(at: app.appending(path: "MacOS"), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\n".utf8).write(to: app.appending(path: "MacOS/ClaudeCodeBot"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: app.appending(path: "MacOS/ClaudeCodeBot").path)
+        let info: [String: Any] = ["CFBundleIdentifier": "io.github.william1010121.ClaudeCodeBot", "CFBundleExecutable": "ClaudeCodeBot", "CFBundleShortVersionString": "1.4.0-dev"]
+        try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0).write(to: app.appending(path: "Info.plist"))
+        let real = ClaudeAgentProcess.launcher(executable: executable)
+        let workspace = Workspace(root: root.appending(path: "ccb")) { profile, store in
+            Bot(profile: profile, defaultModel: .haiku, launcher: real, store: store)
+        }
+        let project = workspace.addProject(folder: folder, select: false)
+        workspace.setDeveloperMode(true, project: project.id)
+        let manager = try #require(workspace.bot(for: project))
+        var asked: [BotRequest] = []
+        manager.onRequests = { asked += $0 }
+
+        manager.send("看一下 App 現在長什麼樣子")
+        await eventually({ !manager.isWorking && manager.messages.last?.role == .bot }, timeout: 120)
+        print("reply 1:", manager.messages.last?.text ?? "", asked)
+        #expect(asked.contains(.appScreenshot))
+
+        manager.send("我已經 build 好了，在 \(folder.path)/dist/ClaudeCodeBot.app，幫我裝起來。改了左欄的未讀數。")
+        await eventually({ asked.contains { if case .installBuild = $0 { true } else { false } } }, timeout: 120)
+        print("reply 2:", manager.messages.last?.text ?? "", asked)
+        await manager.goToSleep()
+        withExtendedLifetime(workspace) {}
+    }
+
     /// M2 acceptance: the main bot answers from a sleeping manager's memory.md without waking it,
     /// and hands work over through inbox.md.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))

@@ -53,6 +53,10 @@ public final class Bot: ObservableObject, Identifiable {
     public var replyFilter: (() -> ((String) async -> String)?)?
     /// Every reply shown, for plugins listening with bots.onReply.
     public var replyObserver: ((ChatMessage) -> Void)?
+    /// Called with what each turn cost, in US dollars.
+    public var onSpend: ((Double) -> Void)?
+    /// What the running session has cost so far (claude reports a running total).
+    private var sessionCost = 0.0
     /// Called with the tags a reply carried (pull up a team, ask the component team).
     public var onRequests: (([BotRequest]) -> Void)?
     /// It asked you something outside a reply (may it use a tool?), so a question asked during a
@@ -113,6 +117,12 @@ public final class Bot: ObservableObject, Identifiable {
     }
     /// What you said in the turn under way, while nothing but you started it.
     private var turnInput: Outgoing?
+    /// Work it was doing (handed over, a routine) when you wrote: it answers you first, then is
+    /// told to carry on. Holds whether that work reports up like handed-over work.
+    private var pausedWork: Bool?
+    static let pauseNote = "(App: I stopped what you were doing to ask you this. Answer me first; you will be told to carry on with it after.)"
+    static let resumeNote = "(App: Now carry on with what you were doing before the user's message, where you left off.)"
+
     /// Turns interrupted to take in what you added whose error results have not come back yet;
     /// those are not shown. (You may add twice before the first one comes back.)
     private var interruptions = 0
@@ -226,7 +236,6 @@ public final class Bot: ObservableObject, Identifiable {
             message.replyPreview = Self.preview(of: quoted)
         }
         append(message)
-        turnFromRelay = false
 
         var lines: [String] = []
         if let appNote { lines.append(appNote) }
@@ -242,7 +251,9 @@ public final class Bot: ObservableObject, Identifiable {
         if !attachments.isEmpty {
             lines.append("(Attachments:\n" + attachments.map { "- " + $0.url.path }.joined(separator: "\n") + ")")
         }
+        // Whether paused work reported up is read before this turn becomes yours.
         route(Outgoing(text: lines.joined(separator: "\n\n"), images: attachments.filter { $0.kind == .image }, fromUser: true, messageID: message.id))
+        turnFromRelay = false
     }
 
     /// Copies a file the user sent into the bot's own attachments folder.
@@ -371,6 +382,20 @@ public final class Bot: ObservableObject, Identifiable {
                 deliver(merged)
                 return
             }
+            if pausing(for: outgoing) {
+                // You come first: what it was doing waits until it has answered you.
+                process?.interrupt()
+                interruptions += 1
+                trace.dropSteps()
+                pausedWork = turnFromRelay
+                turnFromRelay = false
+                var mine = outgoing
+                mine.text = Self.pauseNote + "\n\n" + outgoing.text
+                deliver(mine)
+                // Yours now: what you add before it answers joins it.
+                turnInput = mine
+                return
+            }
             deliver(outgoing)
         case .tidying, .switching:
             queued.append(outgoing)
@@ -388,6 +413,14 @@ public final class Bot: ObservableObject, Identifiable {
             fromUser: true,
             messageID: outgoing.messageID
         )
+    }
+
+    /// You wrote while it worked on something you did not start (handed-over work, a routine, a
+    /// report of its own): unless stopping it would lose work (a question waits on you, a
+    /// subagent runs in the foreground), it pauses that for you.
+    private func pausing(for outgoing: Outgoing) -> Bool {
+        outgoing.fromUser && isWorking && turnInput == nil && pausedWork == nil && internalReply == nil && groupReply == nil
+            && permissionAsks.isEmpty && !trace.subagents.contains { $0.isRunning && !$0.background }
     }
 
     private static let partsNote = "(I sent this in parts before you answered; here is all of it:)\n\n"
@@ -474,6 +507,7 @@ public final class Bot: ObservableObject, Identifiable {
             disallowedTools: profile.disallowedTools
         ))
         self.process = process
+        sessionCost = 0
         Task { [weak self] in
             for await event in process.events {
                 self?.handle(event, from: process)
@@ -495,6 +529,13 @@ public final class Bot: ObservableObject, Identifiable {
         onReply?(message, turnFromRelay)
         replyObserver?(message)
         if !parsed.requests.isEmpty { onRequests?(parsed.requests) }
+        if let fromRelay = pausedWork, process != nil {
+            // It answered you; now back to what it was doing.
+            pausedWork = nil
+            turnFromRelay = fromRelay
+            deliver(Outgoing(text: Self.resumeNote))
+            return
+        }
         afterTurn()
     }
 
@@ -664,6 +705,11 @@ public final class Bot: ObservableObject, Identifiable {
     private func handle(_ event: AgentEvent, from source: AgentProcess) {
         guard source === process else { return }
         switch event {
+        case let .usage(total):
+            // A running total for the session: what this turn cost is the difference.
+            let spent = max(0, total - sessionCost)
+            sessionCost = max(sessionCost, total)
+            if spent > 0 { onSpend?(spent) }
         case let .trace(step):
             if trace.apply(step) { store?.save(subagents: trace.subagents) }
             // It started a turn of its own (a subagent in the background finished): it is at
@@ -720,6 +766,7 @@ public final class Bot: ObservableObject, Identifiable {
             process = nil
             turnInput = nil
             interruptions = 0
+            pausedWork = nil
             if trace.stopRunning() { store?.save(subagents: trace.subagents) }
             dropPermissionAsks()
             dropNextReply = false

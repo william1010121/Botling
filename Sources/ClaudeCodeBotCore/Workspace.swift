@@ -117,8 +117,24 @@ public final class Workspace: ObservableObject {
     public let plugins: PluginRegistry
     /// Runs plugins' program parts (Node), when a script for it was given.
     public let pluginHost: PluginHostClient?
-    let root: URL
+    public let root: URL
     private let makeBot: BotFactory
+    /// ClaudeCodeBot's own settings: daily budget, developer mode.
+    @Published public internal(set) var settings: AppSettings
+    /// What the bots spent today.
+    @Published public internal(set) var spending: Spending
+    var settingsURL: URL { root.appending(path: "settings.json") }
+    var spendingURL: URL { root.appending(path: "spending.json") }
+    /// The "budget reached" card waiting for a pick.
+    var budgetQuestion: UUID?
+    /// The ClaudeCodeBot build running now; nil when not run from an app bundle (`swift run`).
+    public var runningBuild: BuildInfo?
+    /// Runs the install script, detached, and quits the app (the app sets it).
+    public var launchInstaller: (([String]) -> Void)?
+    /// A PNG of the app's window (the app sets it).
+    public var captureWindow: (() async -> URL?)?
+    /// Build cards waiting for a pick: the build, the project that asked, what changed.
+    var buildQuestions: [UUID: (build: BuildInfo, requester: UUID, note: String)] = [:]
     /// Starts processes that are not bots: temporary teams and the component team.
     private let launcher: AgentLauncher
     private var subscriptions: Set<AnyCancellable> = []
@@ -140,6 +156,8 @@ public final class Workspace: ObservableObject {
         self.root = root
         self.makeBot = makeBot
         self.launcher = launcher
+        settings = AppSettings.load(from: root.appending(path: "settings.json"))
+        spending = Spending.load(from: root.appending(path: "spending.json"))
         let library = root.appending(path: "plugins")
         Self.migrateFromDeck(library: library, root: root)
         let componentFolder = Self.prepareComponentPlugin(in: library, movingFrom: root.appending(path: "components"))
@@ -168,6 +186,7 @@ public final class Workspace: ObservableObject {
             if selection == nil { mainBot.markRead() }
         }
         mainBot.onRequests = { [weak self] requests in self?.handle(requests, from: nil) }
+        mainBot.onSpend = { [weak self] amount in self?.record(amount, by: "Main bot") }
         // Asked during a group turn, the main bot's question shows in that group too.
         mainBot.onQuestion = { [weak self] message in
             guard let self else { return }
@@ -509,6 +528,14 @@ public final class Workspace: ObservableObject {
     /// Forgets an app card that was answered in words, undoing what it waited to do; says what
     /// the card was about. Nil if `id` is no app card waiting for a pick.
     private func closeAppCard(_ id: UUID) -> String? {
+        if id == budgetQuestion {
+            budgetQuestion = nil
+            return "saying today's budget is used up"
+        }
+        if let proposal = buildQuestions.removeValue(forKey: id) {
+            managers[proposal.requester]?.queueNote("(App: The user did not install \(proposal.build.label); they wrote instead.)")
+            return "asking to install the ClaudeCodeBot build \(proposal.build.label)"
+        }
         if let folders = projectQuestions.removeValue(forKey: id) {
             return "asking to add \(folders.map(\.folder.lastPathComponent).joined(separator: ", ")) as projects"
         }
@@ -682,6 +709,8 @@ public final class Workspace: ObservableObject {
     }
 
     public func checkRoutines(now: Date = Date()) {
+        // Over today's budget: routines wait (they are still due once there is room).
+        guard !isOverBudget else { return }
         for bot in [mainBot] + everyProject.compactMap({ managers[$0.id] }) {
             bot.reloadRoutines()
             for routine in bot.routines where bot.isDue(routine, at: now) {
@@ -868,6 +897,10 @@ public final class Workspace: ObservableObject {
                 }
             case .newProject:
                 break
+            case let .installBuild(path, note):
+                if let project { proposeBuild(path, note: note, from: project) }
+            case .appScreenshot:
+                if let project { sendScreenshot(to: project) }
             case let .plugin(request):
                 if project?.isMaintainer != true {
                     handToMaintainer("\(project?.name ?? mainBot.name)'s request for ClaudeCodeBot: \(request)")
@@ -881,6 +914,11 @@ public final class Workspace: ObservableObject {
     @discardableResult
     public func startTeam(_ name: String, task: String) -> TeamRun? {
         let spec = teams.first { $0.name == name } ?? teams.first ?? TeamSpec.defaults[0]
+        guard !isOverBudget else {
+            tell(mainBot, "\(spec.title) did not start: today's budget is used up. Raise it in Settings, or ask again tomorrow.")
+            mainBot.queueNote("(App: The \(spec.title) team was not started because today's budget is used up.)")
+            return nil
+        }
         let stamp = Date().formatted(.verbatim(
             "\(year: .defaultDigits)\(month: .twoDigits)\(day: .twoDigits)-\(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased))\(minute: .twoDigits)\(second: .twoDigits)",
             timeZone: .current,
@@ -911,6 +949,9 @@ public final class Workspace: ObservableObject {
             var reported = false
             for await event in process.events {
                 switch event {
+                case let .usage(total):
+                    // A team runs one turn, so its running total is what it cost.
+                    self?.record(total, by: spec.title)
                 case .trace, .permission, .permissionCancelled:
                     // Teams are started without asking (asksPermission is off), so nothing waits.
                     break
@@ -1106,8 +1147,10 @@ public final class Workspace: ObservableObject {
             .store(in: &subscriptions)
     }
 
-    /// Hands whatever the main bot wrote into a project's inbox.md to that manager.
+    /// Hands whatever the main bot wrote into a project's inbox.md to that manager. Over today's
+    /// budget it stays in the inbox until there is room.
     public func deliverInboxes() {
+        guard !isOverBudget else { return }
         for project in everyProject {
             guard let text = try? String(contentsOf: project.inboxURL, encoding: .utf8),
                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
@@ -1158,6 +1201,20 @@ public final class Workspace: ObservableObject {
             } else {
                 try? FileManager.default.removeItem(at: proposal.folder)
             }
+            return true
+        }
+        if let proposal = buildQuestions[messageID] {
+            guard message.isOpenQuestion else { return false }
+            buildQuestions[messageID] = nil
+            bot.markChosen(index, in: messageID)
+            answerBuild(proposal.build, requester: proposal.requester, note: proposal.note, install: index == 0)
+            return true
+        }
+        if messageID == budgetQuestion {
+            guard message.isOpenQuestion else { return false }
+            budgetQuestion = nil
+            bot.markChosen(index, in: messageID)
+            answerBudget(index)
             return true
         }
         if let proposal = projectQuestions[messageID] {
@@ -1437,7 +1494,11 @@ public final class Workspace: ObservableObject {
         }
         let bot = makeBot(profile, store)
         bot.onRequests = { [weak self] requests in self?.handle(requests, from: project) }
-        bot.wakeNote = { [weak self] in self?.componentBriefing() ?? "" }
+        bot.onSpend = { [weak self] amount in self?.record(amount, by: project.name) }
+        bot.wakeNote = { [weak self] in
+            guard let self else { return "" }
+            return [componentBriefing(), developerBriefing(for: project)].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        }
         giveClaudeParts(to: bot)
         bot.onReply = { [weak self, weak bot] _, _ in
             guard let self else { return }

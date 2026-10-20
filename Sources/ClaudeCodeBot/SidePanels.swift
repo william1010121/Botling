@@ -929,6 +929,11 @@ private struct SettingsPage: View {
                 PluginsSection(registry: plugins, host: workspace?.pluginHost, workspace: workspace)
             }
 
+            if let workspace, plugins != nil {
+                BudgetSection(workspace: workspace)
+                DeveloperSection(workspace: workspace)
+            }
+
             Spacer()
             Text(bot.profile.workingDirectory.path(percentEncoded: false))
                 .font(.system(size: 12))
@@ -1248,6 +1253,104 @@ private struct SettingControl: View {
         }
         .font(.system(size: 13))
         .accessibilityLabel(setting.title)
+    }
+}
+
+/// What the bots may spend in a day, and what they spent today.
+private struct BudgetSection: View {
+    @ObservedObject var workspace: Workspace
+    @State private var text = ""
+
+    var body: some View {
+        PanelSection("Daily budget") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Text("$").foregroundStyle(Theme.muted)
+                    TextField("No limit", text: $text)
+                        .textFieldStyle(.plain)
+                        .onSubmit(save)
+                    Button("Save", action: save)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Theme.blue)
+                        .disabled(Double(text) == workspace.settings.dailyBudget || (text.isEmpty && workspace.settings.dailyBudget == nil))
+                }
+                .font(.system(size: 14))
+                .padding(.horizontal, 14)
+                .frame(height: 44)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+                Text(summary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(workspace.isOverBudget ? Theme.orange : Theme.faint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .onAppear { text = workspace.settings.dailyBudget.map { String(format: "%g", $0) } ?? "" }
+    }
+
+    private var summary: String {
+        let today = workspace.spending.day == Spending.today() ? workspace.spending.spent : 0
+        let top = workspace.spending.byBot.sorted { $0.value > $1.value }.prefix(3)
+            .map { "\($0.key) \(Workspace.dollars($0.value))" }.joined(separator: ", ")
+        var line = "Spent today: \(Workspace.dollars(today))" + (top.isEmpty ? "" : " (\(top))") + "."
+        if workspace.isOverBudget { line += " Used up: routines, handed-over work and teams wait; your own messages still go through." }
+        else if workspace.settings.dailyBudget == nil { line += " With no limit, nothing ever waits." }
+        return line
+    }
+
+    private func save() {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        workspace.setDailyBudget(trimmed.isEmpty ? nil : Double(trimmed))
+        text = workspace.settings.dailyBudget.map { String(format: "%g", $0) } ?? ""
+    }
+}
+
+/// For working on ClaudeCodeBot itself: which project is its source, whose manager may then
+/// install new builds, look at the app, and get what you flag as not right.
+private struct DeveloperSection: View {
+    @ObservedObject var workspace: Workspace
+
+    var body: some View {
+        let folders = workspace.projects.filter { !$0.isBot }
+        PanelSection("Developer mode") {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle(isOn: Binding(
+                    get: { workspace.settings.developerMode },
+                    set: { on in workspace.setDeveloperMode(on, project: workspace.settings.developerProjectID ?? Self.guess(folders)?.id) }
+                )) {
+                    Text("Develop ClaudeCodeBot itself").font(.system(size: 14))
+                }
+                .toggleStyle(.switch)
+                .padding(.horizontal, 14)
+                .frame(height: 44)
+                .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+                if workspace.settings.developerMode {
+                    Picker("Its source", selection: Binding(
+                        get: { workspace.settings.developerProjectID },
+                        set: { workspace.setDeveloperMode(true, project: $0) }
+                    )) {
+                        Text("Choose a project").tag(UUID?.none)
+                        ForEach(folders) { project in
+                            Text(project.name).tag(Optional(project.id))
+                        }
+                    }
+                    .font(.system(size: 14))
+                }
+                Text(workspace.settings.developerMode
+                     ? "\(workspace.developerProject?.name ?? "That project")'s manager may install new builds (you confirm; one that does not start is rolled back), take screenshots of this window, and gets what you flag as \"not right\" in any chat."
+                     : "Off for everyone who only uses ClaudeCodeBot. Turn it on to let one project's manager work on the app itself.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.faint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// The project that looks like ClaudeCodeBot's source, to start with.
+    static func guess(_ projects: [Workspace.Project]) -> Workspace.Project? {
+        projects.first { project in
+            let manifest = (try? String(contentsOf: project.folder.appending(path: "Package.swift"), encoding: .utf8)) ?? ""
+            return manifest.contains("\"ClaudeCodeBot\"")
+        }
     }
 }
 

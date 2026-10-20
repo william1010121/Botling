@@ -81,6 +81,7 @@ struct ChatSurface: NSViewRepresentable {
                     speaker: { [workspace] id in workspace.speakerName(for: id) }
                 )
             },
+            feedback: workspace.developerProject != nil,
             avatar: { projectID in
                 if let projectID, let kind = workspace.avatar(for: projectID) {
                     return AvatarImages.dataURL(kind, eyes: .open)
@@ -154,6 +155,10 @@ struct ChatSurface: NSViewRepresentable {
                 }
             case "openSubagent":
                 if let subagent = body["id"] as? String { workspace.view(subagent: subagent, of: bot) }
+            case "feedback":
+                if let messageID = id("messageID") {
+                    workspace.reportFeedback(body["text"] as? String ?? "", on: messageID, in: bot)
+                }
             case "closeSubagent":
                 workspace.view(subagent: nil, of: bot)
             case "openSource":

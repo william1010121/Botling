@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
 import { Composer } from "../src/composer";
-import { messageElement } from "../src/messages";
+import { feedback, messageElement } from "../src/messages";
 import type { ChatState, MessageView } from "../src/types";
 
 function message(overrides: Partial<MessageView>): MessageView {
@@ -195,6 +195,21 @@ describe("messages", () => {
     head.click();
     expect(lists[0].querySelector<HTMLElement>(".step-body")!.hidden).toBe(false);
     expect(lists[0].querySelector("pre")?.textContent).toBe("swift test");
+  });
+
+  it("flag a bot's reply as not right in developer mode only", () => {
+    feedback.enabled = false;
+    expect(messageElement(message({ text: "Hi" }), {}).querySelector(".feedback-button")).toBeNull();
+    feedback.enabled = true;
+    const row = messageElement(message({ id: "r9", text: "Hi" }), {});
+    document.body.append(row);
+    expect(messageElement(message({ role: "user", text: "Me" }), {}).querySelector(".feedback-button")).toBeNull();
+    row.querySelector<HTMLButtonElement>(".feedback-button")!.click();
+    const box = document.querySelector(".report")!;
+    box.querySelector("textarea")!.value = "It answered half";
+    box.querySelector<HTMLButtonElement>(".send")!.click();
+    expect(sent).toEqual([{ type: "feedback", messageID: "r9", text: "It answered half" }]);
+    feedback.enabled = false;
   });
 
   it("let a notice open its project", () => {

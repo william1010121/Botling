@@ -1,6 +1,6 @@
 import { post } from "./bridge";
 import { Composer, sendFile } from "./composer";
-import { extensions, messageElement, typingElement } from "./messages";
+import { extensions, feedback, messageElement, typingElement } from "./messages";
 import { statusWord } from "./steps";
 import { PluginHost, type PluginSpec } from "./plugins";
 import type { ChatState, MessageView } from "./types";
@@ -70,6 +70,14 @@ class Chat {
       this.list.innerHTML = "";
       this.drawn.clear();
       this.composer.setText("");
+    }
+
+    // Turning developer mode on or off redraws every reply with or without its flag.
+    const flagged = !!state.feedback && !state.subagent;
+    if (flagged !== feedback.enabled) {
+      feedback.enabled = flagged;
+      this.list.innerHTML = "";
+      this.drawn.clear();
     }
 
     // Gone ones first, so they do not make the rest move (a moved frame reloads).

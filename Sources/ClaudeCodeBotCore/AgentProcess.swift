@@ -55,6 +55,8 @@ public enum AgentEvent: Equatable, Sendable {
     case permission(PermissionRequest)
     /// It no longer needs the answer to that permission request (its id).
     case permissionCancelled(String)
+    /// What this session has cost so far, in US dollars (sent with each turn's result).
+    case usage(totalCost: Double)
     case exited(status: Int32, stderr: String)
 }
 

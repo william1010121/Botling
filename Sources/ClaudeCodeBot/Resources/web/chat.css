@@ -354,3 +354,8 @@ body.watching #composer-slot { display: none; }
 }
 .report-shot { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; }
 .relay-column { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; }
+
+/* Developer mode: reply and "not right" stacked beside a bot's reply. */
+.message-actions { display: flex; flex-direction: column; gap: 2px; align-self: center; }
+.row:hover .message-actions .reply-button, .message-actions .reply-button:focus-visible { opacity: 1; }
+.feedback-button:hover { color: var(--orange-text); }

@@ -81,6 +81,8 @@ export interface ChatState {
   live?: StepView[];
   /** Set while you watch one of its subagents: the page has no input box then. */
   subagent?: { id: string; title: string; owner: string; status: string; type: string | null } | null;
+  /** Developer mode: a bot's replies can be flagged as not right. */
+  feedback?: boolean;
 }
 
 export type Action =
@@ -94,6 +96,7 @@ export type Action =
   | { type: "openSource"; messageID: string }
   | { type: "openSubagent"; id: string }
   | { type: "closeSubagent" }
+  | { type: "feedback"; messageID: string; text: string }
   | { type: "pickFiles" }
   | { type: "removeFile"; id: string }
   | { type: "addFileData"; name: string; base64: string }

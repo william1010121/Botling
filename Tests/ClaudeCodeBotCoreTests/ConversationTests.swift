@@ -39,15 +39,54 @@ struct ConversationTests {
         #expect(agent.sent.last == "Thanks")
     }
 
-    @Test func workItWasHandedIsNotInterrupted() async {
+    @Test func youComeBeforeWorkItWasHandedThenItCarriesOn() async throws {
         let fake = FakeLauncher()
         fake.respond = { _ in nil }
         let bot = makeBot(fake)
+        var reports: [Bool] = []
+        bot.onReply = { _, answersRelay in reports.append(answersRelay) }
         bot.relay("Fix the login page")
         await eventually { fake.agents.count == 1 }
+        let agent = fake.agents[0]
+
         bot.send("Also, how is it going?")
+        #expect(agent.interrupts == 1)
+        #expect(agent.sent.last == Bot.pauseNote + "\n\nAlso, how is it going?")
+        // Its answer to you is yours, not a report on the handed-over work.
+        agent.reply("Halfway: the form is fixed, the redirect is next.")
+        await eventually { bot.messages.last?.text.hasPrefix("Halfway") == true }
+        #expect(reports == [false])
+        // Then it is told to carry on, and that work reports up again.
+        await eventually { agent.sent.last == Bot.resumeNote }
+        #expect(bot.isWorking)
+        agent.reply("Login page fixed.")
+        await eventually { bot.messages.last?.text == "Login page fixed." }
+        #expect(reports == [false, true])
+        #expect(!bot.messages.contains { $0.role == .error })
+    }
+
+    @Test func aRoutineWaitsForYouToo() async {
+        let fake = FakeLauncher()
+        fake.respond = { _ in nil }
+        let bot = makeBot(fake)
+        bot.run(Routine(schedule: CronSchedule("0 8 * * *")!, task: "News: today's news"), prompt: "Time for the news")
+        await eventually { fake.agents.count == 1 }
+        bot.send("Quick question")
+        #expect(fake.agents[0].interrupts == 1)
+        #expect(fake.agents[0].sent.last?.hasSuffix("Quick question") == true)
+    }
+
+    @Test func aSubagentAtWorkInTheForegroundIsNotStopped() async {
+        let fake = FakeLauncher()
+        fake.respond = { _ in nil }
+        let bot = makeBot(fake)
+        bot.relay("Check the tests")
+        await eventually { fake.agents.count == 1 }
+        fake.agents[0].emit(.trace(.toolUse(id: "A", tool: "Agent", title: "Delegate tests", detail: "run them", parent: nil)))
+        await eventually { bot.subagents.first?.isRunning == true }
+        bot.send("How long?")
         #expect(fake.agents[0].interrupts == 0)
-        #expect(fake.agents[0].sent.last == "Also, how is it going?")
+        #expect(fake.agents[0].sent.last == "How long?")
     }
 
     @Test func aQuestionWaitingOnYouIsNotInterrupted() async {
