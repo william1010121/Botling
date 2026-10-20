@@ -80,7 +80,7 @@ per-bot **Board**, a widget grid.
 </td>
 </tr>
 <tr>
-<td colspan="2" valign="top">
+<td valign="top">
 
 ### 3. One click turns a reply into a component
 
@@ -89,9 +89,19 @@ something you will ask for again) and the Maintainer builds the first version fr
 asking nothing. It reuses a component from the library when one already does the job.
 
 </td>
+<td valign="top">
+
+<img src="docs/images/make-component.png" alt="A test-run reply made into a component: the test-summary card under the reply, and its spec beside it, added to Main bot">
+
+</td>
 </tr>
 <tr>
-<td colspan="2" valign="top">
+<td valign="top">
+
+<img src="docs/images/design.png" alt="A /design request answered with a link to a Claude Design with three directions to pick from">
+
+</td>
+<td valign="top">
 
 ### 4. `/design` gives you a Claude Design to pick from
 
@@ -120,13 +130,19 @@ mark "Not right"; send the change back upstream as a [pull request](CONTRIBUTING
 </td>
 </tr>
 <tr>
-<td colspan="2" valign="top">
+<td valign="top">
+
+<img src="docs/images/local-doctor.png" alt="Settings, Doctor: the Claude Code and Codex CLIs found on this Mac, their versions and how each is signed in">
+
+</td>
+<td valign="top">
 
 ### 6. Everything stays on your Mac
 
 ClaudeCodeBot drives the `claude` CLI already signed in on your Mac: no server, no account of
 its own. Chats, memory, routines and the plugin library are plain markdown and text files in
-`~/.claudecodebot`; each project's notes live in its git-ignored `.bot/` folder.
+`~/.claudecodebot`; each project's notes live in its git-ignored `.bot/` folder. **Doctor**
+shows which `claude` (and `codex`) the bots use and how each is signed in.
 
 </td>
 </tr>
@@ -290,7 +306,8 @@ CCB_SNAPSHOT=/tmp/chat.png swift run ClaudeCodeBot   # render a sample chat to a
 | `docs/` | Product docs, flowcharts and README images |
 
 The screenshots in this README are drawn by the app's own snapshot mode (`CCB_SNAPSHOT`,
-`CCB_RAIL_SNAPSHOT`, `CCB_RIGHT_SNAPSHOT`, `CCB_CODEX_SNAPSHOT`, `CCB_SPEC_SNAPSHOT`) with
+`CCB_RAIL_SNAPSHOT`, `CCB_RIGHT_SNAPSHOT`, `CCB_CODEX_SNAPSHOT`, `CCB_SPEC_SNAPSHOT`,
+`CCB_SETTINGS_SNAPSHOT`) with
 sample data.
 
 ## Versioning & releases

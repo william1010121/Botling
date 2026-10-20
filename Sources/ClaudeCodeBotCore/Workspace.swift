@@ -159,7 +159,8 @@ public final class Workspace: ObservableObject {
     /// Plugins for ClaudeCodeBot itself: `~/.claudecodebot/plugins/` and the ones shipped with the app.
     public let plugins: PluginRegistry
     /// Settings → Doctor: whether Claude Code and Codex are installed, new enough and signed in.
-    public let doctor = DoctorModel()
+    /// A var only so a snapshot can check without asking npm.
+    public var doctor = DoctorModel()
     /// Runs plugins' program parts (Node), when a script for it was given.
     public let pluginHost: PluginHostClient?
     public let root: URL
