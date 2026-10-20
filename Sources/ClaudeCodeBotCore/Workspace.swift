@@ -121,6 +121,8 @@ public final class Workspace: ObservableObject {
     public let components: ComponentLibrary
     /// Components whose data comes from a command: what the user allowed, and each card's run.
     public let componentCommands: ComponentCommands
+    /// How often each component card has been drawn (`component-usage.json`).
+    public let componentUsage: ComponentUsage
     /// Plugins for ClaudeCodeBot itself: `~/.claudecodebot/plugins/` and the ones shipped with the app.
     public let plugins: PluginRegistry
     /// Runs plugins' program parts (Node), when a script for it was given.
@@ -201,6 +203,7 @@ public final class Workspace: ObservableObject {
         pluginHost = pluginHostScript.map { PluginHostClient(script: $0, locateNode: locateNode) }
         components = ComponentLibrary(folder: componentFolder)
         componentCommands = ComponentCommands(approvalsURL: root.appending(path: "approved-commands.json"))
+        componentUsage = ComponentUsage(url: root.appending(path: "component-usage.json"))
         components.git = git.isAvailable ? git : nil
         self.checkCommand = checkCommand
         let mainHome = root.appending(path: "main")
@@ -213,6 +216,8 @@ public final class Workspace: ObservableObject {
         }
         mainBot.extraDirectories = { [weak self] in self?.everyProject.map(\.notesFolder) ?? [] }
         giveClaudeParts(to: mainBot)
+        countComponents(of: mainBot)
+        countComponents(of: codexBot)
         mainBot.onReply = { [weak self] _, _ in
             guard let self else { return }
             deliverInboxes()
@@ -1258,6 +1263,18 @@ public final class Workspace: ObservableObject {
         try? Data(manifest.utf8).write(to: plugin.appending(path: "package.json"))
     }
 
+    /// Each component card made for a new line in `bot`'s chat adds a use, for the bot that said
+    /// it (in a group chat, or a bot called in, the member behind the line).
+    func countComponents(of bot: Bot) {
+        bot.onNewMessage = { [weak self, weak bot] message in
+            guard let self, let bot else { return }
+            let names = ComponentUsage.components(in: message, previews: components.names.contains(PagePreview.component))
+            guard !names.isEmpty else { return }
+            let who = message.sourceID.flatMap { self.member($0)?.name } ?? bot.name
+            componentUsage.record(names, bot: who)
+        }
+    }
+
     /// Every bot starts with the plugins' Claude parts, their MCP tools allowed, and the secrets
     /// those servers read.
     private func giveClaudeParts(to bot: Bot) {
@@ -1729,6 +1746,7 @@ public final class Workspace: ObservableObject {
             return [componentBriefing(), developerBriefing(for: project), managers[project.id].map(codexBriefing(for:)) ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n")
         }
         giveClaudeParts(to: bot)
+        countComponents(of: bot)
         bot.onReply = { [weak self, weak bot] _, _ in
             guard let self else { return }
             if project.isMaintainer { components.finishWorking() }
