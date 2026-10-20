@@ -201,6 +201,37 @@ struct ComponentTests {
         #expect(maintainer.contains("claude.ai link"))
     }
 
+    /// Maintainer never edits a component itself: each request goes to its own background
+    /// editor, and the version bump, check and commit happen one component at a time.
+    @Test func maintainerAlwaysDelegatesComponentsAndCommitsThemOneAtATime() {
+        let maintainer = makeWorkspace(FakeLauncher()).maintainerInstructions()
+        #expect(maintainer.contains("Never edit template.html or about.md yourself"))
+        #expect(maintainer.contains("every component request (a new component or a change) goes to a ccb-core:component-editor agent"))
+        #expect(maintainer.contains("run in the background, one agent per component"))
+        #expect(maintainer.contains("Two editors never work on the same component folder at once"))
+        #expect(maintainer.contains("SendMessage"))
+        #expect(maintainer.contains("stay free for new requests"))
+        #expect(maintainer.contains("review its change, then do the rest yourself, one component at a time"))
+        #expect(!maintainer.contains("Small jobs"))
+    }
+
+    /// The editor's agent file follows the app: an old copy is rewritten, the rest of ccb-core stays.
+    @Test func theComponentEditorFileIsRefreshedWhenTheAppsTextChanges() throws {
+        let library = FileManager.default.temporaryDirectory.appending(path: "ccb-core-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: library) }
+        Workspace.prepareCorePlugin(in: library)
+        let editor = library.appending(path: "ccb-core/claude/agents/component-editor.md")
+        #expect(try String(contentsOf: editor, encoding: .utf8) == Workspace.componentEditorAgent)
+        #expect(Workspace.componentEditorAgent.contains("tools: Read, Write, Edit"))
+
+        let manifest = library.appending(path: "ccb-core/package.json")
+        try "{ \"name\": \"ccb-core\", \"version\": \"1.0.7\" }".write(to: manifest, atomically: true, encoding: .utf8)
+        try "---\nname: component-editor\n---\nold text".write(to: editor, atomically: true, encoding: .utf8)
+        Workspace.prepareCorePlugin(in: library)
+        #expect(try String(contentsOf: editor, encoding: .utf8) == Workspace.componentEditorAgent)
+        #expect(try String(contentsOf: manifest, encoding: .utf8).contains("1.0.7"))
+    }
+
     @Test func aReportMayBeJustAPicture() async throws {
         let fake = FakeLauncher()
         let workspace = makeWorkspace(fake)

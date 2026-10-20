@@ -879,7 +879,8 @@ public final class Workspace: ObservableObject {
     }
 
     /// Someone asked for a component change: the user beside a component, or a bot with a
-    /// <component> tag. Maintainer does it (or hands it to its component-editor agent).
+    /// <component> tag. Maintainer hands it to a component-editor agent in the background,
+    /// then reviews, checks and commits it.
     public func requestComponentChange(_ name: String, request: String, from asker: String, files: [URL] = []) {
         let name = ComponentLibrary.safeName(name)
         guard !name.isEmpty else { return }
@@ -1034,8 +1035,10 @@ public final class Workspace: ObservableObject {
           3. Run the check: \(check). If it fails, fix it, at most 3 rounds; if all 3 fail, use a choices block to tell the user where you are stuck.
           4. git add that plugin folder, git commit -m "<plugin name>: <what you did>", then git tag <plugin name>--v<version>.
           5. Report what you did in one sentence. ClaudeCodeBot hot-updates on its own; no restart needed.
-        - Components live in ccb-components/components/<name>/ (template.html, about.md). After changing one, likewise bump the ccb-components version, check, and commit.
-          Small jobs that only touch a component template can go to the ccb-core:component-editor agent (Haiku); you then check and commit.
+        - Components live in ccb-components/components/<name>/ (template.html, about.md). Never edit template.html or about.md yourself:
+          every component request (a new component or a change) goes to a ccb-core:component-editor agent with the Agent tool, run in the background, one agent per component, so several components can be worked on at once. Give it the component folder's path and the request (and any attached pictures).
+          Two editors never work on the same component folder at once: if another request comes for a component already being edited, send it to that running editor with SendMessage, or keep it until that editor returns.
+          While editors run, stay free for new requests. When an editor returns, review its change, then do the rest yourself, one component at a time: bump the ccb-components version, run the check, then git add, commit and tag as above.
         - When a component request says /design or asks for designs to choose from, first make them a Claude Design: with the Artifact tool, quickstart with intent "design", publish from the Design type, using the look of ccb-components (its templates' colours, type and spacing) as the design system, and reply with the claude.ai link. Build the chosen one into ccb-components only after the user picks.
         - Plugins built into the app are not here and cannot be edited directly: to change one, copy its whole folder into the plugin library; a plugin with the same name overrides the built-in one (paths in PLUGINS.md).
         - To read a folder outside the plugin library (for example to turn an existing project into a plugin): end your reply with <need-folder>full path</need-folder>, say in one sentence why you need it, then stop and wait.
@@ -1048,14 +1051,8 @@ public final class Workspace: ObservableObject {
         """
     }
 
-    /// `ccb-core`: ClaudeCodeBot's own agents, starting with the component editor (Haiku).
-    static func prepareCorePlugin(in library: URL) {
-        let files = FileManager.default
-        let plugin = library.appending(path: "ccb-core")
-        guard !files.fileExists(atPath: plugin.path) else { return }
-        try? files.createDirectory(at: plugin.appending(path: "claude/.claude-plugin"), withIntermediateDirectories: true)
-        try? files.createDirectory(at: plugin.appending(path: "claude/agents"), withIntermediateDirectories: true)
-        let editor = """
+    /// The component editor's agent file, as this build of the app writes it.
+    static let componentEditorAgent = """
         ---
         name: component-editor
         description: Edits one component in the ClaudeCodeBot chat (template.html and about.md). Give it the component folder's path and what to change.
@@ -1065,7 +1062,21 @@ public final class Workspace: ObservableObject {
         \(ComponentPrompts.system)
 
         """
-        try? Data(editor.utf8).write(to: plugin.appending(path: "claude/agents/component-editor.md"))
+
+    /// `ccb-core`: ClaudeCodeBot's own agents, starting with the component editor (Haiku).
+    /// The editor's file follows the app: rewritten whenever the built-in text changes.
+    static func prepareCorePlugin(in library: URL) {
+        let files = FileManager.default
+        let plugin = library.appending(path: "ccb-core")
+        let editor = plugin.appending(path: "claude/agents/component-editor.md")
+        let isNew = !files.fileExists(atPath: plugin.path)
+        if isNew || files.fileExists(atPath: editor.deletingLastPathComponent().path),
+           (try? String(contentsOf: editor, encoding: .utf8)) != componentEditorAgent {
+            try? files.createDirectory(at: editor.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? Data(componentEditorAgent.utf8).write(to: editor)
+        }
+        guard isNew else { return }
+        try? files.createDirectory(at: plugin.appending(path: "claude/.claude-plugin"), withIntermediateDirectories: true)
         try? Data("""
         {
           "name": "ccb-core",
