@@ -195,14 +195,15 @@ public final class Workspace: ObservableObject {
         self.root = root
         self.makeBot = makeBot
         self.launcher = launcher
-        settings = AppSettings.load(from: root.appending(path: "settings.json"))
+        let loadedSettings = AppSettings.load(from: root.appending(path: "settings.json"))
+        settings = loadedSettings
         spending = Spending.load(from: root.appending(path: "spending.json"))
         rateLimits = RateLimits.load(from: root.appending(path: "rate-limits.json"))
         let library = root.appending(path: "plugins")
         Self.migrateFromDeck(library: library, root: root)
         let componentFolder = Self.prepareComponentPlugin(in: library, movingFrom: root.appending(path: "components"))
         Self.prepareTeamsPlugin(in: library, movingFrom: root.appending(path: "teams"))
-        Self.prepareCorePlugin(in: library)
+        let editedEditor = Self.prepareCorePlugin(in: library, model: loadedSettings.componentEditor, record: root.appending(path: Self.coreEditorRecordName))
         Self.writeLibraryGuide(in: library, builtIns: builtInPlugins)
         let git = gitForPlugins ?? PluginLibraryGit(folder: library)
         libraryGit = git
@@ -289,6 +290,7 @@ public final class Workspace: ObservableObject {
         }
         loadGroups()
         setUpCodex()
+        if let editedEditor { askAboutEditedEditor(editedEditor) }
         refreshWaiting()
     }
 
@@ -355,6 +357,9 @@ public final class Workspace: ObservableObject {
     public private(set) var approvedFolders: [URL] = []
     /// Open "may it read this folder?" questions in Maintainer's chat, by message id.
     private var folderQuestions: [UUID: URL] = [:]
+    /// "Keep the edited component editor?" questions in Maintainer's chat, by message id, with
+    /// the hash of the edited file they are about.
+    private var editorQuestions: [UUID: String] = [:]
     /// Folders the main bot asked to make projects, waiting for your "Add", by the question's id.
     private var projectQuestions: [UUID: [(folder: URL, task: String)]] = [:]
     private var foldersURL: URL { root.appending(path: "folders.json") }
@@ -381,6 +386,89 @@ public final class Workspace: ObservableObject {
         )
         folderQuestions[question] = folder
         refreshWaiting()
+    }
+
+    // MARK: The component editor's file
+
+    static let coreEditorRecordName = "component-editor.json"
+    private var coreEditorRecordURL: URL { root.appending(path: Self.coreEditorRecordName) }
+    private var library: URL { root.appending(path: "plugins") }
+
+    /// component-editor.md was edited since the app last wrote it: you choose, once for this
+    /// edit, whether it stays or the app's version (on the model Settings picks) replaces it.
+    func askAboutEditedEditor(_ edited: String) {
+        guard !editorQuestions.values.contains(edited) else { return }
+        let question = tell(
+            maintainer,
+            "ccb-core/claude/agents/component-editor.md was edited outside ClaudeCodeBot (the app did not write this version). Keep the edited version, or use the app's version (its prompt, on \(settings.componentEditor.displayName) as Settings says)?",
+            choices: [
+                Choice(label: "Keep the edited version", detail: "The app leaves it alone until its own text changes", recommended: false),
+                Choice(label: "Use the app's version", detail: "The edit is replaced (it stays in the plugin library's git history)", recommended: false)
+            ],
+            sourceID: Self.maintainerID
+        )
+        editorQuestions[question] = edited
+        refreshWaiting()
+    }
+
+    /// Your answer about the edited editor file. The file changed again since the question: it
+    /// is checked again (and asked about again if it is another edit).
+    private func answerEditedEditor(_ edited: String, keep: Bool) {
+        let editor = Self.componentEditorFile(in: library)
+        guard let current = try? String(contentsOf: editor, encoding: .utf8), Self.textHash(current) == edited else {
+            writeComponentEditor()
+            return
+        }
+        var record = CoreEditorRecord.load(from: coreEditorRecordURL)
+        if keep {
+            record.kept = edited
+            record.save(to: coreEditorRecordURL)
+        } else {
+            let desired = Self.componentEditorAgent(model: settings.componentEditor)
+            try? Data(desired.utf8).write(to: editor)
+            CoreEditorRecord(written: Self.textHash(desired), kept: nil).save(to: coreEditorRecordURL)
+            plugins.rescan()
+        }
+    }
+
+    /// Writes the editor's file for what the app and Settings say now (asking first about an edit).
+    private func writeComponentEditor() {
+        if let edited = Self.prepareCorePlugin(in: library, model: settings.componentEditor, record: coreEditorRecordURL) {
+            askAboutEditedEditor(edited)
+        }
+        plugins.rescan()
+    }
+
+    /// Picks the component editor's model (Settings). Its file is written again, which is one
+    /// plugin change: awake bots load it before their next message. An edit you chose to keep
+    /// gets the new model line and stays kept.
+    public func setComponentEditorModel(_ model: BotModel) {
+        guard model != settings.componentEditor else { return }
+        settings.componentEditorModel = model
+        settings.save(to: settingsURL)
+        let editor = Self.componentEditorFile(in: library)
+        var record = CoreEditorRecord.load(from: coreEditorRecordURL)
+        if let current = try? String(contentsOf: editor, encoding: .utf8), let kept = record.kept, Self.textHash(current) == kept {
+            let changed = Self.settingModel(model, in: current)
+            try? Data(changed.utf8).write(to: editor)
+            record.kept = Self.textHash(changed)
+            record.save(to: coreEditorRecordURL)
+            plugins.rescan()
+            return
+        }
+        writeComponentEditor()
+    }
+
+    /// An agent file with its front matter's `model:` line set to `model`.
+    static func settingModel(_ model: BotModel, in text: String) -> String {
+        var lines = text.components(separatedBy: "\n")
+        guard lines.first == "---", let end = lines.dropFirst().firstIndex(of: "---") else { return text }
+        if let line = lines[1..<end].firstIndex(where: { $0.hasPrefix("model:") }) {
+            lines[line] = "model: \(model.rawValue)"
+        } else {
+            lines.insert("model: \(model.rawValue)", at: end)
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// Your answer to a folder question.
@@ -599,6 +687,9 @@ public final class Workspace: ObservableObject {
         if let proposal = installQuestions.removeValue(forKey: id) {
             try? FileManager.default.removeItem(at: proposal.folder)
             return "asking to install the plugin \"\(proposal.manifest.title)\""
+        }
+        if editorQuestions.removeValue(forKey: id) != nil {
+            return "asking whether to keep the edited component-editor.md (it stays as it is for now; the app asks again at its next launch)"
         }
         if let folder = folderQuestions.removeValue(forKey: id) {
             answerFolder(folder, allowed: false)
@@ -1189,6 +1280,7 @@ public final class Workspace: ObservableObject {
         - Components live in ccb-components/components/<name>/ (template.html, about.md). Never edit template.html or about.md yourself:
           every component request (a new component or a change) goes to a ccb-core:component-editor agent with the Agent tool, run in the background, one agent per component, so several components can be worked on at once. Give it the component folder's path and the request (and any attached pictures).
           A component that will be pinned gets a "Sizes: 1x1, 2x1, 2x2" line in about.md and a layout for each (small = the key number or status, wide = a short row or list, tall = a vertical list, large = full view; ccb.size and ccb.onSize, see PLUGINS.md; on the Board ccb.surface is "board" and <html data-surface="board">: the component is the whole tile, so no own border, background or radius, at most ~12px padding, fill the tile; in the chat ccb.surface is "chat" and <html data-surface="chat">: drawn at its widest size across the whole reply, framed by the bubble, so no own frame there either, as tall as its content; opened above the input box it is "pinned", frameless the same way and as tall as its content) and an "Icon: <SF Symbol name or emoji>" line, and calls ccb.setStatus({text, tone}) with its key value for its chip above the input box (see PLUGINS.md): say so to the editor.
+          Never edit ccb-core/claude/agents/component-editor.md (the editor's own instructions): ClaudeCodeBot writes it. Its model is picked in ClaudeCodeBot's Settings (Plugins › Component editor); a change to its prompt is a request for the ClaudeCodeBot project: tell the user so in one sentence.
           Two editors never work on the same component folder at once: if another request comes for a component already being edited, send it to that running editor with SendMessage, or keep it until that editor returns.
           While editors run, stay free for new requests. When an editor returns, review its change, then do the rest yourself, one component at a time: bump the ccb-components version, run the check, then git add, commit and tag as above.
         - The component library (your shelf) is shared and has no cap; each bot has its own list of components, at most \(ComponentLibrary.limit) per bot. A bot's briefing has the whole usage of the components on its list and one line for each of the others. A bot's request names the bot that asked and how many it has ("garden has N / \(ComponentLibrary.limit) components").
@@ -1209,31 +1301,84 @@ public final class Workspace: ObservableObject {
         """
     }
 
-    /// The component editor's agent file, as this build of the app writes it.
-    static let componentEditorAgent = """
+    /// The component editor's agent file, as this build of the app writes it, on `model` (the
+    /// Settings choice).
+    static func componentEditorAgent(model: BotModel = .sonnet) -> String {
+        """
         ---
         name: component-editor
         description: Edits one component in the ClaudeCodeBot chat (template.html and about.md). Give it the component folder's path and what to change.
-        model: haiku
+        model: \(model.rawValue)
         tools: Read, Write, Edit
         ---
         \(ComponentPrompts.system)
 
         """
+    }
 
-    /// `ccb-core`: ClaudeCodeBot's own agents, starting with the component editor (Haiku).
-    /// The editor's file follows the app: rewritten whenever the built-in text changes.
-    static func prepareCorePlugin(in library: URL) {
+    /// What 1.10.0 and earlier wrote (on Haiku, without the "Make it look good" line): the app's
+    /// own text, not an edit, so it is replaced without asking.
+    static var legacyComponentEditorAgent: String {
+        componentEditorAgent(model: .haiku).replacingOccurrences(of: ComponentPrompts.lookGood + "\n", with: "")
+    }
+
+    /// The editor's file in `library`.
+    static func componentEditorFile(in library: URL) -> URL {
+        library.appending(path: "ccb-core/claude/agents/component-editor.md")
+    }
+
+    /// What the app last wrote into the editor's file, and an edit of it you chose to keep (as
+    /// hashes of the file's text), in `~/.claudecodebot/component-editor.json`.
+    struct CoreEditorRecord: Codable, Equatable {
+        var written: String?
+        var kept: String?
+
+        static func load(from url: URL) -> CoreEditorRecord {
+            (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(CoreEditorRecord.self, from: $0) } ?? CoreEditorRecord()
+        }
+
+        func save(to url: URL) {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? JSONEncoder().encode(self).write(to: url, options: .atomic)
+        }
+    }
+
+    static func textHash(_ text: String) -> String {
+        PluginRegistry.contentHash(text)
+    }
+
+    /// `ccb-core`: ClaudeCodeBot's own agents, starting with the component editor (on the model
+    /// Settings picks). The editor's file follows the app: written when the app's text changes,
+    /// but only over a file the app wrote itself (or an older app's text). A file edited since
+    /// (Maintainer, by hand) is left as it is, and its hash is returned so you can be asked;
+    /// an edit you chose to keep stays until the app's text changes again. `record` remembers
+    /// what was written (default: next to the library).
+    @discardableResult
+    static func prepareCorePlugin(in library: URL, model: BotModel = .sonnet, record: URL? = nil) -> String? {
         let files = FileManager.default
         let plugin = library.appending(path: "ccb-core")
-        let editor = plugin.appending(path: "claude/agents/component-editor.md")
+        let editor = componentEditorFile(in: library)
+        let recordURL = record ?? library.appending(path: ".component-editor.json")
         let isNew = !files.fileExists(atPath: plugin.path)
-        if isNew || files.fileExists(atPath: editor.deletingLastPathComponent().path),
-           (try? String(contentsOf: editor, encoding: .utf8)) != componentEditorAgent {
-            try? files.createDirectory(at: editor.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? Data(componentEditorAgent.utf8).write(to: editor)
+        var conflict: String?
+        if isNew || files.fileExists(atPath: editor.deletingLastPathComponent().path) {
+            let desired = componentEditorAgent(model: model)
+            var saved = CoreEditorRecord.load(from: recordURL)
+            let before = saved
+            let current = try? String(contentsOf: editor, encoding: .utf8)
+            let currentHash = current.map(textHash)
+            if current == desired {
+                saved.written = textHash(desired)
+            } else if current == nil || currentHash == saved.written || current == legacyComponentEditorAgent {
+                try? files.createDirectory(at: editor.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? Data(desired.utf8).write(to: editor)
+                saved = CoreEditorRecord(written: textHash(desired), kept: nil)
+            } else if currentHash != saved.kept {
+                conflict = currentHash
+            }
+            if saved != before { saved.save(to: recordURL) }
         }
-        guard isNew else { return }
+        guard isNew else { return conflict }
         try? files.createDirectory(at: plugin.appending(path: "claude/.claude-plugin"), withIntermediateDirectories: true)
         try? Data("""
         {
@@ -1249,7 +1394,7 @@ public final class Workspace: ObservableObject {
           "name": "ccb-core",
           "displayName": "ClaudeCodeBot core",
           "version": "1.0.0",
-          "description": "Agents ClaudeCodeBot uses itself: component-editor (Haiku) edits component templates.",
+          "description": "Agents ClaudeCodeBot uses itself: component-editor edits component templates (its model is set in Settings).",
           "license": "MIT",
           "engines": { "ccb": "^2.0.0" },
           "ccb": {
@@ -1259,6 +1404,7 @@ public final class Workspace: ObservableObject {
         }
 
         """.utf8).write(to: plugin.appending(path: "package.json"))
+        return conflict
     }
 
     /// PLUGINS.md in the library: how plugins are written, for Maintainer and for people.
@@ -1513,6 +1659,13 @@ public final class Workspace: ObservableObject {
             projectQuestions[messageID] = nil
             bot.markChosen(index, in: messageID)
             answerProjects(proposal, add: index == 0)
+            return true
+        }
+        if let edited = editorQuestions[messageID] {
+            guard message.isOpenQuestion else { return false }
+            editorQuestions[messageID] = nil
+            bot.markChosen(index, in: messageID)
+            answerEditedEditor(edited, keep: index == 0)
             return true
         }
         if let folder = folderQuestions[messageID] {

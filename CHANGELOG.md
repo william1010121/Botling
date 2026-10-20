@@ -4,6 +4,39 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+### Fixed
+
+- **A restart no longer costs each bot a handoff turn.** A plugin update, a model, effort or
+  subagent-model switch, auto mode and a folder Maintainer may read used to make every awake
+  bot write a handoff into memory.md, stop, and spend another turn reading it back on a new
+  session. Now the bot is only marked; just before its next real message (yours, a relay, a
+  group turn) it stops and goes on in the same conversation with `claude --resume <session>`
+  (on the new `--model`, plugins and settings), then gets the message: no handoff, no memory
+  read back, and the prompt cache stays warm. An idle bot costs nothing, and several changes
+  make one restart. As before, it never restarts while a turn runs, a question waits or a
+  subagent works in the background (a model switch no longer ends them either); the message
+  then goes to the running process and the restart waits for a later one. `--resume` keeps the
+  session's first system prompt (a new `--append-system-prompt` is ignored; checked with claude
+  2.1.304), so the message after a restart carries the wake briefing as it is now (components,
+  projects, Codex rules). Without claude's transcript of the session
+  (`~/.claude/projects/…/<session>.jsonl`) it falls back to the handoff, which now also carries
+  that briefing; if claude exits when resumed, the message wakes a fresh session that reads
+  memory and the recent chat. The divider says "Restarted → …" for a resume, "Handoff → …" for
+  the fallback.
+- **The app and Maintainer no longer fight over component-editor.md.** Every launch rewrote
+  `ccb-core/claude/agents/component-editor.md` whenever it differed from the app's text, so an
+  edit by Maintainer was undone, the plugin changed, and every awake bot handed off (twice).
+  The app now remembers what it last wrote (`~/.claudecodebot/component-editor.json`) and
+  writes the file only over its own text (or 1.10.0's); an edited file is left alone and
+  Maintainer's chat asks once per edit: "Keep the edited version" or "Use the app's version".
+  Maintainer is told not to edit the file. Its model is a setting (Settings › Plugins ›
+  Component editor: Haiku, Sonnet or Opus, default Sonnet) instead of a fixed Haiku, and its
+  prompt gains Maintainer's "Make it look good" line. Plugin changes count by what a Claude
+  part's files hold, so a file written again with the same bytes, or a change outside the
+  Claude part (package.json, the web part), restarts no bot.
+
 ## 1.10.0
 
 ### Added

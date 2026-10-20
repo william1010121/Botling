@@ -166,15 +166,19 @@ struct BotTuningTests {
         bot.send("hi")
         await eventually { bot.messages.last?.role == .bot }
 
+        bot.sessionExists = { _, _ in false }
         await bot.setEffort(.high)
-        await eventually { fake.agents.count == 2 && bot.phase == .awake }
+        #expect(fake.agents.count == 1)
+        bot.send("next")
+        await eventually { fake.agents.count == 2 && bot.phase == .awake && !bot.isWorking }
         #expect(fake.agents[0].sent.last == bot.prompts.handoff)
         #expect(fake.agents[0].finished)
         #expect(fake.agents[1].launch.effort == .high)
         #expect(fake.agents[1].launch.model == .sonnet)
-        #expect(fake.agents[1].sent == [bot.prompts.resume])
+        #expect(fake.agents[1].sent == [bot.prompts.resume, "next"])
 
         await bot.setSubagentModel(.haiku)
+        bot.send("and next")
         await eventually { fake.agents.count == 3 && bot.phase == .awake }
         #expect(fake.agents[2].launch.subagentModel == .haiku)
         #expect(fake.agents[2].launch.effort == .high)

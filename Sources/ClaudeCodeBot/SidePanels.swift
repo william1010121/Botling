@@ -1218,7 +1218,7 @@ private struct SettingsPage: View {
                     .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
                 }
 
-                SettingNote("Subagents use their own model and effort when their definition names one. Default effort leaves it to the model. Any change hands over and restarts the bot; asleep, it applies when it wakes.")
+                SettingNote("Subagents use their own model and effort when their definition names one. Default effort leaves it to the model. Awake, a change restarts the bot in the same conversation just before its next message; asleep, it applies when it wakes.")
             }
 
             PanelSection("Codex review for subagents") {

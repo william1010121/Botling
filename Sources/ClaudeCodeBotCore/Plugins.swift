@@ -1,4 +1,5 @@
 import Combine
+import CryptoKit
 import Foundation
 
 /// Any JSON value: a setting's default or what you set it to.
@@ -155,6 +156,9 @@ public final class PluginRegistry: ObservableObject {
     private var reportedProblems: [String: [String]] = [:]
     private var state: State
     private var fingerprints: [String: String] = [:]
+    /// What each plugin's Claude part holds (a hash of its files' paths and bytes), by plugin,
+    /// for the fingerprint it was read at.
+    private var claudeContents: [String: (fingerprint: String, hash: String)] = [:]
     private var watchTask: Task<Void, Never>?
 
     struct State: Codable {
@@ -481,14 +485,40 @@ public final class PluginRegistry: ObservableObject {
         }
     }
 
-    /// The Claude parts `claudeDirectories()` gives, each with the fingerprint of its files: a
-    /// session started with a different stamp has older skills, agents or MCP servers.
+    /// The Claude parts `claudeDirectories()` gives, each with a hash of what its files hold: a
+    /// session started with a different stamp has older skills, agents or MCP servers. A file
+    /// written again with the same bytes (only its date changed), or a change outside the Claude
+    /// part (package.json, the web part), leaves the stamp as it was: no bot restarts for it.
     public func claudeStamp() -> [String] {
         plugins.compactMap { plugin in
             guard plugin.enabled, let claude = plugin.manifest.ccb?.claude, let print = fingerprints[plugin.name],
                   let check = claudeChecks[plugin.name], check.fingerprint == print, check.problem == nil else { return nil }
-            return plugin.url(claude).standardizedFileURL.path + "#" + print
+            return plugin.url(claude).standardizedFileURL.path + "#" + claudeContent(of: plugin, claude: claude, fingerprint: print)
         }
+    }
+
+    private func claudeContent(of plugin: InstalledPlugin, claude: String, fingerprint: String) -> String {
+        if let known = claudeContents[plugin.name], known.fingerprint == fingerprint { return known.hash }
+        let hash = Self.contentHash(plugin.folder, Self.claudeFiles(plugin.folder, plugin.manifest))
+        claudeContents[plugin.name] = (fingerprint, hash)
+        return hash
+    }
+
+    /// A hash of a text (hex SHA-256).
+    nonisolated static func contentHash(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// A hash of `files` (relative to `folder`): their paths and bytes.
+    nonisolated static func contentHash(_ folder: URL, _ files: [String]) -> String {
+        var hasher = SHA256()
+        for file in files {
+            hasher.update(data: Data(file.utf8))
+            hasher.update(data: Data([0]))
+            hasher.update(data: (try? Data(contentsOf: folder.appending(path: file))) ?? Data())
+            hasher.update(data: Data([0]))
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     /// A Claude part changed and is still waiting for (or in) its check: it is left out of

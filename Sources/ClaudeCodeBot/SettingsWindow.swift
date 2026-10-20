@@ -441,12 +441,40 @@ private struct PluginsSection: View {
             }
         }
         if let workspace {
+            ComponentEditorSection(workspace: workspace)
             PanelSection("Add plugin") {
                 AddPluginRow(workspace: workspace, source: $source)
                 Text("ClaudeCodeBot asks before installing. A folder needs a package.json.")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
             }
+        }
+    }
+}
+
+/// The model ccb-core's component editor runs on: the app writes its agent file with it.
+private struct ComponentEditorSection: View {
+    @ObservedObject var workspace: Workspace
+
+    var body: some View {
+        PanelSection("Component editor") {
+            HStack(spacing: 12) {
+                Text("Model").font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { workspace.settings.componentEditor },
+                    set: { workspace.setComponentEditorModel($0) }
+                )) {
+                    ForEach(BotModel.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .labelsHidden().pickerStyle(.menu).fixedSize()
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+            Text("The agent Maintainer hands component changes to. A change here rewrites its file in ccb-core; awake bots pick it up before their next message.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.faint)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
