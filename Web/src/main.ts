@@ -1,11 +1,12 @@
 import { post } from "./bridge";
 import { keepFrames } from "./components";
 import { Composer, sendFile } from "./composer";
-import { extensions, feedback, messageElement, typingElement } from "./messages";
+import { extensions, feedback, makeComponents, messageElement, typingElement } from "./messages";
+import { SpecPanel } from "./spec";
 import { statusWord } from "./steps";
 import { PinArea } from "./pins";
 import { PluginHost, type PluginSpec } from "./plugins";
-import type { ChatState, MessageView } from "./types";
+import type { ChatState, MessageView, SpecState } from "./types";
 import { escapeHTML } from "./util";
 
 /** How close to the bottom (px) still counts as being at the bottom. */
@@ -79,8 +80,10 @@ class Chat {
 
     // Turning developer mode on or off redraws every reply with or without its flag.
     const flagged = !!state.feedback && !state.subagent;
-    if (flagged !== feedback.enabled) {
+    const making = !!state.makeComponents && !state.subagent;
+    if (flagged !== feedback.enabled || making !== makeComponents.enabled) {
       feedback.enabled = flagged;
+      makeComponents.enabled = making;
       this.list.innerHTML = "";
       this.drawn.clear();
     }
@@ -253,6 +256,7 @@ declare global {
       setPlugins(specs: PluginSpec[]): Promise<void>;
       runCommand(id: string): void;
       showPanel(key: string): void;
+      setSpec(state: SpecState): void;
       hostReply(callID: number, ok: boolean, value: unknown): void;
       focus(): void;
     };
@@ -293,12 +297,32 @@ function drawPanel(): void {
   panelDispose = typeof result === "function" ? result : null;
 }
 chat.plugins.onPanels = () => drawPanel();
+
+/**
+ * Spec mode (`chat.html?spec=1`): the same page in the right panel, showing the component spec
+ * workspace (`spec.ts`) instead of the chat.
+ */
+let specPanel: SpecPanel | null = null;
+if (new URLSearchParams(location.search).has("spec")) document.body.classList.add("spec-mode");
+function setSpec(state: SpecState): void {
+  if (!specPanel) {
+    let root = document.getElementById("spec-root");
+    if (!root) {
+      root = document.createElement("div");
+      root.id = "spec-root";
+      document.body.append(root);
+    }
+    specPanel = new SpecPanel(root);
+  }
+  specPanel.update(state);
+}
 window.ccb = {
   setState: (state) => chat.setState(state),
   setPlugins: (specs) => chat.plugins.sync(specs),
   runCommand: (id) => chat.plugins.execute(id),
   hostReply: (callID, ok, value) => chat.plugins.hostReply(callID, ok, value),
   showPanel: (key) => showPanel(key),
+  setSpec: (state) => setSpec(state),
   focus: () => chat.focus(),
 };
 post({ type: "ready" });

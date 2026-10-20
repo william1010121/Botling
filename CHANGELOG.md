@@ -46,6 +46,24 @@ app and publishes it on GitHub Releases.
 - **Board view per bot.** Chat | Board at the top of the chat (⌃⌘B) shows every pin as a card,
   sized S, M or L, with Refresh all, Add component, drag to reorder, and ⋯ to resize or unpin. A
   slim input box stays at the bottom, and the right panel folds to its strip while it shows.
+- **Make a reply into a component.** A bot reply's hover column has "Make into component"
+  between Reply and Not right (an HTML result card has it in its hover toolbar); a reply that
+  already is a component says "Add to another bot…". It adds a small, quiet chip under the reply
+  ("Component spec · name ›") and opens it once in the right panel; after that it stays a chip
+  until pressed, and collapses back to it. The panel holds a live preview with switchable sample
+  data, the spec (data fields, command with Test run and its output checked against the fields,
+  folder, refresh, bots, a similar library component to reuse), "Anything to add?" and a side
+  conversation with Maintainer, which fills in what it can infer and asks only what it can't,
+  with suggested answers. Your edits show blue, Maintainer's purple. Build it hands it to
+  Maintainer (or reuses the library one), shows its progress, and the preview becomes the real
+  component once it is added to the chosen bots' lists; the chat says where it went. Test run
+  goes through the component command allow flow: the exact command and folder are shown and
+  nothing runs until you allow it. Specs are kept per bot in `specs.json` beside its chat.
+- **Bots may suggest a component.** A bot can end a reply with
+  `<suggest-component name="…">short draft</suggest-component>` (now in the bots' prompt rules);
+  the app only adds a "Suggested component · name ›" chip. Nothing opens, runs or is built until
+  you press it (Maintainer drafts it then) and confirm Build it. Maintainer answers a spec with
+  `<component-spec id="…">JSON</component-spec>`.
 
 ## 1.8.0
 

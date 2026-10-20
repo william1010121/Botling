@@ -46,7 +46,8 @@ struct RootView: View {
     var body: some View {
         let bot = workspace.selectedBot
         let collapsed = workspace.railCollapsed
-        let rightCollapsed = workspace.rightPanelCollapsed
+        let spec = workspace.viewingSubagent == nil ? workspace.openSpec(in: bot) : nil
+        let rightCollapsed = spec == nil && workspace.rightPanelCollapsed
         HStack(spacing: 0) {
             RailView(workspace: workspace, settings: settings, collapsed: collapsed, tip: $railTip)
                 .frame(width: RailLayout.width(collapsed: collapsed))
@@ -56,7 +57,11 @@ struct RootView: View {
                 .frame(minWidth: 480, maxWidth: .infinity)
                 .modifier(BoardMode(workspace: workspace, inputs: inputs, bot: bot))
             Group {
-                if rightCollapsed {
+                if let spec {
+                    // A component spec's chip was pressed: its workspace, until collapsed back.
+                    SpecPanelView(specID: spec.id, bot: bot, workspace: workspace, components: workspace.components, commands: workspace.componentCommands)
+                        .background(Theme.side)
+                } else if rightCollapsed {
                     RightStrip(workspace: workspace, bot: bot, group: workspace.group(of: bot), tip: $rightTip) {
                         setRightPanel(collapsed: false)
                     } openSettings: {
@@ -70,13 +75,18 @@ struct RootView: View {
                         .onAppear { panelOpensSettings = false }
                 }
             }
-            .frame(width: RightPanelLayout.width(collapsed: rightCollapsed))
-            .overlay(alignment: .leading) { Rectangle().fill(Theme.line).frame(width: 1).opacity(rightCollapsed ? 1 : 0) }
+            .frame(width: spec == nil ? RightPanelLayout.width(collapsed: rightCollapsed) : RightPanelLayout.specWidth(wide: workspace.specPanelWide))
+            .overlay(alignment: .leading) { Rectangle().fill(Theme.line).frame(width: 1).opacity(rightCollapsed || spec != nil ? 1 : 0) }
             .id(bot.id)
         }
         .coordinateSpace(name: RailTip.space)
         .overlay(alignment: .topLeading) { RailChrome(collapsed: collapsed, tip: railTip) { toggleRail() } }
-        .overlay(alignment: .topTrailing) { RightChrome(collapsed: rightCollapsed, tip: rightTip) { toggleRightPanel() } }
+        .overlay(alignment: .topTrailing) {
+            // With a spec open, the button folds it back to its chip.
+            RightChrome(collapsed: rightCollapsed, tip: rightTip) {
+                if spec != nil { withAnimation(.easeInOut(duration: 0.2)) { workspace.closeSpec() } } else { toggleRightPanel() }
+            }
+        }
         .onChange(of: collapsed) { _, _ in railTip = nil }
         .onChange(of: rightCollapsed) { _, _ in rightTip = nil }
         // Chips and result rows: web links in the browser, local files in a window of their own.
@@ -123,7 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// A run that only draws a snapshot or checks a plugin, then quits.
     static var isHeadless: Bool {
         let environment = ProcessInfo.processInfo.environment
-        return environment["CCB_SNAPSHOT"] != nil || environment["CCB_ICON"] != nil || environment["CCB_CODEX_SNAPSHOT"] != nil || environment["CCB_RAIL_SNAPSHOT"] != nil || environment["CCB_RIGHT_SNAPSHOT"] != nil
+        return environment["CCB_SNAPSHOT"] != nil || environment["CCB_ICON"] != nil || environment["CCB_CODEX_SNAPSHOT"] != nil || environment["CCB_RAIL_SNAPSHOT"] != nil || environment["CCB_RIGHT_SNAPSHOT"] != nil || environment["CCB_SPEC_SNAPSHOT"] != nil
             || CommandLine.arguments.contains("--check-plugin") || Snapshot.isChatRequest
     }
 

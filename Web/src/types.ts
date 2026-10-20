@@ -45,6 +45,62 @@ export interface MessageView {
   previews?: { name: string; data: string }[] | null;
   /** A relay that is a "not right" report: whose reply and the user's words; `text` folds away. */
   feedback?: { about: string; words: string } | null;
+  /** Component specs made from it: a quiet chip each, under the reply. */
+  specs?: SpecChipView[] | null;
+  /** The library component this reply already is ("Add to another bot…"). */
+  component?: string | null;
+}
+
+/** A component spec's chip under its reply; pressed, it opens in the right panel. */
+export interface SpecChipView {
+  id: string;
+  name: string;
+  status: SpecStatus;
+  /** A bot suggested it; nothing has run or been built. */
+  suggested: boolean;
+  /** It shows in the right panel now. */
+  open: boolean;
+}
+
+export type SpecStatus = "draft" | "building" | "done";
+export type SpecOrigin = "user" | "maintainer" | "app";
+
+/** The spec workspace in the right panel (`chat.html?spec=1`), from Swift's `SpecPayload`. */
+export interface SpecState {
+  id: string;
+  name: string;
+  about: string;
+  status: SpecStatus;
+  draft: number;
+  /** The chat it is in. */
+  chat: string;
+  /** "from ClaudeCodeBot's reply at 22:14", "suggested by garden". */
+  from: string;
+  suggestedBy: string | null;
+  /** The reply already is this component: only which bots get it is left. */
+  existing: string | null;
+  fields: { name: string; type: string; by: SpecOrigin }[];
+  command: string | null;
+  folder: string;
+  refresh: PinRefresh;
+  minutes: number;
+  bots: { name: string; on: boolean }[];
+  similar: string | null;
+  similarAbout: string | null;
+  reuse: boolean;
+  samples: { label: string; data: string }[];
+  questions: { id: string; text: string; options: { label: string }[]; suggested: number | null }[];
+  conversation: { kind: "user" | "maintainer" | "event"; text: string }[];
+  /** Who last set each value: blue for the user, purple for Maintainer. */
+  origins: Record<string, SpecOrigin>;
+  /** The library component whose template draws the preview; null: a plain drawing of the data. */
+  preview: string | null;
+  components: Record<string, ComponentInfo>;
+  /** Its command's test run, as a command card shows one. */
+  testRun: { status: CommandStatus; command: string; folder: string; output: string | null; error: string | null; ranAt: string | null; matches: boolean | null } | null;
+  /** While building and once done: what has happened. */
+  steps: { label: string; state: "done" | "doing" | "todo" }[] | null;
+  wide: boolean;
 }
 
 export interface DisplayView {
@@ -155,6 +211,8 @@ export interface ChatState {
   pinChoices?: PinChoiceView[] | null;
   /** The Board shows instead of the messages. */
   board?: boolean | null;
+  /** Replies can be made into components (absent where they can't, e.g. a subagent). */
+  makeComponents?: boolean | null;
 }
 
 export type Action =
@@ -183,6 +241,16 @@ export type Action =
   | { type: "movePin"; id: string; to: number }
   | { type: "resizePin"; id: string; size: PinSize }
   | { type: "setPinRefresh"; id: string; refresh: PinRefresh; minutes: number }
+  | { type: "makeComponent"; messageID: string; preview?: number }
+  | { type: "openSpec"; id: string }
+  | { type: "specEdit"; id: string; key: string; value: string }
+  | { type: "specAnswer"; id: string; question: string; option: number }
+  | { type: "specSay"; id: string; text: string }
+  | { type: "specTestRun"; id: string; command: string; folder: string; approve?: boolean }
+  | { type: "specBuild"; id: string }
+  | { type: "specCancel"; id: string }
+  | { type: "specClose" }
+  | { type: "specWide"; wide: boolean }
   | { type: "pluginError"; name: string; message: string }
   | { type: "pluginNotice"; name: string; text: string }
   | { type: "pluginLoaded"; name: string; version: string }

@@ -41,6 +41,22 @@ public struct ChatPayload: Encodable, Equatable {
         /// A "not right" report handed over: shown as who it is about and the user's words, with
         /// `text` (the chat around it) folded.
         var feedback: Feedback?
+        /// Component specs made from it: a quiet chip each, under the reply.
+        var specs: [SpecChip]? = nil
+        /// The library component the reply already is ("Add to another bot…" instead of "Make
+        /// into component").
+        var component: String? = nil
+    }
+
+    /// A component spec's chip under its reply; pressed, the spec opens in the right panel.
+    public struct SpecChip: Encodable, Equatable {
+        var id: String
+        var name: String
+        var status: String
+        /// A bot suggested it (nothing has run or been built).
+        var suggested: Bool
+        /// It shows in the right panel now.
+        var open: Bool
     }
 
     public struct Feedback: Encodable, Equatable {
@@ -195,6 +211,8 @@ public struct ChatPayload: Encodable, Equatable {
     var pinChoices: [PinChoice]? = nil
     /// The Board is showing instead of the messages.
     var board: Bool? = nil
+    /// Replies can be made into components (their hover column and result cards say so).
+    var makeComponents: Bool? = nil
 
     /// What a group chat adds: who is typing, and names for who said each line. A bot's own chat
     /// has one too, for the bots called into it with @.
@@ -238,6 +256,8 @@ public struct ChatPayload: Encodable, Equatable {
         feedback: Bool = false,
         commands: CommandContext? = nil,
         pins pinning: PinContext? = nil,
+        specs: Bool = false,
+        openSpec: UUID? = nil,
         avatar: (_ projectID: UUID?) -> String
     ) -> ChatPayload {
         let pinnedNames = pinning.map { _ in Set(bot.pins.map(\.name)) }
@@ -282,6 +302,10 @@ public struct ChatPayload: Encodable, Equatable {
                 previews: previews(for: message, in: library),
                 feedback: message.role == .relay
                     ? (message.feedback ?? FeedbackNote.parse(message.text)).map { Feedback(about: $0.about, words: $0.words) }
+                    : nil,
+                specs: specs ? specChips(for: message, in: bot, open: openSpec) : nil,
+                component: specs && message.role == .bot
+                    ? message.shown.first { $0.name != "choices" && $0.name != PagePreview.component && library?.names.contains($0.name) == true }?.name
                     : nil
             )
         }
@@ -333,8 +357,18 @@ public struct ChatPayload: Encodable, Equatable {
             feedback: feedback,
             pins: pinning.map { context in bot.pins.map { pin(view: $0, context: context) } },
             pinChoices: pinning.map { _ in pinChoices(for: bot, library: library) },
-            board: pinning.map(\.board)
+            board: pinning.map(\.board),
+            makeComponents: specs ? true : nil
         )
+    }
+
+    /// The chips of the specs made from `message`.
+    @MainActor
+    static func specChips(for message: ChatMessage, in bot: Bot, open: UUID?) -> [SpecChip]? {
+        let chips = bot.specs.filter { $0.messageID == message.id }.map {
+            SpecChip(id: $0.id.uuidString, name: $0.name, status: $0.status.rawValue, suggested: $0.suggestedBy != nil && $0.status == .draft, open: $0.id == open)
+        }
+        return chips.isEmpty ? nil : chips
     }
 
     /// A pin as the page draws it. A pin with a command whose output was kept and that is not
