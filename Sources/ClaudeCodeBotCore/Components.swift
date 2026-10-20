@@ -242,6 +242,12 @@ public final class ComponentLibrary: ObservableObject {
         working[Self.safeName(name)] = change
     }
 
+    /// `name` is built (a spec's component landed in the library): no longer worked on, though
+    /// Maintainer's turn may go on (reviewing, committing) after it.
+    public func doneWorking(_ name: String) {
+        working[Self.safeName(name)] = nil
+    }
+
     /// Maintainer finished its turn.
     public func finishWorking() {
         guard !working.isEmpty else { return }

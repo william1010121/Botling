@@ -39,6 +39,14 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **A component made from a reply stops spinning once it is built, and lines up with the reply.**
+  When Maintainer handed the build to a background agent, the component landed (and was added
+  to the bot) while Maintainer's turn went on, so its preview under the reply kept a spinner
+  until Maintainer replied again (and the name it started under was never cleared when the
+  build was renamed). A spec's component is now marked done the moment it is in the library,
+  under both names. The reply's bubble now spans the column like the
+  component's tile under it, so the two share one right edge instead of the bubble stopping short.
+
 - **A component made from a reply is filled in by the bot that wrote the reply.** A reply
   listing 12 features made into a component showed only 4 of them under it: Maintainer wrote the
   data as a short example. Now Maintainer's first-version request starts with what the component

@@ -193,6 +193,25 @@ struct ComponentSpecTests {
         #expect(workspace.componentCommands.runs.isEmpty)
     }
 
+    /// Maintainer hands the build to a background agent and its turn goes on (reviewing,
+    /// committing) after the component lands: the preview under the reply stops spinning as
+    /// soon as it is in the library, under the name it was built as and the one it started with.
+    @Test func aBuiltComponentStopsSpinningOnceItLands() throws {
+        let workspace = makeWorkspace()
+        let bot = workspace.mainBot
+        let reply = testReply(in: bot)
+        let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
+        workspace.handle([.componentSpec(id: spec.id.uuidString, json: #"{"name":"test-summary"}"#)], from: workspace.maintainerProject)
+        #expect(workspace.components.working["test-summary"] != nil)
+        // Lands while Maintainer's turn is still under way (no reply from it yet).
+        try addComponent("test-summary", to: workspace)
+        #expect(bot.specs.first?.status == .done)
+        #expect(workspace.components.working["test-summary"] == nil)
+        #expect(workspace.components.working["swift-test"] == nil)
+        let chat = ChatPayload.make(bot: bot, components: workspace.components, pending: [], replyingTo: nil, specs: true) { _ in "" }.json()
+        #expect(!chat.contains(#""working":true"#))
+    }
+
     /// A reply that summed up every release in Chinese (a table, and a result page with each
     /// version's bullets), written after the bot read CHANGELOG.md with a shell command.
     func releaseSummaryReply(in bot: Bot) throws -> (message: ChatMessage, page: URL) {
