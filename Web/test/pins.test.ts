@@ -251,6 +251,28 @@ describe("the Board", () => {
     }
   });
 
+  it("a column is wide enough to read a component, and the card gives it the whole width", () => {
+    const css = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    const style = document.createElement("style");
+    style.textContent = css;
+    document.head.append(style);
+    try {
+      const area = setUp();
+      area.update(state({ board: true, pins: [pin()] }));
+      // At 260px a component got under 200px: a commit's title broke a word per line.
+      const columns = getComputedStyle(document.querySelector<HTMLElement>(".board-grid")!).gridTemplateColumns;
+      expect(columns).toContain("minmax(min(320px, 100%), 1fr)");
+      // The report flag sits over the corner instead of keeping a strip beside the component.
+      const side = document.querySelector<HTMLElement>(".board-card-body .component-side")!;
+      expect(getComputedStyle(side).position).toBe("absolute");
+      // A narrow card drops the command from its header so the name and the time stay readable.
+      expect(getComputedStyle(document.querySelector<HTMLElement>(".board-card")!).getPropertyValue("container-type")).toBe("inline-size");
+      expect(css).toMatch(/@container \(max-width: 439px\) \{ \.board-card-head \.pin-command \{ display: none; \} \}/);
+    } finally {
+      style.remove();
+    }
+  });
+
   it("an empty Board offers to add a component", () => {
     const area = setUp();
     area.update(state({ board: true, pinChoices: [{ name: "天氣卡片", command: null, uses: 1, pinned: false }] }));
