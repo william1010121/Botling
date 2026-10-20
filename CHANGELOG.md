@@ -22,6 +22,13 @@ app and publishes it on GitHub Releases.
   the component editor and PLUGINS.md say to give each size its own layout: small the one key
   number or status, wide a short row or list, tall a vertical list, large the full view.
 
+- **What a bot says between tool calls is in sight.** Its words before and between tool calls
+  stay in the steps area above the reply, but no longer hide in the folded list: they show as
+  its own quieter text (markdown), in order, with each run of tool calls between them folded to
+  a "3 steps" chip that opens to those calls. A hairline sets them off from the reply. A turn
+  that said nothing between calls keeps the single "Worked · N steps" line. The same holds while
+  the bot works (earlier calls fold, the ones under way show), in saved chats, and in group
+  chats and called-in bots, whose replies now keep their steps and show them live as well.
 - **Components load details on demand.** A component's about.md may add a line
   `Detail command: git show --patch --stat {hash}` beside its `Command:`. The template then calls
   `await ccb.runDetail({hash: "2aed630"})`, which runs that template in the same folder as the

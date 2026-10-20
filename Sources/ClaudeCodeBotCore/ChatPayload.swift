@@ -232,13 +232,16 @@ public struct ChatPayload: Encodable, Equatable {
     /// has one too, for the bots called into it with @.
     public struct GroupView {
         public var typing: UUID?
+        /// The bot answering now, whose steps show live while it works.
+        public var working: Bot?
         public var speaker: (UUID) -> String?
         public var names: [String]
         /// Every name you could @, the short list (`names`) first.
         public var allNames: [String]
 
-        public init(typing: UUID?, names: [String] = [], allNames: [String]? = nil, speaker: @escaping (UUID) -> String?) {
+        public init(typing: UUID?, working: Bot? = nil, names: [String] = [], allNames: [String]? = nil, speaker: @escaping (UUID) -> String?) {
             self.typing = typing
+            self.working = working
             self.names = names
             self.allNames = allNames ?? names
             self.speaker = speaker
@@ -367,7 +370,7 @@ public struct ChatPayload: Encodable, Equatable {
             allMentions: group?.allNames ?? callIn?.allNames ?? [],
             slashComponents: slash.own,
             slashLibrary: slash.library,
-            live: group == nil && bot.isWorking ? bot.liveSteps.map { stepView($0, in: bot) } : [],
+            live: liveSteps(of: group.map(\.working) ?? (bot.isWorking ? bot : guest.flatMap { _ in callIn?.working })),
             subagent: nil,
             feedback: feedback,
             pins: pinning.map { context in bot.pins.map { pin(view: $0, context: context) } },
@@ -555,6 +558,13 @@ public struct ChatPayload: Encodable, Equatable {
                 type: subagent.type
             )
         )
+    }
+
+    /// The steps of the turn `bot` is taking now (in a group chat, the member answering).
+    @MainActor
+    static func liveSteps(of bot: Bot?) -> [StepView] {
+        guard let bot, bot.isWorking else { return [] }
+        return bot.liveSteps.map { stepView($0, in: bot) }
     }
 
     @MainActor

@@ -27,6 +27,7 @@ extension Workspace {
         let rest = callable(into: chat).filter { member in !offered.contains { $0.id == member.id } }
         return ChatPayload.GroupView(
             typing: callInSpeakers[host],
+            working: callInSpeakers[host].flatMap { member($0) },
             names: offered.map(\.name),
             allNames: (offered + rest).map(\.name),
             speaker: { [weak self] id in self?.speakerName(for: id) }
@@ -109,11 +110,12 @@ extension Workspace {
                 unheard.append("\(member.name) (busy)")
             case let .failed(why):
                 unheard.append("\(member.name) (\(Self.firstLine(of: why)))")
-            case var .reply(text):
+            case .reply(var text, let steps):
                 if let filter = bot.replyFilter?() { text = await filter(text) }
                 let parsed = ReplyParser.parseAll(text)
                 var line = ChatMessage(role: .bot, text: parsed.body, choices: parsed.choices, sourceID: member.id)
                 if !parsed.displays.isEmpty { line.displays = parsed.displays }
+                line.steps = steps
                 if !line.text.isEmpty || line.choices != nil || line.displays != nil {
                     chat.post(line)
                     bot.replyObserver?(line)
