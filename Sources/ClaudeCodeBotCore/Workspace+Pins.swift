@@ -216,16 +216,17 @@ extension Workspace {
     }
 
     /// How a pin refreshes. With `minutes`, every that many minutes (and `seconds`, when given,
-    /// instead: nil goes back to minutes); with `seconds` alone, every that many seconds.
+    /// instead: nil goes back to minutes); with `seconds` alone, every that many seconds. Any
+    /// interval from 2 seconds to 24 hours (the menu's presets or its custom one) is kept.
     public func setPinRefresh(_ id: UUID, to refresh: PinnedComponent.Refresh, minutes: Int? = nil, seconds: Int? = nil, in bot: Bot) {
         bot.editPins { pins in
             guard let at = pins.firstIndex(where: { $0.id == id }), pins[at].command != nil else { return }
             pins[at].refresh = refresh
             if let minutes {
-                pins[at].minutes = max(PinnedComponent.minimumMinutes, minutes)
-                pins[at].seconds = seconds.map { max(PinnedComponent.minimumSeconds, $0) }
+                pins[at].minutes = PinnedComponent.clampMinutes(minutes)
+                pins[at].seconds = seconds.map(PinnedComponent.clampSeconds)
             } else if let seconds {
-                pins[at].seconds = max(PinnedComponent.minimumSeconds, seconds)
+                pins[at].seconds = PinnedComponent.clampSeconds(seconds)
             }
         }
     }

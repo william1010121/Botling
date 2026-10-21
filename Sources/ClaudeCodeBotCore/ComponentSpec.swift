@@ -408,7 +408,7 @@ public enum ComponentSpecs {
         case "refresh":
             if let refresh = PinnedComponent.Refresh(rawValue: value) { spec.refresh = refresh }
         case "minutes":
-            if let minutes = Int(value) { spec.minutes = max(PinnedComponent.minimumMinutes, minutes) }
+            if let minutes = Int(value) { spec.minutes = PinnedComponent.clampMinutes(minutes) }
         case "bots":
             var seen = Set<String>()
             spec.bots = value.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }

@@ -8,6 +8,13 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Pick any refresh interval for a pin.** A pin's refresh menu keeps its quick choices (When
+  shown, Every 15 min, Every 5 sec, Only on ↻) and adds "Custom…": it opens "Every [n] [sec / min]"
+  right in the menu; Set or Return keeps it, from 2 seconds to 24 hours. The pin then says its
+  own interval ("Every 30 sec", "Every 2 min"), shown checked in the menu, and refreshes on it
+  after a restart too. A number out of range or not a whole number is said under the box and
+  nothing changes. The Pin dialog takes the same intervals.
+
 - **Changing a built component is one step, and you can see it happen.** Once a component is
   built, what you type in its panel's "Ask for changes…" is the change: the next version is built
   right away, with no Build press, and Maintainer is told so plainly (it no longer sometimes waits

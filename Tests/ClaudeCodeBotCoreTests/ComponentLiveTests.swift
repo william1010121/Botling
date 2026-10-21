@@ -118,6 +118,40 @@ struct ComponentLiveTests {
         #expect(pins[0]["seconds"] as? Int == 2)
     }
 
+    @Test func aPinKeepsAnyCustomIntervalFromTwoSecondsToADay() throws {
+        // What the refresh menu's "Custom…" sends: 30 sec, 2 min, kept and driving the timer.
+        let pin = PinnedComponent(name: "cpu", command: "uptime", data: "{}", refresh: .interval, seconds: 30)
+        let now = Date()
+        #expect(pin.interval == 30)
+        #expect(!pin.isDue(at: now, lastRan: now.addingTimeInterval(-29)))
+        #expect(pin.isDue(at: now, lastRan: now.addingTimeInterval(-30)))
+        let saved = try JSONDecoder().decode(PinnedComponent.self, from: JSONEncoder().encode(pin))
+        #expect(saved.seconds == 30 && saved.interval == 30)
+        // Out of bounds, from a hand-edited file or an older page, is brought within them.
+        #expect(PinnedComponent(name: "x", command: "ls", data: "1", seconds: 1).seconds == 2)
+        #expect(PinnedComponent(name: "x", command: "ls", data: "1", seconds: 100_000).seconds == PinnedComponent.maximumSeconds)
+        #expect(PinnedComponent(name: "x", command: "ls", data: "1", minutes: 5000).minutes == PinnedComponent.maximumMinutes)
+        let wild = try JSONDecoder().decode(PinnedComponent.self, from: Data(#"{"id":"8E1B5D2C-3C55-4C6E-9C0B-6D7B0B8E4A11","name":"x","command":"ls","data":"1","refresh":"interval","minutes":99999,"seconds":0}"#.utf8))
+        #expect(wild.minutes == 1440 && wild.seconds == 2)
+
+        let workspace = makeWorkspace()
+        let folder = workspace.components.folder.appending(path: "cpu")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try "<pre></pre>".write(to: folder.appending(path: "template.html"), atomically: true, encoding: .utf8)
+        try "CPU.\nCommand: `uptime`".write(to: folder.appending(path: "about.md"), atomically: true, encoding: .utf8)
+        workspace.components.rescan()
+        let bot = workspace.mainBot
+        let pinned = try #require(workspace.pin(named: "cpu", in: bot, refresh: .shown))
+        workspace.setPinRefresh(pinned.id, to: .interval, seconds: 45, in: bot)
+        #expect(bot.pins[0].seconds == 45 && bot.pins[0].interval == 45)
+        workspace.setPinRefresh(pinned.id, to: .interval, minutes: 2, in: bot)
+        #expect(bot.pins[0].seconds == nil && bot.pins[0].minutes == 2 && bot.pins[0].interval == 120)
+        workspace.setPinRefresh(pinned.id, to: .interval, seconds: 999_999, in: bot)
+        #expect(bot.pins[0].seconds == 86_400)
+        let pins = try #require(try payload(workspace)["pins"] as? [[String: Any]])
+        #expect(pins[0]["seconds"] as? Int == 86_400)
+    }
+
     // MARK: <show id="…">
 
     @Test func aShowTagCanNameItsCard() {
