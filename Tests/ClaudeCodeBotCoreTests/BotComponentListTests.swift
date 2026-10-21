@@ -369,6 +369,95 @@ struct BotComponentListTests {
         await workspace.putEveryoneToSleep()
     }
 
+    // MARK: A component written in two steps
+
+    static let githubCIAbout = """
+        GitHub Actions 建置進度卡片：列出最近的 workflow 執行。用 `<show name="github-ci"></show>` 叫出來。
+        Command: gh run list --limit 8 --json databaseId,status
+        Detail command: gh run view {databaseId} --json jobs
+        Icon: hammer
+        """
+
+    /// The user's case: Maintainer's editor wrote github-ci's template.html, then its about.md 8
+    /// seconds later. The library saw the new folder in between, so every bot was told "Components
+    /// were updated" with an empty usage for it, and when about.md landed nobody heard again (a
+    /// missing about.md was not remembered, so its arrival was no change). Now a new component
+    /// waits for its about.md, and an about.md that arrives late is a change.
+    @Test func aNewComponentWaitsForItsAboutBeforeBotsHearOfIt() throws {
+        let library = ComponentLibrary(folder: root.appending(path: "components"))
+        var heard: [String] = []
+        library.onCatalogChanged = { heard.append(library.catalog(of: ["github-ci"])) }
+        let folder = library.folder.appending(path: "github-ci")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try "<p>ci</p>".write(to: folder.appending(path: "template.html"), atomically: true, encoding: .utf8)
+        library.rescan()
+        #expect(!library.names.contains("github-ci"))
+        #expect(heard.isEmpty)
+
+        try Self.githubCIAbout.write(to: folder.appending(path: "about.md"), atomically: true, encoding: .utf8)
+        library.rescan()
+        #expect(library.names.contains("github-ci"))
+        let usage = try #require(heard.last)
+        #expect(usage.hasPrefix("- github-ci: GitHub Actions 建置進度卡片"))
+        #expect(usage.contains("Detail command:"))
+        #expect(library.icon(of: "github-ci") == "hammer")
+    }
+
+    /// A template left without an about.md still shows up after a while, and its about.md, when
+    /// it comes, reaches the bots.
+    @Test func aLateAboutStillReachesTheBots() throws {
+        let library = ComponentLibrary(folder: root.appending(path: "components"))
+        var heard = 0
+        library.onCatalogChanged = { heard += 1 }
+        let folder = library.folder.appending(path: "bare")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let template = folder.appending(path: "template.html")
+        try "<p>bare</p>".write(to: template, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-600)], ofItemAtPath: template.path)
+        library.rescan()
+        #expect(library.names.contains("bare"))
+        #expect(heard == 1)
+
+        try "Bare card.".write(to: folder.appending(path: "about.md"), atomically: true, encoding: .utf8)
+        library.rescan()
+        #expect(heard == 2)
+        #expect(library.catalog(of: ["bare"]) == "- bare: Bare card.")
+    }
+
+    /// A project bot asks Maintainer with <component>; Maintainer's editor writes the template,
+    /// then the about.md. The bot is woken once the component is whole, with its usage, and
+    /// draws it in its own chat for the user.
+    @Test func aProjectBotIsHandedTheComponentOnceItIsWhole() async throws {
+        let fake = FakeLauncher()
+        fake.respond = { text in
+            if text.contains("Maintainer added the component \"github-ci\"") { return "CI 狀態：<show name=\"github-ci\"></show>" }
+            if text.hasSuffix("做一個 GitHub CI 組件") { return "<component name=\"github-ci\">a GitHub Actions run list</component>" }
+            if isAppOnly(text) { return "OK" }
+            return "Got it"
+        }
+        let workspace = makeWorkspace(fake)
+        await workspace.pluginLibraryReady.value
+        let (_, bot) = try garden(in: workspace)
+
+        bot.send("做一個 GitHub CI 組件")
+        await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text.contains("github-ci") } }
+        let folder = workspace.components.folder.appending(path: "github-ci")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try "<p>ci</p>".write(to: folder.appending(path: "template.html"), atomically: true, encoding: .utf8)
+        workspace.components.rescan()
+        #expect(!fake.agents.flatMap(\.sent).contains { $0.contains("Maintainer added the component \"github-ci\"") })
+
+        try Self.githubCIAbout.write(to: folder.appending(path: "about.md"), atomically: true, encoding: .utf8)
+        workspace.components.rescan()
+        await eventually { bot.messages.last?.shown.first?.name == "github-ci" }
+        let told = try #require(fake.agents.flatMap(\.sent).first { $0.contains("Maintainer added the component \"github-ci\"") })
+        #expect(told.contains("- github-ci: GitHub Actions 建置進度卡片"))
+        #expect(told.contains("做一個 GitHub CI 組件"))
+        #expect(bot.componentList?.contains("github-ci") == true)
+        #expect(bot.messages.contains { $0.role == .notice && $0.text.contains("Maintainer added") })
+        await workspace.putEveryoneToSleep()
+    }
+
     // MARK: The / menu
 
     @Test func theSlashMenuOffersTheBotsOwnComponentsFirst() throws {

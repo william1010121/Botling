@@ -201,6 +201,21 @@ struct ComponentTests {
         #expect(maintainer.contains("claude.ai link"))
     }
 
+    /// The user's case: Maintainer finished a component a bot asked for and wrote to the user
+    /// about versions, tags, script syntax, guessed APIs and 34px rows ("啥意思？"), without
+    /// saying where the component was. The user reads Maintainer's chat: its report is one or two
+    /// plain sentences on what was made and where the user will see it.
+    @Test func maintainerReportsInPlainWordsWhereTheUserWillSeeIt() {
+        let maintainer = makeWorkspace(FakeLauncher()).maintainerInstructions()
+        #expect(!maintainer.contains("Report what you did in one sentence."))
+        #expect(maintainer.contains("The user reads your chat and is not technical"))
+        #expect(maintainer.contains("one or two plain sentences"))
+        #expect(maintainer.contains("what you made and where the user will see it"))
+        #expect(maintainer.contains("handed it back to that bot, which shows it in its own chat"))
+        #expect(maintainer.contains("Leave out versions, tags, checks, file names, APIs and pixel sizes"))
+        #expect(maintainer.contains("only when the user must do something"))
+    }
+
     /// Maintainer never edits a component itself: each request goes to its own background
     /// editor, and the version bump, check and commit happen one component at a time.
     @Test func maintainerAlwaysDelegatesComponentsAndCommitsThemOneAtATime() {
