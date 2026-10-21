@@ -168,10 +168,6 @@ struct PageView: NSViewRepresentable {
         AppResources.bundle.url(forResource: "viewer", withExtension: "html", subdirectory: "web")
     }
 
-    /// Text files WebKit would read as Latin-1 when nothing in them names an encoding.
-    private static let textTypes = ["html": "text/html", "htm": "text/html", "txt": "text/plain", "md": "text/plain",
-                                    "csv": "text/plain", "json": "text/plain", "log": "text/plain"]
-
     private func load(_ url: URL, in view: WKWebView, _ coordinator: Coordinator) {
         coordinator.loaded = url
         coordinator.target = url
@@ -180,7 +176,7 @@ struct PageView: NSViewRepresentable {
             // Served with its charset (UTF-8 pages read right) and the files beside it.
             coordinator.target = served
             view.load(URLRequest(url: served))
-        } else if url.isFileURL, let mime = Self.textTypes[url.pathExtension.lowercased()],
+        } else if url.isFileURL, let mime = PagePreview.windowTextType(forExtension: url.pathExtension),
            let data = try? Data(contentsOf: url), Self.isPlainUTF8(data) {
             // Pages bots write often have no <meta charset>, and such a file is read as Latin-1
             // (Chinese turns to mojibake). Valid UTF-8 that names no other encoding is read as

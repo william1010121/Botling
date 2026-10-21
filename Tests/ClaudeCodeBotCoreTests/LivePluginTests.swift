@@ -118,7 +118,7 @@ struct LivePortTests {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-live-port-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let here = URL(filePath: #filePath).deletingLastPathComponent()
-        let appBinary = here.appending(path: "../../.build/debug/ClaudeCodeBot").standardizedFileURL
+        let appBinary = TestPaths.app
         let launcher = ClaudeAgentProcess.launcher(executable: executable)
         let workspace = Workspace(
             root: root,

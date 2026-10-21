@@ -62,6 +62,25 @@ public final class Workspace: ObservableObject {
 
     public typealias BotFactory = @MainActor (BotProfile, BotStore) -> Bot
 
+    /// Where everything sits under the app's data folder (`~/.claudecodebot`, or a snapshot's
+    /// copy): the one place that spells these paths.
+    public nonisolated enum Layout {
+        /// The main bot's chat and settings.
+        public static func mainBot(in root: URL) -> URL { root.appending(path: "main") }
+        /// A project's or bot's (Maintainer's too): by its id.
+        public static func bot(_ id: UUID, in root: URL) -> URL { root.appending(path: "projects/\(id.uuidString)") }
+        /// The list of projects and bots.
+        public static func projectsFile(in root: URL) -> URL { root.appending(path: "projects.json") }
+        /// The plugin library.
+        public static func plugins(in root: URL) -> URL { root.appending(path: "plugins") }
+        /// The plugin the component library is, and its components folder.
+        public static let componentPlugin = "ccb-components"
+        public static let componentsFolder = "components"
+        public static func components(in root: URL) -> URL {
+            plugins(in: root).appending(path: componentPlugin).appending(path: componentsFolder)
+        }
+    }
+
     /// Shapes handed out to new projects, in order (`AvatarShape.handedOut`).
     static let avatars = AvatarShape.handedOut.map(\.rawValue)
 
@@ -211,7 +230,7 @@ public final class Workspace: ObservableObject {
         settings = loadedSettings
         spending = Spending.load(from: root.appending(path: "spending.json"))
         rateLimits = RateLimits.load(from: root.appending(path: "rate-limits.json"))
-        let library = root.appending(path: "plugins")
+        let library = Layout.plugins(in: root)
         Self.migrateFromDeck(library: library, root: root)
         let componentFolder = Self.prepareComponentPlugin(in: library, movingFrom: root.appending(path: "components"))
         Self.prepareTeamsPlugin(in: library, movingFrom: root.appending(path: "teams"))
@@ -234,7 +253,7 @@ public final class Workspace: ObservableObject {
         components.git = git.isAvailable ? git : nil
         self.checkCommand = checkCommand
         self.shotCommand = shotCommand
-        let mainHome = root.appending(path: "main")
+        let mainHome = Layout.mainBot(in: root)
         try? FileManager.default.createDirectory(at: mainHome, withIntermediateDirectories: true)
         mainBot = makeBot(.main(home: mainHome), BotStore(directory: mainHome))
         Self.retireTheOneGroup(in: root, into: mainBot)
@@ -662,14 +681,23 @@ public final class Workspace: ObservableObject {
         mainBot.queueNote("(App: " + notes.joined(separator: " ") + ")")
     }
 
+    /// The esbuild Maintainer bundles a ported plugin with when the project has none of its own:
+    /// the version Web/package.json builds the app's own plugins with (`WorkspaceTests` checks).
+    static let bundlerVersion = "0.28.2"
+
     /// What marks a folder as a project's own.
     static let projectMarkers: Set<String> = [".git", "package.json", "Package.swift", "pyproject.toml", "setup.py", "Cargo.toml", "go.mod", "pom.xml", "build.gradle", "Gemfile", "composer.json", "CMakeLists.txt", "Makefile", "manifest.json"]
     /// Folders never looked into for projects.
     static let skippedFolders: Set<String> = ["node_modules", "build", "dist", "target", "DerivedData", "Pods", "vendor", "venv"]
 
+    /// How many folders down `projectFolders` looks for projects: deep enough for a tree of work
+    /// folders (~/tool/clients/acme/app), shallow enough that a wide folder such as your home is
+    /// not walked to the bottom. The main bot's instructions say the same.
+    nonisolated public static let projectSearchDepth = 5
+
     /// The projects below `folder`: the outermost folders with a project marker (an Xcode
     /// project counts too), sorted by path. A project's own subfolders are not projects again.
-    static func projectFolders(in folder: URL, depth: Int = 5) -> [URL] {
+    static func projectFolders(in folder: URL, depth: Int = projectSearchDepth) -> [URL] {
         let files = FileManager.default
         guard depth > 0, let inside = try? files.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) else { return [] }
         var found: [URL] = []
@@ -1046,8 +1074,8 @@ public final class Workspace: ObservableObject {
     /// The component library is the `ccb-components` plugin. Components from before plugins
     /// (`~/.claudecodebot/components`) move into it once.
     static func prepareComponentPlugin(in library: URL, movingFrom old: URL) -> URL {
-        let plugin = library.appending(path: "ccb-components")
-        let folder = plugin.appending(path: "components")
+        let plugin = library.appending(path: Layout.componentPlugin)
+        let folder = plugin.appending(path: Layout.componentsFolder)
         let files = FileManager.default
         try? files.createDirectory(at: plugin, withIntermediateDirectories: true)
         if !files.fileExists(atPath: folder.path) {
@@ -1060,9 +1088,9 @@ public final class Workspace: ObservableObject {
         let manifest = plugin.appending(path: "package.json")
         if !files.fileExists(atPath: manifest.path) {
             let text = PluginManifest.builtIn(
-                name: "ccb-components", displayName: "Component library",
+                name: Layout.componentPlugin, displayName: "Component library",
                 description: "Components shown in the chat (choices and so on). One folder per component: template.html and about.md.",
-                permissions: [], components: "components"
+                permissions: [], components: Layout.componentsFolder
             ).fileText
             try? Data(text.utf8).write(to: manifest)
         }
@@ -1327,7 +1355,7 @@ public final class Workspace: ObservableObject {
         - The user reads your chat and is not technical: every report is one or two plain sentences, in the user's language, on what you made and where the user will see it. For a component a bot asked for, say you handed it back to that bot, which shows it in its own chat (e.g. "已做好 github-ci，已交回 ClaudeCodeBot，它會在它的聊天裡顯示給你"). Leave out versions, tags, checks, file names, APIs and pixel sizes; mention a doubt only when the user must do something about it, and then say what to do in plain words.
         - Components live in ccb-components/components/<name>/ (template.html, about.md). Never edit template.html or about.md yourself:
           every component request (a new component or a change) goes to a ccb-core:component-editor agent with the Agent tool, run in the background, one agent per component, so several components can be worked on at once. Give it the component folder's path and the request (and any attached pictures).
-          A component that will be pinned gets ONE responsive layout that adapts to any width and height (the user drags its Board card to any size from 1x1 to 4x4 and its opened panel taller: CSS grid auto-fill columns, container queries, a summary when short, the key number when tiny; no per-size layouts; ccb.size with px and ccb.onSize, see PLUGINS.md; an about.md "Sizes: 2x2" line is optional, only the size a new pin starts at; on the Board ccb.surface is "board" and <html data-surface="board">: the component is the whole tile, so no own border, background or radius, at most ~12px padding, fill the tile; in the chat ccb.surface is "chat" and <html data-surface="chat">: drawn at its widest size across the whole reply, framed by the bubble, so no own frame there either, as tall as its content; opened above the input box it is "pinned", frameless the same way and as tall as its content) and an "Icon: <SF Symbol name or emoji>" line, and calls ccb.setStatus({text, tone}) with its key value for its chip above the input box (see PLUGINS.md): say so to the editor.
+          A component that will be pinned gets ONE responsive layout that adapts to any width and height (the user drags its Board card to any size from \(PinnedComponent.Size.rangeText) and its opened panel taller: CSS grid auto-fill columns, container queries, a summary when short, the key number when tiny; no per-size layouts; ccb.size with px and ccb.onSize, see PLUGINS.md; an about.md "Sizes: 2x2" line is optional, only the size a new pin starts at; on the Board ccb.surface is "board" and <html data-surface="board">: the component is the whole tile, so no own border, background or radius, at most ~12px padding, fill the tile; in the chat ccb.surface is "chat" and <html data-surface="chat">: drawn at its widest size across the whole reply, framed by the bubble, so no own frame there either, as tall as its content; opened above the input box it is "pinned", frameless the same way and as tall as its content) and an "Icon: <SF Symbol name or emoji>" line, and calls ccb.setStatus({text, tone}) with its key value for its chip above the input box (see PLUGINS.md): say so to the editor.
           Never edit ccb-core/claude/agents/component-editor.md (the editor's own instructions): ClaudeCodeBot writes it. Its model is picked in ClaudeCodeBot's Settings (Plugins › Component editor); a change to its prompt is a request for the ClaudeCodeBot project: tell the user so in one sentence.
           Two editors never work on the same component folder at once: if another request comes for a component already being edited, send it to that running editor with SendMessage, or keep it until that editor returns.
           While editors run, stay free for new requests. When an editor returns, review its change, then do the rest yourself, one component at a time: bump the ccb-components version, run the check, then git add, commit and tag as above.
@@ -1337,7 +1365,7 @@ public final class Workspace: ObservableObject {
           Otherwise build the new one (as above); once it is in the library the app adds it to the asking bot's list.
           A bot's request carries its id in a <component-declined id="…"> tag. If you will not or cannot do it (or change it), say why in your reply and end it with that tag around one sentence for the bot: <component-declined id="that id">why</component-declined>; the app passes it on. Only that tag closes a request you do not fulfil: a reply that just mentions the component (you are still working on it, or asking the user) leaves it open.
           A bot already at \(ComponentLibrary.limit): add or build nothing for it; with a choices block of that bot's components, ask the user which one to remove from that bot's list first (the 組件使用統計 card shows which are used least), then <take-component bot="bot name">component name</take-component>. Removing from a list never deletes anything: the library copy stays. Deleting a component from the library itself is yours alone, only when the user asks for that, and never one the user did not pick. Changes to existing components are always fine. Never write these tags inside code or examples.
-        - A message starting "(Component spec <id>) Build the first version" is the user making a bot's reply into a component with one press. It starts with what the component is for (the user's or the bot's own words); the reply after it is the context. Infer the whole spec yourself from them and the library and build it now. Ask nothing: wherever you are unsure, use your best guess (the answer you would have suggested). If a component in the library already does this, reuse it: build nothing, and set similar to it and reuse to true. Its data is the reply's own content: what the bot wrote and organised (and the result page it links, whose words the message includes), in the bot's words and language, shown as a component instead of text or a web page. It may carry the user's own message that led to the reply and a brief from a copy of the bot's session (what it is for, each field, and which ones a CLI command can get, with the exact command): use them. Build only the component, with no data sample: about.md says exactly what JSON a bot gives it with <show>, with its fields in two groups, "From command" and "Optional (bot only)" (the template draws well when optional ones are missing), and, when some fields come from a command, a "Board command: <command>" line (a suggestion, not a Command: the chat still has the bot fill it), and once it is in the library the app asks the bot that wrote the reply to draw it there with that reply's data in full. A Command is optional: give it one only when the user clearly wants live data that changes (test results, git status); a summary, table or write-up needs none, and a shell command the bot ran to read its sources is not one. Otherwise build it as any new component (about.md gets its Command: line when it has one; when its output would go over 1 MB, such as every commit's whole diff, the Command gives a short list and a "Detail command: … {hash}" line plus ccb.runDetail loads the rest on demand, see PLUGINS.md), under a name not already in the library. Never run the command yourself: the user allows it on the component's card. Answer in one or two sentences followed by <component-spec id="<id>">JSON</component-spec> with what you used: name (as built), about, fields [{name, type}], command, refresh (shown, interval or manual), minutes, similar, reuse (no samples). The app adds it to the bot's list and shows it under the reply once it is in the library.
+        - A message starting "(Component spec <id>) Build the first version" is the user making a bot's reply into a component with one press. It starts with what the component is for (the user's or the bot's own words); the reply after it is the context. Infer the whole spec yourself from them and the library and build it now. Ask nothing: wherever you are unsure, use your best guess (the answer you would have suggested). If a component in the library already does this, reuse it: build nothing, and set similar to it and reuse to true. Its data is the reply's own content: what the bot wrote and organised (and the result page it links, whose words the message includes), in the bot's words and language, shown as a component instead of text or a web page. It may carry the user's own message that led to the reply and a brief from a copy of the bot's session (what it is for, each field, and which ones a CLI command can get, with the exact command): use them. Build only the component, with no data sample: about.md says exactly what JSON a bot gives it with <show>, with its fields in two groups, "From command" and "Optional (bot only)" (the template draws well when optional ones are missing), and, when some fields come from a command, a "Board command: <command>" line (a suggestion, not a Command: the chat still has the bot fill it), and once it is in the library the app asks the bot that wrote the reply to draw it there with that reply's data in full. A Command is optional: give it one only when the user clearly wants live data that changes (test results, git status); a summary, table or write-up needs none, and a shell command the bot ran to read its sources is not one. Otherwise build it as any new component (about.md gets its Command: line when it has one; when its output would go over \(ComponentCommands.outputLimit / 1_000_000) MB, such as every commit's whole diff, the Command gives a short list and a "Detail command: … {hash}" line plus ccb.runDetail loads the rest on demand, see PLUGINS.md), under a name not already in the library. Never run the command yourself: the user allows it on the component's card. Answer in one or two sentences followed by <component-spec id="<id>">JSON</component-spec> with what you used: name (as built), about, fields [{name, type}], command, refresh (shown, interval or manual), minutes, similar, reuse (no samples). The app adds it to the bot's list and shows it under the reply once it is in the library.
         - A message starting "(Component <name>) Make it live on the Board" means the user pinned that bot-filled component to a Board: have the component editor add its "Command: …" line from the suggested Board command (as the message says), keeping the data format so bots still fill it in chats. Never run the command yourself; the app switches the pin to it once it is in the library.
         - A message starting "(Component spec <id>) Change it now" is the user asking, in the panel of a component already built, for a change: build that new version right away (the version it names), changing the same component; never ask the user to press Build or wait for anything first. Only when the request is genuinely ambiguous (two readings that would build different things), build nothing and ask exactly one question in the JSON's questions (2 or 3 short answers and the one you suggest); the answer comes back as the next "Change it now". Answer in one or two sentences followed by <component-spec id="<id>">JSON</component-spec> with only what you changed. The app sees the new version land in the library.
         - Other messages starting "(Component spec <id>)" are the user shaping a draft (not built yet) in a panel beside the chat. Fill in what you can infer, ask only what you cannot (at most 3 questions, each with 2 or 3 short answers and the one you suggest), and answer in one or two sentences followed by <component-spec id="<id>">JSON</component-spec> holding only what you set or change: the keys above, plus questions [{id, key, text, options [{label, value}], suggested}]; a question's key is the value its answer sets. A draft is built only when the user presses Build it: build nothing and never run the command yourself until a "(Component spec <id>) Build it" message; then build it (or its new version) as the spec says; the app adds it to the chosen bots once it is in the library. Never write these tags inside code or examples.
@@ -1346,7 +1374,7 @@ public final class Workspace: ObservableObject {
         - To read a folder outside the plugin library (for example to turn an existing project into a plugin): end your reply with <need-folder>full path</need-folder>, say in one sentence why you need it, then stop and wait.
           Once the user agrees you will receive "(App) The user agreed…"; only then read it. If they refuse, find another way. Only read, never change files there. Folders already allowed need no new request.
         - Turning an existing project into a plugin: first find the reusable core (a library without dependencies is best); the web part should only do the wiring (hook up ccb.composer, settings, commands).
-          Bundle it with esbuild into a single ES module (use the esbuild in the original project's node_modules, or npx --yes esbuild@0.25.11).
+          Bundle it with esbuild into a single ES module (use the esbuild in the original project's node_modules, or npx --yes esbuild@\(Self.bundlerVersion)).
           Copy the original project's license into the plugin (the license in package.json and the LICENSE file); GPL code may only go into a separate plugin.
         - A "Hot-update check" message means ClaudeCodeBot found a broken plugin: fix it with the steps above.
         - A bot that only needs instructions and a schedule (a morning news bot, a reading coach) is not a plugin: end your reply with <new-bot name="short name, no quotes">its job in a few sentences, including when it should work</new-bot>; ClaudeCodeBot adds it to the left column and it writes its own routines. Build a plugin with ccb.bots.create (see PLUGINS.md) only when the bot needs code of its own. Never write that tag inside code or examples.
@@ -2096,7 +2124,7 @@ public final class Workspace: ObservableObject {
     // MARK: Setup
 
     private func attach(_ project: Project) {
-        let store = BotStore(directory: root.appending(path: "projects/\(project.id.uuidString)"))
+        let store = BotStore(directory: Layout.bot(project.id, in: root))
         let profile: BotProfile = if project.isMaintainer {
             .maintainer(folder: project.folder, instructions: maintainerInstructions())
         } else if let job = project.job {
@@ -2162,7 +2190,7 @@ public final class Workspace: ObservableObject {
         }
     }
 
-    private var projectsURL: URL { root.appending(path: "projects.json") }
+    private var projectsURL: URL { Layout.projectsFile(in: root) }
 
     private func loadProjects() -> [Project] {
         guard let data = try? Data(contentsOf: projectsURL) else { return [] }

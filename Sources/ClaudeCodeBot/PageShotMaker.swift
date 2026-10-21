@@ -3,7 +3,7 @@ import ClaudeCodeBotCore
 import WebKit
 
 /// Takes the pictures 「網頁預覽卡片」 cards show (see `PageShots`): each page is loaded in an
-/// offscreen view at the card's desktop size (1280×800), given a moment to draw, and saved as
+/// offscreen view at the card's desktop size (`PagePreview.viewport`), given a moment to draw, and saved as
 /// JPEG. One page at a time; `made` runs after each, so open chats redraw with the picture.
 @MainActor
 final class PageShotMaker: NSObject, WKNavigationDelegate {
@@ -57,7 +57,7 @@ final class PageShotMaker: NSObject, WKNavigationDelegate {
 
     private func makeView() -> WKWebView {
         if let view { return view }
-        let frame = NSRect(x: 0, y: 0, width: 1280, height: 800)
+        let frame = NSRect(x: 0, y: 0, width: PagePreview.viewport.width, height: PagePreview.viewport.height)
         let window = HeadlessRun.offscreenWindow(frame)
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(PreviewSchemeHandler.shared, forURLScheme: PagePreview.scheme)

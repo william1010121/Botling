@@ -11,6 +11,8 @@ import Foundation
 public enum ComponentState {
     /// The most a component may keep, in JSON characters (UTF-16, as the page counts them).
     public static let limit = 256 * 1024
+    /// The limit as the instructions say it: "256K characters of JSON".
+    static var limitText: String { "\(limit / 1024)K characters of JSON" }
     /// The most of one component's data the bot's note quotes.
     static let quoted = 1500
     /// The most components one note tells of (the newest).

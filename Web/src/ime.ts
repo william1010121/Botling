@@ -27,15 +27,16 @@ interface ImeState {
 type ImeWindow = Window & { __ccbIme?: ImeState };
 
 /**
- * Installs the guard on `win` (once). Self-contained on purpose: its source is copied as is into
- * every component frame (`imeGuardScript`), so it may not use anything outside its own body.
+ * Installs the guard on `win` (once), counting an Enter within `grace` ms of `compositionend` as
+ * the input method's. Self-contained on purpose: its source is copied as is into every component
+ * frame (`imeGuardScript`, which passes `compositionGrace` in), so it may not use anything
+ * outside its own body.
  */
-export function installImeGuard(win: Window): void {
+export function installImeGuard(win: Window, grace: number = compositionGrace): void {
   const w = win as Window & { __ccbIme?: { composing: boolean; endedAt: number } };
   if (w.__ccbIme) return;
   const state = { composing: false, endedAt: -Infinity };
   w.__ccbIme = state;
-  const grace = 100;
   w.addEventListener("compositionstart", () => { state.composing = true; }, true);
   w.addEventListener("compositionend", () => { state.composing = false; state.endedAt = Date.now(); }, true);
   // A blur ends any composition; a missed compositionend must not swallow Enter for good.
@@ -56,7 +57,7 @@ export function installImeGuard(win: Window): void {
 }
 
 /** The guard as a script for a component frame's `<script>`. */
-export const imeGuardScript = `(${installImeGuard.toString()})(window);`;
+export const imeGuardScript = `(${installImeGuard.toString()})(window, ${compositionGrace});`;
 
 function stateOf(event: Event): ImeState | undefined {
   const target = event.target as Node | null;

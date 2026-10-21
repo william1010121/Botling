@@ -116,6 +116,11 @@ public final class Bot: ObservableObject, Identifiable {
     private var sessionRules: [String] = []
     /// Recent tool calls by id (tool, what it ran or touched), to show and allow a blocked one.
     private var toolCalls: [String: (tool: String, detail: String)] = [:]
+    /// Their ids, oldest first, so the oldest go once there are more than `recentToolCalls`.
+    private var toolCallOrder: [String] = []
+    /// How many recent tool calls are kept: far more than a turn's denials or schedule results
+    /// look back at, few enough that a long session does not grow without end.
+    static let recentToolCalls = 500
     /// The soonest a wake-up or cron job of this bot is due (see `settleDueSchedules`).
     private var scheduleDue: Date?
     /// Blocked calls already shown (claude says so twice: its frame and the tool result).
@@ -1149,8 +1154,13 @@ public final class Bot: ObservableObject, Identifiable {
             if tokens.total > 0 { onTokens?(tokens) }
         case let .trace(step):
             if case let .toolUse(id, tool, _, detail, _) = step {
-                if toolCalls.count > 500 { toolCalls.removeAll() }
+                if toolCalls[id] == nil { toolCallOrder.append(id) }
                 toolCalls[id] = (tool, detail)
+                if toolCallOrder.count > Self.recentToolCalls {
+                    let gone = toolCallOrder.prefix(toolCallOrder.count - Self.recentToolCalls)
+                    for old in gone { toolCalls[old] = nil }
+                    toolCallOrder.removeFirst(gone.count)
+                }
             }
             if trace.apply(step, at: now()) { store?.save(subagents: trace.subagents) }
             if case let .scheduleResult(id, result) = step, let tool = toolCalls[id]?.tool {
@@ -1883,11 +1893,10 @@ public final class Bot: ObservableObject, Identifiable {
     /// `$CLAUDE_CONFIG_DIR/projects`), or, for a folder claude names differently (a long path,
     /// a symlink), in any project folder there.
     public nonisolated static func claudeSessionExists(_ session: UUID, in folder: URL, config: URL? = nil) -> Bool {
-        let config = config ?? ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(filePath: $0) }
-            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude")
-        let projects = config.appending(path: "projects")
-        let file = session.uuidString.lowercased() + ".jsonl"
-        let named = String(folder.standardizedFileURL.path.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+        let config = config ?? ClaudeCodeFiles.configFolder()
+        let projects = ClaudeCodeFiles.projectsFolder(config: config)
+        let file = ClaudeCodeFiles.transcriptName(session)
+        let named = ClaudeCodeFiles.projectFolderName(for: folder)
         if FileManager.default.fileExists(atPath: projects.appending(path: named).appending(path: file).path) { return true }
         let folders = (try? FileManager.default.contentsOfDirectory(atPath: projects.path)) ?? []
         return folders.contains { FileManager.default.fileExists(atPath: projects.appending(path: $0).appending(path: file).path) }

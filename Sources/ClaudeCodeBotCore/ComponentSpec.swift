@@ -194,13 +194,17 @@ public struct ComponentSpec: Codable, Equatable, Identifiable, Sendable {
         public var error: String?
         /// Maintainer was busy when it was sent: the turn that ends first is not the answer to it.
         public var waitTurn: Bool
+        /// The panel's id for the request that started it, so the panel knows its change by it
+        /// (not by the clock); nil when the app started it (a queued request, an answer).
+        public var request: String?
 
-        public init(version: Int, said: [String], startedAt: Date = Date(), waitTurn: Bool = false) {
+        public init(version: Int, said: [String], startedAt: Date = Date(), waitTurn: Bool = false, request: String? = nil) {
             state = .working
             self.version = version
             self.said = said
             self.startedAt = startedAt
             self.waitTurn = waitTurn
+            self.request = request
         }
     }
 

@@ -121,6 +121,8 @@ export interface SpecChange {
   startedAt: number;
   endedAt?: number | null;
   error?: string | null;
+  /** The panel's id for the request that started it (`specSay`'s `request`). */
+  request?: string | null;
 }
 
 export interface SpecState {
@@ -400,7 +402,7 @@ export type Action =
   | { type: "specCommand"; id: string; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean }
   | { type: "specEdit"; id: string; key: string; value: string }
   | { type: "specAnswer"; id: string; question: string; option: number }
-  | { type: "specSay"; id: string; text: string }
+  | { type: "specSay"; id: string; text: string; request?: string }
   | { type: "specTestRun"; id: string; command: string; folder: string; approve?: boolean }
   | { type: "specBuild"; id: string }
   | { type: "specCancel"; id: string }

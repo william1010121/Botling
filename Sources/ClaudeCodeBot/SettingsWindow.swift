@@ -786,18 +786,9 @@ struct DeveloperSection: View {
         Binding(
             get: { workspace.settings.developerMode },
             set: { on in
-                let folders = workspace.projects.filter { !$0.isBot }
-                workspace.setDeveloperMode(on, project: workspace.settings.developerProjectID ?? guess(folders)?.id)
+                workspace.setDeveloperMode(on, project: workspace.settings.developerProjectID ?? workspace.guessDeveloperSource()?.id)
             }
         )
-    }
-
-    /// The project that looks like ClaudeCodeBot's source, to start with.
-    static func guess(_ projects: [Workspace.Project]) -> Workspace.Project? {
-        projects.first { project in
-            let manifest = (try? String(contentsOf: project.folder.appending(path: "Package.swift"), encoding: .utf8)) ?? ""
-            return manifest.contains("\"ClaudeCodeBot\"")
-        }
     }
 }
 

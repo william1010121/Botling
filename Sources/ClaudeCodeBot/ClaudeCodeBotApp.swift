@@ -25,6 +25,7 @@ struct ClaudeCodeBotApp: App {
                 Color.clear.frame(width: 1, height: 1).background(HiddenWindow())
             } else {
                 RootView(workspace: delegate.workspace, settings: delegate.settings)
+                    .background(MainWindowProbe())
                     .frame(minWidth: 980, minHeight: 620)
                     .preferredColorScheme(.dark)
             }
@@ -222,7 +223,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// CoreGraphics call is used on purpose: for the app's own window it needs no Screen
     /// Recording permission, where ScreenCaptureKit would ask every user first.
     static func captureMainWindow(into root: URL) async -> URL? {
-        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil && $0.frame.width > 600 }),
+        guard let window = MainWindowProbe.window, window.isVisible,
               let image = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming, .bestResolution]) else { return nil }
         let folder = SelfUpdate.folder(in: root).appending(path: "screenshots")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -313,6 +314,22 @@ enum AppError: LocalizedError {
         case .claudeNotFound: L("The claude command was not found. Please install Claude Code first.")
         }
     }
+}
+
+/// Remembers the window the chat lands in, so "a picture of the main window" is that window and
+/// never a result, review or settings window that happens to be as large.
+private struct MainWindowProbe: NSViewRepresentable {
+    @MainActor static weak var window: NSWindow?
+
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window { MainWindowProbe.window = window }
+        }
+    }
+
+    func makeNSView(context: Context) -> NSView { Probe() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 /// Sends the window it lands in offscreen (a headless run's SwiftUI window).

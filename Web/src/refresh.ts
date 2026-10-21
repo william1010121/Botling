@@ -1,23 +1,24 @@
 import { isComposingEnter } from "./ime";
+import { shared } from "./contract";
 import { pieces, t } from "./i18n";
 import type { PinRefresh } from "./types";
 
 /**
  * How often a pin (or a spec's pin) refreshes by itself, as its menus say it and as the user
  * types it: "Every [n] [sec / min]" from 2 seconds to 24 hours, typed right in the menu.
- * Swift keeps the same bounds (`PinnedComponent.minimumSeconds` / `maximumSeconds`).
+ * The bounds are Swift's (`PinnedComponent.minimumSeconds` / `maximumSeconds`, in the contract).
  */
 
 export type IntervalUnit = "sec" | "min";
 
 /** The shortest and longest interval, in seconds. */
-export const intervalBounds = { minSeconds: 2, maxSeconds: 24 * 60 * 60 } as const;
+export const intervalBounds = { minSeconds: shared.refresh.minSeconds, maxSeconds: shared.refresh.maxSeconds } as const;
 
 /** A refresh interval as Swift stores it: `seconds`, or whole `minutes`. */
 export type Interval = { seconds: number; minutes?: undefined } | { minutes: number; seconds?: undefined };
 
 /** What the menu's minutes row and seconds row show while the pin refreshes in neither unit. */
-export const presetMinutes = 15;
+export const presetMinutes = shared.refresh.defaultMinutes;
 export const presetSeconds = 5;
 
 /** "When shown", "Every 15 min", "Every 30 sec", "Only on ↻". */
@@ -36,7 +37,7 @@ export function parseInterval(text: string, unit: IntervalUnit): { interval: Int
   const count = Number(trimmed);
   const seconds = unit === "min" ? count * 60 : count;
   if (seconds < intervalBounds.minSeconds) return { error: t("refresh.atLeast", { n: intervalBounds.minSeconds }) };
-  if (seconds > intervalBounds.maxSeconds) return { error: t("refresh.atMost") };
+  if (seconds > intervalBounds.maxSeconds) return { error: t("refresh.atMost", { hours: intervalBounds.maxSeconds / 3600, minutes: intervalBounds.maxSeconds / 60 }) };
   return { interval: unit === "min" ? { minutes: count } : { seconds: count } };
 }
 
@@ -152,4 +153,57 @@ export function intervalRow(row: IntervalRow, checked: boolean): HTMLElement {
   if (!line.contains(pick)) line.prepend(pick);
   holder.append(line, error);
   return holder;
+}
+
+/** How often a page checks whether a card refreshed every few seconds is due, in ms. */
+export const liveTick = 250;
+
+/** One card a `LiveSchedule` may run: refreshed every `every` seconds. */
+export interface LiveCard {
+  key: string;
+  /** Seconds between runs; 0 or less: it does not refresh by itself. */
+  every: number;
+  /** Its last run is over (it is drawn done or failed), so a new one may start. */
+  idle: boolean;
+  /** It may run now: on screen, the window shown, nothing else running it. */
+  ready: () => boolean;
+  run: () => void;
+}
+
+/**
+ * When cards refreshed every few seconds run next: a card's first count starts when it is first
+ * seen idle, it runs once due and ready, and counts again from then. Shared by chat cards and
+ * floating pins, so both keep the same pace.
+ */
+export class LiveSchedule {
+  private readonly due = new Map<string, number>();
+
+  /** Runs the cards whose time has come; how many ran. */
+  tick(cards: Iterable<LiveCard>, now = Date.now()): number {
+    let ran = 0;
+    for (const card of cards) {
+      if (!(card.every > 0) || !card.idle) {
+        this.due.delete(card.key);
+        continue;
+      }
+      const due = this.due.get(card.key);
+      if (due === undefined) {
+        this.due.set(card.key, now + card.every * 1000);
+        continue;
+      }
+      if (now < due || !card.ready()) continue;
+      this.due.set(card.key, now + card.every * 1000);
+      card.run();
+      ran += 1;
+    }
+    return ran;
+  }
+
+  forget(key: string): void {
+    this.due.delete(key);
+  }
+
+  clear(): void {
+    this.due.clear();
+  }
 }

@@ -211,7 +211,8 @@ extension Workspace {
     /// request: its next version is built right away (no Build press). While a build or change is
     /// under way the words wait and go together with the next request. A draft's words are talk:
     /// it is built when the user presses Build it.
-    public func saySpec(_ id: UUID, text: String, in chat: Bot) {
+    /// `request`: the panel's id for these words, which the change they start carries back.
+    public func saySpec(_ id: UUID, text: String, request: String? = nil, in chat: Bot) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var spec = chat.specs.first(where: { $0.id == id }), !text.isEmpty || !spec.pendingEdits.isEmpty else { return }
         if spec.status == .building {
@@ -226,7 +227,7 @@ extension Workspace {
         if spec.built != nil, spec.existing == nil {
             if !text.isEmpty { spec.conversation.append(.init(kind: .user, text: text)) }
             store(spec, in: chat)
-            sendChange(id, said: text.isEmpty ? [] : [text], in: chat)
+            sendChange(id, said: text.isEmpty ? [] : [text], request: request, in: chat)
             return
         }
         if !text.isEmpty { spec.conversation.append(.init(kind: .user, text: text)) }
@@ -242,11 +243,11 @@ extension Workspace {
     /// A built component's change goes to Maintainer now, as its next version: the panel says
     /// Maintainer is on it (and since when) until that version lands in the library, Maintainer
     /// asks its one question, or its turn ends without it.
-    func sendChange(_ id: UUID, said: [String], in chat: Bot) {
+    func sendChange(_ id: UUID, said: [String], request: String? = nil, in chat: Bot) {
         guard var spec = chat.specs.first(where: { $0.id == id }), spec.built != nil else { return }
         let version = spec.nextVersion
         let request = ComponentSpecs.changeRequest(spec, said: said, version: version)
-        beginBuild(&spec, change: ComponentSpec.Change(version: version, said: said, waitTurn: maintainer.isWorking),
+        beginBuild(&spec, change: ComponentSpec.Change(version: version, said: said, waitTurn: maintainer.isWorking, request: request),
                    event: "Sent to Maintainer: building v\(version) with this change", in: chat)
         handToMaintainer(request)
     }
@@ -692,7 +693,7 @@ extension Workspace {
                 .init(state: change.state.rawValue, version: change.version,
                       startedAt: Int(change.startedAt.timeIntervalSince1970 * 1000),
                       endedAt: change.endedAt.map { Int($0.timeIntervalSince1970 * 1000) },
-                      error: change.error)
+                      error: change.error, request: change.request)
             },
             queued: spec.queued ?? [],
             wide: specPanelWide
@@ -791,6 +792,8 @@ public struct SpecPayload: Encodable, Equatable {
         var startedAt: Int
         var endedAt: Int?
         var error: String?
+        /// The panel's id for the request that started it.
+        var request: String?
     }
 
     var id: String

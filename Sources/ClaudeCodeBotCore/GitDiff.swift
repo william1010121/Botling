@@ -22,6 +22,8 @@ public struct GitDiff: Equatable, Sendable {
         /// The path in the new version (the old one for a deleted file).
         public var path: String
         public var hunks: [Hunk]
+        /// Lines left out at the end (an untracked file longer than `untrackedLineLimit`).
+        public var omitted = 0
 
         public var added: Int { hunks.flatMap(\.lines).filter { $0.kind == .added }.count }
         public var removed: Int { hunks.flatMap(\.lines).filter { $0.kind == .removed }.count }
@@ -133,6 +135,10 @@ public struct GitDiff: Equatable, Sendable {
         }.value
     }
 
+    /// The most lines of an untracked file shown as added: a review looks at code, not at a
+    /// generated or data file thousands of lines long. What is left out is counted (`omitted`).
+    public static let untrackedLineLimit = 2000
+
     /// Files git does not track or ignore, as all-added files (the first lines of text ones).
     static func untracked(_ folder: URL) -> [File] {
         let paths = (git(["ls-files", "--others", "--exclude-standard", "-z"], in: folder) ?? "").split(separator: "\0").map(String.init)
@@ -140,8 +146,10 @@ public struct GitDiff: Equatable, Sendable {
             let text = (try? String(contentsOf: folder.appending(path: path), encoding: .utf8)) ?? ""
             var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
             if lines.last == "" { lines.removeLast() }
-            let added = lines.prefix(2000).enumerated().map { Line(kind: .added, old: nil, new: $0.offset + 1, text: $0.element) }
-            return File(path: path, hunks: added.isEmpty ? [] : [Hunk(lines: added)])
+            let added = lines.prefix(untrackedLineLimit).enumerated().map { Line(kind: .added, old: nil, new: $0.offset + 1, text: $0.element) }
+            var file = File(path: path, hunks: added.isEmpty ? [] : [Hunk(lines: added)])
+            file.omitted = max(0, lines.count - untrackedLineLimit)
+            return file
         }
     }
 
