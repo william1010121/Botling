@@ -212,7 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 process.standardError = handle
             }
             do {
-                try process.run()
+                try ChildEnvironment.run(process)
             } catch {
                 return
             }

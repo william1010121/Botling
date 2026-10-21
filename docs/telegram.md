@@ -33,7 +33,9 @@ startup and never creates or changes it or its access controls. Lookup is nonint
 is not already allowed, the channel stays disabled; grant access yourself before retrying.
 
 Do not put a token in source, a PR, screenshots, command history, or chat with an assistant. The token must NOT be supplied through an environment variable. Remove any
-CCB_TELEGRAM_TOKEN left by a preview setup; the bridge rejects that setup. The bridge never writes
+CCB_TELEGRAM_TOKEN left by a preview setup; the bridge rejects that setup. As defense in depth,
+all app-owned child processes strip this reserved variable immediately before launch, even if the
+Telegram feature is disabled, including helpers that normally inherit their environment. The bridge never writes
 the Keychain token to its checkpoint, child-process environment or API error logs/URLs. Keychain
 avoids automatic credential inheritance; it is not a sandbox against arbitrary same-user shell
 commands or software already authorized to read that Keychain item. Finder launches do not automatically inherit

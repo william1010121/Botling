@@ -242,7 +242,7 @@ public final class PluginHostClient: ObservableObject {
             Task { @MainActor [weak self] in self?.exited(ended, status: status) }
         }
         do {
-            try process.run()
+            try ChildEnvironment.run(process)
         } catch {
             problem = "The plugin host failed to start: \(error.localizedDescription)"
             return

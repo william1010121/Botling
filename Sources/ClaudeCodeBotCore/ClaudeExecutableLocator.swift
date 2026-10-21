@@ -58,7 +58,7 @@ public struct ClaudeExecutableLocator: Sendable {
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         do {
-            try process.run()
+            try ChildEnvironment.run(process)
         } catch {
             return nil
         }

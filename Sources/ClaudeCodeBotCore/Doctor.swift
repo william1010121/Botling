@@ -281,7 +281,7 @@ public enum CommandRunner {
             }
         }
         do {
-            try process.run()
+            try ChildEnvironment.run(process)
         } catch {
             pipe.fileHandleForReading.readabilityHandler = nil
             return nil

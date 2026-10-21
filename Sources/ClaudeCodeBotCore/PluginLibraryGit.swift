@@ -21,7 +21,7 @@ public struct PluginLibraryGit: Sendable {
         tools.arguments = ["-p"]
         tools.standardOutput = FileHandle.nullDevice
         tools.standardError = FileHandle.nullDevice
-        guard (try? tools.run()) != nil else { return nil }
+        guard (try? ChildEnvironment.run(tools)) != nil else { return nil }
         tools.waitUntilExit()
         return tools.terminationStatus == 0 ? URL(filePath: "/usr/bin/git") : nil
     }
@@ -39,7 +39,7 @@ public struct PluginLibraryGit: Sendable {
         process.standardOutput = output
         process.standardError = output
         do {
-            try process.run()
+            try ChildEnvironment.run(process)
         } catch {
             return (false, error.localizedDescription)
         }

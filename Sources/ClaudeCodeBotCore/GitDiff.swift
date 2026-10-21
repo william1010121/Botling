@@ -224,7 +224,7 @@ public struct GitDiff: Equatable, Sendable {
         let output = Pipe()
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return nil }
+        guard (try? ChildEnvironment.run(process)) != nil else { return nil }
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil

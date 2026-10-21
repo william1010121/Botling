@@ -253,7 +253,7 @@ public struct CodexCLI: CodexRunning {
             try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { finished in continuation.resume(returning: finished.terminationStatus) }
                 do {
-                    try process.run()
+                    try ChildEnvironment.run(process)
                 } catch {
                     process.terminationHandler = nil
                     continuation.resume(throwing: CodexError("Codex could not start: \(error.localizedDescription)"))
@@ -320,7 +320,7 @@ public struct CodexCLI: CodexRunning {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
-        guard (try? process.run()) != nil else { return [] }
+        guard (try? ChildEnvironment.run(process)) != nil else { return [] }
         process.waitUntilExit()
         let text = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         return parseVersion(text)

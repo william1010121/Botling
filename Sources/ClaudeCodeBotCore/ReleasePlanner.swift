@@ -33,7 +33,7 @@ public struct GitHubCLI: Sendable {
                 process.standardOutput = output
                 process.standardError = errors
                 do {
-                    try process.run()
+                    try ChildEnvironment.run(process)
                 } catch {
                     return (false, error.localizedDescription)
                 }
