@@ -49,7 +49,7 @@ export interface MessageView {
   specs?: SpecChipView[] | null;
   /** The library component this reply already is ("Add to another bot…"). */
   component?: string | null;
-  /** Work its turn left running in the background: a chip each, under it. */
+  /** All the chat's background work, on its latest message only: one row of counts under it. */
   tasks?: TaskChipView[] | null;
 }
 
@@ -63,6 +63,8 @@ export interface TaskChipView {
   started: number;
   ended: number | null;
   detail: string | null;
+  /** The message whose turn started it (its output is asked for by that id); the one it is drawn under if missing. */
+  message?: string;
 }
 
 /**

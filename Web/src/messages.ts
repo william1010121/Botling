@@ -49,9 +49,19 @@ export function messageElement(message: MessageView, components: Record<string, 
 
 function drawRole(row: HTMLElement, message: MessageView, components: Record<string, ComponentInfo>): void {
   switch (message.role) {
-    case "user":
-      row.append(userBody(message), replyButton(message));
+    case "user": {
+      const body = userBody(message);
+      if (message.tasks?.length) {
+        // The chat's background work, when your line is the latest message.
+        const column = document.createElement("div");
+        column.className = "user-column";
+        column.append(body, taskChips(message.id, message.tasks));
+        row.append(column, replyButton(message));
+      } else {
+        row.append(body, replyButton(message));
+      }
       break;
+    }
     case "bot":
     case "notice": {
       const body = botBody(message, components);
@@ -69,7 +79,7 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
           column.append(name);
         }
         column.append(body);
-        // Background work it left running, right under the words that started it.
+        // The chat's background work, when this is its latest message.
         if (tasks) column.append(tasks);
         if (chips) column.append(chips);
         // A component in the reply, or one made from it, takes the whole message column.

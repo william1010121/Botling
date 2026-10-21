@@ -731,36 +731,46 @@ body.viewer { display: block; overflow-y: auto; height: auto; min-height: 100%; 
 /* Make into component: the reply's hover button, a result card's toolbar, the quiet spec chip. */
 .make-component:hover { color: #C4A8F0; }
 .bot-column { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 520px; }
-/* Background work under a reply: up to three small icons with counts (spinner, ✓, ✕); pressed, a list; a task pressed, its output. */
-.task-chips { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding-left: 4px; min-width: 0; max-width: 100%; }
-.task-summary {
-  display: inline-flex; align-items: center; gap: 8px; height: 20px; min-width: 20px; padding: 0 5px;
-  border: none; border-radius: 10px; background: transparent; color: var(--faint);
-  font-size: 11px; line-height: 1; cursor: pointer; font-variant-numeric: tabular-nums;
+/* The chat's background work, under its latest message: up to four icons with counts (subagent, waiting, done, failed); pressed, the list grouped by them; a task pressed, its output. */
+.task-chips {
+  --task-agent: #B79CFF; --task-waiting: var(--orange-text); --task-done: var(--green); --task-failed: var(--error);
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding-left: 4px; min-width: 0; max-width: 100%;
 }
-.task-summary:hover, .task-summary:focus-visible, .task-summary[aria-expanded="true"] { background: var(--chip); }
-.task-group { display: inline-flex; align-items: center; gap: 3px; }
-.task-group.running { color: var(--orange-text); }
-.task-group.done { color: var(--green); }
-.task-group.failed { color: var(--error); }
-.task-icon { display: inline-flex; align-items: center; justify-content: center; width: 12px; font-size: 11px; }
-.task-spin {
-  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
-  border: 1.5px solid currentColor; border-right-color: transparent; animation: spin 0.9s linear infinite;
+/* The chat is always dark; should it ever get a light theme, these read on white. */
+:root[data-theme="light"] .task-chips { --task-agent: #6B4FD8; --task-waiting: #B26A00; --task-done: #1E8A55; --task-failed: #D0342C; }
+.user-column { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 0; max-width: 460px; }
+.user-column > .task-chips { align-items: flex-end; padding: 0 4px 0 0; }
+.task-summary { display: inline-flex; align-items: center; gap: 2px; }
+.task-group {
+  display: inline-flex; align-items: center; gap: 3px; height: 20px; min-width: 20px; padding: 0 6px;
+  border: none; border-radius: 10px; background: transparent; font-size: 11px; line-height: 1; cursor: pointer; font-variant-numeric: tabular-nums;
 }
+.task-group:hover, .task-group:focus-visible, .task-group[aria-expanded="true"] { background: var(--chip); }
+.task-group.agent, .task-item.agent .task-mark, .task-filter.agent .task-filter-icon { color: var(--task-agent); }
+.task-group.waiting, .task-item.waiting .task-mark, .task-filter.waiting .task-filter-icon { color: var(--task-waiting); }
+.task-group.done, .task-item.done .task-mark, .task-filter.done .task-filter-icon { color: var(--task-done); }
+.task-group.failed, .task-item.failed .task-mark, .task-filter.failed .task-filter-icon { color: var(--task-failed); }
+.task-icon, .task-filter-icon { display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 12px; }
+.task-group.agent .task-icon { animation: task-pulse 1.6s ease-in-out infinite; }
+@keyframes task-pulse { 50% { opacity: 0.45; } }
 .task-list {
-  display: flex; flex-direction: column; width: min(360px, 100%); padding: 3px; border: 1px solid var(--line); border-radius: 8px;
+  display: flex; flex-direction: column; gap: 2px; width: min(360px, 100%); padding: 3px; border: 1px solid var(--line); border-radius: 8px;
 }
 .task-list[hidden] { display: none; }
+.task-filters { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 2px 4px; }
+.task-filter {
+  display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 8px; border: 1px solid var(--line); border-radius: 10px;
+  background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.task-filter[aria-selected="true"] { background: var(--chip); color: var(--text); border-color: transparent; }
+.task-section { display: flex; flex-direction: column; }
+.task-section-title { padding: 4px 6px 2px; color: var(--faint); font-size: 10.5px; letter-spacing: 0.02em; }
 .task-item {
   display: flex; align-items: center; gap: 6px; width: 100%; min-width: 0; height: 24px; padding: 0 6px;
   border: none; border-radius: 5px; background: transparent; color: var(--muted); font-size: 12px; text-align: left; cursor: pointer;
 }
 .task-item:hover, .task-item:focus-visible, .task-item[aria-expanded="true"] { background: var(--chip); color: var(--text); }
-.task-item .task-mark { flex: none; display: inline-flex; justify-content: center; width: 12px; font-size: 11px; }
-.task-item.running .task-mark { color: var(--orange-text); }
-.task-item.done .task-mark { color: var(--green); }
-.task-item.failed .task-mark { color: var(--error); }
+.task-item .task-mark { flex: none; display: inline-flex; justify-content: center; width: 12px; }
 .task-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-time { flex: none; color: var(--faint); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .task-output {

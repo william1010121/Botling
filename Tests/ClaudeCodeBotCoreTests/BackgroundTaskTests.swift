@@ -184,6 +184,34 @@ struct BackgroundTaskTests {
         #expect(tasks[0]["ended"] as? Double == 945_000)
     }
 
+    @Test func allTheBackgroundWorkGoesOnTheLatestMessage() throws {
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-bgtask-\(UUID().uuidString)")
+        let store = BotStore(directory: home.appending(path: "store"))
+        var first = ChatMessage(role: .bot, text: "Started the tests.")
+        first.backgroundTasks = [BackgroundTask(id: "B", kind: .command, title: "Run tests")]
+        var second = ChatMessage(role: .bot, text: "Asked a reviewer.")
+        var review = BackgroundTask(id: "A", kind: .agent, title: "Review")
+        review.status = .failed
+        second.backgroundTasks = [review]
+        let user = ChatMessage(role: .user, text: "How is it going?")
+        let divider = ChatMessage(role: .divider, text: "New session")
+        store.save(messages: [first, second, user, divider])
+        let bot = Bot(profile: .main(home: home), launcher: FakeLauncher().launcher, store: store)
+        let payload = ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil) { _ in "data:bot" }
+        let data = Data(payload.json().utf8)
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let messages = try #require(object["messages"] as? [[String: Any]])
+        // Not under the replies that started them, nor on the divider: on your line, the latest one it can go under.
+        #expect(messages[0]["tasks"] == nil)
+        #expect(messages[1]["tasks"] == nil)
+        #expect(messages[3]["tasks"] == nil)
+        let tasks = try #require(messages[2]["tasks"] as? [[String: Any]])
+        #expect(tasks.map { $0["id"] as? String } == ["B", "A"])
+        // Each says which message started it, so its output can be asked for.
+        #expect(tasks.map { $0["message"] as? String } == [first.id.uuidString, second.id.uuidString])
+        #expect(ChatPayload.backgroundRowIndex(in: [user]) == nil)
+    }
+
     @Test func theTailOfAnOutputFileIsItsLastLines() throws {
         let file = FileManager.default.temporaryDirectory.appending(path: "ccb-tail-\(UUID().uuidString).output")
         let lines = (1...200).map { "line \($0)" }.joined(separator: "\n")
