@@ -18,7 +18,8 @@ enum StreamEvent {
         switch object["type"] as? String {
         case "assistant":
             guard let blocks = (object["message"] as? [String: Any])?["content"] as? [[String: Any]] else { return [] }
-            return blocks.flatMap { block -> [AgentEvent] in
+            let lost: [AgentEvent] = NetworkResume.isConnectionLoss(object) ? [.connectionLost(parent: parent)] : []
+            return lost + blocks.flatMap { block -> [AgentEvent] in
                 switch block["type"] as? String {
                 case "tool_use":
                     guard let id = block["id"] as? String, let name = block["name"] as? String else { return [] }
@@ -46,9 +47,14 @@ enum StreamEvent {
                 guard block["type"] as? String == "tool_result", let id = block["tool_use_id"] as? String else { return [] }
                 let output = text(of: block["content"])
                 let failed = block["is_error"] as? Bool ?? false
-                var events: [AgentEvent] = [.trace(.toolResult(id: id, output: output, failed: failed, parent: parent))]
-                if failed, let reason = classifierReason(in: output) {
-                    events.append(.permissionDenied(PermissionDenial(toolUseID: id, tool: nil, reason: reason)))
+                var events: [AgentEvent] = []
+                // What a scheduling call of its own did, from the structured result.
+                if parent == nil, !failed, let result = ScheduleResult(object["tool_use_result"]) {
+                    events.append(.trace(.scheduleResult(id: id, result: result)))
+                }
+                events.append(.trace(.toolResult(id: id, output: output, failed: failed, parent: parent)))
+                if failed, let denial = classifierDenial(id: id, output: output, parent: parent, meta: object["tool_result_meta"]) {
+                    events.append(.permissionDenied(denial))
                 }
                 let pictures = images(of: block["content"])
                 if !pictures.isEmpty { events.append(.trace(.toolImages(id: id, images: pictures, parent: parent))) }
@@ -78,13 +84,14 @@ enum StreamEvent {
                     background: object["is_backgrounded"] as? Bool ?? false
                 ))]
             case "permission_denied":
-                // Only the classifier's blocks; deny rules, modes and safety checks stand.
+                // Only the classifier's; deny rules, modes and safety checks stand. It names the
+                // call and the reason; the tool result after it says whether it was a block.
                 guard object["decision_reason_type"] as? String == "classifier",
                       let id = object["tool_use_id"] as? String,
-                      let tool = object["tool_name"] as? String,
-                      let reason = classifierReason(in: object["message"] as? String ?? "") else { return [] }
+                      let tool = object["tool_name"] as? String else { return [] }
                 let given = (object["decision_reason"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                return [.permissionDenied(PermissionDenial(toolUseID: id, tool: tool, reason: given.isEmpty ? reason : given))]
+                let reason = given.isEmpty ? ClassifierDenialText.reason(in: object["message"] as? String ?? "") ?? "" : given
+                return [.permissionDenied(PermissionDenial(toolUseID: id, tool: tool, reason: reason, confirmed: false))]
             case "api_retry":
                 // An HTTP status means the API answered (overloaded, rate limit): not the network.
                 guard object["error_status"] == nil || object["error_status"] is NSNull else { return [] }
@@ -116,23 +123,18 @@ enum StreamEvent {
         }
     }
 
-    /// How claude words the auto mode classifier's block (not its "gave no verdict", a passing
-    /// failure the bot just retries).
-    static let classifierDenialPrefix = "Permission for this action was denied by the Claude Code auto mode classifier."
-
-    /// The classifier's reason in a blocked call's message ("[Irreversible Local Destruction]"),
-    /// or nil when the message is not the classifier's block.
-    static func classifierReason(in message: String) -> String? {
-        let message = message.hasPrefix("Error: ") ? String(message.dropFirst(7)) : message
-        guard message.hasPrefix(classifierDenialPrefix) else { return nil }
-        var rest = message.dropFirst(classifierDenialPrefix.count).trimmingCharacters(in: .whitespaces)
-        if rest.hasPrefix("Reason: ") { rest = String(rest.dropFirst(8)) } else { return "" }
-        if let end = rest.range(of: " If you have other tasks") ?? rest.range(of: "\n") {
-            rest = String(rest[..<end.lowerBound])
+    /// A failed tool result that is auto mode's classifier blocking the call. claude says so in
+    /// `tool_result_meta` (`non_execution_kind`: "automode-blocked"; a classifier that gave no
+    /// verdict is "automode-unavailable" or "automode-parsing-error"), on the bot's own results.
+    /// A subagent's results carry no kind, and older claude no meta: only the words tell then.
+    static func classifierDenial(id: String, output: String, parent: String?, meta: Any?) -> PermissionDenial? {
+        let reason = ClassifierDenialText.reason(in: output)
+        if parent == nil, let entries = meta as? [[String: Any]] {
+            let kind = entries.first { $0["id"] as? String == id }?["non_execution_kind"] as? String
+            guard kind == "automode-blocked" else { return nil }
+            return PermissionDenial(toolUseID: id, tool: nil, reason: reason ?? "")
         }
-        rest = rest.trimmingCharacters(in: .whitespacesAndNewlines)
-        if rest.hasSuffix(".") { rest = String(rest.dropLast()) }
-        return rest
+        return reason.map { PermissionDenial(toolUseID: id, tool: nil, reason: $0) }
     }
 
     /// claude's summary for a subagent that has not reported yet: "Agent "…" is waiting on its
@@ -336,5 +338,29 @@ public struct FinalMessageWatch: Sendable {
     /// The bot's own conversation, not a subagent's.
     private static func isMain(_ object: [String: Any]) -> Bool {
         object["parent_tool_use_id"] == nil || object["parent_tool_use_id"] is NSNull
+    }
+}
+
+/// Adapter for the words of auto mode's block, used only where claude gives no structured kind
+/// (a subagent's tool results, claude before `tool_result_meta`) and for the reason to show,
+/// which claude has only in words. Real text (claude 2.1.283–2.1.304): "Permission for this
+/// action was denied by the Claude Code auto mode classifier. Reason: [Code from External]. If you
+/// have other tasks …". Words it does not know are no block: no card, the call stays refused.
+enum ClassifierDenialText {
+    static let prefix = "Permission for this action was denied by the Claude Code auto mode classifier."
+
+    /// The classifier's reason ("[Irreversible Local Destruction]"), "" when the block gives
+    /// none, nil when the text is not the classifier's block.
+    static func reason(in message: String) -> String? {
+        let message = message.hasPrefix("Error: ") ? String(message.dropFirst(7)) : message
+        guard message.hasPrefix(prefix) else { return nil }
+        var rest = message.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
+        if rest.hasPrefix("Reason: ") { rest = String(rest.dropFirst(8)) } else { return "" }
+        if let end = rest.range(of: " If you have other tasks") ?? rest.range(of: "\n") {
+            rest = String(rest[..<end.lowerBound])
+        }
+        rest = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+        if rest.hasSuffix(".") { rest = String(rest.dropLast()) }
+        return rest
     }
 }

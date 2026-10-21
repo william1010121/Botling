@@ -142,38 +142,20 @@ public struct BackgroundTask: Codable, Equatable, Identifiable, Sendable {
         return nil
     }
 
-    /// What the result of a ScheduleWakeup call says: when it fires ("Next wakeup scheduled for
-    /// 14:03:00 (in 1200s)"), counted from `date`. Nil when nothing was scheduled (the loop
-    /// ended, or this call stopped it).
-    static func wakeupFire(in result: String, at date: Date) -> Date? {
-        guard result.hasPrefix("Next wakeup scheduled"),
-              let range = result.range(of: #"\(in (\d+)s\)"#, options: .regularExpression) else { return nil }
-        let seconds = result[range].dropFirst(4).dropLast(2)
-        return Double(seconds).map { date.addingTimeInterval($0) }
-    }
-
-    /// The job id in the result of a CronCreate call ("Scheduled recurring job 5381432a (Every 30
-    /// minutes)…", "Scheduled one-shot task 1a2b3c4d (…)"). Nil when it was not scheduled.
-    static func cronJob(in result: String) -> String? {
-        guard let range = result.range(of: #"^Scheduled (recurring job|one-shot task) \S+"#, options: .regularExpression) else { return nil }
-        return result[range].split(separator: " ").last.map(String.init)
-    }
-
-    /// Scheduled work a call took back: a cron job (CronDelete: "Cancelled job 5381432a."), or every
-    /// wake-up still to come (ScheduleWakeup with `stop`: "Loop stopped — …").
+    /// Scheduled work a call took back: a cron job (CronDelete), or every wake-up still to come
+    /// (ScheduleWakeup with `stop`). Read from the call's structured result, not its words.
     public enum Cancellation: Equatable, Sendable {
         case cron(String)
         case wakeups
 
-        public init?(tool: String, result: String) {
+        public init?(tool: String, result: ScheduleResult?) {
+            guard let result else { return nil }
             switch tool {
             case "CronDelete":
-                guard let range = result.range(of: #"^Cancelled job \S+"#, options: .regularExpression) else { return nil }
-                var id = String(result[range].dropFirst("Cancelled job ".count))
-                if id.hasSuffix(".") { id.removeLast() }
+                guard let id = result.jobID else { return nil }
                 self = .cron(id)
             case "ScheduleWakeup":
-                guard result.hasPrefix("Loop stopped") else { return nil }
+                guard result.stopped else { return nil }
                 self = .wakeups
             default:
                 return nil
@@ -318,5 +300,35 @@ extension Array where Element == ChatMessage {
             any = true
         }
         return any
+    }
+}
+
+/// The structured result (`tool_use_result`) claude gives a ScheduleWakeup, CronCreate or
+/// CronDelete call, beside its words for the model, which change between versions. As claude
+/// 2.1.304 sends them: ScheduleWakeup `{scheduledFor (ms), …}`, or `{stopped: true,
+/// cancelledWakeups}` for `stop`; CronCreate `{id, recurring, humanSchedule, nextFireAt (ms)}`
+/// (`nextFireAt` since about 2.1.300); CronDelete `{id}`. A refused call's is a string: nil.
+public struct ScheduleResult: Equatable, Sendable {
+    /// When it fires: ScheduleWakeup's `scheduledFor`, CronCreate's `nextFireAt`.
+    public var fireAt: Date?
+    /// The job a CronCreate made or a CronDelete removed.
+    public var jobID: String?
+    /// A ScheduleWakeup `stop`: the loop ended and its pending wake-ups were cancelled.
+    public var stopped = false
+
+    public init(fireAt: Date? = nil, jobID: String? = nil, stopped: Bool = false) {
+        self.fireAt = fireAt
+        self.jobID = jobID
+        self.stopped = stopped
+    }
+
+    /// Nil when it has none of these fields (another tool's result, or an error).
+    init?(_ value: Any?) {
+        guard let object = value as? [String: Any] else { return nil }
+        let millis = (object["scheduledFor"] as? NSNumber ?? object["nextFireAt"] as? NSNumber)?.doubleValue
+        fireAt = millis.flatMap { $0 > 0 ? Date(timeIntervalSince1970: $0 / 1000) : nil }
+        jobID = (object["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        stopped = object["stopped"] as? Bool ?? false
+        guard fireAt != nil || jobID != nil || stopped || object["scheduledFor"] != nil else { return nil }
     }
 }

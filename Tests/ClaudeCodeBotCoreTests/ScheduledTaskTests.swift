@@ -23,18 +23,22 @@ enum MonitorRun {
     static var turn: [String] { [call, started, launched] }
 }
 
-/// ScheduleWakeup and CronCreate / CronDelete calls with the results claude 2.1.304 gives them.
+/// ScheduleWakeup and CronCreate / CronDelete calls with the results claude 2.1.304 gives them:
+/// the words for the model (`content`) and the structured `tool_use_result` the app reads (copied
+/// from a real `claude -p --output-format stream-json` run; ids and times changed to fit).
 enum ScheduleRun {
     static let wakeup = #"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","id":"toolu_S","name":"ScheduleWakeup","input":{"delaySeconds":1200,"reason":"check the deploy","prompt":"/loop check the deploy","noop":false}}]}}"#
-    static let wakeupSet = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_S","type":"tool_result","content":"Next wakeup scheduled for 14:03:00 (in 1200s). If you owe the user a status update this tick, write it now as ordinary response text; then end the turn — the harness re-invokes you when the wakeup fires or a task-notification arrives."}]}}"#
+    static let wakeupSet = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_S","type":"tool_result","content":"Next wakeup scheduled for 14:03:00 (in 1200s). If you owe the user a status update this tick, write it now as ordinary response text; then end the turn — the harness re-invokes you when the wakeup fires or a task-notification arrives."}]},"tool_use_result":{"scheduledFor":1800001200000,"clampedDelaySeconds":1200,"wasClamped":false}}"#
     static let stop = #"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","id":"toolu_T","name":"ScheduleWakeup","input":{"stop":true}}]}}"#
-    static let stopped = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_T","type":"tool_result","content":"Loop stopped — cancelled 1 pending wakeup(s); no further dynamic-loop wakeups scheduled. Then write it now as ordinary response text — and end the turn."}]}}"#
+    static let stopped = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_T","type":"tool_result","content":"Loop stopped — cancelled 1 pending wakeup(s); no further dynamic-loop wakeups scheduled. Then write it now as ordinary response text — and end the turn."}]},"tool_use_result":{"scheduledFor":0,"clampedDelaySeconds":0,"wasClamped":false,"stopped":true,"cancelledWakeups":1}}"#
     static let cron = #"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","id":"toolu_C","name":"CronCreate","input":{"cron":"*/30 * * * *","prompt":"核對遠端 style_014 訓練進度：讀最新的 EVAL 行，用繁體中文簡短回報。"}}]}}"#
-    static let cronSet = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_C","type":"tool_result","content":"Scheduled recurring job 5381432a (Every 30 minutes). Session-only (not written to disk, dies when Claude exits). Auto-expires after 7 days. Use CronDelete to cancel sooner."}]}}"#
+    static let cronSet = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_C","type":"tool_result","content":"Scheduled recurring job 5381432a (Every 30 minutes). Session-only (not written to disk, dies when Claude exits). Auto-expires after 7 days. Use CronDelete to cancel sooner."}]},"tool_use_result":{"id":"5381432a","humanSchedule":"Every 30 minutes","recurring":true,"durable":false}}"#
     static let oneShot = #"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","id":"toolu_O","name":"CronCreate","input":{"cron":"0 9 22 10 *","prompt":"Remind me to send the report","recurring":false}}]}}"#
-    static let oneShotSet = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_O","type":"tool_result","content":"Scheduled one-shot task 1a2b3c4d (At 09:00 AM, on day 22 of the month, only in October). Session-only (not written to disk, dies when Claude exits). It will fire once then auto-delete."}]}}"#
+    static let oneShotSet = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_O","type":"tool_result","content":"Scheduled one-shot task 1a2b3c4d (At 09:00 AM, on day 22 of the month, only in October). Session-only (not written to disk, dies when Claude exits). It will fire once then auto-delete."}]},"tool_use_result":{"id":"1a2b3c4d","humanSchedule":"At 09:00 AM, on day 22 of the month, only in October","recurring":false,"durable":false}}"#
     static let cronDelete = #"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","id":"toolu_D","name":"CronDelete","input":{"id":"5381432a"}}]}}"#
-    static let cronDeleted = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_D","type":"tool_result","content":"Cancelled job 5381432a."}]}}"#
+    static let cronDeleted = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_D","type":"tool_result","content":"Cancelled job 5381432a."}]},"tool_use_result":{"id":"5381432a"}}"#
+    /// A CronDelete that found no such job: an error, its `tool_use_result` a string.
+    static let cronNotDeleted = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"type":"tool_result","content":"<tool_use_error>No scheduled job with id 'deadbeef'</tool_use_error>","is_error":true,"tool_use_id":"toolu_D"}]},"tool_use_result":"Error: No scheduled job with id 'deadbeef'"}"#
 }
 
 private func apply(_ lines: [String], to book: inout TraceBook, at date: Date) {
@@ -115,7 +119,9 @@ struct ScheduledTaskTests {
     @Test func aWakeUpThatWasNotScheduledOrAStoppedLoopIsNoChip() {
         // The loop hit its limit: nothing scheduled.
         var book = TraceBook()
-        let notScheduled = ScheduleRun.wakeupSet.replacingOccurrences(of: "Next wakeup scheduled for 14:03:00 (in 1200s).", with: "Wakeup not scheduled. The loop reached its maximum duration.")
+        let notScheduled = ScheduleRun.wakeupSet
+            .replacingOccurrences(of: "Next wakeup scheduled for 14:03:00 (in 1200s).", with: "Wakeup not scheduled. The loop reached its maximum duration.")
+            .replacingOccurrences(of: #""scheduledFor":1800001200000"#, with: #""scheduledFor":0"#)
         apply([ScheduleRun.wakeup, notScheduled], to: &book, at: start)
         let r6 = book.takeTasks()
         #expect(r6 == nil)
@@ -123,8 +129,8 @@ struct ScheduledTaskTests {
         apply([ScheduleRun.stop, ScheduleRun.stopped], to: &book, at: start)
         let r7 = book.takeTasks()
         #expect(r7 == nil)
-        #expect(BackgroundTask.Cancellation(tool: "ScheduleWakeup", result: "Loop stopped — cancelled 1 pending wakeup(s); no further dynamic-loop wakeups scheduled.") == .wakeups)
-        #expect(BackgroundTask.Cancellation(tool: "ScheduleWakeup", result: "Next wakeup scheduled for 14:03:00 (in 60s).") == nil)
+        #expect(BackgroundTask.Cancellation(tool: "ScheduleWakeup", result: Self.scheduleResult(in: ScheduleRun.stopped)) == .wakeups)
+        #expect(BackgroundTask.Cancellation(tool: "ScheduleWakeup", result: Self.scheduleResult(in: ScheduleRun.wakeupSet)) == nil)
         // A refused call (an error) is no chip either.
         let refused = ScheduleRun.wakeupSet.replacingOccurrences(of: #""type":"tool_result","#, with: #""type":"tool_result","is_error":true,"#)
         apply([ScheduleRun.wakeup, refused], to: &book, at: start)
@@ -157,7 +163,7 @@ struct ScheduledTaskTests {
         // Deleted in a later turn: it leaves the list; the other one stays.
         var messages = [ChatMessage(role: .bot, text: "Checking every 30 minutes.")]
         messages[0].backgroundTasks = tasks
-        let cancel = try #require(BackgroundTask.Cancellation(tool: "CronDelete", result: "Cancelled job 5381432a."))
+        let cancel = try #require(BackgroundTask.Cancellation(tool: "CronDelete", result: Self.scheduleResult(in: ScheduleRun.cronDeleted)))
         #expect(cancel == .cron("5381432a"))
         let r10 = messages.cancelScheduled(cancel)
         #expect(r10)
@@ -167,7 +173,39 @@ struct ScheduledTaskTests {
         let r12 = messages.cancelScheduled(.cron("1a2b3c4d"))
         #expect(r12)
         #expect(messages[0].backgroundTasks == nil)
-        #expect(BackgroundTask.Cancellation(tool: "CronDelete", result: "No scheduled job with id 'x'") == nil)
+        #expect(Self.scheduleResult(in: ScheduleRun.cronNotDeleted) == nil)
+        #expect(BackgroundTask.Cancellation(tool: "CronDelete", result: nil) == nil)
+    }
+
+    /// The structured result of a call, as the stream gives it to the bot.
+    static func scheduleResult(in line: String) -> ScheduleResult? {
+        StreamEvent.events(in: line).lazy.compactMap { event -> ScheduleResult? in
+            if case let .trace(.scheduleResult(_, result)) = event { return result }
+            return nil
+        }.first
+    }
+
+    /// claude's words for the model change from version to version; what was scheduled is read
+    /// from the call's `tool_use_result`, so other words (or another language) change nothing.
+    @Test func scheduledWorkIsReadFromTheStructuredResultNotItsWords() throws {
+        func reworded(_ line: String) -> String {
+            line.replacingOccurrences(of: #"("content":")[^"]*(")"#, with: "$1Done: 好了$2", options: .regularExpression)
+        }
+        var book = TraceBook()
+        apply([ScheduleRun.wakeup, reworded(ScheduleRun.wakeupSet), ScheduleRun.cron, reworded(ScheduleRun.cronSet)], to: &book, at: start)
+        let taken = book.takeTasks()
+        let tasks = try #require(taken)
+        #expect(tasks.map(\.kind) == [.wakeup, .cron])
+        #expect(tasks[0].fireAt == Date(timeIntervalSince1970: 1_800_001_200))
+        #expect(tasks[1].jobID == "5381432a")
+        #expect(BackgroundTask.Cancellation(tool: "CronDelete", result: Self.scheduleResult(in: reworded(ScheduleRun.cronDeleted))) == .cron("5381432a"))
+        #expect(BackgroundTask.Cancellation(tool: "ScheduleWakeup", result: Self.scheduleResult(in: reworded(ScheduleRun.stopped))) == .wakeups)
+        // CronCreate's own next run, when claude gives it (2.1.304 does).
+        let withNext = ScheduleRun.cronSet.replacingOccurrences(of: #""durable":false"#, with: #""durable":false,"nextFireAt":1800000900000"#)
+        var other = TraceBook()
+        apply([ScheduleRun.cron, withNext], to: &other, at: start)
+        let next = other.takeTasks()
+        #expect(next?.first?.fireAt == Date(timeIntervalSince1970: 1_800_000_900))
     }
 
     @Test func nextTimeOfACronLine() throws {

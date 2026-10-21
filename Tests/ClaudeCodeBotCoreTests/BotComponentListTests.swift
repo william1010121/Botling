@@ -351,7 +351,10 @@ struct BotComponentListTests {
             if text.contains("Maintainer did not add") { return "抱歉，Maintainer 不做 toast。" }
             if text.hasSuffix("Warn me on errors") { return "<component name=\"toast\">an error toast</component>" }
             if isAppOnly(text) { return "OK" }
-            if text.contains("wants a new component \"toast\"") { return "I won't build toast: the app's own notices already do this." }
+            // Maintainer answers the request by its id, with an explicit outcome.
+            if text.contains("wants a new component \"toast\""), let id = Self.requestID(in: text) {
+                return "I won't build toast: the app's own notices already do this.\n<component-declined id=\"\(id)\">the app's own notices already do this</component-declined>"
+            }
             return "Got it"
         }
         let workspace = makeWorkspace(fake)
@@ -366,6 +369,38 @@ struct BotComponentListTests {
         #expect(told.contains("Tell the user"))
         #expect(bot.messages.contains { $0.role == .notice && $0.text.contains("toast") && $0.text.contains("Maintainer") })
         #expect(bot.componentList?.contains("toast") == false)
+        #expect(workspace.componentAsks.isEmpty)
+        await workspace.putEveryoneToSleep()
+    }
+
+    /// The id a request to Maintainer carries, for its answer.
+    nonisolated static func requestID(in text: String) -> String? {
+        guard let range = text.range(of: #"<component-declined id="[^"]+""#, options: .regularExpression) else { return nil }
+        return text[range].split(separator: "\"").dropFirst().first.map(String.init)
+    }
+
+    /// A reply that only names the component (still working on it, asking something) is no
+    /// answer: the request stays, and the bot is not told Maintainer declined.
+    @Test func aReplyThatOnlyNamesTheComponentLeavesTheRequestOpen() async throws {
+        let fake = FakeLauncher()
+        fake.respond = { text in
+            if text.hasSuffix("Warn me on errors") { return "<component name=\"toast\">an error toast</component>" }
+            if isAppOnly(text) { return "OK" }
+            if text.contains("wants a new component \"toast\"") { return "I'm still looking into toast; the editor is on it." }
+            return "Got it"
+        }
+        let workspace = makeWorkspace(fake)
+        await workspace.pluginLibraryReady.value
+        let (_, bot) = try garden(in: workspace)
+
+        bot.send("Warn me on errors")
+        await eventually { workspace.maintainer.messages.contains { $0.role == .bot && $0.text.contains("still looking into toast") } }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(!fake.agents.flatMap(\.sent).contains { $0.contains("Maintainer did not add") })
+        #expect(workspace.componentAsks.map(\.name) == ["toast"])
+        // An answer for another request's id closes nothing either.
+        workspace.handle([.componentDeclined(id: "00000000", reason: "no")], from: workspace.maintainerProject)
+        #expect(workspace.componentAsks.map(\.name) == ["toast"])
         await workspace.putEveryoneToSleep()
     }
 

@@ -2,9 +2,9 @@ import Foundation
 
 /// A bot (or its subagents) stopped because the network went away. What the app sees of that
 /// is in claude's stream-json: `system`/`api_retry` lines with no HTTP status while claude
-/// retries, then a turn that ends with an error result such as "API Error: Connection error."
-/// (the process stays alive, waiting for the next message), a subagent whose result is that
-/// error, or, rarely, the process exiting with it on stderr.
+/// retries, then an API error with no HTTP status (`NetworkResume.isConnectionLoss`) that ends
+/// the turn (the process stays alive, waiting for the next message) or a subagent, or, rarely,
+/// the process exiting with it on stderr (`ConnectionErrorText`).
 public struct Outage: Equatable, Sendable {
     /// When the run failed; the 50-minute cache window counts from here.
     public var since: Date
@@ -29,33 +29,20 @@ public enum NetworkResume {
     /// The status and chat word for it.
     public static let label = "網路中斷"
 
-    /// Words in an error line that mean the connection itself failed (not the API saying no).
-    static let connectionMarkers = [
-        "connection error", "unable to connect", "timed out", "timeout", "econnreset", "econnrefused",
-        "enotfound", "etimedout", "eai_again", "enetunreach", "ehostunreach", "enetdown", "econnaborted",
-        "socket hang up", "fetch failed", "network", "epipe", "connection closed", "connection reset"
-    ]
-
-    /// One line of claude's own API error for a lost connection: "API Error: Connection error.",
-    /// "API Error: Request timed out.", "API Error: Unable to connect to API (ECONNRESET)". Certificate
-    /// problems are not the network going away.
-    static func isConnectionErrorLine(_ line: String) -> Bool {
-        let line = line.trimmingCharacters(in: .whitespaces).lowercased()
-        let fromAPI = line.contains("api error") || line.hasPrefix("unable to connect to api")
-        guard fromAPI, !line.contains("ssl"), !line.contains("certificate") else { return false }
-        return connectionMarkers.contains { line.contains($0) }
-    }
-
-    /// A turn's result (or a subagent's report) that is claude's connection error: its first
-    /// line is, so a report that merely talks about connection errors does not count.
-    public static func isConnectionError(_ text: String) -> Bool {
-        guard let first = text.split(whereSeparator: \.isNewline).first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else { return false }
-        return isConnectionErrorLine(String(first))
-    }
-
-    /// Any line is (stderr of a process that exited, a failed subagent's notification).
-    public static func mentionsConnectionError(_ text: String) -> Bool {
-        text.split(whereSeparator: \.isNewline).contains { isConnectionErrorLine(String($0)) }
+    /// claude's API error (`is_api_error_message` on an assistant line) that had no answer from
+    /// the API: no HTTP status (`api_error_status`), filed as `server_error` or `unknown` (as claude
+    /// 2.1.283–2.1.304 file "Connection refused", "Can't reach the API server", "Connection lost
+    /// mid-response", "Your computer went to sleep mid-response"; the API's safeguards refusing a
+    /// message, also without a status, is `invalid_request`), and no typed kind (`api_error`) but
+    /// `no_response`: a certificate or credential problem is not the network going away. Should
+    /// the API have answered after all, the probe sees it at once and the bot goes on.
+    static func isConnectionLoss(_ line: [String: Any]) -> Bool {
+        guard line["is_api_error_message"] as? Bool == true,
+              line["api_error_status"] == nil || line["api_error_status"] is NSNull else { return false }
+        let filed = line["error"] as? String ?? "unknown"
+        guard filed == "server_error" || filed == "unknown" else { return false }
+        let kind = line["api_error"] as? String
+        return kind == nil || kind == "no_response"
     }
 
     /// "agentId: a1b2c3" in an Agent tool result: the id SendMessage continues it with.
@@ -121,6 +108,43 @@ public enum NetworkResume {
             }
         }
         return parts.joined(separator: "\n")
+    }
+}
+
+/// Adapter for claude's connection errors in words, for where it gives nothing structured: the
+/// stderr of a process that exited, and a subagent's report (a `task_notification` summary or the
+/// Agent call's result). Real texts (claude 2.1.283–2.1.304): "API Error: Connection refused — a
+/// firewall or proxy may be blocking it (ECONNREFUSED)", "API Error: Can't reach the API server —
+/// check your internet or DNS (ENOTFOUND)", "API Error: Connection lost mid-response. …". Words it
+/// does not know are no connection error: the run shows as failed, nothing waits for the network.
+public enum ConnectionErrorText {
+    /// Words in an error line that mean the connection itself failed (not the API saying no).
+    static let connectionMarkers = [
+        "connection error", "unable to connect", "timed out", "timeout", "econnreset", "econnrefused",
+        "enotfound", "etimedout", "eai_again", "enetunreach", "ehostunreach", "enetdown", "econnaborted",
+        "socket hang up", "fetch failed", "network", "epipe", "connection closed", "connection reset",
+        "connection lost", "connection refused"
+    ]
+
+    /// One line of claude's own API error for a lost connection. Certificate problems are not the
+    /// network going away.
+    static func isConnectionErrorLine(_ line: String) -> Bool {
+        let line = line.trimmingCharacters(in: .whitespaces).lowercased()
+        let fromAPI = line.contains("api error") || line.hasPrefix("unable to connect to api")
+        guard fromAPI, !line.contains("ssl"), !line.contains("certificate") else { return false }
+        return connectionMarkers.contains { line.contains($0) }
+    }
+
+    /// A subagent's report that is claude's connection error: its first line is, so a report
+    /// that merely talks about connection errors does not count.
+    public static func isConnectionError(_ text: String) -> Bool {
+        guard let first = text.split(whereSeparator: \.isNewline).first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else { return false }
+        return isConnectionErrorLine(String(first))
+    }
+
+    /// Any line is (stderr of a process that exited, a failed subagent's notification).
+    public static func mentionsConnectionError(_ text: String) -> Bool {
+        text.split(whereSeparator: \.isNewline).contains { isConnectionErrorLine(String($0)) }
     }
 }
 

@@ -42,11 +42,15 @@ public struct PermissionDenial: Equatable, Sendable {
     public var tool: String?
     /// The classifier's reason: "[Irreversible Local Destruction] …".
     public var reason: String
+    /// False for the `permission_denied` frame: it names the call and the reason, but the
+    /// classifier sends one for a call it gave no verdict on too; the tool result says which.
+    public var confirmed: Bool
 
-    public init(toolUseID: String, tool: String?, reason: String) {
+    public init(toolUseID: String, tool: String?, reason: String, confirmed: Bool = true) {
         self.toolUseID = toolUseID
         self.tool = tool
         self.reason = reason
+        self.confirmed = confirmed
     }
 }
 
@@ -88,6 +92,9 @@ public enum AgentEvent: Equatable, Sendable {
     case usage(totalCost: Double, tokens: TokenUsage = TokenUsage())
     /// Claude could not reach the API (no HTTP answer at all) and is retrying (`api_retry`).
     case connectionTrouble(attempt: Int, maxRetries: Int)
+    /// Claude gave up on the API with no answer from it (`NetworkResume.isConnectionLoss`): the
+    /// turn (`parent` nil; its error `.reply` comes next) or that subagent was cut off.
+    case connectionLost(parent: String?)
     /// The subscription's 5-hour and weekly limits as the API last reported them (`rate_limit_event`).
     case rateLimits(RateLimits)
     case exited(status: Int32, stderr: String)

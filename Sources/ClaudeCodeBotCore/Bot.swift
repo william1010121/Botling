@@ -120,6 +120,12 @@ public final class Bot: ObservableObject, Identifiable {
     private var scheduleDue: Date?
     /// Blocked calls already shown (claude says so twice: its frame and the tool result).
     private var deniedCalls: Set<String> = []
+    /// The turn under way ended on an API error with no answer from the API (`.connectionLost`).
+    private var turnLostConnection = false
+    /// Subagents whose run ended on such an error, until they end.
+    private var cutOffByNetwork: Set<String> = []
+    /// `permission_denied` frames waiting for their tool result to say whether it was a block.
+    private var deniedFrames: [String: PermissionDenial] = [:]
     /// A tool question waits for you (the row says so instead of "Working").
     @Published public private(set) var waitingForPermission = false
     /// A tool question was settled without you answering it here (it timed out, claude went
@@ -1010,6 +1016,17 @@ public final class Bot: ObservableObject, Identifiable {
     /// (its command, file or site) and the classifier's reason. Allowing it adds a rule that lets
     /// exactly that through, then tells it to try again.
     private func showDenial(_ denial: PermissionDenial) {
+        // The frame comes first; the tool result says whether it was a block.
+        guard denial.confirmed else {
+            if deniedFrames.count > 100 { deniedFrames.removeAll() }
+            deniedFrames[denial.toolUseID] = denial
+            return
+        }
+        var denial = denial
+        if let frame = deniedFrames.removeValue(forKey: denial.toolUseID) {
+            denial.tool = denial.tool ?? frame.tool
+            if !frame.reason.isEmpty { denial.reason = frame.reason }
+        }
         guard internalReply == nil, deniedCalls.insert(denial.toolUseID).inserted else { return }
         let call = toolCalls[denial.toolUseID]
         guard let tool = denial.tool ?? call?.tool,
@@ -1122,6 +1139,8 @@ public final class Bot: ObservableObject, Identifiable {
             onRateLimits?(limits)
         case .connectionTrouble:
             if !retryingConnection { retryingConnection = true }
+        case let .connectionLost(parent):
+            if let parent { cutOffByNetwork.insert(parent) } else { turnLostConnection = true }
         case let .usage(total, tokens):
             // A running total for the session: what this turn cost is the difference.
             let spent = max(0, total - sessionCost)
@@ -1134,8 +1153,8 @@ public final class Bot: ObservableObject, Identifiable {
                 toolCalls[id] = (tool, detail)
             }
             if trace.apply(step, at: now()) { store?.save(subagents: trace.subagents) }
-            if case let .toolResult(id, output, false, nil) = step, let tool = toolCalls[id]?.tool {
-                if let cancellation = BackgroundTask.Cancellation(tool: tool, result: output) {
+            if case let .scheduleResult(id, result) = step, let tool = toolCalls[id]?.tool {
+                if let cancellation = BackgroundTask.Cancellation(tool: tool, result: result) {
                     trace.cancelScheduled(cancellation)
                     if messages.cancelScheduled(cancellation) { store?.save(messages: messages) }
                     scheduleDue = [messages.nextScheduleDue, trace.nextScheduleDue].compactMap { $0 }.min()
@@ -1186,6 +1205,8 @@ public final class Bot: ObservableObject, Identifiable {
         case let .earlyReply(text):
             showEarly(text)
         case .reply(var text, let isError):
+            let lostConnection = turnLostConnection
+            turnLostConnection = false
             // Words already shown as this turn's reply (before its Stop hook ran): the turn just ends.
             if !isError, interruptions == 0, let shown = early.matching(text) {
                 turnInput = nil
@@ -1229,7 +1250,7 @@ public final class Bot: ObservableObject, Identifiable {
                 Task { [weak self] in await self?.flushQueue() }
                 return
             }
-            if isError, NetworkResume.isConnectionError(text) {
+            if isError, lostConnection {
                 showNetworkLoss(text)
                 return
             }
@@ -1253,7 +1274,7 @@ public final class Bot: ObservableObject, Identifiable {
         case let .exited(status, stderr):
             // Gone because of the network (or gone while waiting for it): its session and the
             // subagents still at work are picked up again when the network is back.
-            let lostToNetwork = exitWaiter == nil && (outage != nil || (status != 0 && NetworkResume.mentionsConnectionError(stderr)))
+            let lostToNetwork = exitWaiter == nil && (outage != nil || (status != 0 && ConnectionErrorText.mentionsConnectionError(stderr)))
             let cutOff = lostToNetwork ? trace.subagents.filter(\.isRunning).map(\.id) : []
             let session = sessionID
             let failedResume = resumeProbe && exitWaiter == nil && !lostToNetwork ? resumeRetry : nil
@@ -1264,6 +1285,7 @@ public final class Bot: ObservableObject, Identifiable {
             sessionID = nil
             turnInput = nil
             interruptions = 0
+            turnLostConnection = false
             if !lostToNetwork { pausedWork = nil }
             turnOrigin = nil
             backgroundWake = false
@@ -1302,7 +1324,7 @@ public final class Bot: ObservableObject, Identifiable {
                 let shown = outage != nil
                 recordOutage(subagents: cutOff, lostSession: session)
                 if !shown {
-                    let line = stderr.split(whereSeparator: \.isNewline).first { NetworkResume.isConnectionErrorLine(String($0)) }
+                    let line = stderr.split(whereSeparator: \.isNewline).first { ConnectionErrorText.isConnectionErrorLine(String($0)) }
                     append(ChatMessage(role: .error, text: NetworkResume.lostText(line.map(String.init) ?? "")))
                     unreadCount += 1
                 }
@@ -1349,7 +1371,7 @@ public final class Bot: ObservableObject, Identifiable {
 
     private func noteProgress(of event: AgentEvent) {
         switch event {
-        case .connectionTrouble, .rateLimits, .exited:
+        case .connectionTrouble, .connectionLost, .rateLimits, .exited:
             return
         case let .trace(step):
             if let id = Self.subagentID(of: step) {
@@ -1379,7 +1401,7 @@ public final class Bot: ObservableObject, Identifiable {
         case let .toolUse(_, _, _, _, parent), let .toolResult(_, _, _, parent), let .toolImages(_, _, parent), let .text(_, parent): parent
         case let .subagentStarted(id, _, _, _, _): id
         case let .subagentWaiting(id): id
-        case .subagentEnded, .subagentNamed, .backgroundCommandStarted, .monitorStarted, .scheduleCalled: nil
+        case .subagentEnded, .subagentNamed, .backgroundCommandStarted, .monitorStarted, .scheduleCalled, .scheduleResult: nil
         }
     }
 
@@ -1397,12 +1419,14 @@ public final class Bot: ObservableObject, Identifiable {
         case let .subagentEnded(callID, status, summary):
             id = callID
             // A notification says more than the error, so a failed one counts if any line is it.
-            guard status == "failed" || status == "error" || NetworkResume.isConnectionError(summary ?? "") else { return }
-            text = (summary ?? "").split(whereSeparator: \.isNewline).first { NetworkResume.isConnectionErrorLine(String($0)) }.map(String.init) ?? ""
+            guard status == "failed" || status == "error" || cutOffByNetwork.contains(callID) || ConnectionErrorText.isConnectionError(summary ?? "") else { return }
+            text = (summary ?? "").split(whereSeparator: \.isNewline).first { ConnectionErrorText.isConnectionErrorLine(String($0)) }.map(String.init) ?? ""
         default:
             return
         }
-        guard let subagent = trace.subagent(id), !subagent.isRunning, NetworkResume.isConnectionError(text) else { return }
+        guard let subagent = trace.subagent(id), !subagent.isRunning,
+              cutOffByNetwork.contains(id) || ConnectionErrorText.isConnectionError(text) else { return }
+        cutOffByNetwork.remove(id)
         recordOutage(subagents: [id])
     }
 

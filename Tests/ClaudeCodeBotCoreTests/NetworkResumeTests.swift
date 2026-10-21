@@ -25,22 +25,59 @@ private func startQuietTurn(_ bot: Bot, _ fake: FakeLauncher, _ text: String = "
     return fake.agents[0]
 }
 
+/// claude 2.1.304's lines when the API cannot be reached (a real `claude -p --output-format
+/// stream-json` run with ANTHROPIC_BASE_URL on a closed port, trimmed to what the app reads).
+enum LostConnectionRun {
+    static let apiError = #"{"type":"assistant","message":{"id":"2c569111-0e31-434e-8389-0eb823f8560c","model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","type":"message","content":[{"type":"text","text":"API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)"}]},"parent_tool_use_id":null,"error":"server_error","is_api_error_message":true}"#
+    static let result = #"{"type":"result","subtype":"success","is_error":true,"api_error_status":null,"terminal_reason":"api_error","result":"API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)"}"#
+}
+
 struct NetworkErrorRecognitionTests {
+    /// What decides is claude's structured API error: no HTTP status, filed as a server error
+    /// or unknown, no typed kind but `no_response`. Its words do not matter.
+    @Test func aTurnsAPIErrorWithNoAnswerIsAConnectionLoss() {
+        #expect(StreamEvent.events(in: LostConnectionRun.apiError).first == .connectionLost(parent: nil))
+        let reworded = LostConnectionRun.apiError.replacingOccurrences(of: "API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)", with: "連不上伺服器")
+        #expect(StreamEvent.events(in: reworded).first == .connectionLost(parent: nil))
+        let noResponse = LostConnectionRun.apiError.replacingOccurrences(of: #""is_api_error_message":true"#, with: #""is_api_error_message":true,"api_error":"no_response""#)
+        #expect(StreamEvent.events(in: noResponse).first == .connectionLost(parent: nil))
+        // A subagent's: that subagent was cut off.
+        let subagent = LostConnectionRun.apiError.replacingOccurrences(of: #""parent_tool_use_id":null"#, with: #""parent_tool_use_id":"toolu_1""#)
+        #expect(StreamEvent.events(in: subagent).first == .connectionLost(parent: "toolu_1"))
+    }
+
+    @Test func anAPIErrorTheAPIAnsweredIsNot() {
+        func lost(_ line: String) -> Bool { StreamEvent.events(in: line).contains { if case .connectionLost = $0 { true } else { false } } }
+        // An HTTP status: the API answered (overloaded, a bad key), even in a connection's words.
+        #expect(!lost(LostConnectionRun.apiError.replacingOccurrences(of: #""is_api_error_message":true"#, with: #""is_api_error_message":true,"api_error_status":529"#)))
+        // Refused by the API's safeguards (real: no status, `invalid_request`).
+        #expect(!lost(LostConnectionRun.apiError.replacingOccurrences(of: "server_error", with: "invalid_request")))
+        // A typed kind that is not the network (an untrusted certificate, credentials).
+        #expect(!lost(LostConnectionRun.apiError.replacingOccurrences(of: #""is_api_error_message":true"#, with: #""is_api_error_message":true,"api_error":"tls_untrusted_ca""#)))
+        // Not an API error at all: the bot writing those words.
+        #expect(!lost(LostConnectionRun.apiError.replacingOccurrences(of: #","error":"server_error","is_api_error_message":true"#, with: "")))
+    }
+
+    /// The words of a process's stderr and a subagent's report are all there is for those: the
+    /// adapter reads them (real texts from claude 2.1.283–2.1.304).
     @Test func claudesConnectionErrorsCount() {
-        #expect(NetworkResume.isConnectionError("API Error: Connection error."))
-        #expect(NetworkResume.isConnectionError("API Error: Request timed out."))
-        #expect(NetworkResume.isConnectionError("API Error: Unable to connect to API (ECONNRESET)"))
-        #expect(NetworkResume.isConnectionError("\nAPI Error: getaddrinfo ENOTFOUND api.anthropic.com\nagentId: a1"))
+        #expect(ConnectionErrorText.isConnectionError("API Error: Connection error."))
+        #expect(ConnectionErrorText.isConnectionError("API Error: Request timed out."))
+        #expect(ConnectionErrorText.isConnectionError("API Error: Unable to connect to API (ECONNRESET)"))
+        #expect(ConnectionErrorText.isConnectionError("\nAPI Error: getaddrinfo ENOTFOUND api.anthropic.com\nagentId: a1"))
+        #expect(ConnectionErrorText.isConnectionError("API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)"))
+        #expect(ConnectionErrorText.isConnectionError("API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)"))
+        #expect(ConnectionErrorText.isConnectionError("API Error: Connection lost mid-response. The response above may be incomplete."))
     }
 
     @Test func otherFailuresDoNot() {
-        #expect(!NetworkResume.isConnectionError("API Error: 529 {\"type\":\"overloaded_error\"}"))
-        #expect(!NetworkResume.isConnectionError("API Error: 401 Invalid API key"))
-        #expect(!NetworkResume.isConnectionError("API Error: Unable to connect to API: SSL certificate verification failed"))
-        #expect(!NetworkResume.isConnectionError(""))
+        #expect(!ConnectionErrorText.isConnectionError("API Error: 529 {\"type\":\"overloaded_error\"}"))
+        #expect(!ConnectionErrorText.isConnectionError("API Error: 401 Invalid API key"))
+        #expect(!ConnectionErrorText.isConnectionError("API Error: Unable to connect to API: SSL certificate verification failed"))
+        #expect(!ConnectionErrorText.isConnectionError(""))
         // A report that talks about connection errors is not one.
-        #expect(!NetworkResume.isConnectionError("Fixed it.\nThe old code showed API Error: Connection error. on timeouts"))
-        #expect(NetworkResume.mentionsConnectionError("Fixed it.\nAPI Error: Connection error."))
+        #expect(!ConnectionErrorText.isConnectionError("Fixed it.\nThe old code showed API Error: Connection error. on timeouts"))
+        #expect(ConnectionErrorText.mentionsConnectionError("Fixed it.\nAPI Error: Connection error."))
     }
 
     @Test func agentIDIsReadFromTheToolResult() {
@@ -86,6 +123,7 @@ struct NetworkResumeTests {
 
         agent.emit(.connectionTrouble(attempt: 1, maxRetries: 10))
         await eventually { bot.retryingConnection }
+        agent.emit(.connectionLost(parent: nil))
         agent.emit(.reply("API Error: Connection error.", isError: true))
         await eventually { bot.outage != nil }
 
@@ -103,11 +141,32 @@ struct NetworkResumeTests {
         #expect(!agent.finished)
     }
 
+    /// claude's real lines decide, whatever the result's words: an error result that only reads
+    /// like a lost connection is an ordinary error.
+    @Test func theStreamsStructuredErrorDecidesNotTheResultsWords() async {
+        let fake = FakeLauncher()
+        let bot = clockedBot(fake, clock: TestClock())
+        let agent = await startQuietTurn(bot, fake)
+        for line in [LostConnectionRun.apiError, LostConnectionRun.result.replacingOccurrences(of: "API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)", with: "伺服器沒有回應")] {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+        await eventually { bot.outage != nil }
+        #expect(bot.messages.last?.text.contains("伺服器沒有回應") == true)
+
+        let other = FakeLauncher()
+        let plain = clockedBot(other, clock: TestClock())
+        let second = await startQuietTurn(plain, other)
+        second.emit(.reply("API Error: Connection error.", isError: true))
+        await eventually { plain.messages.last?.role == .error }
+        #expect(plain.outage == nil)
+    }
+
     @Test func backWithinFiftyMinutesTheSameSessionCarriesOn() async {
         let fake = FakeLauncher()
         let clock = TestClock()
         let bot = clockedBot(fake, clock: clock)
         let agent = await startQuietTurn(bot, fake)
+        agent.emit(.connectionLost(parent: nil))
         agent.emit(.reply("API Error: Connection error.", isError: true))
         await eventually { bot.outage != nil }
 
@@ -133,6 +192,7 @@ struct NetworkResumeTests {
         agent.emit(.trace(.subagentStarted(id: "toolu_1", description: "Fix login", type: "general-purpose", prompt: "Work in /repo/.bot/worktrees/login. Fix the login bug.", background: false)))
         agent.emit(.trace(.toolUse(id: "toolu_2", tool: "Read", title: "Read a.swift", detail: "/repo/a.swift", parent: "toolu_1")))
         agent.emit(.trace(.toolResult(id: "toolu_1", output: "API Error: Connection error.\nagentId: a7f3c2e (use SendMessage with to: 'a7f3c2e' to continue this agent)", failed: false, parent: nil)))
+        agent.emit(.connectionLost(parent: nil))
         agent.emit(.reply("API Error: Connection error.", isError: true))
         await eventually { bot.outage?.turnFailed == true }
         #expect(bot.outage?.subagents == ["toolu_1"])
@@ -280,6 +340,7 @@ struct StallReminderTests {
         let fake2 = FakeLauncher()
         let bot2 = clockedBot(fake2, clock: clock)
         let agent2 = await startQuietTurn(bot2, fake2)
+        agent2.emit(.connectionLost(parent: nil))
         agent2.emit(.reply("API Error: Connection error.", isError: true))
         await eventually { bot2.outage != nil }
         clock.advance(minutes: 30)
@@ -309,6 +370,7 @@ struct NetworkWatchTests {
         fake.respond = { _ in nil }
         bot.send("hi")
         await eventually { fake.agents.count == 1 }
+        fake.agents[0].emit(.connectionLost(parent: nil))
         fake.agents[0].emit(.reply("API Error: Connection error.", isError: true))
         await eventually { bot.outage != nil }
 
