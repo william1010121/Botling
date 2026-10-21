@@ -1067,3 +1067,18 @@ img.media { cursor: zoom-in; }
 .float-resize[data-edge="topRight"]::before { border-right-width: 2px; border-top-width: 2px; border-top-right-radius: 6px; }
 .float-card:hover > .float-resize, .float-card.hovered > .float-resize, .float-card.resizing > .float-resize { opacity: 1; }
 body.spec-mode .float-layer { display: none; }
+
+/* A claude.ai Artifact a reply links to: title, host, Open (in the browser, where the user is signed in). */
+.artifact-card {
+  display: flex; align-items: center; gap: 12px; margin-top: 10px; padding: 8px 8px 8px 14px;
+  border: 1px solid #303037; border-radius: 14px; background: #232328;
+}
+.artifact-names { flex: 1; min-width: 0; }
+.artifact-title { font-size: 14px; font-weight: 600; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-host { margin-top: 2px; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-open {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px;
+  border-radius: 10px; border: 1px solid #2F4F8F; background: #1E2A44; color: var(--text); font: inherit; font-size: 13px; cursor: pointer;
+}
+.artifact-open:hover { background: #26375A; }
+.artifact-open:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }

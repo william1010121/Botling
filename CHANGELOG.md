@@ -8,6 +8,15 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Results go to a claude.ai Artifact by default.** Reports, comparisons, screenshots and
+  previews the bots make for you are published as one private claude.ai Artifact page and linked
+  in the reply; anything sensitive (secrets, personal data, work you asked to keep local) still
+  becomes a local HTML page, and so does a result when the Artifact tool is unavailable. A reply's
+  Artifact links show as cards with an Open button that opens them in your browser, where you are
+  signed in, and the Results list marks them with a Safari icon. Settings → Permissions → Reports
+  and results picks where results go: Artifact with sensitive ones local (the default), always a
+  local HTML page, or always an Artifact. Changing it tells bots that are already awake. Bots and
+  temporary teams may now use the Artifact tool without asking (not when results stay local).
 - **Pick any refresh interval for a pin.** A pin's refresh menu keeps its four choices (When
   shown, Every [15] [min], Every [5] [sec], Only on ↻), and in the two "Every" rows the number
   and the unit are typed right in place, from 2 seconds to 24 hours: Return or leaving the field

@@ -47,7 +47,8 @@ public final class Bot: ObservableObject, Identifiable {
 
     public let id = UUID()
     public let profile: BotProfile
-    let prompts: BotPrompts
+    /// What it is told, with the results rule as Settings has it now (read at each start).
+    var prompts: BotPrompts { BotPrompts(profile: profile, results: resultPublishing?() ?? .artifactUnlessSensitive) }
     private let launcher: AgentLauncher
     private let idleInterval: TimeInterval
     private let exitTimeout: TimeInterval
@@ -68,6 +69,8 @@ public final class Bot: ObservableObject, Identifiable {
     public var pluginEnvironment: (() -> [String: String])?
     /// Whether it starts in Claude Code's auto mode, read at each wake (off when not set).
     public var autoMode: (() -> Bool)?
+    /// Where it puts results for the user (Settings), read at each start.
+    public var resultPublishing: (() -> ResultPublishing)?
     /// Called once for each new line added to the chat (not when a saved chat is loaded or
     /// drawn again): where component cards are counted.
     public var onNewMessage: ((ChatMessage) -> Void)?
@@ -220,7 +223,6 @@ public final class Bot: ObservableObject, Identifiable {
         store: BotStore? = nil
     ) {
         self.profile = profile
-        prompts = BotPrompts(profile: profile)
         self.idleInterval = idleInterval
         self.exitTimeout = exitTimeout
         self.launcher = launcher
@@ -730,7 +732,7 @@ public final class Bot: ObservableObject, Identifiable {
             workingDirectory: profile.workingDirectory,
             systemPrompt: prompts.system,
             // "Bash(rm -rf build)" is a rule, not a tool name, and may hold commas: it goes in --settings.
-            tools: profile.tools + alwaysAllowed.filter { !profile.tools.contains($0) && !Self.isRule($0) },
+            tools: launchTools,
             extraDirectories: extraDirectories?() ?? [],
             pluginDirectories: pluginDirectories?() ?? [],
             pluginTools: pluginTools?() ?? [],
@@ -752,6 +754,13 @@ public final class Bot: ObservableObject, Identifiable {
             }
         }
         return process
+    }
+
+    /// The tools it uses without asking: its profile's (without the Artifact tool when results
+    /// stay local: then publishing asks first) and the ones the user always allowed.
+    var launchTools: [String] {
+        let own = resultPublishing?() == .localOnly ? profile.tools.filter { $0 != ResultPublishing.tool } : profile.tools
+        return own + alwaysAllowed.filter { !own.contains($0) && !Self.isRule($0) }
     }
 
     private func show(reply text: String, isError: Bool) {
