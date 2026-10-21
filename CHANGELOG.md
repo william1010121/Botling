@@ -106,6 +106,19 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **Finished background work is cleared when you write again.** Done, failed and stopped work
+  (the ✓ and ✕ counts) piled up and carried over to every new message. It now stays only until
+  your next message; what is still running carries over to the bot's newest reply. Replies before
+  your latest message also stop showing their finished subagents' cards while folded (unfolding
+  still lists them), so an old "Stopped" card no longer sits next to the new one.
+- **The background row never jumps under your own message.** Sending a message briefly moved the
+  row (e.g. "✓ 2 ✕ 1") under your bubble; it now goes only under the bot's latest reply.
+- **The stop guard catches a next step the bot says it is starting.** A reply ending "下一步照先前
+  說好的，開始做 1.14.0 的多國語言。" ended the turn without the work: Haiku read it as a mere
+  suggestion. A last sentence that plainly says the bot will now do something ("開始做…",
+  "接著做…", "我再去看…", "Next, I'll…") now blocks the stop too, unless it asks you, offers, or
+  names what will bring the result back.
+
 - **A floating pin shows only in its own bot's chat.** A pin floated in one bot's chat (say,
   ClaudeCodeBot's release progress) also floated over every other bot's chat, the main bot's
   included. It now floats only where it was floated, unless shown in all bots, and the two-card

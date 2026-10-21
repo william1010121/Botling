@@ -1,5 +1,5 @@
-// The chat's background work, as one row under its latest message (the app puts every task of the chat
-// there, and none under the others): up to four small icons with counts, only those there are —
+// The chat's background work, as one row under the bot's latest reply (the app puts there every task
+// still running, and those finished since your latest line, and none under the others): up to four small icons with counts, only those there are —
 // subagents still working, other work still waiting (background commands, Monitors, scheduled
 // wake-ups and cron jobs, each with its own mark in the list), work done, work failed (stopped or
 // interrupted too). Pressing one opens the list, grouped by those four and filtered

@@ -105,11 +105,11 @@ describe("background task chips", () => {
     expect(summary(row).textContent?.trim()).toBe("2");
   });
 
-  it("goes under your own line too, when it is the latest message", () => {
+  it("never goes under your own line, only under the bot's", () => {
+    // Your line drawn while the app still had the row on it (or any stray tasks) shows none.
     const row = messageElement(reply([task({ kind: "agent", message: "m0" })], "u1", "user"), {});
-    expect(row.querySelector(".user-column > .task-chips")).not.toBeNull();
-    expect(count(row, "agent")).toBe("1");
-    // A message without the chat's work draws no row.
+    expect(row.querySelector(".task-chips")).toBeNull();
+    expect(row.querySelector(".user-column")).toBeNull();
     expect(messageElement(reply([], "u2", "user"), {}).querySelector(".task-chips")).toBeNull();
   });
 

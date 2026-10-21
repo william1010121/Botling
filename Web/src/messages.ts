@@ -50,19 +50,10 @@ export function messageElement(message: MessageView, components: Record<string, 
 
 function drawRole(row: HTMLElement, message: MessageView, components: Record<string, ComponentInfo>): void {
   switch (message.role) {
-    case "user": {
-      const body = userBody(message);
-      if (message.tasks?.length) {
-        // The chat's background work, when your line is the latest message.
-        const column = document.createElement("div");
-        column.className = "user-column";
-        column.append(body, taskChips(message.id, message.tasks));
-        row.append(column, replyButton(message));
-      } else {
-        row.append(body, replyButton(message));
-      }
+    case "user":
+      // The chat's background work never goes under your own line, only under the bot's.
+      row.append(userBody(message), replyButton(message));
       break;
-    }
     case "bot":
     case "notice": {
       const body = botBody(message, components);
@@ -364,7 +355,7 @@ function userBody(message: MessageView): HTMLElement {
 function botBody(message: MessageView, components: Record<string, ComponentInfo>): HTMLElement {
   const bubble = document.createElement("div");
   bubble.className = message.role === "notice" ? `bubble notice-bubble${message.open ? " open" : ""}` : "bubble bot-bubble";
-  if (message.steps?.length) bubble.append(stepsElement(message.id, message.steps));
+  if (message.steps?.length) bubble.append(stepsElement(message.id, message.steps, message.earlier === true));
   const displays = (message.displays ?? (message.display ? [message.display] : []))
     .map((display, index) => ({ display, index, at: typeof display.at === "number" ? Math.min(Math.max(display.at, 0), message.text.length) : null }));
   // The text in pieces, with each component drawn where it was written.

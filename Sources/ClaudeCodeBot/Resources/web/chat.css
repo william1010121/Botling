@@ -761,8 +761,6 @@ body.viewer { display: block; overflow-y: auto; height: auto; min-height: 100%; 
 }
 /* The chat is always dark; should it ever get a light theme, these read on white. */
 :root[data-theme="light"] .task-chips { --task-agent: #6B4FD8; --task-waiting: #B26A00; --task-done: #1E8A55; --task-failed: #D0342C; }
-.user-column { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 0; max-width: 460px; }
-.user-column > .task-chips { align-items: flex-end; padding: 0 4px 0 0; }
 .task-summary { display: inline-flex; align-items: center; gap: 2px; }
 .task-group {
   display: inline-flex; align-items: center; gap: 3px; height: 20px; min-width: 20px; padding: 0 6px;

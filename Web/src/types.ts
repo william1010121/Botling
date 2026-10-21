@@ -49,8 +49,10 @@ export interface MessageView {
   specs?: SpecChipView[] | null;
   /** The library component this reply already is ("Add to another bot…"). */
   component?: string | null;
-  /** All the chat's background work, on its latest message only: one row of counts under it. */
+  /** The chat's background work (running, and finished since your latest line), on the bot's latest reply only: one row of counts under it. */
   tasks?: TaskChipView[] | null;
+  /** Before your latest line: its finished subagents leave the folded steps line. */
+  earlier?: boolean | null;
   /** claude.ai Artifacts it links to, drawn as cards under it. */
   artifacts?: ArtifactCardView[] | null;
 }
