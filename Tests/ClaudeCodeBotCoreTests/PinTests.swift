@@ -147,6 +147,9 @@ struct PinTests {
         #expect(pins.map(\.name) == ["c", "a", "b"])
         Pins.move(c.id, to: 99, in: &pins)
         #expect(pins.map(\.name) == ["a", "b", "c"])
+        // The Board's drop between a and b: its index once out of the list and put back.
+        Pins.move(c.id, to: 1, in: &pins)
+        #expect(pins.map(\.name) == ["a", "c", "b"])
     }
 
     @Test func onlyIntervalPinsWithACommandFallDue() {

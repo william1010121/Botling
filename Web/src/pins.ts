@@ -559,6 +559,30 @@ function capture(handle: HTMLElement, pointer: number): void {
   }
 }
 
+/**
+ * Where a dragged Board tile would go among the others (`rects`, in order, on screen): before the
+ * tile under the pointer or, over a gap, the nearest one, when the pointer is on its left half
+ * (its top half when the Board is one column), else after it. `slot` is the tile's index once
+ * it is out of the list and put back, as Swift's `Pins.move` takes it. Null with no others.
+ */
+export function dropSlot(rects: DOMRect[], x: number, y: number, vertical = false): { slot: number; rect: DOMRect; before: boolean } | null {
+  let best = -1;
+  let distance = Infinity;
+  rects.forEach((r, i) => {
+    const dx = Math.max(r.left - x, 0, x - r.right);
+    const dy = Math.max(r.top - y, 0, y - r.bottom);
+    const d = Math.hypot(dx, dy);
+    if (d < distance) {
+      distance = d;
+      best = i;
+    }
+  });
+  if (best < 0) return null;
+  const rect = rects[best];
+  const before = vertical ? y < rect.top + rect.height / 2 : x < rect.left + rect.width / 2;
+  return { slot: before ? best : best + 1, rect, before };
+}
+
 /** The Board's smallest cell and the gap between cells, in px (chat.css has the same gap). */
 const boardCell = 150;
 const boardGap = 14;
@@ -945,29 +969,27 @@ export class PinArea {
   /**
    * Lets a tile be dragged by `handle` (its grip, or the grab bar along its top edge) with the
    * pointer, not HTML drag and drop: its component's frame covers the whole tile, so a drop
-   * would land in the frame and never reach the Board. The tile follows the pointer; over
-   * another tile it takes that one's place at once and the others make room. Letting go asks
-   * Swift to keep it there; a small wobble is a click.
+   * would land in the frame and never reach the Board. The tile follows the pointer while the
+   * others stay put, and a line in the gap shows where it will go (`dropSlot`): before the tile
+   * under the pointer or nearest it when over its left half (top half, in one column), after it
+   * over its right half. Letting go puts it there and asks Swift to keep it; a small wobble is a
+   * click.
    */
   private movable(handle: HTMLElement, card: HTMLElement, pin: PinView): void {
     handle.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
-      const tiles = () => [...this.grid.querySelectorAll<HTMLElement>(".board-card")];
-      const from = tiles().indexOf(card);
+      const tiles = [...this.grid.querySelectorAll<HTMLElement>(".board-card")];
+      const from = tiles.indexOf(card);
+      const others = tiles.filter((tile) => tile !== card);
       const startX = event.clientX;
       const startY = event.clientY;
-      // Where the tile sits in the grid now, without the drag's offset.
-      const home = card.getBoundingClientRect();
-      let base = { left: home.left, top: home.top };
       let moving = false;
-      let over: HTMLElement | null = null;
+      let slot = from;
+      let line: HTMLElement | null = null;
       document.body.classList.add("pin-resizing");
       capture(handle, event.pointerId);
-      const follow = (x: number, y: number) => {
-        card.style.transform = `translate(${Math.round(x - startX + home.left - base.left)}px, ${Math.round(y - startY + home.top - base.top)}px)`;
-      };
       const move = (moved: PointerEvent) => {
         const x = moved.clientX;
         const y = moved.clientY;
@@ -976,22 +998,26 @@ export class PinArea {
           moving = true;
           card.classList.add("moving");
         }
-        const target = tiles().find((tile) => {
-          if (tile === card) return false;
-          const r = tile.getBoundingClientRect();
-          return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
-        }) ?? null;
-        if (target && target !== over) {
-          const order = tiles();
-          if (order.indexOf(card) < order.indexOf(target)) target.after(card);
-          else target.before(card);
-          // Its new place in the grid, measured without the offset.
-          card.style.transform = "";
-          const now = card.getBoundingClientRect();
-          base = { left: now.left, top: now.top };
+        card.style.transform = `translate(${Math.round(x - startX)}px, ${Math.round(y - startY)}px)`;
+        const vertical = this.columns === 1;
+        const drop = dropSlot(others.map((tile) => tile.getBoundingClientRect()), x, y, vertical);
+        if (!drop) return;
+        slot = drop.slot;
+        if (!line) {
+          line = document.createElement("div");
+          line.className = "board-drop-line";
+          line.setAttribute("aria-hidden", "true");
+          document.body.append(line);
         }
-        over = target ?? over;
-        follow(x, y);
+        // In the gap beside the tile it goes before or after, as long as that tile's side.
+        const r = drop.rect;
+        const half = boardGap / 2;
+        line.classList.toggle("vertical", vertical);
+        if (vertical) {
+          Object.assign(line.style, { left: `${r.left}px`, top: `${(drop.before ? r.top - half : r.bottom + half) - 2}px`, width: `${r.width}px`, height: "4px" });
+        } else {
+          Object.assign(line.style, { left: `${(drop.before ? r.left - half : r.right + half) - 2}px`, top: `${r.top}px`, width: "4px", height: `${r.height}px` });
+        }
       };
       const up = () => {
         window.removeEventListener("pointermove", move);
@@ -1000,8 +1026,12 @@ export class PinArea {
         document.body.classList.remove("pin-resizing");
         card.classList.remove("moving");
         card.style.transform = "";
-        const to = tiles().indexOf(card);
-        if (moving && to !== from && to >= 0) post({ type: "movePin", id: pin.id, to });
+        line?.remove();
+        if (!moving || slot === from || from < 0) return;
+        // Put it there now; Swift's state comes back in the same order.
+        if (slot < others.length) others[slot].before(card);
+        else others[others.length - 1]?.after(card);
+        post({ type: "movePin", id: pin.id, to: slot });
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
