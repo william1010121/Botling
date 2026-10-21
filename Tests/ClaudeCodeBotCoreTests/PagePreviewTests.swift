@@ -196,6 +196,74 @@ struct PagePreviewTests {
         #expect(PagePreview.cardData("nope") == "nope")
     }
 
+    /// A card shows a picture of its page once the app has taken one, so a chat with many cards
+    /// does not run every page; the picture belongs to the page as it was (written again, a new one).
+    @Test func cardShowsAPictureOfThePageOnceTaken() throws {
+        let shots = root.appending(path: "shots")
+        let (folder, maker) = (PageShots.folder, PageShots.maker)
+        defer { PageShots.folder = folder; PageShots.maker = maker; PageShots.reset() }
+        PageShots.folder = shots
+        PageShots.reset()
+        // Other tests may build cards meanwhile: only this test's pages count.
+        let lock = NSLock()
+        nonisolated(unsafe) var all: [(URL, URL)] = []
+        PageShots.maker = { page, destination in lock.withLock { all.append((page, destination)) } }
+        var asked: [(URL, URL)] { lock.withLock { all.filter { $0.0.path.hasPrefix(root.path) } } }
+
+        let page = try write("p/.bot/artifacts/shot.html")
+        // No picture yet: the page loads in a frame, and one picture is asked for (once).
+        let first = try object(PagePreview.cardData(#"{"path":"\#(page.path)"}"#))
+        #expect(first["shot"] == nil)
+        #expect(first["src"] != nil)
+        _ = PagePreview.cardData(#"{"path":"\#(page.path)"}"#)
+        #expect(asked.count == 1)
+        let (load, destination) = try #require(asked.first)
+        #expect(PagePreview.file(forPreview: load) == page)
+        #expect(destination.deletingLastPathComponent().path == shots.path)
+
+        // Taken: the card names it, and the scheme serves it as a JPEG.
+        try FileManager.default.createDirectory(at: shots, withIntermediateDirectories: true)
+        try Data([0xFF, 0xD8, 0xFF]).write(to: destination)
+        let card = try object(PagePreview.cardData(#"{"path":"\#(page.path)","shot":"ccb-preview://shot/x"}"#))
+        let shot = try #require((card["shot"] as? String).flatMap(URL.init(string:)))
+        #expect(shot.scheme == PagePreview.scheme)
+        #expect(PagePreview.file(forPreview: shot) == destination)
+        #expect(PagePreview.response(for: shot)?.mimeType == "image/jpeg")
+        // Only pictures it made: no other names, no paths out of the folder.
+        #expect(PagePreview.file(forPreview: try #require(URL(string: "ccb-preview://shot/../secret.jpg"))) == nil)
+        #expect(PagePreview.file(forPreview: try #require(URL(string: "ccb-preview://shot\(page.path)"))) == nil)
+
+        // The page written again: the old picture is not shown, a new one is asked for.
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: page.path)
+        #expect(try object(PagePreview.cardData(#"{"path":"\#(page.path)"}"#))["shot"] == nil)
+        #expect(asked.count == 2)
+        #expect(asked[1].1 != destination)
+
+        // A bot's own "shot" is never passed on, even with no maker.
+        PageShots.maker = nil
+        let other = try write("p/.bot/artifacts/other.html")
+        #expect(try object(PagePreview.cardData(#"{"path":"\#(other.path)","shot":"https://x/y.jpg"}"#))["shot"] == nil)
+    }
+
+    @Test func oldestPagePicturesArePruned() throws {
+        let shots = root.appending(path: "prune")
+        let folder = PageShots.folder
+        defer { PageShots.folder = folder }
+        PageShots.folder = shots
+        try FileManager.default.createDirectory(at: shots, withIntermediateDirectories: true)
+        let now = Date()
+        for index in 0..<(PageShots.limit + 3) {
+            let file = shots.appending(path: String(format: "%032x.jpg", index))
+            try Data([1]).write(to: file)
+            try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(Double(index))], ofItemAtPath: file.path)
+        }
+        PageShots.prune()
+        let left = try FileManager.default.contentsOfDirectory(atPath: shots.path)
+        #expect(left.count == PageShots.limit)
+        #expect(!left.contains(String(format: "%032x.jpg", 0)))
+        #expect(left.contains(String(format: "%032x.jpg", PageShots.limit + 2)))
+    }
+
     @Test func linksToResultPagesBecomeCards() throws {
         let a = try write("p/.bot/artifacts/a.html")
         let b = try write("runs/1-prototype/artifacts/b.html")

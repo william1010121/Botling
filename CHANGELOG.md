@@ -130,6 +130,27 @@ app and publishes it on GitHub Releases.
   load only once you open it, so opening a chat no longer reads every screenshot in it. Pictures
   kept before are converted once in the background (in a test copy: 30.9 MB of step pictures
   became 22.9 MB, plus 5.0 MB of small copies).
+- **A chat with many components opens without freezing.** Every component in a chat's history
+  was built when the chat opened, so a 500-message chat with 16 components froze for about
+  3 seconds before the first one showed (and again on each switch back to it). A component in the
+  chat is now built only once it scrolls within about 1500 px of view; until then it holds its
+  place at the height it last had (remembered across launches), and one above the view that grows
+  keeps what you are reading where it is. In that chat, opening it now freezes for about 0.2 s,
+  and a component at the bottom shows in about 0.5 s. Pins, the Board and floating pins are built
+  at once as before. A command card in the history no longer runs its command when the chat
+  opens; it runs once you scroll near it, and its `refresh` waits for that too.
+- **Web page preview cards show a picture instead of running the page.** Every 「網頁預覽卡片」
+  loaded its whole page (scripts, charts, video) in the chat each time it was drawn. The app now
+  takes a picture of each page once, offscreen and one page at a time, and the card shows that;
+  the page itself runs only when you open it. A page written again gets a new picture, and until
+  a picture is ready the card shows the page as before. Pictures are kept in the app's caches
+  folder (at most 400). A preview card nobody edited is updated to the new one.
+- **A streaming reply sends the chat only what changed.** Each update while a bot worked sent the
+  page the whole chat (every message and all components' text, some 180 KB of it alone), which
+  the page then parsed and compared message by message. Now only the messages that are new or
+  different are sent, and the rest are kept as they were; components and the chat's other state
+  are sent only when they change. While a bot works, the chat is updated at most ten times a
+  second, always with the latest state.
 
 - **A Board card can be dropped between two others.** While a card was dragged, the others
   jumped as soon as the pointer touched one, and a card it had just passed over was ignored when

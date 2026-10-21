@@ -169,6 +169,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
         workspace.prepareLibrary()
+        // Preview cards show a picture of their page; a new picture redraws the chats.
+        PageShotMaker.shared.install { [workspace] in workspace.objectWillChange.send() }
         connectSelfUpdate()
         workspace.startRoutines()
         workspace.startPinRefresh()

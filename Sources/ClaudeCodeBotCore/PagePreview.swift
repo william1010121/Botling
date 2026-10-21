@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// The 「網頁預覽卡片」 component: a one-page HTML result shown in the chat as a small live
@@ -65,7 +66,9 @@ public enum PagePreview {
 
     /// The file a `ccb-preview:` request asks for, if it may be served.
     public static func file(forPreview url: URL) -> URL? {
-        guard url.scheme == scheme, url.host == "page" else { return nil }
+        guard url.scheme == scheme else { return nil }
+        if url.host == PageShots.host { return PageShots.file(named: url.lastPathComponent) }
+        guard url.host == "page" else { return nil }
         let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.path ?? url.path
         guard path.hasPrefix("/") else { return nil }
         let file = URL(filePath: path).standardizedFileURL
@@ -95,7 +98,8 @@ public enum PagePreview {
     // MARK: Cards
 
     /// The data the card's template reads: what the bot gave (`path`, `title`), with what the
-    /// app adds: `src` (to load the preview from), `url` (to open it full-size), `name` (the file
+    /// app adds: `src` (to load the preview from), `shot` (a picture of the page as it is now,
+    /// once one was taken; see `PageShots`), `url` (to open it full-size), `name` (the file
     /// name) and `missing` (no such page).
     public static func cardData(_ data: String) -> String {
         guard var object = (try? JSONSerialization.jsonObject(with: Data(data.utf8))) as? [String: Any] else { return data }
@@ -110,8 +114,11 @@ public enum PagePreview {
         object["path"] = file.path
         object["url"] = file.absoluteString
         object["name"] = file.lastPathComponent
+        object.removeValue(forKey: "shot")
         if exists && isPage(file) {
-            object["src"] = previewURL(for: file, version: attributes?[.modificationDate] as? Date).absoluteString
+            let date = attributes?[.modificationDate] as? Date
+            object["src"] = previewURL(for: file, version: date).absoluteString
+            if let shot = PageShots.shot(for: file, version: date) { object["shot"] = shot.absoluteString }
         } else {
             object.removeValue(forKey: "src")
         }
@@ -299,5 +306,74 @@ public enum ComponentImages {
         lock.lock()
         defer { lock.unlock() }
         return pictures.contains(file.path)
+    }
+}
+
+/// Pictures of result pages for 「網頁預覽卡片」: a card shows one as an `<img>` instead of
+/// loading the page itself in a frame, so a chat with many cards does not run all their pages.
+/// A picture is kept per page and change date (a page written again gets a new one), in the
+/// app's caches folder; the app takes them (`maker`, an offscreen view) one page at a time.
+public enum PageShots {
+    static let host = "shot"
+    /// At most this many pictures are kept; the oldest go first.
+    static let limit = 400
+
+    nonisolated(unsafe) public static var folder: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appending(path: "ClaudeCodeBot/page-shots")
+    /// Takes a picture of `page` (a `ccb-preview:` URL) and writes it as JPEG to `destination`.
+    /// Unset (tests, snapshot runs), no pictures are taken and cards load their pages.
+    nonisolated(unsafe) public static var maker: (@Sendable (_ page: URL, _ destination: URL) -> Void)?
+
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var asked: Set<String> = []
+
+    /// The picture's name for `file` as it was at `version`.
+    static func name(for file: URL, version: Date?) -> String {
+        let stamp = version.map { String(Int($0.timeIntervalSince1970)) } ?? "-"
+        let hash = SHA256.hash(data: Data("\(file.standardizedFileURL.path)\n\(stamp)".utf8))
+        return hash.prefix(16).map { String(format: "%02x", $0) }.joined() + ".jpg"
+    }
+
+    /// Where the card loads the picture of `file` from, when there is one; otherwise asks the
+    /// maker for one (once per page and version) and gives nil.
+    public static func shot(for file: URL, version: Date?) -> URL? {
+        let name = name(for: file, version: version)
+        let picture = folder.appending(path: name)
+        if FileManager.default.fileExists(atPath: picture.path) {
+            var components = URLComponents()
+            components.scheme = PagePreview.scheme
+            components.host = host
+            components.path = "/" + name
+            return components.url
+        }
+        guard let maker else { return nil }
+        lock.lock()
+        let first = asked.insert(name).inserted
+        lock.unlock()
+        if first { maker(PagePreview.previewURL(for: file, version: version), picture) }
+        return nil
+    }
+
+    /// The picture a `ccb-preview://shot/<name>` request asks for: only a name this made.
+    static func file(named name: String) -> URL? {
+        guard name.count == 36, name.hasSuffix(".jpg"), name.dropLast(4).allSatisfy(\.isHexDigit) else { return nil }
+        let picture = folder.appending(path: name)
+        return FileManager.default.fileExists(atPath: picture.path) ? picture : nil
+    }
+
+    /// Removes the oldest pictures past `limit`.
+    public static func prune() {
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey]
+        guard let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: Array(keys)),
+              files.count > limit else { return }
+        let dated = files.map { ($0, (try? $0.resourceValues(forKeys: keys).contentModificationDate) ?? .distantPast) }
+        for (file, _) in dated.sorted(by: { $0.1 > $1.1 }).dropFirst(limit) { try? FileManager.default.removeItem(at: file) }
+    }
+
+    /// Forgets which pages were asked for (tests).
+    static func reset() {
+        lock.lock()
+        asked = []
+        lock.unlock()
     }
 }

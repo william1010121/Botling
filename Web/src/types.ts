@@ -341,6 +341,8 @@ export interface ChatState {
 
 export type Action =
   | { type: "ready" }
+  /** A `patchState` could not be applied: send the whole state. */
+  | { type: "resync" }
   | { type: "send"; text: string }
   | { type: "choose"; messageID: string; index: number }
   | { type: "answer"; messageID: string; text: string; images?: { name: string; base64: string }[] }
@@ -393,3 +395,15 @@ export type Action =
   | { type: "pluginLoaded"; name: string; version: string }
   | { type: "command"; id: string }
   | { type: "hostCall"; plugin: string; method: string; params: unknown; callID: number };
+
+/**
+ * What `ccb.patchState(...)` gets: only what changed since the last state. `base` is the state
+ * without its messages and components, and is left out when it is the same, as `components`
+ * is; `order` is every message's id, `changed` the messages that are new or different.
+ */
+export interface StatePatch {
+  base?: Omit<ChatState, "messages" | "components">;
+  components?: ChatState["components"];
+  order: string[];
+  changed: MessageView[];
+}
