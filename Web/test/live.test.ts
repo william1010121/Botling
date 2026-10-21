@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sent } from "../src/bridge";
 import { componentElement, componentPage, keepFrames, refreshDueCards } from "../src/components";
 import { messageElement } from "../src/messages";
+import { FloatLayer } from "../src/float";
 import { PinArea } from "../src/pins";
 import type { ChatState, ComponentInfo, DisplayView, MessageView, PinView } from "../src/types";
 
@@ -92,13 +93,32 @@ describe("a frame that takes live data", () => {
     expect(posts).toEqual([]);
   });
 
-  it("a frame that did not ask is drawn anew, as before", () => {
+  it("a frame that did not ask stays on screen while the new data is drawn behind it, then gives way", async () => {
     const row = messageElement(message([card()]), components);
     document.body.append(row);
     const frame = row.querySelector<HTMLIFrameElement>(".component-frame")!;
+    const page = frame.srcdoc;
     const fresh = messageElement(message([card({ data: `{"cpu":80}` })]), components);
-    expect(keepFrames(row, fresh)).toBe(fresh);
-    expect(fresh.querySelector(".component-frame")).not.toBe(frame);
+    expect(keepFrames(row, fresh)).toBe(row);
+    // Not reloaded, not emptied: the old drawing is what shows until the new one is ready.
+    expect(frame.isConnected).toBe(true);
+    expect(frame.srcdoc).toBe(page);
+    const next = row.querySelector<HTMLIFrameElement>(".component-frame.incoming")!;
+    expect(next.srcdoc).toContain(`{"cpu":80}`);
+    // The same data again (its command ran and printed the same): nothing more to draw.
+    keepFrames(row, messageElement(message([card({ data: `{"cpu":80}` })]), components));
+    expect(row.querySelectorAll(".component-frame")).toHaveLength(2);
+    expect(next.isConnected).toBe(true);
+    // Newer data while it loads: it is replaced, the old drawing still on screen.
+    keepFrames(row, messageElement(message([card({ data: `{"cpu":90}` })]), components));
+    expect(next.isConnected).toBe(false);
+    const newest = row.querySelector<HTMLIFrameElement>(".component-frame.incoming")!;
+    expect(newest.srcdoc).toContain(`{"cpu":90}`);
+    expect(frame.isConnected).toBe(true);
+    newest.dispatchEvent(new Event("load"));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect([...row.querySelectorAll(".component-frame")]).toEqual([newest]);
+    expect(newest.classList.contains("incoming")).toBe(false);
   });
 
   it("a component's own element keeps track of what it shows", () => {
@@ -126,6 +146,70 @@ describe("a live Board tile", () => {
     expect(tile.querySelectorAll(".board-card-tools")).toHaveLength(1);
     expect(tile.querySelectorAll(".board-card-body")).toHaveLength(1);
     vi.restoreAllMocks();
+  });
+});
+
+describe("a Board tile, a pinned panel and a floating card that do not take live data", () => {
+  const pin = (data: string, extra: Partial<PinView> = {}): PinView => ({ id: "P1", name: "cpu", headline: "", chip: { text: "", tone: "neutral" }, size: "2x2", refresh: "manual", minutes: 15, display: card({ data, every: null }), ...extra });
+  const state = (data: string, extra: Partial<ChatState> = {}) => ({ botID: "b", botName: "B", messages: [], working: false, avatar: "", placeholder: "", replyingTo: null, pendingFiles: [], components, pins: [pin(data)], pinChoices: [], board: true, ...extra }) as ChatState;
+  /** Counts every srcdoc `frame` is given from here on. */
+  function watch(frame: HTMLIFrameElement): { count: number } {
+    const counter = { count: 0 };
+    const descriptor = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "srcdoc")!;
+    Object.defineProperty(frame, "srcdoc", {
+      configurable: true,
+      get() { return descriptor.get!.call(this); },
+      set(value: string) { counter.count++; descriptor.set!.call(this, value); },
+    });
+    return counter;
+  }
+  /** After new data: the shown frame is the same, never given a page again, still in the page. */
+  async function staysUntilDrawn(holder: () => HTMLElement, frame: HTMLIFrameElement, count: { count: number }) {
+    expect(frame.isConnected).toBe(true);
+    expect(holder().contains(frame)).toBe(true);
+    expect(count.count).toBe(0);
+    const next = holder().querySelector<HTMLIFrameElement>(".component-frame.incoming")!;
+    expect(next.srcdoc).toContain(`{"cpu":2}`);
+    next.dispatchEvent(new Event("load"));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect([...holder().querySelectorAll(".component-frame")]).toEqual([next]);
+  }
+
+  beforeEach(() => {
+    document.body.innerHTML = `<main id="scroller"></main><section id="board"></section><div id="pin-area"></div><div id="composer-slot"></div>`;
+  });
+
+  it("a Board tile keeps its tile and drawing until the new data is drawn", async () => {
+    const area = new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
+    area.update(state(`{"cpu":1}`));
+    const tile = document.querySelector<HTMLElement>(".board-card")!;
+    const frame = tile.querySelector<HTMLIFrameElement>(".component-frame")!;
+    const count = watch(frame);
+    area.update(state(`{"cpu":2}`));
+    expect(document.querySelector(".board-card")).toBe(tile);
+    await staysUntilDrawn(() => document.querySelector<HTMLElement>(".board-card")!, frame, count);
+  });
+
+  it("an opened pin keeps its drawing until the new data is drawn", async () => {
+    const area = new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
+    area.update(state(`{"cpu":1}`, { board: false }));
+    document.querySelector<HTMLElement>(".pin-chip:not(.add)")!.click();
+    const sheet = () => document.querySelector<HTMLElement>(".pin-sheet")!;
+    const frame = sheet().querySelector<HTMLIFrameElement>(".component-frame")!;
+    const count = watch(frame);
+    area.update(state(`{"cpu":2}`, { board: false }));
+    await staysUntilDrawn(sheet, frame, count);
+  });
+
+  it("a floating card keeps its drawing until the new data is drawn", async () => {
+    const layer = new FloatLayer(document.body);
+    const floating = (data: string) => ({ floating: [{ botID: "b", botName: "B", pin: pin(data, { float: { corner: "topRight", width: 280, height: 160, collapsed: false }, floatMenu: "stop" }) }], board: false });
+    layer.update(state(`{"cpu":1}`, floating(`{"cpu":1}`)));
+    const body = () => document.querySelector<HTMLElement>(".float-card")!;
+    const frame = body().querySelector<HTMLIFrameElement>(".component-frame")!;
+    const count = watch(frame);
+    layer.update(state(`{"cpu":2}`, floating(`{"cpu":2}`)));
+    await staysUntilDrawn(body, frame, count);
   });
 });
 

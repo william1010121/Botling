@@ -8,6 +8,17 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **A card that refreshes no longer goes blank for a moment on each run.** A component with a
+  Command whose template does not call `ccb.onData` (a `Refresh: every 2s` card, a
+  `<show … refresh="2s">`, a pin refreshing every few seconds) got a new frame with each new
+  data, and a new frame is empty while it loads: about 0.1 s of nothing in the chat, the opened
+  pin and the floating card, and an empty dark cell on the Board. Pinned, floating and Board
+  copies also replaced their whole body unless the frame took live data. Now every surface keeps
+  the frame on screen and draws the new data in a hidden frame right over it; once that has
+  loaded and painted it takes the old one's place in one step (newer data while it loads replaces
+  it; after 2 s it shows anyway). Frames that call `ccb.onData` still keep their frame and just
+  get the data.
+
 - **The window no longer slides off its edges in the main bot's chat.** The right panel's
   overview did not scroll, so with a long "Waiting on you" list (the main bot gathers every
   bot's questions) it grew taller than the window. The row of columns grew with it and was

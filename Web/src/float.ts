@@ -1,7 +1,7 @@
 import { post } from "./bridge";
 import { language, t } from "./i18n";
 import { shared } from "./contract";
-import { componentSizes, hasLiveFrame, keepFrames, maxColumns, maxRows, pinSize, resizeFrame, sizeInfo } from "./components";
+import { componentSizes, keepFrames, maxColumns, maxRows, pinSize, resizeFrame, sizeInfo } from "./components";
 import { LiveSchedule, liveTick, type LiveCard } from "./refresh";
 import { boardCell, boardGap, capture, closePopups, drawnPart, fillPinHead, openMenu, pinBody, pinHeadKey, pinTitle, refreshItems, whenWords, type MenuItem } from "./pins";
 import type { ChatState, ComponentInfo, FloatCorner, FloatView, FloatingPinView, PinSize, PinView } from "./types";
@@ -295,7 +295,9 @@ export class FloatLayer {
     body.className = "float-body";
     body.append(pinBody(pin, this.cells(entry), false, "float", this.components[pin.name]));
     const before = entry.body;
-    const shown = before && hasLiveFrame(before) ? keepFrames(before, body) : body;
+    // Its frame is kept: given only new data, it takes it (ccb.onData) or is drawn anew behind
+    // what it shows, so a refresh never blanks it.
+    const shown = before ? keepFrames(before, body) : body;
     if (before && shown !== before) before.replaceWith(shown);
     else if (!before) entry.head.after(shown);
     entry.body = shown;

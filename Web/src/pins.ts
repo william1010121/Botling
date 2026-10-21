@@ -3,7 +3,7 @@ import { language, pieces, t, type Key } from "./i18n";
 import { isComposingEnter } from "./ime";
 import { intervalRow, parseInterval, presetMinutes, presetSeconds, refreshWords, type Interval, type IntervalRow, type IntervalUnit } from "./refresh";
 import { shared } from "./contract";
-import { commandCard, componentElement, hasLiveFrame, keepFrames, componentSizes, detailTarget, markPinFrames, maxColumns, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
+import { commandCard, componentElement, hasFrame, keepFrames, componentSizes, detailTarget, markPinFrames, maxColumns, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
 import { arrange, cellFor, clampTarget, drop, resize as resizeTiles, trailingCell, type Place, type Tile } from "./board-layout";
 import { escapeHTML } from "./util";
 import type { ChatState, ChipStatus, ComponentInfo, DisplayView, FloatMenu, PinChoiceView, PinRefresh, PinSize, PinView, SpecChipView } from "./types";
@@ -978,9 +978,9 @@ export class PinArea {
     const key = JSON.stringify([{ ...drawnPart(pin, "sheet"), panelHeight: null }, info ?? null]);
     if (key === this.sheetKey) return;
     this.sheetKey = key;
-    // A component that takes live data (ccb.onData) keeps its frame and gets the new data.
-    const before = this.sheet.querySelector<HTMLElement>(":scope > .pin-sheet-body");
-    const keep = hasLiveFrame(before) ? before : null;
+    // Its frame is kept: given only new data, it takes it (ccb.onData) or is drawn anew behind
+    // what it shows, so a refresh never blanks it.
+    const keep = this.sheet.querySelector<HTMLElement>(":scope > .pin-sheet-body");
     // Taken out of the page even for a moment, a frame loads again: the body that is kept stays.
     for (const child of [...this.sheet.children]) if (child !== keep && child !== this.sheetHead) child.remove();
     this.sheet.classList.remove("hovered");
@@ -1085,9 +1085,10 @@ export class PinArea {
       let entry = this.cards.get(pin.id);
       if (!entry || entry.key !== key) {
         let element: HTMLElement;
-        if (entry && hasLiveFrame(entry.element)) {
-          // A component that takes live data (ccb.onData) keeps its tile and frame, drawn anew
-          // around it, and gets the new data.
+        if (entry && hasFrame(entry.element)) {
+          // A tile with a component keeps its tile and frame, drawn anew around it: given only
+          // new data, the frame takes it (ccb.onData) or is drawn anew behind what it shows, so
+          // a refresh never shows an empty tile.
           element = this.card(pin, entry.element);
         } else {
           element = this.card(pin);
