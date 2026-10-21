@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { sent } from "../src/bridge";
 import type { ChatState, ComponentInfo, MessageView, StepView } from "../src/types";
 
@@ -41,6 +41,18 @@ function watchSrcdoc(...watched: HTMLIFrameElement[]): { count: number } {
   });
   return counter;
 }
+
+/**
+ * Holds the page's animation frames until `paint()`, so a frame drawing new data behind the shown
+ * one takes its place exactly when the test says it has loaded and painted, never by the clock.
+ */
+function holdPaints(): { paint: () => void } {
+  const queue: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => queue.push(callback));
+  return { paint: () => { while (queue.length) queue.shift()!(0); } };
+}
+
+afterEach(() => vi.unstubAllGlobals());
 
 const frames = () => [...document.querySelectorAll<HTMLIFrameElement>("#messages iframe.component-frame")];
 
@@ -122,7 +134,8 @@ describe("components in the chat", () => {
     expect(document.querySelector(".row[data-id=\"r1\"] .steps-toggle")?.textContent).toContain("1 subagent");
   });
 
-  it("redraw only the component whose data changed, keeping it on screen until the new drawing is ready", async () => {
+  it("redraw only the component whose data changed, keeping it on screen until the new drawing is ready", () => {
+    const paints = holdPaints();
     const reply = (b: string) => message({
       id: "m3", text: "Two",
       displays: [{ name: "card", data: "{\"a\":1}", at: null }, { name: "chart", data: b, at: null }],
@@ -143,7 +156,9 @@ describe("components in the chat", () => {
     expect(next.style.height).toBe("120px");
     // Loaded and painted: it takes the old one's place in one step, without moving.
     next.dispatchEvent(new Event("load"));
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    // Loaded, not painted yet: the old one still shows.
+    expect(chart.isConnected).toBe(true);
+    paints.paint();
     expect(chart.isConnected).toBe(false);
     expect(frames()).toEqual([card, next]);
     expect(next.classList.contains("incoming")).toBe(false);

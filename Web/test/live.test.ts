@@ -44,12 +44,23 @@ function run(page: string) {
   return { ccb: frame.ccb, posted, hear };
 }
 
+/**
+ * Holds the page's animation frames until `paint()`, so a frame drawing new data behind the shown
+ * one takes its place exactly when the test says it has loaded and painted, never by the clock.
+ */
+function holdPaints(): { paint: () => void } {
+  const queue: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => queue.push(callback));
+  return { paint: () => { while (queue.length) queue.shift()!(0); } };
+}
+
 const say = (frame: HTMLIFrameElement, data: unknown) => window.dispatchEvent(new MessageEvent("message", { data, source: frame.contentWindow }));
 
 beforeEach(() => {
   sent.length = 0;
   document.body.innerHTML = "";
 });
+afterEach(() => vi.unstubAllGlobals());
 
 describe("in the frame", () => {
   it("ccb.load() resolves to the data it has", async () => {
@@ -93,7 +104,8 @@ describe("a frame that takes live data", () => {
     expect(posts).toEqual([]);
   });
 
-  it("a frame that did not ask stays on screen while the new data is drawn behind it, then gives way", async () => {
+  it("a frame that did not ask stays on screen while the new data is drawn behind it, then gives way", () => {
+    const paints = holdPaints();
     const row = messageElement(message([card()]), components);
     document.body.append(row);
     const frame = row.querySelector<HTMLIFrameElement>(".component-frame")!;
@@ -116,7 +128,8 @@ describe("a frame that takes live data", () => {
     expect(newest.srcdoc).toContain(`{"cpu":90}`);
     expect(frame.isConnected).toBe(true);
     newest.dispatchEvent(new Event("load"));
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(frame.isConnected).toBe(true);
+    paints.paint();
     expect([...row.querySelectorAll(".component-frame")]).toEqual([newest]);
     expect(newest.classList.contains("incoming")).toBe(false);
   });
@@ -164,14 +177,15 @@ describe("a Board tile, a pinned panel and a floating card that do not take live
     return counter;
   }
   /** After new data: the shown frame is the same, never given a page again, still in the page. */
-  async function staysUntilDrawn(holder: () => HTMLElement, frame: HTMLIFrameElement, count: { count: number }) {
+  function staysUntilDrawn(holder: () => HTMLElement, frame: HTMLIFrameElement, count: { count: number }, paints: { paint: () => void }) {
     expect(frame.isConnected).toBe(true);
     expect(holder().contains(frame)).toBe(true);
     expect(count.count).toBe(0);
     const next = holder().querySelector<HTMLIFrameElement>(".component-frame.incoming")!;
     expect(next.srcdoc).toContain(`{"cpu":2}`);
     next.dispatchEvent(new Event("load"));
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(frame.isConnected).toBe(true);
+    paints.paint();
     expect([...holder().querySelectorAll(".component-frame")]).toEqual([next]);
   }
 
@@ -179,7 +193,8 @@ describe("a Board tile, a pinned panel and a floating card that do not take live
     document.body.innerHTML = `<main id="scroller"></main><section id="board"></section><div id="pin-area"></div><div id="composer-slot"></div>`;
   });
 
-  it("a Board tile keeps its tile and drawing until the new data is drawn", async () => {
+  it("a Board tile keeps its tile and drawing until the new data is drawn", () => {
+    const paints = holdPaints();
     const area = new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
     area.update(state(`{"cpu":1}`));
     const tile = document.querySelector<HTMLElement>(".board-card")!;
@@ -187,10 +202,11 @@ describe("a Board tile, a pinned panel and a floating card that do not take live
     const count = watch(frame);
     area.update(state(`{"cpu":2}`));
     expect(document.querySelector(".board-card")).toBe(tile);
-    await staysUntilDrawn(() => document.querySelector<HTMLElement>(".board-card")!, frame, count);
+    staysUntilDrawn(() => document.querySelector<HTMLElement>(".board-card")!, frame, count, paints);
   });
 
-  it("an opened pin keeps its drawing until the new data is drawn", async () => {
+  it("an opened pin keeps its drawing until the new data is drawn", () => {
+    const paints = holdPaints();
     const area = new PinArea(document.getElementById("pin-area")!, document.getElementById("board")!);
     area.update(state(`{"cpu":1}`, { board: false }));
     document.querySelector<HTMLElement>(".pin-chip:not(.add)")!.click();
@@ -198,10 +214,11 @@ describe("a Board tile, a pinned panel and a floating card that do not take live
     const frame = sheet().querySelector<HTMLIFrameElement>(".component-frame")!;
     const count = watch(frame);
     area.update(state(`{"cpu":2}`, { board: false }));
-    await staysUntilDrawn(sheet, frame, count);
+    staysUntilDrawn(sheet, frame, count, paints);
   });
 
-  it("a floating card keeps its drawing until the new data is drawn", async () => {
+  it("a floating card keeps its drawing until the new data is drawn", () => {
+    const paints = holdPaints();
     const layer = new FloatLayer(document.body);
     const floating = (data: string) => ({ floating: [{ botID: "b", botName: "B", pin: pin(data, { float: { corner: "topRight", width: 280, height: 160, collapsed: false }, floatMenu: "stop" }) }], board: false });
     layer.update(state(`{"cpu":1}`, floating(`{"cpu":1}`)));
@@ -209,7 +226,7 @@ describe("a Board tile, a pinned panel and a floating card that do not take live
     const frame = body().querySelector<HTMLIFrameElement>(".component-frame")!;
     const count = watch(frame);
     layer.update(state(`{"cpu":2}`, floating(`{"cpu":2}`)));
-    await staysUntilDrawn(body, frame, count);
+    staysUntilDrawn(body, frame, count, paints);
   });
 });
 
