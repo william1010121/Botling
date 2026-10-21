@@ -8,6 +8,15 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Monitors and scheduled wake-ups show in the background-work row.** A bot's Monitor (a watch
+  that wakes it on each event) counts as waiting while it watches, with its description and how
+  long it has run; it is done when its source ends or its time runs out, an error when its script
+  fails. A wake-up it scheduled (ScheduleWakeup, as in /loop) or a cron job (CronCreate) waits too,
+  saying when it fires: "20 分後", "每天 09:00 · 18 小時後", "每 30 分鐘 · 12 分後". A fired wake-up or
+  one-shot job is done ("已觸發"); a deleted job (CronDelete) or a stopped loop leaves the list. In
+  the list each waiting kind has its own mark (an eye, an alarm clock, circling arrows); the row
+  keeps its four icons. A bot with a wake-up or cron job pending stays up for it (they live in
+  its session), and one cut off by a restart is told about it like other background work.
 - **Pick any refresh interval for a pin.** A pin's refresh menu keeps its quick choices (When
   shown, Every 15 min, Every 5 sec, Only on ↻) and adds "Custom…": it opens "Every [n] [sec / min]"
   right in the menu; Set or Return keeps it, from 2 seconds to 24 hours. The pin then says its

@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
 import { messageElement } from "../src/messages";
-import { bucketOf, countTasks, elapsed, resetTaskChips, setTaskClock, taskOutput, tickTaskChips } from "../src/tasks";
+import { bucketOf, countTasks, describeCron, elapsed, nextCronFire, resetTaskChips, setTaskClock, taskOutput, tickTaskChips, until } from "../src/tasks";
 import type { MessageView, TaskChipView } from "../src/types";
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
@@ -196,5 +196,83 @@ describe("background task chips", () => {
 
   it("draws no strip without background work", () => {
     expect(messageElement(reply([]), {}).querySelector(".task-chips")).toBeNull();
+  });
+
+  it("counts Monitors and scheduled work as waiting while they wait, done once they end or fire", () => {
+    const monitor = task({ id: "m", kind: "monitor", title: "gpu_ft_001 training progress" });
+    const wakeup = task({ id: "w", kind: "wakeup", title: "check the deploy", fires: now + 20 * 60_000 });
+    const cron = task({ id: "c", kind: "cron", title: "核對訓練進度", schedule: "*/30 * * * *", recurring: true });
+    expect([monitor, wakeup, cron].map(bucketOf)).toEqual(["waiting", "waiting", "waiting"]);
+    expect(bucketOf({ ...wakeup, status: "completed", ended: now })).toBe("done");
+    expect(bucketOf({ ...monitor, status: "completed", ended: now })).toBe("done");
+    expect(bucketOf({ ...monitor, status: "failed", ended: now })).toBe("failed");
+    // A cron job cut off with its session is an error, like any work that went with its process.
+    expect(bucketOf({ ...cron, status: "stopped", ended: now })).toBe("failed");
+    expect(countTasks([monitor, wakeup, cron, task({ id: "a", kind: "agent" })])).toEqual({ agent: 1, waiting: 3, done: 0, failed: 0 });
+  });
+
+  it("says when something fires, in words", () => {
+    expect(until(45_000)).toBe("45 秒後");
+    expect(until(20 * 60_000)).toBe("20 分後");
+    expect(until(19 * 60_000 + 1_000)).toBe("20 分後");
+    expect(until(65 * 60_000)).toBe("1 小時 5 分後");
+    expect(until(3 * 3600_000)).toBe("3 小時後");
+    expect(until(3 * 24 * 3600_000)).toBe("3 天後");
+    expect(until(0)).toBe("即將觸發");
+  });
+
+  it("reads a cron line: in words, and when it runs next", () => {
+    expect(describeCron("*/30 * * * *")).toBe("每 30 分鐘");
+    expect(describeCron("7 * * * *")).toBe("每小時 :07");
+    expect(describeCron("0 9 * * *")).toBe("每天 09:00");
+    expect(describeCron("0 9 * * 1-5")).toBe("平日 09:00");
+    expect(describeCron("30 18 * * 1,4")).toBe("每週一、四 18:30");
+    expect(describeCron("0 */2 * * *")).toBe("每 2 小時");
+    expect(describeCron("0 9 22 10 *")).toBe("10/22 09:00");
+    expect(describeCron("7,37 * * * *")).toBe("7,37 * * * *");
+    expect(describeCron("not cron")).toBe("not cron");
+    // Local time, as claude's scheduler runs it.
+    const local = new Date(2026, 9, 21, 12, 10, 30).getTime();
+    expect(nextCronFire("*/30 * * * *", local)).toBe(new Date(2026, 9, 21, 12, 30).getTime());
+    expect(nextCronFire("0 9 * * *", local)).toBe(new Date(2026, 9, 22, 9, 0).getTime());
+    // 2026-10-21 is a Wednesday: the next Monday 09:00 is the 26th.
+    expect(nextCronFire("0 9 * * 1", local)).toBe(new Date(2026, 9, 26, 9, 0).getTime());
+    expect(nextCronFire("0 0 1 1 *", local)).toBe(new Date(2027, 0, 1, 0, 0).getTime());
+    expect(nextCronFire("0 0 31 2 *", local)).toBeNull();
+    expect(nextCronFire("nope", local)).toBeNull();
+  });
+
+  it("lists a Monitor and a scheduled wake-up with their own marks and when the wake-up fires", () => {
+    const local = new Date(2026, 9, 21, 12, 10, 0).getTime();
+    setTaskClock(() => local);
+    const row = messageElement(reply([
+      task({ id: "m", kind: "monitor", title: "gpu_ft_001 training progress", started: local - 192_000, detail: "tail -F train.log | grep EVAL" }),
+      task({ id: "w", kind: "wakeup", title: "check the deploy", started: local - 60_000, fires: local + 20 * 60_000 }),
+      task({ id: "c", kind: "cron", title: "核對訓練進度", started: local - 120_000, schedule: "0 9 * * *", recurring: true }),
+      task({ id: "o", kind: "wakeup", title: "earlier tick", status: "completed", started: local - 3_600_000, ended: local - 1_800_000, fires: local - 1_800_000 }),
+    ]), {});
+    document.body.append(row);
+    expect(count(row, "waiting")).toBe("3");
+    expect(count(row, "done")).toBe("1");
+    group(row, "waiting")!.click();
+    const lines = items(row);
+    const byId = (id: string) => lines.find((line) => line.dataset.task === id)!;
+    expect(byId("m").textContent).toContain("3 分 12 秒");
+    expect(byId("m").querySelector<HTMLElement>(".task-mark")!.dataset.kind).toBe("monitor");
+    expect(byId("m").title).toBe("監看（Monitor）：tail -F train.log | grep EVAL");
+    expect(byId("w").textContent).toContain("check the deploy");
+    expect(byId("w").textContent).toContain("20 分後");
+    expect(byId("w").querySelector<HTMLElement>(".task-mark")!.dataset.kind).toBe("wakeup");
+    expect(byId("c").textContent).toContain("每天 09:00 · 20 小時 50 分後");
+    expect(byId("c").querySelector<HTMLElement>(".task-mark")!.dataset.kind).toBe("cron");
+    // The countdown moves on; the Monitor's time goes up.
+    tickTaskChips(local + 5 * 60_000);
+    expect(byId("w").textContent).toContain("15 分後");
+    expect(byId("m").textContent).toContain("8 分 12 秒");
+    // A fired one is done, with the done mark.
+    list(row).querySelector<HTMLButtonElement>('.task-filter[data-filter="done"]')!.click();
+    const fired = items(row).find((line) => line.dataset.task === "o")!;
+    expect(fired.textContent).toContain("已觸發");
+    expect(fired.querySelector<HTMLElement>(".task-mark")!.dataset.kind).toBeUndefined();
   });
 });

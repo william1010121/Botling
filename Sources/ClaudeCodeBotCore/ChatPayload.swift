@@ -66,6 +66,11 @@ public struct ChatPayload: Encodable, Equatable {
         var detail: String?
         /// The message whose turn started it (its output is asked for by that message's id).
         var message: String
+        /// A wake-up's or one-shot cron job's time (ms since 1970).
+        var fires: Double?
+        /// A cron job's five fields, and whether it fires on every match.
+        var schedule: String?
+        var recurring: Bool?
 
         init(_ task: BackgroundTask, from messageID: UUID) {
             message = messageID.uuidString
@@ -76,6 +81,9 @@ public struct ChatPayload: Encodable, Equatable {
             started = (task.startedAt.timeIntervalSince1970 * 1000).rounded()
             ended = task.endedAt.map { ($0.timeIntervalSince1970 * 1000).rounded() }
             detail = task.detail
+            fires = task.fireAt.map { ($0.timeIntervalSince1970 * 1000).rounded() }
+            schedule = task.schedule
+            recurring = task.recurring
         }
     }
 

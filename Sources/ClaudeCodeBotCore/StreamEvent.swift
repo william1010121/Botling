@@ -24,6 +24,10 @@ enum StreamEvent {
                     guard let id = block["id"] as? String, let name = block["name"] as? String else { return [] }
                     let input = block["input"] as? [String: Any] ?? [:]
                     var events: [AgentEvent] = [.trace(.toolUse(id: id, tool: name, title: activity(tool: name, input: input), detail: detail(tool: name, input: input), parent: parent))]
+                    // A wake-up or cron job it scheduled waits in the background (its own only).
+                    if parent == nil, let call = ScheduleCall.from(tool: name, input: input) {
+                        events.append(.trace(.scheduleCalled(id: id, call: call)))
+                    }
                     // A subagent the bot named can be reached again (SendMessage) by that name.
                     if TraceBook.subagentTools.contains(name), let agent = input["name"] as? String, !agent.isEmpty {
                         events.append(.trace(.subagentNamed(id: id, name: agent)))
@@ -59,6 +63,10 @@ enum StreamEvent {
                 let type = object["task_type"] as? String
                 if type == "local_bash", object["is_backgrounded"] as? Bool == true, let id = object["tool_use_id"] as? String {
                     return [.trace(.backgroundCommandStarted(id: id, description: object["description"] as? String ?? ""))]
+                }
+                // A Monitor on a socket or an MCP server (not claude's own ambient sockets).
+                if type == "monitor_ws" || type == "monitor_mcp", object["ambient"] as? Bool != true, let id = object["tool_use_id"] as? String {
+                    return [.trace(.monitorStarted(id: id, description: object["description"] as? String ?? ""))]
                 }
                 guard let id = object["tool_use_id"] as? String,
                       type == "local_agent" || (type == nil && object["subagent_type"] != nil) else { return [] }
