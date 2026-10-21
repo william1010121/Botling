@@ -64,17 +64,16 @@ struct ComponentLiveTests {
         // The first run, then a live run asked for too soon: not run again.
         await workspace.runComponentCommand(messageID: message.id, index: 0, in: bot)
         let first = try #require(workspace.componentCommands.runs["\(message.id.uuidString)/0"]?.ranAt)
-        await workspace.runComponentCommand(messageID: message.id, index: 0, in: bot, force: true, live: true)
+        // Times are given as `now`, counted from the last run, so a slow machine changes nothing.
+        await workspace.runComponentCommand(messageID: message.id, index: 0, in: bot, force: true, live: true, now: first.addingTimeInterval(1))
         #expect(workspace.componentCommands.runs["\(message.id.uuidString)/0"]?.ranAt == first)
         // A card with no Refresh line is never run live.
         await workspace.runComponentCommand(messageID: message.id, index: 1, in: bot)
         let log = try #require(workspace.componentCommands.runs["\(message.id.uuidString)/1"]?.ranAt)
-        try await Task.sleep(for: .milliseconds(1100))
-        await workspace.runComponentCommand(messageID: message.id, index: 1, in: bot, force: true, live: true)
+        await workspace.runComponentCommand(messageID: message.id, index: 1, in: bot, force: true, live: true, now: log.addingTimeInterval(60))
         #expect(workspace.componentCommands.runs["\(message.id.uuidString)/1"]?.ranAt == log)
         // Once its time has come it runs.
-        try await Task.sleep(for: .milliseconds(1000))
-        await workspace.runComponentCommand(messageID: message.id, index: 0, in: bot, force: true, live: true)
+        await workspace.runComponentCommand(messageID: message.id, index: 0, in: bot, force: true, live: true, now: first.addingTimeInterval(2))
         #expect(try #require(workspace.componentCommands.runs["\(message.id.uuidString)/0"]?.ranAt) > first)
     }
 
