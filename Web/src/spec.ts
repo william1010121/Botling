@@ -1,5 +1,6 @@
 import { post } from "./bridge";
 import { componentElement, keepFrames } from "./components";
+import { isComposingEnter, isSendEnter } from "./ime";
 import type { ComponentInfo, PinRefresh, SpecOrigin, SpecState } from "./types";
 
 /**
@@ -249,7 +250,7 @@ export class SpecPanel {
       if (input.value.trim() !== value.trim()) post({ type: "specEdit", id: state.id, key, value: input.value.trim() });
     });
     input.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") input.blur();
+      if (event.key === "Enter" && !isComposingEnter(event)) input.blur();
     });
     return input;
   }
@@ -439,7 +440,7 @@ export class SpecPanel {
     }, "Send to Maintainer");
     box.addEventListener("input", () => { box.dataset.dirty = "1"; });
     box.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      if (isSendEnter(event)) {
         event.preventDefault();
         send.click();
       }

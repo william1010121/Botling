@@ -508,7 +508,7 @@ enum ComponentPrompts {
     - Text color #EDEDF0, secondary text #A0A0A8, accent blue #4C8DFF, recommended orange #F7C27F; font -apple-system, "PingFang TC", sans-serif.
     \(lookGood)
     - Do not load any outside resources. Use real <button> and <input> elements, buttons at least 44px tall, with enough contrast.
-    - The user may type with an input method (IME, e.g. for Chinese): always check event.isComposing before sending on Enter; an Enter that picks a candidate must not send.
+    - The user may type with an input method (IME, e.g. for Chinese): an Enter that picks a candidate must not send. The frame's runtime already stops that Enter (keydown and keypress, during composition and just after compositionend) before any of your handlers or a form submit see it, so a plain "send on Enter" handler is safe; still check event.isComposing || event.keyCode === 229 before sending on Enter.
     - about.md is the usage guide every bot reads; it is the only way they learn to use your component: the first line says in one sentence what it is, then the data format (with an example JSON) and what the bot receives when the user answers. Whenever the format or the way of answering changes, you must update about.md.
     - Only change files in that component's folder and do not commit (whoever handed you the job checks and commits). When done, reply with one sentence saying what you changed.
     """

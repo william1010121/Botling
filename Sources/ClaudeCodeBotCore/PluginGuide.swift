@@ -111,7 +111,7 @@ enum PluginGuide {
         ## Components (components/<name>/)
 
         - template.html: a piece of HTML (may include style and script), drawn on the dark background #1B1B1F. The data is in `window.ccb.data`;
-          the user's answer calls `ccb.answer(number or text)` (once: it locks the card; for state that changes, see `ccb.save` below). Do not load outside resources. Check `event.isComposing` before sending on Enter.
+          the user's answer calls `ccb.answer(number or text)` (once: it locks the card; for state that changes, see `ccb.save` below). Do not load outside resources. Check `event.isComposing` before sending on Enter. (The frame's runtime also stops an input method's Enter — Zhuyin, Pinyin — before your keydown/keypress handlers or a form submit see it, during composition and right after `compositionend`, so sending on Enter never fires on a candidate pick.)
           Pictures back: `ccb.answer({ text, images })`, where images come from `await ccb.pickImage({ multiple: true })` (from a click; `[]` if cancelled),
           `await ccb.readImage(file)` for a pasted or dropped File, or data: URLs; each picture has `dataURL` for a thumbnail. The bot receives the text
           and the pictures as files saved in the chat's attachments folder, listed like a message's attachments.
