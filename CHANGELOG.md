@@ -209,6 +209,15 @@ app and publishes it on GitHub Releases.
   where the component was. Its report is now one or two plain sentences: what it made and where
   you will see it (handed back to the bot that asked, which shows it in its own chat); a doubt is
   mentioned only when you need to do something about it.
+- **What a button does no longer depends on what it says.** Whether "Always allow" on a tool
+  question or a blocked call saves a permanent allow now comes from the button's own action
+  (allow once, always allow, don't allow), carried with it to the page, instead of its wording, so
+  renaming or translating the buttons cannot change a permission. A component spec's samples
+  carry what they are (test run, this reply, this page): which one the preview shows first is
+  decided once, in the app, and a sample of Maintainer's that happens to be called "Test run" is
+  no longer overwritten by a run; specs saved before keep working. A routine's time picker shows
+  for any every-day routine by reading its schedule, not its description, and a group chat says
+  who did not answer by what went wrong, not by the "(busy)" words.
 
 ## 1.11.0
 

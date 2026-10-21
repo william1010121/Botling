@@ -35,13 +35,68 @@ public struct ComponentSpec: Codable, Equatable, Identifiable, Sendable {
 
     /// Data to preview it with ("This reply", "Failing run", "Empty").
     public struct Sample: Codable, Equatable, Sendable {
+        /// The app's own samples. Which one is which goes by this, never by the label.
+        public enum Kind: String, Codable, Sendable {
+            /// The output of the last test run of its command.
+            case testRun
+            /// The reply's own content (or what the bot drew from it).
+            case reply
+            /// The result page it was made from.
+            case page
+
+            /// The tab's words for it.
+            public var label: String {
+                switch self {
+                case .testRun: "Test run"
+                case .reply: "This reply"
+                case .page: "This page"
+                }
+            }
+        }
+
+        /// What the tab says; only shown.
         public var label: String
+        /// Nil: one of Maintainer's (or the user's).
+        public var kind: Kind?
         public var data: String
 
-        public init(label: String, data: String) {
+        public init(label: String, kind: Kind? = nil, data: String) {
             self.label = label
+            self.kind = kind
             self.data = data
         }
+
+        public init(_ kind: Kind, data: String) {
+            self.init(label: kind.label, kind: kind, data: data)
+        }
+
+        private enum CodingKeys: String, CodingKey { case label, kind, data }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            label = try container.decode(String.self, forKey: .label)
+            data = try container.decode(String.self, forKey: .data)
+            // Saved before samples had a kind: the app's own were known by their English label.
+            kind = try container.decodeIfPresent(Kind.self, forKey: .kind)
+                ?? (container.contains(.kind) ? nil : [Kind.testRun, .reply, .page].first { $0.label == label })
+        }
+
+        /// Writes `kind` even when nil, so one of Maintainer's that reads like the app's stays Maintainer's.
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(label, forKey: .label)
+            try container.encode(kind, forKey: .kind)
+            try container.encode(data, forKey: .data)
+        }
+    }
+
+    /// The sample shown until you pick one: with live data (a command), the real run; otherwise
+    /// the reply's own content, or the page it came from; else the first. Nil when there are none.
+    public static func preferredSample(in samples: [Sample], live: Bool) -> Int? {
+        (live ? samples.firstIndex { $0.kind == .testRun } : nil)
+            ?? samples.firstIndex { $0.kind == .reply }
+            ?? samples.firstIndex { $0.kind == .page }
+            ?? (samples.isEmpty ? nil : 0)
     }
 
     /// Something Maintainer could not infer, with answers to pick (one suggested).
@@ -275,14 +330,14 @@ public enum ComponentSpecs {
         spec.command = command
         if let first, first.data != "null" {
             spec.fields = fields(fromJSON: first.data)
-            spec.samples = [ComponentSpec.Sample(label: "This reply", data: first.data)]
+            spec.samples = [ComponentSpec.Sample(.reply, data: first.data)]
             spec.shownAs = names.contains(first.name) ? first.name : nil
         } else if let page {
-            spec.samples = [ComponentSpec.Sample(label: "This page", data: PagePreview.cardData(jsonString(["path": page])))]
+            spec.samples = [ComponentSpec.Sample(.page, data: PagePreview.cardData(jsonString(["path": page])))]
             spec.shownAs = names.contains(PagePreview.component) ? PagePreview.component : nil
         } else {
             let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            spec.samples = [ComponentSpec.Sample(label: "This reply", data: jsonString(["text": text]))]
+            spec.samples = [ComponentSpec.Sample(.reply, data: jsonString(["text": text]))]
         }
         if existing == nil, let library {
             spec.similar = similar(to: spec.name, command: ran, text: message.text, in: library)

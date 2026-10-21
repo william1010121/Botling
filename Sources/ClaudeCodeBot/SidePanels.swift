@@ -1586,7 +1586,7 @@ private struct RoutineRow: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(routine.title).foregroundStyle(routine.enabled ? Theme.text : Theme.muted)
-                if let time = routine.schedule.dailyTime, routine.schedule.description.hasPrefix("Every day") {
+                if let time = routine.schedule.everyDayTime {
                     DatePicker("Time", selection: binding(hour: time.hour, minute: time.minute), displayedComponents: .hourAndMinute)
                         .labelsHidden()
                         .datePickerStyle(.field)

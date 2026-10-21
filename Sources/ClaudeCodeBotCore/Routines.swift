@@ -102,6 +102,12 @@ public struct CronSchedule: Equatable, Sendable {
         return (hour, minute)
     }
 
+    /// `HH:mm` when it runs at that one time on every day of the year; nil for anything else.
+    public var everyDayTime: (hour: Int, minute: Int)? {
+        guard let time = dailyTime, days.count == 31, months.count == 12, weekdays.isSuperset(of: 0...6) else { return nil }
+        return time
+    }
+
     /// "Every day 08:15", "Weekdays 09:00", or the cron fields when it is not that simple.
     public var description: String {
         let fields = text.split(separator: " ").map(String.init)

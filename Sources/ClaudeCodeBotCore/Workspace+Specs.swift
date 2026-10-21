@@ -396,10 +396,10 @@ extension Workspace {
             run.matches = state.data.map { ComponentSpecs.outputMatches($0, fields: specs[at].fields) }
             specs[at].testRun = run
             if let data = state.data {
-                if let sample = specs[at].samples.firstIndex(where: { $0.label == "Test run" }) {
+                if let sample = specs[at].samples.firstIndex(where: { $0.kind == .testRun }) {
                     specs[at].samples[sample].data = data
                 } else {
-                    specs[at].samples.append(.init(label: "Test run", data: data))
+                    specs[at].samples.append(.init(.testRun, data: data))
                 }
             }
         }
@@ -649,6 +649,8 @@ extension Workspace {
         let writer = reply?.sourceID.flatMap(member)?.name ?? chat.name
         let at = reply.map { " at " + $0.date.formatted(date: .omitted, time: .shortened) } ?? ""
         let from = spec.suggestedBy.map { "suggested by \($0)" } ?? (spec.page != nil ? "from \(writer)'s result page\(at)" : "from \(writer)'s reply\(at)")
+        // What the bot drew under the reply is "This reply" in the preview.
+        let samples = spec.filled.map { filled in [ComponentSpec.Sample(.reply, data: filled)] + spec.samples.filter { $0.kind != .reply } } ?? spec.samples
         return SpecPayload(
             id: spec.id.uuidString,
             name: spec.name,
@@ -668,9 +670,9 @@ extension Workspace {
             similar: spec.similar,
             similarAbout: spec.similar.flatMap { name in components.names.contains(name) ? components.summaries(of: [name]).split(separator: ":", maxSplits: 1).last.map { $0.trimmingCharacters(in: .whitespaces) } : nil },
             reuse: spec.reuse,
-            // What the bot drew under the reply is "This reply" in the preview.
-            samples: (spec.filled.map { filled in [ComponentSpec.Sample(label: "This reply", data: filled)] + spec.samples.filter { $0.label != "This reply" } } ?? spec.samples)
-                .map { .init(label: $0.label, data: $0.data) },
+            // The app's own say what their kind says now (a label saved in another language follows).
+            samples: samples.map { .init(label: $0.kind?.label ?? $0.label, kind: $0.kind?.rawValue, data: $0.data) },
+            preferredSample: ComponentSpec.preferredSample(in: samples, live: spec.status == .done && spec.command != nil),
             questions: spec.questions.map { question in
                 .init(id: question.id, text: question.text, options: question.options.map { .init(label: $0.label) }, suggested: question.suggested)
             },
@@ -709,6 +711,8 @@ public struct SpecPayload: Encodable, Equatable {
 
     public struct SampleView: Encodable, Equatable {
         var label: String
+        /// `ComponentSpec.Sample.Kind`; nil for Maintainer's.
+        var kind: String?
         var data: String
     }
 
@@ -805,6 +809,8 @@ public struct SpecPayload: Encodable, Equatable {
     var similarAbout: String?
     var reuse: Bool
     var samples: [SampleView]
+    /// The one shown until you pick one (`ComponentSpec.preferredSample`).
+    var preferredSample: Int?
     var questions: [QuestionView]
     var conversation: [LineView]
     var origins: [String: String]

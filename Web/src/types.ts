@@ -2,10 +2,14 @@
 
 export type Role = "user" | "bot" | "divider" | "error" | "relay" | "notice";
 
+export type SampleKind = "testRun" | "reply" | "page";
+
 export interface ChoiceView {
   label: string;
   detail: string | null;
   recommended: boolean;
+  /** A tool question's button: what it does. The label is only what it says; the pick goes back as its index. */
+  action?: "allowOnce" | "alwaysAllow" | "deny" | null;
 }
 
 export interface FileView {
@@ -141,7 +145,10 @@ export interface SpecState {
   similar: string | null;
   similarAbout: string | null;
   reuse: boolean;
-  samples: { label: string; data: string }[];
+  /** `kind`: the app's own samples ("testRun", "reply", "page"); null for Maintainer's. The label is only what the tab says. */
+  samples: { label: string; kind: SampleKind | null; data: string }[];
+  /** The sample shown until you pick one (the app decides: the real run for live data, else the reply's own). */
+  preferredSample: number | null;
   questions: { id: string; text: string; options: { label: string }[]; suggested: number | null }[];
   /** `images`: pictures in Maintainer's words (a component shot's contact sheet), as file URLs. */
   conversation: { kind: "user" | "maintainer" | "event"; text: string; images?: string[] }[];

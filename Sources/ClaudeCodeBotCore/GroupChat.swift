@@ -239,6 +239,7 @@ extension Workspace {
         let before = Array(chat.messages.prefix(upTo + 1).suffix(15))
         var said: [UUID] = []
         var unheard: [String] = []
+        var failed = false
         for member in members {
             // Removed, taken out of the group, or the group deleted while waiting its turn.
             guard let group = group(id), group.members.contains(member.id), let bot = self.member(member.id) else { continue }
@@ -257,6 +258,7 @@ extension Workspace {
             case .busy:
                 unheard.append("\(member.name) (busy)")
             case let .failed(why):
+                failed = true
                 unheard.append("\(member.name) (\(Self.firstLine(of: why)))")
             case .reply(var text, let steps):
                 if let filter = bot.replyFilter?() { text = await filter(text) }
@@ -280,7 +282,7 @@ extension Workspace {
             refreshWaiting()
         }
         // Said only when it matters: you named them, or something went wrong.
-        if !unheard.isEmpty, addressed || unheard.contains(where: { !$0.hasSuffix("(busy)") }) {
+        if !unheard.isEmpty, addressed || failed {
             tell(chat, "Did not answer this time: \(unheard.joined(separator: ", ")).")
         }
     }
