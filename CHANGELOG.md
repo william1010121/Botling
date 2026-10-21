@@ -153,9 +153,10 @@ app and publishes it on GitHub Releases.
   row (e.g. "✓ 2 ✕ 1") under your bubble; it now goes only under the bot's latest reply.
 - **The stop guard catches a next step the bot says it is starting.** A reply ending "下一步照先前
   說好的，開始做 1.14.0 的多國語言。" ended the turn without the work: Haiku read it as a mere
-  suggestion. A last sentence that plainly says the bot will now do something ("開始做…",
-  "接著做…", "我再去看…", "Next, I'll…") now blocks the stop too, unless it asks you, offers, or
-  names what will bring the result back.
+  suggestion. Haiku's instructions now say a next step the bot states it is starting is a promise
+  even right after a report of finished work, while a question, an offer ("要做的話跟我說"), or
+  work already handed to a background task or subagent that will report back is not; Haiku now
+  names what work is left and who will do it before it answers.
 - **A card's slow scan finishes when you open another chat.** A card whose button runs its
   component's Detail command for fresh data (the disk usage card's 重新整理, a scan of about a
   minute) seemed to stop when you switched chats: the scan's result went only to the card's page,

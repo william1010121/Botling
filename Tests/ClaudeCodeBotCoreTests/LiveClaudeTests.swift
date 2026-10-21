@@ -629,6 +629,31 @@ extension LiveClaudeTests {
         #expect(times.allSatisfy { $0 < StopGuard.classifierTimeout })
     }
 
+    /// The Haiku check on its own wording alone: a next step the bot states it is starting blocks;
+    /// finished work, a question, choices, a background task that reports back, or a suggestion to
+    /// the user don't.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func theHaikuCheckCatchesAStatedNextStepButNotASuggestion() async throws {
+        let executable = try #require(ClaudeExecutableLocator().locate())
+        let classify = StopGuard.claudeClassifier(executable: executable)
+        let cases: [(String, Bool)] = [
+            ("1.13.0-dev（389d00d）已經換上，截圖看起來正常：網頁預覽卡片改成顯示截圖，背景工作的 subagent 狀態也只出現在最後一則。下一步照先前說好的，開始做 1.14.0 的多國語言。", true),
+            ("好，我接著把測試補上。", true),
+            ("Next, I'll update the README.", true),
+            ("我再去看一下 log。", true),
+            ("已修好登入逾時的問題：改了 SessionStore 的過期判斷，補了兩個測試，全部通過，已 commit 在 bot/login（a1b2c3d）。", false),
+            ("要我 push 嗎？", false),
+            ("接下來要先做哪一個？\n<choices>\n- 多國語言\n- 深色模式\n</choices>", false),
+            ("已派 subagent 去查，查完會通知你。", false),
+            ("下一步可以考慮加快取，要做的話跟我說。", false)
+        ]
+        for (message, promises) in cases {
+            let verdict = try await classify(message)
+            print(verdict ? "PROMISE" : "OK", "-", message)
+            #expect(verdict == promises, "\(message)")
+        }
+    }
+
     /// The whole guard, with the app built (`swift build`): a bot told to only promise is sent
     /// back to do the work in the same turn.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
