@@ -6,9 +6,9 @@ public enum CodexSeverity: String, Codable, CaseIterable, Comparable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .high: "High"
-        case .medium: "Medium"
-        case .low: "Low"
+        case .high: L("High")
+        case .medium: L("Medium")
+        case .low: L("Low")
         }
     }
 
@@ -94,7 +94,7 @@ public struct CodexOutput: Codable, Equatable, Sendable {
 
     /// The reply Codex's chat shows: the verdict, then one line per finding, worst first.
     public var markdown: String {
-        var lines = [summary.isEmpty ? (findings.isEmpty ? "Nothing to report." : "Found \(findings.count) to look at.") : summary]
+        var lines = [summary.isEmpty ? (findings.isEmpty ? L("Nothing to report.") : L("Found {0} to look at.", findings.count)) : summary]
         let sorted = findings.enumerated().sorted { ($0.element.severity, $0.offset) < ($1.element.severity, $1.offset) }.map(\.element)
         if !sorted.isEmpty { lines.append("") }
         for item in sorted {
@@ -417,7 +417,7 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
         let text = queue.removeFirst()
         let folder = desk.folder
         let step = "codex-\(UUID().uuidString)"
-        continuation.yield(.trace(.toolUse(id: step, tool: "Codex", title: "Codex reads \(folder.lastPathComponent)", detail: folder.path, parent: nil)))
+        continuation.yield(.trace(.toolUse(id: step, tool: "Codex", title: L("Codex reads {0}", folder.lastPathComponent), detail: folder.path, parent: nil)))
         current = Task { [weak self, runner, desk] in
             let event: AgentEvent
             do {

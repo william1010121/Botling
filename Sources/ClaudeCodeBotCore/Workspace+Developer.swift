@@ -200,7 +200,7 @@ extension Workspace {
         manager.relay(report, files: [screenshot].compactMap { $0 } + files, feedback: FeedbackNote(about: chat.name, words: words))
         let kept = manager.messages.last { $0.role == .relay }?.attachments ?? []
         Self.appendFeedback(kept.isEmpty ? report : report + "\n\nAttachments:\n" + kept.map { "- " + $0.url.path }.joined(separator: "\n"), in: root)
-        tell(chat, "Sent to \(developer.name) as feedback.", sourceID: developer.id)
+        tell(chat, L("Sent to {0} as feedback.", developer.name), sourceID: developer.id)
         return true
     }
 

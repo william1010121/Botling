@@ -33,7 +33,7 @@ struct ClaudeCodeBotApp: App {
         .defaultSize(width: 1280, height: 820)
         .commands {
             CommandGroup(replacing: .appSettings) {
-                Button("Settings…") { delegate.settings.open() }
+                Button(L("Settings…")) { delegate.settings.open() }
                     .keyboardShortcut(",", modifiers: .command)
             }
         }
@@ -310,7 +310,7 @@ enum AppError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .claudeNotFound: "The claude command was not found. Please install Claude Code first."
+        case .claudeNotFound: L("The claude command was not found. Please install Claude Code first.")
         }
     }
 }

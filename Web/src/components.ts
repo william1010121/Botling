@@ -1,4 +1,5 @@
 import { post } from "./bridge";
+import { t } from "./i18n";
 import { imeGuardScript } from "./ime";
 import { openMedia } from "./lightbox";
 import { escapeHTML } from "./util";
@@ -923,21 +924,23 @@ export function commandCard(
     const text = document.createElement("code");
     text.className = "command-text";
     text.textContent = display.command;
-    text.title = display.folder ? `Runs in ${display.folder}` : display.command;
+    text.title = display.folder ? t("command.runsIn", { folder: display.folder }) : display.command;
     bar.append(text);
     const when = document.createElement("span");
     when.className = "command-when";
-    const every = typeof display.every === "number" && display.every > 0 ? `every ${display.every < 60 ? `${display.every}s` : `${Math.round(display.every / 60)} min`}` : "";
+    const every = typeof display.every === "number" && display.every > 0
+      ? display.every < 60 ? t("command.everySeconds", { n: display.every }) : t("command.everyMinutes", { n: Math.round(display.every / 60) })
+      : "";
     // A card that refreshes by itself says how often, and does not flash "Running…" each time.
     when.textContent = every
-      ? [display.ranAt ? `Ran ${display.ranAt}` : "", every].filter(Boolean).join(" · ")
-      : status === "running" ? "Running…" : display.ranAt ? `Ran ${display.ranAt}` : "";
+      ? [display.ranAt ? t("command.ran", { when: display.ranAt }) : "", every].filter(Boolean).join(" · ")
+      : status === "running" ? t("command.running") : display.ranAt ? t("command.ran", { when: display.ranAt }) : "";
     bar.append(when);
     if (status !== "approve") {
       const refresh = document.createElement("button");
       refresh.className = "command-refresh" + (status === "running" ? " spinning" : "");
-      refresh.setAttribute("aria-label", "Run the command again");
-      refresh.title = "Run again";
+      refresh.setAttribute("aria-label", t("command.runAgainLabel"));
+      refresh.title = t("command.runAgain");
       refresh.innerHTML = refreshIcon;
       refresh.disabled = status === "running" || status === "idle";
       refresh.addEventListener("click", () => run({ force: true }));
@@ -950,10 +953,10 @@ export function commandCard(
     const ask = document.createElement("div");
     ask.className = "command-approve";
     const line = document.createElement("div");
-    line.textContent = "This card gets its data by running a command in";
+    line.textContent = t("command.approveLine");
     const folder = document.createElement("code");
     folder.className = "command-folder";
-    folder.textContent = display.folder ?? "the project folder";
+    folder.textContent = display.folder ?? t("command.projectFolder");
     const command = document.createElement("pre");
     command.className = "command-full";
     command.textContent = display.command ?? "";
@@ -961,21 +964,21 @@ export function commandCard(
     actions.className = "command-actions";
     const allow = document.createElement("button");
     allow.className = "primary command-allow";
-    allow.textContent = "Allow and run";
+    allow.textContent = t("command.allow");
     allow.addEventListener("click", () => {
       allow.disabled = true;
       run({ approve: true });
     });
     const note = document.createElement("span");
     note.className = "command-note";
-    note.textContent = "Remembered for this command in this project.";
+    note.textContent = t("command.remembered");
     actions.append(allow, note);
     ask.append(line, folder, command);
     if (display.detail) {
       // Allowed with it: the command the component runs for more data when you ask it to.
       const also = document.createElement("div");
       also.className = "command-detail-line";
-      also.textContent = "and, for details when you open one, with the {values} filled in:";
+      also.textContent = t("command.detailLine");
       const detail = document.createElement("pre");
       detail.className = "command-full command-detail";
       detail.textContent = display.detail;
@@ -988,7 +991,7 @@ export function commandCard(
     problem.className = "command-error";
     problem.setAttribute("role", "alert");
     const title = document.createElement("strong");
-    title.textContent = display.command ? "The command failed" : "Nothing to show";
+    title.textContent = display.command ? t("command.failed") : t("command.nothing");
     const detail = document.createElement("pre");
     detail.textContent = display.error ?? "";
     problem.append(title, detail);
@@ -1003,7 +1006,7 @@ export function commandCard(
     const key = JSON.stringify([messageID, index, shown.folder, shown.command]);
     const waiting = document.createElement("div");
     waiting.className = "command-waiting";
-    waiting.innerHTML = `<span class="spinner" aria-hidden="true"></span><span>Running the command…</span>`;
+    waiting.innerHTML = `<span class="spinner" aria-hidden="true"></span><span>${escapeHTML(t("command.runningFirst"))}</span>`;
     const first = () => {
       if (requestedRuns.has(key)) return;
       requestedRuns.add(key);
@@ -1024,7 +1027,7 @@ export function fallbackChoices(choices: ChoiceView[], chosen: number | null, an
     const button = document.createElement("button");
     button.className = "choice" + (choice.recommended && !answered ? " recommended" : "") + (chosen === index ? " picked" : "") + (answered && chosen !== index ? " faded" : "");
     button.disabled = answered || !onPick;
-    const side = chosen === index ? "✓" : choice.recommended ? (choice.detail ? `Recommended · ${choice.detail}` : "Recommended") : (choice.detail ?? "");
+    const side = chosen === index ? "✓" : choice.recommended ? (choice.detail ? `${t("choices.recommended")} · ${choice.detail}` : t("choices.recommended")) : (choice.detail ?? "");
     button.innerHTML = `<span>${escapeHTML(choice.label)}</span><span class="detail">${escapeHTML(side)}</span>`;
     button.addEventListener("click", () => onPick?.(index));
     list.append(button);
@@ -1037,11 +1040,11 @@ function reportControl(name: string, info: ComponentInfo): HTMLElement {
   const side = document.createElement("div");
   side.className = "component-side";
   if (info.working) {
-    side.innerHTML = `<span class="spinner" role="img" aria-label="Component being updated"></span>`;
+    side.innerHTML = `<span class="spinner" role="img" aria-label="${escapeHTML(t("component.updating"))}"></span>`;
   } else {
     const flag = document.createElement("button");
     flag.className = "flag";
-    flag.setAttribute("aria-label", "Report this component");
+    flag.setAttribute("aria-label", t("component.report"));
     flag.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4h11l-2 4 2 4H5"/></svg>`;
     flag.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -1052,7 +1055,7 @@ function reportControl(name: string, info: ComponentInfo): HTMLElement {
   if (info.updated) {
     const label = document.createElement("span");
     label.className = "updated";
-    label.textContent = "Updated";
+    label.textContent = t("component.updated");
     side.append(label);
   }
   return side;
@@ -1075,11 +1078,11 @@ function openReport(anchor: HTMLElement, name: string, info: ComponentInfo, fram
   const component = frame ?? anchor.closest(".component")?.querySelector<HTMLElement>(".component-frame") ?? null;
   const box = document.createElement("div");
   box.className = "report";
-  box.innerHTML = `<div class="report-title">How should this component change?</div>
-<textarea rows="3" placeholder="e.g. put the options in a row. Paste or drop a picture to show it."></textarea>
+  box.innerHTML = `<div class="report-title">${escapeHTML(t("component.changeQuestion"))}</div>
+<textarea rows="3" placeholder="${escapeHTML(t("component.changePlaceholder"))}"></textarea>
 <div class="report-images" hidden></div>
-${component ? `<label class="report-shot"><input type="checkbox" checked> Attach a screenshot of it as it is now</label>` : ""}
-<div class="report-actions">${info.hasPrevious ? `<button class="plain revert">Revert to previous version</button>` : ""}<span></span><button class="primary send">Send</button></div>`;
+${component ? `<label class="report-shot"><input type="checkbox" checked> ${escapeHTML(t("component.attachShot"))}</label>` : ""}
+<div class="report-actions">${info.hasPrevious ? `<button class="plain revert">${escapeHTML(t("component.revert"))}</button>` : ""}<span></span><button class="primary send">${escapeHTML(t("composer.send"))}</button></div>`;
   const textarea = box.querySelector("textarea")!;
   const send = box.querySelector<HTMLButtonElement>(".send")!;
   const strip = box.querySelector<HTMLElement>(".report-images")!;
@@ -1099,7 +1102,8 @@ ${component ? `<label class="report-shot"><input type="checkbox" checked> Attach
       images.push(image);
       const item = document.createElement("div");
       item.className = "report-image";
-      item.innerHTML = `<img alt=""><button class="remove" aria-label="Remove picture">×</button>`;
+      item.innerHTML = `<img alt=""><button class="remove">×</button>`;
+      item.querySelector(".remove")!.setAttribute("aria-label", t("pictures.remove"));
       item.querySelector("img")!.src = url;
       item.querySelector("img")!.alt = image.name;
       item.querySelector(".remove")!.addEventListener("click", () => {

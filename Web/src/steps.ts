@@ -2,7 +2,7 @@ import { post } from "./bridge";
 import type { StepImage, StepView } from "./types";
 import { openLightbox } from "./lightbox";
 import { renderMarkdown } from "./markdown";
-import { t } from "./i18n";
+import { t, type Key } from "./i18n";
 import { escapeHTML } from "./util";
 
 /**
@@ -106,7 +106,7 @@ function liveRun(steps: StepView[]): HTMLElement[] {
   if (hidden) {
     const earlier = document.createElement("div");
     earlier.className = "steps-earlier";
-    earlier.textContent = `${tools.length} steps so far · ${hidden} earlier hidden`;
+    earlier.textContent = t("steps.soFar", { n: tools.length, hidden });
     parts.push(earlier);
   }
   parts.push(stepList(steps.slice(hidden)));
@@ -128,7 +128,7 @@ function foldedRun(listID: string, steps: StepView[], worked: boolean, earlier =
   toggle.className = "steps-toggle";
   const count = t("steps.steps", { n: tools });
   const label = [worked ? `${t("steps.worked")} · ${count}` : count];
-  if (subagents.length) label.push(`${subagents.length} subagent${subagents.length === 1 ? "" : "s"}${running ? ` (${running} running)` : ""}`);
+  if (subagents.length) label.push(t("steps.subagents", { n: subagents.length }) + (running ? t("steps.subagentsRunning", { running }) : ""));
   toggle.innerHTML = `${chevron}<span></span>`;
   toggle.querySelector("span")!.textContent = label.join(" · ");
   const list = stepList(steps);
@@ -173,8 +173,8 @@ function toolLine(step: StepView): HTMLElement {
   if (!step.detail && !step.output && !images.length) return line;
   const body = document.createElement("div");
   body.className = "step-body";
-  if (step.detail) body.append(block("In", step.detail));
-  if (step.output || images.length) body.append(block(step.failed ? "Error" : "Out", outputText(step.output ?? "", images), images));
+  if (step.detail) body.append(block(t("steps.in"), step.detail));
+  if (step.output || images.length) body.append(block(step.failed ? t("steps.error") : t("steps.out"), outputText(step.output ?? "", images), images));
   const setOpen = (open: boolean) => {
     // Pictures load once their step is first opened (a long chat has dozens of screenshots).
     if (open) for (const image of body.querySelectorAll<HTMLImageElement>("img[data-src]")) {
@@ -246,20 +246,22 @@ function subagentCard(step: StepView): HTMLElement {
   const status = step.status ?? (step.done ? "completed" : "running");
   card.className = `subagent-card ${status}`;
   const count = step.count ?? 0;
-  card.innerHTML = `<span class="subagent-dot" aria-hidden="true"></span><span class="subagent-text"><span class="subagent-title"></span><span class="subagent-meta"></span></span><span class="subagent-open">Open ›</span>`;
+  card.innerHTML = `<span class="subagent-dot" aria-hidden="true"></span><span class="subagent-text"><span class="subagent-title"></span><span class="subagent-meta"></span></span><span class="subagent-open"></span>`;
+  card.querySelector(".subagent-open")!.textContent = t("steps.openSubagent");
   card.querySelector(".subagent-title")!.textContent = step.title;
-  card.querySelector(".subagent-meta")!.textContent = `Subagent · ${statusWord(status)} · ${count} tool${count === 1 ? "" : "s"}`;
-  card.setAttribute("aria-label", `Subagent ${step.title}, ${statusWord(status)}. Open its conversation`);
+  card.querySelector(".subagent-meta")!.textContent = `${t("steps.subagent")} · ${statusWord(status)} · ${t("steps.tools", { n: count })}`;
+  card.setAttribute("aria-label", t("steps.subagentLabel", { title: step.title, status: statusWord(status) }));
   card.addEventListener("click", () => post({ type: "openSubagent", id: step.id }));
   return card;
 }
 
 export function statusWord(status: string): string {
-  return { running: "Running", completed: "Done", failed: "Failed", stopped: "Stopped" }[status] ?? status;
+  const words: Record<string, Key> = { running: "status.running", completed: "status.done", failed: "status.failed", stopped: "status.stopped" };
+  return words[status] ? t(words[status]) : status;
 }
 
 function statusIcon(step: StepView): string {
-  if (!step.done) return `<span class="step-icon spinner" aria-label="Running"></span>`;
-  if (step.failed) return `<span class="step-icon failed" aria-label="Failed">✕</span>`;
+  if (!step.done) return `<span class="step-icon spinner" aria-label="${escapeHTML(t("status.running"))}"></span>`;
+  if (step.failed) return `<span class="step-icon failed" aria-label="${escapeHTML(t("status.failed"))}">✕</span>`;
   return `<span class="step-icon done" aria-hidden="true">•</span>`;
 }

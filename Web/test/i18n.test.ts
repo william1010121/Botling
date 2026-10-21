@@ -1,7 +1,10 @@
 /// <reference types="node" />
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { globalItems } from "../src/float";
 import { dictionaries, languages, setLanguage, t, type Key } from "../src/i18n";
-import type { ChatState, MessageView, StepView } from "../src/types";
+import { refreshWords, intervalRow } from "../src/refresh";
+import { taskChips } from "../src/tasks";
+import type { ChatState, MessageView, PinView, StepView } from "../src/types";
 
 // The chat page's own words in the app's five languages: every word in every language, and the
 // language the app sends with the state reaching what the page draws.
@@ -75,3 +78,30 @@ describe("the language the app sends", () => {
     expect(toggle()).toBe("Worked · 2 steps");
   });
 });
+
+describe("menus and rows in Japanese", () => {
+  afterEach(() => setLanguage("en"));
+
+  it("a pin's refresh and float entries, and its interval row with the number before the words", () => {
+    setLanguage("ja");
+    expect(refreshWords("interval", 15)).toBe("15 分ごと");
+    expect(refreshWords("shown", 15)).toBe("表示されたとき");
+    const pin = { id: "p1" } as PinView;
+    expect(globalItems({ pin, botName: "garden", global: false, blocked: null })[0].label).toBe("すべてのボットに表示");
+    expect(globalItems({ pin, botName: "garden", global: true, blocked: null })[0].label).toBe("garden のみ");
+    const row = intervalRow({ start: { count: 30, unit: "sec" }, set: () => {} }, true);
+    const line = row.querySelector(".refresh-interval-line")!;
+    expect([...line.children].map((child) => child.className)).toEqual(["refresh-interval-count", "refresh-interval-unit", "refresh-interval-pick"]);
+    expect(line.querySelector(".refresh-interval-pick")!.textContent).toBe("ごと");
+    expect(line.querySelector(".refresh-interval-pick")!.getAttribute("aria-label")).toBe("30 秒ごと");
+    expect([...line.querySelectorAll("option")].map((option) => option.textContent)).toEqual(["秒", "分"]);
+  });
+
+  it("the background-work row", () => {
+    setLanguage("ja");
+    const now = Date.now();
+    const row = taskChips("m1", [{ id: "a", kind: "agent", title: "Review", status: "running", started: now, ended: null, detail: null, message: "m1" }]);
+    expect(row.querySelector(".task-summary")!.getAttribute("aria-label")).toBe("バックグラウンド作業：サブエージェント 1 件実行中");
+  });
+});
+

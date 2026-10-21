@@ -471,7 +471,7 @@ public struct ChatPayload: Encodable, Equatable {
         let reply = replyingTo.flatMap { id in bot.messages.first { $0.id == id } }.map {
             Reply(
                 id: $0.id.uuidString,
-                who: $0.role == .user ? "Reply to yourself" : "Reply to \($0.sourceID.flatMap { id in speaker?(id) } ?? bot.name)",
+                who: $0.role == .user ? L("Reply to yourself") : L("Reply to {0}", $0.sourceID.flatMap { id in speaker?(id) } ?? bot.name),
                 preview: Bot.preview(of: $0)
             )
         }
@@ -503,8 +503,8 @@ public struct ChatPayload: Encodable, Equatable {
             messages: messages,
             working: group.map { $0.typing != nil } ?? (bot.isWorking || guest != nil),
             avatar: (group?.typing ?? guest).map { avatar($0) } ?? own,
-            placeholder: group != nil ? "Message everyone, or @name one bot…"
-                : bot.profile.role == .main ? "Make a wish, or ask how things are going…" : "Message \(bot.name)…",
+            placeholder: group != nil ? L("Message everyone, or @name one bot…")
+                : bot.profile.role == .main ? L("Make a wish, or ask how things are going…") : L("Message {0}…", bot.name),
             replyingTo: reply,
             pendingFiles: pending.map { pending in
                 var entry = file(Attachment(url: pending.url))
@@ -698,7 +698,7 @@ public struct ChatPayload: Encodable, Equatable {
             // Its result, unless the last thing it said already is it.
             let result = subagent.result?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !pending.isEmpty || (!result.isEmpty && result != said) {
-                let text = result.isEmpty ? (subagent.status == .completed ? "Done." : "It \(subagent.status.rawValue).") : result
+                let text = result.isEmpty ? Self.endWords(subagent.status) : result
                 messages.append(message("result", role: subagent.status == .completed ? "bot" : "error", text: text, steps: pending))
             }
             pending = []
@@ -718,7 +718,7 @@ public struct ChatPayload: Encodable, Equatable {
             live: subagent.isRunning ? pending.map { stepView($0, in: bot) } : [],
             subagent: SubagentHeader(
                 id: subagent.id,
-                title: subagent.description.isEmpty ? "Subagent" : subagent.description,
+                title: subagent.description.isEmpty ? L("Subagent") : subagent.description,
                 owner: bot.name,
                 status: subagent.status.rawValue,
                 type: subagent.type
@@ -854,7 +854,7 @@ public struct ChatPayload: Encodable, Equatable {
         guard let command = command(of: instance, in: message, library: library) else {
             if instance.data == "null" {
                 shown.status = ComponentCommands.Status.failed.rawValue
-                shown.error = "This component was shown without data, and it has no command to get data from."
+                shown.error = L("This component was shown without data, and it has no command to get data from.")
             }
             return shown
         }
@@ -900,15 +900,25 @@ public struct ChatPayload: Encodable, Equatable {
         File(id: nil, name: attachment.name, kind: attachment.kind.rawValue, url: attachment.url.absoluteString)
     }
 
+    /// What a subagent's chat ends with when it said nothing at the end.
+    static func endWords(_ status: Subagent.Status) -> String {
+        switch status {
+        case .completed: L("Done.")
+        case .failed: L("It failed.")
+        case .stopped: L("It was stopped.")
+        case .running: L("It is still running.")
+        }
+    }
+
     /// "Today 08:15" above a message that comes 30+ minutes after the one before it.
     static func stamp(for messages: [ChatMessage], at index: Int, now: Date) -> String? {
         let date = messages[index].date
         if index > 0, date.timeIntervalSince(messages[index - 1].date) < 30 * 60 { return nil }
         let calendar = Calendar.current
         let time = date.formatted(date: .omitted, time: .shortened)
-        if calendar.isDate(date, inSameDayAs: now) { return "Today \(time)" }
+        if calendar.isDate(date, inSameDayAs: now) { return L("Today {0}", time) }
         if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
-            return "Yesterday \(time)"
+            return L("Yesterday {0}", time)
         }
         return date.formatted(.dateTime.month().day().hour().minute())
     }

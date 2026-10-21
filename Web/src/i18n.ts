@@ -4,47 +4,20 @@
  * wrote, components and the user's own data are never put through `t`.
  *
  * Each word has a key; `{name}` marks are filled from `values`. A pair `[one, other]` is a word
- * that changes with `values.n` (English plurals); languages without plurals give one string.
+ * that changes with `values.n` (English plurals); languages without plurals give one string. The
+ * words themselves are in `locales/`, one file a language; English's keys are the list.
  */
+
+import { en, type Dictionary, type Key, type Word } from "./locales/en";
+import { zhHant } from "./locales/zh-Hant";
+import { zhHans } from "./locales/zh-Hans";
+import { ja } from "./locales/ja";
+import { ko } from "./locales/ko";
 
 export type Lang = "en" | "zh-Hant" | "zh-Hans" | "ja" | "ko";
 export const languages: readonly Lang[] = ["en", "zh-Hant", "zh-Hans", "ja", "ko"];
 
-type Word = string | readonly [one: string, other: string];
-
-const en = {
-  // steps.ts
-  "steps.worked": "Worked",
-  "steps.notes": ["{n} note", "{n} notes"],
-  "steps.steps": ["{n} step", "{n} steps"],
-} as const satisfies Record<string, Word>;
-
-export type Key = keyof typeof en;
-type Dictionary = Record<Key, Word>;
-
-const zhHant: Dictionary = {
-  "steps.worked": "已處理",
-  "steps.notes": "{n} 段說明",
-  "steps.steps": "{n} 個步驟",
-};
-
-const zhHans: Dictionary = {
-  "steps.worked": "已处理",
-  "steps.notes": "{n} 段说明",
-  "steps.steps": "{n} 个步骤",
-};
-
-const ja: Dictionary = {
-  "steps.worked": "作業済み",
-  "steps.notes": "メモ {n} 件",
-  "steps.steps": "{n} ステップ",
-};
-
-const ko: Dictionary = {
-  "steps.worked": "작업함",
-  "steps.notes": "메모 {n}개",
-  "steps.steps": "{n}단계",
-};
+export type { Key };
 
 export const dictionaries: Record<Lang, Dictionary> = { en, "zh-Hant": zhHant, "zh-Hans": zhHans, ja, ko };
 
@@ -62,6 +35,23 @@ export function setLanguage(lang: string | null | undefined): boolean {
   current = next;
   document.documentElement.lang = next;
   return true;
+}
+
+/**
+ * `key` in the current language cut at its `{name}` marks, for words with fields in them
+ * ("Every [5] [min]" is "[5] [分]ごと" in Japanese): text pieces, and `{ mark }` where a field goes.
+ */
+export function pieces(key: Key): (string | { mark: string })[] {
+  const text = t(key);
+  const parts: (string | { mark: string })[] = [];
+  let last = 0;
+  for (const match of text.matchAll(/\{(\w+)\}/g)) {
+    if (match.index > last) parts.push(text.slice(last, match.index));
+    parts.push({ mark: match[1] });
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
 }
 
 /** `key` in the current language, its `{name}` marks filled from `values`. */

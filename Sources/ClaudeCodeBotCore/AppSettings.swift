@@ -90,9 +90,9 @@ public enum ResultPublishing: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .artifactUnlessSensitive: "Artifact, sensitive ones local"
-        case .localOnly: "Always a local HTML page"
-        case .artifactAlways: "Always an Artifact"
+        case .artifactUnlessSensitive: L("Artifact, sensitive ones local")
+        case .localOnly: L("Always a local HTML page")
+        case .artifactAlways: L("Always an Artifact")
         }
     }
 

@@ -21,14 +21,14 @@ public struct InstallProposal: Identifiable, Sendable {
 
     /// The text of the permission card.
     public var summary: String {
-        var lines = ["Install the plugin \"\(manifest.title)\" \(manifest.version)?"]
+        var lines = [L("Install the plugin \"{0}\" {1}?", manifest.title, manifest.version)]
         if let description = manifest.description { lines.append(description) }
-        lines.append("Source: \(source)")
-        lines.append("Author: \(author ?? "not given"); license: \(manifest.license ?? "not given")")
+        lines.append(L("Source: {0}", source))
+        lines.append(L("Author: {0}; license: {1}", author ?? L("not given"), manifest.license ?? L("not given")))
         let permissions = permissionLines
-        lines.append(permissions.isEmpty ? "It asks for no permissions." : "It will: " + permissions.joined(separator: ", "))
-        if !mcpServers.isEmpty { lines.append("It gives the bots new tools (MCP): " + mcpServers.joined(separator: ", ")) }
-        if manifest.ccb?.host != nil { lines.append("It has a program part that runs on your computer (permissions are only declared, not sandboxed).") }
+        lines.append(permissions.isEmpty ? L("It asks for no permissions.") : L("It will: {0}", permissions.joined(separator: ", ")))
+        if !mcpServers.isEmpty { lines.append(L("It gives the bots new tools (MCP): {0}", mcpServers.joined(separator: ", "))) }
+        if manifest.ccb?.host != nil { lines.append(L("It has a program part that runs on your computer (permissions are only declared, not sandboxed).")) }
         return lines.joined(separator: "\n")
     }
 }
@@ -150,13 +150,13 @@ public enum PluginInstaller {
 
     static func describe(permission: String) -> String {
         switch permission {
-        case "composer": "read and change what you type in the input box"
-        case "messages": "read the conversation"
-        case "network": "connect to the internet"
-        case "files": "read and write files on your computer"
-        case "exec": "run programs on your computer"
-        case "bots": "talk to bots on your behalf and make new ones"
-        case "claude": "give the bots new tools"
+        case "composer": L("read and change what you type in the input box")
+        case "messages": L("read the conversation")
+        case "network": L("connect to the internet")
+        case "files": L("read and write files on your computer")
+        case "exec": L("run programs on your computer")
+        case "bots": L("talk to bots on your behalf and make new ones")
+        case "claude": L("give the bots new tools")
         default: "\"\(permission)\""
         }
     }

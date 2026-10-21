@@ -14,10 +14,10 @@ public struct CodexFinding: Codable, Equatable, Identifiable, Sendable {
 
         public var displayName: String {
             switch self {
-            case .open: "Open"
-            case .sent: "Being fixed"
-            case .fixed: "Fixed"
-            case .skipped: "Skipped"
+            case .open: L("Open")
+            case .sent: L("Being fixed")
+            case .fixed: L("Fixed")
+            case .skipped: L("Skipped")
             }
         }
     }
@@ -55,7 +55,7 @@ public struct CodexFinding: Codable, Equatable, Identifiable, Sendable {
     /// "Bot.swift:42".
     public var place: String {
         let name = file.isEmpty ? "" : (file as NSString).lastPathComponent
-        return name + (line.map { name.isEmpty ? "line \($0)" : ":\($0)" } ?? "")
+        return name + (line.map { name.isEmpty ? L("line {0}", $0) : ":\($0)" } ?? "")
     }
 
     /// Seen in more than one round: sent back and still there.
@@ -73,9 +73,9 @@ public enum CodexSendBack: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .highAndMedium: "High and medium"
-        case .all: "All findings"
-        case .highOnly: "High only"
+        case .highAndMedium: L("High and medium")
+        case .all: L("All findings")
+        case .highOnly: L("High only")
         }
     }
 
@@ -94,9 +94,9 @@ public enum CodexReviewMode: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .off: "Off"
-        case .ask: "Ask each time"
-        case .always: "Always"
+        case .off: L("Off")
+        case .ask: L("Ask each time")
+        case .always: L("Always")
         }
     }
 }
@@ -131,10 +131,10 @@ public enum CodexScope: Codable, Equatable, Hashable, Sendable {
     /// "Uncommitted changes", "This branch vs main": how the picker names it.
     public var displayName: String {
         switch self {
-        case .uncommitted: "Uncommitted changes"
-        case .lastCommit: "Last commit"
-        case let .branch(base): "This branch vs \(base)"
-        case let .commit(hash): "Commit \(hash)"
+        case .uncommitted: L("Uncommitted changes")
+        case .lastCommit: L("Last commit")
+        case let .branch(base): L("This branch vs {0}", base)
+        case let .commit(hash): L("Commit {0}", hash)
         }
     }
 }
@@ -340,14 +340,14 @@ public struct CodexReview: Codable, Equatable, Identifiable, Sendable {
         var parts: [String] = []
         if let changedFiles {
             switch scope ?? base.map({ .branch(base: $0) }) ?? .uncommitted {
-            case .uncommitted: parts.append("Uncommitted changes")
-            case .lastCommit: parts.append("Last commit"); parts += commit.map { [$0] } ?? []
+            case .uncommitted: parts.append(L("Uncommitted changes"))
+            case .lastCommit: parts.append(L("Last commit")); parts += commit.map { [$0] } ?? []
             case let .branch(base): parts.append("\(base)...\(branch ?? "HEAD")")
-            case let .commit(hash): parts.append("Commit \(hash)")
+            case let .commit(hash): parts.append(L("Commit {0}", hash))
             }
-            if changedFiles > 0 { parts.append("\(changedFiles) file\(changedFiles == 1 ? "" : "s")") }
+            if changedFiles > 0 { parts.append(changedFiles == 1 ? L("1 file") : L("{0} files", changedFiles)) }
         }
-        if let specPath { parts.append("spec: \((specPath as NSString).lastPathComponent)") }
+        if let specPath { parts.append(L("spec: {0}", (specPath as NSString).lastPathComponent)) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
@@ -458,18 +458,18 @@ public struct CodexReview: Codable, Equatable, Identifiable, Sendable {
         let left = findings.filter { $0.status == .open || $0.status == .sent }.count
         let fixed = findings.filter { $0.status == .fixed }.count
         switch state {
-        case .reviewing: return round == 0 ? "Codex reviewing" : "Round \(round + 1) · Codex reviewing"
+        case .reviewing: return round == 0 ? L("Codex reviewing") : L("Round {0} · Codex reviewing", round + 1)
         case .fixing:
             let sending = findings.filter { $0.status == .sent }.count
-            return "Round \(round) · fixing \(sending) finding\(sending == 1 ? "" : "s")"
+            return sending == 1 ? L("Round {0} · fixing 1 finding", round) : L("Round {0} · fixing {1} findings", round, sending)
         case .clean:
-            if kind == .single, fixed == 0 { return "Clean" }
-            return round <= 1 && fixed == 0 ? "Codex: clean" : "Clean after \(round) round\(round == 1 ? "" : "s")"
-        case .open: return "\(left) to look at"
-        case .stuck: return "Max rounds · \(left) finding\(left == 1 ? "" : "s") left"
-        case .failed: return "Codex could not run"
-        case .stopped: return left == 0 ? "Stopped" : "Stopped · \(left) left"
-        case .empty: return "No changes to review"
+            if kind == .single, fixed == 0 { return L("Clean") }
+            return round <= 1 && fixed == 0 ? L("Codex: clean") : round == 1 ? L("Clean after 1 round") : L("Clean after {0} rounds", round)
+        case .open: return L("{0} to look at", left)
+        case .stuck: return left == 1 ? L("Max rounds · 1 finding left") : L("Max rounds · {0} findings left", left)
+        case .failed: return L("Codex could not run")
+        case .stopped: return left == 0 ? L("Stopped") : L("Stopped · {0} left", left)
+        case .empty: return L("No changes to review")
         }
     }
 

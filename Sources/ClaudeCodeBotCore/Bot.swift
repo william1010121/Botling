@@ -293,8 +293,8 @@ public final class Bot: ObservableObject, Identifiable {
         }
         if task.kind.isScheduled {
             // What it wakes the bot with, and when.
-            let when = task.fireAt.map { "Fires \($0.formatted(date: .abbreviated, time: .shortened))" }
-            let schedule = task.schedule.map { "cron \($0)" + (task.recurring == false ? " (once)" : "") }
+            let when = task.fireAt.map { L("Fires {0}", $0.formatted(date: .abbreviated, time: .shortened)) }
+            let schedule = task.schedule.map { "cron \($0)" + (task.recurring == false ? " " + L("(once)") : "") }
             return [[schedule, task.isRunning ? when : task.summary].compactMap { $0 }.joined(separator: " · "), task.detail ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n")
         }
         if let summary = task.summary, !task.isRunning || task.kind == .command || task.kind == .monitor { return summary }
@@ -304,10 +304,10 @@ public final class Bot: ObservableObject, Identifiable {
             if !recent.isEmpty { return recent.joined(separator: "\n") }
         }
         switch task.status {
-        case .running: return task.kind == .agent ? "Working; nothing to show yet." : task.kind == .monitor ? "Watching; no event yet." : "No output yet."
-        case .stopped: return "The bot's process ended before this reported back."
-        case .interrupted: return "The app restarted while this ran; it was killed."
-        default: return "No output was kept."
+        case .running: return task.kind == .agent ? L("Working; nothing to show yet.") : task.kind == .monitor ? L("Watching; no event yet.") : L("No output yet.")
+        case .stopped: return L("The bot's process ended before this reported back.")
+        case .interrupted: return L("The app restarted while this ran; it was killed.")
+        default: return L("No output was kept.")
         }
     }
 
@@ -674,7 +674,7 @@ public final class Bot: ObservableObject, Identifiable {
             let cutOff = takeInterruptedNote() ?? ""
             process.send([wakeLine, note, cutOff, recent, outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n"), images: outgoing.images)
         } catch {
-            append(ChatMessage(role: .error, text: "Couldn't wake up: \(error.localizedDescription)"))
+            append(ChatMessage(role: .error, text: L("Couldn't wake up: {0}", error.localizedDescription)))
         }
     }
 
@@ -843,15 +843,15 @@ public final class Bot: ObservableObject, Identifiable {
         // A background subagent's report would come back as a turn of its own and be taken for the group's reply.
         while isWorking || groupReply != nil || phase == .tidying || isSwitching || dropNextReply
                 || trace.subagents.contains(where: \.isRunning) {
-            guard !removed else { return .failed("It was removed.") }
+            guard !removed else { return .failed(L("It was removed.")) }
             guard Date() < deadline else { return .busy }
             try? await Task.sleep(for: .milliseconds(300))
         }
-        guard !removed else { return .failed("It was removed.") }
+        guard !removed else { return .failed(L("It was removed.")) }
         if restartsBeforeMessage {
             phase = .switching(.stopping)
             await restartWaiting()
-            guard !removed else { return .failed("It was removed.") }
+            guard !removed else { return .failed(L("It was removed.")) }
         }
         return await withCheckedContinuation { continuation in
             groupReply = continuation
@@ -862,7 +862,7 @@ public final class Bot: ObservableObject, Identifiable {
             }
             // It could not start, or had no process to talk to.
             if process == nil {
-                finishGroupReply(.failed("It could not start."))
+                finishGroupReply(.failed(L("It could not start.")))
                 return
             }
             Task { [weak self] in
@@ -870,7 +870,7 @@ public final class Bot: ObservableObject, Identifiable {
                 guard let self, groupReply != nil else { return }
                 // Its reply, when it comes, belongs to nobody now.
                 dropNextReply = true
-                finishGroupReply(.failed("No answer in time."))
+                finishGroupReply(.failed(L("No answer in time.")))
             }
         }
     }
@@ -895,8 +895,8 @@ public final class Bot: ObservableObject, Identifiable {
 
     // MARK: Asking to use a tool
 
-    static let noLongerNeeded = "No longer needed"
-    static let askAgain = "Closed when ClaudeCodeBot restarted; ask again"
+    static var noLongerNeeded: String { L("No longer needed") }
+    static var askAgain: String { L("Closed when ClaudeCodeBot restarted; ask again") }
     static let allowOnce = 0
 
     /// Claude wants a tool it may not use without asking: allowed already if you said always,
@@ -914,7 +914,7 @@ public final class Bot: ObservableObject, Identifiable {
         var choices = [Choice(label: "Allow once", detail: nil, recommended: true)]
         // "Always" by tool name would mean any command or any file on the disk for these.
         if !Self.neverAlways.contains(request.tool) {
-            choices.append(Choice(label: "Always allow \(request.tool)", detail: "For \(name), from now on", recommended: false))
+            choices.append(Choice(label: "Always allow \(request.tool)", detail: L("For {0}, from now on", name), recommended: false))
         }
         choices.append(Choice(label: "Don't allow", detail: nil, recommended: false))
         var message = ChatMessage(role: .bot, text: Self.permissionText(request), choices: choices)
@@ -936,7 +936,7 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// The question, with what would run shown as code so nothing in it renders as a link,
     /// a picture or formatting.
-    static func permissionText(_ request: PermissionRequest, lead: String = "Wants to use") -> String {
+    static func permissionText(_ request: PermissionRequest, lead: String = L("Wants to use")) -> String {
         let fence = String(repeating: "~", count: max(3, longestRun(of: "~", in: request.summary) + 1))
         return "\(lead) `\(request.tool.replacingOccurrences(of: "`", with: "'"))`:\n\n\(fence)\n\(request.summary)\n\(fence)"
     }
@@ -953,7 +953,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// Nobody answered in time: it counts as not allowed.
     private func expire(_ id: UUID) {
         guard let ask = permissionAsks.removeValue(forKey: id) else { return }
-        settle(id, answer: "No answer in time")
+        settle(id, answer: L("No answer in time"))
         ask.process.answer(ask.request, allow: false, message: "The user did not answer in time; carry on without it, or ask again later.")
     }
 
@@ -1010,12 +1010,12 @@ public final class Bot: ObservableObject, Identifiable {
         }
         let choices = [
             Choice(label: "Allow once", detail: nil, recommended: true),
-            Choice(label: always, detail: "For \(name), from now on", recommended: false),
+            Choice(label: always, detail: L("For {0}, from now on", name), recommended: false),
             Choice(label: "Don't allow", detail: nil, recommended: false)
         ]
         let request = PermissionRequest(id: denial.toolUseID, tool: tool, summary: summary, input: "{}")
-        let reason = denial.reason.isEmpty ? "" : "\n\nReason: " + denial.reason.replacingOccurrences(of: "\n", with: " ")
-        var message = ChatMessage(role: .bot, text: Self.permissionText(request, lead: "Auto mode blocked") + reason, choices: choices)
+        let reason = denial.reason.isEmpty ? "" : "\n\n" + L("Reason: {0}", denial.reason.replacingOccurrences(of: "\n", with: " "))
+        var message = ChatMessage(role: .bot, text: Self.permissionText(request, lead: L("Auto mode blocked")) + reason, choices: choices)
         message.permissionTool = tool
         append(message)
         denialAsks[message.id] = Denial(tool: tool, summary: summary, rule: rule)
@@ -1257,7 +1257,7 @@ public final class Bot: ObservableObject, Identifiable {
             if messages.stopBackgroundTasks(as: .stopped, at: now()) { store?.save(messages: messages) }
             dropPermissionAsks()
             dropNextReply = false
-            finishGroupReply(.failed(stderr.isEmpty ? "It stopped (\(status))." : stderr))
+            finishGroupReply(.failed(stderr.isEmpty ? L("It stopped ({0}).", status) : stderr))
             if let waiter = internalReply {
                 internalReply = nil
                 waiter.resume(returning: "")
@@ -1274,7 +1274,7 @@ public final class Bot: ObservableObject, Identifiable {
             if resumeFailed {
                 // `--resume` did not take (claude lost the session): the old process is gone, so
                 // no handoff can be written; a fresh session reads memory and the recent chat.
-                append(ChatMessage(role: .divider, text: "Couldn't go on in the same session → new session"))
+                append(ChatMessage(role: .divider, text: L("Couldn't go on in the same session → new session")))
                 if let retry = failedResume {
                     wake(with: retry)
                 } else if !queued.isEmpty {
@@ -1291,7 +1291,7 @@ public final class Bot: ObservableObject, Identifiable {
                     unreadCount += 1
                 }
             } else if status != 0 {
-                append(ChatMessage(role: .error, text: stderr.isEmpty ? "claude exited unexpectedly (\(status))" : stderr))
+                append(ChatMessage(role: .error, text: stderr.isEmpty ? L("claude exited unexpectedly ({0})", status) : stderr))
             }
             // What you said here while a group turn ran still gets an answer.
             if !queued.isEmpty { Task { [weak self] in await self?.flushQueue() } }
@@ -1580,7 +1580,7 @@ public final class Bot: ObservableObject, Identifiable {
         dropPermissionAsks()
         dropNextReply = false
         early = EarlyReplies()
-        finishGroupReply(.failed("It was removed."))
+        finishGroupReply(.failed(L("It was removed.")))
         isWorking = false
         phase = .asleep
         // Anything waiting on that process (a tidy, a handoff) carries on instead of hanging.
@@ -1604,7 +1604,7 @@ public final class Bot: ObservableObject, Identifiable {
         model = newModel
         store?.save(model: newModel)
         guard phase != .asleep else {
-            append(ChatMessage(role: .divider, text: "Switched to \(newModel.displayName)"))
+            append(ChatMessage(role: .divider, text: L("Switched to {0}", newModel.displayName)))
             return
         }
         await restart(divider: "Handoff → \(newModel.displayName)")
@@ -1624,7 +1624,7 @@ public final class Bot: ObservableObject, Identifiable {
         guard newEffort != effort else { return }
         effort = newEffort
         store?.save(effort: newEffort)
-        await restart(divider: "Handoff → \(newEffort?.displayName ?? "default") effort")
+        await restart(divider: "Handoff → \(newEffort?.englishName ?? "default") effort")
     }
 
     /// Codex review of its subagents' work. Takes effect at once: an awake bot is told with its
@@ -1725,6 +1725,34 @@ public final class Bot: ObservableObject, Identifiable {
         }
     }
 
+    /// A restart's divider as the chat shows it, in the app's language; `divider` itself stays
+    /// English, since its reason is also what the bot is told.
+    static func shownDivider(_ divider: String) -> String {
+        for (prefix, shown) in [("Handoff → ", L("Handoff → {0}", "{0}")), ("Restarted → ", L("Restarted → {0}", "{0}"))] where divider.hasPrefix(prefix) {
+            return shown.replacingOccurrences(of: "{0}", with: shownReason(String(divider.dropFirst(prefix.count))))
+        }
+        return divider
+    }
+
+    /// The reason after "Handoff → ", in the app's language.
+    static func shownReason(_ reason: String) -> String {
+        if reason.hasPrefix("subagents on ") {
+            let model = String(reason.dropFirst("subagents on ".count))
+            return model == "the same model" ? L("subagents on the same model") : L("subagents on {0}", model)
+        }
+        if reason.hasPrefix("may read ") { return L("may read {0}", String(reason.dropFirst("may read ".count))) }
+        if reason.hasSuffix(" effort") {
+            let level = String(reason.dropLast(" effort".count))
+            return L("{0} effort", EffortLevel.allCases.first { $0.englishName == level }?.displayName ?? L("default"))
+        }
+        switch reason {
+        case "loading new plugins": return L("loading new plugins")
+        case "auto-approving safe actions": return L("auto-approving safe actions")
+        case "asking before tools": return L("asking before tools")
+        default: return reason
+        }
+    }
+
     static func resumedDivider(_ divider: String) -> String {
         divider.hasPrefix("Handoff → ") ? "Restarted → " + divider.dropFirst("Handoff → ".count) : divider
     }
@@ -1743,7 +1771,7 @@ public final class Bot: ObservableObject, Identifiable {
         do {
             _ = try start(resuming: session)
             phase = .awake
-            append(ChatMessage(role: .divider, text: Self.resumedDivider(divider)))
+            append(ChatMessage(role: .divider, text: Self.shownDivider(Self.resumedDivider(divider))))
             resumeProbe = true
             resumeRetry = nil
             let reason = divider.hasPrefix("Handoff → ") ? String(divider.dropFirst("Handoff → ".count)) : divider
@@ -1754,7 +1782,7 @@ public final class Bot: ObservableObject, Identifiable {
         } catch {
             // The old process is gone already: the messages waiting wake a fresh session.
             phase = .asleep
-            append(ChatMessage(role: .error, text: "Restart failed: \(error.localizedDescription)"))
+            append(ChatMessage(role: .error, text: L("Restart failed: {0}", error.localizedDescription)))
         }
         switchTarget = nil
         await flushQueue()
@@ -1770,7 +1798,7 @@ public final class Bot: ObservableObject, Identifiable {
         phase = .switching(.stopping)
         await finishProcess()
         phase = .switching(.starting)
-        append(ChatMessage(role: .divider, text: divider))
+        append(ChatMessage(role: .divider, text: Self.shownDivider(divider)))
         do {
             _ = try start()
             let briefing = wakeNote?() ?? ""
@@ -1791,7 +1819,7 @@ public final class Bot: ObservableObject, Identifiable {
             if phase == .awake { scheduleIdle() }
         } catch {
             phase = .asleep
-            append(ChatMessage(role: .error, text: "Restart after handoff failed: \(error.localizedDescription)"))
+            append(ChatMessage(role: .error, text: L("Restart after handoff failed: {0}", error.localizedDescription)))
         }
         switchTarget = nil
         await flushQueue()

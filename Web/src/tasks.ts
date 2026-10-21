@@ -6,6 +6,7 @@
 // to the one pressed; pressing a task shows its last lines of output, which the app reads (`taskOutput`
 // action with the id of the message that started it, answered by `ccb.taskOutput`).
 import { post } from "./bridge";
+import { t, type Key } from "./i18n";
 import type { TaskChipView } from "./types";
 
 let clock: () => number = () => Date.now();
@@ -19,12 +20,16 @@ export function setTaskClock(now: () => number): void {
 export type TaskBucket = "agent" | "waiting" | "done" | "failed";
 export const taskBuckets: readonly TaskBucket[] = ["agent", "waiting", "done", "failed"];
 
-const bucketWords: Record<TaskBucket, { label: string; count: string }> = {
-  agent: { label: "Subagent", count: "subagent 執行中" },
-  waiting: { label: "等待中", count: "等待中" },
-  done: { label: "成功", count: "成功" },
-  failed: { label: "錯誤", count: "錯誤" },
+/** Each kind's name in the list ("Subagents · 2") and with its count ("2 subagents running"). */
+const bucketWords: Record<TaskBucket, { label: Key; count: Key }> = {
+  agent: { label: "tasks.agent", count: "tasks.agentCount" },
+  waiting: { label: "tasks.waiting", count: "tasks.waitingCount" },
+  done: { label: "tasks.done", count: "tasks.doneCount" },
+  failed: { label: "tasks.failed", count: "tasks.failedCount" },
 };
+
+const bucketLabel = (bucket: TaskBucket) => t(bucketWords[bucket].label);
+const bucketCount = (bucket: TaskBucket, n: number) => t(bucketWords[bucket].count, { n });
 
 /** Which of the four a task counts as: a running subagent, other running work, done, or failed. */
 export function bucketOf(task: TaskChipView): TaskBucket {
@@ -50,12 +55,12 @@ const kindIcons: Partial<Record<TaskChipView["kind"], string>> = {
 };
 
 /** What each kind is, for a line's tooltip. */
-const kindWords: Record<TaskChipView["kind"], string> = {
-  command: "背景指令",
-  agent: "背景 subagent",
-  monitor: "監看（Monitor）",
-  wakeup: "排程喚醒（ScheduleWakeup）",
-  cron: "排程工作（CronCreate）",
+const kindWords: Record<TaskChipView["kind"], Key> = {
+  command: "tasks.kind.command",
+  agent: "tasks.kind.agent",
+  monitor: "tasks.kind.monitor",
+  wakeup: "tasks.kind.wakeup",
+  cron: "tasks.kind.cron",
 };
 
 const icons: Record<TaskBucket, string> = {
@@ -84,26 +89,26 @@ export function resetTaskChips(): void {
   open.clear();
 }
 
-/** "45 秒", "3 分 12 秒", "1 小時 5 分". */
+/** "45 sec", "3 min 12 sec", "1 h 5 min" (in the page's language). */
 export function elapsed(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000));
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
-  if (hours > 0) return `${hours} 小時 ${minutes} 分`;
-  if (minutes > 0) return `${minutes} 分 ${seconds % 60} 秒`;
-  return `${seconds} 秒`;
+  if (hours > 0) return t("tasks.elapsedHours", { h: hours, m: minutes });
+  if (minutes > 0) return t("tasks.elapsedMinutes", { m: minutes, s: seconds % 60 });
+  return t("tasks.elapsedSeconds", { s: seconds });
 }
 
-/** "45 秒後", "20 分後", "3 小時 5 分後", "2 天後"; "即將觸發" once it is time. */
+/** "in 45 sec", "in 20 min", "in 3 h 5 min", "in 2 days"; "due now" once it is time. */
 export function until(ms: number): string {
-  if (ms <= 0) return "即將觸發";
+  if (ms <= 0) return t("tasks.dueNow");
   const seconds = Math.ceil(ms / 1000);
-  if (seconds < 60) return `${seconds} 秒後`;
+  if (seconds < 60) return t("tasks.inSeconds", { s: seconds });
   const minutes = Math.ceil(seconds / 60);
-  if (minutes < 60) return `${minutes} 分後`;
+  if (minutes < 60) return t("tasks.inMinutes", { m: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 48) return minutes % 60 ? `${hours} 小時 ${minutes % 60} 分後` : `${hours} 小時後`;
-  return `${Math.round(hours / 24)} 天後`;
+  if (hours < 48) return minutes % 60 ? t("tasks.inHoursMinutes", { h: hours, m: minutes % 60 }) : t("tasks.inHours", { h: hours });
+  return t("tasks.inDays", { n: Math.round(hours / 24) });
 }
 
 interface Cron {
@@ -176,13 +181,14 @@ export function nextCronFire(text: string, now: number): number | null {
   return null;
 }
 
-const weekdayNames = ["日", "一", "二", "三", "四", "五", "六"];
+/** Sunday to Saturday, short, as the page's language writes them. */
+const weekdayNames = () => t("tasks.weekdays").split(",");
 
 function hhmm(hour: number, minute: number): string {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
-/** A cron line in words: "每 30 分鐘", "每小時 :07", "每天 09:00", "平日 09:00", "每週一、四 18:30", "10/22 09:00"; the line itself when it is not that simple. */
+/** A cron line in words: "Every 30 min", "Hourly at :07", "Daily 09:00", "Weekdays 09:00", "Every Mon, Thu 18:30", "10/22 09:00"; the line itself when it is not that simple. */
 export function describeCron(text: string): string {
   const cron = parseCron(text);
   if (!cron) return text;
@@ -191,37 +197,38 @@ export function describeCron(text: string): string {
   const one = (set: Set<number>) => (set.size === 1 ? [...set][0] : null);
   const allDays = day === "*" && month === "*" && weekday === "*";
   const step = /^\*\/(\d+)$/;
-  if (step.test(minute) && hour === "*" && allDays) return `每 ${minute.match(step)![1]} 分鐘`;
-  if (minute === "*" && hour === "*" && allDays) return "每分鐘";
+  if (step.test(minute) && hour === "*" && allDays) return t("tasks.cronEveryMinutes", { n: minute.match(step)![1] });
+  if (minute === "*" && hour === "*" && allDays) return t("tasks.cronEveryMinute");
   const m = one(cron.minutes);
   if (m === null) return text;
-  if (hour === "*" && allDays) return `每小時 :${String(m).padStart(2, "0")}`;
-  if (step.test(hour) && allDays) return `每 ${hour.match(step)![1]} 小時`;
+  if (hour === "*" && allDays) return t("tasks.cronHourly", { m: String(m).padStart(2, "0") });
+  if (step.test(hour) && allDays) return t("tasks.cronEveryHours", { n: hour.match(step)![1] });
   const h = one(cron.hours);
   if (h === null) return text;
   const at = hhmm(h, m);
   if (day === "*" && month === "*") {
-    if (weekday === "*") return `每天 ${at}`;
-    if (weekday === "1-5") return `平日 ${at}`;
-    if (weekday === "0,6" || weekday === "6,0" || weekday === "6-7") return `週末 ${at}`;
+    if (weekday === "*") return t("tasks.cronDaily", { at });
+    if (weekday === "1-5") return t("tasks.cronWeekdays", { at });
+    if (weekday === "0,6" || weekday === "6,0" || weekday === "6-7") return t("tasks.cronWeekends", { at });
     const days = [...cron.weekdays].filter((d) => d !== 7).sort((a, b) => a - b);
-    return `每週${days.map((d) => weekdayNames[d]).join("、")} ${at}`;
+    const names = weekdayNames();
+    return t("tasks.cronWeekly", { days: days.map((d) => names[d]).join(t("tasks.listSeparator")), at });
   }
   const d = one(cron.days);
   const mo = one(cron.months);
   if (d !== null && mo !== null && weekday === "*") return `${mo}/${d} ${at}`;
-  if (d !== null && month === "*" && weekday === "*") return `每月 ${d} 日 ${at}`;
+  if (d !== null && month === "*" && weekday === "*") return t("tasks.cronMonthly", { d, at });
   return text;
 }
 
-/** What scheduled work's line says while it waits: when it fires next ("20 分後", "每天 09:00 · 3 小時後"). */
+/** What scheduled work's line says while it waits: when it fires next ("in 20 min", "Daily 09:00 · in 3 h"). */
 function scheduledWords(kind: string, fires: number | null, schedule: string | null, recurring: boolean, now: number): string {
   if (kind === "cron" && schedule) {
     const next = recurring ? nextCronFire(schedule, now) : fires;
-    const words = recurring ? describeCron(schedule) : `一次 ${describeCron(schedule)}`;
+    const words = recurring ? describeCron(schedule) : t("tasks.cronOnce", { when: describeCron(schedule) });
     return next != null ? `${words} · ${until(next - now)}` : words;
   }
-  return fires != null ? until(fires - now) : "等待中";
+  return fires != null ? until(fires - now) : t("status.waiting");
 }
 
 /** A running line's time: how long it has run, or, for scheduled work, when it fires. */
@@ -234,36 +241,36 @@ function runningOf(task: TaskChipView): { kind: string; started: number; fires: 
   return { kind: task.kind, started: task.started, fires: task.fires ?? null, schedule: task.schedule ?? null, recurring: task.recurring !== false };
 }
 
-const endWords: Record<string, string> = {
-  completed: "完成",
-  failed: "失敗",
-  killed: "已停止",
-  stopped: "已中斷",
-  interrupted: "已中斷（App 重開）",
+const endWords: Record<string, Key> = {
+  completed: "status.done",
+  failed: "status.failed",
+  killed: "status.stopped",
+  stopped: "tasks.interrupted",
+  interrupted: "tasks.interruptedRestart",
 };
 
 /** What a task's line says after its title: its time, or how it ended (and how long it took). */
 function status(task: TaskChipView, now: number): string {
   if (task.status === "running") return runningWords(runningOf(task), now);
-  const words = endWords[task.status] ?? endWords.killed;
+  const words = t(endWords[task.status] ?? endWords.killed);
   if (task.status === "completed" && (task.kind === "wakeup" || task.kind === "cron")) {
-    return task.kind === "cron" && task.recurring !== false ? `${describeCron(task.schedule ?? "")} · 已到期` : "已觸發";
+    return task.kind === "cron" && task.recurring !== false ? t("tasks.cronEnded", { when: describeCron(task.schedule ?? "") }) : t("tasks.fired");
   }
   if (task.status === "completed") return task.ended != null ? elapsed(task.ended - task.started) : words;
   const took = task.ended != null && task.status === "failed" ? ` · ${elapsed(task.ended - task.started)}` : "";
   return `${words}${took}`;
 }
 
-/** The counts in words: "2 subagent 執行中、1 等待中、3 成功". */
+/** The counts in words: "2 subagents running, 1 waiting, 3 done". */
 function countWords(tasks: TaskChipView[]): string {
   const counts = countTasks(tasks);
-  return taskBuckets.filter((bucket) => counts[bucket]).map((bucket) => `${counts[bucket]} ${bucketWords[bucket].count}`).join("、");
+  return taskBuckets.filter((bucket) => counts[bucket]).map((bucket) => bucketCount(bucket, counts[bucket])).join(t("tasks.listSeparator"));
 }
 
 /** An icon's tooltip: its count, then a line per task of that kind. */
 function bucketTooltip(bucket: TaskBucket, tasks: TaskChipView[], now: number): string {
   const mine = tasks.filter((task) => bucketOf(task) === bucket);
-  return [`${mine.length} ${bucketWords[bucket].count}`, ...mine.map((task) => `${task.title} · ${status(task, now)}`), "按一下看清單"].join("\n");
+  return [bucketCount(bucket, mine.length), ...mine.map((task) => `${task.title} · ${status(task, now)}`), t("tasks.clickForList")].join("\n");
 }
 
 function iconElement(bucket: TaskBucket, className: string): HTMLElement {
@@ -286,7 +293,7 @@ export function taskChips(messageID: string, tasks: TaskChipView[]): HTMLElement
   const summary = document.createElement("div");
   summary.className = "task-summary";
   summary.setAttribute("role", "group");
-  summary.setAttribute("aria-label", `背景工作：${countWords(tasks)}`);
+  summary.setAttribute("aria-label", t("tasks.summary", { counts: countWords(tasks) }));
   const iconButtons: HTMLButtonElement[] = [];
   for (const bucket of taskBuckets) {
     if (!counts[bucket]) continue;
@@ -299,7 +306,7 @@ export function taskChips(messageID: string, tasks: TaskChipView[]): HTMLElement
     count.textContent = String(counts[bucket]);
     group.append(iconElement(bucket, "task-icon"), count);
     group.title = bucketTooltip(bucket, tasks, now);
-    group.setAttribute("aria-label", `${counts[bucket]} ${bucketWords[bucket].count}`);
+    group.setAttribute("aria-label", bucketCount(bucket, counts[bucket]));
     // The times in the tooltip are as of now.
     group.addEventListener("pointerenter", () => (group.title = bucketTooltip(bucket, tasks, clock())));
     group.addEventListener("click", () => {
@@ -326,7 +333,7 @@ export function taskChips(messageID: string, tasks: TaskChipView[]): HTMLElement
     panel.hidden = !task || !view.expanded;
     panel.dataset.task = task?.id ?? "";
     panel.dataset.message = task ? origin(task) : "";
-    panel.textContent = task ? (shown ?? "讀取中…") : "";
+    panel.textContent = task ? (shown ?? t("tasks.reading")) : "";
     for (const line of lines) line.setAttribute("aria-expanded", String(!!task && line.dataset.task === task.id && line.dataset.message === origin(task)));
   };
 
@@ -342,7 +349,8 @@ export function taskChips(messageID: string, tasks: TaskChipView[]): HTMLElement
     if (task.fires != null) item.dataset.fires = String(task.fires);
     if (task.schedule) item.dataset.schedule = task.schedule;
     if (task.recurring === false) item.dataset.recurring = "false";
-    item.title = [kindWords[task.kind] ?? kindWords.command, task.detail].filter(Boolean).join("：");
+    const kind = t(kindWords[task.kind] ?? kindWords.command);
+    item.title = task.detail ? t("tasks.kindDetail", { kind, detail: task.detail }) : kind;
     const name = document.createElement("span");
     name.className = "task-name";
     name.textContent = task.title;
@@ -393,8 +401,8 @@ export function taskChips(messageID: string, tasks: TaskChipView[]): HTMLElement
         tab.dataset.filter = choice;
         tab.setAttribute("role", "tab");
         tab.setAttribute("aria-selected", String(view.filter === choice));
-        if (choice === "all") tab.textContent = `全部 ${tasks.length}`;
-        else tab.append(iconElement(choice, "task-filter-icon"), `${bucketWords[choice].label} ${counts[choice]}`);
+        if (choice === "all") tab.textContent = t("tasks.all", { n: tasks.length });
+        else tab.append(iconElement(choice, "task-filter-icon"), `${bucketLabel(choice)} ${counts[choice]}`);
         tab.addEventListener("click", () => {
           view.filter = choice;
           draw();
@@ -412,7 +420,7 @@ export function taskChips(messageID: string, tasks: TaskChipView[]): HTMLElement
         section.dataset.bucket = bucket;
         const title = document.createElement("div");
         title.className = "task-section-title";
-        title.textContent = `${bucketWords[bucket].label} · ${mine.length}`;
+        title.textContent = `${bucketLabel(bucket)} · ${mine.length}`;
         section.append(title, ...mine.map(line));
         list.append(section);
       }
@@ -427,7 +435,7 @@ export function taskChips(messageID: string, tasks: TaskChipView[]): HTMLElement
 export function taskOutput(messageID: string, taskID: string, text: string): void {
   const id = key(messageID, taskID);
   if (!open.has(id)) return;
-  const shown = text.trim() ? text : "（沒有輸出）";
+  const shown = text.trim() ? text : t("tasks.noOutput");
   open.set(id, shown);
   for (const panel of document.querySelectorAll<HTMLElement>(".task-output")) {
     if (panel.dataset.task === taskID && panel.dataset.message === messageID) panel.textContent = shown;

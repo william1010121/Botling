@@ -117,7 +117,7 @@ struct MediaView: View {
                 .frame(maxWidth: 480)
                 .frame(height: 270)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
-                .accessibilityLabel(label.isEmpty ? "Video" : label)
+                .accessibilityLabel(label.isEmpty ? L("Video") : label)
         default:
             Button { onOpen?(url, label.isEmpty ? url.lastPathComponent : label) } label: {
                 image
@@ -126,7 +126,7 @@ struct MediaView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(label.isEmpty ? "Image" : label)
+            .accessibilityLabel(label.isEmpty ? L("Image") : label)
         }
     }
 

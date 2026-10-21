@@ -259,7 +259,7 @@ struct ChatSurface: NSViewRepresentable {
                 panel.canChooseFiles = true
                 panel.canChooseDirectories = false
                 panel.allowsMultipleSelection = true
-                panel.prompt = "Add"
+                panel.prompt = L("Add")
                 if panel.runModal() == .OK {
                     inputs.files[bot.id, default: []] += panel.urls.map { ChatPayload.Pending(url: $0) }
                 }
@@ -288,7 +288,7 @@ struct ChatSurface: NSViewRepresentable {
                     let components = surface.components
                     Task {
                         if let problem = await components.revert(name) {
-                            workspace.mainBot.notice("Couldn't revert component \"\(name)\": \(problem)")
+                            workspace.mainBot.notice(L("Couldn't revert component \"{0}\": {1}", name, problem))
                         }
                     }
                 }
@@ -442,7 +442,7 @@ struct ChatSurface: NSViewRepresentable {
             panel.canChooseDirectories = false
             panel.allowsMultipleSelection = parameters.allowsMultipleSelection
             panel.allowedContentTypes = [.image]
-            panel.prompt = "Attach"
+            panel.prompt = L("Attach")
             panel.begin { response in completionHandler(response == .OK ? panel.urls : nil) }
         }
 

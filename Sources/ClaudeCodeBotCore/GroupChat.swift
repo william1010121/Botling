@@ -83,9 +83,9 @@ extension Workspace {
         let added = members.filter { !old.members.contains($0) }.compactMap(speakerName(for:))
         let left = old.members.filter { !members.contains($0) }.compactMap(speakerName(for:))
         var changes: [String] = []
-        if old.name != name { changes.append("Renamed to \"\(name)\".") }
-        if !added.isEmpty { changes.append("Added \(added.joined(separator: ", ")).") }
-        if !left.isEmpty { changes.append("Took out \(left.joined(separator: ", ")).") }
+        if old.name != name { changes.append(L("Renamed to \"{0}\".", name)) }
+        if !added.isEmpty { changes.append(L("Added {0}.", added.joined(separator: ", "))) }
+        if !left.isEmpty { changes.append(L("Took out {0}.", left.joined(separator: ", "))) }
         if !changes.isEmpty { tell(chat, changes.joined(separator: " ")) }
         // Questions from members taken out can no longer be answered here.
         for line in chat.messages where line.isOpenQuestion && line.sourceID.map({ !members.contains($0) }) == true {
@@ -239,6 +239,7 @@ extension Workspace {
         let before = Array(chat.messages.prefix(upTo + 1).suffix(15))
         var said: [UUID] = []
         var unheard: [String] = []
+        var failed = false
         for member in members {
             // Removed, taken out of the group, or the group deleted while waiting its turn.
             guard let group = group(id), group.members.contains(member.id), let bot = self.member(member.id) else { continue }
@@ -255,9 +256,10 @@ extension Workspace {
             guard groupChats[id] === chat else { return }
             switch answer {
             case .busy:
-                unheard.append("\(member.name) (busy)")
+                unheard.append(L("{0} (busy)", member.name))
             case let .failed(why):
-                unheard.append("\(member.name) (\(Self.firstLine(of: why)))")
+                unheard.append(L("{0} ({1})", member.name, Self.firstLine(of: why)))
+                failed = true
             case .reply(var text, let steps):
                 if let filter = bot.replyFilter?() { text = await filter(text) }
                 guard !Self.isPass(text) else { continue }
@@ -280,8 +282,8 @@ extension Workspace {
             refreshWaiting()
         }
         // Said only when it matters: you named them, or something went wrong.
-        if !unheard.isEmpty, addressed || unheard.contains(where: { !$0.hasSuffix("(busy)") }) {
-            tell(chat, "Did not answer this time: \(unheard.joined(separator: ", ")).")
+        if !unheard.isEmpty, addressed || failed {
+            tell(chat, L("Did not answer this time: {0}.", unheard.joined(separator: ", ")))
         }
     }
 

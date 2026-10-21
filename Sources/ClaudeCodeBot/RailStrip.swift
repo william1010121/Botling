@@ -74,8 +74,8 @@ struct RailToggle: View {
         }
         .buttonStyle(.plain)
         .keyboardShortcut("s", modifiers: [.control, .command])
-        .help(collapsed ? "Expand sidebar (⌃⌘S)" : "Collapse sidebar (⌃⌘S)")
-        .accessibilityLabel(collapsed ? "Expand sidebar" : "Collapse sidebar")
+        .help(collapsed ? L("Expand sidebar") + " (⌃⌘S)" : L("Collapse sidebar") + " (⌃⌘S)")
+        .accessibilityLabel(collapsed ? L("Expand sidebar") : L("Collapse sidebar"))
     }
 }
 
@@ -123,7 +123,7 @@ struct RailStrip: View {
                 selected: workspace.selection == Workspace.codexID,
                 waiting: false,
                 busy: workspace.codexIsReviewing,
-                status: workspace.codexIsReviewing ? "Reviewing" : "Read-only reviewer",
+                status: workspace.codexIsReviewing ? L("Reviewing") : L("Read-only reviewer"),
                 tip: $tip
             ) {
                 workspace.select(Workspace.codexID)
@@ -144,18 +144,18 @@ struct RailStrip: View {
                                 workspace.select(group.id)
                             }
                             .contextMenu {
-                                Button("Edit group…") { editGroup(group) }
-                                Button("Delete group…", role: .destructive) { deleteGroup(group) }
+                                Button(L("Edit group…")) { editGroup(group) }
+                                Button(L("Delete group…"), role: .destructive) { deleteGroup(group) }
                             }
                         case .project(let project, let bot):
                             BotIcon(bot: bot, selected: workspace.selection == project.id, waiting: waiting(project.id), tip: $tip) {
                                 workspace.select(project.id)
                             }
                             .contextMenu {
-                                Button(workspace.isPinned(project.id) ? "Unpin" : "Pin") { workspace.togglePin(project.id) }
+                                Button(workspace.isPinned(project.id) ? L("Unpin") : L("Pin")) { workspace.togglePin(project.id) }
                                 if project.isBot {
                                     Divider()
-                                    Button("Remove bot…", role: .destructive) { removeBot(project) }
+                                    Button(L("Remove bot…"), role: .destructive) { removeBot(project) }
                                 }
                             }
                         }
@@ -168,9 +168,9 @@ struct RailStrip: View {
             .scrollIndicators(.never)
 
             Menu {
-                Button("Add project…", action: addProject)
-                Button("New bot…", action: newBot)
-                Button("New group…", action: newGroup)
+                Button(L("Add project…"), action: addProject)
+                Button(L("New bot…"), action: newBot)
+                Button(L("New group…"), action: newGroup)
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 13))
@@ -181,8 +181,8 @@ struct RailStrip: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("Add a project, a bot or a group")
-            .accessibilityLabel("Add project, bot or group")
+            .help(L("Add a project, a bot or a group"))
+            .accessibilityLabel(L("Add a project, a bot or a group"))
 
             Button { showingQuickSettings.toggle() } label: {
                 Image(systemName: "gearshape")
@@ -194,8 +194,8 @@ struct RailStrip: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Settings: today's cost, auto-approve, plugins")
-            .accessibilityLabel("Settings")
+            .help(L("Settings: today's cost, auto-approve, plugins"))
+            .accessibilityLabel(L("Settings"))
             .popover(isPresented: $showingQuickSettings, arrowEdge: .trailing) {
                 SettingsPopover(workspace: workspace, registry: workspace.plugins, open: openSettings)
             }
@@ -213,10 +213,10 @@ struct RailStrip: View {
     }
 
     private var maintainerStatus: String {
-        if let (name, change) = workspace.components.working.first { return "Component \(name): \(change)" }
+        if let (name, change) = workspace.components.working.first { return L("Component {0}: {1}", name, change) }
         let bot = workspace.maintainer
-        if bot.isWorking { return "Working" }
-        return bot.hasUnread ? "Done, click to see" : bot.statusText
+        if bot.isWorking { return L("Working") }
+        return bot.hasUnread ? L("Done, click to see") : bot.statusText
     }
 }
 
@@ -267,7 +267,7 @@ private struct GroupIcon: View {
         RailIcon(
             title: group.name,
             detail: RailLayout.tipDetail(
-                status: speaker.map { "\($0) is writing…" } ?? workspace.members(of: group).map(\.name).joined(separator: ", "),
+                status: speaker.map { L("{0} is writing…", $0) } ?? workspace.members(of: group).map(\.name).joined(separator: ", "),
                 unread: selected ? 0 : chat.unreadCount,
                 waiting: question
             ),

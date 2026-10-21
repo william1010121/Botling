@@ -1,5 +1,6 @@
 import { artifactCard } from "./artifacts";
 import { post } from "./bridge";
+import { t } from "./i18n";
 import { pinBar, specPinButton } from "./pins";
 import { answerAction, answerImages, choicesData, commandCard, componentElement, detailTarget, fallbackChoices } from "./components";
 import type { ComponentAnswer } from "./components";
@@ -96,7 +97,7 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
       const relay = document.createElement("div");
       relay.className = "relay";
       relay.innerHTML = `${message.avatar ? `<img class="mini-avatar" src="${message.avatar}" alt="">` : ""}<span>${escapeHTML(message.text)}</span>`;
-      relay.setAttribute("aria-label", `From the main bot: ${message.text}`);
+      relay.setAttribute("aria-label", t("messages.fromMain", { text: message.text }));
       if (message.attachments?.length) {
         // Pictures handed over with the work (a report's screenshots), under the line.
         const column = document.createElement("div");
@@ -135,9 +136,9 @@ function feedbackRelay(message: MessageView, note: { about: string; words: strin
 <button class="feedback-toggle"><span></span>${chevron}</button>
 <div class="feedback-full"></div>
 </div>`;
-  card.querySelector(".feedback-title")!.textContent = `Feedback: a reply of ${note.about} was not right`;
+  card.querySelector(".feedback-title")!.textContent = t("feedback.title", { bot: note.about });
   const words = card.querySelector<HTMLElement>(".feedback-words")!;
-  words.textContent = note.words || "(No words, only the chat around it.)";
+  words.textContent = note.words || t("feedback.noWords");
   words.classList.toggle("empty", !note.words);
   const toggle = card.querySelector<HTMLButtonElement>(".feedback-toggle")!;
   const full = card.querySelector<HTMLElement>(".feedback-full")!;
@@ -145,7 +146,7 @@ function feedbackRelay(message: MessageView, note: { about: string; words: strin
   const show = (open: boolean) => {
     full.hidden = !open;
     toggle.setAttribute("aria-expanded", String(open));
-    toggle.querySelector("span")!.textContent = open ? "Hide the full report" : "Show the full report";
+    toggle.querySelector("span")!.textContent = open ? t("feedback.hideFull") : t("feedback.showFull");
     toggle.classList.toggle("open", open);
   };
   show(openReports.has(message.id));
@@ -155,7 +156,7 @@ function feedbackRelay(message: MessageView, note: { about: string; words: strin
     else openReports.delete(message.id);
     show(open);
   });
-  card.setAttribute("aria-label", `Feedback on a reply of ${note.about}: ${note.words}`);
+  card.setAttribute("aria-label", t("feedback.label", { bot: note.about, words: note.words }));
   column.append(card);
   if (message.attachments?.length) column.append(attachmentStrip(message.attachments));
   return column;
@@ -178,11 +179,11 @@ function actionColumn(message: MessageView): HTMLElement {
   column.className = "message-actions";
   column.append(replyButton(message));
   if (makeComponents.enabled) {
-    const label = message.component ? "Add to another bot…" : "Make into component";
+    const label = message.component ? t("messages.addToBot") : t("messages.makeComponent");
     const make = document.createElement("button");
     make.className = "reply-button make-component";
     make.setAttribute("aria-label", label);
-    make.title = message.component ? label : `${label}: Maintainer builds it from this reply right away`;
+    make.title = message.component ? label : t("messages.makeComponentTitle", { label });
     make.innerHTML = cubeIcon;
     make.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -215,10 +216,10 @@ function specChips(message: MessageView, components: Record<string, ComponentInf
     // Built, and the bot that wrote the reply is drawing it for the reply.
     const filling = spec.status === "done" && spec.filling ? spec.filling : null;
     const building = spec.status === "building" || !!filling;
-    const words = filling ? `Filling in · ${filling}` : spec.status === "done" ? "Component" : building ? "Building…" : spec.suggested ? "Suggested component" : "Component spec";
+    const words = filling ? t("specChip.filling", { bot: filling }) : spec.status === "done" ? t("specChip.component") : building ? t("specChip.building") : spec.suggested ? t("specChip.suggested") : t("specChip.spec");
     chip.innerHTML = `${building ? `<span class="spinner" aria-hidden="true"></span>` : cubeIcon}<span></span><span class="spec-chip-arrow" aria-hidden="true">›</span>`;
     chip.querySelector("span:not(.spinner)")!.textContent = `${words} · ${spec.component ?? spec.name}`;
-    chip.title = filling ? `Built; ${filling} is drawing it with this reply's data` : spec.suggested ? "Make it into a component: Maintainer builds it now" : building ? "Maintainer is building it; show its progress" : spec.open ? "Showing in the right panel" : "Open in the right panel";
+    chip.title = filling ? t("specChip.fillingTitle", { bot: filling }) : spec.suggested ? t("specChip.suggestedTitle") : building ? t("specChip.buildingTitle") : spec.open ? t("specChip.showing") : t("specChip.openInPanel");
     chip.addEventListener("click", () => post({ type: "pressSpec", id: spec.id }));
     strip.append(chip);
     if (spec.status === "done") strip.append(editSpecButton(spec));
@@ -229,9 +230,9 @@ function specChips(message: MessageView, components: Record<string, ComponentInf
 function editSpecButton(spec: SpecChipView): HTMLButtonElement {
   const edit = document.createElement("button");
   edit.className = "spec-edit";
-  edit.textContent = "Edit spec";
+  edit.textContent = t("specChip.edit");
   edit.setAttribute("aria-expanded", String(spec.open));
-  edit.title = spec.open ? "Showing in the right panel" : "Change it in the right panel; Build it makes a new version";
+  edit.title = spec.open ? t("specChip.showing") : t("specChip.editTitle");
   edit.addEventListener("click", (event) => {
     event.stopPropagation();
     post({ type: "openSpec", id: spec.id });
@@ -258,7 +259,7 @@ function builtSpec(spec: SpecChipView, components: Record<string, ComponentInfo>
   const label = document.createElement("span");
   label.className = "spec-built-name";
   label.innerHTML = spec.status === "building" ? `<span class="spinner" aria-hidden="true"></span><span></span>` : `${cubeIcon}<span></span>`;
-  label.querySelector("span:not(.spinner)")!.textContent = spec.status === "building" ? `Building a new version · ${name}` : `Component · ${name}`;
+  label.querySelector("span:not(.spinner)")!.textContent = spec.status === "building" ? t("specChip.newVersion", { name }) : `${t("specChip.component")} · ${name}`;
   head.append(label, editSpecButton(spec));
   // Pinned, a bot-filled one is made live on the Board (Maintainer gives it a command).
   if (spec.status === "done") head.append(specPinButton(spec));
@@ -270,8 +271,8 @@ function builtSpec(spec: SpecChipView, components: Record<string, ComponentInfo>
 function feedbackFlag(message: MessageView): HTMLElement {
   const flag = document.createElement("button");
   flag.className = "reply-button feedback-button";
-  flag.setAttribute("aria-label", "Not right: send to the developer project");
-  flag.title = "Not right";
+  flag.setAttribute("aria-label", t("feedback.flagLabel"));
+  flag.title = t("feedback.flag");
   flag.innerHTML = flagIcon;
   flag.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -288,10 +289,10 @@ function openFeedback(anchor: HTMLElement, message: MessageView): void {
   document.querySelector(".report")?.remove();
   const box = document.createElement("div");
   box.className = "report";
-  box.innerHTML = `<div class="report-title">What was not right?</div>
-<textarea rows="3" placeholder="e.g. it answered only half of what I said. Paste or drop a picture to show it."></textarea>
+  box.innerHTML = `<div class="report-title">${escapeHTML(t("feedback.question"))}</div>
+<textarea rows="3" placeholder="${escapeHTML(t("feedback.placeholder"))}"></textarea>
 <div class="report-images" hidden></div>
-<div class="report-actions"><span></span><button class="primary send">Send</button></div>`;
+<div class="report-actions"><span></span><button class="primary send">${escapeHTML(t("composer.send"))}</button></div>`;
   const textarea = box.querySelector("textarea")!;
   const images = acceptPictures(box, textarea, box.querySelector<HTMLElement>(".report-images")!, () => place());
   box.querySelector(".send")!.addEventListener("click", () => {
@@ -325,7 +326,7 @@ function openFeedback(anchor: HTMLElement, message: MessageView): void {
 function replyButton(message: MessageView): HTMLElement {
   const button = document.createElement("button");
   button.className = "reply-button";
-  button.setAttribute("aria-label", "Reply");
+  button.setAttribute("aria-label", t("messages.reply"));
   button.innerHTML = replyIcon;
   button.addEventListener("click", () => post({ type: "reply", messageID: message.id }));
   return button;
@@ -411,7 +412,7 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     bar.className = "preview-bar";
     const make = document.createElement("button");
     make.className = "preview-make";
-    make.innerHTML = `${cubeIcon}<span>Make into component</span>`;
+    make.innerHTML = `${cubeIcon}<span>${escapeHTML(t("messages.makeComponent"))}</span>`;
     make.addEventListener("click", (event) => {
       event.stopPropagation();
       post({ type: "makeComponent", messageID: message.id, preview: index });
@@ -425,7 +426,7 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
   if (message.openable) {
     const open = document.createElement("button");
     open.className = "open-source";
-    open.textContent = "Open ›";
+    open.textContent = t("steps.openSubagent");
     open.addEventListener("click", () => post({ type: "openSource", messageID: message.id }));
     bubble.append(open);
   }
@@ -497,7 +498,7 @@ function choicesElement(message: MessageView, components: Record<string, Compone
   wrap.className = "unfolded";
   const fold = document.createElement("button");
   fold.className = "fold";
-  fold.innerHTML = `<span>Fold</span>${chevron}`;
+  fold.innerHTML = `<span>${escapeHTML(t("messages.fold"))}</span>${chevron}`;
   fold.setAttribute("aria-expanded", "true");
   fold.addEventListener("click", () => {
     unfolded.delete(message.id);
@@ -516,14 +517,14 @@ function choicesElement(message: MessageView, components: Record<string, Compone
  */
 export function foldedChoices(message: MessageView, components: Record<string, ComponentInfo>): HTMLElement {
   const picked = message.chosen != null ? message.choices?.[message.chosen]?.label : null;
-  const label = picked ?? message.answer ?? "Answered";
+  const label = picked ?? message.answer ?? t("messages.answered");
   const button = document.createElement("button");
   button.className = "folded-choice";
   button.setAttribute("aria-expanded", "false");
   button.innerHTML = `<span class="picked-label"></span>${chevron}`;
   button.querySelector(".picked-label")!.textContent = label;
   button.title = label;
-  button.setAttribute("aria-label", `Answered: ${label}. Show the options`);
+  button.setAttribute("aria-label", t("messages.answeredLabel", { label }));
   button.addEventListener("click", () => {
     unfolded.add(message.id);
     const options = choicesElement(message, components);
@@ -566,7 +567,7 @@ export function typingElement(avatarSrc: string, live: StepView[] = []): HTMLEle
   row.append(avatar(avatarSrc));
   const dots = document.createElement("div");
   dots.className = "dots";
-  dots.setAttribute("aria-label", "Working");
+  dots.setAttribute("aria-label", t("messages.working"));
   dots.innerHTML = "<span></span><span></span><span></span>";
   if (!live.length) {
     dots.classList.add("bubble", "bot-bubble");

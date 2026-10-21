@@ -289,7 +289,7 @@ public final class Workspace: ObservableObject {
         }
         plugins.onUpdated = { [weak self] plugin, old in
             guard let self else { return }
-            tell(mainBot, "Plugin \"\(plugin.manifest.title)\" updated: \(old) → \(plugin.manifest.version)")
+            tell(mainBot, L("Plugin \"{0}\" updated: {1} → {2}", plugin.manifest.title, old, plugin.manifest.version))
         }
         connectPlugins(to: mainBot)
         startPluginHost()
@@ -338,12 +338,12 @@ public final class Workspace: ObservableObject {
         do {
             proposal = try await PluginInstaller.fetch(source, scratch: root.appending(path: "install-staging"))
         } catch {
-            tell(mainBot, "Couldn't install \"\(source)\": \(error.localizedDescription)")
+            tell(mainBot, L("Couldn't install \"{0}\": {1}", source, error.localizedDescription))
             return error.localizedDescription
         }
         guard proposal.problems.isEmpty else {
             let problem = proposal.problems.joined(separator: "; ")
-            tell(mainBot, "\"\(proposal.manifest.title)\" failed the checks and was not installed: \(problem)")
+            tell(mainBot, L("\"{0}\" failed the checks and was not installed: {1}", proposal.manifest.title, problem))
             return problem
         }
         if trusted {
@@ -352,7 +352,7 @@ public final class Workspace: ObservableObject {
         let question = tell(
             mainBot,
             proposal.summary,
-            choices: [Choice(label: "Install", detail: nil, recommended: false), Choice(label: "Don't install", detail: nil, recommended: false)]
+            choices: [Choice(label: L("Install"), detail: nil, recommended: false), Choice(label: L("Don't install"), detail: nil, recommended: false)]
         )
         installQuestions[question] = proposal
         return nil
@@ -364,9 +364,9 @@ public final class Workspace: ObservableObject {
         let problem = await plugins.install(proposal)
         try? FileManager.default.removeItem(at: proposal.folder)
         if let problem {
-            tell(mainBot, "\"\(proposal.manifest.title)\" could not be installed: \(problem)")
+            tell(mainBot, L("\"{0}\" could not be installed: {1}", proposal.manifest.title, problem))
         } else {
-            tell(mainBot, "Installed: \(proposal.manifest.title) \(proposal.manifest.version). You can turn it off or remove it under Plugins in Settings.")
+            tell(mainBot, L("Installed: {0} {1}. You can turn it off or remove it under Plugins in Settings.", proposal.manifest.title, proposal.manifest.version))
         }
         return problem
     }
@@ -400,8 +400,8 @@ public final class Workspace: ObservableObject {
         }
         let question = tell(
             maintainer,
-            "Maintainer wants to read \"\(folder.path)\". It will only read, never change files there. Allow it?",
-            choices: [Choice(label: "Allow", detail: "Won't ask again", recommended: false), Choice(label: "Don't allow", detail: nil, recommended: false)],
+            L("Maintainer wants to read \"{0}\". It will only read, never change files there. Allow it?", folder.path),
+            choices: [Choice(label: L("Allow"), detail: L("Won't ask again"), recommended: false), Choice(label: L("Don't allow"), detail: nil, recommended: false)],
             sourceID: Self.maintainerID
         )
         folderQuestions[question] = folder
@@ -420,10 +420,10 @@ public final class Workspace: ObservableObject {
         guard !editorQuestions.values.contains(edited) else { return }
         let question = tell(
             maintainer,
-            "ccb-core/claude/agents/component-editor.md was edited outside ClaudeCodeBot (the app did not write this version). Keep the edited version, or use the app's version (its prompt, on \(settings.componentEditor.displayName) as Settings says)?",
+            L("ccb-core/claude/agents/component-editor.md was edited outside ClaudeCodeBot (the app did not write this version). Keep the edited version, or use the app's version (its prompt, on {0} as Settings says)?", settings.componentEditor.displayName),
             choices: [
-                Choice(label: "Keep the edited version", detail: "The app leaves it alone until its own text changes", recommended: false),
-                Choice(label: "Use the app's version", detail: "The edit is replaced (it stays in the plugin library's git history)", recommended: false)
+                Choice(label: L("Keep the edited version"), detail: L("The app leaves it alone until its own text changes"), recommended: false),
+                Choice(label: L("Use the app's version"), detail: L("The edit is replaced (it stays in the plugin library's git history)"), recommended: false)
             ],
             sourceID: Self.maintainerID
         )
@@ -624,15 +624,17 @@ public final class Workspace: ObservableObject {
         }
         var notes: [String] = []
         if !missing.isEmpty {
-            tell(mainBot, "Couldn't add a project: there is no folder at \(missing.joined(separator: ", ")).")
+            tell(mainBot, L("Couldn't add a project: there is no folder at {0}.", missing.joined(separator: ", ")))
             notes.append("There is no folder at \(missing.joined(separator: ", ")); nothing was added for it. Ask the user for the full path.")
         }
         if !tooBroad.isEmpty {
-            tell(mainBot, "Couldn't add \(tooBroad.joined(separator: ", ")) as a project: a manager there could change far more than one project.")
+            tell(mainBot, L("Couldn't add {0} as a project: a manager there could change far more than one project.", tooBroad.joined(separator: ", ")))
             notes.append("\(tooBroad.joined(separator: ", ")) was not added: a whole disk, the home folder or ClaudeCodeBot's own folder cannot be a project. Ask for the project's own folder.")
         }
         if !handed.isEmpty {
-            tell(mainBot, "\(handed.joined(separator: ", ")) \(handed.count == 1 ? "is" : "are") already a project; any task went to \(handed.count == 1 ? "its manager" : "their managers").")
+            tell(mainBot, handed.count == 1
+                ? L("{0} is already a project; any task went to its manager.", handed.joined(separator: ", "))
+                : L("{0} are already projects; any task went to their managers.", handed.joined(separator: ", ")))
         }
         guard !adding.isEmpty else {
             if !notes.isEmpty { mainBot.queueNote("(App: " + notes.joined(separator: " ") + ")") }
@@ -642,19 +644,19 @@ public final class Workspace: ObservableObject {
         let text: String
         let add: String
         if adding.count == 1, let only = adding.first {
-            let first = only.task.isEmpty ? "" : "\n\nThen its manager starts on: \(only.task)"
-            text = "Add **\(only.folder.lastPathComponent)** as a project?\n\n`\(only.folder.path)`\n\nIts manager can read and change the files in this folder.\(first)"
-            add = "Add as project"
+            let first = only.task.isEmpty ? "" : "\n\n" + L("Then its manager starts on: {0}", only.task)
+            text = L("Add **{0}** as a project?", only.folder.lastPathComponent) + "\n\n`\(only.folder.path)`\n\n" + L("Its manager can read and change the files in this folder.") + first
+            add = L("Add as project")
         } else {
             // The same task for all of them is said once, under the list.
             let tasks = Set(adding.map(\.task))
             let shared = tasks.count == 1 ? tasks.first ?? "" : nil
-            let list = adding.map { "- **\($0.folder.lastPathComponent)** `\($0.folder.path)`" + (shared != nil || $0.task.isEmpty ? "" : " — then: \($0.task)") }
-            let then = shared.map { $0.isEmpty ? "" : "\n\nThen each manager starts on: \($0)" } ?? ""
-            text = "Add these \(adding.count) folders as projects?\n\n" + list.joined(separator: "\n") + then + "\n\nEach gets a manager that can read and change the files in its folder. To leave some out, tell the main bot instead."
-            add = "Add all \(adding.count)"
+            let list = adding.map { "- **\($0.folder.lastPathComponent)** `\($0.folder.path)`" + (shared != nil || $0.task.isEmpty ? "" : " — " + L("then: {0}", $0.task)) }
+            let then = shared.map { $0.isEmpty ? "" : "\n\n" + L("Then each manager starts on: {0}", $0) } ?? ""
+            text = L("Add these {0} folders as projects?", adding.count) + "\n\n" + list.joined(separator: "\n") + then + "\n\n" + L("Each gets a manager that can read and change the files in its folder. To leave some out, tell the main bot instead.")
+            add = L("Add all {0}", adding.count)
         }
-        let question = tell(mainBot, text, choices: [Choice(label: add, detail: nil, recommended: true), Choice(label: "Don't add", detail: nil, recommended: false)])
+        let question = tell(mainBot, text, choices: [Choice(label: add, detail: nil, recommended: true), Choice(label: L("Don't add"), detail: nil, recommended: false)])
         projectQuestions[question] = adding
         // So it can answer "is that all of them?" without seeing the card.
         notes.append("The user now sees a card asking to add \(adding.count == 1 ? "this folder" : "these \(adding.count) folders") as projects: \(adding.map(\.folder.path).joined(separator: ", ")). Nothing is added until they pick.")
@@ -740,7 +742,9 @@ public final class Workspace: ObservableObject {
         }
         let names = added.map(\.name).joined(separator: ", ")
         let anyTask = folders.contains { !$0.task.isEmpty }
-        tell(mainBot, "Added \(names) as \(added.count == 1 ? "a project" : "projects")\(anyTask ? "; the managers with a task are on it" : "").", sourceID: added.count == 1 ? added.first?.id : nil)
+        tell(mainBot, added.count == 1
+            ? (anyTask ? L("Added {0} as a project; the managers with a task are on it.", names) : L("Added {0} as a project.", names))
+            : (anyTask ? L("Added {0} as projects; the managers with a task are on it.", names) : L("Added {0} as projects.", names)), sourceID: added.count == 1 ? added.first?.id : nil)
         mainBot.queueNote("(App: The user added \(names) as projects (\(paths)); they are in the project list now.)")
     }
 
@@ -802,7 +806,7 @@ public final class Workspace: ObservableObject {
         prepareNotesFolder(for: project)
         attach(project)
         saveProjects()
-        tell(mainBot, "New bot \"\(name)\"\(creator.map { " (made by \($0))" } ?? ""): \(Self.firstLine(of: job))", sourceID: id)
+        tell(mainBot, (creator.map { L("New bot \"{0}\" (made by {1})", name, $0) } ?? L("New bot \"{0}\"", name)) + ": " + Self.firstLine(of: job), sourceID: id)
         briefAwakeMainBot()
         if setUp {
             managers[id]?.relay("""
@@ -851,7 +855,7 @@ public final class Workspace: ObservableObject {
         // It leaves its groups, and its questions there can no longer be answered.
         for group in groups where group.members.contains(id) {
             let rest = group.members.filter { $0 != id }
-            if let chat = groupChats[group.id] { tell(chat, "\(project.name) left: the bot was removed.") }
+            if let chat = groupChats[group.id] { tell(chat, L("{0} left: the bot was removed.", project.name)) }
             if rest.isEmpty {
                 deleteGroup(group.id)
             } else {
@@ -865,7 +869,7 @@ public final class Workspace: ObservableObject {
         }
         briefAwakeMainBot()
         refreshWaiting()
-        tell(mainBot, "Removed the bot \"\(project.name)\". Its folder stays at \(project.folder.path).")
+        tell(mainBot, L("Removed the bot \"{0}\". Its folder stays at {1}.", project.name, project.folder.path))
     }
 
     // MARK: Routines
@@ -989,7 +993,7 @@ public final class Workspace: ObservableObject {
             return
         }
         guard let question = managers[project.id]?.openQuestion else {
-            tell(mainBot, "\(project.name) has no question waiting in its chat now.", sourceID: project.id)
+            tell(mainBot, L("{0} has no question waiting in its chat now.", project.name), sourceID: project.id)
             mainBot.queueNote("(App: \(project.name) has no open card, so none was shown. Do not ask its question again yourself; if it still needs the user, it asks in its own chat.)")
             return
         }
@@ -1134,7 +1138,7 @@ public final class Workspace: ObservableObject {
     /// by the time it finishes (another chat was opened). `chat` holds the card's spec.
     public func runComponentDetail(_ name: String, values: [String: String], folder: String, card: String? = nil, command: String? = nil, in chat: Bot? = nil) async -> CommandOutcome {
         guard let template = components.detailCommand(of: ComponentLibrary.safeName(name)) else {
-            return CommandOutcome(error: "The component \"\(name)\" has no Detail command.")
+            return CommandOutcome(error: L("The component \"{0}\" has no Detail command.", name))
         }
         let saving = card.flatMap { card in command.map { (card: card, command: $0) } }
         let outcome = await componentCommands.runDetail(template, values: values, in: URL(filePath: folder), saving: saving)
@@ -1209,9 +1213,9 @@ public final class Workspace: ObservableObject {
                 guard project == nil || project?.isMaintainer == true else { break }
                 switch makeBot(name: name, job: job, setUp: true, by: project?.name) {
                 case let .existing(old):
-                    tell(mainBot, "There is already a bot called \"\(old.name)\"; nothing new was made. To change its job, tell it, or remove it from its menu first.", sourceID: old.id)
+                    tell(mainBot, L("There is already a bot called \"{0}\"; nothing new was made. To change its job, tell it, or remove it from its menu first.", old.name), sourceID: old.id)
                 case .taken:
-                    tell(mainBot, "No bot was made: the name \"\(Self.botName(name))\" is already used by a project or the app.")
+                    tell(mainBot, L("No bot was made: the name \"{0}\" is already used by a project or the app.", Self.botName(name)))
                 case .made, .empty, .removedByUser:
                     break
                 }
@@ -1260,7 +1264,7 @@ public final class Workspace: ObservableObject {
                 environment: plugins.secretEnvironment()
             ))
         } catch {
-            tell(mainBot, "\(spec.title) could not start: \(error.localizedDescription)")
+            tell(mainBot, L("{0} could not start: {1}", spec.title, error.localizedDescription))
             return nil
         }
         runningTeams.append(run)
@@ -1284,7 +1288,7 @@ public final class Workspace: ObservableObject {
                     process.finish()
                 case let .exited(status, stderr):
                     if !reported {
-                        if let self { tell(mainBot, "\(spec.title) did not finish: \(stderr.isEmpty ? "exit code \(status)" : stderr)") }
+                        if let self { tell(mainBot, L("{0} did not finish: {1}", spec.title, stderr.isEmpty ? L("exit code {0}", status) : stderr)) }
                     }
                 }
             }
@@ -2001,7 +2005,7 @@ public final class Workspace: ObservableObject {
                 text = changed
             case let .stopped(by: plugin):
                 let title = plugins.plugin(plugin)?.manifest.title ?? plugin
-                bot.notice("Plugin \"\(title)\" stopped this message: \(text)")
+                bot.notice(L("Plugin \"{0}\" stopped this message: {1}", title, text))
                 return
             }
         }
@@ -2028,7 +2032,7 @@ public final class Workspace: ObservableObject {
         do {
             _ = try await pluginHost.command(id)
         } catch {
-            tell(mainBot, "Command \"\(id)\" failed: \(error.localizedDescription)")
+            tell(mainBot, L("Command \"{0}\" failed: {1}", id, error.localizedDescription))
         }
     }
 

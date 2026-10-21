@@ -16,9 +16,9 @@ struct ReleasesSection: View {
     }
 
     var body: some View {
-        PanelSection("Shared features, most 👍 first") {
+        PanelSection(L("Shared features, most 👍 first")) {
             if planner.prs.isEmpty {
-                Text(planner.loading ? "Loading…" : planner.problem == nil ? "No open PRs labelled \(CommunityPR.label) yet." : "")
+                Text(planner.loading ? L("Loading…") : planner.problem == nil ? L("No open PRs labelled {0} yet.", CommunityPR.label) : "")
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.muted)
                     .padding(.horizontal, 14)
@@ -42,25 +42,25 @@ struct ReleasesSection: View {
             }
             HStack {
                 Text(planner.canPick
-                     ? "A vote is a 👍 on the PR, seen on GitHub too. Tick the ones for the next version."
-                     : "A vote is a 👍 on the PR, seen on GitHub too. The repo's owner picks what goes into the next version.")
+                     ? L("A vote is a 👍 on the PR, seen on GitHub too. Tick the ones for the next version.")
+                     : L("A vote is a 👍 on the PR, seen on GitHub too. The repo's owner picks what goes into the next version."))
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
-                Button("Reload") { Task { await planner.refresh() } }
+                Button(L("Reload")) { Task { await planner.refresh() } }
                     .disabled(planner.loading)
             }
         }
         if planner.canPick {
-            PanelSection("Next version") {
+            PanelSection(L("Next version")) {
                 let picks = planner.pickedPRs
                 HStack(spacing: 12) {
-                    Text(picks.isEmpty ? "Nothing picked yet." : picks.map { "#\($0.number)" }.joined(separator: ", "))
+                    Text(picks.isEmpty ? L("Nothing picked yet.") : picks.map { "#\($0.number)" }.joined(separator: ", "))
                         .font(.system(size: 14))
                         .foregroundStyle(picks.isEmpty ? Theme.muted : Theme.text)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Button(sent ? "Sent" : "Send to \(workspace.developerProject?.name ?? "manager")") {
+                    Button(sent ? L("Sent") : L("Send to {0}", workspace.developerProject?.name ?? L("manager"))) {
                         sent = workspace.handOffRelease(picks)
                     }
                     .disabled(picks.isEmpty || sent)
@@ -68,7 +68,7 @@ struct ReleasesSection: View {
                 .padding(.horizontal, 14)
                 .frame(height: 48)
                 .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-                Text("Its manager merges each picked PR whose tests pass and writes the release notes; one that conflicts or fails comes back to you.")
+                Text(L("Its manager merges each picked PR whose tests pass and writes the release notes; one that conflicts or fails comes back to you."))
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
                     .fixedSize(horizontal: false, vertical: true)
@@ -90,14 +90,14 @@ private struct ReleaseRow: View {
                 Toggle("", isOn: Binding(get: { planner.picked.contains(pr.number) }, set: { _ in planner.togglePick(pr.number) }))
                     .labelsHidden()
                     .toggleStyle(.checkbox)
-                    .accessibilityLabel("Pick #\(pr.number) for the next version")
+                    .accessibilityLabel(L("Pick #{0} for the next version", pr.number))
             }
             Button {
                 if let url = pr.url { NSWorkspace.shared.open(url) }
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(pr.title).font(.system(size: 14)).lineLimit(1)
-                    Text("#\(pr.number) · @\(pr.author)\(pr.isDraft ? " · draft" : "")")
+                    Text("#\(pr.number) · @\(pr.author)\(pr.isDraft ? " · " + L("draft") : "")")
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.faint)
                 }
@@ -105,7 +105,7 @@ private struct ReleaseRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Open on GitHub")
+            .help(L("Open on GitHub"))
             Button {
                 Task { await planner.vote(pr.number) }
             } label: {
@@ -118,8 +118,8 @@ private struct ReleaseRow: View {
             }
             .buttonStyle(.plain)
             .disabled(planner.loading)
-            .help(planner.voted.contains(pr.number) ? "You voted for this" : "Vote: a 👍 on the PR")
-            .accessibilityLabel("\(pr.votes) votes. Vote for #\(pr.number)")
+            .help(planner.voted.contains(pr.number) ? L("You voted for this") : L("Vote: a 👍 on the PR"))
+            .accessibilityLabel(L("{0} votes. Vote for #{1}", pr.votes, pr.number))
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

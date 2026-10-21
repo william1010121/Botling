@@ -104,15 +104,15 @@ public enum RateLimitText {
     /// The 5-hour window: "in 2h 13m", "in 8m".
     public static func countdown(_ window: RateLimitWindow, now: Date) -> String {
         guard let reset = window.resetsAt else { return "" }
-        if reset <= now { return "reset" }
+        if reset <= now { return L("reset") }
         let minutes = max(1, Int((reset.timeIntervalSince(now) / 60).rounded(.up)))
-        return minutes >= 60 ? "in \(minutes / 60)h \(minutes % 60)m" : "in \(minutes)m"
+        return minutes >= 60 ? L("in {0}h {1}m", minutes / 60, minutes % 60) : L("in {0}m", minutes)
     }
 
     /// The weekly window: "Thu 9:00 AM" (a time today: "9:00 PM").
-    public static func resetDay(_ window: RateLimitWindow, now: Date, calendar: Calendar = .current, locale: Locale = .current) -> String {
+    public static func resetDay(_ window: RateLimitWindow, now: Date, calendar: Calendar = .current, locale: Locale = L10n.language == .english ? .current : Locale(identifier: L10n.language.rawValue)) -> String {
         guard let reset = window.resetsAt else { return "" }
-        if reset <= now { return "reset" }
+        if reset <= now { return L("reset") }
         let formatter = DateFormatter()
         formatter.calendar = calendar
         formatter.timeZone = calendar.timeZone
@@ -125,9 +125,9 @@ public enum RateLimitText {
     public static func asOf(_ date: Date, now: Date) -> String {
         let minutes = max(0, Int(now.timeIntervalSince(date) / 60))
         switch minutes {
-        case ..<60: return "as of \(minutes) min ago"
-        case ..<(48 * 60): return "as of \(minutes / 60) h ago"
-        default: return "as of \(minutes / (24 * 60)) days ago"
+        case ..<60: return L("as of {0} min ago", minutes)
+        case ..<(48 * 60): return L("as of {0} h ago", minutes / 60)
+        default: return L("as of {0} days ago", minutes / (24 * 60))
         }
     }
 }

@@ -1,5 +1,6 @@
 import { mathPlugin } from "../plugins/ccb-latex/src/math";
 import { post } from "./bridge";
+import { setLanguage, t } from "./i18n";
 import { installImeGuard } from "./ime";
 import { createMarkdown } from "./markdown";
 
@@ -15,6 +16,8 @@ export interface ViewerDocument {
   base: string;
   /** The file name. */
   name: string;
+  /** The language of the window's own words (Settings → General → Language); absent means English. */
+  lang?: string | null;
 }
 
 installImeGuard(window);
@@ -47,6 +50,7 @@ export function renderDocument(text: string, base: string): string {
 
 /** Draws `doc` into the page: the formatted file, the raw source (hidden) and the toggle. */
 export function showDocument(doc: ViewerDocument): void {
+  setLanguage(doc.lang);
   document.title = doc.name;
   document.body.classList.add("viewer");
   const bar = document.createElement("div");
@@ -54,7 +58,7 @@ export function showDocument(doc: ViewerDocument): void {
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "source-toggle";
-  toggle.textContent = "Source";
+  toggle.textContent = t("viewer.source");
   toggle.setAttribute("aria-pressed", "false");
   bar.append(toggle);
 
@@ -76,7 +80,7 @@ export function showDocument(doc: ViewerDocument): void {
     const showSource = source.hidden;
     source.hidden = !showSource;
     article.hidden = showSource;
-    toggle.textContent = showSource ? "Formatted" : "Source";
+    toggle.textContent = showSource ? t("viewer.formatted") : t("viewer.source");
     toggle.setAttribute("aria-pressed", String(showSource));
   });
 

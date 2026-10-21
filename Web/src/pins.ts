@@ -1,7 +1,9 @@
 import { post } from "./bridge";
+import { language, pieces, t, type Key } from "./i18n";
 import { isComposingEnter } from "./ime";
 import { intervalRow, parseInterval, presetMinutes, presetSeconds, refreshWords, type Interval, type IntervalRow, type IntervalUnit } from "./refresh";
 import { commandCard, componentElement, hasLiveFrame, keepFrames, componentSizes, detailTarget, markPinFrames, maxColumns, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
+import { escapeHTML } from "./util";
 import type { ChatState, ChipStatus, ComponentInfo, DisplayView, FloatMenu, PinChoiceView, PinRefresh, PinSize, PinView, SpecChipView } from "./types";
 
 /**
@@ -62,26 +64,26 @@ export function pinBar(display: DisplayView, messageID: string, index: number): 
     pin: (refresh, minutes, seconds) => ({ type: "pin", id: newID(), messageID, index, refresh, minutes, ...(seconds ? { seconds } : {}) }),
   });
   if (display.pinned) {
-    const badge = button("pin-badge", "Pinned: show it", `${icons.pin}<span>Pinned</span>`, () => {
+    const badge = button("pin-badge", t("pins.pinnedShow"), `${icons.pin}<span>${escapeHTML(t("pins.pinned"))}</span>`, () => {
       document.dispatchEvent(new CustomEvent("ccb-open-pin", { detail: display.name }));
     });
     bar.append(badge);
   } else {
-    const pin = button("pin-tool", "Pin to this bot", icons.pin, () => pinIt(pin));
+    const pin = button("pin-tool", t("pins.pinToThisBot"), icons.pin, () => pinIt(pin));
     bar.append(pin);
   }
   if (display.command && (display.status === "done" || display.status === "failed")) {
-    bar.append(button("pin-tool", "Run the command again", icons.refresh, () => {
+    bar.append(button("pin-tool", t("command.runAgainLabel"), icons.refresh, () => {
       post({ type: "componentCommand", messageID, index, command: display.command ?? "", folder: display.folder ?? "", force: true });
     }));
   }
-  const more = button("pin-tool", "More", icons.more, () => {
+  const more = button("pin-tool", t("pins.more"), icons.more, () => {
     const pinned = current.pins.find((p) => p.name === display.name);
     openMenu(more, [
       pinned
-        ? { label: "Unpin", run: () => post({ type: "unpin", id: pinned.id }) }
-        : { label: `Pin to ${current.botName}…`, run: () => pinIt(more) },
-      { label: "Report this component…", run: () => more.closest(".pin-holder")?.querySelector<HTMLButtonElement>(".flag")?.click() },
+        ? { label: t("pins.unpin"), run: () => post({ type: "unpin", id: pinned.id }) }
+        : { label: t("pins.pinToBotMenu", { bot: current.botName }), run: () => pinIt(more) },
+      { label: t("pins.report"), run: () => more.closest(".pin-holder")?.querySelector<HTMLButtonElement>(".flag")?.click() },
     ]);
   });
   bar.append(more);
@@ -97,11 +99,11 @@ type PinAction = Extract<Parameters<typeof post>[0], { type: "pin" }>;
 export function specPinButton(spec: SpecChipView): HTMLElement {
   const name = spec.component ?? spec.name;
   if (current.pins.some((p) => p.name === name)) {
-    return button("pin-badge", "Pinned: show it", `${icons.pin}<span>Pinned</span>`, () => {
+    return button("pin-badge", t("pins.pinnedShow"), `${icons.pin}<span>${escapeHTML(t("pins.pinned"))}</span>`, () => {
       document.dispatchEvent(new CustomEvent("ccb-open-pin", { detail: name }));
     });
   }
-  const pin = button("pin-tool", "Pin to this bot", icons.pin, () => openPinDialog(pin, {
+  const pin = button("pin-tool", t("pins.pinToThisBot"), icons.pin, () => openPinDialog(pin, {
     name,
     command: spec.display?.command ?? null,
     pin: (refresh, minutes, seconds) => ({ type: "pin", id: newID(), spec: spec.id, refresh, minutes, ...(seconds ? { seconds } : {}) }),
@@ -113,8 +115,8 @@ export function specPinButton(spec: SpecChipView): HTMLElement {
 function liveNote(): HTMLElement {
   const note = document.createElement("div");
   note.className = "pin-live-note";
-  note.textContent = "Making it live…";
-  note.title = "Maintainer is giving it a command so it refreshes here; it shows the bot's data until then";
+  note.textContent = t("pins.makingLive");
+  note.title = t("pins.makingLiveTitle");
   return note;
 }
 
@@ -127,22 +129,22 @@ function openPinDialog(anchor: HTMLElement, options: { name: string; command: st
   const dialog = document.createElement("div");
   dialog.className = "pin-dialog pin-popup";
   dialog.setAttribute("role", "dialog");
-  dialog.setAttribute("aria-label", `Pin to ${current.botName}`);
+  dialog.setAttribute("aria-label", t("pins.pinTo", { bot: current.botName }));
   const title = document.createElement("div");
   title.className = "pin-dialog-title";
-  title.textContent = `Pin to ${current.botName}`;
+  title.textContent = t("pins.pinTo", { bot: current.botName });
   const note = document.createElement("div");
   note.className = "pin-dialog-note";
   dialog.append(title, note);
   if (options.command) {
-    note.textContent = `Keeps ${options.name} on this bot and redraws it with its command.`;
+    note.textContent = t("pins.keepsWithCommand", { name: options.name });
     const line = document.createElement("div");
     line.className = "pin-dialog-line";
-    line.innerHTML = `<span>Command</span><code class="pin-dialog-command"></code>`;
+    line.innerHTML = `<span>${escapeHTML(t("pins.command"))}</span><code class="pin-dialog-command"></code>`;
     line.querySelector("code")!.textContent = options.command;
     const heading = document.createElement("div");
     heading.className = "pin-dialog-heading";
-    heading.textContent = "Refresh";
+    heading.textContent = t("pins.refresh");
     dialog.append(line, heading);
     const group = `pin-refresh-${newID()}`;
     for (const value of ["shown", "interval", "manual"] as PinRefresh[]) {
@@ -160,7 +162,7 @@ function openPinDialog(anchor: HTMLElement, options: { name: string; command: st
         minutes.inputMode = "numeric";
         minutes.value = String(presetMinutes);
         minutes.className = "pin-minutes";
-        minutes.setAttribute("aria-label", "Minutes");
+        minutes.setAttribute("aria-label", t("refresh.interval"));
         minutes.addEventListener("focus", () => { input.checked = true; });
         // Return pins it (never an input method's Return committing a candidate).
         minutes.addEventListener("keydown", (event) => {
@@ -172,12 +174,16 @@ function openPinDialog(anchor: HTMLElement, options: { name: string; command: st
         // Minutes, or seconds for a live pin (a CPU meter, tests running).
         const unit = document.createElement("select");
         unit.className = "pin-unit";
-        unit.setAttribute("aria-label", "Unit");
-        unit.innerHTML = `<option value="min">min</option><option value="sec">sec</option>`;
+        unit.setAttribute("aria-label", t("refresh.unit"));
+        for (const [value, word] of [["min", t("refresh.min")], ["sec", t("refresh.sec")]]) unit.add(new Option(word, value));
         unit.addEventListener("focus", () => { input.checked = true; });
-        label.append(document.createTextNode("Every "), minutes, document.createTextNode(" "), unit);
+        // "Every [n] [unit]" in the page's language.
+        for (const piece of pieces("refresh.everyRow")) {
+          if (typeof piece === "string") label.append(document.createTextNode(piece));
+          else label.append(piece.mark === "n" ? minutes : unit);
+        }
       } else {
-        label.append(document.createTextNode(value === "shown" ? "When shown" : "Only when I press ↻"));
+        label.append(document.createTextNode(value === "shown" ? t("refresh.whenShown") : t("pins.onlyWhenPressed")));
       }
       dialog.append(label);
     }
@@ -187,20 +193,20 @@ function openPinDialog(anchor: HTMLElement, options: { name: string; command: st
     wrong.hidden = true;
     const hint = document.createElement("div");
     hint.className = "pin-dialog-note";
-    hint.textContent = "It runs only once you have allowed this command for the bot's folder.";
+    hint.textContent = t("pins.runsOnceAllowed");
     dialog.append(wrong, hint);
   } else {
-    note.textContent = `Keeps ${options.name} on this bot as it is drawn now (it has no command to redraw it).`;
+    note.textContent = t("pins.keepsSnapshot", { name: options.name });
   }
   const actions = document.createElement("div");
   actions.className = "pin-dialog-actions";
   const cancel = document.createElement("button");
   cancel.className = "plain";
-  cancel.textContent = "Cancel";
+  cancel.textContent = t("common.cancel");
   cancel.addEventListener("click", () => dialog.remove());
   const confirm = document.createElement("button");
   confirm.className = "primary";
-  confirm.textContent = "Pin";
+  confirm.textContent = t("pins.pin");
   confirm.addEventListener("click", () => {
     const picked = dialog.querySelector<HTMLInputElement>("input[type=radio]:checked");
     const refresh = options.command ? ((picked?.value as PinRefresh | undefined) ?? "shown") : "manual";
@@ -221,7 +227,7 @@ function openPinDialog(anchor: HTMLElement, options: { name: string; command: st
     }
     post(action);
     dialog.remove();
-    showToast(`Pinned ${options.name} to ${current.botName}`, () => post({ type: "unpin", id: action.id }));
+    showToast(t("pins.pinnedToast", { name: options.name, bot: current.botName }), () => post({ type: "unpin", id: action.id }));
   });
   actions.append(cancel, confirm);
   dialog.append(actions);
@@ -237,7 +243,7 @@ function showToast(text: string, undo: () => void): void {
   const words = document.createElement("span");
   words.textContent = text;
   const undoButton = document.createElement("button");
-  undoButton.textContent = "Undo";
+  undoButton.textContent = t("pins.undo");
   undoButton.addEventListener("click", () => {
     undo();
     toast.remove();
@@ -267,7 +273,7 @@ function sizeGrid(grid: SizeGrid, menu: HTMLElement): HTMLElement {
   const cells = document.createElement("div");
   cells.className = "pin-size-grid";
   cells.setAttribute("role", "group");
-  cells.setAttribute("aria-label", "Size");
+  cells.setAttribute("aria-label", t("pins.size"));
   const light = (size: PinSize) => {
     const { w, h } = sizeInfo(size);
     for (const cell of cells.querySelectorAll<HTMLButtonElement>("button")) {
@@ -282,7 +288,7 @@ function sizeGrid(grid: SizeGrid, menu: HTMLElement): HTMLElement {
     cell.dataset.size = size;
     cell.setAttribute("aria-label", sizeLabel(size));
     cell.setAttribute("aria-checked", String(size === grid.current));
-    cell.title = sizeLabel(size) + (grid.hints.includes(size) ? " · suggested" : "");
+    cell.title = sizeLabel(size) + (grid.hints.includes(size) ? ` · ${t("pins.suggested")}` : "");
     if (size === grid.current) cell.classList.add("checked");
     if (grid.hints.includes(size)) cell.classList.add("hint");
     cell.addEventListener("mouseenter", () => light(size));
@@ -423,17 +429,17 @@ function pinMenu(anchor: HTMLElement, pin: PinView, options: { sizes?: boolean; 
     // An opened pin has no flag over its corner (it covered the content): Report is here.
     const drawn = options.report;
     items.push(info.working
-      ? { label: "Being updated…", disabled: true, run: () => {} }
-      : { label: "Report this component…", run: () => reportComponent(anchor, pin.name, info, drawn) });
+      ? { label: t("pins.beingUpdated"), disabled: true, run: () => {} }
+      : { label: t("pins.report"), run: () => reportComponent(anchor, pin.name, info, drawn) });
     items.push("-");
   }
   // Drawn before it floated (or stopped), its sheet or tile still has the old pin.
   const float = floatItem(current.pins.find((p) => p.id === pin.id) ?? pin);
   if (float) items.push(float, "-");
-  items.push({ label: "Move earlier", disabled: at <= 0, run: () => post({ type: "movePin", id: pin.id, to: at - 1 }) });
-  items.push({ label: "Move later", disabled: at < 0 || at >= current.pins.length - 1, run: () => post({ type: "movePin", id: pin.id, to: at + 1 }) });
+  items.push({ label: t("pins.moveEarlier"), disabled: at <= 0, run: () => post({ type: "movePin", id: pin.id, to: at - 1 }) });
+  items.push({ label: t("pins.moveLater"), disabled: at < 0 || at >= current.pins.length - 1, run: () => post({ type: "movePin", id: pin.id, to: at + 1 }) });
   items.push("-");
-  items.push({ label: "Unpin", run: () => post({ type: "unpin", id: pin.id }) });
+  items.push({ label: t("pins.unpin"), run: () => post({ type: "unpin", id: pin.id }) });
   openMenu(anchor, items);
 }
 
@@ -457,26 +463,26 @@ export function refreshItems(pin: PinView): MenuItem[] {
 }
 
 /** The float entry's words, as Swift's `Pins.FloatMenu` says them. */
-export const floatWords: Record<FloatMenu, string> = {
-  float: "Float in corner",
-  stop: "Stop floating",
-  full: "Float in corner (2 floating already)",
+const floatWords: Record<FloatMenu, Key> = {
+  float: "pins.float",
+  stop: "float.stop",
+  full: "pins.floatFull",
 };
 
 /** "Float in corner" / "Stop floating" (shown off while two float already); none where Swift says nothing. */
 export function floatItem(pin: PinView): MenuItem | null {
   const menu = pin.floatMenu ?? (pin.float ? "stop" : null);
   if (!menu) return null;
-  return { label: floatWords[menu], disabled: menu === "full", run: () => post({ type: "floatPin", id: pin.id, floating: menu === "float" }) };
+  return { label: t(floatWords[menu]), disabled: menu === "full", run: () => post({ type: "floatPin", id: pin.id, floating: menu === "float" }) };
 }
 
-const sizeWords: Record<string, string> = { "1x1": "Small", "2x1": "Wide", "1x2": "Tall", "2x2": "Large", "4x2": "Extra wide" };
+const sizeWords: Record<string, Key> = { "1x1": "pins.sizeSmall", "2x1": "pins.sizeWide", "1x2": "pins.sizeTall", "2x2": "pins.sizeLarge", "4x2": "pins.sizeExtraWide" };
 
 /** A size as its card's button and menu show it: "Wide 2×1", or "3×2" for one without a name. */
 export function sizeLabel(size: PinSize): string {
   const { w, h } = sizeInfo(size);
   const word = sizeWords[`${w}x${h}`];
-  return word ? `${word} ${w}×${h}` : `${w}×${h}`;
+  return word ? `${t(word)} ${w}×${h}` : `${w}×${h}`;
 }
 
 /**
@@ -485,7 +491,7 @@ export function sizeLabel(size: PinSize): string {
  */
 function sizeItems(pin: PinView): MenuItem[] {
   const hints = current.components[pin.name]?.sizes?.length ? componentSizes(current.components[pin.name]) : [];
-  return [{ label: "Size", run: () => {}, sizes: { current: pin.size, hints, pick: (size) => post({ type: "resizePin", id: pin.id, size }) } }];
+  return [{ label: t("pins.size"), run: () => {}, sizes: { current: pin.size, hints, pick: (size) => post({ type: "resizePin", id: pin.id, size }) } }];
 }
 
 /** "Pin a component": what this bot drew (with a Command marked), and components with a Command. */
@@ -496,15 +502,15 @@ function openPicker(): void {
   const picker = document.createElement("div");
   picker.className = "pin-picker";
   picker.setAttribute("role", "dialog");
-  picker.setAttribute("aria-label", "Pin a component");
+  picker.setAttribute("aria-label", t("pins.pinAComponent"));
   const head = document.createElement("div");
   head.className = "pin-picker-head";
   const title = document.createElement("div");
   title.className = "pin-picker-title";
-  title.textContent = `Pin components to ${current.botName}`;
+  title.textContent = t("pins.pickerTitle", { bot: current.botName });
   const count = document.createElement("span");
   count.className = "pin-picker-count";
-  count.textContent = `${current.pins.length} pinned`;
+  count.textContent = t("pins.count", { n: current.pins.length });
   head.append(title, count);
   picker.append(head);
   const list = document.createElement("div");
@@ -512,7 +518,7 @@ function openPicker(): void {
   if (!current.choices.length) {
     const empty = document.createElement("div");
     empty.className = "pin-picker-empty";
-    empty.textContent = "This bot has not drawn any components yet.";
+    empty.textContent = t("pins.pickerEmpty");
     list.append(empty);
   }
   for (const choice of current.choices) {
@@ -524,10 +530,10 @@ function openPicker(): void {
     name.textContent = choice.name;
     const tag = document.createElement("span");
     tag.className = "pin-tag" + (choice.command ? " command" : "");
-    tag.textContent = choice.command ? "Command" : "Snapshot";
+    tag.textContent = choice.command ? t("pins.command") : t("pins.snapshot");
     const detail = document.createElement("span");
     detail.className = "pin-picker-detail";
-    detail.textContent = [choice.pinned ? "pinned" : "", choice.uses ? `${choice.uses} use${choice.uses === 1 ? "" : "s"}` : "not used here yet"].filter(Boolean).join(" · ");
+    detail.textContent = [choice.pinned ? t("pins.pinnedTag") : "", choice.uses ? t("pins.uses", { n: choice.uses }) : t("pins.notUsed")].filter(Boolean).join(" · ");
     row.append(name, tag, detail);
     if (choice.command) row.title = choice.command;
     row.addEventListener("click", () => {
@@ -538,7 +544,7 @@ function openPicker(): void {
       } else {
         const action = pin("manual", 15);
         post(action);
-        showToast(`Pinned ${choice.name} to ${current.botName}`, () => post({ type: "unpin", id: action.id }));
+        showToast(t("pins.pinnedToast", { name: choice.name, bot: current.botName }), () => post({ type: "unpin", id: action.id }));
       }
     });
     list.append(row);
@@ -546,12 +552,12 @@ function openPicker(): void {
   picker.append(list);
   const note = document.createElement("div");
   note.className = "pin-picker-note";
-  note.textContent = "Components without a Command pin as a snapshot of their last drawing.";
+  note.textContent = t("pins.pickerNote");
   const actions = document.createElement("div");
   actions.className = "pin-dialog-actions";
   const cancel = document.createElement("button");
   cancel.className = "plain";
-  cancel.textContent = "Close";
+  cancel.textContent = t("common.close");
   cancel.addEventListener("click", () => backdrop.remove());
   actions.append(cancel);
   picker.append(note, actions);
@@ -595,7 +601,7 @@ export function pinBody(pin: PinView, size?: PinSize, fill = !!size, where: PinS
   if (drawn) return drawn;
   const missing = document.createElement("div");
   missing.className = "command-error";
-  missing.textContent = `The component ${pin.name} is not installed any more.`;
+  missing.textContent = t("pins.missing", { name: pin.name });
   return missing;
 }
 
@@ -606,10 +612,10 @@ export function refreshPin(pin: PinView): void {
 
 /** When it last ran, or how it refreshes: "Updated 10:42", "Running…", "Snapshot". */
 export function whenWords(pin: PinView): string {
-  if (pin.display.status === "running") return "Running…";
-  if (pin.display.ranAt) return `Updated ${pin.display.ranAt}`;
-  if (pin.makingLive) return "Making it live…";
-  return pin.display.command ? refreshWords(pin.refresh, pin.minutes, pin.seconds) : "Snapshot";
+  if (pin.display.status === "running") return t("command.running");
+  if (pin.display.ranAt) return t("pins.updatedAt", { when: pin.display.ranAt });
+  if (pin.makingLive) return t("pins.makingLive");
+  return pin.display.command ? refreshWords(pin.refresh, pin.minutes, pin.seconds) : t("pins.snapshot");
 }
 
 /** What an opened or floating pin's header calls it: its about.md's short name ("發版進度卡"), else its folder name. */
@@ -631,7 +637,7 @@ export interface PinHeadTools {
 
 /** All a header shows, to fill it again only when that changed. */
 export function pinHeadKey(pin: PinView, info: ComponentInfo | undefined): string {
-  return JSON.stringify([pin.name, pinTitle(pin, info), pinStatus(pin), pin.display.status, pin.display.ranAt ?? null, info?.icon ?? null, info?.iconImage ?? null, !!pin.display.command, pin.refresh, pin.minutes, pin.seconds ?? null]);
+  return JSON.stringify([language(), pin.name, pinTitle(pin, info), pinStatus(pin), pin.display.status, pin.display.ranAt ?? null, info?.icon ?? null, info?.iconImage ?? null, !!pin.display.command, pin.refresh, pin.minutes, pin.seconds ?? null]);
 }
 
 /**
@@ -658,13 +664,13 @@ export function fillPinHead(head: HTMLElement, pin: PinView, info: ComponentInfo
   bar.setAttribute("aria-label", `${pinTitle(pin, info)}: ${whenWords(pin)}`);
   const running = pin.display.status;
   if (pin.display.command) {
-    const refresh = button("pin-tool" + (running === "running" ? " spinning" : ""), `Refresh (${whenWords(pin)})`, icons.refresh, () => refreshPin(pin));
+    const refresh = button("pin-tool" + (running === "running" ? " spinning" : ""), t("pins.refreshWhen", { when: whenWords(pin) }), icons.refresh, () => refreshPin(pin));
     refresh.disabled = running === "running" || running === "approve";
     bar.append(refresh);
   }
-  const more = button("pin-tool", "More", icons.more, () => tools.more(more));
+  const more = button("pin-tool", t("pins.more"), icons.more, () => tools.more(more));
   bar.append(more);
-  if (tools.close) bar.append(button("pin-tool", "Collapse", icons.close, tools.close));
+  if (tools.close) bar.append(button("pin-tool", t("pins.collapse"), icons.close, tools.close));
   head.append(title, chip, bar);
 }
 
@@ -791,6 +797,8 @@ export class PinArea {
   /** The opened pin's header, kept (filled again when what it shows changed). */
   private readonly sheetHead: HTMLElement;
   private sheetHeadKey = "";
+  /** The language its words were last drawn in. */
+  private wordsIn = "";
 
   constructor(area: HTMLElement, board: HTMLElement) {
     this.sheet = document.createElement("section");
@@ -801,7 +809,6 @@ export class PinArea {
     this.dock = document.createElement("div");
     this.dock.className = "pin-dock";
     this.dock.setAttribute("role", "toolbar");
-    this.dock.setAttribute("aria-label", "Pinned components");
     this.dock.hidden = true;
     area.append(this.sheet, this.dock);
     this.board = board;
@@ -823,6 +830,15 @@ export class PinArea {
   }
 
   update(state: ChatState): void {
+    // A new language: everything is drawn again in its words (live frames are kept).
+    if (this.wordsIn !== language()) {
+      this.wordsIn = language();
+      this.dock.setAttribute("aria-label", t("pins.dock"));
+      this.board.setAttribute("aria-label", t("pins.board"));
+      this.sheetKey = this.dockKey = this.headKey = this.sheetHeadKey = "";
+      for (const entry of this.cards.values()) entry.key = "";
+      this.grid.querySelector(".board-add")?.remove();
+    }
     this.enabled = !!state.pins && !state.subagent;
     current.botName = state.botName;
     current.pins = state.pins ?? [];
@@ -890,7 +906,7 @@ export class PinArea {
       this.dragAndDrop(chip, pin.id, index);
       this.dock.append(chip);
     });
-    const add = button("pin-chip add", "Pin a component", icons.plus, () => openPicker());
+    const add = button("pin-chip add", t("pins.pinAComponent"), icons.plus, () => openPicker());
     this.dock.append(add);
   }
 
@@ -985,7 +1001,7 @@ export class PinArea {
   private sheetHandle(pin: PinView): HTMLElement {
     const handle = document.createElement("div");
     handle.className = "pin-sheet-resize resize-handle";
-    handle.title = "Drag to resize · double-click to fit its content";
+    handle.title = t("pins.sheetHandle");
     handle.setAttribute("aria-hidden", "true");
     handle.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
@@ -1036,15 +1052,15 @@ export class PinArea {
       title.textContent = state.botName;
       const count = document.createElement("span");
       count.className = "board-count";
-      count.textContent = pins.length ? `${pins.length} pinned` : "Nothing pinned yet";
+      count.textContent = pins.length ? t("pins.count", { n: pins.length }) : t("pins.nothingPinned");
       const fill = document.createElement("span");
       fill.className = "pin-fill";
       this.boardHead.append(title, count, fill);
       if (pins.some((p) => p.display.command)) {
-        const all = button("board-button board-refresh-all", "Refresh all", `${icons.refresh}<span>Refresh all</span>`, () => current.pins.forEach(refreshPin));
+        const all = button("board-button board-refresh-all", t("pins.refreshAll"), `${icons.refresh}<span>${escapeHTML(t("pins.refreshAll"))}</span>`, () => current.pins.forEach(refreshPin));
         this.boardHead.append(all);
       }
-      this.boardHead.append(button("board-button primary-outline", "Add component", `${icons.plus}<span>Add component</span>`, () => openPicker()));
+      this.boardHead.append(button("board-button primary-outline", t("pins.addComponent"), `${icons.plus}<span>${escapeHTML(t("pins.addComponent"))}</span>`, () => openPicker()));
     }
 
     const keep = new Set(pins.map((p) => p.id));
@@ -1086,7 +1102,7 @@ export class PinArea {
     if (!add) {
       add = document.createElement("button");
       add.className = "board-add";
-      add.innerHTML = `${icons.plus}<span>Add component</span><span class="board-add-note">or pin one from the chat</span>`;
+      add.innerHTML = `${icons.plus}<span>${escapeHTML(t("pins.addComponent"))}</span><span class="board-add-note">${escapeHTML(t("pins.addNote"))}</span>`;
       add.addEventListener("click", () => openPicker());
     }
     if (this.grid.lastElementChild !== add) this.grid.append(add);
@@ -1127,7 +1143,7 @@ export class PinArea {
   private resizeHandle(card: HTMLElement, pin: PinView, edge: "se" | "e" | "s"): HTMLElement {
     const handle = document.createElement("div");
     handle.className = (edge === "se" ? "board-resize" : `board-resize-${edge}`) + " resize-handle";
-    handle.title = "Drag to resize";
+    handle.title = t("float.dragToResize");
     handle.setAttribute("aria-hidden", "true");
     handle.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
@@ -1274,19 +1290,19 @@ export class PinArea {
     tools.setAttribute("aria-label", `${pin.name}: ${whenWords(pin)}`);
     const grip = document.createElement("span");
     grip.className = "board-grip";
-    grip.title = `${pin.name} · ${whenWords(pin)} · drag to move`;
+    grip.title = `${pin.name} · ${whenWords(pin)} · ${t("pins.dragToMoveLower")}`;
     grip.setAttribute("aria-hidden", "true");
     grip.innerHTML = icons.grip;
     this.movable(grip, card, pin);
-    const size = button("board-size pin-tool", `Size: ${sizeLabel(pin.size)}`, sizeInfo(pin.size).w + "×" + sizeInfo(pin.size).h, () => openMenu(size, sizeItems(pin)));
+    const size = button("board-size pin-tool", t("pins.sizeLabel", { size: sizeLabel(pin.size) }), sizeInfo(pin.size).w + "×" + sizeInfo(pin.size).h, () => openMenu(size, sizeItems(pin)));
     tools.append(grip, size);
     const status = pin.display.status;
     if (pin.display.command) {
-      const refresh = button("pin-tool" + (status === "running" ? " spinning" : ""), `Refresh (${whenWords(pin)})`, icons.refresh, () => refreshPin(pin));
+      const refresh = button("pin-tool" + (status === "running" ? " spinning" : ""), t("pins.refreshWhen", { when: whenWords(pin) }), icons.refresh, () => refreshPin(pin));
       refresh.disabled = status === "running" || status === "approve";
       tools.append(refresh);
     }
-    const more = button("pin-tool", "More", icons.more, () => pinMenu(more, pin, { sizes: true, about: true }));
+    const more = button("pin-tool", t("pins.more"), icons.more, () => pinMenu(more, pin, { sizes: true, about: true }));
     tools.append(more);
     return tools;
   }
@@ -1307,7 +1323,7 @@ export class PinArea {
     // A grab bar along its top edge (on hover), as an opened pin's panel has: drag it to move.
     const bar = document.createElement("div");
     bar.className = "board-move resize-handle";
-    bar.title = "Drag to move";
+    bar.title = t("pins.dragToMove");
     bar.setAttribute("aria-hidden", "true");
     this.movable(bar, card, pin);
     // A tile drawn anew around a live frame: its body stays in place (taken out, the frame would

@@ -81,11 +81,11 @@ struct CodexReviewCard: View {
                 if !counts.isEmpty {
                     HStack(spacing: 6) {
                         ForEach(counts, id: \.0) { severity, count in
-                            SeverityBadge(severity: severity, text: "\(count) \(severity.rawValue)")
+                            SeverityBadge(severity: severity, text: "\(count) \(severity.displayName.lowercased())")
                         }
                         let fixed = review.findings.filter { $0.status == .fixed }.count
                         if fixed > 0 {
-                            Text("\(fixed) fixed").font(.system(size: 11)).foregroundStyle(Theme.green)
+                            Text(L("{0} fixed", fixed)).font(.system(size: 11)).foregroundStyle(Theme.green)
                         }
                     }
                 }
@@ -115,7 +115,7 @@ struct CodexReviewButton: View {
 
     var body: some View {
         Button { picking = true } label: {
-            Label(running ? "Codex is reviewing…" : "Review with Codex", systemImage: "magnifyingglass")
+            Label(running ? L("Codex is reviewing…") : L("Review with Codex"), systemImage: "magnifyingglass")
                 .font(.system(size: 14))
                 .foregroundStyle(running ? Theme.faint : Theme.text)
                 .frame(maxWidth: .infinity, minHeight: 40)
@@ -124,21 +124,21 @@ struct CodexReviewButton: View {
         }
         .buttonStyle(.plain)
         .disabled(running)
-        .help("Pick what Codex reviews (read-only), and a spec to check it against if you like; it lists what it would fix.")
+        .help(L("Pick what Codex reviews (read-only), and a spec to check it against if you like; it lists what it would fix."))
         .popover(isPresented: $picking, arrowEdge: .leading) { picker }
     }
 
     private var picker: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("What should Codex review?").font(.system(size: 14, weight: .semibold))
+            Text(L("What should Codex review?")).font(.system(size: 14, weight: .semibold))
             if let choices {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(choices.scopes, id: \.self) { option in
-                        row(option.displayName, detail: option == choices.suggested ? "Suggested" : nil, chosen: scope == option) { scope = option }
+                        row(option.displayName, detail: option == choices.suggested ? L("Suggested") : nil, chosen: scope == option) { scope = option }
                     }
                 }
                 if !choices.recent.isEmpty {
-                    Text("A recent commit").font(.system(size: 12)).foregroundStyle(Theme.faint)
+                    Text(L("A recent commit")).font(.system(size: 12)).foregroundStyle(Theme.faint)
                     ScrollView {
                         VStack(alignment: .leading, spacing: 2) {
                             ForEach(choices.recent, id: \.self) { commit in
@@ -151,8 +151,8 @@ struct CodexReviewButton: View {
                 specRow
                 HStack {
                     Spacer()
-                    Button("Cancel") { picking = false }
-                    Button("Review") {
+                    Button(L("Cancel")) { picking = false }
+                    Button(L("Review")) {
                         picking = false
                         if let id = workspace.reviewWithCodex(bot, scope: scope ?? choices.suggested, spec: spec?.path) { opened(id) }
                     }
@@ -179,22 +179,22 @@ struct CodexReviewButton: View {
     /// The optional spec: none, one of the bot's latest pages, or any file you choose.
     private var specRow: some View {
         HStack(spacing: 8) {
-            Text("Spec").font(.system(size: 13)).foregroundStyle(Theme.muted)
-            Menu(spec?.lastPathComponent ?? "None") {
-                Button("None") { spec = nil }
+            Text(L("Spec")).font(.system(size: 13)).foregroundStyle(Theme.muted)
+            Menu(spec?.lastPathComponent ?? L("None")) {
+                Button(L("None")) { spec = nil }
                 let pages = CodexSpec.candidates(in: bot.profile.artifactsURL)
                 if !pages.isEmpty {
                     Divider()
                     ForEach(pages, id: \.self) { page in Button(page.lastPathComponent) { spec = page } }
                 }
                 Divider()
-                Button("Choose a file…") { chooseSpec() }
+                Button(L("Choose a file…")) { chooseSpec() }
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
             Spacer()
         }
-        .help("Codex checks point by point that the change does what the spec says.")
+        .help(L("Codex checks point by point that the change does what the spec says."))
     }
 
     private func chooseSpec() {
@@ -204,7 +204,7 @@ struct CodexReviewButton: View {
         panel.showsHiddenFiles = true
         panel.directoryURL = GitDiff.repositoryRoot(bot.profile.workingDirectory) ?? bot.profile.workingDirectory
         panel.allowedContentTypes = CodexSpec.extensions.compactMap { UTType(filenameExtension: $0) }
-        panel.prompt = "Use as spec"
+        panel.prompt = L("Use as spec")
         if panel.runModal() == .OK, let url = panel.url,
            let checked = CodexSpec.validated(url.path, folder: bot.profile.workingDirectory) {
             spec = checked
@@ -264,7 +264,7 @@ struct CodexReportView: View {
                         filters(review)
                         let shown = visible(review)
                         if shown.isEmpty {
-                            Text(review.findings.isEmpty ? (review.isActive ? "Codex is reading the change…" : "Nothing found.") : "Nothing here with this filter.")
+                            Text(review.findings.isEmpty ? (review.isActive ? L("Codex is reading the change…") : L("Nothing found.")) : L("Nothing here with this filter."))
                                 .font(.system(size: 13))
                                 .foregroundStyle(Theme.faint)
                                 .padding(.vertical, 8)
@@ -284,7 +284,7 @@ struct CodexReportView: View {
         } else {
             VStack(alignment: .leading) {
                 if let close { backButton(close) }
-                Text("This review is gone.").foregroundStyle(Theme.faint)
+                Text(L("This review is gone.")).foregroundStyle(Theme.faint)
             }
         }
     }
@@ -297,7 +297,7 @@ struct CodexReportView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Back")
+        .accessibilityLabel(L("Back"))
     }
 
     private func header(_ review: CodexReview) -> some View {
@@ -305,7 +305,7 @@ struct CodexReportView: View {
             if let close { backButton(close) }
             VStack(alignment: .leading, spacing: 1) {
                 Text(review.title).font(.system(size: 15, weight: .semibold)).lineLimit(1)
-                Text("\(URL(filePath: review.folder).lastPathComponent)\(review.base.map { " → \($0)" } ?? " · uncommitted")")
+                Text("\(URL(filePath: review.folder).lastPathComponent)\(review.base.map { " → \($0)" } ?? " · " + L("uncommitted"))")
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(Theme.faint)
                     .lineLimit(1)
@@ -321,8 +321,8 @@ struct CodexReportView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Open the full report in a window")
-                .accessibilityLabel("Open the full report")
+                .help(L("Open the full report in a window"))
+                .accessibilityLabel(L("Open the full report"))
             }
         }
     }
@@ -346,7 +346,7 @@ struct CodexReportView: View {
             }
             if review.kind == .loop, !review.rounds.isEmpty {
                 // The rounds so far: found → fixed → found …
-                Text(review.rounds.map { $0.found == 0 ? "R\($0.number): clean" : "R\($0.number): \($0.found) found\($0.sent > 0 ? ", \($0.sent) sent back" : "")" }.joined(separator: "  ›  "))
+                Text(review.rounds.map { $0.found == 0 ? L("R{0}: clean", $0.number) : $0.sent > 0 ? L("R{0}: {1} found, {2} sent back", $0.number, $0.found, $0.sent) : L("R{0}: {1} found", $0.number, $0.found) }.joined(separator: "  ›  "))
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -368,13 +368,13 @@ struct CodexReportView: View {
     }
 
     private func filters(_ review: CodexReview) -> some View {
-        let options: [(Filter, String)] = [(.all, "All")]
+        let options: [(Filter, String)] = [(.all, L("All"))]
             + CodexSeverity.allCases.compactMap { severity in
                 let n = review.findings.filter { $0.severity == severity }.count
                 return n == 0 ? nil : (.severity(severity), "\(severity.displayName) · \(n)")
             }
-            + [(.open, "Open · \(review.findings.filter { $0.status == .open || $0.status == .sent }.count)"),
-               (.fixed, "Fixed · \(review.findings.filter { $0.status == .fixed }.count)")]
+            + [(.open, L("Open") + " · \(review.findings.filter { $0.status == .open || $0.status == .sent }.count)"),
+               (.fixed, CodexFinding.Status.fixed.displayName + " · \(review.findings.filter { $0.status == .fixed }.count)")]
         return FlowRow(spacing: 6) {
             ForEach(options, id: \.0) { option, label in
                 Button { filter = option } label: {
@@ -413,7 +413,7 @@ struct CodexReportView: View {
         let changes = diff?.file(file)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Text(file.isEmpty ? "(no file)" : file)
+                Text(file.isEmpty ? L("(no file)") : file)
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
@@ -444,7 +444,7 @@ struct CodexReportView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel(isPicked ? "Unpick \(finding.title)" : "Pick \(finding.title)")
+                    .accessibilityLabel(isPicked ? L("Unpick {0}", finding.title) : L("Pick {0}", finding.title))
                 }
                 SeverityBadge(severity: finding.severity)
                 Text(finding.place).font(.system(size: 12, design: .monospaced)).foregroundStyle(Color(hex: 0x8DB5FF)).lineLimit(1)
@@ -463,18 +463,18 @@ struct CodexReportView: View {
                     .textSelection(.enabled)
             }
             if finding.keepsComingBack {
-                Text("Seen in rounds \(finding.firstRound)–\(finding.lastSeenRound)").font(.system(size: 11)).foregroundStyle(Theme.orange)
+                Text(L("Seen in rounds {0}–{1}", finding.firstRound, finding.lastSeenRound)).font(.system(size: 11)).foregroundStyle(Theme.orange)
             }
             HStack(spacing: 12) {
                 if let changes, !changes.hunks.isEmpty {
-                    Button(showsDiff.contains(finding.id) ? "Hide diff" : "Show diff") {
+                    Button(showsDiff.contains(finding.id) ? L("Hide diff") : L("Show diff")) {
                         if showsDiff.contains(finding.id) { showsDiff.remove(finding.id) } else { showsDiff.insert(finding.id) }
                     }
                 }
-                Menu("Mark") {
-                    Button("Fixed") { workspace.setCodexFindings([finding.id], of: reviewID, to: .fixed) }
-                    Button("Not an issue (skip)") { workspace.setCodexFindings([finding.id], of: reviewID, to: .skipped) }
-                    Button("Open again") { workspace.setCodexFindings([finding.id], of: reviewID, to: .open) }
+                Menu(L("Mark")) {
+                    Button(CodexFinding.Status.fixed.displayName) { workspace.setCodexFindings([finding.id], of: reviewID, to: .fixed) }
+                    Button(L("Not an issue (skip)")) { workspace.setCodexFindings([finding.id], of: reviewID, to: .skipped) }
+                    Button(L("Open again")) { workspace.setCodexFindings([finding.id], of: reviewID, to: .open) }
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -501,7 +501,7 @@ struct CodexReportView: View {
         case .fixed: Theme.green
         case .skipped: Theme.faint
         }
-        return Text(finding.status == .sent ? "Being fixed" : finding.status.displayName)
+        return Text(finding.status.displayName)
             .font(.system(size: 11))
             .foregroundStyle(color)
     }
@@ -511,7 +511,7 @@ struct CodexReportView: View {
     }
 
     private func ownerName(_ review: CodexReview) -> String {
-        workspace.speakerName(for: review.ownerID) ?? "the bot"
+        workspace.speakerName(for: review.ownerID) ?? L("the bot")
     }
 
     @ViewBuilder
@@ -519,29 +519,29 @@ struct CodexReportView: View {
         VStack(spacing: 8) {
             if review.kind == .loop, review.state == .stuck {
                 HStack(spacing: 8) {
-                    wideButton("Fix once more", primary: true) { workspace.fixCodexOnceMore(reviewID) }
-                    wideButton("Accept as is") { workspace.acceptCodexReview(reviewID) }
+                    wideButton(L("Fix once more"), primary: true) { workspace.fixCodexOnceMore(reviewID) }
+                    wideButton(L("Accept as is")) { workspace.acceptCodexReview(reviewID) }
                 }
             }
             HStack(spacing: 8) {
                 if ownerCanFix(review), !review.isActive {
                     let chosen = picked.intersection(Set(review.openFindings.map(\.id)))
-                    wideButton(chosen.isEmpty ? "Pick findings to send" : "Send \(chosen.count) to \(ownerName(review))", primary: !chosen.isEmpty) {
+                    wideButton(chosen.isEmpty ? L("Pick findings to send") : L("Send {0} to {1}", chosen.count, ownerName(review)), primary: !chosen.isEmpty) {
                         workspace.sendCodexFindings(chosen, of: reviewID)
                         picked.removeAll()
                     }
                     .disabled(chosen.isEmpty)
                 }
                 if review.isActive || review.state == .stuck, review.kind == .loop {
-                    wideButton("Stop loop") { workspace.stopCodexReview(reviewID) }
+                    wideButton(L("Stop loop")) { workspace.stopCodexReview(reviewID) }
                 }
             }
             HStack(spacing: 16) {
                 if review.kind == .single {
-                    Button("Run again") { workspace.rerunCodexReview(reviewID) }
+                    Button(L("Run again")) { workspace.rerunCodexReview(reviewID) }
                         .disabled(review.state == .reviewing)
                 }
-                Button(copied ? "Copied" : "Copy as Markdown") {
+                Button(copied ? L("Copied") : L("Copy as Markdown")) {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(review.markdown, forType: .string)
                     copied = true

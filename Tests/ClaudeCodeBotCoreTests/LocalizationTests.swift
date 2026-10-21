@@ -192,4 +192,24 @@ struct LocalizationTests {
         settings.save(to: url)
         #expect(AppSettings.load(from: url).languageChoice == .korean)
     }
+    // MARK: Words the core makes
+
+    /// Dividers, choices and names the app writes into chats follow the language; what the bot
+    /// is told about the same restart stays English.
+    @Test func coreWordsFollowTheLanguage() {
+        defer { L10n.language = .english }
+        L10n.language = .japanese
+        #expect(Bot.shownDivider("Handoff → loading new plugins") == "引き継ぎ → 新しいプラグインを読み込み")
+        #expect(Bot.shownDivider("Restarted → High effort") == "再起動 → 思考レベル：高")
+        #expect(Bot.shownDivider("Handoff → subagents on Opus") == "引き継ぎ → サブエージェントは Opus")
+        #expect(CodexSeverity.high.displayName == "高")
+        #expect(EffortLevel.xhigh.englishName == "Extra high")
+        #expect(ResultPublishing.localOnly.displayName == "常にローカルの HTML ページ")
+        #expect(SlashCommands.all.first?.about == "Claude Design を作って claude.ai のリンクを受け取る")
+        L10n.language = .traditionalChinese
+        #expect(Bot.noLongerNeeded == "已不需要")
+        #expect(Pins.FloatMenu.full.label == "浮在角落（已有 2 個浮動中）")
+        L10n.language = .english
+        #expect(Bot.shownDivider("Handoff → may read laas-copy") == "Handoff → may read laas-copy")
+    }
 }
