@@ -147,8 +147,27 @@ public final class Bot: ObservableObject, Identifiable {
     private var removed = false
     /// Waiting for a group-chat reply, which goes to the group instead of this chat.
     private var groupReply: CheckedContinuation<GroupAnswer, Never>?
-    /// A group turn timed out: its late reply is dropped instead of showing in this chat.
-    private var dropNextReply = false
+    /// The group-chat line sent for a reply that goes elsewhere, until its turn's reply comes
+    /// (after a timeout too: that late reply is dropped instead of showing in this chat).
+    private var groupCommand: GroupCommand?
+
+    /// Turns of its own (background work reporting back) may end before the group line's turn
+    /// begins: claude says when that line is `queued` behind them and when its turn `started`.
+    struct GroupCommand: Equatable {
+        enum Stage: Equatable {
+            /// Sent; nothing heard of it yet. A process that does not report its messages (Codex)
+            /// stays here, and its next reply is the group's.
+            case sent
+            /// Waiting behind a turn under way or about to start: that turn's reply is not the group's.
+            case queued
+            /// Its turn is under way: the next reply is the group's.
+            case started
+        }
+        let id: UUID
+        var stage = Stage.sent
+        /// Whether a reply that comes now is this line's.
+        var ownsReply: Bool { stage != .queued }
+    }
 
     /// How a group-chat turn went.
     public enum GroupAnswer: Equatable, Sendable {
@@ -575,7 +594,7 @@ public final class Bot: ObservableObject, Identifiable {
     private func route(_ outgoing: Outgoing) {
         // Its group-chat turn is running: what you say here waits, so the reply to it does not
         // end up in the group.
-        if groupReply != nil {
+        if groupCommand != nil {
             queued.append(outgoing)
             return
         }
@@ -656,7 +675,7 @@ public final class Bot: ObservableObject, Identifiable {
         text.hasPrefix(partsNote) ? String(text.dropFirst(partsNote.count)) : text
     }
 
-    private func deliver(_ outgoing: Outgoing) {
+    private func deliver(_ outgoing: Outgoing, id: UUID? = nil) {
         guard let process else { return }
         cancelIdle()
         // A turn you started, or one you are adding to; anything else is not yours to add to.
@@ -671,7 +690,7 @@ public final class Bot: ObservableObject, Identifiable {
             pendingNote = nil
             text = note + "\n\n" + text
         }
-        process.send(text, images: outgoing.images)
+        if let id { process.send(text, images: outgoing.images, id: id) } else { process.send(text, images: outgoing.images) }
     }
 
     /// Tells an awake bot something with its next message (a later note replaces an earlier one).
@@ -681,7 +700,7 @@ public final class Bot: ObservableObject, Identifiable {
         pendingNote = note
     }
 
-    private func wake(with outgoing: Outgoing) {
+    private func wake(with outgoing: Outgoing, id: UUID? = nil) {
         pendingNote = nil
         do {
             let process = try start()
@@ -693,7 +712,8 @@ public final class Bot: ObservableObject, Identifiable {
             let recent = recentChat(leavingOut: outgoing.messageID)
             let wakeLine = profile.keepsMemory ? prompts.wake : ""
             let cutOff = takeInterruptedNote() ?? ""
-            process.send([wakeLine, note, cutOff, recent, outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n"), images: outgoing.images)
+            let text = [wakeLine, note, cutOff, recent, outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            if let id { process.send(text, images: outgoing.images, id: id) } else { process.send(text, images: outgoing.images) }
         } catch {
             append(ChatMessage(role: .error, text: L("Couldn't wake up: {0}", error.localizedDescription)))
         }
@@ -822,7 +842,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// as working. Its result line (the same words, or the reply of the work the hook sent it
     /// back to) ends the turn. Not for turns whose reply goes elsewhere or is not shown.
     private func showEarly(_ text: String) {
-        guard interruptions == 0, internalReply == nil, groupReply == nil, !dropNextReply,
+        guard interruptions == 0, internalReply == nil, groupCommand?.ownsReply != true,
               !((fromBackground || (turnOrigin != .user && Self.saysNothing(text))) && ReplyParser.saysNoReply(text)),
               replyFilter?() == nil, outage == nil else { return }
         // Your message is answered: what you write now is a new one.
@@ -863,9 +883,10 @@ public final class Bot: ObservableObject, Identifiable {
     /// then gives up (`.busy`); once asked, it gets `answerWithin` to reply.
     public func groupTurn(_ text: String, waitFor: TimeInterval = 20, answerWithin: TimeInterval = 5 * 60) async -> GroupAnswer {
         let deadline = Date().addingTimeInterval(waitFor)
-        // A background subagent's report would come back as a turn of its own and be taken for the group's reply.
-        while isWorking || groupReply != nil || phase == .tidying || isSwitching || dropNextReply
-                || trace.subagents.contains(where: \.isRunning) {
+        // Work it left running in the background (a subagent, a command) does not keep it from
+        // answering: what that work reports comes in a turn of its own, which `groupCommand`
+        // tells apart from the group line's.
+        while isWorking || groupReply != nil || groupCommand != nil || phase == .tidying || isSwitching {
             guard !removed else { return .failed(L("It was removed.")) }
             guard Date() < deadline else { return .busy }
             try? await Task.sleep(for: .milliseconds(300))
@@ -876,23 +897,28 @@ public final class Bot: ObservableObject, Identifiable {
             await restartWaiting()
             guard !removed else { return .failed(L("It was removed.")) }
         }
+        let id = UUID()
         return await withCheckedContinuation { continuation in
             groupReply = continuation
+            groupCommand = GroupCommand(id: id)
             if phase == .asleep {
-                wake(with: Outgoing(text: text))
+                wake(with: Outgoing(text: text), id: id)
             } else {
-                deliver(Outgoing(text: text))
+                deliver(Outgoing(text: text), id: id)
             }
+            // A turn that ends before the group line's is one claude started itself (background
+            // work reporting back): it says who started it, as when it is idle.
+            turnOrigin = nil
             // It could not start, or had no process to talk to.
             if process == nil {
+                groupCommand = nil
                 finishGroupReply(.failed(L("It could not start.")))
                 return
             }
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(answerWithin))
-                guard let self, groupReply != nil else { return }
-                // Its reply, when it comes, belongs to nobody now.
-                dropNextReply = true
+                // Its reply, when it comes, belongs to nobody now (`groupCommand` stays to drop it).
+                guard let self, groupCommand?.id == id else { return }
                 finishGroupReply(.failed(L("No answer in time.")))
             }
         }
@@ -1173,6 +1199,14 @@ public final class Bot: ObservableObject, Identifiable {
         switch event {
         case let .rateLimits(limits):
             onRateLimits?(limits)
+        case let .commandQueued(id):
+            if groupCommand?.id == id, groupCommand?.stage == .sent { groupCommand?.stage = .queued }
+        case let .commandStarted(id):
+            guard groupCommand?.id == id else { return }
+            groupCommand?.stage = .started
+            // A turn of its own may have ended just before: the group line's turn is under way now.
+            cancelIdle()
+            isWorking = true
         case .connectionTrouble:
             if !retryingConnection { retryingConnection = true }
         case let .connectionLost(parent):
@@ -1280,11 +1314,11 @@ public final class Bot: ObservableObject, Identifiable {
                 waiter.resume(returning: text)
                 return
             }
-            if groupReply != nil || dropNextReply {
+            if groupCommand?.ownsReply == true {
                 // The steps go with the reply to the group's line, not to this chat.
                 let steps = trace.takeSteps()
                 isWorking = false
-                dropNextReply = false
+                groupCommand = nil
                 // It may have edited its routines.cron.
                 reloadRoutines()
                 finishGroupReply(isError ? .failed(text) : .reply(text, steps: steps))
@@ -1338,7 +1372,7 @@ public final class Bot: ObservableObject, Identifiable {
             if trace.stopRunning() { store?.save(subagents: trace.subagents) }
             if messages.stopBackgroundTasks(as: .stopped, at: now()) { store?.save(messages: messages) }
             dropPermissionAsks()
-            dropNextReply = false
+            groupCommand = nil
             finishGroupReply(.failed(stderr.isEmpty ? L("It stopped ({0}).", status) : stderr))
             if let waiter = internalReply {
                 internalReply = nil
@@ -1673,7 +1707,7 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// Writes memory.md, then ends the process. Also used when the app quits.
     public func goToSleep() async {
-        guard phase == .awake, !isWorking, process != nil else { return }
+        guard phase == .awake, !isWorking, groupCommand == nil, process != nil else { return }
         // A subagent still at work in the background would stop with the process: wait for it.
         // Cut off by the network, it keeps its session for when the network is back.
         // So would a command or subagent it left running in the background.
@@ -1703,7 +1737,7 @@ public final class Bot: ObservableObject, Identifiable {
         process = nil
         running?.stop()
         dropPermissionAsks()
-        dropNextReply = false
+        groupCommand = nil
         early = EarlyReplies()
         finishGroupReply(.failed(L("It was removed.")))
         isWorking = false
@@ -1821,7 +1855,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// (in the background too: the restart would end it), no question waiting.
     private var restartsBeforeMessage: Bool {
         pendingRestart != nil && phase == .awake && process != nil && !isWorking && internalReply == nil
-            && groupReply == nil && permissionAsks.isEmpty && outage == nil && !removed
+            && groupReply == nil && groupCommand == nil && permissionAsks.isEmpty && outage == nil && !removed
             && !trace.subagents.contains(where: \.isRunning) && !messages.hasBackgroundWorkRunning(now: now())
     }
 

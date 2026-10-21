@@ -18,6 +18,16 @@ app and publishes it on GitHub Releases.
   with `CCB_WINDOW_WAITING` things waiting and fails when a column leaves the window; a test
   runs it with 1, 14 and 40.
 
+- **A bot called in with @ answers even while a background agent of its own is at work.** A bot
+  that had finished its turn but left a subagent (or a background command) running counted as
+  busy, so a call-in or group turn waited up to 5 minutes behind a "…" and then gave up with
+  "Did not answer this time: X (busy)". That wait was there so the subagent's report, which comes
+  back as a turn of its own, would not be taken for the group's reply. Now the call-in line is
+  sent with an id and claude says when it is queued and when its turn starts
+  (`command_lifecycle`): only that turn's reply goes to the group. A report turn that comes first
+  shows in the bot's own chat as usual, and after a timeout only the late group reply is dropped,
+  not a report that arrived before it.
+
 ## 1.14.1
 
 ### Added

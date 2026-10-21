@@ -71,6 +71,14 @@ enum StreamEvent {
                 if !pictures.isEmpty { events.append(.trace(.toolImages(id: id, images: pictures, parent: parent))) }
                 return events
             }
+        case "command_lifecycle":
+            // A message sent with a `uuid`: queued when claude reads it, started when its turn begins.
+            guard let id = (object["command_uuid"] as? String).flatMap(UUID.init(uuidString:)) else { return [] }
+            switch object["state"] as? String {
+            case "queued": return [.commandQueued(id)]
+            case "started": return [.commandStarted(id)]
+            default: return []
+            }
         case "rate_limit_event":
             return RateLimits.parse(object, seen: Date()).map { [.rateLimits($0)] } ?? []
         case "system":

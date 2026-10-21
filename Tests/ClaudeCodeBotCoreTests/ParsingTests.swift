@@ -8,6 +8,16 @@ struct ParsingTests {
         #expect(StreamEvent.reply(in: line) == .reply("Fine.", isError: false))
     }
 
+    @Test func aMessageSentWithAnIdReportsWhenItIsQueuedAndStarted() {
+        let id = UUID()
+        func line(_ state: String) -> String {
+            #"{"type":"command_lifecycle","command_uuid":"\#(id.uuidString.lowercased())","state":"\#(state)","uuid":"c2e90e32-69da-4094-8555-5065a9f23e73"}"#
+        }
+        #expect(StreamEvent.events(in: line("queued")) == [.commandQueued(id)])
+        #expect(StreamEvent.events(in: line("started")) == [.commandStarted(id)])
+        #expect(StreamEvent.events(in: line("completed")).isEmpty)
+    }
+
     @Test func otherLinesAreIgnored() {
         #expect(StreamEvent.reply(in: #"{"type":"system","subtype":"init"}"#) == nil)
         #expect(StreamEvent.reply(in: "not json") == nil)
