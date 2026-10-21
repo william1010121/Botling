@@ -27,6 +27,10 @@ enum Snapshot {
             drawRailPins(to: path)
             return true
         }
+        if let path = ProcessInfo.processInfo.environment["CCB_WINDOW_SNAPSHOT"] {
+            drawWindow(to: path)
+            return true
+        }
         if let path = ProcessInfo.processInfo.environment["CCB_RIGHT_SNAPSHOT"] {
             drawRightPanel(to: path)
             return true
@@ -499,6 +503,54 @@ enum Snapshot {
     /// `CCB_RIGHT_SNAPSHOT=/path/out.png`: the right panel open and folded side by side, for a
     /// sample project with results and settled subagents, with the folded one's hover tip on the
     /// face and its Results popped out (drawn in place, as a popover is not in the picture).
+    /// `CCB_WINDOW_SNAPSHOT=/path/out.png`: the whole window (rail, chat, right panel) at
+    /// 1280×820 on the main bot, with `CCB_WINDOW_WAITING` (default 14) things waiting on you.
+    /// It prints the size the window's content needs and fails when that is bigger than the
+    /// window: content that cannot shrink pushes every column off the window's edges.
+    private static func drawWindow(to path: String) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
+        let count = ProcessInfo.processInfo.environment["CCB_WINDOW_WAITING"].flatMap(Int.init) ?? 14
+        let projects = (0..<count).map { index in
+            let code = root.appending(path: "code/project-\(index)")
+            try? FileManager.default.createDirectory(at: code.appending(path: ".bot"), withIntermediateDirectories: true)
+            try? Data("## Waiting on you\n- Project \(index): pick one of the two layouts for the settings page before I go on\n".utf8)
+                .write(to: code.appending(path: ".bot/memory.md"))
+            return Workspace.Project(id: UUID(), name: "project-\(index)", folder: code, avatar: "square")
+        }
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try? JSONEncoder().encode(projects).write(to: Workspace.Layout.projectsFile(in: root))
+        let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
+            Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
+        }
+        workspace.refreshWaiting()
+        let size = CGSize(width: 1280, height: 820)
+        let content = RootView(workspace: workspace, settings: SettingsNavigator())
+            .frame(minWidth: 980, minHeight: 620)
+            .preferredColorScheme(.dark)
+        var columns: [String: CGRect] = [:]
+        RootView.columnProbe = { name, frame in columns[name] = frame }
+        let frame = NSRect(origin: .zero, size: size)
+        let window = HeadlessRun.offscreenWindow(frame)
+        window.appearance = NSAppearance(named: .darkAqua)
+        let host = NSHostingView(rootView: content)
+        host.frame = frame
+        window.contentView = host
+        self.window = window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            let bounds = CGRect(origin: .zero, size: size)
+            let off = columns.filter { !bounds.insetBy(dx: -0.5, dy: -0.5).contains($0.value) || $0.value.minY != 0 }
+            for (name, column) in columns.sorted(by: { $0.key < $1.key }) {
+                print("\(name): x \(Int(column.minX))…\(Int(column.maxX)), y \(Int(column.minY))…\(Int(column.maxY))")
+            }
+            print("waiting: \(workspace.waiting.count), window: \(Int(size.width))x\(Int(size.height)), " + (columns.count == 3 && off.isEmpty ? "columns fit" : "columns off the window: \(off.keys.sorted())"))
+            if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                host.cacheDisplay(in: host.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
+            }
+            exit(columns.count == 3 && off.isEmpty ? 0 : 2)
+        }
+    }
+
     private static func drawRightPanel(to path: String) {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         let code = root.appending(path: "code/ClaudeCodeBot")

@@ -68,12 +68,14 @@ struct RootView: View {
             RailView(workspace: workspace, settings: settings, collapsed: collapsed, tip: $railTip)
                 .frame(width: RailLayout.width(collapsed: collapsed))
                 .overlay(alignment: .trailing) { Rectangle().fill(Theme.line).frame(width: 1).opacity(collapsed ? 1 : 0) }
+                .shellColumn("rail", height: window.size.height)
                 // A new language (Settings) draws the native views again in its words.
                 .id(workspace.language)
             // One web view for every bot: switching bots redraws it instead of reloading.
             ChatSurface(bot: bot, workspace: workspace, components: workspace.components, commands: workspace.componentCommands, plugins: workspace.plugins, inputs: inputs)
                 .frame(minWidth: columns.chat, maxWidth: .infinity)
                 .modifier(BoardMode(workspace: workspace, inputs: inputs, bot: bot))
+                .shellColumn("chat", height: window.size.height)
             Group {
                 if let spec {
                     // A component spec's chip was pressed: its workspace, until collapsed back.
@@ -96,6 +98,7 @@ struct RootView: View {
             .frame(width: columns.right)
             .overlay(alignment: .leading) { Rectangle().fill(Theme.line).frame(width: 1).opacity(rightCollapsed || spec != nil ? 1 : 0) }
             .id("\(bot.id)-\(workspace.language.rawValue)")
+            .shellColumn("right", height: window.size.height)
         }
         }
         .coordinateSpace(name: RailTip.space)
@@ -123,7 +126,34 @@ struct RootView: View {
     }
 }
 
+/// One of the window's three columns, exactly as tall as the window and drawn from its top. A
+/// column whose content is taller (a long "Waiting on you" list) runs off the bottom instead of
+/// making the row taller: a taller row is centred in the window, which pushed every column's top
+/// and the input box's bottom off the window and left the rail's search bar floating mid-way.
+private struct ShellColumn: ViewModifier {
+    let name: String
+    let height: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .frame(height: height, alignment: .top)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(RailTip.space)) } action: { frame in
+                RootView.columnProbe?(name, frame)
+            }
+    }
+}
+
+extension View {
+    fileprivate func shellColumn(_ name: String, height: CGFloat) -> some View {
+        modifier(ShellColumn(name: name, height: height))
+    }
+}
+
 extension RootView {
+    /// Where each column ("rail", "chat", "right") lands in the window: the window snapshot
+    /// checks that none is pushed off the window's edges.
+    static var columnProbe: ((String, CGRect) -> Void)?
+
     private func toggleRail() {
         withAnimation(.easeInOut(duration: 0.2)) { workspace.toggleRail() }
     }
