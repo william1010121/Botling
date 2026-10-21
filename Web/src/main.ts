@@ -1,5 +1,6 @@
 import { post } from "./bridge";
 import { detailReply, keepFrames } from "./components";
+import { startTaskTicks, taskOutput } from "./tasks";
 import { Composer, sendFile } from "./composer";
 import { extensions, feedback, makeComponents, messageElement, typingElement } from "./messages";
 import { SpecPanel } from "./spec";
@@ -259,6 +260,7 @@ declare global {
       setSpec(state: SpecState): void;
       hostReply(callID: number, ok: boolean, value: unknown): void;
       detailReply(requestID: number, ok: boolean, value: string): void;
+      taskOutput(messageID: string, taskID: string, text: string): void;
       focus(): void;
     };
   }
@@ -323,8 +325,10 @@ window.ccb = {
   runCommand: (id) => chat.plugins.execute(id),
   hostReply: (callID, ok, value) => chat.plugins.hostReply(callID, ok, value),
   detailReply: (requestID, ok, value) => detailReply(requestID, ok, value),
+  taskOutput: (messageID, taskID, text) => taskOutput(messageID, taskID, text),
   showPanel: (key) => showPanel(key),
   setSpec: (state) => setSpec(state),
   focus: () => chat.focus(),
 };
+startTaskTicks();
 post({ type: "ready" });

@@ -238,6 +238,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !Self.isHeadless else { return .terminateNow }
         Task {
             await workspace.putEveryoneToSleep()
+            // Bots kept awake by background work (and that work) would outlive the app, unseen.
+            ChildProcessLedger.shared?.endAll()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -251,6 +253,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let legacy = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".deck")
         if !FileManager.default.fileExists(atPath: root.path), FileManager.default.fileExists(atPath: legacy.path) {
             try? FileManager.default.moveItem(at: legacy, to: root)
+        }
+        // Bots an earlier run left running (it crashed, or a new build replaced it) are ended
+        // first: they would go on working, unseen. Their chips say so when the chats load.
+        if !isHeadless {
+            let ledger = ChildProcessLedger(file: root.appending(path: "children.json"))
+            ledger.endLeftovers()
+            ChildProcessLedger.shared = ledger
         }
         let idle = ProcessInfo.processInfo.environment["CCB_IDLE_SECONDS"].flatMap(TimeInterval.init) ?? 50 * 60
         let locator = ClaudeExecutableLocator()

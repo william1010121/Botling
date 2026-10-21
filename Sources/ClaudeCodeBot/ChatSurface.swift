@@ -193,6 +193,15 @@ struct ChatSurface: NSViewRepresentable {
                 if let call = CodexComponentCall(body, folder: bot.profile.workingDirectory) {
                     workspace.reviewWithCodex(bot, scope: call.scope, spec: call.spec)
                 }
+            case "taskOutput":
+                // A background chip opened: its last lines of output (or what the subagent is
+                // doing), sent back to the page.
+                if let messageID = id("messageID"), let taskID = body["taskID"] as? String {
+                    Task { @MainActor [weak view] in
+                        let text = await bot.backgroundTaskOutput(messageID: messageID, taskID: taskID)
+                        _ = try? await view?.evaluateJavaScript(BackgroundTask.outputReplyScript(messageID: messageID.uuidString, taskID: taskID, text: text))
+                    }
+                }
             case "openSubagent":
                 if let subagent = body["id"] as? String { workspace.view(subagent: subagent, of: bot) }
             case "feedback":

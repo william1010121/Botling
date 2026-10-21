@@ -57,6 +57,9 @@ enum StreamEvent {
             case "task_started":
                 // Background shell commands start tasks too ("local_bash"); only agents are subagents.
                 let type = object["task_type"] as? String
+                if type == "local_bash", object["is_backgrounded"] as? Bool == true, let id = object["tool_use_id"] as? String {
+                    return [.trace(.backgroundCommandStarted(id: id, description: object["description"] as? String ?? ""))]
+                }
                 guard let id = object["tool_use_id"] as? String,
                       type == "local_agent" || (type == nil && object["subagent_type"] != nil) else { return [] }
                 return [.trace(.subagentStarted(

@@ -23,6 +23,9 @@ public enum TraceEvent: Equatable, Sendable {
     /// The name the bot gave a subagent (the Agent call's `name`), to reach it again with
     /// SendMessage.
     case subagentNamed(id: String, name: String)
+    /// A shell command went on in the background (`task_started`, `local_bash`); `id` is the
+    /// Bash call. It ends with a `task_notification`, read as `subagentEnded` with that id.
+    case backgroundCommandStarted(id: String, description: String)
 }
 
 /// A picture in a tool result, as it came (decoded from its base64). Only passed along: the step
@@ -150,6 +153,8 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable {
 public struct TraceBook: Equatable, Sendable {
     public private(set) var steps: [Step] = []
     public private(set) var subagents: [Subagent]
+    /// Background work the turn under way started (its reply's chips).
+    public private(set) var tasks: [BackgroundTask] = []
     /// Subagents kept once ended; running ones are always kept.
     static let keptSubagents = 40
     /// Longest detail or output kept for one step.
@@ -182,6 +187,9 @@ public struct TraceBook: Equatable, Sendable {
             trim()
             return true
         case let .toolResult(id, output, failed, parent):
+            if parent == nil, let at = tasks.firstIndex(where: { $0.id == id }) {
+                tasks[at].outputFile = BackgroundTask.outputFile(in: output) ?? tasks[at].outputFile
+            }
             let output = Self.shorten(output)
             if let parent {
                 guard let index = subagentIndex(parent), let at = subagents[index].steps.lastIndex(where: { $0.id == id }) else { return false }
@@ -223,6 +231,7 @@ public struct TraceBook: Equatable, Sendable {
             }
             return false
         case let .subagentStarted(id, description, type, prompt, background):
+            if background { addTask(id, kind: .agent, title: description, at: date) }
             if let index = subagentIndex(id) {
                 if !description.isEmpty { subagents[index].description = description }
                 if !prompt.isEmpty { subagents[index].prompt = prompt }
@@ -236,6 +245,9 @@ public struct TraceBook: Equatable, Sendable {
             }
             return true
         case let .subagentEnded(id, status, summary):
+            if let at = tasks.firstIndex(where: { $0.id == id && $0.isRunning }) {
+                tasks[at].end(status, summary: summary, at: date)
+            }
             guard let index = subagentIndex(id), subagents[index].isRunning else { return false }
             let ended: Subagent.Status = switch status {
             case "completed": .completed
@@ -251,7 +263,27 @@ public struct TraceBook: Equatable, Sendable {
             guard let index = subagentIndex(id), subagents[index].name != name else { return false }
             subagents[index].name = name
             return true
+        case let .backgroundCommandStarted(id, description):
+            addTask(id, kind: .command, title: description, at: date)
+            return false
         }
+    }
+
+    /// A chip for background work the bot itself started in this turn (not one of its
+    /// subagents: their work is theirs), once.
+    private mutating func addTask(_ id: String, kind: BackgroundTask.Kind, title: String, at date: Date) {
+        guard let step = steps.last(where: { $0.id == id }), !tasks.contains(where: { $0.id == id }) else { return }
+        let title = title.isEmpty ? Self.subagentName(step.title) : title
+        var task = BackgroundTask(id: id, kind: kind, title: title, startedAt: date)
+        if let detail = step.detail, !detail.isEmpty { task.detail = detail.count > 600 ? String(detail.prefix(600)) + "…" : detail }
+        tasks.append(task)
+    }
+
+    /// The background work the finished turn started, for its reply. Nil when there was none.
+    public mutating func takeTasks() -> [BackgroundTask]? {
+        let taken = tasks
+        tasks = []
+        return taken.isEmpty ? nil : taken
     }
 
     /// The finished turn's steps, for its reply. Words after the last tool call are the reply
@@ -292,12 +324,14 @@ public struct TraceBook: Equatable, Sendable {
     /// Forgets the turn's steps (a turn nobody sees: tidying, a group turn).
     public mutating func dropSteps() {
         steps = []
+        tasks = []
     }
 
     /// The process went away: what still runs is stopped. True if any was.
     @discardableResult
     public mutating func stopRunning(at date: Date = Date()) -> Bool {
         steps = []
+        tasks = []
         var any = false
         for index in subagents.indices where subagents[index].isRunning {
             end(index, status: .stopped, result: subagents[index].result, at: date)

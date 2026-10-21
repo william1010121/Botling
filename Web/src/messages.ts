@@ -6,6 +6,7 @@ import { mediaHTML, renderMarkdown } from "./markdown";
 import { acceptPictures } from "./pictures";
 import type { ComponentRender } from "./plugins";
 import { liveElement, stepsElement } from "./steps";
+import { taskChips } from "./tasks";
 import type { ComponentInfo, DisplayView, FileView, MessageView, SpecChipView, StepView } from "./types";
 import { escapeHTML } from "./util";
 
@@ -56,7 +57,8 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
       const body = botBody(message, components);
       const actions = message.role === "bot" && (feedback.enabled || makeComponents.enabled) ? actionColumn(message) : replyButton(message);
       const chips = message.specs?.length ? specChips(message, components) : null;
-      if (message.speaker || chips) {
+      const tasks = message.tasks?.length ? taskChips(message.id, message.tasks) : null;
+      if (message.speaker || chips || tasks) {
         // The group chat: who said it, above what they said. A spec's chip goes under it.
         const column = document.createElement("div");
         column.className = message.speaker ? "speaker-column" : "bot-column";
@@ -67,6 +69,8 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
           column.append(name);
         }
         column.append(body);
+        // Background work it left running, right under the words that started it.
+        if (tasks) column.append(tasks);
         if (chips) column.append(chips);
         // A component in the reply, or one made from it, takes the whole message column.
         if (body.classList.contains("wide") || column.querySelector(".spec-built")) {

@@ -94,6 +94,8 @@ public struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var permissionTool: String?
     /// What the bot did on the way to this reply (tool calls, subagents), folded above it.
     public var steps: [Step]?
+    /// Work its turn left running in the background (commands, subagents): a chip each under it.
+    public var backgroundTasks: [BackgroundTask]?
     /// A relay that is a "not right" report: whose reply it was about and the user's own words.
     /// Only for showing it short; `text` is the full report the bot got.
     public var feedback: FeedbackNote?

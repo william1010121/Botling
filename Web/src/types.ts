@@ -49,6 +49,20 @@ export interface MessageView {
   specs?: SpecChipView[] | null;
   /** The library component this reply already is ("Add to another bot…"). */
   component?: string | null;
+  /** Work its turn left running in the background: a chip each, under it. */
+  tasks?: TaskChipView[] | null;
+}
+
+/** A command or subagent a reply's turn left running in the background. Times in ms since 1970. */
+export interface TaskChipView {
+  id: string;
+  kind: "command" | "agent";
+  title: string;
+  /** stopped: its bot's process ended; interrupted: the app restarted while it ran. */
+  status: "running" | "completed" | "failed" | "killed" | "stopped" | "interrupted";
+  started: number;
+  ended: number | null;
+  detail: string | null;
 }
 
 /**
@@ -260,6 +274,7 @@ export type Action =
   | { type: "codexReview"; scope: string | null; commit: string | null; spec: string | null }
   | { type: "openSource"; messageID: string }
   | { type: "openSubagent"; id: string }
+  | { type: "taskOutput"; messageID: string; taskID: string }
   | { type: "closeSubagent" }
   | { type: "feedback"; messageID: string; text: string; images: { name: string; base64: string }[] }
   | { type: "pickFiles" }
