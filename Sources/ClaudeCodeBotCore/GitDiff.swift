@@ -22,6 +22,8 @@ public struct GitDiff: Equatable, Sendable {
         /// The path in the new version (the old one for a deleted file).
         public var path: String
         public var hunks: [Hunk]
+        /// Lines left out at the end (an untracked file longer than `untrackedLineLimit`).
+        public var omitted = 0
 
         public var added: Int { hunks.flatMap(\.lines).filter { $0.kind == .added }.count }
         public var removed: Int { hunks.flatMap(\.lines).filter { $0.kind == .removed }.count }
@@ -133,6 +135,10 @@ public struct GitDiff: Equatable, Sendable {
         }.value
     }
 
+    /// The most lines of an untracked file shown as added: a review looks at code, not at a
+    /// generated or data file thousands of lines long. What is left out is counted (`omitted`).
+    public static let untrackedLineLimit = 2000
+
     /// Files git does not track or ignore, as all-added files (the first lines of text ones).
     static func untracked(_ folder: URL) -> [File] {
         let paths = (git(["ls-files", "--others", "--exclude-standard", "-z"], in: folder) ?? "").split(separator: "\0").map(String.init)
@@ -140,8 +146,10 @@ public struct GitDiff: Equatable, Sendable {
             let text = (try? String(contentsOf: folder.appending(path: path), encoding: .utf8)) ?? ""
             var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
             if lines.last == "" { lines.removeLast() }
-            let added = lines.prefix(2000).enumerated().map { Line(kind: .added, old: nil, new: $0.offset + 1, text: $0.element) }
-            return File(path: path, hunks: added.isEmpty ? [] : [Hunk(lines: added)])
+            let added = lines.prefix(untrackedLineLimit).enumerated().map { Line(kind: .added, old: nil, new: $0.offset + 1, text: $0.element) }
+            var file = File(path: path, hunks: added.isEmpty ? [] : [Hunk(lines: added)])
+            file.omitted = max(0, lines.count - untrackedLineLimit)
+            return file
         }
     }
 
@@ -173,15 +181,32 @@ public struct GitDiff: Equatable, Sendable {
             .flatMap { $0.isEmpty || $0 == "HEAD" ? nil : $0 }
     }
 
-    /// The branch to compare with: main or master when the folder is on another branch; nil
-    /// when it is on that branch itself (then only uncommitted changes count) or is no repository.
-    public static func defaultBase(folder: URL) -> String? {
-        guard let branch = git(["rev-parse", "--abbrev-ref", "HEAD"], in: folder)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !branch.isEmpty else { return nil }
-        for candidate in ["main", "master"] where candidate != branch {
-            if git(["rev-parse", "--verify", "--quiet", candidate], in: folder) != nil { return candidate }
+    /// The repository's default branch: what `origin/HEAD` points at, else `init.defaultBranch`,
+    /// else the first of `main` and `master` that exists. Nil outside a repository or when none
+    /// of these is there.
+    public static func defaultBranch(folder: URL) -> String? {
+        if let head = git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], in: folder)?.trimmingCharacters(in: .whitespacesAndNewlines),
+           let slash = head.firstIndex(of: "/") {
+            let name = String(head[head.index(after: slash)...])
+            if !name.isEmpty, exists(name, in: folder) { return name }
         }
-        return nil
+        let configured = git(["config", "--get", "init.defaultBranch"], in: folder)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ([configured].compactMap { $0 } + conventionalDefaults).first { !$0.isEmpty && exists($0, in: folder) }
+    }
+
+    /// The names a default branch usually has, for a repository that says nothing of its own.
+    static let conventionalDefaults = ["main", "master"]
+
+    private static func exists(_ branch: String, in folder: URL) -> Bool {
+        git(["rev-parse", "--verify", "--quiet", "refs/heads/\(branch)"], in: folder) != nil
+    }
+
+    /// The branch to compare with: the default branch (`defaultBranch`) when the folder is on
+    /// another branch; nil when it is on that branch itself (then only uncommitted changes count)
+    /// or is no repository.
+    public static func defaultBase(folder: URL) -> String? {
+        guard let branch = currentBranch(folder: folder), let base = defaultBranch(folder: folder), base != branch else { return nil }
+        return base
     }
 
     /// The top of the git repository holding `folder`; nil outside one.

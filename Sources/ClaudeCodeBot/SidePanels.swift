@@ -787,12 +787,7 @@ private struct MaintainerRow: View {
         }
     }
 
-    private var status: String {
-        if let (name, change) = library.working.first { return L("Component {0}: {1}", name, change) }
-        if bot.outage != nil { return NetworkResume.label }
-        if bot.isWorking { return L("Working") }
-        return bot.hasUnread ? L("Done, click to see") : bot.statusText
-    }
+    private var status: String { Workspace.maintainerStatus(bot, library: library) }
 }
 
 /// Codex, the read-only reviewer: always listed under Maintainer. Its line says what it is
@@ -1297,7 +1292,7 @@ extension DetailPanel {
     @ViewBuilder var codexSection: some View {
         let isCodex = bot.profile.capabilities.reviewer
         let reviews = workspace.codexReviews(for: bot)
-        let canReview = bot.profile.canBeReviewed
+        let canReview = workspace.canRequestReview(of: bot)
         if canReview || !reviews.isEmpty {
             PanelSection(isCodex ? L("Reviews") : L("Codex review")) {
                 VStack(spacing: 6) {

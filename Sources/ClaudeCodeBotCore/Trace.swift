@@ -310,10 +310,10 @@ public struct TraceBook: Equatable, Sendable {
                 tasks[at].end(status, summary: summary, at: date)
             }
             guard let index = subagentIndex(id), subagents[index].isRunning else { return false }
-            let ended: Subagent.Status = switch status {
-            case "completed": .completed
-            case "failed", "error": .failed
-            default: .stopped
+            let ended: Subagent.Status = switch TaskEnd(status) {
+            case .completed: .completed
+            case .failed: .failed
+            case .killed, nil: .stopped
             }
             end(index, status: ended, result: summary.map(Self.shorten) ?? subagents[index].result, at: date)
             trim()

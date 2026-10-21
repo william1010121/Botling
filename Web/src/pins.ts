@@ -2,6 +2,7 @@ import { post } from "./bridge";
 import { language, pieces, t, type Key } from "./i18n";
 import { isComposingEnter } from "./ime";
 import { intervalRow, parseInterval, presetMinutes, presetSeconds, refreshWords, type Interval, type IntervalRow, type IntervalUnit } from "./refresh";
+import { shared } from "./contract";
 import { commandCard, componentElement, hasLiveFrame, keepFrames, componentSizes, detailTarget, markPinFrames, maxColumns, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
 import { escapeHTML } from "./util";
 import type { ChatState, ChipStatus, ComponentInfo, DisplayView, FloatMenu, PinChoiceView, PinRefresh, PinSize, PinView, SpecChipView } from "./types";
@@ -473,7 +474,7 @@ const floatWords: Record<FloatMenu, Key> = {
 export function floatItem(pin: PinView): MenuItem | null {
   const menu = pin.floatMenu ?? (pin.float ? "stop" : null);
   if (!menu) return null;
-  return { label: t(floatWords[menu]), disabled: menu === "full", run: () => post({ type: "floatPin", id: pin.id, floating: menu === "float" }) };
+  return { label: t(floatWords[menu], { n: shared.floating.max }), disabled: menu === "full", run: () => post({ type: "floatPin", id: pin.id, floating: menu === "float" }) };
 }
 
 const sizeWords: Record<string, Key> = { "1x1": "pins.sizeSmall", "2x1": "pins.sizeWide", "1x2": "pins.sizeTall", "2x2": "pins.sizeLarge", "4x2": "pins.sizeExtraWide" };
@@ -759,14 +760,23 @@ export type PinSurface = "board" | "sheet" | "float";
  */
 const pinSaves = new Map<string, { from: string; to: string }>();
 
-/** The Board's smallest cell and the gap between cells, in px (chat.css has the same gap). */
-const boardCell = 150;
-const boardGap = 14;
+/**
+ * The Board's smallest cell and the gap between cells, in px; also floating cards' (float.ts).
+ * chat.css reads them as `--board-cell-min` and `--board-gap`, set here on the page.
+ */
+export const boardCell = 150;
+export const boardGap = 14;
+if (typeof document !== "undefined") {
+  document.documentElement.style.setProperty("--board-cell-min", `${boardCell}px`);
+  document.documentElement.style.setProperty("--board-gap", `${boardGap}px`);
+}
 
-/** The heights an opened pin's panel may be dragged to (Swift keeps 120…1600 too), leaving the chat room above. */
-const panelMinimum = 120;
+/** The heights an opened pin's panel may be dragged to (Swift's `PinnedComponent.panelHeights`). */
+const [panelMinimum, panelMaximum] = shared.panelHeights;
+/** What a dragged-up panel leaves of the window for the chat above it and the input box, in px. */
+const chatRoom = 140;
 function panelHeight(height: number): number {
-  const most = Math.max(panelMinimum, Math.min(1600, (window.innerHeight || 800) - 140));
+  const most = Math.max(panelMinimum, Math.min(panelMaximum, (window.innerHeight || 800) - chatRoom));
   return Math.round(Math.min(most, Math.max(panelMinimum, height)));
 }
 

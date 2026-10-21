@@ -69,7 +69,7 @@ enum Snapshot {
         mine.attachments = [Attachment(url: picture)]
         mine.replyTo = answered
         mine.replyPreview = "Right panel 70% done, scheduling this afternoon."
-        BotStore(directory: root.appending(path: "main")).save(messages: [
+        BotStore(directory: Workspace.Layout.mainBot(in: root)).save(messages: [
             ChatMessage(id: answered, role: .bot, text: "Right panel 70% done, scheduling this afternoon.", date: now.addingTimeInterval(-3600 * 3)),
             mine,
             ChatMessage(role: .bot, text: """
@@ -110,34 +110,30 @@ enum Snapshot {
         let folder: URL?
         switch name.lowercased() {
         case "main bot", "main":
-            folder = data.appending(path: "main")
+            folder = Workspace.Layout.mainBot(in: data)
         case "maintainer":
-            folder = data.appending(path: "projects/\(Workspace.maintainerID.uuidString)")
+            folder = Workspace.Layout.bot(Workspace.maintainerID, in: data)
         default:
-            let projects = (try? Data(contentsOf: data.appending(path: "projects.json")))
+            let projects = (try? Data(contentsOf: Workspace.Layout.projectsFile(in: data)))
                 .flatMap { try? JSONDecoder().decode([Workspace.Project].self, from: $0) } ?? []
             folder = projects.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
-                .map { data.appending(path: "projects/\($0.id.uuidString)") }
+                .map { Workspace.Layout.bot($0.id, in: data) }
         }
-        guard let folder, FileManager.default.fileExists(atPath: folder.appending(path: "chat.json").path) else {
+        guard let folder, BotStore(directory: folder).hasChat else {
             FileHandle.standardError.write(Data("No chat called \"\(name)\" in \(data.path).\n".utf8))
             exit(1)
         }
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
-        let copy = root.appending(path: "main")
-        try? FileManager.default.createDirectory(at: copy, withIntermediateDirectories: true)
-        for file in ["chat.json", "subagents.json", "pins.json", "specs.json"] {
-            try? FileManager.default.copyItem(at: folder.appending(path: file), to: copy.appending(path: file))
-        }
+        let copy = BotStore(directory: Workspace.Layout.mainBot(in: root))
+        BotStore(directory: folder).copyChat(to: copy)
         // `--pins file.json`: pins to draw instead of the chat's own (to look at them without pinning).
         let arguments = CommandLine.arguments
         if let at = arguments.firstIndex(of: "--pins"), arguments.count > at + 1 {
-            try? FileManager.default.removeItem(at: copy.appending(path: "pins.json"))
-            try? FileManager.default.copyItem(at: URL(filePath: arguments[at + 1]), to: copy.appending(path: "pins.json"))
+            copy.replacePins(with: URL(filePath: arguments[at + 1]))
         }
         // The components as installed, so cards and pins draw as they do in the app (a copy).
-        let installed = data.appending(path: "plugins/ccb-components/components")
-        let components = root.appending(path: "plugins/ccb-components/components")
+        let installed = Workspace.Layout.components(in: data)
+        let components = Workspace.Layout.components(in: root)
         try? FileManager.default.createDirectory(at: components.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? FileManager.default.copyItem(at: installed, to: components)
         draw(root: root, to: path, pins: true)
@@ -194,7 +190,7 @@ enum Snapshot {
         let card = CommunityShare.checklistCard(feature, checks: checks, owner: "mei-lin")
         var picked = ChatMessage(role: .notice, text: list.text, date: now.addingTimeInterval(-20), choices: list.choices)
         picked.chosen = blocked ? 1 : 0
-        BotStore(directory: root.appending(path: "main")).save(messages: [
+        BotStore(directory: Workspace.Layout.mainBot(in: root)).save(messages: [
             ChatMessage(role: .bot, text: "Merged **emoji reactions on pins** into main and kept its branch `bot/pin-reactions`. Type /share when you want to send it upstream.", date: now.addingTimeInterval(-60)),
             ChatMessage(role: .user, text: "/share", date: now.addingTimeInterval(-30)),
             picked,
@@ -213,7 +209,7 @@ enum Snapshot {
         let projectID = UUID()
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let project = Workspace.Project(id: projectID, name: "ClaudeCodeBot", folder: folder, avatar: "square")
-        try? JSONEncoder().encode([project]).write(to: root.appending(path: "projects.json"))
+        try? JSONEncoder().encode([project]).write(to: Workspace.Layout.projectsFile(in: root))
         let item = { (file: String, line: Int, severity: CodexSeverity, title: String) in
             CodexOutput.Item(file: file, line: line, severity: severity, title: title, scenario: "Two quick taps on Send start two runs; the second overwrites the first one's result.")
         }
@@ -234,7 +230,7 @@ enum Snapshot {
         let subagents = [Subagent(id: "toolu_1", description: "Fix login loop", prompt: "Fix it", startedAt: Date())]
         var named = subagents
         named[0].name = "fix-login"
-        BotStore(directory: root.appending(path: "projects/\(projectID.uuidString)")).save(subagents: named)
+        BotStore(directory: Workspace.Layout.bot(projectID, in: root)).save(subagents: named)
 
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
@@ -276,11 +272,11 @@ enum Snapshot {
         let projects = samples.map { name, avatar, _ in
             Workspace.Project(id: UUID(), name: name, folder: root.appending(path: "code/\(name)"), avatar: avatar)
         }
-        try? JSONEncoder().encode(projects).write(to: root.appending(path: "projects.json"))
+        try? JSONEncoder().encode(projects).write(to: Workspace.Layout.projectsFile(in: root))
         for (project, sample) in zip(projects, samples) where sample.2 > 0 {
-            BotStore(directory: root.appending(path: "projects/\(project.id.uuidString)")).save(unread: sample.2)
+            BotStore(directory: Workspace.Layout.bot(project.id, in: root)).save(unread: sample.2)
         }
-        BotStore(directory: root.appending(path: "projects/\(Workspace.maintainerID.uuidString)")).save(unread: 2)
+        BotStore(directory: Workspace.Layout.bot(Workspace.maintainerID, in: root)).save(unread: 2)
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
@@ -338,9 +334,9 @@ enum Snapshot {
         let projects = samples.map { name, avatar, folder, _ in
             Workspace.Project(id: UUID(), name: name, folder: root.appending(path: "code/\(folder)"), avatar: avatar)
         }
-        try? JSONEncoder().encode(projects).write(to: root.appending(path: "projects.json"))
+        try? JSONEncoder().encode(projects).write(to: Workspace.Layout.projectsFile(in: root))
         for (project, sample) in zip(projects, samples) where sample.3 > 0 {
-            BotStore(directory: root.appending(path: "projects/\(project.id.uuidString)")).save(unread: sample.3)
+            BotStore(directory: Workspace.Layout.bot(project.id, in: root)).save(unread: sample.3)
         }
         var settings = AppSettings()
         // Pinned Home server first, then Arbor.
@@ -484,8 +480,8 @@ enum Snapshot {
         try? FileManager.default.createDirectory(at: code.appending(path: ".bot"), withIntermediateDirectories: true)
         try? Data("## In progress\n- v1.9.0: fold the right panel into a strip of icons\n".utf8).write(to: code.appending(path: ".bot/memory.md"))
         let project = Workspace.Project(id: UUID(), name: "ClaudeCodeBot", folder: code, avatar: "square")
-        try? JSONEncoder().encode([project]).write(to: root.appending(path: "projects.json"))
-        let store = BotStore(directory: root.appending(path: "projects/\(project.id.uuidString)"))
+        try? JSONEncoder().encode([project]).write(to: Workspace.Layout.projectsFile(in: root))
+        let store = BotStore(directory: Workspace.Layout.bot(project.id, in: root))
         store.save(messages: [
             ChatMessage(role: .bot, text: "Done: [Sidebar option A](file:///tmp/a.html), [Sidebar collapse](file:///tmp/b.html), [ClaudeCodeBot v1.7.1](file:///tmp/c.html)", date: Date())
         ])
@@ -583,7 +579,7 @@ enum Snapshot {
     /// draws a whole window that wide.
     private static func drawSpec(to path: String) {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
-        let home = root.appending(path: "main")
+        let home = Workspace.Layout.mainBot(in: root)
         try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         let now = Date()
         var reply = ChatMessage(role: .bot, text: "測試全部跑完了：382 個測試，0 個失敗，共 41.2 秒。WebBridgeTests 112、ChatStoreTests 86、MarkdownTests 79，全部通過。", date: now.addingTimeInterval(-120))

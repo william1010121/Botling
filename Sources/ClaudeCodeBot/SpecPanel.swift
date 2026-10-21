@@ -85,7 +85,7 @@ struct SpecPanelView: NSViewRepresentable {
                     workspace.answerSpec(specID, question: question, option: option, in: bot)
                 }
             case "specSay":
-                workspace.saySpec(specID, text: body["text"] as? String ?? "", in: bot)
+                workspace.saySpec(specID, text: body["text"] as? String ?? "", request: body["request"] as? String, in: bot)
             case "specTestRun":
                 // Allowing needs the command and folder the panel showed; nothing else runs.
                 let approve = body["approve"] as? Bool ?? false

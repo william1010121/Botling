@@ -1,0 +1,15 @@
+[
+  { "text": "/choices", "name": "choices", "found": true },
+  { "text": "show me /choices", "name": "choices", "found": true },
+  { "text": "用/choices", "name": "choices", "found": true },
+  { "text": "café/choices", "name": "choices", "found": true },
+  { "text": "(/choices", "name": "choices", "found": true },
+  { "text": "\"/choices", "name": "choices", "found": true },
+  { "text": "'/choices", "name": "choices", "found": true },
+  { "text": "[/choices", "name": "choices", "found": true },
+  { "text": "{/choices", "name": "choices", "found": true },
+  { "text": "a/choices", "name": "choices", "found": false },
+  { "text": "~/choices", "name": "choices", "found": false },
+  { "text": "x_/choices", "name": "choices", "found": false },
+  { "text": "1/choices", "name": "choices", "found": false }
+]

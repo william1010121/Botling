@@ -99,6 +99,57 @@ public struct PluginManifest: Codable, Equatable, Sendable {
     public var title: String { displayName ?? name }
 }
 
+/// What a plugin may ask for in `ccb.permissions`, with what the install question says it allows.
+/// The one list both the check and the question read, so a permission cannot pass the check
+/// without words to ask about it.
+public enum PluginPermission: String, CaseIterable, Sendable {
+    case composer, messages, network, files, exec, bots, claude
+
+    /// "read the conversation": how the install question puts it.
+    public var allows: String {
+        switch self {
+        case .composer: L("read and change what you type in the input box")
+        case .messages: L("read the conversation")
+        case .network: L("connect to the internet")
+        case .files: L("read and write files on your computer")
+        case .exec: L("run programs on your computer")
+        case .bots: L("talk to bots on your behalf and make new ones")
+        case .claude: L("give the bots new tools")
+        }
+    }
+}
+
+extension PluginManifest {
+    /// The version a plugin the app writes itself starts at.
+    static let firstVersion = "1.0.0"
+    /// The `engines.ccb` range a plugin the app writes itself asks for: this build's plugin API.
+    static var engineRange: String { "^\(PluginRegistry.apiVersion.major).\(PluginRegistry.apiVersion.minor).0" }
+
+    /// A plugin the app makes itself (the component library, ccb-core, ccb-teams): at its first
+    /// version and asking for this build's plugin API.
+    static func builtIn(name: String, displayName: String, description: String, permissions: [PluginPermission],
+                        claude: String? = nil, components: String? = nil) -> PluginManifest {
+        let contributes = components.map { PluginManifest.Contributes(components: $0) }
+        return PluginManifest(name: name, displayName: displayName, version: firstVersion, description: description, license: "MIT",
+                              engines: ["ccb": engineRange], scripts: nil,
+                              ccb: Extension(permissions: permissions.map(\.rawValue), claude: claude, contributes: contributes))
+    }
+
+    /// As package.json is written: pretty, keys sorted, ending in a newline.
+    var fileText: String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return ((try? encoder.encode(self)).map { String(decoding: $0, as: UTF8.self) } ?? "{}") + "\n"
+    }
+
+    /// The `.claude-plugin/plugin.json` of its Claude part, at the same version.
+    static func claudePluginText(name: String, description: String) -> String {
+        let object: [String: Any] = ["name": name, "version": firstVersion, "description": description, "author": ["name": "ClaudeCodeBot"]]
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
+        return String(decoding: data, as: UTF8.self) + "\n"
+    }
+}
+
 /// One plugin found in the plugin library or shipped with ClaudeCodeBot.
 public struct InstalledPlugin: Identifiable, Equatable, Sendable {
     public var manifest: PluginManifest
@@ -679,10 +730,10 @@ public final class PluginRegistry: ObservableObject {
             problems.append("version \"\(manifest.version)\" must be semver, for example 1.0.0.")
         }
         guard let range = manifest.engines?["ccb"] else {
-            problems.append("engines.ccb is missing (for example \"^2.0.0\").")
+            problems.append("engines.ccb is missing (for example \"\(PluginManifest.engineRange)\").")
             return problems
         }
-        if !compatible(range) { problems.append("engines.ccb \"\(range)\" is not compatible with this ClaudeCodeBot (2.\(apiVersion.minor)).") }
+        if !compatible(range) { problems.append("engines.ccb \"\(range)\" is not compatible with this ClaudeCodeBot (\(apiVersion.major).\(apiVersion.minor)).") }
         guard let ccb = manifest.ccb else {
             problems.append("The ccb field is missing.")
             return problems
@@ -701,8 +752,8 @@ public final class PluginRegistry: ObservableObject {
         for style in ccb.styles ?? [] where !FileManager.default.fileExists(atPath: folder.appending(path: style).path) {
             problems.append("\"\(style)\" in styles does not exist.")
         }
-        let known = ["composer", "messages", "network", "files", "exec", "bots", "claude"]
-        for permission in ccb.permissions ?? [] where !known.contains(permission) {
+        let known = PluginPermission.allCases.map(\.rawValue)
+        for permission in ccb.permissions ?? [] where PluginPermission(rawValue: permission) == nil {
             problems.append("Unknown permission \"\(permission)\" (allowed: \(known.joined(separator: ", "))).")
         }
         var ids = Set<String>()

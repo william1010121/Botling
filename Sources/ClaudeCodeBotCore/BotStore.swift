@@ -10,11 +10,36 @@ public struct BotStore: Sendable {
         self.directory = directory
     }
 
-    private var chatURL: URL { directory.appending(path: "chat.json") }
+    /// The files that hold a bot's chat as it shows: its lines, its subagents, its pins and its
+    /// specs (its settings, bot.json, are not the chat).
+    public enum ChatFile: String, CaseIterable, Sendable {
+        case chat = "chat.json", subagents = "subagents.json", pins = "pins.json", specs = "specs.json"
+    }
+
+    private func url(_ file: ChatFile) -> URL { directory.appending(path: file.rawValue) }
+    private var chatURL: URL { url(.chat) }
     private var settingsURL: URL { directory.appending(path: "bot.json") }
-    private var subagentsURL: URL { directory.appending(path: "subagents.json") }
-    private var pinsURL: URL { directory.appending(path: "pins.json") }
-    private var specsURL: URL { directory.appending(path: "specs.json") }
+    private var subagentsURL: URL { url(.subagents) }
+    private var pinsURL: URL { url(.pins) }
+    private var specsURL: URL { url(.specs) }
+
+    /// Whether it has a chat at all.
+    public var hasChat: Bool { FileManager.default.fileExists(atPath: chatURL.path) }
+
+    /// Copies its chat (every `ChatFile` it has) into `other`, to look at it without touching it.
+    public func copyChat(to other: BotStore) {
+        try? FileManager.default.createDirectory(at: other.directory, withIntermediateDirectories: true)
+        for file in ChatFile.allCases {
+            try? FileManager.default.removeItem(at: other.url(file))
+            try? FileManager.default.copyItem(at: url(file), to: other.url(file))
+        }
+    }
+
+    /// Puts `source` in place of its pins (`--pins file.json`).
+    public func replacePins(with source: URL) {
+        try? FileManager.default.removeItem(at: pinsURL)
+        try? FileManager.default.copyItem(at: source, to: pinsURL)
+    }
 
     private struct Settings: Codable {
         var model: BotModel?

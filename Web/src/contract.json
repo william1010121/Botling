@@ -1,0 +1,64 @@
+{
+  "board" : {
+    "maxColumns" : 4,
+    "maxRows" : 4,
+    "sizeNames" : {
+      "1x1" : "small",
+      "1x2" : "tall",
+      "1x3" : "tall",
+      "1x4" : "tall",
+      "2x1" : "wide",
+      "2x2" : "large",
+      "2x3" : "large",
+      "2x4" : "large",
+      "3x1" : "wide",
+      "3x2" : "large",
+      "3x3" : "large",
+      "3x4" : "large",
+      "4x1" : "xlarge",
+      "4x2" : "xlarge",
+      "4x3" : "xlarge",
+      "4x4" : "xlarge"
+    }
+  },
+  "componentMention" : {
+    "nameCharacters" : "_-/",
+    "startsAfter" : "([{\"'"
+  },
+  "floating" : {
+    "heights" : [
+      100,
+      480
+    ],
+    "max" : 2,
+    "widths" : [
+      200,
+      640
+    ]
+  },
+  "imageExtensions" : [
+    "avif",
+    "bmp",
+    "gif",
+    "heic",
+    "heif",
+    "ico",
+    "jpeg",
+    "jpg",
+    "png",
+    "svg",
+    "tif",
+    "tiff",
+    "webp"
+  ],
+  "panelHeights" : [
+    120,
+    1600
+  ],
+  "refresh" : {
+    "defaultMinutes" : 15,
+    "maxSeconds" : 86400,
+    "minSeconds" : 2
+  },
+  "saveLimit" : 262144
+}

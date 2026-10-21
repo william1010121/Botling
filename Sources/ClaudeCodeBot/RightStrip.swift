@@ -99,7 +99,7 @@ struct RightStrip: View {
     @State private var open: RightPanelLayout.Section?
 
     private var isCodex: Bool { bot.profile.capabilities.reviewer }
-    private var canReview: Bool { bot.profile.canBeReviewed }
+    private var canReview: Bool { workspace.canRequestReview(of: bot) }
 
     private var waiting: [Workspace.Waiting] {
         if let group { return workspace.waiting.filter { $0.groupID == group.id } }

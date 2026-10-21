@@ -381,7 +381,7 @@ describe("changing a built component from its panel", () => {
     expect(rebuild.classList.contains("primary")).toBe(false);
     box.value = "失敗的要列名字";
     click(root.querySelector(".spec-say button"));
-    expect(sent).toEqual([{ type: "specSay", id: "S1", text: "失敗的要列名字" }]);
+    expect(sent).toEqual([{ type: "specSay", id: "S1", text: "失敗的要列名字", request: expect.any(String) }]);
     // Right away the panel says Maintainer is on it, before Swift sends the spec back,
     // and nothing can be built again meanwhile.
     expect(root.querySelector(".spec-status")?.textContent).toContain("Maintainer 正在改…（v3）");

@@ -91,8 +91,30 @@ public final class PluginHostClient: ObservableObject {
     private var nextID = 1
     private var stopping = false
 
-    public init(script: URL, locateNode: @escaping () -> URL? = { ClaudeExecutableLocator(command: "node").locate() }) {
+    /// How long the host is given for each kind of work, in one place (a slower machine or
+    /// plugin gets a longer policy, not a hunt through the file).
+    public struct Timing: Sendable {
+        /// A hook on a message being sent or a reply being shown: it holds up the chat, so it
+        /// is short, and when it runs out the message goes as it is.
+        public var hook: Duration = .seconds(5)
+        /// A command or a web part's call to its program part: work the user asked for.
+        public var call: Duration = .seconds(60)
+        /// Loading the plugins' program parts (each may import a lot).
+        public var load: Duration = .seconds(30)
+        /// How long `waitUntilReady` waits by default, and how often it looks.
+        public var ready: Duration = .seconds(5)
+        public var readyPoll: Duration = .milliseconds(20)
+        /// The pause before a host that died is started again (so a crash loop does not spin).
+        public var restartDelay: Duration = .milliseconds(300)
+
+        public init() {}
+    }
+
+    public let timing: Timing
+
+    public init(script: URL, timing: Timing = Timing(), locateNode: @escaping () -> URL? = { ClaudeExecutableLocator(command: "node").locate() }) {
         self.script = script
+        self.timing = timing
         self.locateNode = locateNode
     }
 
@@ -117,11 +139,11 @@ public final class PluginHostClient: ObservableObject {
     }
 
     /// Waits until the host is up and has loaded its plugins (for tests and first sends).
-    public func waitUntilReady(timeout: Duration = .seconds(5)) async -> Bool {
+    public func waitUntilReady(timeout: Duration? = nil) async -> Bool {
         if isRunning { return true }
-        let deadline = ContinuousClock.now + timeout
+        let deadline = ContinuousClock.now + (timeout ?? timing.ready)
         while !isRunning, ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(20))
+            try? await Task.sleep(for: timing.readyPoll)
         }
         return isRunning
     }
@@ -151,15 +173,17 @@ public final class PluginHostClient: ObservableObject {
     }
 
     public func command(_ id: String, args: [JSONValue] = []) async throws -> JSONValue {
-        try await request("command", .object(["id": .string(id), "args": .array(args)]), plugin: id.split(separator: ".").first.map(String.init), timeout: .seconds(60))
+        try await request("command", .object(["id": .string(id), "args": .array(args)]), plugin: id.split(separator: ".").first.map(String.init), timeout: timing.call)
     }
 
     /// A web part's `host.call` to its own program part.
     public func webCall(plugin: String, method: String, params: JSONValue) async throws -> JSONValue {
-        try await request("web", .object(["plugin": .string(plugin), "method": .string(method), "params": params]), plugin: plugin, timeout: .seconds(60))
+        try await request("web", .object(["plugin": .string(plugin), "method": .string(method), "params": params]), plugin: plugin, timeout: timing.call)
     }
 
-    public func request(_ method: String, _ params: JSONValue, plugin: String? = nil, timeout: Duration = .seconds(5)) async throws -> JSONValue {
+    /// `timeout`: nil gives a hook's (`timing.hook`).
+    public func request(_ method: String, _ params: JSONValue, plugin: String? = nil, timeout: Duration? = nil) async throws -> JSONValue {
+        let timeout = timeout ?? timing.hook
         guard input != nil else { throw HostMessage.HostError(message: "The plugin host is not running.") }
         let id = nextID
         nextID += 1
@@ -244,8 +268,9 @@ public final class PluginHostClient: ObservableObject {
         }
         restarts += 1
         // Back right away; the plugins load again when it says it is ready.
+        let delay = timing.restartDelay
         Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(300))
+            try? await Task.sleep(for: delay)
             guard let self, process == nil, !stopping, !specs.isEmpty else { return }
             start()
         }
@@ -300,7 +325,7 @@ public final class PluginHostClient: ObservableObject {
 
     private func load() async {
         let specs = specs
-        guard let result = try? await request("load", .object(["plugins": JSONValue(encoding: specs)]), timeout: .seconds(30)) else { return }
+        guard let result = try? await request("load", .object(["plugins": JSONValue(encoding: specs)]), timeout: timing.load) else { return }
         for failure in result["failed"]?.decode([[String: String]].self) ?? [] {
             onPluginFailure?(failure["name"], "The program part failed to load: \(failure["message"] ?? "")", true)
         }

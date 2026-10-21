@@ -1,7 +1,9 @@
 import { post } from "./bridge";
 import { language, t } from "./i18n";
-import { componentSizes, hasLiveFrame, keepFrames, pinSize, resizeFrame, sizeInfo } from "./components";
-import { capture, closePopups, drawnPart, fillPinHead, openMenu, pinBody, pinHeadKey, pinTitle, refreshItems, whenWords, type MenuItem } from "./pins";
+import { shared } from "./contract";
+import { componentSizes, hasLiveFrame, keepFrames, maxColumns, maxRows, pinSize, resizeFrame, sizeInfo } from "./components";
+import { LiveSchedule, liveTick, type LiveCard } from "./refresh";
+import { boardCell, boardGap, capture, closePopups, drawnPart, fillPinHead, openMenu, pinBody, pinHeadKey, pinTitle, refreshItems, whenWords, type MenuItem } from "./pins";
 import type { ChatState, ComponentInfo, FloatCorner, FloatView, FloatingPinView, PinSize, PinView } from "./types";
 
 /**
@@ -25,21 +27,22 @@ export const lineHeight = 38;
 const lineWidth = 240;
 /** The px a Board cell stands for, to tell the component its cells. */
 const cellPx = 140;
-/** A Board cell and the gap between two, in px (pins.ts's), for the width a card's tile has. */
-const boardCell = 150;
-const boardGap = 14;
 /** A card not resized is at least this wide: typical cards then draw their full layout, not their compact one. */
 export const floatWidth = 360;
 
 /** Below this width the window shows floating cards as one line each. */
 export const narrowWidth = 640;
-export const floatLimits = { minWidth: 200, maxWidth: 640, minHeight: 100, maxHeight: 480 };
+/** A floating card's bounds, as Swift keeps them (`PinnedComponent.Floating.widths` / `heights`). */
+export const floatLimits = {
+  minWidth: shared.floating.widths[0], maxWidth: shared.floating.widths[1],
+  minHeight: shared.floating.heights[0], maxHeight: shared.floating.heights[1],
+};
 
 export function isNarrow(width: number): boolean {
   return width < narrowWidth;
 }
 
-/** A card's size kept within `floatLimits` (Swift keeps the same). */
+/** A card's size kept within `floatLimits`. */
 export function clampFloatSize(width: number, height: number): { width: number; height: number } {
   const clamp = (value: number, low: number, high: number) => Math.round(Math.min(high, Math.max(low, value)));
   return { width: clamp(width, floatLimits.minWidth, floatLimits.maxWidth), height: clamp(height, floatLimits.minHeight, floatLimits.maxHeight) };
@@ -47,7 +50,7 @@ export function clampFloatSize(width: number, height: number): { width: number; 
 
 /** The Board cells a card of this many px stands for, for `ccb.size`: 280×160 is 2×1. */
 export function floatCells(width: number, height: number): PinSize {
-  return pinSize(Math.min(4, Math.max(1, Math.round(width / cellPx))), Math.min(4, Math.max(1, Math.round(height / cellPx))));
+  return pinSize(Math.min(maxColumns, Math.max(1, Math.round(width / cellPx))), Math.min(maxRows, Math.max(1, Math.round(height / cellPx))));
 }
 
 /** The corner nearest a point (a dragged card's centre) in a window this size. */
@@ -118,7 +121,7 @@ const globe = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" strok
 export function globalItems(entry: { pin: PinView; botName: string; global: boolean; blocked: string | null }): MenuItem[] {
   const id = entry.pin.id;
   if (entry.global) return [{ label: t("float.onlyIn", { bot: entry.botName }), run: () => post({ type: "setPinGlobal", id, global: false }) }];
-  if (entry.blocked) return [{ label: t("float.allBotsBlocked", { bot: entry.blocked }), disabled: true, run: () => {} }];
+  if (entry.blocked) return [{ label: t("float.allBotsBlocked", { bot: entry.blocked, n: shared.floating.max }), disabled: true, run: () => {} }];
   return [{ label: t("float.showInAllBots"), run: () => post({ type: "setPinGlobal", id, global: true }) }];
 }
 
@@ -147,7 +150,7 @@ export class FloatLayer {
   private readonly pending = new Map<string, Partial<FloatView>>();
   private components: Record<string, ComponentInfo> = {};
   /** When each pin refreshed every few seconds runs next. */
-  private readonly due = new Map<string, number>();
+  private readonly due = new LiveSchedule();
   private timer: ReturnType<typeof setInterval> | null = null;
   private busy = false;
   /** A card's content got taller or shorter: the cards after it in its corner move. */
@@ -176,7 +179,7 @@ export class FloatLayer {
       this.observer?.unobserve(entry.card);
       entry.card.remove();
       this.entries.delete(id);
-      this.due.delete(id);
+      this.due.forget(id);
       this.pending.delete(id);
     }
     const appeared: PinView[] = [];
@@ -209,7 +212,7 @@ export class FloatLayer {
     }
     this.layOut();
     this.shown(appeared);
-    if (this.entries.size && !this.timer) this.timer = setInterval(() => this.refreshDue(), 1000);
+    if (this.entries.size && !this.timer) this.timer = setInterval(() => this.refreshDue(), liveTick);
     if (!this.entries.size && this.timer) {
       clearInterval(this.timer);
       this.timer = null;
@@ -475,25 +478,19 @@ export class FloatLayer {
     this.busy = true;
     let ran = 0;
     try {
-      for (const [id, entry] of this.entries) {
+      ran = this.due.tick([...this.entries].map(([id, entry]): LiveCard => {
         const pin = entry.pin;
         const every = typeof pin.display.every === "number" && pin.display.every > 0 ? pin.display.every
           : pin.refresh === "interval" && pin.seconds ? pin.seconds : 0;
         const status = pin.display.status;
-        if (!every || !pin.display.command || (status !== "done" && status !== "failed")) {
-          this.due.delete(id);
-          continue;
-        }
-        const due = this.due.get(id);
-        if (due === undefined) {
-          this.due.set(id, now + every * 1000);
-          continue;
-        }
-        if (now < due || document.visibilityState === "hidden" || this.elsewhere(id)) continue;
-        this.due.set(id, now + Math.max(1, every) * 1000);
-        post({ type: "pinCommand", id, command: pin.display.command, folder: pin.display.folder ?? "", force: true, live: true });
-        ran += 1;
-      }
+        return {
+          key: id,
+          every: pin.display.command ? every : 0,
+          idle: status === "done" || status === "failed",
+          ready: () => document.visibilityState !== "hidden" && !this.elsewhere(id),
+          run: () => post({ type: "pinCommand", id, command: pin.display.command!, folder: pin.display.folder ?? "", force: true, live: true }),
+        };
+      }), now);
     } finally {
       this.busy = false;
     }

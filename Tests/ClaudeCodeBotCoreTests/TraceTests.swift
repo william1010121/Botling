@@ -38,7 +38,8 @@ struct TraceTests {
     /// claude's structured result for a call that started work in the background is read, not
     /// its words: a reworded result still sends the subagent to the background with its id.
     @Test func aLaunchIsReadFromTheStructuredResult() throws {
-        let line = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_A","type":"tool_result","content":[{"type":"text","text":"Started it."}]}]},"tool_use_result":{"status":"async_launched","agentId":"ab5d","outputFile":"/tmp/x/ab5d.output"}}"#
+        // The keys claude 2.1.304 gives a background Agent launch, as in a real transcript.
+        let line = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_A","type":"tool_result","content":[{"type":"text","text":"Started it."}]}]},"tool_use_result":{"agentId":"ab5d","canContinueAgent":true,"canReadOutputFile":true,"description":"Read a.txt","isAsync":true,"outputFile":"/tmp/x/ab5d.output","prompt":"Read a.txt and report it.","resolvedModel":"claude-sonnet-4-5","status":"async_launched"}}"#
         let events = StreamEvent.events(in: line)
         #expect(events.first == .trace(.launchResult(id: "toolu_A", result: LaunchResult(agentID: "ab5d", outputFile: "/tmp/x/ab5d.output", background: true), parent: nil)))
         var book = TraceBook()
@@ -47,7 +48,9 @@ struct TraceTests {
         #expect(try #require(book.subagent("toolu_A")).isRunning)
         // Another tool's result is none.
         #expect(LaunchResult(["stdout": "hi", "interrupted": false]) == nil)
-        #expect(LaunchResult(["backgroundTaskId": "bh62"])?.background == true)
+        // A background Bash call's result: its backgroundTaskId.
+        let bash = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_B","type":"tool_result","content":"Running."}]},"tool_use_result":{"stdout":"","stderr":"","interrupted":false,"isImage":false,"backgroundTaskId":"bh62"}}"#
+        #expect(StreamEvent.events(in: bash).first == .trace(.launchResult(id: "toolu_B", result: LaunchResult(background: true), parent: nil)))
     }
 
     @Test func aBackgroundShellCommandIsNoSubagent() {

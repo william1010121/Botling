@@ -303,9 +303,8 @@ public struct CodexCLI: CodexRunning {
     /// Several installs can sit side by side (a standalone one, npm's); the newest version is
     /// used, since an old one may not read the user's config.
     public static func newestExecutable() -> URL? {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        var paths = [".local/bin/codex", ".npm-global/bin/codex", ".bun/bin/codex"].map { home.appending(path: $0).path }
-        paths += ["/opt/homebrew/bin/codex", "/usr/local/bin/codex"]
+        let locator = ClaudeExecutableLocator(command: "codex")
+        var paths = locator.installed().map(\.path)
         if let shell = ClaudeExecutableLocator.askLoginShell(for: "codex") { paths.append(shell) }
         var seen = Set<String>()
         let found = paths.filter { FileManager.default.isExecutableFile(atPath: $0) && seen.insert(URL(filePath: $0).resolvingSymlinksInPath().path).inserted }

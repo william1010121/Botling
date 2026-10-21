@@ -101,8 +101,8 @@ struct CallInTests {
         #expect(called.role == .bot)
         #expect(called.text == "I'll fix the flag.")
         #expect(workspace.callInSpeakers.isEmpty)
-        // Maintainer's own chat stays its own.
-        #expect(workspace.maintainer.messages.isEmpty)
+        // Maintainer's own chat keeps what it was asked there and what it said.
+        #expect(workspace.maintainer.messages.map(\.role) == [.notice, .bot])
 
         let payload = ChatPayload.make(bot: chat, components: workspace.components, pending: [], replyingTo: nil,
                                        callIn: workspace.callInView(for: chat)) { _ in "" }
@@ -145,5 +145,53 @@ struct CallInTests {
         await workspace.callInQueues[garden.id]?.value
         #expect(chat.messages.last { $0.sourceID == Workspace.mainBotID }?.text == "Done today, then.")
         #expect(chat.messages.first { $0.id == question.id }?.chosen == 0)
+    }
+
+    /// A called-in bot works in its own main session, and its own chat and archive keep the
+    /// exchange (with the subagent it sent), so it owns that work after the call-in too.
+    @Test func aCalledInBotsOwnChatAndArchiveKeepTheExchange() async throws {
+        let fake = FakeLauncher()
+        fake.respond = { text in
+            if text.contains("(App: The user called you into") { return "Measured: 42 tokens/s." }
+            if isAppOnly(text) { return "OK" }
+            return "Got it"
+        }
+        let workspace = makeWorkspace(fake)
+        let garden = workspace.addProject(folder: try folder("garden"))
+        let chat = try #require(workspace.bot(for: garden))
+
+        await workspace.send("@Maintainer how fast is it?", to: chat)
+        await workspace.callInQueues[garden.id]?.value
+        #expect(chat.messages.contains { $0.sourceID == Workspace.maintainerID && $0.text == "Measured: 42 tokens/s." })
+
+        // Its own chat: where it was called in and what was asked, then its reply.
+        let own = workspace.maintainer.messages
+        #expect(own.count == 2)
+        let asked = try #require(own.first)
+        #expect(asked.role == .notice)
+        #expect(asked.text.contains("garden"))
+        #expect(asked.text.contains("@Maintainer how fast is it?"))
+        #expect(own.last?.role == .bot)
+        #expect(own.last?.sourceID == nil)
+        #expect(own.last?.text == "Measured: 42 tokens/s.")
+        // Seen already in garden's chat: nothing unread for it.
+        #expect(workspace.maintainer.unreadCount == 0)
+
+        // Its archive has both, so a later session can grep it.
+        let archive = workspace.maintainer.profile.archiveURL
+        let months = try FileManager.default.contentsOfDirectory(at: archive, includingPropertiesForKeys: nil)
+        let written = try months.map { try String(contentsOf: $0, encoding: .utf8) }.joined()
+        #expect(written.contains("@Maintainer how fast is it?"))
+        #expect(written.contains("You: Measured: 42 tokens/s."))
+
+        // The same main session as its own chat: talking to it there launches nothing new.
+        let launched = fake.agents.filter { $0.launch.workingDirectory == workspace.maintainer.profile.workingDirectory }
+        #expect(launched.count == 1)
+        await workspace.send("and now?", to: workspace.maintainer)
+        await eventually { workspace.maintainer.messages.contains { $0.text == "Got it" } }
+        #expect(fake.agents.filter { $0.launch.workingDirectory == workspace.maintainer.profile.workingDirectory }.count == 1)
+        #expect(launched.first?.sent.contains { $0.contains("(App: The user called you into") } == true)
+        // The reply in garden's chat is not answered twice.
+        #expect(chat.messages.filter { $0.text == "Measured: 42 tokens/s." }.count == 1)
     }
 }

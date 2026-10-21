@@ -238,3 +238,30 @@ struct ComponentAsk: Equatable {
     /// The id Maintainer answers it by (`<component-declined id="…">`).
     var key: String { String(id.uuidString.prefix(8)).lowercased() }
 }
+
+extension Workspace {
+    /// Maintainer's line in the left column, open or folded: the component it is changing, the
+    /// network it waits for, or how its chat stands.
+    public var maintainerStatus: String { Self.maintainerStatus(maintainer, library: components) }
+
+    /// The same for a view that watches Maintainer and the library itself.
+    public static func maintainerStatus(_ bot: Bot, library: ComponentLibrary) -> String {
+        if let (name, change) = library.working.first { return L("Component {0}: {1}", name, change) }
+        if bot.outage != nil { return NetworkResume.label }
+        if bot.isWorking { return L("Working") }
+        return bot.hasUnread ? L("Done, click to see") : bot.statusText
+    }
+}
+
+extension Bot {
+    /// How the bot stands, in a word or two, for its line in the left column.
+    public var statusText: String {
+        switch phase {
+        case .asleep where outage != nil, .awake where outage != nil: NetworkResume.label
+        case .asleep: "Asleep"
+        case .tidying: "Tidying notes"
+        case .switching: "Handing off"
+        case .awake: waitingForPermission ? "Waiting for your OK" : retryingConnection ? NetworkResume.label + "，重試中…" : isWorking ? "Working" : "Awake"
+        }
+    }
+}

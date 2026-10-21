@@ -3,7 +3,9 @@ import Foundation
 /// A picture the chat's lightbox may hand to Preview or Finder: a file on disk with a picture's
 /// extension, so a page can never open an app or a script this way.
 public enum ImageFile {
-    public static let extensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "bmp", "tif", "tiff", "svg", "avif"]
+    /// Every picture extension the app knows: the lightbox (this, and the chat page's copy from
+    /// `WebContract`) and the pictures a component's data names (`ComponentImages`).
+    public static let extensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "bmp", "tif", "tiff", "svg", "avif", "ico"]
 
     public static func isOpenable(_ url: URL, fileManager: FileManager = .default) -> Bool {
         guard url.isFileURL, extensions.contains(url.pathExtension.lowercased()) else { return false }

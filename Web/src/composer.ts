@@ -3,10 +3,18 @@ import { EditorState, Prec, StateEffect, type Extension } from "@codemirror/stat
 import { EditorView, keymap, placeholder as placeholderExtension } from "@codemirror/view";
 import { Compartment } from "@codemirror/state";
 import { post } from "./bridge";
+import { escapeRegExp, shared } from "./contract";
 import { language, t } from "./i18n";
 import { isComposingEnter, isComposingKey, isSendEnter } from "./ime";
 import { escapeHTML } from "./util";
 import type { ChatState } from "./types";
+
+/**
+ * The `/name` being typed right before the caret, as Swift reads a component's name in a message
+ * (`ComponentMentions`): the slash starts a word after whitespace, non-ASCII text such as
+ * Chinese, or one of the contract's `startsAfter` characters; group 1 is what is typed so far.
+ */
+export const slashQuery = new RegExp(`(?:^|[\\s${escapeRegExp(shared.componentMention.startsAfter)}\\u0080-\\uffff])\\/([^\\s/]{0,40})$`);
 
 /**
  * The input box: CodeMirror 6, so editor plugins (laas and the like) work in it as they do on the
@@ -163,7 +171,7 @@ export class Composer {
     const atAt = bots ? /(?:^|[^A-Za-z0-9_@])@@([^@\n]{0,40})$/.exec(before) : null;
     const at = bots && !atAt ? /(?:^|[^A-Za-z0-9_@])@([^@\n]{0,40})$/.exec(before) : null;
     // A / starts a word (after a space, a bracket or quote, or Chinese); a/b and ~/x are paths.
-    const slash = !atAt && !at && this.slashItems.length ? /(?:^|[\s([{"'\u0080-\uffff])\/([^\s/]{0,40})$/.exec(before) : null;
+    const slash = !atAt && !at && this.slashItems.length ? slashQuery.exec(before) : null;
     const match = atAt ?? at ?? slash;
     const query = match ? match[1].toLowerCase() : null;
     // A bare / offers only the app's commands; the components wait for a letter.

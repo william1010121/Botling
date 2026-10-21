@@ -1,7 +1,10 @@
 import { post } from "./bridge";
 import { t } from "./i18n";
+import { shared } from "./contract";
 import { imeGuardScript } from "./ime";
 import { openMedia } from "./lightbox";
+import { acceptPictures } from "./pictures";
+import { LiveSchedule, liveTick, type LiveCard } from "./refresh";
 import { escapeHTML } from "./util";
 import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./types";
 
@@ -197,7 +200,7 @@ ${imeGuardScript}
       let json;
       try { json = JSON.stringify(value); } catch (error) { return Promise.reject(new Error('ccb.save takes data JSON can hold: ' + error.message)); }
       if (json === undefined || json === 'null') return Promise.reject(new Error('ccb.save needs data (not null or undefined).'));
-      if (json.length > ${saveLimit}) return Promise.reject(new Error('The data is too big to save (at most 256 KB as JSON).'));
+      if (json.length > ${saveLimit}) return Promise.reject(new Error('The data is too big to save (at most ${saveLimit} characters of JSON).'));
       window.ccb.data = JSON.parse(json);
       parent.postMessage({ccb: 'save', data: json}, '*');
       return Promise.resolve();
@@ -277,8 +280,8 @@ document.documentElement.addEventListener('mouseleave', () => parent.postMessage
 </script></body></html>`;
 }
 
-/** The most `ccb.save` keeps, as JSON characters (Swift's `ComponentState.limit` is the same). */
-export const saveLimit = 256 * 1024;
+/** The most `ccb.save` keeps, as JSON characters (UTF-16 code units; Swift's `ComponentState.limit`). */
+export const saveLimit = shared.saveLimit;
 
 /**
  * Where a component is drawn: in the chat, as a tile on the Board, or "pinned": opened from its
@@ -286,18 +289,15 @@ export const saveLimit = 256 * 1024;
  */
 export type Surface = "chat" | "board" | "pinned";
 
-/** The most cells a Board card spans each way. */
-export const maxColumns = 4;
-export const maxRows = 4;
+/** The most cells a Board card spans each way (Swift's `PinnedComponent.Size`). */
+export const maxColumns = shared.board.maxColumns;
+export const maxRows = shared.board.maxRows;
 
 /** Every Board size, row by row: 1×1, 2×1, … 4×4. */
 export const pinSizes: PinSize[] = Array.from({ length: maxRows }, (_, row) =>
   Array.from({ length: maxColumns }, (_, column) => `${column + 1}x${row + 1}` as PinSize)).flat();
 
-/** The five sizes that have a name, for templates written for them. */
-const namedSizes: [number, number, string][] = [[1, 1, "small"], [2, 1, "wide"], [1, 2, "tall"], [2, 2, "large"], [4, 2, "xlarge"]];
-
-/** A size of `w`×`h` cells, each kept within 1…4. */
+/** A size of `w`×`h` cells, each kept within 1…`maxColumns` and 1…`maxRows`. */
 export function pinSize(w: number, h: number): PinSize {
   const clamp = (value: number, most: number) => Math.min(most, Math.max(1, Math.round(value) || 1));
   return `${clamp(w, maxColumns)}x${clamp(h, maxRows)}`;
@@ -311,18 +311,12 @@ export function parseSize(text: string | undefined | null): PinSize | null {
   return w >= 1 && w <= maxColumns && h >= 1 && h <= maxRows ? `${w}x${h}` : null;
 }
 
-/** The nearest named size to `w`×`h` ("small", "wide", "tall", "large", "xlarge"); of two as near, the earlier. */
+/**
+ * The nearest named size to `w`×`h` ("small", "wide", "tall", "large", "xlarge"), as Swift names
+ * every size (`PinnedComponent.Size.name`, sent in the contract).
+ */
 export function sizeName(w: number, h: number): string {
-  let best = namedSizes[0];
-  let distance = Infinity;
-  for (const named of namedSizes) {
-    const d = (named[0] - w) ** 2 + (named[1] - h) ** 2;
-    if (d < distance) {
-      best = named;
-      distance = d;
-    }
-  }
-  return best[2];
+  return shared.board.sizeNames[pinSize(w, h)] ?? "large";
 }
 
 /** What a template sees in `ccb.size` (the frame adds `px`, its real width and height). */
@@ -846,7 +840,7 @@ export function hasLiveFrame(element: Element | null): boolean {
  * done again, so a run is never asked for while one is going.
  */
 const liveRuns = new Map<string, () => void>();
-const liveDue = new Map<string, number>();
+const liveSchedule = new LiveSchedule();
 let liveTimer: ReturnType<typeof setInterval> | null = null;
 
 /** On screen: the window is shown and some of the card is inside it. */
@@ -859,37 +853,28 @@ function onScreen(element: Element): boolean {
 
 /** Runs the cards whose time has come and that are on screen; how many ran. */
 export function refreshDueCards(now = Date.now()): number {
-  let ran = 0;
-  let live = 0;
-  for (const card of document.querySelectorAll<HTMLElement>(".command-card[data-every]")) {
+  const cards = [...document.querySelectorAll<HTMLElement>(".command-card[data-every]")];
+  const ran = liveSchedule.tick(cards.map((card): LiveCard => {
     const key = card.dataset.liveKey ?? "";
-    const every = Number(card.dataset.every);
-    live += 1;
-    if (!(every > 0) || (card.dataset.status !== "done" && card.dataset.status !== "failed")) {
-      liveDue.delete(key);
-      continue;
-    }
-    const due = liveDue.get(key);
-    if (due === undefined) {
-      liveDue.set(key, now + every * 1000);
-      continue;
-    }
-    // Not on screen, or its frame not built yet (it is built once near): it waits.
-    if (now < due || !onScreen(card) || !builtFrames(card)) continue;
-    liveDue.set(key, now + every * 1000);
-    liveRuns.get(key)?.();
-    ran += 1;
-  }
-  if (!live && liveTimer) {
+    return {
+      key,
+      every: Number(card.dataset.every),
+      idle: card.dataset.status === "done" || card.dataset.status === "failed",
+      // Not on screen, or its frame not built yet (it is built once near): it waits.
+      ready: () => onScreen(card) && builtFrames(card),
+      run: () => liveRuns.get(key)?.(),
+    };
+  }), now);
+  if (!cards.length && liveTimer) {
     clearInterval(liveTimer);
     liveTimer = null;
-    liveDue.clear();
+    liveSchedule.clear();
   }
   return ran;
 }
 
 function watchLiveCards(): void {
-  liveTimer ??= setInterval(() => refreshDueCards(), 250);
+  liveTimer ??= setInterval(() => refreshDueCards(), liveTick);
 }
 
 export function commandCard(
@@ -1087,56 +1072,12 @@ ${component ? `<label class="report-shot"><input type="checkbox" checked> ${esca
   const send = box.querySelector<HTMLButtonElement>(".send")!;
   const strip = box.querySelector<HTMLElement>(".report-images")!;
   const shot = box.querySelector<HTMLInputElement>(".report-shot input");
-  const images: { name: string; base64: string }[] = [];
   // The screenshot alone is not a request: words or a picture of your own are.
   const refresh = () => {
     send.disabled = textarea.value.trim() === "" && images.length === 0;
     strip.hidden = images.length === 0;
   };
-  const addImage = (file: File) => {
-    if (!file.type.startsWith("image/")) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const url = String(reader.result ?? "");
-      const image = { name: file.name || `Pasted image.${file.type.split("/")[1] ?? "png"}`, base64: url.slice(url.indexOf(",") + 1) };
-      images.push(image);
-      const item = document.createElement("div");
-      item.className = "report-image";
-      item.innerHTML = `<img alt=""><button class="remove">×</button>`;
-      item.querySelector(".remove")!.setAttribute("aria-label", t("pictures.remove"));
-      item.querySelector("img")!.src = url;
-      item.querySelector("img")!.alt = image.name;
-      item.querySelector(".remove")!.addEventListener("click", () => {
-        images.splice(images.indexOf(image), 1);
-        item.remove();
-        refresh();
-      });
-      strip.append(item);
-      refresh();
-    };
-    reader.readAsDataURL(file);
-  };
-  textarea.addEventListener("paste", (event) => {
-    const files = [...(event.clipboardData?.files ?? [])].filter((file) => file.type.startsWith("image/"));
-    if (!files.length) return;
-    event.preventDefault();
-    files.forEach(addImage);
-  });
-  box.addEventListener("dragover", (event) => {
-    if (!event.dataTransfer?.types.includes("Files")) return;
-    event.preventDefault();
-    event.stopPropagation();
-    box.classList.add("dropping");
-  });
-  box.addEventListener("dragleave", () => box.classList.remove("dropping"));
-  box.addEventListener("drop", (event) => {
-    if (!event.dataTransfer?.files.length) return;
-    // Pictures dropped here go with the report, not into the chat's input box.
-    event.preventDefault();
-    event.stopPropagation();
-    box.classList.remove("dropping");
-    [...event.dataTransfer.files].forEach(addImage);
-  });
+  const images = acceptPictures(box, textarea, strip, refresh);
   refresh();
   textarea.addEventListener("input", refresh);
   send.addEventListener("click", () => {

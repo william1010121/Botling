@@ -173,7 +173,7 @@ describe("the spec panel", () => {
     expect(shift.defaultPrevented).toBe(false);
     expect(sent).toEqual([]);
     key(box, { key: "Enter", keyCode: 13 });
-    expect(sent).toEqual([{ type: "specSay", id: "S1", text: "失敗的要列名字" }]);
+    expect(sent).toEqual([{ type: "specSay", id: "S1", text: "失敗的要列名字", request: expect.any(String) }]);
   });
 
   it("a field keeps focus on the Return that commits a candidate, and is done on plain Return", () => {

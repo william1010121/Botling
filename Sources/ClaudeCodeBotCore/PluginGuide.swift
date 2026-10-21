@@ -30,7 +30,7 @@ enum PluginGuide {
           "displayName": "Example",
           "version": "1.0.0",
           "description": "One sentence on what it does.",
-          "engines": { "ccb": "^2.0.0" },
+          "engines": { "ccb": "\#(PluginManifest.engineRange)" },
           "ccb": {
             "permissions": ["composer", "messages"],
             "web": "dist/web.js",
@@ -117,11 +117,11 @@ enum PluginGuide {
           and the pictures as files saved in the chat's attachments folder, listed like a message's attachments.
           Pictures shown: data may name local pictures by file path; load them with `img.src = ccb.image(path)` (file: URLs do not load in the frame).
           Codex review: `ccb.reviewWithCodex({ scope, commit, spec })` (from a click) has Codex review the chat bot's repository once, read-only.
-          scope: "uncommitted", "lastCommit", "branch" (against main or master, only when on another branch) or "commit"; a `commit` hash implies "commit"
+          scope: "uncommitted", "lastCommit", "branch" (against the repository's default branch, such as main, only when on another branch) or "commit"; a `commit` hash implies "commit"
           and must be in the repository. `spec` (optional): a .md/.txt/.html file in the bot's folder or home that Codex checks the change against point by point.
           The report shows in the right column and a line in the chat; a call that does not check out is ignored.
           Data from a command: about.md's `Command: <command>` line fills the component with what it prints (run in the bot's folder after the user
-          presses "Allow and run" on the card; JSON output is the data, other output one string; at most 1 MB and 60 seconds). It is optional,
+          presses "Allow and run" on the card; JSON output is the data, other output one string; at most \#(ComponentCommands.limitsText)). It is optional,
           only for live data that changes: most components draw the data a bot gives them with `<show>`, and one made from a bot's reply shows that reply.
           Fields in two groups: about.md lists the data fields under "\#(ComponentFieldGroup.fromCommand.label)" (a CLI command can get them) and "\#(ComponentFieldGroup.botOnly.label)"
           (explanations, advice, a next step: only a bot can write them, so they are there only when a bot fills it); the template draws well
@@ -147,7 +147,7 @@ enum PluginGuide {
           `{"passed":120,"failed":2,"total":300,"cpu":37}`, a `Refresh: every 2s` line, and a template that draws once and updates in `onData`;
           the bot can also keep a card up to date itself with `<show name="build" id="build">` (below).
           Board sizes: a pinned component is a card on the bot's Board in square cells (about 150–170px, like home-screen widgets). The user
-          drags its bottom-right corner (or picks in its size menu) to any size from 1x1 to 4x4 cells, and can drag an opened pin's panel taller.
+          drags its bottom-right corner (or picks in its size menu) to any size from \#(PinnedComponent.Size.rangeText) cells, and can drag an opened pin's panel taller.
           So write ONE responsive layout that adapts to any width and height, like a responsive web page, not a layout per size: CSS grid with
           auto-fill columns (`repeat(auto-fill, minmax(140px, 1fr))`), container queries (`#ccb-root` is a size container on the Board, an
           inline-size one elsewhere: `@container (max-height: 200px) { … }`), collapse to a summary when short and to the key number when tiny.
@@ -175,7 +175,7 @@ enum PluginGuide {
           `ccb.setStatus({ text: "3 new", tone: "good" })` sets the status: a short value (about 14 characters show) and a tone, "good", "warning",
           "bad" or "neutral" (a coloured dot on the icon unless neutral); text alone is fine, `ccb.setStatus(null)` clears it. Without it the chip
           shows the start of a summary of the data. Only a pinned copy (opened from its chip, or its Board tile) sets the chip, which keeps the last status.
-          State of its own: `await ccb.save(data)` keeps `data` (anything JSON can hold but null, at most 256 KB as JSON) as this
+          State of its own: `await ccb.save(data)` keeps `data` (anything JSON can hold but null, at most \#(ComponentState.limitText)) as this
           component's data from now on, so a todo list's ticks and new items stay. It is kept where the component is drawn from: in
           the chat message (the bot's folder's chat.json, that message's `displays[i].data`) or on its pin (pins.json, the pin's
           `data`; a pin starts as a copy of the message's data and keeps its own from then on), so it draws with it again, also

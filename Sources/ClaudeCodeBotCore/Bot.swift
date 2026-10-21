@@ -111,11 +111,20 @@ public final class Bot: ObservableObject, Identifiable {
         var summary: String
         /// What lets that call through: "Bash(rm -rf build)".
         var rule: String
+        /// One of its subagents made the call, not the bot: which one, in the bot's words
+        /// (`"Fix group B" (named `audit-b`)`). The bot has to pass the answer on to it.
+        var subagent: String?
     }
     /// Blocked calls allowed once: rules for this run of the app (each new session starts with them).
     private var sessionRules: [String] = []
     /// Recent tool calls by id (tool, what it ran or touched), to show and allow a blocked one.
-    private var toolCalls: [String: (tool: String, detail: String)] = [:]
+    /// `parent`: the subagent that made the call (nil: the bot itself).
+    private var toolCalls: [String: (tool: String, detail: String, parent: String?)] = [:]
+    /// Their ids, oldest first, so the oldest go once there are more than `recentToolCalls`.
+    private var toolCallOrder: [String] = []
+    /// How many recent tool calls are kept: far more than a turn's denials or schedule results
+    /// look back at, few enough that a long session does not grow without end.
+    static let recentToolCalls = 500
     /// The soonest a wake-up or cron job of this bot is due (see `settleDueSchedules`).
     private var scheduleDue: Date?
     /// Blocked calls already shown (claude says so twice: its frame and the tool result).
@@ -492,7 +501,7 @@ public final class Bot: ObservableObject, Identifiable {
         let shown = Self.answerLabel(text, files: files)
         if let denial = denialAsks.removeValue(forKey: messageID) {
             markAnswered(shown, in: messageID)
-            appMessage("(App: The user did not allow `\(denial.summary)` (\(denial.tool)), which auto mode blocked, and said: \(shown))")
+            appMessage("(App: The user did not allow `\(denial.summary)` (\(denial.tool)), which auto mode blocked\(denial.subagent.map { " for " + $0 } ?? ""), and said: \(shown))")
             return true
         }
         if message.permissionTool != nil {
@@ -814,7 +823,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// back to) ends the turn. Not for turns whose reply goes elsewhere or is not shown.
     private func showEarly(_ text: String) {
         guard interruptions == 0, internalReply == nil, groupReply == nil, !dropNextReply,
-              !(fromBackground && ReplyParser.saysNoReply(text)),
+              !((fromBackground || (turnOrigin != .user && Self.saysNothing(text))) && ReplyParser.saysNoReply(text)),
               replyFilter?() == nil, outage == nil else { return }
         // Your message is answered: what you write now is a new one.
         turnInput = nil
@@ -898,6 +907,20 @@ public final class Bot: ObservableObject, Identifiable {
     /// A line in this chat that is not part of its own conversation (a group chat's lines).
     public func post(_ message: ChatMessage, unread: Bool = true) {
         if append(message), unread { unreadCount += 1 }
+    }
+
+    /// A turn it took in another chat, called in there with @ (its own session answered it):
+    /// kept in its own chat and archive too, as what it was asked there and its reply, with the
+    /// work that turn left running. Not unread: you read it where you called it in.
+    public func keepCallIn(asked: String, at date: Date, reply line: ChatMessage) {
+        append(ChatMessage(role: .notice, text: asked, date: date))
+        var copy = ChatMessage(role: .bot, text: line.text)
+        copy.displays = line.displays
+        copy.steps = line.steps
+        copy.session = sessionID
+        copy.backgroundTasks = trace.takeTasks()
+        if copy.text.isEmpty, copy.displays == nil, copy.backgroundTasks == nil { return }
+        append(copy)
     }
 
     /// Puts earlier lines in, in date order (notices moving over from another chat).
@@ -1047,10 +1070,18 @@ public final class Bot: ObservableObject, Identifiable {
         ]
         let request = PermissionRequest(id: denial.toolUseID, tool: tool, summary: summary, input: "{}")
         let reason = denial.reason.isEmpty ? "" : "\n\n" + L("Reason: {0}", denial.reason.replacingOccurrences(of: "\n", with: " "))
-        var message = ChatMessage(role: .bot, text: Self.permissionText(request, lead: L("Auto mode blocked")) + reason, choices: choices)
+        // A subagent's call (its line's `parent_tool_use_id`): the card says which subagent asked.
+        let subagent = call?.parent.map { id in trace.subagent(id) ?? Subagent(id: id, description: "", prompt: "") }
+        let title = subagent.map { $0.description.isEmpty ? ($0.name ?? L("Subagent")) : $0.description }
+        let lead = title.map { L("Subagent “{0}”: auto mode blocked", $0) } ?? L("Auto mode blocked")
+        var message = ChatMessage(role: .bot, text: Self.permissionText(request, lead: lead) + reason, choices: choices)
         message.permissionTool = tool
+        message.subagentID = subagent?.id
         append(message)
-        denialAsks[message.id] = Denial(tool: tool, summary: summary, rule: rule)
+        let named = subagent.map { agent in
+            "your subagent \"\(title ?? agent.id)\"" + (agent.name.map { " (named `\($0)`)" } ?? "")
+        }
+        denialAsks[message.id] = Denial(tool: tool, summary: summary, rule: rule, subagent: named)
         unreadCount += 1
         onQuestion?(message)
     }
@@ -1062,7 +1093,7 @@ public final class Bot: ObservableObject, Identifiable {
         markChosen(index, in: message.id)
         let (allowed, always) = Self.permissionVerdict(message.choices?[safe: index])
         guard allowed else {
-            appMessage("(App: The user did not allow `\(denial.summary)` (\(denial.tool)), which auto mode blocked. Do not try it again; carry on without it, or ask the user what to do instead.)")
+            appMessage("(App: The user did not allow `\(denial.summary)` (\(denial.tool)), which auto mode blocked\(denial.subagent.map { " for " + $0 } ?? ""). Do not try it again; carry on without it, or ask the user what to do instead.)")
             return true
         }
         if always {
@@ -1074,7 +1105,12 @@ public final class Bot: ObservableObject, Identifiable {
             sessionRules.append(denial.rule)
         }
         process?.allow(rules: allowRules)
-        appMessage("(App: The user allowed `\(denial.summary)` (\(denial.tool)), which auto mode blocked. It is allowed now: run it again as it was, then carry on.)")
+        if let subagent = denial.subagent {
+            // Not the bot's call: running it itself would do nothing for the subagent that needs it.
+            appMessage("(App: The user allowed `\(denial.summary)` (\(denial.tool)), which auto mode blocked for \(subagent). It is allowed now. It was the subagent's call, not yours: do not run it yourself; tell that subagent (SendMessage) to run it again as it was and carry on.)")
+        } else {
+            appMessage("(App: The user allowed `\(denial.summary)` (\(denial.tool)), which auto mode blocked. It is allowed now: run it again as it was, then carry on.)")
+        }
         return true
     }
 
@@ -1148,9 +1184,14 @@ public final class Bot: ObservableObject, Identifiable {
             if spent > 0 { onSpend?(spent) }
             if tokens.total > 0 { onTokens?(tokens) }
         case let .trace(step):
-            if case let .toolUse(id, tool, _, detail, _) = step {
-                if toolCalls.count > 500 { toolCalls.removeAll() }
-                toolCalls[id] = (tool, detail)
+            if case let .toolUse(id, tool, _, detail, parent) = step {
+                if toolCalls[id] == nil { toolCallOrder.append(id) }
+                toolCalls[id] = (tool, detail, parent)
+                if toolCallOrder.count > Self.recentToolCalls {
+                    let gone = toolCallOrder.prefix(toolCallOrder.count - Self.recentToolCalls)
+                    for old in gone { toolCalls[old] = nil }
+                    toolCallOrder.removeFirst(gone.count)
+                }
             }
             if trace.apply(step, at: now()) { store?.save(subagents: trace.subagents) }
             if case let .scheduleResult(id, result) = step, let tool = toolCalls[id]?.tool {
@@ -1227,6 +1268,7 @@ public final class Bot: ObservableObject, Identifiable {
             }
             turnInput = nil
             let fromBackground = self.fromBackground
+            let fromUser = turnOrigin == .user
             endTurnOrigin()
             // `<choices>` and other tags written before a tool call are not in claude's result
             // (only the words after the last call are): they count as part of the reply.
@@ -1254,9 +1296,11 @@ public final class Bot: ObservableObject, Identifiable {
                 showNetworkLoss(text)
                 return
             }
-            if fromBackground, !isError, ReplyParser.saysNoReply(text) {
+            // The app's own message (an allow it passed on, say) answered with only <no-reply/>:
+            // a bubble with no words ("Worked · 1 step") would only look like it stopped.
+            if fromBackground || (!fromUser && Self.saysNothing(text) && trace.tasks.isEmpty), !isError, ReplyParser.saysNoReply(text) {
                 // Background work woke it with nothing for you: no bubble, and nothing unread.
-                // (A turn you or the app started always shows; the tag is just taken out.)
+                // (A turn you started always shows, and an app's turn with words; the tag is just taken out.)
                 trace.dropSteps()
                 isWorking = false
                 reloadRoutines()
@@ -1350,6 +1394,14 @@ public final class Bot: ObservableObject, Identifiable {
         turnOrigin == .background || (turnOrigin == nil && backgroundWake)
     }
 
+    /// The reply is only `<no-reply/>` (and tags that draw nothing): no words, buttons,
+    /// components or requests left to show.
+    static func saysNothing(_ reply: String) -> Bool {
+        let parsed = ReplyParser.parseAll(reply)
+        return parsed.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (parsed.choices ?? []).isEmpty && parsed.displays.isEmpty && parsed.requests.isEmpty
+    }
+
     /// The turn is over: the next one says again who started it.
     private func endTurnOrigin() {
         if fromBackground { backgroundWake = false }
@@ -1423,7 +1475,7 @@ public final class Bot: ObservableObject, Identifiable {
         case let .subagentEnded(callID, status, summary):
             id = callID
             // A notification says more than the error, so a failed one counts if any line is it.
-            guard status == "failed" || status == "error" || cutOffByNetwork.contains(callID) || ConnectionErrorText.isConnectionError(summary ?? "") else { return }
+            guard TaskEnd(status) == .failed || cutOffByNetwork.contains(callID) || ConnectionErrorText.isConnectionError(summary ?? "") else { return }
             text = (summary ?? "").split(whereSeparator: \.isNewline).first { ConnectionErrorText.isConnectionErrorLine(String($0)) }.map(String.init) ?? ""
         default:
             return
@@ -1876,11 +1928,10 @@ public final class Bot: ObservableObject, Identifiable {
     /// `$CLAUDE_CONFIG_DIR/projects`), or, for a folder claude names differently (a long path,
     /// a symlink), in any project folder there.
     public nonisolated static func claudeSessionExists(_ session: UUID, in folder: URL, config: URL? = nil) -> Bool {
-        let config = config ?? ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(filePath: $0) }
-            ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude")
-        let projects = config.appending(path: "projects")
-        let file = session.uuidString.lowercased() + ".jsonl"
-        let named = String(folder.standardizedFileURL.path.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+        let config = config ?? ClaudeCodeFiles.configFolder()
+        let projects = ClaudeCodeFiles.projectsFolder(config: config)
+        let file = ClaudeCodeFiles.transcriptName(session)
+        let named = ClaudeCodeFiles.projectFolderName(for: folder)
         if FileManager.default.fileExists(atPath: projects.appending(path: named).appending(path: file).path) { return true }
         let folders = (try? FileManager.default.contentsOfDirectory(atPath: projects.path)) ?? []
         return folders.contains { FileManager.default.fileExists(atPath: projects.appending(path: $0).appending(path: file).path) }

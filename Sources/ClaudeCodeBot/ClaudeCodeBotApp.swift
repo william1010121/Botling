@@ -25,7 +25,7 @@ struct ClaudeCodeBotApp: App {
                 Color.clear.frame(width: 1, height: 1).background(HiddenWindow())
             } else {
                 RootView(workspace: delegate.workspace, settings: delegate.settings)
-                    .background(MainWindowMarker())
+                    .background(MainWindowProbe())
                     .frame(minWidth: 980, minHeight: 620)
                     .preferredColorScheme(.dark)
             }
@@ -223,7 +223,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// CoreGraphics call is used on purpose: for the app's own window it needs no Screen
     /// Recording permission, where ScreenCaptureKit would ask every user first.
     static func captureMainWindow(into root: URL) async -> URL? {
-        guard let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil && $0.frame.width > 600 }),
+        guard let window = MainWindowProbe.window, window.isVisible,
               let image = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(window.windowNumber), [.boundsIgnoreFraming, .bestResolution]) else { return nil }
         let folder = SelfUpdate.folder(in: root).appending(path: "screenshots")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -239,7 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Clicking the Dock icon with only result windows open brings the main window back.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if let main = MainWindowMarker.window {
+        if let main = MainWindowProbe.window {
             main.makeKeyAndOrderFront(nil)
             return false
         }
@@ -315,15 +315,16 @@ enum AppError: LocalizedError {
     }
 }
 
-/// Remembers the window the chat is in: the main window, found again by what it holds rather
-/// than by its title or SwiftUI's name for it.
-private struct MainWindowMarker: NSViewRepresentable {
+/// Remembers the window the chat lands in, so "a picture of the main window" is that window and
+/// never a result, review or settings window that happens to be as large, and the Dock finds it
+/// again by what it holds rather than by its title or SwiftUI's name for it.
+private struct MainWindowProbe: NSViewRepresentable {
     @MainActor static weak var window: NSWindow?
 
     final class Probe: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            if let window { MainWindowMarker.window = window }
+            if let window { MainWindowProbe.window = window }
         }
     }
 

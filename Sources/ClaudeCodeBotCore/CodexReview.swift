@@ -150,10 +150,10 @@ public struct CodexScopeChoices: Equatable, Sendable {
     /// Asks git (blocking); nil outside a repository.
     public init?(folder: URL) {
         guard GitDiff.repositoryRoot(folder) != nil else { return nil }
-        let branch = GitDiff.currentBranch(folder: folder)
         var scopes: [CodexScope] = [.uncommitted, .lastCommit]
         suggested = .uncommitted
-        if let branch, !["main", "master"].contains(branch), let base = GitDiff.defaultBase(folder: folder) {
+        // Off the default branch: the branch's own work against it.
+        if let base = GitDiff.defaultBase(folder: folder) {
             scopes.append(.branch(base: base))
             suggested = .branch(base: base)
         }

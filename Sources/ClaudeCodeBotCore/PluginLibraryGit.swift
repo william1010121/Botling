@@ -14,10 +14,8 @@ public struct PluginLibraryGit: Sendable {
     /// git from the usual places; /usr/bin/git only when the developer tools are installed
     /// (otherwise it would pop up an installer).
     public static func locate() -> URL? {
-        for path in ["/opt/homebrew/bin/git", "/usr/local/bin/git", "/etc/profiles/per-user/\(NSUserName())/bin/git", "/run/current-system/sw/bin/git"]
-        where FileManager.default.isExecutableFile(atPath: path) {
-            return URL(filePath: path)
-        }
+        // Not the login shell: it may answer /usr/bin/git, which pops up the installer.
+        if let found = ClaudeExecutableLocator(command: "git").installed().first { return found }
         let tools = Process()
         tools.executableURL = URL(filePath: "/usr/bin/xcode-select")
         tools.arguments = ["-p"]

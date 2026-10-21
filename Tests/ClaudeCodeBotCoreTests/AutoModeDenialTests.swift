@@ -45,14 +45,13 @@ struct AutoModeDenialTests {
     /// the call did not run (`non_execution_kind`), beside the words for the model. (Shape from the
     /// SDK schema in the claude binary and the `toolDenialKind` / `permissionDecision` of real
     /// transcripts; the classifier's text is a real one.)
-    static func resultWithMeta(kind: String, text given: String? = nil) -> String {
+    static func resultWithMeta(kind: String?, text given: String? = nil) -> String {
         let text = given ?? realClassifierText
+        var meta: [String: Any] = ["id": "toolu_1", "permission_decision": ["decision": "reject", "source": "config", "reason_type": "classifier"]]
+        if let kind { meta["non_execution_kind"] = kind }
         let line: [String: Any] = ["type": "user", "parent_tool_use_id": NSNull(), "message": ["role": "user", "content": [
             ["type": "tool_result", "tool_use_id": "toolu_1", "is_error": true, "content": text]
-        ]], "tool_use_result": "Error: " + text, "tool_result_meta": [[
-            "id": "toolu_1", "non_execution_kind": kind,
-            "permission_decision": ["decision": "reject", "source": "config", "reason_type": "classifier"]
-        ]]]
+        ]], "tool_use_result": "Error: " + text, "tool_result_meta": [meta]]
         return String(decoding: try! JSONSerialization.data(withJSONObject: line), as: UTF8.self)
     }
 
@@ -83,7 +82,7 @@ struct AutoModeDenialTests {
         #expect(!denied(Self.resultWithMeta(kind: "automode-parsing-error")))
         #expect(!denied(Self.resultWithMeta(kind: "permission-rule")))
         // A call that ran (no kind) is not a denial whatever its output says.
-        let ran = Self.resultWithMeta(kind: "automode-blocked").replacingOccurrences(of: #""non_execution_kind":"automode-blocked","#, with: "")
+        let ran = Self.resultWithMeta(kind: nil)
         #expect(!denied(ran))
         // Words alone (an older claude): only a real block's.
         for text in Self.realNoVerdictTexts {
@@ -170,6 +169,103 @@ struct AutoModeDenialTests {
         #expect(bot.choose(2, in: try #require(bot.openQuestion).id))
         #expect(agent.allowedRules.isEmpty)
         await eventually { agent.sent.last?.contains("did not allow") == true }
+    }
+
+    // MARK: A subagent's call
+
+    /// A background subagent named `audit-b` (the Agent call's `name`) whose own Bash call auto
+    /// mode blocks. Its lines carry `parent_tool_use_id` (the Agent call), as claude streams them;
+    /// a subagent's tool result has no `tool_result_meta`, so its words tell.
+    static var subagentLines: [String] {
+        let spawn = #"{"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"tool_use","id":"toolu_A","name":"Agent","input":{"description":"Fix medium audit items group B","name":"audit-b","subagent_type":"general-purpose","prompt":"Fix group B.","run_in_background":true}}]}}"#
+        let started = #"{"type":"system","subtype":"task_started","task_id":"a35","tool_use_id":"toolu_A","description":"Fix medium audit items group B","subagent_type":"general-purpose","is_backgrounded":true,"prompt":"Fix group B."}"#
+        let launched = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_A","type":"tool_result","content":[{"type":"text","text":"Async agent launched successfully."}]}]}}"#
+        let call = toolUseLine.replacingOccurrences(of: #""parent_tool_use_id":null"#, with: #""parent_tool_use_id":"toolu_A""#)
+        let frame = deniedFrame
+        let result = deniedResult.replacingOccurrences(of: #""parent_tool_use_id":null"#, with: #""parent_tool_use_id":"toolu_A""#)
+        return [spawn, started, launched, call, frame, result]
+    }
+
+    func emitSubagentDenial(_ agent: FakeAgent) {
+        for line in Self.subagentLines {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+    }
+
+    @Test func aSubagentsBlockedCallSaysWhichSubagentAsked() async throws {
+        #expect(Self.subagentLines[5].contains(#""parent_tool_use_id":"toolu_A""#))
+        let fake = FakeLauncher()
+        let (bot, agent) = try await awakeBot(fake)
+        emitSubagentDenial(agent)
+        await eventually { bot.openQuestion?.permissionTool == "Bash" }
+        let card = try #require(bot.openQuestion)
+        #expect(card.subagentID == "toolu_A")
+        #expect(card.text.contains("Fix medium audit items group B"))
+        #expect(card.text.contains("rm -rf build"))
+        // The chat draws it with that subagent (its title, and a way to open it).
+        let json = ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil) { _ in "" }.json()
+        #expect(json.contains(#""fromSubagent":{"#))
+        #expect(json.contains(#""id":"toolu_A""#))
+    }
+
+    @Test func allowingASubagentsCallTellsTheBotToRelayItNotRunIt() async throws {
+        let (bot, agent) = try await awakeBot(FakeLauncher())
+        emitSubagentDenial(agent)
+        await eventually { bot.openQuestion != nil }
+        #expect(bot.choose(0, in: try #require(bot.openQuestion).id))
+        #expect(agent.allowedRules.last == ["Bash(rm -rf build)"])
+        await eventually { agent.sent.last?.contains("allowed") == true }
+        let note = try #require(agent.sent.last)
+        #expect(note.contains("rm -rf build"))
+        #expect(note.contains("Fix medium audit items group B"))
+        #expect(note.contains("SendMessage"))
+        #expect(note.contains("audit-b"))
+        #expect(!note.contains("run it again as it was, then carry on"))
+    }
+
+    @Test func theBotsOwnBlockedCallIsNotASubagents() async throws {
+        let (bot, agent) = try await awakeBot(FakeLauncher())
+        emitDenial(agent)
+        await eventually { bot.openQuestion != nil }
+        #expect(bot.openQuestion?.subagentID == nil)
+        #expect(bot.choose(0, in: try #require(bot.openQuestion).id))
+        await eventually { agent.sent.last?.contains("allowed") == true }
+        #expect(agent.sent.last?.contains("SendMessage") == false)
+    }
+
+    /// The bot hands the allow on and has nothing to say (`<no-reply/>`): no empty
+    /// "Worked · 1 step" bubble is left in the chat.
+    @Test func aRelayedAllowThatSaysNoReplyLeavesNoEmptyBubble() async throws {
+        let fake = FakeLauncher()
+        // The allow is answered below, by hand.
+        fake.respond = { text in isAppOnly(text) && !text.contains("allowed") ? "OK" : nil }
+        let bot = Bot(profile: .main(home: root), launcher: fake.launcher, store: BotStore(directory: root.appending(path: "store")))
+        bot.send("Clean the build")
+        await eventually { fake.agents.count == 1 }
+        let agent = fake.agents[0]
+        // It sends the subagent off and replies; the subagent's call is blocked after.
+        for line in Self.subagentLines.prefix(3) {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+        agent.reply("Sent a subagent off.")
+        await eventually { !bot.isWorking }
+        for line in Self.subagentLines.dropFirst(3) {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+        await eventually { bot.openQuestion != nil }
+        let shown = bot.messages.count
+        #expect(bot.choose(0, in: try #require(bot.openQuestion).id))
+        await eventually { agent.sent.last?.contains("allowed") == true }
+        await eventually { bot.isWorking }
+        agent.emit(.trace(.toolUse(id: "toolu_S", tool: "SendMessage", title: "Message audit-b", detail: "Run it again.", parent: nil)))
+        agent.emit(.trace(.toolResult(id: "toolu_S", output: "Sent.", failed: false, parent: nil)))
+        agent.emit(.trace(.text("<no-reply/>", parent: nil)))
+        agent.emit(.earlyReply("<no-reply/>"))
+        agent.reply("<no-reply/>")
+        await eventually { !bot.isWorking }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(bot.messages.count == shown)
+        #expect(!bot.messages.contains { $0.role == .bot && $0.text.isEmpty && $0.choices == nil })
     }
 
     @Test func theRuleFitsTheTool() {

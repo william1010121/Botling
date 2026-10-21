@@ -1,5 +1,24 @@
 import Foundation
 
+/// How a task ended, read once from Claude Code's status word for every place that asks (the
+/// stop hook's `background_tasks`, a `task_notification`, a subagent's end). Nil: the word is no
+/// end (`running`, `pending`, or one this build does not know), so the task still runs.
+public enum TaskEnd: Sendable {
+    case completed, failed, killed
+
+    /// The words claude uses for an ended task, by how it ended.
+    static let words: [String: TaskEnd] = [
+        "completed": .completed, "done": .completed,
+        "failed": .failed, "error": .failed,
+        "killed": .killed, "stopped": .killed, "cancelled": .killed, "canceled": .killed,
+    ]
+
+    public init?(_ status: String?) {
+        guard let status, let end = Self.words[status.lowercased()] else { return nil }
+        self = end
+    }
+}
+
 /// Work a bot's turn left running in the background: a Bash call with `run_in_background`, an
 /// Agent call that was not told to wait (`task_started` with `is_backgrounded`), a Monitor (a watch
 /// that wakes the bot on each event), or something scheduled to wake it later (ScheduleWakeup,
@@ -28,12 +47,13 @@ public struct BackgroundTask: Codable, Equatable, Identifiable, Sendable {
         /// The app quit (a new build installed, a restart) while it ran: it went with the app.
         case interrupted
 
-        /// How a `task_notification` says it ended.
+        /// How a `task_notification` says it ended: an end word claude does not use yet counts
+        /// as killed (it did end).
         public init(notification status: String) {
-            switch status {
-            case "completed": self = .completed
-            case "failed", "error": self = .failed
-            default: self = .killed
+            switch TaskEnd(status) {
+            case .completed: self = .completed
+            case .failed: self = .failed
+            case .killed, nil: self = .killed
             }
         }
     }

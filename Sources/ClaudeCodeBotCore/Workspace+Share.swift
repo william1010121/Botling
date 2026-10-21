@@ -55,7 +55,7 @@ extension Workspace {
             }
             let card = CommunityShare.listCard(features, base: base)
             let question = tell(bot, card.text, choices: card.choices, sourceID: project.id)
-            shareQuestions[question] = .pick(Array(features.prefix(8)), project: project.id, base: base)
+            shareQuestions[question] = .pick(card.offered, project: project.id, base: base)
         }
         return true
     }
