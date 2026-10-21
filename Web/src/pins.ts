@@ -547,6 +547,18 @@ function drawnPart(pin: PinView): PinView {
   return { ...pin, headline: "", chip: undefined };
 }
 
+/**
+ * Keeps the pointer's moves coming to `handle` while it is held, over frames too. A pointer the
+ * page does not know (a synthetic event) cannot be captured; the drag goes on without it.
+ */
+function capture(handle: HTMLElement, pointer: number): void {
+  try {
+    handle.setPointerCapture?.(pointer);
+  } catch {
+    // Frames already ignore the pointer while dragging (body.pin-resizing).
+  }
+}
+
 /** The Board's smallest cell and the gap between cells, in px (chat.css has the same gap). */
 const boardCell = 150;
 const boardGap = 14;
@@ -762,7 +774,7 @@ export class PinArea {
       this.sheetDrag = true;
       this.sheet.classList.add("sized", "resizing");
       document.body.classList.add("pin-resizing");
-      handle.setPointerCapture?.(event.pointerId);
+      capture(handle, event.pointerId);
       const move = (moved: PointerEvent) => {
         height = panelHeight(start + startY - moved.clientY);
         this.sheet.style.height = `${height}px`;
@@ -900,7 +912,7 @@ export class PinArea {
       let size = was;
       card.classList.add("resizing");
       document.body.classList.add("pin-resizing");
-      handle.setPointerCapture?.(event.pointerId);
+      capture(handle, event.pointerId);
       const move = (moved: PointerEvent) => {
         const w = edge === "s" ? startW : Math.round((width + moved.clientX - startX + boardGap) / (cell + boardGap));
         const h = edge === "e" ? startH : Math.round((height + moved.clientY - startY + boardGap) / (cell + boardGap));
@@ -952,7 +964,7 @@ export class PinArea {
       let moving = false;
       let over: HTMLElement | null = null;
       document.body.classList.add("pin-resizing");
-      handle.setPointerCapture?.(event.pointerId);
+      capture(handle, event.pointerId);
       const follow = (x: number, y: number) => {
         card.style.transform = `translate(${Math.round(x - startX + home.left - base.left)}px, ${Math.round(y - startY + home.top - base.top)}px)`;
       };
