@@ -128,20 +128,21 @@ describe("the chips above the input box", () => {
     expect(sheet.hidden).toBe(true);
   });
 
-  it("an opened pin's top edge drags it taller or shorter; then its component fills that height", () => {
+  it("an opened pin is as tall as its content; its top edge drags the most it grows to", () => {
     const area = setUp();
     area.update(state({ pins: [pin()] }));
     click(document.querySelector(".pin-chip"));
     sent.length = 0;
     const sheet = document.querySelector<HTMLElement>(".pin-sheet")!;
     const frame = sheet.querySelector<HTMLIFrameElement>(".component-frame")!;
-    // As tall as its content at first: no height of its own, the page not told to fill.
+    // As tall as its content: no height of its own, the page not told to fill.
     expect(sheet.style.height).toBe("");
-    expect(frame.srcdoc).not.toContain('data-surface="pinned" data-fill');
+    expect(sheet.style.maxHeight).toBe("");
+    expect(frame.srcdoc).not.toMatch(/<html[^>]*data-fill/);
     Object.defineProperty(sheet, "offsetHeight", { configurable: true, value: 300 });
     const pointer = (type: string, y: number) => new PointerEvent(type, { clientX: 0, clientY: y, button: 0, bubbles: true });
     sheet.querySelector<HTMLElement>(".pin-sheet-resize")!.dispatchEvent(pointer("pointerdown", 500));
-    // It rises from the input box: up is taller.
+    // It rises from the input box: up is taller. While dragged it is exactly that tall, to see it.
     window.dispatchEvent(pointer("pointermove", 400));
     expect(sheet.style.height).toBe("400px");
     expect(sheet.classList.contains("sized")).toBe(true);
@@ -153,97 +154,71 @@ describe("the chips above the input box", () => {
     window.dispatchEvent(pointer("pointermove", 380));
     window.dispatchEvent(pointer("pointerup", 380));
     expect(sent).toEqual([{ type: "setPinHeight", id: "P1", height: 420 }]);
-    // Swift keeps it: the panel is that tall and the component is drawn to fill it.
+    // Let go, that is the most it grows to: a shorter component leaves no empty area under it.
+    expect(sheet.style.height).toBe("");
+    expect(sheet.style.maxHeight).toBe("420px");
+    // Swift keeps it; the component is still drawn at its content's height, not filling.
     area.update(state({ pins: [pin({ panelHeight: 420 })] }));
-    expect(sheet.style.height).toBe("420px");
-    const filled = sheet.querySelector<HTMLIFrameElement>(".component-frame")!;
-    expect(filled.srcdoc).toContain('<html data-size="2x2" data-surface="pinned" data-fill>');
-    // Another height keeps the same frame (it hears the new size itself).
+    expect(sheet.style.maxHeight).toBe("420px");
+    expect(sheet.style.height).toBe("");
+    const kept = sheet.querySelector<HTMLIFrameElement>(".component-frame")!;
+    expect(kept.srcdoc).not.toMatch(/<html[^>]*data-fill/);
+    // Another limit keeps the same frame.
     area.update(state({ pins: [pin({ panelHeight: 360 })] }));
-    expect(sheet.style.height).toBe("360px");
-    expect(sheet.querySelector(".component-frame")).toBe(filled);
-    // A double-click gives it back its content's height.
+    expect(sheet.style.maxHeight).toBe("360px");
+    expect(sheet.querySelector(".component-frame")).toBe(kept);
+    // A double-click takes the limit away.
     sheet.querySelector<HTMLElement>(".pin-sheet-resize")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     expect(sent.at(-1)).toEqual({ type: "setPinHeight", id: "P1", height: null });
     area.update(state({ pins: [pin({ panelHeight: null })] }));
-    expect(sheet.style.height).toBe("");
+    expect(sheet.style.maxHeight).toBe("");
     expect(sheet.classList.contains("sized")).toBe(false);
   });
 
-  it("an opened pin is its component, like a Board tile: no header, controls float over it on hover", () => {
+  it("an opened pin has the floating card's header: icon, its own name, status, ↻ ⋯ and collapse", () => {
     const css = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
     const style = document.createElement("style");
     style.textContent = css;
     document.head.append(style);
     try {
       const area = setUp();
-      area.update(state({ pins: [pin()] }));
+      const named = { ...components, 提交紀錄: { ...components.提交紀錄, title: "提交紀錄卡" } };
+      area.update(state({ components: named, pins: [pin()] }));
       click(document.querySelector(".pin-chip"));
       const sheet = document.querySelector<HTMLElement>(".pin-sheet")!;
-      // No header row (title, command, when it ran): the body, then the floating tools.
-      expect(sheet.querySelector(".pin-sheet-head, .pin-sheet-title, .pin-command, .pin-when")).toBeNull();
-      expect([...sheet.children].map((child) => child.className)).toEqual(["pin-sheet-resize resize-handle", "pin-sheet-body", "pin-sheet-tools"]);
-      // The component's frame fills the panel with no padding around it, and draws no frame of its own.
+      expect([...sheet.children].map((child) => child.className)).toEqual(["pin-sheet-resize resize-handle", "pin-sheet-head pin-head", "pin-sheet-body"]);
+      const head = sheet.querySelector<HTMLElement>(".pin-head")!;
+      // Its name from about.md; the folder's name in the tooltip.
+      expect(head.querySelector(".pin-head-title")?.textContent).toBe("提交紀錄卡");
+      expect(head.querySelector<HTMLElement>(".pin-head-title")?.title).toBe("提交紀錄");
+      expect(sheet.getAttribute("aria-label")).toBe("提交紀錄卡");
+      expect(head.querySelector(".pin-head-status")?.textContent).toBe("f472a1c · Mer…");
+      expect(head.querySelector(".pin-chip-icon")).not.toBeNull();
+      expect([...head.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual(["Refresh (Updated 10:42)", "More", "Collapse"]);
+      // The same header and card as a floating pin: one rule for both.
+      expect(css).toMatch(/\.pin-sheet, \.float-card \{[^}]*border-radius: 16px/);
+      expect(css).toMatch(/\.pin-sheet-body, \.float-body \{[^}]*overflow-y: auto/);
+      // The component under it has no padding and draws no frame of its own.
       const body = sheet.querySelector<HTMLElement>(".pin-sheet-body")!;
       expect(getComputedStyle(body).padding).toMatch(/^(0px|)$/);
       const frame = sheet.querySelector<HTMLIFrameElement>(".component-frame")!;
       expect(frame.srcdoc).toContain('data-surface="pinned"');
-      expect(frame.srcdoc).toContain('surface: "pinned"');
-      // The tools are hidden until hovered or focused: refresh, more and collapse.
-      const tools = sheet.querySelector<HTMLElement>(".pin-sheet-tools")!;
-      expect(getComputedStyle(tools).position).toBe("absolute");
-      expect(getComputedStyle(tools).opacity).toBe("0");
-      expect(css).toMatch(/\.pin-sheet:hover > \.pin-sheet-tools, \.pin-sheet\.hovered > \.pin-sheet-tools, \.pin-sheet-tools:focus-within/);
-      expect([...tools.querySelectorAll("button")].map((b) => b.getAttribute("aria-label"))).toEqual(["Refresh (Updated 10:42)", "More", "Collapse"]);
-      // The pointer over the component (inside its frame) shows them too.
-      window.dispatchEvent(new MessageEvent("message", { data: { ccb: "hover", on: true }, source: frame.contentWindow }));
-      expect(sheet.classList.contains("hovered")).toBe(true);
-      window.dispatchEvent(new MessageEvent("message", { data: { ccb: "hover", on: false }, source: frame.contentWindow }));
-      expect(sheet.classList.contains("hovered")).toBe(false);
-      // Its name, when it ran and its command are in the more menu.
-      click(tools.querySelector("[aria-label='More']"));
+      // A new status redraws the header, not the component.
+      area.update(state({ components: named, pins: [pin({ chip: { text: "9a1b2c3", tone: "good" } })] }));
+      expect(head.querySelector(".pin-head-status")?.textContent).toBe("9a1b2c3");
+      expect(head.querySelector<HTMLElement>(".pin-head-status")?.dataset.tone).toBe("good");
+      expect(sheet.querySelector(".component-frame")).toBe(frame);
+      // Its name, when it ran and its command are in the more menu, with Report.
+      click(head.querySelector("[aria-label='More']"));
       expect(document.querySelector(".pin-menu-heading")?.textContent).toBe("提交紀錄");
       expect([...document.querySelectorAll(".pin-menu-note")].map((n) => n.textContent)).toEqual(["Updated 10:42", "$ python3 git-log-json.py 20"]);
+      expect([...document.querySelectorAll(".pin-menu button")].some((b) => b.textContent === "Report this component…")).toBe(true);
       document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      // Collapse puts it away.
-      click(tools.querySelector("[aria-label='Collapse']"));
-      expect(sheet.hidden).toBe(true);
-    } finally {
-      style.remove();
-    }
-  });
-
-  it("an opened pin's controls never cover its content: the pill sits above the panel, the flag is in ⋯", () => {
-    const css = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
-    const style = document.createElement("style");
-    style.textContent = css;
-    document.head.append(style);
-    try {
-      const area = setUp();
-      area.update(state({ pins: [pin()] }));
-      click(document.querySelector(".pin-chip"));
-      const sheet = document.querySelector<HTMLElement>(".pin-sheet")!;
-      const tools = sheet.querySelector<HTMLElement>(".pin-sheet-tools")!;
-      // The pill floats just above the panel's top-right corner, outside the component (it covered
-      // the first row's right-aligned time), with a bridge so the pointer can reach it.
-      const look = getComputedStyle(tools);
-      expect(look.top).toMatch(/^(auto|)$/);
-      expect(look.bottom).toBe("calc(100% + 6px)");
-      expect(css).toMatch(/\.pin-sheet-tools::after \{[^}]*top: 100%/);
-      // So the panel does not clip it: the body clips the component to the rounded corners
-      // instead (clip-path too, as WebKit does not clip a frame to a radius with overflow alone).
-      expect(getComputedStyle(sheet).overflow).toBe("visible");
-      const body = sheet.querySelector<HTMLElement>(".pin-sheet-body")!;
-      expect(getComputedStyle(body).borderRadius).toBe("19px");
-      expect(css).toMatch(/\.pin-sheet-body \{[^}]*clip-path: inset\(0 round 19px\)/);
-      // No report flag over the bottom-right corner (it covered the last row's time)...
+      // No report flag over the component (it covered the last row).
       expect(getComputedStyle(sheet.querySelector<HTMLElement>(".component-side")!).display).toBe("none");
-      // ...it is in the ⋯ menu instead.
-      click(tools.querySelector("[aria-label='More']"));
-      const report = [...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")].find((b) => b.textContent === "Report this component…")!;
-      expect(report).toBeDefined();
-      report.click();
-      expect(document.querySelector(".report")).not.toBeNull();
+      // Collapse puts it away.
+      click(sheet.querySelector(".pin-head [aria-label='Collapse']"));
+      expect(sheet.hidden).toBe(true);
     } finally {
       style.remove();
     }

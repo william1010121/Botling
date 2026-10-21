@@ -65,6 +65,15 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **A floating pin and an opened pin look the same, and fit their content.** Both now have one
+  header: the component's icon, its own name from its about.md ("發版進度卡", not the folder name
+  "release-progress"), its status, ↻ and ⋯ (and collapse above the input box), with the same
+  spacing, type, border and corners. Both are as tall as the component's content, up to a limit,
+  and scroll past it, so a short component no longer leaves an empty area under it; a height you
+  dragged an opened pin to is now that limit. A floating pin is wide enough by default for a card
+  to show its full layout instead of its compact one (as wide as the window allows); one you
+  resized keeps its width, and its height becomes its limit. Board tiles are unchanged.
+
 - **A long chat redraws faster while a bot works.** Each update the page compared every message
   that shows a component against the whole components text (~180 KB) again; a 500-message chat
   spent 25-45 ms of every streamed step on that. It now compares the components once per update

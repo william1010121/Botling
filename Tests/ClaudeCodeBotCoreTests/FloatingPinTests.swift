@@ -61,7 +61,21 @@ struct FloatingPinTests {
         let empty = #"[{"id":"8E1B5D2C-3C55-4C6E-9C0B-6D7B0B8E4A11","name":"x","data":"1","float":{}}]"#
         let fresh = try #require(try JSONDecoder().decode([PinnedComponent].self, from: Data(empty.utf8))[0].float)
         #expect(fresh == PinnedComponent.Floating())
-        #expect(fresh.width == 280 && fresh.height == 160 && fresh.corner == .topRight)
+        // No size of its own: the page fits it to its content.
+        #expect(fresh.width == nil && fresh.height == nil && fresh.corner == .topRight && !fresh.resized)
+    }
+
+    @Test func aFloatAtTheOldDefaultSizeFitsItsContentNow() throws {
+        // Every card used to float at 280×160 until resized: kept at exactly that, it was never resized.
+        let old = #"[{"id":"8E1B5D2C-3C55-4C6E-9C0B-6D7B0B8E4A11","name":"x","data":"1","float":{"corner":"bottomLeft","width":280,"height":160,"collapsed":true}}]"#
+        let float = try #require(try JSONDecoder().decode([PinnedComponent].self, from: Data(old.utf8))[0].float)
+        #expect(float == PinnedComponent.Floating(corner: .bottomLeft, collapsed: true))
+        // One the user resized keeps its size, and an encoded one without a size writes none.
+        let resized = #"[{"id":"8E1B5D2C-3C55-4C6E-9C0B-6D7B0B8E4A11","name":"x","data":"1","float":{"width":420,"height":160}}]"#
+        let kept = try #require(try JSONDecoder().decode([PinnedComponent].self, from: Data(resized.utf8))[0].float)
+        #expect(kept.width == 420 && kept.height == 160 && kept.resized)
+        let written = String(decoding: try JSONEncoder().encode(PinnedComponent.Floating()), as: UTF8.self)
+        #expect(!written.contains("width") && !written.contains("height"))
     }
 
     // MARK: At most two
@@ -143,7 +157,8 @@ struct FloatingPinTests {
         #expect((view["display"] as? [String: Any])?["command"] as? String == "printf '{\"title\":\"Building 40%\"}'")
         let float = try #require(view["float"] as? [String: Any])
         #expect(float["corner"] as? String == "topRight")
-        #expect(float["width"] as? Int == 280 && float["height"] as? Int == 160)
+        // Not resized: no size, so the page fits it to its content.
+        #expect(float["width"] == nil && float["height"] == nil)
         #expect(float["collapsed"] as? Bool == false)
         // The pin's own menu entry, in its bot's chat.
         let own = try #require(try payload(workspace, bot: main)["pins"] as? [[String: Any]])

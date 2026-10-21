@@ -1,26 +1,33 @@
 import { post } from "./bridge";
-import { hasLiveFrame, keepFrames, pinSize, resizeFrame } from "./components";
-import { button, capture, chipIcon, closePopups, drawnPart, icons, openMenu, pinBody, refreshItems, refreshPin, whenWords, type MenuItem } from "./pins";
-import type { ChatState, ChipStatus, ComponentInfo, FloatCorner, FloatView, FloatingPinView, PinSize, PinView } from "./types";
+import { componentSizes, hasLiveFrame, keepFrames, pinSize, resizeFrame, sizeInfo } from "./components";
+import { capture, closePopups, drawnPart, fillPinHead, openMenu, pinBody, pinHeadKey, pinTitle, refreshItems, whenWords, type MenuItem } from "./pins";
+import type { ChatState, ComponentInfo, FloatCorner, FloatView, FloatingPinView, PinSize, PinView } from "./types";
 
 /**
  * Pins floated in a corner of the window ("Float in corner" in a pin's menu): a small card over
  * the chat and the Board, of whichever bot, so something live (a release build's progress) can
  * be watched without asking. It draws the pin's component as its Board tile does, keeps a live
  * frame (`ccb.onData`) when new data comes, and reruns a pin refreshed every few seconds only
- * while the window is shown. Its head folds it to one line (a click) and drags it to another
- * corner (it snaps); its inner corner resizes it. It never covers the input box, and in a narrow
- * window it shows only as that one line.
+ * while the window is shown. Its header is the one an opened pin has (pins.ts `fillPinHead`), and
+ * like it, it is as tall as its component's content up to a limit, then scrolls. Its head folds
+ * it to one line (a click) and drags it to another corner (it snaps); its inner corner resizes it
+ * (that width is kept, that height is then the most it grows to). It never covers the input box,
+ * and in a narrow window it shows only as that one line.
  */
 
 /** Room around a floating card and between two in the same corner, in px. */
 const margin = 12;
 const gap = 12;
-/** A folded card's (or a chip's, in a narrow window) height and widest width. */
-const lineHeight = 34;
+/** A folded card's (or a chip's, in a narrow window) height: the shared header and the card's border. */
+export const lineHeight = 38;
 const lineWidth = 240;
 /** The px a Board cell stands for, to tell the component its cells. */
 const cellPx = 140;
+/** A Board cell and the gap between two, in px (pins.ts's), for the width a card's tile has. */
+const boardCell = 150;
+const boardGap = 14;
+/** A card not resized is at least this wide: typical cards then draw their full layout, not their compact one. */
+export const floatWidth = 360;
 
 /** Below this width the window shows floating cards as one line each. */
 export const narrowWidth = 640;
@@ -49,23 +56,37 @@ export function snapCorner(x: number, y: number, width: number, height: number):
 }
 
 /**
+ * How wide a card not resized is: as wide as its component's first Board size (its about.md's
+ * `Sizes:`), and never narrower than `floatWidth`, so it draws its full layout.
+ */
+export function defaultFloatWidth(info: ComponentInfo | undefined): number {
+  const { w } = sizeInfo(componentSizes(info)[0] ?? "2x2");
+  const tile = w * boardCell + (w - 1) * boardGap;
+  return Math.min(floatLimits.maxWidth, Math.max(floatWidth, tile));
+}
+
+/**
  * Where a card goes: in its corner, `offset` px further in when another card is there before it,
  * between the window's top and `composerTop` (never over the input box), no wider than the window.
- * Folded, it is one line.
+ * Its height is its content's (CSS), up to `maxHeight`: the height it was resized to, else
+ * `floatLimits.maxHeight`, and never more than the room there is. A card at the top is placed by
+ * its top, one at the bottom by its bottom (`bottom` px above the window's bottom edge), so it
+ * grows away from its corner. Folded, it is one line.
  */
-export function floatRect(float: FloatView, view: { width: number; height: number }, composerTop: number, offset = 0): { left: number; top: number; width: number; height: number } {
+export function floatRect(float: FloatView, view: { width: number; height: number }, composerTop: number, offset = 0, width = floatWidth): { left: number; top: number | null; bottom: number | null; width: number; maxHeight: number } {
   const bottom = Math.max(margin + lineHeight, Math.min(view.height, composerTop) - margin);
   const room = Math.max(lineHeight, bottom - margin - offset);
-  const wanted = float.collapsed ? lineHeight : float.height;
-  const height = Math.round(Math.min(wanted, room));
-  const width = Math.round(Math.max(120, Math.min(float.collapsed ? Math.min(float.width, lineWidth) : float.width, view.width - 2 * margin)));
+  const most = float.collapsed ? lineHeight : float.height ?? floatLimits.maxHeight;
+  const wide = float.width ?? width;
+  const shown = Math.round(Math.max(120, Math.min(float.collapsed ? Math.min(wide, lineWidth) : wide, view.width - 2 * margin)));
   const right = float.corner === "topRight" || float.corner === "bottomRight";
   const atTop = float.corner === "topRight" || float.corner === "topLeft";
   return {
-    left: right ? view.width - margin - width : margin,
-    top: atTop ? margin + offset : Math.max(margin, bottom - height - offset),
-    width,
-    height,
+    left: right ? view.width - margin - shown : margin,
+    top: atTop ? margin + offset : null,
+    bottom: atTop ? null : Math.round(view.height - bottom + offset),
+    width: shown,
+    maxHeight: Math.round(Math.min(most, room)),
   };
 }
 
@@ -83,10 +104,11 @@ interface FloatEntry {
   bodyKey: string;
   headKey: string;
   float: FloatView;
-  rect: { left: number; top: number; width: number; height: number };
+  /** Where it is now, its height as shown (or, unmeasured, the most it may be). */
+  rect: { left: number; top: number; width: number; height: number; maxHeight: number };
 }
 
-const defaultFloat: FloatView = { corner: "topRight", width: 280, height: 160, collapsed: false };
+const defaultFloat: FloatView = { corner: "topRight", collapsed: false };
 
 export class FloatLayer {
   private readonly layer: HTMLElement;
@@ -98,6 +120,8 @@ export class FloatLayer {
   private readonly due = new Map<string, number>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private busy = false;
+  /** A card's content got taller or shorter: the cards after it in its corner move. */
+  private readonly observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => this.layOut()) : null;
 
   constructor(parent: HTMLElement) {
     this.layer = document.createElement("div");
@@ -119,6 +143,7 @@ export class FloatLayer {
     const keep = new Set(list.map((f) => f.pin.id));
     for (const [id, entry] of this.entries) {
       if (keep.has(id)) continue;
+      this.observer?.unobserve(entry.card);
       entry.card.remove();
       this.entries.delete(id);
       this.due.delete(id);
@@ -172,7 +197,7 @@ export class FloatLayer {
     return { ...float, ...pending };
   }
 
-  private change(entry: FloatEntry, change: Partial<FloatView>): void {
+  private change(entry: FloatEntry, change: Partial<Pick<FloatView, "corner" | "collapsed">> & { width?: number; height?: number }): void {
     entry.float = { ...entry.float, ...change };
     this.pending.set(entry.pin.id, { ...(this.pending.get(entry.pin.id) ?? {}), ...change });
     post({ type: "setPinFloat", id: entry.pin.id, ...change });
@@ -183,9 +208,10 @@ export class FloatLayer {
     card.className = "float-card";
     card.dataset.id = pin.id;
     const head = document.createElement("div");
-    head.className = "float-head";
+    head.className = "float-head pin-head";
     card.append(head);
-    const entry: FloatEntry = { pin, botName, card, head, body: null, bodyKey: "", headKey: "", float: this.merged(pin), rect: { left: 0, top: 0, width: 0, height: 0 } };
+    const entry: FloatEntry = { pin, botName, card, head, body: null, bodyKey: "", headKey: "", float: this.merged(pin), rect: { left: 0, top: 0, width: 0, height: 0, maxHeight: 0 } };
+    this.observer?.observe(card);
     this.movable(entry);
     const handle = document.createElement("div");
     handle.className = "float-resize resize-handle";
@@ -201,43 +227,25 @@ export class FloatLayer {
     return entry;
   }
 
-  /** Its one line: icon, name, status, and ↻ and ⋯. Redrawn whenever it changes; the body is not. */
+  /** Its one line, the header an opened pin has: icon, name, status, ↻ and ⋯. Redrawn whenever it changes; the body is not. */
   private drawHead(entry: FloatEntry): void {
     const pin = entry.pin;
-    const status: ChipStatus = pin.chip ?? { text: pin.headline, tone: pin.display.status === "failed" ? "bad" : "neutral" };
     const info = this.components[pin.name];
-    const key = JSON.stringify([pin.name, status, pin.headline, pin.display.status, pin.display.ranAt ?? null, info?.icon ?? null, info?.iconImage ?? null, entry.botName, !!pin.display.command]);
-    entry.card.title = `${pin.name} · ${entry.botName}${pin.headline ? ` — ${pin.headline}` : ""}`;
-    entry.card.setAttribute("aria-label", `${pin.name}, floating`);
+    const title = pinTitle(pin, info);
+    const key = JSON.stringify([pinHeadKey(pin, info), entry.botName]);
+    entry.card.title = `${title} · ${entry.botName}${pin.headline ? ` — ${pin.headline}` : ""}`;
+    entry.card.setAttribute("aria-label", `${title}, floating`);
     entry.card.classList.toggle("running", pin.display.status === "running");
     if (key === entry.headKey) return;
     entry.headKey = key;
-    const head = entry.head;
-    head.innerHTML = "";
-    head.title = "Click to fold or unfold · drag to another corner";
-    head.append(chipIcon(info, status));
-    const title = document.createElement("span");
-    title.className = "float-title";
-    title.textContent = pin.name;
-    const chip = document.createElement("span");
-    chip.className = "float-status";
-    chip.dataset.tone = status.tone;
-    chip.textContent = status.text;
-    const tools = document.createElement("span");
-    tools.className = "float-tools";
-    if (pin.display.command) {
-      const refresh = button("pin-tool" + (pin.display.status === "running" ? " spinning" : ""), `Refresh (${whenWords(pin)})`, icons.refresh, () => refreshPin(entry.pin));
-      refresh.disabled = pin.display.status === "running" || pin.display.status === "approve";
-      tools.append(refresh);
-    }
-    const more = button("pin-tool", "More", icons.more, () => this.menu(entry, more));
-    tools.append(more);
-    head.append(title, chip, tools);
+    fillPinHead(entry.head, pin, info, { more: (anchor) => this.menu(entry, anchor) });
+    entry.head.title = "Click to fold or unfold · drag to another corner";
   }
 
   /**
-   * Its component, as on the Board (it fills the card and is told its cells). Drawn again only
-   * when what it shows changed; a frame that takes live data is kept and sent the new data.
+   * Its component, told it is pinned and its cells, as tall as its content (the card scrolls past
+   * its most). Drawn again only when what it shows changed; a frame that takes live data is kept
+   * and sent the new data.
    */
   private drawBody(entry: FloatEntry): void {
     // It does not rerun itself as a card would: the layer does, only while the window is shown.
@@ -247,7 +255,7 @@ export class FloatLayer {
     entry.bodyKey = key;
     const body = document.createElement("div");
     body.className = "float-body";
-    body.append(pinBody(pin, this.cells(entry), true, "float", this.components[pin.name]));
+    body.append(pinBody(pin, this.cells(entry), false, "float", this.components[pin.name]));
     const before = entry.body;
     const shown = before && hasLiveFrame(before) ? keepFrames(before, body) : body;
     if (before && shown !== before) before.replaceWith(shown);
@@ -256,7 +264,10 @@ export class FloatLayer {
   }
 
   private cells(entry: FloatEntry): PinSize {
-    return floatCells(entry.float.width, Math.max(lineHeight, entry.float.height - lineHeight));
+    // From its own size, not as it shows (folded, in a short window), so folding does not resize it.
+    const width = entry.float.width ?? defaultFloatWidth(this.components[entry.pin.name]);
+    const most = entry.float.height ?? floatLimits.maxHeight;
+    return floatCells(width, Math.max(lineHeight, most - lineHeight));
   }
 
   /** Puts every card in its corner, stacked when two share one, above the input box. */
@@ -273,19 +284,31 @@ export class FloatLayer {
       const float = entry.float;
       const folded = float.collapsed || narrow;
       const offset = offsets[float.corner] ?? 0;
-      const rect = floatRect({ ...float, collapsed: folded }, view, composerTop, offset);
-      offsets[float.corner] = offset + rect.height + gap;
-      entry.rect = rect;
-      this.place(entry, rect, folded);
+      const place = floatRect({ ...float, collapsed: folded }, view, composerTop, offset, defaultFloatWidth(this.components[entry.pin.name]));
+      this.place(entry, place, folded);
+      // As tall as it is drawn (its content's height); unmeasured, the most it may be.
+      const height = folded ? lineHeight : Math.round(entry.card.getBoundingClientRect().height) || place.maxHeight;
+      offsets[float.corner] = offset + height + gap;
+      const top = place.top ?? view.height - (place.bottom ?? 0) - height;
+      entry.rect = { left: place.left, top, width: place.width, height, maxHeight: place.maxHeight };
     }
   }
 
-  private place(entry: FloatEntry, rect: FloatEntry["rect"], folded: boolean): void {
+  private place(entry: FloatEntry, place: ReturnType<typeof floatRect>, folded: boolean): void {
     const card = entry.card;
     card.dataset.corner = entry.float.corner;
     card.classList.toggle("collapsed", folded);
     card.setAttribute("aria-expanded", String(!folded));
-    Object.assign(card.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` });
+    // Being resized it is exactly as tall as dragged, to see it; else its content's height, up to its most.
+    const exact = folded || card.classList.contains("resizing");
+    Object.assign(card.style, {
+      left: `${place.left}px`,
+      top: place.top === null ? "" : `${place.top}px`,
+      bottom: place.bottom === null ? "" : `${place.bottom}px`,
+      width: `${place.width}px`,
+      maxHeight: `${place.maxHeight}px`,
+      height: exact ? `${place.maxHeight}px` : "",
+    });
     const handle = card.querySelector<HTMLElement>(":scope > .float-resize");
     if (handle) handle.dataset.edge = innerCorner[entry.float.corner];
     const size = this.cells(entry);
@@ -346,11 +369,13 @@ export class FloatLayer {
       event.stopPropagation();
       const startX = event.clientX;
       const startY = event.clientY;
-      const start = { width: entry.float.width, height: entry.float.height };
+      // From the size it shows: one not resized yet has none of its own.
+      const start = { width: entry.rect.width || entry.float.width || floatWidth, height: entry.rect.height || entry.float.height || floatLimits.maxHeight };
       const corner = entry.float.corner;
       const right = corner === "topRight" || corner === "bottomRight";
       const atTop = corner === "topRight" || corner === "topLeft";
       let size = start;
+      let changed = false;
       entry.card.classList.add("resizing");
       document.body.classList.add("pin-resizing");
       capture(handle, event.pointerId);
@@ -358,6 +383,7 @@ export class FloatLayer {
         const dx = moved.clientX - startX;
         const dy = moved.clientY - startY;
         size = clampFloatSize(start.width + (right ? -dx : dx), start.height + (atTop ? dy : -dy));
+        changed = true;
         entry.float = { ...entry.float, ...size };
         this.layOut();
       };
@@ -367,7 +393,8 @@ export class FloatLayer {
         window.removeEventListener("pointercancel", up);
         entry.card.classList.remove("resizing");
         document.body.classList.remove("pin-resizing");
-        if (size.width !== start.width || size.height !== start.height) this.change(entry, size);
+        if (changed && (size.width !== start.width || size.height !== start.height)) this.change(entry, size);
+        this.layOut();
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
@@ -379,7 +406,7 @@ export class FloatLayer {
   private menu(entry: FloatEntry, anchor: HTMLElement): void {
     const pin = entry.pin;
     const items: (MenuItem | "-")[] = [
-      { label: pin.name, heading: true, run: () => {} },
+      { label: pinTitle(pin, this.components[pin.name]), heading: true, run: () => {} },
       { label: `${entry.botName} · ${whenWords(pin)}`, note: true, run: () => {} },
       "-",
     ];

@@ -194,7 +194,7 @@ struct PinTests {
         // The page hears it, and an SF Symbol drawn as a picture the web view can show.
         let workspace = makeWorkspace()
         try addComponent("pie", to: workspace)
-        try "Pie.\nIcon: chart.pie.fill".write(to: workspace.components.folder.appending(path: "pie/about.md"), atomically: true, encoding: .utf8)
+        try "圓餅圖：Pie.\nIcon: chart.pie.fill".write(to: workspace.components.folder.appending(path: "pie/about.md"), atomically: true, encoding: .utf8)
         try addComponent("weather", to: workspace)
         try "Weather.\nIcon: ⛅️".write(to: workspace.components.folder.appending(path: "weather/about.md"), atomically: true, encoding: .utf8)
         try addComponent("plain", to: workspace)
@@ -204,6 +204,9 @@ struct PinTests {
         #expect(components["weather"]?["icon"] as? String == "⛅️")
         #expect(components["weather"]?["iconImage"] == nil)
         #expect(components["plain"]?["icon"] == nil)
+        // Its short name from about.md's first line, for an opened or floating pin's header.
+        #expect(components["pie"]?["title"] as? String == "圓餅圖")
+        #expect(components["weather"]?["title"] == nil)
         // A name that is no SF Symbol draws nothing.
         #expect(ComponentIcon.symbolImage("no.such.symbol.anywhere") == nil)
     }

@@ -207,11 +207,15 @@ export interface PinView {
 export type FloatCorner = "topRight" | "topLeft" | "bottomRight" | "bottomLeft";
 export type FloatMenu = "float" | "stop" | "full";
 
-/** Where a floating pin sits: the corner it snaps to, its card's size in px, folded to one line. */
+/**
+ * Where a floating pin sits: the corner it snaps to, folded to one line, and its card's size in px
+ * once the user dragged it: its width, and the most it grows to (absent: a width that fits a
+ * card's full layout, and its content's height up to `floatLimits.maxHeight`).
+ */
 export interface FloatView {
   corner: FloatCorner;
-  width: number;
-  height: number;
+  width?: number | null;
+  height?: number | null;
   collapsed: boolean;
 }
 
@@ -270,6 +274,8 @@ export interface ComponentInfo {
   icon?: string | null;
   /** An SF Symbol `icon` drawn as a PNG data URL, used as a mask so it takes the chip's colour. */
   iconImage?: string | null;
+  /** Its short name from its about.md's first line ("發版進度卡"), for an opened or floating pin's header. */
+  title?: string | null;
 }
 
 export interface ChatState {

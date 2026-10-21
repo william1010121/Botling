@@ -129,29 +129,36 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
     public var float: Floating?
 
     /// Where a floating pin sits and how it shows: a corner it snaps to, its card's size in
-    /// points (dragged by its corner), and whether it is folded to one line (title and status).
+    /// points once dragged by its corner (nil until then: the page gives it a width that fits a
+    /// card's full layout and its content's height), and whether it is folded to one line.
     public struct Floating: Codable, Equatable, Sendable {
         public enum Corner: String, Codable, CaseIterable, Sendable {
             case topRight, topLeft, bottomRight, bottomLeft
         }
 
-        public static let defaultWidth = 280
-        public static let defaultHeight = 160
+        /// The size every floating card had before it fitted its content: one kept with exactly
+        /// this size was never resized, and fits its content now.
+        static let oldDefault = (width: 280, height: 160)
         /// The sizes its card may be dragged to.
         public static let widths = 200...640
         public static let heights = 100...480
 
         public var corner: Corner
-        public var width: Int
-        public var height: Int
+        /// Its width as the user dragged it; nil: the page's default width.
+        public var width: Int?
+        /// The most it grows to as the user dragged it (shorter content, shorter card); nil: its content's height, up to the page's limit.
+        public var height: Int?
         public var collapsed: Bool
 
-        public init(corner: Corner = .topRight, width: Int = Floating.defaultWidth, height: Int = Floating.defaultHeight, collapsed: Bool = false) {
+        public init(corner: Corner = .topRight, width: Int? = nil, height: Int? = nil, collapsed: Bool = false) {
             self.corner = corner
-            self.width = Self.clamp(width, Self.widths)
-            self.height = Self.clamp(height, Self.heights)
+            self.width = width.map { Self.clamp($0, Self.widths) }
+            self.height = height.map { Self.clamp($0, Self.heights) }
             self.collapsed = collapsed
         }
+
+        /// Whether the user gave it a size of their own.
+        public var resized: Bool { width != nil || height != nil }
 
         static func clamp(_ value: Int, _ range: ClosedRange<Int>) -> Int { min(max(value, range.lowerBound), range.upperBound) }
 
@@ -161,10 +168,14 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         public init(from decoder: Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             let corner: String? = try? c.decodeIfPresent(String.self, forKey: .corner)
-            let width: Int? = try? c.decodeIfPresent(Int.self, forKey: .width)
-            let height: Int? = try? c.decodeIfPresent(Int.self, forKey: .height)
+            var width: Int? = try? c.decodeIfPresent(Int.self, forKey: .width)
+            var height: Int? = try? c.decodeIfPresent(Int.self, forKey: .height)
             let collapsed: Bool? = try? c.decodeIfPresent(Bool.self, forKey: .collapsed)
-            self.init(corner: corner.flatMap(Corner.init(rawValue:)) ?? .topRight, width: width ?? Self.defaultWidth, height: height ?? Self.defaultHeight, collapsed: collapsed ?? false)
+            if width == Self.oldDefault.width, height == Self.oldDefault.height {
+                width = nil
+                height = nil
+            }
+            self.init(corner: corner.flatMap(Corner.init(rawValue:)) ?? .topRight, width: width, height: height, collapsed: collapsed ?? false)
         }
     }
 
