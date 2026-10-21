@@ -57,6 +57,8 @@ export interface MessageView {
   tasks?: TaskChipView[] | null;
   /** Before your latest line: its finished subagents leave the folded steps line. */
   earlier?: boolean | null;
+  /** A call auto mode blocked that a subagent made: which one (drawn above the card, opens it). */
+  fromSubagent?: { id: string; title: string } | null;
   /** claude.ai Artifacts it links to, drawn as cards under it. */
   artifacts?: ArtifactCardView[] | null;
 }

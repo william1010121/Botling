@@ -170,6 +170,13 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
   border: none; background: transparent; color: var(--muted); font-size: 13px; cursor: pointer;
 }
 
+.from-subagent {
+  display: flex; align-items: center; gap: 8px; max-width: 100%; margin-bottom: 8px; min-height: 28px; padding: 0 10px;
+  border: none; border-radius: 8px; background: var(--chip); color: var(--muted); font-size: 13px; cursor: pointer;
+}
+.from-subagent > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.from-subagent-open { flex-shrink: 0; color: var(--link); }
+
 /* Components and choice buttons */
 .component { display: flex; align-items: flex-start; gap: 6px; margin-top: 10px; }
 .component-frame { flex: 1; min-width: 280px; height: 52px; border: none; background: transparent; color-scheme: dark; }

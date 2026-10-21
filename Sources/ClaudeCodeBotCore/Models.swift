@@ -103,6 +103,9 @@ public struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var replyPreview: String?
     /// It asks to let the bot use this tool; answered by the running `claude`, not as a message.
     public var permissionTool: String?
+    /// A call auto mode blocked that one of the bot's subagents made, not the bot: that
+    /// subagent's id (the Agent call's), so the card says which one asked.
+    public var subagentID: String?
     /// What the bot did on the way to this reply (tool calls, subagents), folded above it.
     public var steps: [Step]?
     /// Work its turn left running in the background (commands, subagents): a chip each under it.

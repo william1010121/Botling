@@ -39,6 +39,20 @@ describe("messages", () => {
     expect(sent).toEqual([{ type: "reply", messageID: "m1" }]);
   });
 
+  it("draw a call auto mode blocked for a subagent with that subagent, and open it", () => {
+    const row = messageElement(message({
+      text: "Subagent “Fix group B”: auto mode blocked `Bash`:", open: true,
+      fromSubagent: { id: "toolu_A", title: "Fix group B" },
+    }), {});
+    const from = row.querySelector<HTMLButtonElement>(".from-subagent")!;
+    expect(from.textContent).toContain("Subagent");
+    expect(from.textContent).toContain("Fix group B");
+    from.click();
+    expect(sent).toEqual([{ type: "openSubagent", id: "toolu_A" }]);
+    // The bot's own messages say nothing of the kind.
+    expect(messageElement(message({ text: "Hi" }), {}).querySelector(".from-subagent")).toBeNull();
+  });
+
   it("draw your message with its quote and files", () => {
     const row = messageElement(message({
       role: "user", text: "What is this?", replyTo: "m0", replyPreview: "Right panel 70% done",

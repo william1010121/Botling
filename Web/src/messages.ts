@@ -356,6 +356,7 @@ function userBody(message: MessageView): HTMLElement {
 function botBody(message: MessageView, components: Record<string, ComponentInfo>): HTMLElement {
   const bubble = document.createElement("div");
   bubble.className = message.role === "notice" ? `bubble notice-bubble${message.open ? " open" : ""}` : "bubble bot-bubble";
+  if (message.fromSubagent) bubble.append(fromSubagent(message.fromSubagent));
   if (message.steps?.length) bubble.append(stepsElement(message.id, message.steps, message.earlier === true));
   const displays = (message.displays ?? (message.display ? [message.display] : []))
     .map((display, index) => ({ display, index, at: typeof display.at === "number" ? Math.min(Math.max(display.at, 0), message.text.length) : null }));
@@ -431,6 +432,20 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     bubble.append(open);
   }
   return bubble;
+}
+
+/** Whose call it was: one of the bot's subagents ("Subagent · Fix group B  Open ›"), opening it. */
+function fromSubagent(agent: { id: string; title: string }): HTMLElement {
+  const button = document.createElement("button");
+  button.className = "from-subagent";
+  const label = document.createElement("span");
+  label.textContent = `${t("steps.subagent")} · ${agent.title}`;
+  const open = document.createElement("span");
+  open.className = "from-subagent-open";
+  open.textContent = t("steps.openSubagent");
+  button.append(label, open);
+  button.addEventListener("click", () => post({ type: "openSubagent", id: agent.id }));
+  return button;
 }
 
 /**
