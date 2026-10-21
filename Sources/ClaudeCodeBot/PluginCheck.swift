@@ -68,7 +68,7 @@ enum PluginCheck {
         configuration.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
         let frame = NSRect(x: 0, y: 0, width: 760, height: 600)
         let view = WKWebView(frame: frame, configuration: configuration)
-        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        let window = HeadlessRun.offscreenWindow(frame)
         window.contentView = view
         handler.view = view
         view.loadFileURL(page, allowingReadAccessTo: URL(filePath: "/"))
