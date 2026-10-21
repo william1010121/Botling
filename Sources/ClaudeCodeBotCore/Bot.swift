@@ -148,8 +148,13 @@ public final class Bot: ObservableObject, Identifiable {
     /// Set while an App-only turn (tidy, handoff, resume) waits for its reply.
     private var internalReply: CheckedContinuation<String, Never>?
     private var exitWaiter: CheckedContinuation<Void, Never>?
-    /// Messages that arrived while tidying or switching; sent once that is done.
+    /// Messages that arrived while tidying or switching, or while a reply already shown waits
+    /// for its turn to end; sent once that is done.
     private var queued: [Outgoing] = []
+    /// The turn under way already showed its reply (`.earlyReply`) and waits for its result line
+    /// (the Stop hook runs in between): the words of each reply shown so far this turn, the last
+    /// one shown, and the tags they carried, acted on when the turn ends.
+    private var early = EarlyReplies()
 
     /// What goes to Claude: the words, and the images it should look at.
     private struct Outgoing {
@@ -503,6 +508,12 @@ public final class Bot: ObservableObject, Identifiable {
                 Task { [weak self] in await self?.restartWaiting() }
                 return
             }
+            if early.waiting {
+                // It already answered and only its turn's end (the Stop hook) is left: this is
+                // a new message, not one to stop that turn for. It goes once the turn ends.
+                queued.append(outgoing)
+                return
+            }
             if let merged = merging(outgoing) {
                 // You added to what you said before it answered: stop that turn and ask again
                 // with all of it, so one reply answers the whole thing. The message goes first:
@@ -670,18 +681,46 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     private func show(reply text: String, isError: Bool) {
-        isWorking = false
+        let (message, requests) = bubble(text, isError: isError)
+        finishTurn(reply: message, requests: early.requests + requests)
+    }
+
+    /// The reply's bubble in the chat (counted unread, told to plugins), and the tags it carried.
+    private func bubble(_ text: String, isError: Bool) -> (ChatMessage, [BotRequest]) {
         let parsed = ReplyParser.parseAll(text)
         var message = ChatMessage(role: isError ? .error : .bot, text: parsed.body, choices: parsed.choices)
         if !parsed.displays.isEmpty { message.displays = parsed.displays }
         message.steps = trace.takeSteps()
         append(message)
         unreadCount += 1
+        replyObserver?(message)
+        return (message, parsed.requests)
+    }
+
+    /// The turn's last words, said before its Stop hook runs: shown now, while it still counts
+    /// as working. Its result line (the same words, or the reply of the work the hook sent it
+    /// back to) ends the turn. Not for turns whose reply goes elsewhere or is not shown.
+    private func showEarly(_ text: String) {
+        guard interruptions == 0, internalReply == nil, groupReply == nil, !dropNextReply, !quietTurn,
+              replyFilter?() == nil, outage == nil else { return }
+        // Your message is answered: what you write now is a new one.
+        turnInput = nil
+        let lifted = trace.liftReplyTags()
+        let (message, requests) = bubble(ReplyParser.lifting(lifted, into: text), isError: false)
+        early.shown(text, message: message, requests: requests)
+    }
+
+    /// The turn is over (its result line came): it is idle again, and whatever waits for a
+    /// reply hears of the turn's last one, once.
+    private func finishTurn(reply message: ChatMessage, requests: [BotRequest]) {
+        isWorking = false
+        let held = early.last != nil
+        early = EarlyReplies()
         // It may have edited its routines.cron.
         reloadRoutines()
         onReply?(message, turnFromRelay)
-        replyObserver?(message)
-        if !parsed.requests.isEmpty { onRequests?(parsed.requests) }
+        if !requests.isEmpty { onRequests?(requests) }
+        if held, !queued.isEmpty { Task { [weak self] in await self?.flushQueue() } }
         if let fromRelay = pausedWork, process != nil {
             // It answered you; now back to what it was doing.
             pausedWork = nil
@@ -955,7 +994,7 @@ public final class Bot: ObservableObject, Identifiable {
         guard source === process else { return }
         noteProgress(of: event)
         switch event {
-        case .reply, .trace, .permission, .usage:
+        case .reply, .earlyReply, .trace, .permission, .usage:
             // The resumed session is alive.
             resumeProbe = false
             resumeRetry = nil
@@ -992,6 +1031,12 @@ public final class Bot: ObservableObject, Identifiable {
             default:
                 break
             }
+            // Its Stop hook sent it back to work after the reply shown: messages held for the
+            // end of that turn go now (it is working on something you did not start).
+            if early.waiting, Self.startsATurn(step) {
+                early.waiting = false
+                if !queued.isEmpty { Task { [weak self] in await self?.flushQueue() } }
+            }
             // It started a turn of its own (a subagent in the background finished): it is at
             // work again, and the reply will show.
             if !isWorking, internalReply == nil, groupReply == nil, Self.startsATurn(step) {
@@ -1011,7 +1056,17 @@ public final class Bot: ObservableObject, Identifiable {
                 permissionAsks[id] = nil
                 settle(id)
             }
+        case let .earlyReply(text):
+            showEarly(text)
         case .reply(var text, let isError):
+            // Words already shown as this turn's reply (before its Stop hook ran): the turn just ends.
+            if !isError, interruptions == 0, let shown = early.matching(text) {
+                turnInput = nil
+                quietTurn = false
+                trace.dropSteps()
+                finishTurn(reply: shown, requests: early.requests)
+                return
+            }
             // The turn stopped to take in what you added: the next one answers it all.
             if interruptions > 0 {
                 if isError {
@@ -1084,6 +1139,7 @@ public final class Bot: ObservableObject, Identifiable {
             if !lostToNetwork { pausedWork = nil }
             quietTurn = false
             pausedQuiet = false
+            early = EarlyReplies()
             if trace.stopRunning() { store?.save(subagents: trace.subagents) }
             dropPermissionAsks()
             dropNextReply = false
@@ -1202,6 +1258,10 @@ public final class Bot: ObservableObject, Identifiable {
     /// of going to sleep.
     private func showNetworkLoss(_ text: String) {
         isWorking = false
+        if early.last != nil {
+            early = EarlyReplies()
+            if !queued.isEmpty { Task { [weak self] in await self?.flushQueue() } }
+        }
         recordOutage(turnFailed: true)
         var message = ChatMessage(role: .error, text: NetworkResume.lostText(text))
         message.steps = trace.takeSteps()
@@ -1395,6 +1455,7 @@ public final class Bot: ObservableObject, Identifiable {
         running?.stop()
         dropPermissionAsks()
         dropNextReply = false
+        early = EarlyReplies()
         finishGroupReply(.failed("It was removed."))
         isWorking = false
         phase = .asleep
@@ -1722,5 +1783,38 @@ public final class Bot: ObservableObject, Identifiable {
         case .divider: "—"
         case .error: "Error"
         }
+    }
+}
+
+/// The replies a turn showed before it ended (`.earlyReply`, said before the Stop hook ran).
+struct EarlyReplies {
+    /// The words of each, as claude said them.
+    private(set) var texts: [String] = []
+    /// The last one shown: what the turn's end reports.
+    private(set) var last: ChatMessage?
+    /// The tags they carried, acted on when the turn ends (not while it may still go on).
+    private(set) var requests: [BotRequest] = []
+    /// Shown, and the turn has not gone on since: messages wait for its end.
+    var waiting = false
+
+    mutating func shown(_ text: String, message: ChatMessage, requests: [BotRequest]) {
+        texts.append(Self.normalized(text))
+        last = message
+        self.requests += requests
+        waiting = true
+    }
+
+    /// The bubble already showing `result` (the turn's result line), if one does: the last
+    /// reply shown when the words are the same, or when they are the end of what was shown
+    /// (claude's result holds only the last part of a message said in parts).
+    func matching(_ result: String) -> ChatMessage? {
+        guard let last, let latest = texts.last else { return nil }
+        let result = Self.normalized(result)
+        guard !result.isEmpty, latest == result || latest.hasSuffix(result) else { return nil }
+        return last
+    }
+
+    static func normalized(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

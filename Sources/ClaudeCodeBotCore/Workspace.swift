@@ -1238,7 +1238,7 @@ public final class Workspace: ObservableObject {
                     self?.record(total, tokens: tokens, by: spec.title)
                 case let .rateLimits(limits):
                     self?.note(limits)
-                case .trace, .permission, .permissionCancelled, .permissionDenied, .connectionTrouble:
+                case .trace, .earlyReply, .permission, .permissionCancelled, .permissionDenied, .connectionTrouble:
                     // Teams are started without asking (asksPermission is off), so nothing waits.
                     break
                 case let .reply(text, _):

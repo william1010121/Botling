@@ -601,4 +601,59 @@ extension LiveClaudeTests {
         #expect(bot.messages.last?.text.contains("KUMQUAT") == true)
         bot.stop()
     }
+
+    /// With the real stop guard (`swift build` first), the reply arrives as `.earlyReply` when its
+    /// message ends, seconds before the result line the Stop hook holds back; the bot shows it
+    /// then, still working, and the result adds no second bubble.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func theReplyArrivesBeforeTheStopHookIsDone() async throws {
+        let executable = try #require(ClaudeExecutableLocator().locate())
+        let app = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appending(path: ".build/debug/ClaudeCodeBot")
+        try #require(FileManager.default.isExecutableFile(atPath: app.path), "swift build first")
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        var launch = AgentLaunch(model: .haiku, sessionID: UUID(), workingDirectory: home, systemPrompt: "", tools: ["Read"])
+        launch.stopHookCommand = StopGuard.command(app: app.path, claude: executable.path)
+
+        // The process's own events: when each came.
+        let process = try ClaudeAgentProcess(launch, executable: executable)
+        process.send("Reply with only the word PONG.")
+        var early: (String, Date)?
+        var result: (String, Date)?
+        for await event in process.events {
+            switch event {
+            case let .earlyReply(text): early = (text, Date())
+            case let .reply(text, _): result = (text, Date())
+            default: break
+            }
+            if result != nil { break }
+        }
+        process.finish()
+        let said = try #require(early)
+        let ended = try #require(result)
+        let gap = ended.1.timeIntervalSince(said.1)
+        print(String(format: "early reply %@ → result %@: %.2fs earlier", said.0, ended.0, gap))
+        #expect(said.0.contains("PONG"))
+        #expect(said.0 == ended.0.trimmingCharacters(in: .whitespacesAndNewlines))
+        #expect(gap > 1)
+
+        // In a bot: shown while it still works, and once.
+        let launcher: AgentLauncher = { launch in
+            var launch = launch
+            launch.stopHookCommand = StopGuard.command(app: app.path, claude: executable.path)
+            return try ClaudeAgentProcess(launch, executable: executable)
+        }
+        let profile = BotProfile(name: "Probe", role: .manager, avatar: "square", workingDirectory: home, memoryPath: ".bot/memory.md", tools: ["Read"])
+        let bot = Bot(profile: profile, defaultModel: .haiku, launcher: launcher)
+        bot.send("Reply with only the word PING.")
+        await eventually({ bot.messages.last?.role == .bot }, timeout: 120)
+        let shown = Date()
+        #expect(bot.isWorking)
+        await eventually({ !bot.isWorking }, timeout: 60)
+        print(String(format: "bot: bubble %.2fs before the turn ended", Date().timeIntervalSince(shown)))
+        #expect(bot.messages.filter { $0.role == .bot }.count == 1)
+        bot.stop()
+    }
 }
+

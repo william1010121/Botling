@@ -72,6 +72,9 @@ public struct PermissionRequest: Equatable, Sendable {
 public enum AgentEvent: Equatable, Sendable {
     /// The final text of one turn.
     case reply(String, isError: Bool)
+    /// The turn's last words, the moment they are said (see `FinalMessageWatch`): Stop hooks may
+    /// still run, and may send it back to work; the turn ends with its `.reply`.
+    case earlyReply(String)
     /// What it is doing on the way: a tool call, its result, a subagent.
     case trace(TraceEvent)
     /// It is waiting for the user to allow a tool.
@@ -185,6 +188,11 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         if let effort = launch.effort {
             arguments += ["--effort", effort.rawValue]
         }
+        if launch.stopHookCommand != nil {
+            // The Stop hook holds the result line back for seconds: the reply shows from the
+            // message's own end (`.earlyReply`), which only these chunks carry.
+            arguments.append("--include-partial-messages")
+        }
         return arguments
     }
 
@@ -225,6 +233,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         let (stream, continuation) = AsyncStream.makeStream(of: AgentEvent.self)
         events = stream
         let lines = LineBuffer()
+        let watch = Watch()
         let stderrTail = Tail()
         let responder = Responder()
         let respond: (([String: Any]) -> Void)? = { response in responder.send?(response) }
@@ -242,6 +251,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
                     continue
                 }
                 for event in StreamEvent.events(in: line) { continuation.yield(event) }
+                if let text = watch.read(line) { continuation.yield(.earlyReply(text)) }
             }
         }
         errors.fileHandleForReading.readabilityHandler = { handle in
@@ -399,6 +409,16 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
 /// Lets the output reader answer claude before `self` exists.
 private final class Responder: @unchecked Sendable {
     var send: (([String: Any]) -> Void)?
+}
+
+/// The output reader's `FinalMessageWatch`.
+private final class Watch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var watch = FinalMessageWatch()
+
+    func read(_ line: String) -> String? {
+        lock.withLock { watch.read(line) }
+    }
 }
 
 private final class Tail: @unchecked Sendable {
