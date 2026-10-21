@@ -6,7 +6,7 @@ The Mac must be awake, online, and running ClaudeCodeBot. Closing the app stops 
 
 ## Before enabling
 
-This feature is disabled unless all four environment values below are supplied to the app process.
+This feature is disabled unless all three environment values below are supplied to the app process.
 This PR does **not** create a Telegram bot, request a token, enable remote access, or change any
 credentials. Create/configure your bot yourself only after reviewing this feature.
 
@@ -26,11 +26,17 @@ Supply these variables to the actual app process when launching its executable f
 - CCB_TELEGRAM_ENABLED: exactly 1
 - CCB_TELEGRAM_OWNER_ID: your verified numeric Telegram user ID
 - CCB_TELEGRAM_CHAT_ID: the verified positive ID of your private chat with this bot
-- CCB_TELEGRAM_TOKEN: your bot token
 
-Do not put a token in source, a PR, screenshots, command history, or chat with an assistant. Use your
-own secret manager or a hidden terminal prompt to supply it to the process. The bridge never writes
-the token to its checkpoint or logs API errors/URLs. Finder launches do not automatically inherit
+Create a generic password yourself in macOS Keychain Access: service/name **ClaudeCodeBot Telegram**,
+account **bot-token**, password your bot token. The bridge only reads this existing item once at
+startup and never creates or changes it or its access controls. Lookup is noninteractive: if access
+is not already allowed, the channel stays disabled; grant access yourself before retrying.
+
+Do not put a token in source, a PR, screenshots, command history, or chat with an assistant. The token must NOT be supplied through an environment variable. Remove any
+CCB_TELEGRAM_TOKEN left by a preview setup; the bridge rejects that setup. The bridge never writes
+the Keychain token to its checkpoint, child-process environment or API error logs/URLs. Keychain
+avoids automatic credential inheritance; it is not a sandbox against arbitrary same-user shell
+commands or software already authorized to read that Keychain item. Finder launches do not automatically inherit
 your terminal environment. Remove the variables and restart to disable.
 
 The sender ID AND private chat ID must match. Groups, channels, forwarded/via-bot messages and
@@ -48,7 +54,8 @@ fails closed.
 - /use main, /use codex, or /use <project ID>: select the target without changing the desktop selection
 - /status: working/idle/waiting for approval
 - /latest: latest text reply from the selected bot
-- /stop: stop only that bot's local session (not other project bots)
+- /stop: request interruption of that bot's current foreground turn. Background tasks and other
+  bots keep running. Tidy/handoff/group turns and pending decisions must be managed on the Mac.
 - Other text: send through Workspace.send, including existing plugin beforeSend handling
 
 Unknown slash commands are rejected, not forwarded into app/plugin commands. When any decision

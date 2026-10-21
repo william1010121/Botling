@@ -38,13 +38,14 @@ struct TelegramTests {
     }
 
     @Test func disabledUnlessExplicitAndComplete() {
-        #expect(TelegramConfiguration.read([:]) == nil)
-        let values = ["CCB_TELEGRAM_ENABLED": "1", "CCB_TELEGRAM_TOKEN": config.token,
-                      "CCB_TELEGRAM_OWNER_ID": "42", "CCB_TELEGRAM_CHAT_ID": "42"]
-        #expect(TelegramConfiguration.read(values) != nil)
-        #expect(TelegramConfiguration.read(values.merging(["CCB_TELEGRAM_ENABLED": "0"]) { _, b in b }) == nil)
-        #expect(TelegramConfiguration.read(values.merging(["CCB_TELEGRAM_CHAT_ID": "-100"]) { _, b in b }) == nil)
-        #expect(TelegramConfiguration.read(values.merging(["CCB_TELEGRAM_TOKEN": "123:bad/path"]) { _, b in b }) == nil)
+        #expect(TelegramConfiguration.read([:], token: config.token) == nil)
+        let values = ["CCB_TELEGRAM_ENABLED": "1", "CCB_TELEGRAM_OWNER_ID": "42", "CCB_TELEGRAM_CHAT_ID": "42"]
+        #expect(TelegramConfiguration.read(values, token: config.token) != nil)
+        #expect(TelegramConfiguration.read(values.merging(["CCB_TELEGRAM_ENABLED": "0"]) { _, b in b }, token: config.token) == nil)
+        #expect(TelegramConfiguration.read(values.merging(["CCB_TELEGRAM_CHAT_ID": "-100"]) { _, b in b }, token: config.token) == nil)
+        #expect(TelegramConfiguration.read(values, token: "123:bad/path") == nil)
+        #expect(TelegramConfiguration.read(values, token: nil) == nil)
+        #expect(TelegramConfiguration.read(values.merging(["CCB_TELEGRAM_TOKEN": config.token]) { _, b in b }, token: nil) == nil)
     }
 
     @Test func ownerChatFreshnessAndForwardChecks() throws {
@@ -132,7 +133,7 @@ struct TelegramTests {
         let fake = FakeLauncher(), network = FakeTelegram()
         let ws = workspace(root, fake)
         ws.mainBot.notice("Approve?", choices: [Choice(label: "Allow", action: .allowOnce)])
-        network.batches = [[], [try update(1, text: "yes"), try update(2, text: "/share"), try update(3, text: "/approve")]]
+        network.batches = [[], [try update(1, text: "yes"), try update(2, text: "  /share"), try update(3, text: "/approve")]]
         let bridge = TelegramBridge(workspace: ws, config: config, transport: network, save: { _ in }, delay: { _ in })
         try await bridge.initialize()
         try await bridge.pollOnce()
@@ -159,6 +160,10 @@ struct TelegramTests {
         #expect(ws.mainBot.messages.filter { $0.role == .user }.count == 1)
         #expect(ws.bot(for: project)?.messages.contains { $0.role == .user && $0.text == "hello" } == true)
         #expect(fake.agents.first?.finished == false)
+        let manager = try #require(ws.bot(for: project))
+        manager.send("after stop")
+        await eventually { fake.agents.last?.sent.last?.contains("after stop") == true }
+        #expect(fake.agents.last?.sent.last?.contains("after stop") == true)
     }
 
     @Test func unicodeOutputIsBoundedAndUnknownMediaIsNotDownloaded() async throws {
@@ -175,5 +180,42 @@ struct TelegramTests {
         let value = TelegramBridge.bounded(String(repeating: "👨‍👩‍👧‍👦", count: 1000))
         #expect(value.utf16.count < 4096)
         #expect(value.contains("Truncated"))
+    }
+
+    @Test func foregroundInterruptKeepsBotAndBackgroundAgentAlive() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-telegram-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fake = FakeLauncher()
+        fake.respond = { _ in nil }
+        let ws = workspace(root, fake)
+        ws.mainBot.send("work")
+        let process = try #require(fake.agents.first)
+        process.emit(.trace(.subagentStarted(id: "background", description: "work", type: nil, prompt: "", background: true)))
+        await eventually { !ws.mainBot.subagents.isEmpty }
+        #expect(ws.mainBot.interruptForegroundTurn())
+        #expect(process.interrupts == 1)
+        #expect(!process.finished)
+        await eventually { !ws.mainBot.isWorking }
+        #expect(ws.mainBot.subagents.first?.isRunning == true)
+        ws.mainBot.send("continue chatting")
+        #expect(process.sent.last?.contains("continue chatting") == true)
+        #expect(fake.agents.count == 1)
+    }
+
+    @Test func lastMomentDispatchGuardAndUncertainSendsFailClosed() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-telegram-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fake = FakeLauncher(), network = FakeTelegram()
+        let ws = workspace(root, fake)
+        await ws.send("must not run", to: ws.mainBot, whenAllowed: { false })
+        #expect(fake.agents.isEmpty)
+        network.batches = [[], [try update(1, text: "/help")], []]
+        network.failSend = true
+        let bridge = TelegramBridge(workspace: ws, config: config, transport: network, save: { _ in }, delay: { _ in })
+        try await bridge.initialize()
+        do { try await bridge.pollOnce(); Issue.record("Expected send failure") } catch {}
+        network.failSend = false
+        try await bridge.pollOnce()
+        #expect(network.sent.count == 1)
     }
 }

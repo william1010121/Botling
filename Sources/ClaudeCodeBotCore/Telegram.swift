@@ -1,20 +1,41 @@
 import Foundation
+import Security
 
-/// Opt-in only. The token is read from the launching process, never saved in app state.
+/// Opt-in only. The credential comes from Keychain, never a child-inheritable environment.
 public struct TelegramConfiguration {
     let token: String
     let ownerID: Int64
     let chatID: Int64
     var identity: String { "\(token.split(separator: ":")[0]):\(ownerID):\(chatID)" }
 
-    public static func read(_ environment: [String: String]) -> TelegramConfiguration? {
+    public static func read(_ environment: [String: String], token: String?) -> TelegramConfiguration? {
         guard environment["CCB_TELEGRAM_ENABLED"] == "1",
-              let token = environment["CCB_TELEGRAM_TOKEN"],
+              let token,
               token.range(of: #"^[0-9]+:[A-Za-z0-9_-]{20,}$"#, options: .regularExpression) != nil,
               let owner = environment["CCB_TELEGRAM_OWNER_ID"].flatMap(Int64.init), owner > 0,
               let chat = environment["CCB_TELEGRAM_CHAT_ID"].flatMap(Int64.init), chat > 0
         else { return nil }
         return TelegramConfiguration(token: token, ownerID: owner, chatID: chat)
+    }
+}
+
+
+/// A separate, user-created generic password. Never add this to plugin secrets or process env.
+/// Setup and any Keychain permission prompt belong to the owner, not to this bridge.
+enum TelegramCredential {
+    static func read() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "ClaudeCodeBot Telegram",
+            kSecAttrAccount as String: "bot-token",
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 }
 
@@ -140,10 +161,19 @@ public final class TelegramBridge {
     private var outbox: [String] = []
     private let save: (TelegramCheckpoint) throws -> Void
     private var warned = false
+    private var generation = UUID()
     private let delay: (TimeInterval) async throws -> Void
 
     public static func configured(workspace: Workspace, environment: [String: String]) -> TelegramBridge? {
-        guard let config = TelegramConfiguration.read(environment) else { return nil }
+        guard environment["CCB_TELEGRAM_ENABLED"] == "1" else { return nil }
+        guard environment["CCB_TELEGRAM_TOKEN"] == nil else {
+            workspace.mainBot.notice("Telegram is disabled. Remove the unsupported token environment variable and restart; use the dedicated Keychain item instead. Environment secrets can be inherited by local tools.")
+            return nil
+        }
+        guard let config = TelegramConfiguration.read(environment, token: TelegramCredential.read()) else {
+            workspace.mainBot.notice("Telegram is disabled: check the owner/chat IDs and its Keychain credential.")
+            return nil
+        }
         return TelegramBridge(workspace: workspace, config: config, transport: TelegramHTTP(token: config.token))
     }
 
@@ -168,11 +198,17 @@ public final class TelegramBridge {
 
     public func start() {
         guard task == nil else { return }
+        let run = UUID()
+        generation = run
         task = Task { [weak self] in
             guard let self else { return }
             do { try await initialize() }
-            catch { reportFailure(); task = nil; return }
-            while !Task.isCancelled {
+            catch {
+                if generation == run { reportFailure(); task = nil }
+                return
+            }
+            guard generation == run, !Task.isCancelled else { return }
+            while !Task.isCancelled && generation == run {
                 do {
                     try await pollOnce()
                     warned = false
@@ -186,6 +222,7 @@ public final class TelegramBridge {
     }
 
     public func stop() {
+        generation = UUID()
         task?.cancel()
         task = nil
         watching.removeAll()
@@ -203,6 +240,7 @@ public final class TelegramBridge {
         } else {
             // First setup discards pre-setup messages, rather than executing old instructions.
             let tail = try await transport.updates(offset: -1, timeout: 0)
+            try Task.checkCancellation()
             let offset = (tail.map(\.update_id).max() ?? -1) + 1
             let value = TelegramCheckpoint(identity: config.identity, offset: offset, selected: Workspace.mainBotID)
             try save(value)
@@ -243,7 +281,7 @@ public final class TelegramBridge {
         let words = text.split(whereSeparator: \.isWhitespace)
         let command = words.first.map(String.init) ?? ""
         if command == "/start" || command == "/help" {
-            enqueue("Connected to your Mac. /bots lists chats; /use main, /use codex or /use <project ID> selects one. /status, /latest and /stop work on that selection. Text goes to the same bot and local permission rules apply. Resolve approvals on the Mac. No files, remote approval buttons or group chats yet.")
+            enqueue("Connected to your Mac. /bots lists chats; /use main, /use codex or /use <project ID> selects one. /status and /latest inspect that selection; /stop interrupts only its foreground turn, not background tasks or other bots. Text goes to the same bot and local permission rules apply. Resolve approvals on the Mac. No files, remote approval buttons or group chats yet.")
             return
         }
         if command == "/bots" {
@@ -271,11 +309,11 @@ public final class TelegramBridge {
                 enqueue("\(bot.name):\n\(reply.text)")
             } else { enqueue("\(bot.name): no reply yet.") }
         case "/stop":
-            bot.stop()
-            enqueue("Stopped \(bot.name)'s local session. Other bots are unchanged.")
+            let requested = bot.interruptForegroundTurn()
+            enqueue(requested ? "Requested interruption of \(bot.name)'s foreground turn. Background tasks and other bots are not stopped." : "No interruptible foreground turn. Use the Mac to manage background work or pending decisions.")
         default:
             // Unknown slash commands are not forwarded into plugins or app commands.
-            guard !text.hasPrefix("/") else { enqueue("Unknown command. Use /help."); return }
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/") else { enqueue("Unknown command. Use /help."); return }
             // Text must not resolve an existing approval implicitly.
             guard !bot.waitingForPermission, !bot.messages.contains(where: { $0.isOpenQuestion }) else {
                 enqueue("This bot has a pending decision. Resolve it on the Mac before sending more text.")
@@ -285,8 +323,13 @@ public final class TelegramBridge {
                 guard watching.count < 16 else { enqueue("Too many active chats. Restart the bridge or use /latest."); return }
                 watching[state.selected] = Set(bot.messages.map(\.id))
             }
-            await workspace.send(text, to: bot)
-            enqueue("Sent to \(bot.name).")
+            var dispatched = false
+            await workspace.send(text, to: bot, whenAllowed: {
+                dispatched = !Task.isCancelled && self.workspace.member(state.selected) === bot
+                    && !bot.waitingForPermission && !bot.messages.contains(where: { $0.isOpenQuestion })
+                return dispatched
+            })
+            enqueue(dispatched ? "Sent to \(bot.name)." : "Message was not sent. Check the Mac for a pending decision or plugin notice.")
         }
     }
 
