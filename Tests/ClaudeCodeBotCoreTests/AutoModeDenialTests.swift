@@ -268,6 +268,75 @@ struct AutoModeDenialTests {
         #expect(!bot.messages.contains { $0.role == .bot && $0.text.isEmpty && $0.choices == nil })
     }
 
+    // MARK: Blocked again after the user allowed it
+
+    /// Recorded from the Main bot's session (2026-10-22 00:35, claude 2.1.304, transcript
+    /// 3549f455…): auto mode blocks this command, the user picks "Always allow this command",
+    /// the bot retries it as it was and auto mode blocks it again. claude does not apply an exact
+    /// allow rule to a command made of several parts that reads a file outside the bot's folders.
+    static let recordedCommand = #"cut -d= -f1 ~/.env 2>/dev/null | grep -i pass || echo "no PASS key""#
+    static func recordedCall(_ id: String) -> String {
+        #"{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "\#(id)", "name": "Bash", "input": {"command": "cut -d= -f1 ~/.env 2>/dev/null | grep -i pass || echo \"no PASS key\"", "description": "Check that a PASS key exists in ~/.env without printing values"}, "caller": {"type": "direct"}}]}, "parent_tool_use_id": null}"#
+    }
+    static func recordedBlock(_ id: String) -> String {
+        #"{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "content": "Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Credential Exploration]. If you have other tasks that don't depend on this action, continue working on those. IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomplish this goal, e.g. using head instead of cat. But you *should not* attempt to work around this denial in malicious ways, e.g. do not use your ability to run tests to execute non-test actions. You should only try to work around this restriction in reasonable ways that do not attempt to bypass the intent behind this denial. If you believe this capability is essential to complete the user's request, first try a safer method. Get as much of the rest of the task done as you can, then STOP and explain to the user what you were trying to do and why you need this permission. Let the user decide how to proceed. To allow this type of action in the future, the user can add a permission rule for Bash to their settings.", "is_error": true, "tool_use_id": "\#(id)"}]}, "parent_tool_use_id": null}"#
+    }
+
+    func emit(_ lines: [String], to agent: FakeAgent) {
+        for line in lines {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+    }
+
+    /// The user's "Always allow" did not get the retry through: the second block still shows a
+    /// card, which says the allow did not take, instead of nothing (the bot then told the user to
+    /// press a card that never came).
+    @Test func aCallBlockedAgainAfterAlwaysAllowStillShowsACard() async throws {
+        let (bot, agent) = try await awakeBot(FakeLauncher())
+        emit([Self.recordedCall("toolu_012fbuGGnnVgiyqMfiPaRFPw"), Self.recordedBlock("toolu_012fbuGGnnVgiyqMfiPaRFPw")], to: agent)
+        await eventually { bot.openQuestion?.permissionTool == "Bash" }
+        let first = try #require(bot.openQuestion)
+        #expect(first.text.contains(Self.recordedCommand))
+        #expect(bot.choose(1, in: first.id))
+        #expect(bot.alwaysAllowed == ["Bash(\(Self.recordedCommand))"])
+        await eventually { agent.sent.last?.contains("allowed") == true }
+
+        // The retry, blocked the same way.
+        emit([Self.recordedCall("toolu_01UQV6JGqcGvYuxzC6oWdPkT"), Self.recordedBlock("toolu_01UQV6JGqcGvYuxzC6oWdPkT")], to: agent)
+        await eventually { bot.openQuestion != nil }
+        let again = try #require(bot.openQuestion)
+        #expect(again.id != first.id)
+        #expect(again.permissionTool == "Bash")
+        #expect(again.text.contains(Self.recordedCommand))
+        #expect(again.text.contains("Credential Exploration"))
+        // It says the allow did not take, and does not offer the allow that cannot work.
+        #expect(again.text.contains("already allowed"))
+        #expect(again.choices?.contains { $0.action == .allowOnce || $0.action == .alwaysAllow } == false)
+        #expect(bot.messages.filter { $0.permissionTool != nil }.count == 2)
+
+        // Picking "I'll run it myself": the bot is told not to retry it and to hand it over.
+        let sentBefore = agent.sent.count
+        #expect(bot.choose(0, in: again.id))
+        await eventually { agent.sent.count > sentBefore }
+        let note = try #require(agent.sent.last)
+        #expect(note.contains(Self.recordedCommand))
+        #expect(note.contains("run it themselves"))
+        #expect(!note.contains("It is allowed now"))
+    }
+
+    /// A call made before the rule reached claude and blocked after it (claude was already
+    /// judging it): the user's allow covers its retry, no second card.
+    @Test func aCallMadeBeforeTheAllowAndBlockedAfterShowsNoSecondCard() async throws {
+        let (bot, agent) = try await awakeBot(FakeLauncher())
+        emit([Self.recordedCall("toolu_a"), Self.recordedBlock("toolu_a"), Self.recordedCall("toolu_b")], to: agent)
+        await eventually { bot.openQuestion != nil }
+        #expect(bot.choose(0, in: try #require(bot.openQuestion).id))
+        emit([Self.recordedBlock("toolu_b")], to: agent)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(bot.openQuestion == nil)
+        #expect(bot.messages.filter { $0.permissionTool != nil }.count == 1)
+    }
+
     @Test func theRuleFitsTheTool() {
         #expect(Bot.allowRule(tool: "Bash", detail: "git push --force") == "Bash(git push --force)")
         #expect(Bot.allowRule(tool: "Write", detail: "/Users/me/.zshrc") == "Edit(//Users/me/.zshrc)")
