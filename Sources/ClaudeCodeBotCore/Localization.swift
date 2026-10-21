@@ -69,6 +69,7 @@ public enum L10n {
 
     /// Every table, by where its words are used.
     static let tables: [(name: String, rows: Table)] = [
+        ("Common", commonStrings),
         ("App", appStrings),
         ("Settings", settingsStrings),
         ("Panels", panelStrings),
