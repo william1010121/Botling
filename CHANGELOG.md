@@ -8,6 +8,14 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Float a pin in a corner.** A pin's menu has "Float in corner" / "Stop floating": the pin shows
+  as a small card (about 280×160) in the top-right corner over the chat and the Board, in
+  whichever bot's chat you are in, so you can watch something live (a release build) without
+  asking. Click its head to fold it to one line (title and status); drag it to another corner (it
+  snaps); drag its inner corner to resize it. It never covers the input box, and in a window
+  narrower than 640px it shows only as that line. It refreshes like the pin (its seconds, or
+  `Refresh: every 5s`), keeps a live frame (`ccb.onData`), and reruns only while the window is
+  shown. At most two float at once; kept in pins.json (older files still load).
 - **"Make into component" starts with a brief from the bot that wrote the reply.** A read-only
   copy of that bot's session (`claude --resume … --fork-session`, its own model, out of the chat;
   the bot is not woken or held up) tells Maintainer what the component is for, your message that

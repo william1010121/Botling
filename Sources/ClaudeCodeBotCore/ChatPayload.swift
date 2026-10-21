@@ -166,12 +166,15 @@ public struct ChatPayload: Encodable, Equatable {
         public var board: Bool
         /// Where pinned components' Detail commands are read from.
         public var library: ComponentLibrary?
+        /// How many pins float now (over all bots): whether one more may.
+        public var floating: Int
 
-        public init(runs: ComponentCommands, folder: URL, board: Bool = false, library: ComponentLibrary? = nil) {
+        public init(runs: ComponentCommands, folder: URL, board: Bool = false, library: ComponentLibrary? = nil, floating: Int = 0) {
             self.runs = runs
             self.folder = folder
             self.board = board
             self.library = library
+            self.floating = floating
         }
     }
 
@@ -196,6 +199,23 @@ public struct ChatPayload: Encodable, Equatable {
         var display: Display
         /// Maintainer is giving it a command so it refreshes here ("making it live…").
         var makingLive: Bool? = nil
+        /// Where it floats in a corner of the window; nil: it does not.
+        var float: PinnedComponent.Floating? = nil
+        /// Its menu's float entry: "float", "stop" or "full".
+        var floatMenu: Pins.FloatMenu? = nil
+    }
+
+    /// A pin floating in a corner, drawn over whichever bot's chat is shown: its bot, and the pin.
+    public struct FloatingPin: Encodable, Equatable {
+        var botID: String
+        var botName: String
+        var pin: Pin
+
+        public init(botID: String, botName: String, pin: Pin) {
+            self.botID = botID
+            self.botName = botName
+            self.pin = pin
+        }
     }
 
     /// A component the picker offers: one this bot drew, or one with a Command.
@@ -273,6 +293,8 @@ public struct ChatPayload: Encodable, Equatable {
     var pinChoices: [PinChoice]? = nil
     /// The Board is showing instead of the messages.
     var board: Bool? = nil
+    /// The pins floating in a corner, of any bot; nil where none can show (a subagent).
+    var floating: [FloatingPin]? = nil
     /// Replies can be made into components (their hover column and result cards say so).
     var makeComponents: Bool? = nil
 
@@ -324,6 +346,7 @@ public struct ChatPayload: Encodable, Equatable {
         pins pinning: PinContext? = nil,
         specs: Bool = false,
         openSpec: UUID? = nil,
+        floating: [FloatingPin]? = nil,
         avatar: (_ projectID: UUID?) -> String
     ) -> ChatPayload {
         let pinnedNames = pinning.map { _ in Set(bot.pins.map(\.name)) }
@@ -430,6 +453,7 @@ public struct ChatPayload: Encodable, Equatable {
             pins: pinning.map { context in bot.pins.map { pin(view: $0, context: context) } },
             pinChoices: pinning.map { _ in pinChoices(for: bot, library: library) },
             board: pinning.map(\.board),
+            floating: floating,
             makeComponents: specs ? true : nil
         )
     }
@@ -542,7 +566,7 @@ public struct ChatPayload: Encodable, Equatable {
         }
         let chip = Pins.chip(status: pin.status, headline: headline, command: shown.status.flatMap(ComponentCommands.Status.init(rawValue:)), hasData: pin.data != "null")
         return Pin(id: pin.id.uuidString, name: pin.name, headline: headline, chip: chip, size: pin.size.rawValue, panelHeight: pin.panelHeight, refresh: pin.refresh.rawValue, minutes: pin.minutes, seconds: pin.seconds, display: shown,
-                   makingLive: pin.makingLive && pin.command == nil ? true : nil)
+                   makingLive: pin.makingLive && pin.command == nil ? true : nil, float: pin.float, floatMenu: Pins.floatMenu(for: pin, floating: context.floating))
     }
 
     /// The picker's list: components this bot drew (newest use first), then its own others (the

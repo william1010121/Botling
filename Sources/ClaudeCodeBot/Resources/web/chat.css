@@ -982,3 +982,58 @@ img.media { cursor: zoom-in; }
   padding: 2px 8px; border-radius: 8px;
 }
 .spec-built-head > .pin-tool, .spec-built-head > .pin-badge { margin-left: 2px; }
+
+/* Pins floated in a corner (float.ts): small cards over the chat and the Board, of any bot, never
+   over the input box (float.ts places them above it). Semi-opaque, so what is under them shows a
+   little; folded (or in a narrow window) just their head line: icon, name, status. */
+.float-layer { position: fixed; inset: 0; z-index: 30; pointer-events: none; }
+.float-card {
+  position: fixed; pointer-events: auto; display: flex; flex-direction: column; min-width: 0;
+  background: rgba(27, 27, 31, 0.86); border: 1px solid #3A3A42; border-radius: 14px; overflow: hidden; isolation: isolate;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  transition: left 0.18s ease, top 0.18s ease, opacity 0.12s;
+}
+.float-card.moving { transition: none; opacity: 0.9; outline: 2px solid var(--blue); outline-offset: 1px; cursor: grabbing; }
+.float-card.resizing { transition: none; outline: 2px solid var(--blue); outline-offset: 1px; }
+.float-head {
+  flex: none; height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 10px; cursor: grab;
+  font-size: 12px; white-space: nowrap; user-select: none; -webkit-user-select: none; border-bottom: 1px solid rgba(58, 58, 66, 0.7);
+}
+.float-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; flex: 0 1 auto; }
+.float-status {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; padding: 1px 7px; border-radius: 7px;
+  background: rgba(58, 58, 66, 0.7); color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums;
+}
+.float-status:empty { display: none; }
+.float-status[data-tone="good"] { color: var(--green); background: rgba(76, 195, 138, 0.14); }
+.float-status[data-tone="warning"] { color: var(--orange-text); background: rgba(247, 194, 127, 0.13); }
+.float-status[data-tone="bad"] { color: var(--error); background: rgba(255, 138, 128, 0.14); }
+.float-head .pin-chip-dot { box-shadow: 0 0 0 2px rgba(27, 27, 31, 0.9); }
+.float-head .pin-chip-icon { color: var(--text); }
+.float-tools { margin-left: auto; display: flex; gap: 1px; flex: none; }
+.float-tools .pin-tool { width: 24px; height: 24px; }
+.float-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.float-body > .command-card { flex: 1; min-height: 0; margin: 0; padding: 0; border: none; border-radius: 0; background: none; display: flex; flex-direction: column; overflow-y: auto; scrollbar-width: none; }
+.float-body > .command-card::-webkit-scrollbar { display: none; }
+.float-body .component { flex: 1; min-height: 0; margin: 0; position: relative; display: flex; align-items: stretch; }
+.float-body .component-frame { flex: 1; min-width: 0; height: auto !important; align-self: stretch; }
+.float-body .component-side { display: none; }
+.float-body .command-approve, .float-body .command-error, .float-body .command-waiting { padding: 8px 10px; font-size: 12px; }
+/* Folded: one line; the body stays (its frame keeps running) but out of sight. */
+.float-card.collapsed { border-radius: 11px; }
+.float-card.collapsed .float-head { height: 100%; border-bottom: none; }
+.float-card.collapsed .float-body { visibility: hidden; height: 0; flex: 0 0 0; }
+.float-card.collapsed > .float-resize { display: none; }
+/* Its inner corner resizes it (bottom-left for one in the top-right corner). */
+.float-resize { width: 18px; height: 18px; }
+.float-resize[data-edge="bottomLeft"] { left: 0; bottom: 0; cursor: nesw-resize; }
+.float-resize[data-edge="bottomRight"] { right: 0; bottom: 0; cursor: nwse-resize; }
+.float-resize[data-edge="topLeft"] { left: 0; top: 0; cursor: nwse-resize; }
+.float-resize[data-edge="topRight"] { right: 0; top: 0; cursor: nesw-resize; }
+.float-resize::before { content: ""; position: absolute; inset: 4px; border: 0 solid rgba(237, 237, 240, 0.6); }
+.float-resize[data-edge="bottomLeft"]::before { border-left-width: 2px; border-bottom-width: 2px; border-bottom-left-radius: 6px; }
+.float-resize[data-edge="bottomRight"]::before { border-right-width: 2px; border-bottom-width: 2px; border-bottom-right-radius: 6px; }
+.float-resize[data-edge="topLeft"]::before { border-left-width: 2px; border-top-width: 2px; border-top-left-radius: 6px; }
+.float-resize[data-edge="topRight"]::before { border-right-width: 2px; border-top-width: 2px; border-top-right-radius: 6px; }
+.float-card:hover > .float-resize, .float-card.hovered > .float-resize, .float-card.resizing > .float-resize { opacity: 1; }
+body.spec-mode .float-layer { display: none; }

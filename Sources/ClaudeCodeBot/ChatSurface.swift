@@ -112,6 +112,7 @@ struct ChatSurface: NSViewRepresentable {
             pins: bot === workspace.codexBot ? nil : workspace.pinContext(for: bot, board: inputs.boards.contains(bot.id)),
             specs: bot !== workspace.codexBot,
             openSpec: workspace.openSpecID,
+            floating: workspace.floatingPinViews(),
             avatar: { projectID in
                 if let projectID, let kind = workspace.avatar(for: projectID) {
                     return AvatarImages.dataURL(kind, eyes: .open)
@@ -152,6 +153,13 @@ struct ChatSurface: NSViewRepresentable {
             let inputs = surface.inputs
             let workspace = surface.workspace
             func id(_ key: String) -> UUID? { (body[key] as? String).flatMap(UUID.init(uuidString:)) }
+            // A pin's message goes to the bot that holds it: a floating card shows over any bot's
+            // chat. Another bot's change redraws this chat too.
+            func pinBot(_ pinID: UUID?) -> Bot {
+                guard let pinID, let owner = workspace.bot(holdingPin: pinID), owner !== bot else { return bot }
+                workspace.objectWillChange.send()
+                return owner
+            }
 
             switch type {
             case "ready":
@@ -311,20 +319,20 @@ struct ChatSurface: NSViewRepresentable {
                     workspace.pin(named: name, in: bot, id: pinID, refresh: refresh, minutes: minutes, seconds: seconds)
                 }
             case "unpin":
-                if let pinID = id("id") { workspace.unpin(pinID, in: bot) }
+                if let pinID = id("id") { workspace.unpin(pinID, in: pinBot(pinID)) }
             case "movePin":
-                if let pinID = id("id"), let to = body["to"] as? Int { workspace.movePin(pinID, to: to, in: bot) }
+                if let pinID = id("id"), let to = body["to"] as? Int { workspace.movePin(pinID, to: to, in: pinBot(pinID)) }
             case "resizePin":
                 if let pinID = id("id"), let size = (body["size"] as? String).flatMap(PinnedComponent.Size.init(spelled:)) {
-                    workspace.resizePin(pinID, to: size, in: bot)
+                    workspace.resizePin(pinID, to: size, in: pinBot(pinID))
                 }
             case "setPinHeight":
                 // An opened pin's panel dragged taller or shorter (null: back to its content's height).
-                if let pinID = id("id") { workspace.setPinPanelHeight(pinID, to: (body["height"] as? NSNumber)?.intValue, in: bot) }
+                if let pinID = id("id") { workspace.setPinPanelHeight(pinID, to: (body["height"] as? NSNumber)?.intValue, in: pinBot(pinID)) }
             case "pinStatus":
                 // A pinned component's ccb.setStatus: its chip's short value and tone (text null: cleared).
                 if let pinID = id("id") {
-                    workspace.setPinStatus(pinID, text: body["text"] as? String, tone: body["tone"] as? String, in: bot)
+                    workspace.setPinStatus(pinID, text: body["text"] as? String, tone: body["tone"] as? String, in: pinBot(pinID))
                 }
             case "componentSave":
                 // A component's ccb.save(data) in a chat message: kept in the message; nothing
@@ -335,11 +343,20 @@ struct ChatSurface: NSViewRepresentable {
             case "pinSave":
                 // A pinned component's ccb.save(data): kept on the pin.
                 if let pinID = id("id"), let data = body["data"] as? String {
-                    workspace.savePinData(data, pin: pinID, in: bot)
+                    workspace.savePinData(data, pin: pinID, in: pinBot(pinID))
+                }
+            case "floatPin":
+                // Float in corner / Stop floating, from its menu (at most two float at once).
+                if let pinID = id("id"), let on = body["floating"] as? Bool { workspace.floatPin(pinID, on, in: pinBot(pinID)) }
+            case "setPinFloat":
+                // A floating card dragged to another corner, resized, or folded to one line.
+                if let pinID = id("id") {
+                    let corner = (body["corner"] as? String).flatMap(PinnedComponent.Floating.Corner.init(rawValue:))
+                    workspace.setPinFloat(pinID, corner: corner, width: (body["width"] as? NSNumber)?.intValue, height: (body["height"] as? NSNumber)?.intValue, collapsed: body["collapsed"] as? Bool, in: pinBot(pinID))
                 }
             case "setPinRefresh":
                 if let pinID = id("id"), let refresh = (body["refresh"] as? String).flatMap(PinnedComponent.Refresh.init(rawValue:)) {
-                    workspace.setPinRefresh(pinID, to: refresh, minutes: body["minutes"] as? Int, seconds: body["seconds"] as? Int, in: bot)
+                    workspace.setPinRefresh(pinID, to: refresh, minutes: body["minutes"] as? Int, seconds: body["seconds"] as? Int, in: pinBot(pinID))
                 }
             case "pinCommand":
                 // A pinned card: Allow (with the command and folder it showed) or ↻. Only what
@@ -348,7 +365,8 @@ struct ChatSurface: NSViewRepresentable {
                     let approve = body["approve"] as? Bool ?? false
                     let force = body["force"] as? Bool ?? false
                     let command = body["command"] as? String, folder = body["folder"] as? String, detail = body["detail"] as? String
-                    Task { await workspace.runPin(pinID, in: bot, command: command, folder: folder, detail: detail, approve: approve, force: force) }
+                    let owner = pinBot(pinID)
+                    Task { await workspace.runPin(pinID, in: owner, command: command, folder: folder, detail: detail, approve: approve, force: force) }
                 }
             case "makeComponent":
                 // A reply's "Make into component" (or an HTML result card's): its first version is
@@ -381,7 +399,8 @@ struct ChatSurface: NSViewRepresentable {
                 }
             case "pinShown":
                 let ids = (body["ids"] as? [String])?.compactMap(UUID.init(uuidString:))
-                Task { await workspace.pinsShown(ids, in: bot) }
+                let owner = pinBot(ids?.first)
+                Task { await workspace.pinsShown(ids, in: owner) }
             case "pluginLoaded":
                 if let name = body["name"] as? String { surface.plugins.markLoaded(name) }
             default:

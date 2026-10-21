@@ -15,7 +15,52 @@ extension Workspace {
 
     /// What drawing a chat's pins needs.
     public func pinContext(for bot: Bot, board: Bool = false) -> ChatPayload.PinContext {
-        ChatPayload.PinContext(runs: componentCommands, folder: pinFolder(for: bot), board: board, library: components)
+        ChatPayload.PinContext(runs: componentCommands, folder: pinFolder(for: bot), board: board, library: components, floating: floatingPins().count)
+    }
+
+    // MARK: Floating in a corner
+
+    /// The pins floating in a corner of the chat window, of every bot, in the order of the bots
+    /// and their pins.
+    public func floatingPins() -> [(bot: Bot, pin: PinnedComponent)] {
+        chatsWithPins.flatMap { bot in bot.pins.filter { $0.float != nil }.map { (bot: bot, pin: $0) } }
+    }
+
+    /// The floating pins as every chat's page draws them, over whichever bot's chat is shown.
+    public func floatingPinViews() -> [ChatPayload.FloatingPin] {
+        floatingPins().map { entry in
+            ChatPayload.FloatingPin(botID: entry.bot.id.uuidString, botName: entry.bot.name, pin: ChatPayload.pin(view: entry.pin, context: pinContext(for: entry.bot)))
+        }
+    }
+
+    /// The bot a pin is on, so a floating card's ↻ and menu reach it from any bot's chat.
+    public func bot(holdingPin id: UUID) -> Bot? {
+        chatsWithPins.first { $0.pins.contains { $0.id == id } }
+    }
+
+    /// Floats a pin in a corner (at the defaults) or stops it. Floating one more than
+    /// `Pins.maxFloating` does not; returns whether it floats (or stopped) as asked.
+    @discardableResult
+    public func floatPin(_ id: UUID, _ on: Bool, in bot: Bot) -> Bool {
+        guard let pin = bot.pins.first(where: { $0.id == id }) else { return false }
+        if on, pin.float == nil, floatingPins().count >= Pins.maxFloating { return false }
+        objectWillChange.send()
+        bot.editPins { pins in
+            guard let at = pins.firstIndex(where: { $0.id == id }) else { return }
+            pins[at].float = on ? (pins[at].float ?? PinnedComponent.Floating()) : nil
+        }
+        return true
+    }
+
+    /// Where a floating pin sits: the corner it was dragged to, its size, folded or not. Nothing
+    /// for a pin that does not float.
+    public func setPinFloat(_ id: UUID, corner: PinnedComponent.Floating.Corner? = nil, width: Int? = nil, height: Int? = nil, collapsed: Bool? = nil, in bot: Bot) {
+        guard bot.pins.contains(where: { $0.id == id && $0.float != nil }) else { return }
+        objectWillChange.send()
+        bot.editPins { pins in
+            guard let at = pins.firstIndex(where: { $0.id == id }), let float = pins[at].float else { return }
+            pins[at].float = PinnedComponent.Floating(corner: corner ?? float.corner, width: width ?? float.width, height: height ?? float.height, collapsed: collapsed ?? float.collapsed)
+        }
     }
 
     /// Pins the `index`th component of a message, with what it shows now (its command's last
@@ -238,6 +283,9 @@ extension Workspace {
                 let folder = pinFolder(for: bot)
                 let due = bot.pins.filter { pin in
                     guard let command = pin.command, componentCommands.isApproved(command, in: folder) else { return false }
+                    // A floating pin refreshed every few seconds is rerun by the page, only while
+                    // the window is shown.
+                    if pin.float != nil, pin.refresh == .interval, pin.seconds != nil { return false }
                     return pin.isDue(at: now, lastRan: lastRan(pin))
                 }
                 if !due.isEmpty { group.addTask { await self.run(due, in: bot) } }
