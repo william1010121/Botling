@@ -114,7 +114,12 @@ public final class Bot: ObservableObject, Identifiable {
         /// One of its subagents made the call, not the bot: which one, in the bot's words
         /// (`"Fix group B" (named `audit-b`)`). The bot has to pass the answer on to it.
         var subagent: String?
+        /// The user allowed it before and claude blocked it anyway: allowing again cannot help.
+        var allowedBefore = false
     }
+    /// Rules given to claude while the bot runs, with the last call it had made then: a call
+    /// up to that one was judged before claude had the rule (a block of it is no news).
+    private var rulesGivenAfter: [String: String?] = [:]
     /// Blocked calls allowed once: rules for this run of the app (each new session starts with them).
     private var sessionRules: [String] = []
     /// Recent tool calls by id (tool, what it ran or touched), to show and allow a blocked one.
@@ -1081,21 +1086,32 @@ public final class Bot: ObservableObject, Identifiable {
         guard let tool = denial.tool ?? call?.tool,
               let rule = Self.allowRule(tool: tool, detail: call?.detail ?? "") else { return }
         let summary = call?.detail ?? tool
-        // Allowed already (a rule from before this session reached claude late): nothing to ask.
-        guard !allowRules.contains(rule) else { return }
+        // Allowed already. A call made before claude had the rule: its retry is covered, nothing
+        // to ask. One made after: claude does not apply the rule to this command (one of several
+        // parts, or reaching outside the bot's folders): still a card, saying so.
+        let allowedBefore = allowRules.contains(rule)
+        if allowedBefore, case let given?? = rulesGivenAfter[rule],
+           let callIndex = toolCallOrder.firstIndex(of: denial.toolUseID),
+           let givenIndex = toolCallOrder.firstIndex(of: given), callIndex <= givenIndex { return }
         let always = switch tool {
         case "Bash": L("Always allow this command")
         case "Write", "Edit", "MultiEdit", "NotebookEdit": L("Always allow editing this file")
         case "WebFetch": L("Always allow this site")
         default: L("Always allow {0}", tool)
         }
-        let choices = [
+        let choices = allowedBefore ? [
+            Choice(label: L("I'll run it myself"), detail: nil, recommended: true, action: .deny),
+            Choice(label: L("Don't allow"), detail: nil, recommended: false, action: .deny)
+        ] : [
             Choice(label: L("Allow once"), detail: nil, recommended: true, action: .allowOnce),
             Choice(label: always, detail: L("For {0}, from now on", name), recommended: false, action: .alwaysAllow),
             Choice(label: L("Don't allow"), detail: nil, recommended: false, action: .deny)
         ]
         let request = PermissionRequest(id: denial.toolUseID, tool: tool, summary: summary, input: "{}")
-        let reason = denial.reason.isEmpty ? "" : "\n\n" + L("Reason: {0}", denial.reason.replacingOccurrences(of: "\n", with: " "))
+        var reason = denial.reason.isEmpty ? "" : "\n\n" + L("Reason: {0}", denial.reason.replacingOccurrences(of: "\n", with: " "))
+        if allowedBefore {
+            reason += "\n\n" + L("You already allowed this, but Claude Code blocked it again: it does not apply that allow to this command (made of several parts, or reaching outside the bot's folders, for example). Allowing it again would not help.")
+        }
         // A subagent's call (its line's `parent_tool_use_id`): the card says which subagent asked.
         let subagent = call?.parent.map { id in trace.subagent(id) ?? Subagent(id: id, description: "", prompt: "") }
         let title = subagent.map { $0.description.isEmpty ? ($0.name ?? L("Subagent")) : $0.description }
@@ -1107,7 +1123,7 @@ public final class Bot: ObservableObject, Identifiable {
         let named = subagent.map { agent in
             "your subagent \"\(title ?? agent.id)\"" + (agent.name.map { " (named `\($0)`)" } ?? "")
         }
-        denialAsks[message.id] = Denial(tool: tool, summary: summary, rule: rule, subagent: named)
+        denialAsks[message.id] = Denial(tool: tool, summary: summary, rule: rule, subagent: named, allowedBefore: allowedBefore)
         unreadCount += 1
         onQuestion?(message)
     }
@@ -1118,6 +1134,10 @@ public final class Bot: ObservableObject, Identifiable {
         guard let denial = denialAsks.removeValue(forKey: message.id) else { return false }
         markChosen(index, in: message.id)
         let (allowed, always) = Self.permissionVerdict(message.choices?[safe: index])
+        if denial.allowedBefore, index == 0 {
+            appMessage("(App: Auto mode blocked `\(denial.summary)` (\(denial.tool)) again\(denial.subagent.map { " for " + $0 } ?? ""), although the user had allowed it: Claude Code does not apply that allow to this command, so allowing it cannot help. Do not try it again as it was. The user will run it themselves: tell them exactly what to run and what to send back, then wait.)")
+            return true
+        }
         guard allowed else {
             appMessage("(App: The user did not allow `\(denial.summary)` (\(denial.tool)), which auto mode blocked\(denial.subagent.map { " for " + $0 } ?? ""). Do not try it again; carry on without it, or ask the user what to do instead.)")
             return true
@@ -1130,6 +1150,7 @@ public final class Bot: ObservableObject, Identifiable {
         } else if !sessionRules.contains(denial.rule) {
             sessionRules.append(denial.rule)
         }
+        rulesGivenAfter[denial.rule] = .some(toolCallOrder.last)
         process?.allow(rules: allowRules)
         if let subagent = denial.subagent {
             // Not the bot's call: running it itself would do nothing for the subagent that needs it.

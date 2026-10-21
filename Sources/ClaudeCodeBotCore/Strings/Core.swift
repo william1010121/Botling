@@ -90,6 +90,8 @@ extension L10n {
         "Always allow editing this file": ["一律允許編輯這個檔案", "始终允许编辑此文件", "このファイルの編集を常に許可", "이 파일 편집 항상 허용"],
         "Always allow this site": ["一律允許這個網站", "始终允许此网站", "このサイトを常に許可", "이 사이트 항상 허용"],
         "Reason: {0}": ["原因：{0}", "原因：{0}", "理由：{0}", "이유: {0}"],
+        "I'll run it myself": ["我自己執行", "我自己运行", "自分で実行する", "내가 직접 실행"],
+        "You already allowed this, but Claude Code blocked it again: it does not apply that allow to this command (made of several parts, or reaching outside the bot's folders, for example). Allowing it again would not help.": ["你已經允許過，但 Claude Code 又擋下了：它不會把那個允許套用到這個指令（例如由好幾段組成，或讀寫 Bot 資料夾以外的地方）。再允許一次也沒有用。", "你已经允许过，但 Claude Code 又拦截了：它不会把那个允许应用到这个命令（例如由好几段组成，或读写 Bot 文件夹以外的地方）。再允许一次也没有用。", "すでに許可していますが、Claude Code が再びブロックしました。このコマンドにはその許可が適用されません（複数の部分からなる、ボットのフォルダの外に触れる、など）。もう一度許可しても効果はありません。", "이미 허용했지만 Claude Code가 다시 차단했습니다. 이 명령에는 그 허용이 적용되지 않습니다(여러 부분으로 이루어졌거나 봇 폴더 밖을 다루는 경우 등). 다시 허용해도 소용없습니다."],
         "Subagent “{0}”: auto mode blocked": ["子代理「{0}」：自動模式擋下了", "子代理「{0}」：自动模式拦截了", "サブエージェント「{0}」：自動モードがブロックしたツール", "서브에이전트 「{0}」: 자동 모드가 차단한 도구"],
         "Auto mode blocked": ["自動模式擋下了", "自动模式拦截了", "自動モードがブロックしたツール", "자동 모드가 차단한 도구"],
         "No answer in time": ["未及時回答", "未及时回答", "時間内に回答なし", "제때 답하지 않음"],
