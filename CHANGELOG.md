@@ -4,7 +4,7 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
-## Unreleased
+## 1.14.1
 
 ### Added
 
@@ -147,6 +147,7 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **Doctor shows each CLI's path with ~ for your home folder** (the full path in its tooltip).
 - **Logic reads structure, not wording (hardcode audit, Medium: matching, display text, special
   cases, prompts, tests).** A background subagent's id and output file, and whether it went to the
   background, come from claude's structured result (the words only for results without one); a
