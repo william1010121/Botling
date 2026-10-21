@@ -174,7 +174,10 @@ public enum ReplyParser {
             // command is the tag's own, or the one the component's about.md declares.
             let data = body.isEmpty ? "null" : body
             if !name.isEmpty, body.isEmpty || (try? JSONSerialization.jsonObject(with: Data(data.utf8))) != nil {
-                displays.insert(ComponentInstance(name: name, data: data, command: command), at: 0)
+                // id="tests" names the card so a later <show> updates it; refresh="2s" reruns its command.
+                let id = attributes["id"].map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
+                let refresh = attributes["refresh"].flatMap(ComponentRefresh.seconds(from:))
+                displays.insert(ComponentInstance(name: name, data: data, command: command, id: id, refresh: refresh), at: 0)
                 marker = "\u{E000}"
             }
             text.replaceCharacters(in: match.range, with: marker)

@@ -460,8 +460,12 @@ function drawComponent(message: MessageView, display: DisplayView, index: number
     )));
     return root;
   }
+  // ccb.save(data) keeps new data in this message; a command's card shows the command's output.
+  const save = message.role === "bot" && !display.command
+    ? (data: string) => post({ type: "componentSave", messageID: message.id, index, data })
+    : null;
   return componentElement(display.name, components[display.name], display.data, answer,
-    index === 0 ? message.id : `${message.id}/show-${index}`, display.images, detailTarget(display));
+    index === 0 ? message.id : `${message.id}/show-${index}`, display.images, detailTarget(display), undefined, "chat", false, save);
 }
 
 /** Answered questions you opened again, by message id; the rest stay folded to one line. */

@@ -36,6 +36,16 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./
  *   "bad" or "neutral"), a dot on the icon unless neutral. Text alone is fine; `null` clears it (the
  *   chip shows the summary of its data again). Only a pinned copy (its sheet or Board tile) sets
  *   it, and the chip keeps the last one; elsewhere it does nothing.
+ * - `save(data)`: keeps `data` (anything JSON can hold but null, up to 256 KB) as this use of the
+ *   component's data from now on, so it draws with it again, also after a restart: in its chat
+ *   message, or on its pin (a pin keeps a copy of its own). It becomes `ccb.data`, does not lock
+ *   the card or wake the bot (the bot hears the latest state with your next message), and the
+ *   frame is not drawn again for it. Resolves once sent; rejects with an Error when the data cannot
+ *   be kept or the component cannot save here (a card whose data comes from a command, a preview).
+ * - `onData(fn)`: live data. Each new data for this card (its command ran again, a pin refreshed,
+ *   the bot updated the card) calls `fn(data)` and becomes `ccb.data`, and the frame is kept
+ *   instead of drawn anew. Returns a function that stops it.
+ * - `load()`: resolves to the data it has now (the saved data, after `save`).
  * - `surface`: where it is drawn, "chat", "board" or "pinned"; also `<html data-surface="chat">`.
  *   Everywhere it draws no frame of its own (no border, background or radius, at most ~12px
  *   padding): on the Board the component is the whole tile, like a home-screen widget, whose
@@ -47,7 +57,7 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./
  *   padding: 12px }` with `html[data-surface="board"] .card { height: 100% }`.
  * The frame reports its height and answers to this page, which passes answers on to Swift.
  */
-export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2", surface: Surface = "chat", fill = surface === "board"): string {
+export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2", surface: Surface = "chat", fill = surface === "board", saving = false): string {
   const safe = (json: string) => json.replace(/</g, "\\u003c");
   return `<!doctype html><html data-size="${size}" data-surface="${surface}"${fill ? " data-fill" : ""}><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
 <style>:root{color-scheme:dark}html,body{margin:0;padding:0;background:transparent;color:#EDEDF0;font:14px -apple-system,"PingFang TC",sans-serif;overflow:hidden}
@@ -58,6 +68,8 @@ html[data-fill] body{overflow-y:auto;scrollbar-width:none}html[data-fill] body::
 <script>
 (() => {
   const images = ${safe(JSON.stringify(images))};
+  // Whether ccb.save keeps anything here.
+  const canSave = ${saving ? "true" : "false"};
   const read = (file) => new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -120,6 +132,16 @@ html[data-fill] body{overflow-y:auto;scrollbar-width:none}html[data-fill] body::
     const message = event.data;
     if (event.source !== parent || !message) return;
     if (message.ccbSize && typeof message.ccbSize === 'object') return resized(message.ccbSize);
+    // New data for a frame kept on screen (ccb.onData): its command ran again, or the bot updated it.
+    if (typeof message.ccbData === 'string') {
+      let next;
+      try { next = JSON.parse(message.ccbData); } catch (error) { return; }
+      window.ccb.data = next;
+      for (const watcher of [...dataWatchers]) {
+        try { watcher(next); } catch (error) { console.error(error); }
+      }
+      return;
+    }
     if (typeof message.ccbDetail !== 'number') return;
     const call = details.get(message.ccbDetail);
     if (!call) return;
@@ -127,6 +149,7 @@ html[data-fill] body{overflow-y:auto;scrollbar-width:none}html[data-fill] body::
     if (message.ok) call.resolve(message.value);
     else call.reject(new Error(String(message.error || 'The Detail command failed.')));
   });
+  const dataWatchers = new Set();
   window.ccb = {
     data: ${safe(data)},
     size: sized(${JSON.stringify(sizeInfo(size))}, pixels()),
@@ -148,6 +171,24 @@ html[data-fill] body{overflow-y:auto;scrollbar-width:none}html[data-fill] body::
         });
       }
       parent.postMessage({ccb: 'answer', text: String(value)}, '*');
+      return Promise.resolve();
+    },
+    onData(fn) {
+      if (typeof fn !== 'function') return () => {};
+      dataWatchers.add(fn);
+      // The page keeps this frame from now on and sends it each new data instead of drawing it anew.
+      parent.postMessage({ccb: 'live'}, '*');
+      return () => dataWatchers.delete(fn);
+    },
+    load() { return Promise.resolve(window.ccb.data); },
+    save(value) {
+      if (!canSave) return Promise.reject(new Error('This component cannot save here: its data comes from a command, or it is a preview.'));
+      let json;
+      try { json = JSON.stringify(value); } catch (error) { return Promise.reject(new Error('ccb.save takes data JSON can hold: ' + error.message)); }
+      if (json === undefined || json === 'null') return Promise.reject(new Error('ccb.save needs data (not null or undefined).'));
+      if (json.length > ${saveLimit}) return Promise.reject(new Error('The data is too big to save (at most 256 KB as JSON).'));
+      window.ccb.data = JSON.parse(json);
+      parent.postMessage({ccb: 'save', data: json}, '*');
       return Promise.resolve();
     },
     choose(index) { return this.answer(Number(index)); },
@@ -223,6 +264,9 @@ document.documentElement.addEventListener('mouseenter', () => parent.postMessage
 document.documentElement.addEventListener('mouseleave', () => parent.postMessage({ccb: 'hover', on: false}, '*'));
 </script></body></html>`;
 }
+
+/** The most `ccb.save` keeps, as JSON characters (Swift's `ComponentState.limit` is the same). */
+export const saveLimit = 256 * 1024;
 
 /**
  * Where a component is drawn: in the chat, as a tile on the Board, or "pinned": opened from its
@@ -319,11 +363,13 @@ export interface ComponentAnswer {
 }
 
 type AnswerHandler = (answer: ComponentAnswer) => void;
+/** Where a component's `ccb.save(data)` goes, as the JSON it saved. */
+export type SaveHandler = (json: string) => void;
 /**
  * A component's frame: its answer handler, the use it is (`ccbKey`), and what it was drawn from
  * (`ccbDrawn`), so a redrawn message can keep a frame whose component did not change.
  */
-type ComponentFrame = HTMLIFrameElement & { ccbAnswer?: AnswerHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbPin?: string | null };
+type ComponentFrame = HTMLIFrameElement & { ccbAnswer?: AnswerHandler | null; ccbSave?: SaveHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDrawnFor?: (data: string) => string; ccbShape?: string; ccbData?: string; ccbLive?: boolean; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbPin?: string | null };
 
 /** Marks the component frames in `element` as pin `id`'s: their `ccb.setStatus` sets its chip. */
 export function markPinFrames(element: HTMLElement | null, id: string): void {
@@ -429,6 +475,16 @@ window.addEventListener("message", (event) => {
   } else if (message.ccb === "status") {
     // Only a pinned copy has a chip to set.
     if (frame.ccbPin) post(pinStatusAction(frame.ccbPin, message as { clear?: unknown; text?: unknown; tone?: unknown }));
+  } else if (message.ccb === "live") {
+    // It takes new data itself (ccb.onData): a redraw with only new data keeps it.
+    frame.ccbLive = true;
+  } else if (message.ccb === "save" && frame.ccbSave) {
+    const data = (message as { data?: unknown }).data;
+    if (typeof data !== "string" || data === "" || data.length > saveLimit) return;
+    // The frame shows this data already: a redraw with it keeps the frame.
+    if (frame.ccbDrawnFor) frame.ccbDrawn = frame.ccbDrawnFor(data);
+    frame.ccbData = data;
+    frame.ccbSave(data);
   } else if (message.ccb === "runDetail" && event.source) {
     runDetail(frame, event.source, message.id, message.values);
   }
@@ -476,6 +532,7 @@ export function componentElement(
   size?: PinSize,
   surface: Surface = "chat",
   fill = surface === "board",
+  onSave: SaveHandler | null = null,
 ): HTMLElement | null {
   if (!info) return null;
   const wrap = document.createElement("div");
@@ -486,6 +543,7 @@ export function componentElement(
   frame.setAttribute("sandbox", "allow-scripts");
   frame.title = name;
   frame.ccbAnswer = onAnswer;
+  frame.ccbSave = onSave;
   frame.ccbDetail = detail ?? null;
   if (key) {
     frame.ccbKey = `${key}/${name}`;
@@ -494,10 +552,14 @@ export function componentElement(
   }
   // What it shows; the order of the pictures does not count (a Swift dictionary has none).
   const pictures = Object.entries(images ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  frame.ccbDrawn = JSON.stringify([name, info.template, info.version, data, pictures, fill]);
+  frame.ccbDrawnFor = (shown: string) => JSON.stringify([name, info.template, info.version, shown, pictures, fill, !!onSave]);
+  frame.ccbDrawn = frame.ccbDrawnFor(data);
+  // All of it but the data: a frame that takes live data (ccb.onData) is kept when only that changes.
+  frame.ccbShape = JSON.stringify([name, info.template, info.version, pictures, fill, !!onSave]);
+  frame.ccbData = data;
   const drawnSize = size ?? chatSize(info);
   frame.ccbSize = drawnSize;
-  frame.srcdoc = componentPage(info.template, data, images ?? {}, drawnSize, surface, fill);
+  frame.srcdoc = componentPage(info.template, data, images ?? {}, drawnSize, surface, fill, !!onSave);
   // Resized before its page ran: tell it once it has loaded.
   frame.addEventListener("load", () => {
     if (frame.ccbSize && frame.ccbSize !== drawnSize) resizeFrame(frame, frame.ccbSize);
@@ -525,7 +587,10 @@ export function keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement {
   const keptFrames = new Set<Element>();
   for (const frame of fresh.querySelectorAll<ComponentFrame>("iframe.component-frame")) {
     const before = frame.ccbKey ? oldFrames.get(frame.ccbKey) : undefined;
-    if (!before || before.ccbDrawn !== frame.ccbDrawn) continue;
+    if (!before) continue;
+    // Only its data changed, and it takes new data itself: kept, and sent the data.
+    const live = before.ccbDrawn !== frame.ccbDrawn && !!before.ccbLive && before.ccbShape === frame.ccbShape;
+    if (before.ccbDrawn !== frame.ccbDrawn && !live) continue;
     // Only where it sits the same way in both, so nothing around it has to move.
     const pairs: [Element, Element][] = [];
     let a: Element | null = frame;
@@ -541,7 +606,13 @@ export function keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement {
     keptFrames.add(frame);
     oldFrames.delete(frame.ccbKey!);
     (before as ComponentFrame).ccbAnswer = frame.ccbAnswer;
+    (before as ComponentFrame).ccbSave = frame.ccbSave;
     (before as ComponentFrame).ccbDetail = frame.ccbDetail;
+    if (live) {
+      before.ccbDrawn = frame.ccbDrawn;
+      before.ccbData = frame.ccbData;
+      before.contentWindow?.postMessage({ ccbData: frame.ccbData }, "*");
+    }
   }
   if (!keptFrames.size) return fresh;
   const patch = (target: Element, source: Element) => {
@@ -572,7 +643,7 @@ export function keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement {
 }
 
 /** Where a card's command requests go instead of a chat card's (a pinned card's). */
-export type CommandSend = (request: { command: string; folder: string; detail?: string; approve?: boolean; force?: boolean }) => void;
+export type CommandSend = (request: { command: string; folder: string; detail?: string; approve?: boolean; force?: boolean; live?: boolean }) => void;
 
 /** Cards whose command was asked to run once allowed, so a redraw does not ask again. */
 const requestedRuns = new Set<string>();
@@ -585,6 +656,64 @@ const refreshIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"
  * the card only asks (Swift remembers the answer); a failed run shows why instead of the
  * component. `draw` draws the component itself with the data the command gave.
  */
+/** Whether `element` holds a frame that takes live data (`ccb.onData`). */
+export function hasLiveFrame(element: Element | null): boolean {
+  return !!element && [...element.querySelectorAll<ComponentFrame>("iframe.component-frame")].some((frame) => frame.ccbLive);
+}
+
+/**
+ * Cards that refresh by themselves (`Refresh: every 2s`): what runs each one again, by its card,
+ * the newest drawing's (a redraw may keep the old element, so the element holds only the key),
+ * and when each is due. A card is due `every` seconds after it was first seen done (or failed);
+ * it then runs once it is on screen and the window is shown, and counts again once it is drawn
+ * done again, so a run is never asked for while one is going.
+ */
+const liveRuns = new Map<string, () => void>();
+const liveDue = new Map<string, number>();
+let liveTimer: ReturnType<typeof setInterval> | null = null;
+
+/** On screen: the window is shown and some of the card is inside it. */
+function onScreen(element: Element): boolean {
+  if (document.visibilityState === "hidden") return false;
+  const box = element.getBoundingClientRect();
+  if (box.width <= 0 || box.height <= 0) return false;
+  return box.bottom > 0 && box.top < (window.innerHeight || document.documentElement.clientHeight);
+}
+
+/** Runs the cards whose time has come and that are on screen; how many ran. */
+export function refreshDueCards(now = Date.now()): number {
+  let ran = 0;
+  let live = 0;
+  for (const card of document.querySelectorAll<HTMLElement>(".command-card[data-every]")) {
+    const key = card.dataset.liveKey ?? "";
+    const every = Number(card.dataset.every);
+    live += 1;
+    if (!(every > 0) || (card.dataset.status !== "done" && card.dataset.status !== "failed")) {
+      liveDue.delete(key);
+      continue;
+    }
+    const due = liveDue.get(key);
+    if (due === undefined) {
+      liveDue.set(key, now + every * 1000);
+      continue;
+    }
+    if (now < due || !onScreen(card)) continue;
+    liveDue.set(key, now + every * 1000);
+    liveRuns.get(key)?.();
+    ran += 1;
+  }
+  if (!live && liveTimer) {
+    clearInterval(liveTimer);
+    liveTimer = null;
+    liveDue.clear();
+  }
+  return ran;
+}
+
+function watchLiveCards(): void {
+  liveTimer ??= setInterval(() => refreshDueCards(), 250);
+}
+
 export function commandCard(
   display: DisplayView,
   messageID: string,
@@ -599,9 +728,17 @@ export function commandCard(
   // With the command and folder this card shows: Swift allows and runs only what you saw.
   const shown: { command: string; folder: string; detail?: string } = { command: display.command ?? "", folder: display.folder ?? "" };
   if (display.detail) shown.detail = display.detail;
-  const run = (extra: { approve?: boolean; force?: boolean }) =>
+  const run = (extra: { approve?: boolean; force?: boolean; live?: boolean }) =>
     options.send ? options.send({ ...shown, ...extra }) : post({ type: "componentCommand", messageID, index, ...shown, ...extra });
   const hasData = display.data !== "null" && display.data !== "";
+  // Runs again by itself every so often while on screen (its about.md's Refresh line).
+  if (display.command && typeof display.every === "number" && display.every > 0) {
+    const key = `${messageID}/${index}`;
+    card.dataset.every = String(Math.max(1, display.every));
+    card.dataset.liveKey = key;
+    liveRuns.set(key, () => run({ force: true, live: true }));
+    watchLiveCards();
+  }
 
   if (display.command && options.bar !== false) {
     const bar = document.createElement("div");
@@ -613,7 +750,11 @@ export function commandCard(
     bar.append(text);
     const when = document.createElement("span");
     when.className = "command-when";
-    when.textContent = status === "running" ? "Running…" : display.ranAt ? `Ran ${display.ranAt}` : "";
+    const every = typeof display.every === "number" && display.every > 0 ? `every ${display.every < 60 ? `${display.every}s` : `${Math.round(display.every / 60)} min`}` : "";
+    // A card that refreshes by itself says how often, and does not flash "Running…" each time.
+    when.textContent = every
+      ? [display.ranAt ? `Ran ${display.ranAt}` : "", every].filter(Boolean).join(" · ")
+      : status === "running" ? "Running…" : display.ranAt ? `Ran ${display.ranAt}` : "";
     bar.append(when);
     if (status !== "approve") {
       const refresh = document.createElement("button");

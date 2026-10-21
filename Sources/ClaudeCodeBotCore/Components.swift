@@ -11,12 +11,48 @@ public struct ComponentInstance: Codable, Equatable, Sendable {
     /// A shell command whose output is the data instead (`<show name="x" command="git diff --stat">`),
     /// run in the bot's project folder once the user allows it. See `ComponentCommands`.
     public var command: String?
+    /// When the component last kept new data itself (`ccb.save`, see `ComponentState`); nil:
+    /// `data` is still what the bot gave.
+    public var savedAt: Date?
+    /// The bot's name for this card (`<show name="x" id="tests">`): a later `<show>` with the same
+    /// id updates this card in place instead of drawing a new one (see `Bot.updateCards`).
+    public var id: String?
+    /// How often, in seconds, a card with a command runs it again while it is on screen
+    /// (`<show refresh="2s">`); nil: its about.md's `Refresh:` line, if any. See `ComponentRefresh`.
+    public var refresh: Double?
 
-    public init(name: String, data: String, at: Int? = nil, command: String? = nil) {
+    public init(name: String, data: String, at: Int? = nil, command: String? = nil, savedAt: Date? = nil, id: String? = nil, refresh: Double? = nil) {
         self.name = name
         self.data = data
         self.at = at
         self.command = command
+        self.savedAt = savedAt
+        self.id = id
+        self.refresh = refresh
+    }
+}
+
+/// How often a card whose data comes from a command runs it again by itself, while it is on
+/// screen (the page pauses it when the card is scrolled away or the window is hidden): about.md's
+/// `Refresh: every 2s` line, or a `<show refresh="2s">`. At least a second, at most an hour.
+public enum ComponentRefresh {
+    /// Seconds from "2s", "every 2s", "1.5s", "5 seconds", "3" (seconds), "1m", "every 3 min",
+    /// "500ms" (raised to a second). Nil for "0", "off", over an hour, or anything not a time.
+    public static func seconds(from text: String) -> Double? {
+        var text = text.trimmingCharacters(in: CharacterSet(charactersIn: "` ")).lowercased()
+        if text.hasPrefix("every ") { text = String(text.dropFirst(6)).trimmingCharacters(in: .whitespaces) }
+        guard let match = text.wholeMatch(of: #/(\d+(?:\.\d+)?)\s*([a-z]*)/#), let value = Double(match.1), value > 0 else { return nil }
+        let unit: Double
+        switch String(match.2) {
+        case "", "s", "sec", "secs", "second", "seconds": unit = 1
+        case "ms", "millisecond", "milliseconds": unit = 0.001
+        case "m", "min", "mins", "minute", "minutes": unit = 60
+        default: return nil
+        }
+        let seconds = value * unit
+        let range = ComponentLibrary.liveRange
+        guard seconds <= range.upperBound else { return nil }
+        return max(seconds, range.lowerBound)
     }
 }
 
@@ -193,6 +229,20 @@ public final class ComponentLibrary: ObservableObject {
 
     static func detailCommand(inAbout about: String) -> String? {
         line(labelled: "detail command:", inAbout: about)
+    }
+
+    /// How often a live card may run its command by itself: at least a second, at most an hour.
+    public nonisolated static let liveRange: ClosedRange<Double> = 1...3600
+
+    /// How often, in seconds, a card of this component with a command runs it again while on
+    /// screen, from an about.md line `Refresh: every 2s` (see `ComponentRefresh`).
+    public func refreshInterval(of name: String) -> Double? {
+        guard let about = try? String(contentsOf: aboutURL(name), encoding: .utf8) else { return nil }
+        return Self.refreshInterval(inAbout: about)
+    }
+
+    static func refreshInterval(inAbout about: String) -> Double? {
+        line(labelled: "refresh:", inAbout: about).flatMap(ComponentRefresh.seconds(from:))
     }
 
     /// The Board sizes an about.md line `Sizes: 1x1, 2x1, 2x2` hints at (in that order; any WxH
@@ -435,6 +485,9 @@ enum ComponentPrompts {
     - Codex review: ccb.reviewWithCodex({scope, commit, spec}) has Codex review the chat bot's repository once, read-only; scope is "uncommitted", "lastCommit", "branch" (against main or master, only off those) or "commit" (commit: a hash in the repository; a commit alone implies it); spec is an optional .md/.txt/.html file in the bot's folder or home that Codex checks the change against. Call it from a click. The report shows in the right column and a line in the chat; a call the app cannot check is ignored.
     - Data from a command (optional): an about.md line "Command: git log --format=..." makes the app fill the component with what that command prints (run in the bot's folder once the user presses "Allow and run" on its card; JSON output is the data, other output one string; at most 1 MB, 60 seconds). Only for live data that changes; most components need none and draw the data a bot gives them with <show>, such as a component made from a bot's reply, which shows that reply's content.
     - Details on demand: when the data would be too big to give all at once (each commit's whole diff, each file's contents), keep the Command's output small and add an about.md line "Detail command: git show --patch --stat {hash}". Then await ccb.runDetail({hash: "2aed630"}) (from a click) runs it with each {name} filled in, in the same folder, with the same limits, and resolves to its output (parsed when it is JSON, else the text); it rejects with an Error (show error.message) when the user has not allowed it yet, a value is missing or not allowed, or the command fails. Values may only hold letters, digits and . _ / - (up to 200, not starting with -); every {name} in the template needs one, and nothing else may be passed. It is allowed together with the Command on the card, so changing the Detail command line asks the user again. Cache what you fetched; show a spinner while waiting.
+    - Refreshing by itself: an about.md line "Refresh: every 2s" (with a Command) makes its chat card run the command again every 2 seconds (at least 1s) while the card is on screen; it pauses when scrolled away or the window is hidden. A bot can also write <show name="x" refresh="2s">. Each run draws the frame anew unless the template calls ccb.onData((data) => …): then the frame stays and the function gets each new data (also in ccb.data); use it for live cards (test progress, CPU) so they update smoothly.
+    - State of its own: await ccb.save(data) keeps data (JSON, not null, at most 256 KB) as this card's data from now on, in the chat message or on its pin, so a todo list keeps its ticks after a reload or restart; ccb.data (and await ccb.load()) is the saved data when the frame starts. It does not answer, lock the card or wake the bot (the bot sees the latest data with the user's next message). Cards whose data comes from a command cannot save (ccb.save rejects). Save after each change.
+    - Updating a card: a bot that writes <show name="x" id="tests">JSON</show> and later the same id again updates that card in place instead of adding a new one; say so in about.md when the component is meant to be kept up to date.
     - Pin chip: a pinned component also shows as a small chip above the input box: an icon and a short status, its name in the tooltip. An about.md line "Icon: chart.pie.fill" (an SF Symbol name) or "Icon: 📊" (one emoji) gives the icon (without it: a generic one). ccb.setStatus({text: "3 new", tone: "good"}) sets the status: text is a short value (about 14 characters show: a count, a temperature, a hash), tone is "good", "warning", "bad" or "neutral" (a coloured dot on the icon unless neutral); text alone is fine, and ccb.setStatus(null) clears it. Without it the chip shows the start of a summary of the data. Call it each time you draw, from what the data says; only a pinned copy (opened from its chip, or its Board tile) sets the chip, which keeps the last status, and elsewhere it does nothing.
     - Board sizes: a pinned component is a card on the bot's Board, in square cells like a home-screen widget (a cell is about 150–170px): the user drags the card's bottom-right corner (or picks in its size menu) to any size from 1x1 to 4x4 cells, and drags a pin opened above the input box taller or shorter. So write ONE responsive layout that adapts to any width and height, like a responsive web page; no per-size layouts are needed. Let CSS do it: CSS grid with auto-fill columns (grid-template-columns: repeat(auto-fill, minmax(140px, 1fr))) so rows and lists reflow, container queries (#ccb-root is a size container on the Board and in a panel the user sized, an inline-size one elsewhere: @container (max-height: 200px) {…}, @container (max-width: 260px) {…}), and flex-wrap. When it gets short, collapse to a summary (fewer rows, the top items, a one-line total); when it is tiny (about one cell), show just the key number or status, big; when it is large, show more rows or detail beside the list. The size it is drawn at is ccb.size = {w, h, name, px: {width, height}}: w and h in cells, name the nearest of "small", "wide", "tall", "large", "xlarge", px the frame's real width and height in pixels; also <html data-size="2x1"> for CSS. ccb.onSize((size) => …) is called on every resize, while dragging too (it returns a function that stops it): use it only for what CSS cannot do, such as redrawing a canvas chart at its new px width. An about.md line "Sizes: 2x2" is optional: only a hint for the size a new pin starts at (the first it names; without it 2x2), and the user may still give the card any size. A card is fixed in height and the component is the whole tile, like a home-screen widget (no header; the app's controls float over the top-right corner on hover, its resize handle over the bottom-right corner), so fit inside whatever height it has instead of scrolling. On the Board ccb.surface = "board" and <html data-surface="board">: there draw no card frame of your own, since the tile already has the rounded corners and background: no border, no background (transparent, or the tile's), no border-radius, no outer padding beyond about 12px, and fill the tile (html[data-surface="board"] .card {border:0;background:none;border-radius:0;padding:12px;height:100%;box-sizing:border-box}); leave the top-right corner free of key content. In the chat it is drawn at its widest size (the widest in its Sizes: line, so 4x2 when it has one; 2x2 without the line) across the whole width of the reply, with ccb.surface = "chat" and <html data-surface="chat">: the reply's bubble (or, under a reply, a tile like the Board's) is its frame, edge to edge, so draw no card frame there either (the same rules: no border, background or border-radius, at most about 12px padding), but let it be as tall as its content (there is no fixed height in the chat). A pin opened from its chip above the input box is frameless the same way: there ccb.surface = "pinned" and <html data-surface="pinned">, the panel gives the corners and background, its controls show just above the panel on hover (none over the component; Report is in their ⋯ menu), and the page is as tall as its content (as in the chat, the panel scrolls) until the user drags the panel's top edge to a height of their own: then the page fills that height, as on the Board. So a component draws no frame of its own anywhere, and one rule covers every surface: .card {border:0;background:none;border-radius:0;padding:12px;box-sizing:border-box} html[data-surface="board"] .card {height:100%}.
     - Pictures shown: when the data names a local picture by file path, set img.src = ccb.image(path) (a file: URL does not load in the frame); ccb.image returns "" for a file that is not there.

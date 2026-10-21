@@ -6,6 +6,25 @@ app and publishes it on GitHub Releases.
 
 ## Unreleased
 
+### Added
+
+- **Components keep their own state.** A component can call `ccb.save(data)` to keep new data
+  for itself, so a todo list's ticks and new items stay: in the chat message (chat.json) or on
+  its pin (pins.json; a pin keeps its own copy), also after a restart. Saving does not answer the
+  card, lock it or wake the bot, and the frame is not reloaded; the bot gets each component's
+  latest saved data with your next message. A card whose data comes from a command does not
+  save (it shows what the command prints). Documented in PLUGINS.md; a sample todo component is
+  in `Examples/components/todo`. `ccb.load()` resolves to the data it keeps.
+- **Live cards.** A component with a Command can refresh itself: an about.md line
+  `Refresh: every 2s` (or a bot's `<show name="x" refresh="2s">`; at least 1s, at most 1h) runs
+  the command again every 2 seconds while the card is on screen, pausing when it is scrolled away
+  or the window is hidden. A template that calls `ccb.onData(fn)` gets each new data without its
+  frame reloading. A pin can also refresh every few seconds (its refresh menu, or "sec" when
+  pinning).
+- **Bots update a card in place.** `<show name="x" id="build">…</show>` names a card; a later
+  `<show>` with the same id replaces that card's data where it is instead of adding a new one
+  (a reply with nothing else adds no empty bubble).
+
 ### Fixed
 
 - **A Board card can be dropped between two others.** While a card was dragged, the others

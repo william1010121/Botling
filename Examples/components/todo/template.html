@@ -1,0 +1,71 @@
+<style>
+  .card { border:0; background:none; border-radius:0; padding:12px; box-sizing:border-box; color:#EDEDF0; }
+  html[data-surface="board"] .card { height:100%; display:flex; flex-direction:column; }
+  h3 { margin:0 0 8px; font-size:15px; font-weight:600; }
+  .count { color:#A0A0A8; font-weight:400; font-size:12px; margin-left:6px; }
+  ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; overflow:auto; flex:1; }
+  li { display:flex; align-items:center; gap:10px; min-height:44px; padding:0 10px; border-radius:10px; background:#232328; }
+  li:hover { background:#2A2A30; }
+  li.done span { color:#A0A0A8; text-decoration:line-through; }
+  input[type=checkbox] { width:18px; height:18px; accent-color:#4C8DFF; }
+  span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .remove { min-width:32px; min-height:32px; border:0; border-radius:8px; background:none; color:#A0A0A8; font-size:16px; cursor:pointer; opacity:0; }
+  li:hover .remove, .remove:focus-visible { opacity:1; }
+  form { display:flex; gap:8px; margin-top:8px; }
+  form input { flex:1; min-width:0; min-height:44px; padding:0 10px; border:1px solid #303037; border-radius:10px; background:#1B1B1F; color:#EDEDF0; font:inherit; outline:none; }
+  form input:focus { border-color:#4C8DFF; }
+  form button { min-height:44px; padding:0 14px; border:1px solid #2F4F8F; border-radius:10px; background:#1E2A44; color:#EDEDF0; font:inherit; cursor:pointer; }
+  .note { color:#A0A0A8; font-size:12px; margin-top:6px; min-height:16px; }
+</style>
+<div class="card">
+  <h3 id="title"></h3>
+  <ul id="list"></ul>
+  <form id="add"><input id="text" placeholder="Add an item…" aria-label="New item"><button type="submit">Add</button></form>
+  <div class="note" id="note"></div>
+</div>
+<script>
+  const data = Object.assign({ title: 'Todo', items: [] }, window.ccb.data || {});
+  const list = document.getElementById('list');
+  const note = document.getElementById('note');
+  const save = () => ccb.save(data).then(() => { note.textContent = 'Saved'; }, (error) => { note.textContent = error.message; });
+  const draw = () => {
+    const left = data.items.filter((item) => !item.done).length;
+    const title = document.getElementById('title');
+    title.textContent = data.title || 'Todo';
+    const count = document.createElement('span');
+    count.className = 'count';
+    count.textContent = left + ' left';
+    title.append(count);
+    ccb.setStatus({ text: left + ' left', tone: left ? 'warning' : 'good' });
+    list.replaceChildren(...data.items.map((item, index) => {
+      const row = document.createElement('li');
+      row.className = item.done ? 'done' : '';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = !!item.done;
+      box.setAttribute('aria-label', item.text);
+      box.addEventListener('change', () => { item.done = box.checked; draw(); save(); });
+      const text = document.createElement('span');
+      text.textContent = item.text;
+      const remove = document.createElement('button');
+      remove.className = 'remove';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', 'Remove ' + item.text);
+      remove.addEventListener('click', () => { data.items.splice(index, 1); draw(); save(); });
+      row.append(box, text, remove);
+      return row;
+    }));
+  };
+  const input = document.getElementById('text');
+  document.getElementById('add').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    data.items.push({ text, done: false });
+    input.value = '';
+    draw();
+    save();
+  });
+  input.addEventListener('keydown', (event) => { if (event.isComposing || event.keyCode === 229) event.stopPropagation(); });
+  draw();
+</script>
