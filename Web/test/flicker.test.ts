@@ -122,7 +122,7 @@ describe("components in the chat", () => {
     expect(document.querySelector(".row[data-id=\"r1\"] .steps-toggle")?.textContent).toContain("1 subagent");
   });
 
-  it("rebuild only the component whose data changed, keeping its height", () => {
+  it("redraw only the component whose data changed, keeping it on screen until the new drawing is ready", async () => {
     const reply = (b: string) => message({
       id: "m3", text: "Two",
       displays: [{ name: "card", data: "{\"a\":1}", at: null }, { name: "chart", data: b, at: null }],
@@ -130,11 +130,25 @@ describe("components in the chat", () => {
     window.ccb.setState(state([reply("{\"b\":1}")]));
     const [card, chart] = frames();
     window.dispatchEvent(new MessageEvent("message", { data: { ccb: "size", height: 120 }, source: chart.contentWindow }));
+    const srcdoc = watchSrcdoc(card, chart);
     window.ccb.setState(state([reply("{\"b\":2}")]));
+    // The old drawing stays, untouched; the new one loads hidden over it, as tall.
     expect(frames()[0]).toBe(card);
-    expect(frames()[1]).not.toBe(chart);
-    expect(frames()[1].srcdoc).toContain("{\"b\":2}");
-    expect(frames()[1].style.height).toBe("120px");
+    expect(frames()[1]).toBe(chart);
+    expect(chart.isConnected).toBe(true);
+    expect(srcdoc.count).toBe(0);
+    const next = frames()[2];
+    expect(next.classList.contains("incoming")).toBe(true);
+    expect(next.srcdoc).toContain("{\"b\":2}");
+    expect(next.style.height).toBe("120px");
+    // Loaded and painted: it takes the old one's place in one step, without moving.
+    next.dispatchEvent(new Event("load"));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(chart.isConnected).toBe(false);
+    expect(frames()).toEqual([card, next]);
+    expect(next.classList.contains("incoming")).toBe(false);
+    expect(next.style.position).toBe("");
+    expect(next.style.height).toBe("120px");
   });
 
   it("redraw a question's component once it is answered, and send later answers with the new state", () => {

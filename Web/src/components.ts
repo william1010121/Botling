@@ -375,7 +375,7 @@ export type SaveHandler = (json: string) => void;
  * A component's frame: its answer handler, the use it is (`ccbKey`), and what it was drawn from
  * (`ccbDrawn`), so a redrawn message can keep a frame whose component did not change.
  */
-type ComponentFrame = HTMLIFrameElement & { ccbPending?: string | null; ccbAnswer?: AnswerHandler | null; ccbSave?: SaveHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDrawnFor?: (data: string) => string; ccbShape?: string; ccbData?: string; ccbLive?: boolean; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbPin?: string | null };
+type ComponentFrame = HTMLIFrameElement & { ccbPending?: string | null; ccbAnswer?: AnswerHandler | null; ccbSave?: SaveHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDrawnFor?: (data: string) => string; ccbShape?: string; ccbData?: string; ccbLive?: boolean; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbPin?: string | null; ccbIncoming?: ComponentFrame | null };
 
 /** Marks the component frames in `element` as pin `id`'s: their `ccb.setStatus` sets its chip. */
 export function markPinFrames(element: HTMLElement | null, id: string): void {
@@ -609,7 +609,8 @@ window.addEventListener("message", (event) => {
   if (message.ccb === "size" && typeof message.height === "number" && message.height > 0) {
     const before = frame.getBoundingClientRect();
     frame.style.height = `${message.height}px`;
-    keepReading(frame, before, message.height);
+    // One drawing behind the shown frame takes no room yet: its height counts once it shows.
+    if (!frame.classList.contains("incoming")) keepReading(frame, before, message.height);
     if (frame.ccbKey) rememberHeight(frame.ccbKey, message.height);
   } else if (message.ccb === "hover") {
     // The pointer is over the component: its Board tile (or opened pin) shows its controls.
@@ -746,18 +747,26 @@ export function keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement {
   if (old.tagName !== fresh.tagName) return replaced();
   const oldFrames = new Map<string, ComponentFrame>();
   for (const frame of old.querySelectorAll<ComponentFrame>("iframe.component-frame")) {
+    // A frame still drawing new data behind the one on screen stands for nothing yet.
+    if (frame.classList.contains("incoming")) continue;
     if (frame.ccbKey && frame.ccbDrawn && !oldFrames.has(frame.ccbKey)) oldFrames.set(frame.ccbKey, frame);
   }
   if (!oldFrames.size) return replaced();
   // Each fresh element kept as its old one: the frames, and the elements around them.
   const kept = new Map<Element, Element>([[fresh, old]]);
   const keptFrames = new Set<Element>();
+  const behind: [ComponentFrame, ComponentFrame][] = [];
   for (const frame of fresh.querySelectorAll<ComponentFrame>("iframe.component-frame")) {
     const before = frame.ccbKey ? oldFrames.get(frame.ccbKey) : undefined;
     if (!before) continue;
     // Only its data changed, and it takes new data itself: kept, and sent the data.
-    const live = before.ccbDrawn !== frame.ccbDrawn && !!before.ccbLive && before.ccbShape === frame.ccbShape;
-    if (before.ccbDrawn !== frame.ccbDrawn && !live) continue;
+    const changed = before.ccbDrawn !== frame.ccbDrawn;
+    const sameShape = before.ccbShape === frame.ccbShape;
+    const live = changed && !!before.ccbLive && sameShape;
+    // Only its data changed but it draws data only as it loads: it stays on screen while a new
+    // frame draws the new data behind it (a frame given a new page goes blank while it loads).
+    const redraw = changed && !live && sameShape && frameBuilt(before);
+    if (changed && !live && !redraw) continue;
     // Only where it sits the same way in both, so nothing around it has to move.
     const pairs: [Element, Element][] = [];
     let a: Element | null = frame;
@@ -775,6 +784,8 @@ export function keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement {
     (before as ComponentFrame).ccbAnswer = frame.ccbAnswer;
     (before as ComponentFrame).ccbSave = frame.ccbSave;
     (before as ComponentFrame).ccbDetail = frame.ccbDetail;
+    if (frame.ccbSize && before.ccbSize !== frame.ccbSize) resizeFrame(before, frame.ccbSize);
+    if (redraw) behind.push([before, frame]);
     if (live) {
       before.ccbDrawn = frame.ccbDrawn;
       before.ccbData = frame.ccbData;
@@ -792,11 +803,13 @@ export function keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement {
     for (const { name, value } of [...source.attributes]) {
       if (target.getAttribute(name) !== value) target.setAttribute(name, value);
     }
-    const wanted = [...source.childNodes].map((child) => {
+    const wanted = [...source.childNodes].flatMap((child): Node[] => {
       const match = child instanceof Element ? kept.get(child) : undefined;
-      if (!match) return child;
+      if (!match) return [child];
       if (!keptFrames.has(child as Element)) patch(match, child as Element);
-      return match;
+      // The frame drawing its new data behind it stays where it is too.
+      const incoming = (match as ComponentFrame).ccbIncoming;
+      return incoming && incoming.parentNode === target ? [match, incoming] : [match];
     });
     const keep = new Set<Node>(wanted);
     for (const child of [...target.childNodes]) {
@@ -809,8 +822,70 @@ export function keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement {
     }
   };
   patch(old, fresh);
+  for (const [shown, next] of behind) drawBehind(shown, next);
   for (const element of waiting) if (!old.contains(element)) forgetNear(element);
   return old;
+}
+
+/** How long a frame drawing new data behind the shown one may take before it is shown anyway, in ms. */
+export const redrawWait = 2000;
+
+/** Runs `work` after the next frame is painted (at once where there are no frames, as in a test). */
+function afterPaint(work: () => void): void {
+  if (typeof requestAnimationFrame !== "function") return work();
+  requestAnimationFrame(() => requestAnimationFrame(work));
+}
+
+/**
+ * New data for `shown`, a frame that reads its data only as it loads (no ccb.onData): `next`, a
+ * frame with the new page, loads hidden right over it, and once it has loaded and painted it
+ * takes `shown`'s place in one step. So a card that refreshes never shows a blank frame: the
+ * old drawing stays until the new one is ready. Newer data while `next` loads replaces `next`.
+ */
+function drawBehind(shown: ComponentFrame, next: ComponentFrame): void {
+  shown.ccbIncoming?.remove();
+  const page = next.ccbPending;
+  next.ccbPending = null;
+  next.classList.remove("pending");
+  next.classList.add("incoming");
+  // Over the shown frame, as big as it is; hidden and out of the way until it is ready.
+  next.style.position = "absolute";
+  next.style.left = `${shown.offsetLeft}px`;
+  next.style.top = `${shown.offsetTop}px`;
+  next.style.width = `${shown.offsetWidth}px`;
+  next.style.setProperty("height", shown.style.height || `${shown.offsetHeight}px`, "important");
+  shown.ccbIncoming = next;
+  // It shows that data from now on: a redraw with it again changes nothing.
+  shown.ccbDrawn = next.ccbDrawn;
+  shown.ccbData = next.ccbData;
+  let done = false;
+  const swap = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    if (shown.ccbIncoming !== next) return;
+    shown.ccbIncoming = null;
+    if (!next.isConnected) return;
+    if (!shown.isConnected) return next.remove();
+    next.ccbAnswer = shown.ccbAnswer;
+    next.ccbSave = shown.ccbSave;
+    next.ccbDetail = shown.ccbDetail;
+    next.ccbPin = shown.ccbPin ?? next.ccbPin;
+    if (shown.ccbSize && next.ccbSize !== shown.ccbSize) resizeFrame(next, shown.ccbSize);
+    for (const name of ["position", "left", "top", "width"]) next.style.removeProperty(name);
+    // As tall as it said it is, or else as the shown one.
+    if (next.style.getPropertyPriority("height") === "important") next.style.height = shown.style.height;
+    // Not moved in the page (it would load again): the old one goes and the new one shows.
+    const box = shown.getBoundingClientRect();
+    shown.remove();
+    next.classList.remove("incoming");
+    const height = parseFloat(next.style.height);
+    if (height > 0) keepReading(next, box, height);
+  };
+  const timer = setTimeout(swap, redrawWait);
+  next.addEventListener("load", () => afterPaint(swap), { once: true });
+  shown.after(next);
+  if (page != null) next.srcdoc = page;
 }
 
 /** Where a card's command requests go instead of a chat card's (a pinned card's). */
@@ -827,9 +902,9 @@ const refreshIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"
  * the card only asks (Swift remembers the answer); a failed run shows why instead of the
  * component. `draw` draws the component itself with the data the command gave.
  */
-/** Whether `element` holds a frame that takes live data (`ccb.onData`). */
-export function hasLiveFrame(element: Element | null): boolean {
-  return !!element && [...element.querySelectorAll<ComponentFrame>("iframe.component-frame")].some((frame) => frame.ccbLive);
+/** Whether `element` holds a component frame (one `keepFrames` may keep). */
+export function hasFrame(element: Element | null): boolean {
+  return !!element?.querySelector("iframe.component-frame");
 }
 
 /**

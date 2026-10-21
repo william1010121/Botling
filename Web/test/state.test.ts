@@ -100,10 +100,12 @@ describe("a chat component's saved data", () => {
     const kept = keepFrames(row, fresh);
     expect(kept).toBe(row);
     expect(row.querySelectorAll(".component-frame")[1]).toBe(frames[1]);
-    // Data changed some other way still draws again.
+    // Data changed some other way still draws again (behind the shown frame until it is ready).
     const other = messageElement(message([{ name: "todo", data: first }, { name: "todo", data: "{}" }]), components);
     keepFrames(row, other);
-    expect(row.querySelectorAll(".component-frame")[1]).not.toBe(frames[1]);
+    const redrawn = row.querySelector<HTMLIFrameElement>(".component-frame.incoming");
+    expect(redrawn).not.toBeNull();
+    expect(redrawn).not.toBe(frames[1]);
   });
 
   it("a card whose data comes from a command does not save", () => {
@@ -143,14 +145,15 @@ describe("a pinned component's saved data", () => {
     area.update(state({ pins: [pin({ display: { name: "todo", data: ticked } })] }));
     expect(document.querySelector(".pin-sheet .component-frame")).toBe(frame);
 
-    // The Board's tile, drawn before with the old data, draws again with the saved data.
+    // The Board's tile, drawn before with the old data, draws again with the saved data (behind
+    // the shown frame until it is ready).
     area.update(state({ board: true, pins: [pin()] }));
     const tile = document.querySelector<HTMLIFrameElement>(".board-card .component-frame")!;
     // Back to the chat: the pin is still open above the input box.
     area.update(state({ board: false, pins: [pin()] }));
     say(document.querySelector<HTMLIFrameElement>(".pin-sheet .component-frame")!, { ccb: "save", data: ticked });
     area.update(state({ board: true, pins: [pin({ display: { name: "todo", data: ticked } })] }));
-    const redrawn = document.querySelector<HTMLIFrameElement>(".board-card .component-frame")!;
+    const redrawn = document.querySelector<HTMLIFrameElement>(".board-card .component-frame.incoming")!;
     expect(redrawn).not.toBe(tile);
     expect(redrawn.srcdoc).toContain("Eggs");
 
