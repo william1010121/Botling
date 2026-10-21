@@ -332,6 +332,9 @@ public struct ChatPayload: Encodable, Equatable {
     var floating: [FloatingPin]? = nil
     /// Replies can be made into components (their hover column and result cards say so).
     var makeComponents: Bool? = nil
+    /// The language the page's own words are in (Settings → General → Language): "en", "zh-Hant",
+    /// "zh-Hans", "ja" or "ko". What bots wrote and components show stay as they are.
+    var lang: String = L10n.language.rawValue
 
     /// What a group chat adds: who is typing, and names for who said each line. A bot's own chat
     /// has one too, for the bots called into it with @.

@@ -192,10 +192,10 @@ public enum CodexPrompts {
 
     /// Codex's chat (its own, or called into another with @): the user's words, answered
     /// read-only in `folder`.
-    public static func chat(_ text: String, folder: URL) -> String {
+    public static func chat(_ text: String, folder: URL, language: AppLanguage = .english) -> String {
         """
         \(rules)
-        Your working folder is \(folder.path). The user is talking to you in a chat app. If they ask for a review, review what they name (by default \(scope(base: nil)), or the current branch against its base when they say so) and put each problem in findings, as a code reviewer would: file, line, severity (high, medium, low), title (one sentence), scenario (the concrete failure and the fix in a few words). For anything else, answer in summary in at most 3 sentences and leave findings empty. Reply in the language of the user's lines.
+        Your working folder is \(folder.path). The user is talking to you in a chat app. If they ask for a review, review what they name (by default \(scope(base: nil)), or the current branch against its base when they say so) and put each problem in findings, as a code reviewer would: file, line, severity (high, medium, low), title (one sentence), scenario (the concrete failure and the fix in a few words). For anything else, answer in summary in at most 3 sentences and leave findings empty. \(BotPrompts.languageRule(language))
 
         \(text)
         """
@@ -421,7 +421,7 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
         current = Task { [weak self, runner, desk] in
             let event: AgentEvent
             do {
-                let output = try await runner.run(CodexRequest(prompt: CodexPrompts.chat(text, folder: folder), folder: folder))
+                let output = try await runner.run(CodexRequest(prompt: CodexPrompts.chat(text, folder: folder, language: L10n.language), folder: folder))
                 self?.continuation.yield(.trace(.toolResult(id: step, output: "\(output.findings.count) finding(s)", failed: false, parent: nil)))
                 if !output.findings.isEmpty { desk.onFindings?(output, folder) }
                 event = .reply(output.markdown, isError: false)

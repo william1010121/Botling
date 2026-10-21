@@ -1253,7 +1253,7 @@ public final class Workspace: ObservableObject {
                 model: spec.model,
                 sessionID: run.id,
                 workingDirectory: folder,
-                systemPrompt: TeamPrompts.system(spec, folder: folder, results: settings.resultPublishing),
+                systemPrompt: TeamPrompts.system(spec, folder: folder, results: settings.resultPublishing, language: language),
                 tools: TeamPrompts.tools(spec, results: settings.resultPublishing),
                 pluginDirectories: plugins.claudeDirectories(),
                 pluginTools: plugins.claudeTools(),
@@ -1550,6 +1550,36 @@ public final class Workspace: ObservableObject {
         bot.pluginEnvironment = { [weak self] in self?.plugins.secretEnvironment() ?? [:] }
         bot.autoMode = { [weak self] in self?.settings.autoApprovesSafeActions ?? false }
         bot.resultPublishing = { [weak self] in self?.settings.resultPublishing ?? .artifactUnlessSensitive }
+        bot.language = { [weak self] in self?.language ?? .english }
+    }
+
+    /// The language the app's words are in and bots reply in by default (Settings → General →
+    /// Language): the user's choice, else the Mac's preferred language, else English.
+    public var language: AppLanguage { settings.language() }
+
+    /// Shows the app's words in `language` from now on (at launch, and when Settings changes it).
+    public func applyLanguage() {
+        L10n.language = language
+    }
+
+    /// Picks the language (nil: System default). The app's words change at once; a new session
+    /// starts with the reply rule in its system prompt, and an awake one (whose `--resume` keeps
+    /// the old prompt) hears it with its next message.
+    public func setLanguage(_ choice: AppLanguage?) {
+        guard choice != settings.languageChoice else { return }
+        let before = language
+        settings.languageChoice = choice
+        settings.save(to: settingsURL)
+        applyLanguage()
+        guard language != before else { return }
+        for bot in [mainBot] + Array(managers.values) {
+            bot.queueNote(Self.languageNote(language))
+        }
+    }
+
+    /// What an awake bot is told when the user changes the app's language.
+    static func languageNote(_ language: AppLanguage) -> String {
+        "(App: The user changed the app's language to \(language.promptName). From now on this replaces the reply-language rule you were given: \(BotPrompts.languageRule(language)))"
     }
 
     /// Where bots put results for the user. A new session starts with the rule in its system

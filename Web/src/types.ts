@@ -161,6 +161,8 @@ export interface SpecState {
   /** What was typed during a build: it goes with the next change. */
   queued?: string[] | null;
   wide: boolean;
+  /** The language of the panel's own words, as `ChatState.lang`. */
+  lang?: string | null;
 }
 
 export interface DisplayView {
@@ -342,6 +344,8 @@ export interface ChatState {
   board?: boolean | null;
   /** Replies can be made into components (absent where they can't, e.g. a subagent). */
   makeComponents?: boolean | null;
+  /** The language of the page's own words (Settings → General → Language); absent means English. */
+  lang?: string | null;
 }
 
 export type Action =

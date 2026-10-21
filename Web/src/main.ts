@@ -1,3 +1,4 @@
+import { setLanguage } from "./i18n";
 import { post } from "./bridge";
 import { buildNear, detailReply, keepFrames, releaseFrames } from "./components";
 import { startTaskTicks, taskOutput } from "./tasks";
@@ -107,6 +108,9 @@ class Chat {
       this.clearList();
       this.composer.setText("");
     }
+
+    // A new language (Settings) draws every message again in its words.
+    if (setLanguage(state.lang)) this.clearList();
 
     // Turning developer mode on or off redraws every reply with or without its flag.
     const flagged = !!state.feedback && !state.subagent;
@@ -357,6 +361,7 @@ chat.plugins.onPanels = () => drawPanel();
 let specPanel: SpecPanel | null = null;
 if (new URLSearchParams(location.search).has("spec")) document.body.classList.add("spec-mode");
 function setSpec(state: SpecState): void {
+  setLanguage(state.lang);
   if (!specPanel) {
     let root = document.getElementById("spec-root");
     if (!root) {

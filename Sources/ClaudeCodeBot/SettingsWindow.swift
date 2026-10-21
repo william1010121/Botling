@@ -221,6 +221,7 @@ struct SettingsWindow: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 28) {
                         switch navigator.section {
+                        case .general: LanguageSection(workspace: workspace)
                         case .usage: UsageSection(workspace: workspace)
                         case .permissions: PermissionsSection(workspace: workspace, commands: workspace.componentCommands)
                         case .plugins: PluginsSection(registry: workspace.plugins, host: workspace.pluginHost, workspace: workspace)
@@ -457,6 +458,36 @@ private struct PluginsSection: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
             }
+        }
+    }
+}
+
+/// Settings → General: the language of the app's words, which bots also reply in by default.
+/// "System default" follows the Mac's preferred languages (English when it has none of them).
+struct LanguageSection: View {
+    @ObservedObject var workspace: Workspace
+
+    var body: some View {
+        PanelSection(L("Language")) {
+            HStack(spacing: 12) {
+                Text(L("App language")).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { workspace.settings.languageChoice },
+                    set: { workspace.setLanguage($0) }
+                )) {
+                    Text(L("System default ({0})", AppLanguage.preferred().nativeName)).tag(AppLanguage?.none)
+                    Divider()
+                    ForEach(AppLanguage.allCases, id: \.self) { Text($0.nativeName).tag(Optional($0)) }
+                }
+                .labelsHidden().pickerStyle(.menu).fixedSize()
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+            Text(L("ClaudeCodeBot's menus, buttons and messages change at once. Bots reply in this language by default; when you write to them in another language, they answer in yours."))
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.faint)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

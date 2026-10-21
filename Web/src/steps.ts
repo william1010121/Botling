@@ -2,6 +2,7 @@ import { post } from "./bridge";
 import type { StepImage, StepView } from "./types";
 import { openLightbox } from "./lightbox";
 import { renderMarkdown } from "./markdown";
+import { t } from "./i18n";
 import { escapeHTML } from "./util";
 
 /**
@@ -37,9 +38,9 @@ export function stepsElement(listID: string, steps: StepView[], earlier = false)
   toggle.className = "steps-toggle";
   toggle.innerHTML = `${chevron}<span></span>`;
   toggle.querySelector("span")!.textContent = [
-    "Worked",
-    `${notes} note${notes === 1 ? "" : "s"}`,
-    ...(tools ? [`${tools} step${tools === 1 ? "" : "s"}`] : []),
+    t("steps.worked"),
+    t("steps.notes", { n: notes }),
+    ...(tools ? [t("steps.steps", { n: tools })] : []),
   ].join(" · ");
   const body = document.createElement("div");
   body.className = "steps-body";
@@ -125,8 +126,8 @@ function foldedRun(listID: string, steps: StepView[], worked: boolean, earlier =
   const running = subagents.filter((step) => step.status === "running").length;
   const toggle = document.createElement("button");
   toggle.className = "steps-toggle";
-  const count = `${tools} step${tools === 1 ? "" : "s"}`;
-  const label = [worked ? `Worked · ${count}` : count];
+  const count = t("steps.steps", { n: tools });
+  const label = [worked ? `${t("steps.worked")} · ${count}` : count];
   if (subagents.length) label.push(`${subagents.length} subagent${subagents.length === 1 ? "" : "s"}${running ? ` (${running} running)` : ""}`);
   toggle.innerHTML = `${chevron}<span></span>`;
   toggle.querySelector("span")!.textContent = label.join(" · ");

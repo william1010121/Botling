@@ -67,6 +67,8 @@ struct RootView: View {
             RailView(workspace: workspace, settings: settings, collapsed: collapsed, tip: $railTip)
                 .frame(width: RailLayout.width(collapsed: collapsed))
                 .overlay(alignment: .trailing) { Rectangle().fill(Theme.line).frame(width: 1).opacity(collapsed ? 1 : 0) }
+                // A new language (Settings) draws the native views again in its words.
+                .id(workspace.language)
             // One web view for every bot: switching bots redraws it instead of reloading.
             ChatSurface(bot: bot, workspace: workspace, components: workspace.components, commands: workspace.componentCommands, plugins: workspace.plugins, inputs: inputs)
                 .frame(minWidth: columns.chat, maxWidth: .infinity)
@@ -92,7 +94,7 @@ struct RootView: View {
             }
             .frame(width: columns.right)
             .overlay(alignment: .leading) { Rectangle().fill(Theme.line).frame(width: 1).opacity(rightCollapsed || spec != nil ? 1 : 0) }
-            .id(bot.id)
+            .id("\(bot.id)-\(workspace.language.rawValue)")
         }
         }
         .coordinateSpace(name: RailTip.space)
@@ -115,6 +117,7 @@ struct RootView: View {
         .ignoresSafeArea()
         .sheet(isPresented: $settings.isOpen) {
             SettingsWindow(workspace: workspace, navigator: settings)
+                .id(workspace.language)
         }
     }
 }
@@ -161,6 +164,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if Self.isHeadless {
             for window in NSApp.windows { HeadlessRun.hide(window) }
+            // `--language ja` (or CCB_LANGUAGE=ja): a snapshot in that language.
+            if let language = HeadlessRun.language() { L10n.language = language }
         }
         if Snapshot.runIfRequested() || PluginCheck.runIfRequested() || ComponentShotRun.runIfRequested() {
             return
@@ -281,7 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return try ClaudeAgentProcess.launcher(executable: executable)(launch)
         }
-        return Workspace(
+        let workspace = Workspace(
             root: root,
             builtInPlugins: ChatSurface.builtInPlugins,
             pluginHostScript: ChatSurface.pluginHostScript,
@@ -295,6 +300,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { profile, store in
             Bot(profile: profile, idleInterval: idle, launcher: launcher, store: store)
         }
+        workspace.applyLanguage()
+        return workspace
     }
 }
 

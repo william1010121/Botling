@@ -819,6 +819,8 @@ public struct SpecPayload: Encodable, Equatable {
     /// What the user typed during a build: it goes with the next change.
     var queued: [String]
     var wide: Bool
+    /// The language of the panel's own words, as `ChatPayload.lang`.
+    var lang: String = L10n.language.rawValue
 
     public func json() -> String {
         let encoder = JSONEncoder()

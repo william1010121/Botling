@@ -48,7 +48,7 @@ public final class Bot: ObservableObject, Identifiable {
     public let id = UUID()
     public let profile: BotProfile
     /// What it is told, with the results rule as Settings has it now (read at each start).
-    var prompts: BotPrompts { BotPrompts(profile: profile, results: resultPublishing?() ?? .artifactUnlessSensitive) }
+    var prompts: BotPrompts { BotPrompts(profile: profile, results: resultPublishing?() ?? .artifactUnlessSensitive, language: language?() ?? .english) }
     private let launcher: AgentLauncher
     private let idleInterval: TimeInterval
     private let exitTimeout: TimeInterval
@@ -71,6 +71,8 @@ public final class Bot: ObservableObject, Identifiable {
     public var autoMode: (() -> Bool)?
     /// Where it puts results for the user (Settings), read at each start.
     public var resultPublishing: (() -> ResultPublishing)?
+    /// The language it replies in by default (Settings), read at each start.
+    public var language: (() -> AppLanguage)?
     /// Called once for each new line added to the chat (not when a saved chat is loaded or
     /// drawn again): where component cards are counted.
     public var onNewMessage: ((ChatMessage) -> Void)?
