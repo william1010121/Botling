@@ -1692,7 +1692,7 @@ public final class Bot: ObservableObject, Identifiable {
     private func scheduleIdle() {
         idleTask?.cancel()
         let interval = idleInterval
-        sleepsAt = Date().addingTimeInterval(interval)
+        sleepsAt = now().addingTimeInterval(interval)
         idleTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(interval))
             guard !Task.isCancelled else { return }

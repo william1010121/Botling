@@ -157,14 +157,18 @@ struct BotTests {
 
     @Test func idleBotKnowsWhenItWillSleep() async {
         let fake = FakeLauncher()
-        let bot = makeBot(fake, idle: 60)
+        let idle: TimeInterval = 60
+        let bot = makeBot(fake, idle: idle)
+        // The bot's own clock, not the wall clock read later: in a busy parallel run the test
+        // gets the main actor back seconds after the reply set the time.
+        let replied = Date()
+        bot.now = { replied }
         #expect(bot.sleepsAt == nil)
 
         bot.send("hi")
         #expect(bot.sleepsAt == nil)
         await eventually { bot.sleepsAt != nil }
-        let remaining = bot.sleepsAt!.timeIntervalSinceNow
-        #expect(remaining > 55 && remaining <= 60)
+        #expect(bot.sleepsAt == replied.addingTimeInterval(idle))
 
         // A new message stops the clock until the reply.
         fake.respond = { _ in nil }
