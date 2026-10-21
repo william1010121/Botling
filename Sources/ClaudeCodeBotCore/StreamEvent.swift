@@ -6,6 +6,9 @@ enum StreamEvent {
     /// The result line as a reply; tool calls, their results, words between them and
     /// subagents as trace events.
     static func events(in line: String) -> [AgentEvent] {
+        // `--include-partial-messages` chunks: many per second, and only `FinalMessageWatch`
+        // reads them (the whole message comes again as an `assistant` line).
+        if isPartial(line) { return [] }
         if let reply = reply(in: line) { return (usage(in: line).map { [$0] } ?? []) + [reply] }
         if let request = permission(in: line) { return [.permission(request)] }
         if let id = cancelledRequest(in: line) { return [.permissionCancelled(id)] }
@@ -250,5 +253,73 @@ enum StreamEvent {
             (object["result"] as? String) ?? "",
             isError: (object["is_error"] as? Bool) ?? false
         )
+    }
+
+    /// A `stream_event` line (`--include-partial-messages`), told by its start alone.
+    static func isPartial(_ line: String) -> Bool {
+        line.hasPrefix(#"{"type":"stream_event""#)
+    }
+}
+
+/// Spots the turn's last words the moment they are said: the main conversation's message whose
+/// `message_delta` (a `--include-partial-messages` chunk) says `stop_reason: "end_turn"`. Claude
+/// Code's Stop hooks run after that and the `result` line comes only once they are done, so this
+/// shows the reply seconds earlier. Subagents' messages (`parent_tool_use_id`) are left out.
+///
+/// Verified with claude 2.1.304: the full `assistant` line of a message comes before its
+/// `message_delta`, and `assistant` lines themselves always carry `stop_reason: null`. A Stop
+/// hook that blocks makes the turn go on: its next last message ends the same way.
+public struct FinalMessageWatch: Sendable {
+    /// The main conversation's message being said, and its words so far.
+    private var messageID: String?
+    private var texts: [String] = []
+
+    public init() {}
+
+    /// Takes in one line. Returns the last message's words when this line ends the turn's
+    /// last message, else nil.
+    public mutating func read(_ line: String) -> String? {
+        if StreamEvent.isPartial(line) {
+            guard line.contains(#""message_delta""#), line.contains(#""end_turn""#),
+                  let object = Self.object(line), Self.isMain(object),
+                  let event = object["event"] as? [String: Any],
+                  event["type"] as? String == "message_delta",
+                  (event["delta"] as? [String: Any])?["stop_reason"] as? String == "end_turn" else { return nil }
+            // A chunk of some other message (claude names it in `api_message_id`).
+            if let id = object["api_message_id"] as? String, let messageID, id != messageID { return nil }
+            let text = texts.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            messageID = nil
+            texts = []
+            return text.isEmpty ? nil : text
+        }
+        guard line.contains(#""type":"assistant""#) || line.contains(#""type":"result""#),
+              let object = Self.object(line) else { return nil }
+        switch object["type"] as? String {
+        case "assistant":
+            guard Self.isMain(object), let message = object["message"] as? [String: Any] else { return nil }
+            let id = message["id"] as? String
+            if id != messageID || id == nil {
+                messageID = id
+                texts = []
+            }
+            let blocks = message["content"] as? [[String: Any]] ?? []
+            texts += blocks.compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }.filter { !$0.isEmpty }
+        case "result":
+            messageID = nil
+            texts = []
+        default:
+            break
+        }
+        return nil
+    }
+
+    private static func object(_ line: String) -> [String: Any]? {
+        guard let data = line.data(using: .utf8) else { return nil }
+        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    }
+
+    /// The bot's own conversation, not a subagent's.
+    private static func isMain(_ object: [String: Any]) -> Bool {
+        object["parent_tool_use_id"] == nil || object["parent_tool_use_id"] is NSNull
     }
 }

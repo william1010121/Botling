@@ -18,6 +18,14 @@ app and publishes it on GitHub Releases.
   sent back again, and any error or a check slower than 15 seconds lets the turn end. The check
   runs Haiku without tools or hooks, adds about 6–8 seconds to the end of each turn, and costs
   about $0.0003.
+- **Replies show as soon as they are written, not after the Stop hook.** A bot's reply now
+  appears the moment its last message ends (claude's `stop_reason: "end_turn"`, read from
+  `--include-partial-messages`), about 7 seconds before the stop guard lets the turn end; the bot
+  shows as working until then. When the guard sends it back to do the work, what it then says
+  comes as a second reply. Notifications to other parts of the app (tags like `<team>`, a
+  finished component, the handoff report) still happen once, when the turn really ends, and
+  what you write in those seconds waits for that end instead of interrupting it. Turns whose
+  reply a plugin's `afterReply` hook changes still show at the end.
 - **Release planner: vote on shared features with 👍, and pick the next version.** With
   developer mode on, Settings → Release planner lists the open PRs labelled
   `community-feature`, most 👍 first (other reactions are not votes; a tie puts the older PR
