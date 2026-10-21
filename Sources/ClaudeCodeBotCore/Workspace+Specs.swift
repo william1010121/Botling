@@ -306,7 +306,9 @@ extension Workspace {
 
     /// The component is in the library: on each chosen bot's list (a full list is said, not
     /// forced), the spec done (drawn under its reply from now on), and the chat told where it
-    /// went. Nothing runs: its command, if any, waits for the user on the card.
+    /// went. A bot that already had it (a reply reusing one built earlier) is not added or told
+    /// again, and the chat says nothing more: the card under the reply is all that changes.
+    /// Nothing runs: its command, if any, waits for the user on the card.
     private func finish(_ id: UUID, component name: String, in chat: Bot) {
         guard let spec = chat.specs.first(where: { $0.id == id }) else { return }
         // Built: its preview under the reply stops spinning now, not when Maintainer's turn ends
@@ -314,10 +316,13 @@ extension Workspace {
         components.doneWorking(name)
         components.doneWorking(spec.name)
         var added: [String] = []
+        var had: [String] = []
         var full: [String] = []
         for botName in spec.bots {
             guard let holder = componentHolder(named: botName) else { continue }
-            if giveComponent(name, to: holder) {
+            if ownComponents(of: holder).contains(name) {
+                had.append(holder.name)
+            } else if giveComponent(name, to: holder) {
                 added.append(holder.name)
                 holder.queueNote("(App: The user added the component \"\(name)\" to your list; here are your components now.)\n" + componentBriefing(for: holder))
             } else if holder.componentList != nil {
@@ -329,12 +334,18 @@ extension Workspace {
             specs[at].status = .done
             specs[at].name = name
             specs[at].built = name
-            specs[at].bots = added
-            specs[at].conversation.append(.init(kind: .event, text: added.isEmpty ? "\(name) is in the library" : "\(name) added to \(added.joined(separator: ", "))"))
+            specs[at].bots = had + added
+            var events: [String] = []
+            if !added.isEmpty { events.append("\(name) added to \(added.joined(separator: ", "))") }
+            if !had.isEmpty { events.append("\(name) already on \(had.joined(separator: ", "))'s list") }
+            if events.isEmpty { events.append("\(name) is in the library") }
+            specs[at].conversation += events.map { .init(kind: .event, text: $0) }
         }
-        var text = added.isEmpty ? "\(name) is in the library, but on no bot's list yet." : "\(name) added to \(added.joined(separator: ", "))."
-        if !full.isEmpty { text += " Not added to \(full.joined(separator: ", ")): \(full.count == 1 ? "its list is" : "their lists are") full (\(ComponentLibrary.limit) components); take one off first." }
-        tell(chat, text)
+        if !added.isEmpty || !full.isEmpty || had.isEmpty {
+            var text = added.isEmpty ? (had.isEmpty ? "\(name) is in the library, but on no bot's list yet." : "") : "\(name) added to \(added.joined(separator: ", "))."
+            if !full.isEmpty { text += (text.isEmpty ? "" : " ") + "Not added to \(full.joined(separator: ", ")): \(full.count == 1 ? "its list is" : "their lists are") full (\(ComponentLibrary.limit) components); take one off first." }
+            tell(chat, text)
+        }
         askToFill(id, component: name, in: chat)
     }
 

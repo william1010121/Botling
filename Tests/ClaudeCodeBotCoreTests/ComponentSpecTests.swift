@@ -473,6 +473,35 @@ struct ComponentSpecTests {
         #expect(workspace.ownComponents(of: bot).contains("build-status"))
     }
 
+    /// 2026-10-21: cpu-load was built from one reply and added to Main bot; "Make into component"
+    /// on a later reply reused it, and the chat said "cpu-load added to Main bot." again, as if the
+    /// first build had not put it on the list. One build: added once, said once.
+    @Test func reusingAComponentAlreadyOnTheListDoesNotSayItWasAddedAgain() throws {
+        let workspace = makeWorkspace()
+        let bot = workspace.mainBot
+        let added = { bot.messages.filter { $0.role == .notice && $0.text.contains("cpu-load added to") }.count }
+
+        let first = testReply(in: bot)
+        let built = try #require(workspace.makeComponent(from: first.id, in: bot))
+        workspace.handle([.componentSpec(id: built.id.uuidString, json: #"{"name":"cpu-load"}"#)], from: workspace.maintainerProject)
+        try addComponent("cpu-load", to: workspace)
+        #expect(workspace.ownComponents(of: bot).contains("cpu-load"))
+        #expect(added() == 1)
+
+        // A later reply about the same thing: Maintainer reuses the component already on the list.
+        let second = testReply(in: bot)
+        let reused = try #require(workspace.makeComponent(from: second.id, in: bot))
+        workspace.handle([.componentSpec(id: reused.id.uuidString, json: #"{"similar":"cpu-load","reuse":true}"#)], from: workspace.maintainerProject)
+        let done = try #require(bot.specs.first { $0.id == reused.id })
+        #expect(done.status == .done)
+        #expect(done.built == "cpu-load")
+        #expect(done.bots == [bot.name])
+        #expect(workspace.ownComponents(of: bot).filter { $0 == "cpu-load" }.count == 1)
+        #expect(added() == 1)
+        #expect(!done.conversation.contains { $0.text.contains("added to") })
+        #expect(done.conversation.contains { $0.text.contains("already on") })
+    }
+
     @Test func theBuiltComponentRunsOnlyWhatTheUserAllowed() async throws {
         let workspace = makeWorkspace()
         let bot = workspace.mainBot
