@@ -61,6 +61,11 @@ const plainTemplate = `<style>
 
 const plainInfo: ComponentInfo = { template: plainTemplate, version: 0, working: false, updated: false, hasPrevious: false };
 
+type Sample = SpecState["samples"][number];
+
+/** Which tab you picked: the app's own by their kind, Maintainer's by their label. */
+const sampleKey = (sample: Sample) => (sample.kind ? `kind:${sample.kind}` : `label:${sample.label}`);
+
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = "", text?: string): HTMLElementTagNameMap[K] {
   const element = document.createElement(tag);
   if (className) element.className = className;
@@ -247,12 +252,12 @@ export class SpecPanel {
       group.setAttribute("role", "group");
       group.setAttribute("aria-label", "Sample data");
       for (const sample of samples) {
-        const tab = button(sample.label === chosen?.label ? "on" : "", "", () => {
-          this.sample.set(state.id, sample.label);
+        const tab = button(sample === chosen ? "on" : "", "", () => {
+          this.sample.set(state.id, sampleKey(sample));
           this.draw();
         });
         tab.textContent = sample.label;
-        tab.setAttribute("aria-pressed", String(sample.label === chosen?.label));
+        tab.setAttribute("aria-pressed", String(sample === chosen));
         group.append(tab);
       }
       head.append(group);
@@ -270,17 +275,14 @@ export class SpecPanel {
     return block;
   }
 
-  private samples(state: SpecState): { label: string; data: string }[] {
-    return state.samples.length ? state.samples : [{ label: "Empty", data: "null" }];
+  private samples(state: SpecState): Sample[] {
+    return state.samples.length ? state.samples : [{ label: "Empty", kind: null, data: "null" }];
   }
 
-  private chosenSample(state: SpecState, samples: { label: string; data: string }[]): { label: string; data: string } | undefined {
+  private chosenSample(state: SpecState, samples: Sample[]): Sample | undefined {
     const picked = this.sample.get(state.id);
-    // Done with a command (live data): the real run first, if there was one. Otherwise the
-    // reply's own content, as it shows under the reply.
-    const fallback = state.status === "done" && state.command ? samples.find((s) => s.label === "Test run") : undefined;
-    const reply = samples.find((s) => s.label === "This reply") ?? samples.find((s) => s.label === "This page");
-    return samples.find((s) => s.label === picked) ?? fallback ?? reply ?? samples[0];
+    // Until you pick one, the app's pick (the real run for live data, else the reply's own).
+    return samples.find((s) => sampleKey(s) === picked) ?? samples[state.preferredSample ?? 0] ?? samples[0];
   }
 
   // MARK: Fields

@@ -602,7 +602,7 @@ enum Snapshot {
             .init(name: "failures", type: "[suite, test, message]", by: .user),
         ]
         spec.samples = [
-            .init(label: "This reply", data: #"{"total":382,"passed":382,"failed":0,"seconds":41.2,"suites":[{"name":"WebBridgeTests","passed":112},{"name":"ChatStoreTests","passed":86}]}"#),
+            .init(.reply, data: #"{"total":382,"passed":382,"failed":0,"seconds":41.2,"suites":[{"name":"WebBridgeTests","passed":112},{"name":"ChatStoreTests","passed":86}]}"#),
             .init(label: "Failing run", data: #"{"total":382,"passed":380,"failed":2,"seconds":41.2,"failures":[{"suite":"WebBridgeTests","test":"testDropOrder"}]}"#),
             .init(label: "Empty", data: "null"),
         ]

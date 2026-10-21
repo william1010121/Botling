@@ -29,7 +29,8 @@ function spec(overrides: Partial<SpecState> = {}): SpecState {
     refresh: "manual", minutes: 15,
     bots: [{ name: "ClaudeCodeBot", on: true }, { name: "Arbor", on: false }],
     similar: "build-status", similarAbout: "Whether the last build passed.", reuse: false,
-    samples: [{ label: "This reply", data: '{"total":382}' }, { label: "Failing run", data: '{"total":382,"failed":2}' }],
+    samples: [{ label: "This reply", kind: "reply", data: '{"total":382}' }, { label: "Failing run", kind: null, data: '{"total":382,"failed":2}' }],
+    preferredSample: 0,
     questions: [{ id: "q1", text: "How often?", options: [{ label: "Only on ↻" }, { label: "Every show" }], suggested: 0 }],
     conversation: [{ kind: "maintainer", text: "其他欄位我照這則回覆填好了。" }, { kind: "event", text: "You edited Command" }],
     origins: { command: "user", refresh: "maintainer" },
@@ -201,17 +202,32 @@ describe("the spec workspace in the right panel", () => {
   });
 
   it("a built component without a command previews with the reply's own data", () => {
-    const samples = [
-      { label: "Failing run", data: '{"total":382,"failed":2}' },
-      { label: "Test run", data: '"# Changelog"' },
-      { label: "This reply", data: '{"versions":["1.9.0 看板變成格子"]}' },
+    const samples: SpecState["samples"] = [
+      { label: "Failing run", kind: null, data: '{"total":382,"failed":2}' },
+      { label: "Test run", kind: "testRun", data: '"# Changelog"' },
+      { label: "This reply", kind: "reply", data: '{"versions":["1.9.0 看板變成格子"]}' },
     ];
-    const root = panel(spec({ status: "done", preview: "test-summary", command: null, samples, questions: [] }));
+    const root = panel(spec({ status: "done", preview: "test-summary", command: null, samples, preferredSample: 2, questions: [] }));
     expect(root.querySelector(".spec-samples button[aria-pressed='true']")?.textContent).toBe("This reply");
     expect(root.querySelector<HTMLIFrameElement>(".spec-preview iframe")!.srcdoc).toContain("看板變成格子");
     // With a command (live data), the real run comes first.
-    const live = panel(spec({ id: "S2", status: "done", preview: "test-summary", samples, questions: [] }));
+    const live = panel(spec({ id: "S2", status: "done", preview: "test-summary", samples, preferredSample: 1, questions: [] }));
     expect(live.querySelector(".spec-samples button[aria-pressed='true']")?.textContent).toBe("Test run");
+  });
+
+  it("which sample shows first is the app's pick, not a label it recognizes", () => {
+    // Translated labels, and a sample of Maintainer's that only reads like the app's.
+    const samples: SpecState["samples"] = [
+      { label: "This reply", kind: null, data: '{"total":1}' },
+      { label: "這則回覆", kind: "reply", data: '{"total":2}' },
+    ];
+    const root = panel(spec({ samples, preferredSample: 1 }));
+    const tabs = [...root.querySelectorAll(".spec-samples button")];
+    expect(tabs.map((t) => t.getAttribute("aria-pressed"))).toEqual(["false", "true"]);
+    expect(root.querySelector<HTMLIFrameElement>(".spec-preview iframe")!.srcdoc).toContain('{"total":2}');
+    // Picking one keeps it.
+    click(tabs[0]);
+    expect([...root.querySelectorAll(".spec-samples button")].map((t) => t.getAttribute("aria-pressed"))).toEqual(["true", "false"]);
   });
 
   it("a built or existing component previews with its own template", () => {

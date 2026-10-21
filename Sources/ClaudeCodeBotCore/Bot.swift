@@ -895,7 +895,6 @@ public final class Bot: ObservableObject, Identifiable {
 
     static let noLongerNeeded = "No longer needed"
     static let askAgain = "Closed when ClaudeCodeBot restarted; ask again"
-    static let allowOnce = 0
 
     /// Claude wants a tool it may not use without asking: allowed already if you said always,
     /// otherwise a question in the chat while it waits.
@@ -909,12 +908,12 @@ public final class Bot: ObservableObject, Identifiable {
             source.answer(request, allow: false, message: "Not now: this turn only updates your memory file.")
             return
         }
-        var choices = [Choice(label: "Allow once", detail: nil, recommended: true)]
+        var choices = [Choice(label: "Allow once", detail: nil, recommended: true, action: .allowOnce)]
         // "Always" by tool name would mean any command or any file on the disk for these.
         if !Self.neverAlways.contains(request.tool) {
-            choices.append(Choice(label: "Always allow \(request.tool)", detail: "For \(name), from now on", recommended: false))
+            choices.append(Choice(label: "Always allow \(request.tool)", detail: "For \(name), from now on", recommended: false, action: .alwaysAllow))
         }
-        choices.append(Choice(label: "Don't allow", detail: nil, recommended: false))
+        choices.append(Choice(label: "Don't allow", detail: nil, recommended: false, action: .deny))
         var message = ChatMessage(role: .bot, text: Self.permissionText(request), choices: choices)
         message.permissionTool = request.tool
         append(message)
@@ -968,13 +967,11 @@ public final class Bot: ObservableObject, Identifiable {
             return false
         }
         markChosen(index, in: message.id)
-        let label = message.choices?[safe: index]?.label ?? ""
-        let always = label.hasPrefix("Always allow")
+        let (allowed, always) = Self.permissionVerdict(message.choices?[safe: index])
         if always, !alwaysAllowed.contains(ask.request.tool) {
             alwaysAllowed.append(ask.request.tool)
             store?.save(alwaysAllowed: alwaysAllowed)
         }
-        let allowed = index == Self.allowOnce || always
         ask.process.answer(ask.request, allow: allowed, message: allowed ? nil : "The user did not allow it.")
         // Other questions for the same tool from this turn are settled by "always".
         if always {
@@ -985,6 +982,16 @@ public final class Bot: ObservableObject, Identifiable {
             }
         }
         return true
+    }
+
+    /// What a pick on a tool question does, from its action (never its words): anything that is
+    /// not an allow refuses.
+    static func permissionVerdict(_ choice: Choice?) -> (allow: Bool, always: Bool) {
+        switch choice?.action {
+        case .allowOnce: (true, false)
+        case .alwaysAllow: (true, true)
+        case .deny, nil: (false, false)
+        }
     }
 
     // MARK: Calls auto mode blocked
@@ -1007,9 +1014,9 @@ public final class Bot: ObservableObject, Identifiable {
         default: "Always allow \(tool)"
         }
         let choices = [
-            Choice(label: "Allow once", detail: nil, recommended: true),
-            Choice(label: always, detail: "For \(name), from now on", recommended: false),
-            Choice(label: "Don't allow", detail: nil, recommended: false)
+            Choice(label: "Allow once", detail: nil, recommended: true, action: .allowOnce),
+            Choice(label: always, detail: "For \(name), from now on", recommended: false, action: .alwaysAllow),
+            Choice(label: "Don't allow", detail: nil, recommended: false, action: .deny)
         ]
         let request = PermissionRequest(id: denial.toolUseID, tool: tool, summary: summary, input: "{}")
         let reason = denial.reason.isEmpty ? "" : "\n\nReason: " + denial.reason.replacingOccurrences(of: "\n", with: " ")
@@ -1026,11 +1033,12 @@ public final class Bot: ObservableObject, Identifiable {
     private func decideDenial(_ index: Int, in message: ChatMessage) -> Bool {
         guard let denial = denialAsks.removeValue(forKey: message.id) else { return false }
         markChosen(index, in: message.id)
-        guard index <= 1 else {
+        let (allowed, always) = Self.permissionVerdict(message.choices?[safe: index])
+        guard allowed else {
             appMessage("(App: The user did not allow `\(denial.summary)` (\(denial.tool)), which auto mode blocked. Do not try it again; carry on without it, or ask the user what to do instead.)")
             return true
         }
-        if index == 1 {
+        if always {
             if !alwaysAllowed.contains(denial.rule) {
                 alwaysAllowed.append(denial.rule)
                 store?.save(alwaysAllowed: alwaysAllowed)

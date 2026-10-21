@@ -76,6 +76,7 @@ struct ComponentSpecTests {
         #expect(spec.folder == bot.profile.workingDirectory.path)
         #expect(spec.bots == [bot.name])
         #expect(spec.samples.first?.label == "This reply")
+        #expect(spec.samples.first?.kind == .reply)
         #expect(spec.existing == nil)
         #expect(spec.status == .draft)
         // A component in the library about the same thing is offered for reuse.
@@ -692,6 +693,36 @@ struct ComponentSpecTests {
         #expect(answered.status == .building)
     }
 
+    // MARK: Samples: which is which is their kind
+
+    /// The sample shown first comes from its kind; the label is only what the tab says.
+    @Test func samplesAreChosenByKindNotLabel() {
+        let samples = [
+            ComponentSpec.Sample(label: "Test run", data: "maintainer's"),
+            ComponentSpec.Sample(label: "測試執行", kind: .testRun, data: "run"),
+            ComponentSpec.Sample(label: "這則回覆", kind: .reply, data: "reply"),
+        ]
+        #expect(ComponentSpec.preferredSample(in: samples, live: true) == 1)
+        #expect(ComponentSpec.preferredSample(in: samples, live: false) == 2)
+        #expect(ComponentSpec.preferredSample(in: [samples[0]], live: true) == 0)
+        #expect(ComponentSpec.preferredSample(in: [samples[0], .init(label: "此頁", kind: .page, data: "p")], live: false) == 1)
+        #expect(ComponentSpec.preferredSample(in: [], live: true) == nil)
+    }
+
+    /// Specs saved before samples had a kind: the app's own labels become their kinds on load.
+    @Test func samplesSavedWithOnlyALabelGetTheirKind() throws {
+        let json = #"[{"label":"Test run","data":"1"},{"label":"This reply","data":"2"},{"label":"This page","data":"3"},{"label":"Failing run","data":"4"}]"#
+        let samples = try JSONDecoder().decode([ComponentSpec.Sample].self, from: Data(json.utf8))
+        #expect(samples.map(\.kind) == [.testRun, .reply, .page, nil])
+        // Saved with its kind, a renamed one keeps it.
+        var renamed = samples[0]
+        renamed.label = "測試執行"
+        #expect(try JSONDecoder().decode(ComponentSpec.Sample.self, from: JSONEncoder().encode(renamed)).kind == .testRun)
+        // One of Maintainer's that only reads like the app's stays Maintainer's once saved.
+        let maintainers = ComponentSpec.Sample(label: "Test run", data: "1")
+        #expect(try JSONDecoder().decode(ComponentSpec.Sample.self, from: JSONEncoder().encode(maintainers)).kind == nil)
+    }
+
     // MARK: Test run: only what the user allowed
 
     @Test func aTestRunGoesThroughTheAllowFlow() async throws {
@@ -704,6 +735,8 @@ struct ComponentSpecTests {
         let spec = draftSpec(from: reply, in: bot, in: workspace)
         workspace.editSpec(spec.id, key: "command", value: #"printf '{"total":3,"failed":1}'"#, in: bot)
         let folder = bot.profile.workingDirectory.path
+        // Maintainer's own sample that only reads like the app's: never overwritten by a run.
+        bot.editSpecs { specs in specs[0].samples.append(.init(label: "Test run", data: "\"mine\"")) }
 
         // Not allowed: nothing runs, the panel asks.
         await workspace.testRunSpec(spec.id, in: bot)
@@ -721,7 +754,13 @@ struct ComponentSpecTests {
         #expect(run.matches == true)
         #expect(workspace.specPayload(spec.id)?.testRun?.status == "done")
         // The output becomes a sample to preview.
-        #expect(bot.specs.first?.samples.contains { $0.label == "Test run" } == true)
+        let samples = try #require(bot.specs.first?.samples)
+        #expect(samples.contains { $0.kind == .testRun && $0.data == #"{"total":3,"failed":1}"# })
+        #expect(samples.contains { $0.kind == nil && $0.label == "Test run" && $0.data == "\"mine\"" })
+        // The panel is told which sample to show first and what each one is.
+        let payload = try #require(workspace.specPayload(spec.id))
+        #expect(payload.samples.map(\.kind) == ["reply", nil, "testRun"])
+        #expect(payload.preferredSample == 0)
 
         // Output missing a field does not match.
         workspace.editSpec(spec.id, key: "fields", value: "total: int, failures: [suite]", in: bot)
