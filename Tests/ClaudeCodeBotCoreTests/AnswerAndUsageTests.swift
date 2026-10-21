@@ -183,15 +183,21 @@ struct AnswerAndUsageTests {
     @Test func shippedPreviewCardFillsTheReplyWidth() throws {
         // In a wide reply the card spans the bubble's text width, not a fixed 480px on the left.
         #expect(!ComponentDefaults.previewTemplate.contains("max-width:480px"))
-        #expect(ComponentDefaults.olderPreviewTemplates.allSatisfy { $0.contains("max-width:480px") })
+        #expect(ComponentDefaults.olderPreviewTemplates.last!.contains("max-width:480px"))
+        // The card before pictures (1.12) loaded its page in a frame and is brought up too.
+        #expect(!ComponentDefaults.previewTemplateWithoutShot.contains("data.shot"))
+        #expect(ComponentDefaults.previewTemplateWithoutShot.contains("frame.src = data.src;"))
+        #expect(ComponentDefaults.olderPreviewTemplates.first == ComponentDefaults.previewTemplateWithoutShot)
 
         // A preview card from before nobody edited is brought up to the new one.
         let folder = root.appending(path: "componentsPreview")
         let preview = folder.appending(path: PagePreview.component)
         try FileManager.default.createDirectory(at: preview, withIntermediateDirectories: true)
-        try ComponentDefaults.olderPreviewTemplates[0].write(to: preview.appending(path: "template.html"), atomically: true, encoding: .utf8)
-        let library = ComponentLibrary(folder: folder)
-        #expect(library.template(PagePreview.component) == ComponentDefaults.previewTemplate)
+        for older in ComponentDefaults.olderPreviewTemplates {
+            try older.write(to: preview.appending(path: "template.html"), atomically: true, encoding: .utf8)
+            let library = ComponentLibrary(folder: folder)
+            #expect(library.template(PagePreview.component) == ComponentDefaults.previewTemplate)
+        }
     }
 
     @Test func componentTeamIsToldTheAnswerContract() throws {

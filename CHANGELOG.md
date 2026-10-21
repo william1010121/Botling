@@ -77,6 +77,12 @@ app and publishes it on GitHub Releases.
   and a component at the bottom shows in about 0.5 s. Pins, the Board and floating pins are built
   at once as before. A command card in the history no longer runs its command when the chat
   opens; it runs once you scroll near it, and its `refresh` waits for that too.
+- **Web page preview cards show a picture instead of running the page.** Every 「網頁預覽卡片」
+  loaded its whole page (scripts, charts, video) in the chat each time it was drawn. The app now
+  takes a picture of each page once, offscreen and one page at a time, and the card shows that;
+  the page itself runs only when you open it. A page written again gets a new picture, and until
+  a picture is ready the card shows the page as before. Pictures are kept in the app's caches
+  folder (at most 400). A preview card nobody edited is updated to the new one.
 
 - **A Board card can be dropped between two others.** While a card was dragged, the others
   jumped as soon as the pointer touched one, and a card it had just passed over was ignored when
