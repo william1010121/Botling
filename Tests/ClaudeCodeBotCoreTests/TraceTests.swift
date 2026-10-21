@@ -34,7 +34,8 @@ struct TraceTests {
 
     @Test func aBackgroundShellCommandIsNoSubagent() {
         let bash = #"{"type":"system","subtype":"task_started","task_id":"b1","tool_use_id":"toolu_B","description":"cd /Users/me/app; swift build","task_type":"local_bash","is_backgrounded":true}"#
-        #expect(StreamEvent.events(in: bash).isEmpty)
+        // It is a chip under the reply (background work), not a subagent.
+        #expect(StreamEvent.events(in: bash) == [.trace(.backgroundCommandStarted(id: "toolu_B", description: "cd /Users/me/app; swift build"))])
         let older = #"{"type":"system","subtype":"task_started","tool_use_id":"toolu_C","description":"swift test"}"#
         #expect(StreamEvent.events(in: older).isEmpty)
     }

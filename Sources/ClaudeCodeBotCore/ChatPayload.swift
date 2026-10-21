@@ -46,6 +46,33 @@ public struct ChatPayload: Encodable, Equatable {
         /// The library component the reply already is ("Add to another bot…" instead of "Make
         /// into component").
         var component: String? = nil
+        /// Work the reply's turn left running in the background: a chip each, under it.
+        var tasks: [TaskChip]? = nil
+    }
+
+    /// Background work under a reply: a command or a subagent, with how it is doing. Times are
+    /// milliseconds since 1970, so the page can count the time it has been running.
+    public struct TaskChip: Encodable, Equatable {
+        var id: String
+        var kind: String
+        var title: String
+        /// running, completed, failed, killed, stopped (its bot's process ended) or interrupted
+        /// (the app restarted).
+        var status: String
+        var started: Double
+        var ended: Double?
+        /// The command or the subagent's task, for the chip's tooltip.
+        var detail: String?
+
+        init(_ task: BackgroundTask) {
+            id = task.id
+            kind = task.kind.rawValue
+            title = task.title
+            status = task.status.rawValue
+            started = (task.startedAt.timeIntervalSince1970 * 1000).rounded()
+            ended = task.endedAt.map { ($0.timeIntervalSince1970 * 1000).rounded() }
+            detail = task.detail
+        }
     }
 
     /// A component made from a reply, under it: a chip while it is a suggestion or being built
@@ -337,7 +364,8 @@ public struct ChatPayload: Encodable, Equatable {
                 specs: specs ? specChips(for: message, in: bot, open: openSpec, library: library, commands: commands) : nil,
                 component: specs && message.role == .bot
                     ? message.shown.first { $0.name != "choices" && $0.name != PagePreview.component && library?.names.contains($0.name) == true }?.name
-                    : nil
+                    : nil,
+                tasks: message.backgroundTasks.map { $0.map(TaskChip.init) }
             )
         }
         let reply = replyingTo.flatMap { id in bot.messages.first { $0.id == id } }.map {

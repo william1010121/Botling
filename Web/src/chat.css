@@ -720,6 +720,26 @@ body.viewer { display: block; overflow-y: auto; height: auto; min-height: 100%; 
 /* Make into component: the reply's hover button, a result card's toolbar, the quiet spec chip. */
 .make-component:hover { color: #C4A8F0; }
 .bot-column { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 520px; }
+/* Background work under a reply: a chip each, its output under them when pressed. */
+.task-chips { display: flex; flex-direction: column; gap: 4px; padding-left: 4px; min-width: 0; }
+.task-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.task-chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; max-width: 100%; padding: 0 9px 0 7px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08)); border-radius: 12px; background: transparent;
+  color: var(--faint); font-size: 12px; cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.task-chip .task-words { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-chip .task-mark:empty { display: none; }
+.task-chip.running { color: #E8C37A; border-color: rgba(232, 195, 122, 0.28); }
+.task-chip.done { color: #9AD9B8; }
+.task-chip.failed { color: #F09A9A; }
+.task-chip:hover, .task-chip:focus-visible, .task-chip[aria-expanded="true"] { background: rgba(255, 255, 255, 0.06); }
+.task-output {
+  margin: 0; max-height: 180px; overflow: auto; padding: 8px 10px; border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25); color: var(--text); font: 11.5px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  white-space: pre-wrap; word-break: break-word;
+}
+.task-output[hidden] { display: none; }
 .spec-chips { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 4px; }
 .spec-chip {
   display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px 0 6px; border: none; border-radius: 12px;

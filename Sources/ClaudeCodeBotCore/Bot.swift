@@ -235,7 +235,11 @@ public final class Bot: ObservableObject, Identifiable {
         for index in loaded.indices where loaded[index].role == .notice && loaded[index].sourceMessageID == nil && loaded[index].isOpenQuestion {
             loaded[index].answer = Self.askAgain
         }
+        // Background work still running when the app quit went with it (its chip says so, and
+        // the bot hears of it when it next wakes).
+        let stopped = loaded.stopBackgroundTasks(as: .interrupted, at: Date())
         messages = loaded
+        if stopped { store?.save(messages: loaded) }
         // A chat from before there was an archive goes into it once, so all of it can be searched.
         if !loaded.isEmpty, !FileManager.default.fileExists(atPath: profile.archiveURL.path) {
             Self.archiveAll(loaded, in: profile.archiveURL)
@@ -268,6 +272,28 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// The steps of the turn under way.
     public var liveSteps: [Step] { trace.steps }
+
+    /// What an opened background chip shows: a command's last lines of output; for a subagent,
+    /// its report once it ended, else what it did last.
+    public func backgroundTaskOutput(messageID: UUID, taskID: String) async -> String {
+        guard let task = messages.first(where: { $0.id == messageID })?.backgroundTasks?.first(where: { $0.id == taskID }) else { return "" }
+        if task.kind == .command, let path = task.outputFile {
+            let tail = await Task.detached(priority: .utility) { BackgroundTask.tail(of: path) }.value
+            if let tail, !tail.isEmpty { return tail }
+        }
+        if let summary = task.summary, !task.isRunning || task.kind == .command { return summary }
+        if task.kind == .agent, let subagent = trace.subagent(taskID) {
+            if !subagent.isRunning, let result = subagent.result, !result.isEmpty { return result }
+            let recent = subagent.steps.suffix(4).map { $0.kind == .text ? "· \($0.title.split(whereSeparator: \.isNewline).first.map(String.init) ?? "")" : "› \($0.title)" }
+            if !recent.isEmpty { return recent.joined(separator: "\n") }
+        }
+        switch task.status {
+        case .running: return task.kind == .agent ? "Working; nothing to show yet." : "No output yet."
+        case .stopped: return "The bot's process ended before this reported back."
+        case .interrupted: return "The app restarted while this ran; it was killed."
+        default: return "No output was kept."
+        }
+    }
 
     /// The subagents it sent off, newest last.
     public var subagents: [Subagent] { trace.subagents }
@@ -609,10 +635,34 @@ public final class Bot: ObservableObject, Identifiable {
             let note = wakeNote?() ?? ""
             let recent = recentChat(leavingOut: outgoing.messageID)
             let wakeLine = profile.keepsMemory ? prompts.wake : ""
-            process.send([wakeLine, note, recent, outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n"), images: outgoing.images)
+            let cutOff = takeInterruptedNote() ?? ""
+            process.send([wakeLine, note, cutOff, recent, outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n"), images: outgoing.images)
         } catch {
             append(ChatMessage(role: .error, text: "Couldn't wake up: \(error.localizedDescription)"))
         }
+    }
+
+    /// Background work the bot started that went away before it reported (the app quit, its
+    /// process ended), for its wake-up: what it was, so it can start it again. Nil when none.
+    static func interruptedNote(_ messages: [ChatMessage]) -> String? {
+        let tasks = messages.untoldCutOffTasks
+        guard !tasks.isEmpty else { return nil }
+        let lines = tasks.map { task in
+            let kind = task.kind == .command ? "background command" : "background subagent"
+            let why = task.status == .interrupted ? "killed when the app restarted" : "stopped when your previous session ended"
+            let started = task.startedAt.formatted(.dateTime.month(.twoDigits).day(.twoDigits).hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+            var line = "- \(kind) \"\(task.title)\" (started \(started), \(why))"
+            if let detail = task.detail, !detail.isEmpty { line += ": " + detail.replacingOccurrences(of: "\n", with: " ") }
+            return line
+        }
+        return "(App: This background work of yours never finished: it went away with its process before it reported. Nothing of it is running now. Start again whatever still needs doing; leave out what no longer matters.)\n" + lines.joined(separator: "\n")
+    }
+
+    /// The note above, once: those tasks count as told from now on.
+    private func takeInterruptedNote() -> String? {
+        guard let note = Self.interruptedNote(messages) else { return nil }
+        if messages.markCutOffTasksTold() { store?.save(messages: messages) }
+        return note
     }
 
     /// How many of the chat's last lines a wake-up brings along, and how long each may be.
@@ -691,6 +741,7 @@ public final class Bot: ObservableObject, Identifiable {
         var message = ChatMessage(role: isError ? .error : .bot, text: parsed.body, choices: parsed.choices)
         if !parsed.displays.isEmpty { message.displays = parsed.displays }
         message.steps = trace.takeSteps()
+        message.backgroundTasks = trace.takeTasks()
         append(message)
         unreadCount += 1
         replyObserver?(message)
@@ -1018,6 +1069,10 @@ public final class Bot: ObservableObject, Identifiable {
                 toolCalls[id] = (tool, detail)
             }
             if trace.apply(step) { store?.save(subagents: trace.subagents) }
+            if case let .subagentEnded(id, status, summary) = step,
+               messages.endBackgroundTask(id, status: status, summary: summary, at: now()) {
+                store?.save(messages: messages)
+            }
             noteSubagentEnd(step)
             switch step {
             case .subagentWaiting:
@@ -1141,6 +1196,7 @@ public final class Bot: ObservableObject, Identifiable {
             pausedQuiet = false
             early = EarlyReplies()
             if trace.stopRunning() { store?.save(subagents: trace.subagents) }
+            if messages.stopBackgroundTasks(as: .stopped, at: now()) { store?.save(messages: messages) }
             dropPermissionAsks()
             dropNextReply = false
             finishGroupReply(.failed(stderr.isEmpty ? "It stopped (\(status))." : stderr))
@@ -1227,7 +1283,7 @@ public final class Bot: ObservableObject, Identifiable {
         case let .toolUse(_, _, _, _, parent), let .toolResult(_, _, _, parent), let .toolImages(_, _, parent), let .text(_, parent): parent
         case let .subagentStarted(id, _, _, _, _): id
         case let .subagentWaiting(id): id
-        case .subagentEnded, .subagentNamed: nil
+        case .subagentEnded, .subagentNamed, .backgroundCommandStarted: nil
         }
     }
 
@@ -1428,7 +1484,8 @@ public final class Bot: ObservableObject, Identifiable {
         guard phase == .awake, !isWorking, process != nil else { return }
         // A subagent still at work in the background would stop with the process: wait for it.
         // Cut off by the network, it keeps its session for when the network is back.
-        if trace.subagents.contains(where: \.isRunning) || outage != nil, !removed {
+        // So would a command or subagent it left running in the background.
+        if trace.subagents.contains(where: \.isRunning) || messages.hasBackgroundWorkRunning(now: now()) || outage != nil, !removed {
             scheduleIdle()
             return
         }
@@ -1573,7 +1630,7 @@ public final class Bot: ObservableObject, Identifiable {
     private var restartsBeforeMessage: Bool {
         pendingRestart != nil && phase == .awake && process != nil && !isWorking && internalReply == nil
             && groupReply == nil && permissionAsks.isEmpty && outage == nil && !removed
-            && !trace.subagents.contains(where: \.isRunning)
+            && !trace.subagents.contains(where: \.isRunning) && !messages.hasBackgroundWorkRunning(now: now())
     }
 
     /// Does the restart waiting: the same session again (`--resume`), or, when claude kept no

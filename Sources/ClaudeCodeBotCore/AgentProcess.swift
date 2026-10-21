@@ -263,6 +263,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
             stderrTail.append(data)
         }
         process.terminationHandler = { process in
+            ChildProcessLedger.shared?.forget(process.processIdentifier)
             // Give stdout a moment to drain before reporting the exit.
             DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
                 output.fileHandleForReading.readabilityHandler = nil
@@ -275,6 +276,9 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
             }
         }
         try process.run()
+        // Written down, so a later app run can end it if this one goes without doing so.
+        let pid = process.processIdentifier
+        ChildProcessLedger.shared?.record(pid)
         responder.send = { [weak self] response in self?.writeControlResponse(response) }
     }
 
