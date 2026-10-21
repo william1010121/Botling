@@ -147,6 +147,22 @@ app and publishes it on GitHub Releases.
   KaTeX stylesheet (from ccb-latex's manifest) and test paths (`CCB_TEST_APP`). Developer mode
   guesses the app's source by the running build's commit, not by a name in Package.swift.
 
+- **A call auto mode blocked for a subagent says which subagent asked.** The card used to read like
+  the bot's own ("Auto mode blocked `Bash`"), with no sign one of its background subagents made the
+  call. It now says "Subagent “<its task>”: auto mode blocked …", with a "Subagent · <task>  Open ›"
+  row on top that opens that subagent. The call's owner is read from claude's stream (the tool call's
+  `parent_tool_use_id`), not from any wording.
+- **Allowing a subagent's blocked call goes to that subagent (an app-to-bot message change).** The
+  app used to tell the bot "(App: The user allowed `…` (Bash), which auto mode blocked. It is allowed
+  now: run it again as it was, then carry on.)", so the bot re-ran a command that was never its own and
+  the subagent never heard. For a subagent's call it now says "…which auto mode blocked for your
+  subagent "<task>" (named `<name>`). It is allowed now. It was the subagent's call, not yours: do not
+  run it yourself; tell that subagent (SendMessage) to run it again as it was and carry on." "Don't
+  allow" names the subagent the same way. The bot's own blocked calls get the same words as before.
+- **No empty "Worked · 1 step" bubble after `<no-reply/>`.** A turn the app started (passing an allow
+  on, say) that ended with only `<no-reply/>` left a bubble with steps and no words, which looked like
+  the bot had stopped. Such a turn now shows nothing, as a background wake-up's `<no-reply/>` already
+  did; a turn you started still always shows, and one that left background work running keeps its bubble.
 - **Background work no longer wakes empty bubbles.** When a subagent stops while still waiting on
   its own background work (or reports something interim), claude starts a turn of the bot's own;
   its "(still waiting…)" reply used to show as a bubble each time, with the background row jumping

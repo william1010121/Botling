@@ -57,6 +57,14 @@ public struct ChatPayload: Encodable, Equatable {
         /// Before your latest line: its finished subagents leave the folded steps line (the
         /// unfolded steps still list them).
         var earlier: Bool? = nil
+        /// A call auto mode blocked that a subagent made: which one (drawn above the card, with
+        /// a way to open it).
+        var fromSubagent: SubagentRef? = nil
+    }
+
+    public struct SubagentRef: Encodable, Equatable {
+        var id: String
+        var title: String
     }
 
     /// Background work under a reply: a command or a subagent, with how it is doing. Times are
@@ -457,7 +465,12 @@ public struct ChatPayload: Encodable, Equatable {
                     ? message.shown.first { $0.name != "choices" && $0.name != PagePreview.component && library?.names.contains($0.name) == true }?.name
                     : nil,
                 tasks: nil,
-                artifacts: artifactCards(for: message)
+                artifacts: artifactCards(for: message),
+                fromSubagent: message.subagentID.map { id in
+                    let agent = bot.trace.subagent(id)
+                    let title = agent.map { $0.description.isEmpty ? ($0.name ?? "") : $0.description } ?? ""
+                    return SubagentRef(id: id, title: title.isEmpty ? L("Subagent") : title)
+                }
             )
         }
         // All the chat's background work goes on its latest message, as one row of counts.
