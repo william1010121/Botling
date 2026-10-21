@@ -30,7 +30,7 @@ enum PluginGuide {
           "displayName": "Example",
           "version": "1.0.0",
           "description": "One sentence on what it does.",
-          "engines": { "ccb": "^2.0.0" },
+          "engines": { "ccb": "\#(PluginManifest.engineRange)" },
           "ccb": {
             "permissions": ["composer", "messages"],
             "web": "dist/web.js",

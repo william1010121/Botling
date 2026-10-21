@@ -89,8 +89,7 @@ extension Workspace {
     }
 
     private func runCallIn(in chat: Bot, host: UUID, to members: [Member], newest: UUID?, ask: String?) async {
-        let upTo = newest.flatMap { id in chat.messages.firstIndex { $0.id == id } } ?? chat.messages.count - 1
-        let before = Array(chat.messages.prefix(upTo + 1).suffix(15))
+        let before = Self.transcriptBefore(newest, in: chat.messages)
         var unheard: [String] = []
         for member in members {
             guard let bot = self.member(member.id), hostID(of: chat) == host else { continue }
@@ -110,21 +109,10 @@ extension Workspace {
                 unheard.append(L("{0} (busy)", member.name))
             case let .failed(why):
                 unheard.append(L("{0} ({1})", member.name, Self.firstLine(of: why)))
-            case .reply(var text, let steps):
-                if let filter = bot.replyFilter?() { text = await filter(text) }
-                let parsed = ReplyParser.parseAll(text)
-                var line = ChatMessage(role: .bot, text: parsed.body, choices: parsed.choices, sourceID: member.id)
-                if !parsed.displays.isEmpty { line.displays = parsed.displays }
-                line.steps = steps
-                if !line.text.isEmpty || line.choices != nil || line.displays != nil {
-                    chat.post(line)
-                    bot.replyObserver?(line)
-                    if selectedBot === chat { chat.markRead() }
-                }
+            case let .reply(text, steps):
                 // You named it, so its tags act as they would in its own chat.
-                if !parsed.requests.isEmpty {
-                    handle(parsed.requests, from: member.id == Self.mainBotID ? nil : project(member.id))
-                }
+                _ = await postGuestReply(text, steps: steps, from: member, bot: bot, into: chat, seen: selectedBot === chat,
+                                         policy: .init(passes: false, tagsAct: true))
             }
             refreshWaiting()
         }

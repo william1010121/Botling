@@ -24,23 +24,13 @@ enum Theme {
 
 extension Bot {
     var avatarKind: AvatarKind {
-        AvatarKind(rawValue: profile.avatar) ?? .circle
+        AvatarKind(rawValue: profile.avatar) ?? .main
     }
 
     var eyes: EyeStyle {
         switch phase {
         case .asleep, .tidying: .closed
         case .awake, .switching: .open
-        }
-    }
-
-    var statusText: String {
-        switch phase {
-        case .asleep where outage != nil, .awake where outage != nil: NetworkResume.label
-        case .asleep: "Asleep"
-        case .tidying: "Tidying notes"
-        case .switching: "Handing off"
-        case .awake: waitingForPermission ? "Waiting for your OK" : retryingConnection ? NetworkResume.label + "，重試中…" : isWorking ? "Working" : "Awake"
         }
     }
 
@@ -56,7 +46,7 @@ extension Bot {
 
 extension Workspace {
     func avatar(for projectID: UUID) -> AvatarKind? {
-        if projectID == Workspace.mainBotID { return .circle }
+        if projectID == Workspace.mainBotID { return .main }
         return project(projectID).flatMap { AvatarKind(rawValue: $0.avatar) }
     }
 }

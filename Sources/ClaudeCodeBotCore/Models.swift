@@ -224,6 +224,23 @@ public struct Choice: Codable, Equatable, Sendable {
     }
 }
 
+/// The faces bots wear: coloured shapes with big eyes (the app draws each). `BotProfile.avatar`
+/// and a project's `avatar` hold one's raw value.
+public enum AvatarShape: String, CaseIterable, Codable, Sendable {
+    case circle, star, square, triangle, diamond, clover, heart, hexagon, drop, pentagon
+    case cloud, octagon, moon, pill, ghost, burst
+    /// Codex's own: a light rounded square with dark eyes. Never handed to a project.
+    case codex
+
+    /// The main bot's.
+    public static let main = AvatarShape.circle
+    /// Maintainer's.
+    public static let maintainer = AvatarShape.diamond
+    /// Shapes handed out to new projects, in order: all but the main bot's and Codex's.
+    public static let handedOut: [AvatarShape] = [.square, .triangle, .hexagon, .star, .diamond, .clover, .heart, .drop,
+                                                  .pentagon, .cloud, .octagon, .moon, .pill, .ghost, .burst]
+}
+
 /// Who a bot is and where it works.
 public struct BotProfile: Equatable, Sendable {
     public enum Role: Equatable, Sendable {
@@ -235,7 +252,7 @@ public struct BotProfile: Equatable, Sendable {
 
     public var name: String
     public var role: Role
-    /// An `AvatarKind` raw value.
+    /// An `AvatarShape` raw value.
     public var avatar: String
     public var workingDirectory: URL
     /// memory.md, relative to `workingDirectory`.
@@ -294,7 +311,7 @@ public struct BotProfile: Equatable, Sendable {
 
     /// The main bot asks before each command: its folder is no project to build or test in.
     public static func main(home: URL) -> BotProfile {
-        BotProfile(name: "Main bot", role: .main, avatar: "circle", workingDirectory: home, memoryPath: "memory.md", tools: toolbox)
+        BotProfile(name: "Main bot", role: .main, avatar: AvatarShape.main.rawValue, workingDirectory: home, memoryPath: "memory.md", tools: toolbox)
     }
 
     /// A manager keeps its notes in `<project>/.bot/` and runs commands in its project freely.
@@ -330,7 +347,7 @@ public struct BotProfile: Equatable, Sendable {
         var profile = BotProfile(
             name: "Codex",
             role: .manager,
-            avatar: "codex",
+            avatar: AvatarShape.codex.rawValue,
             workingDirectory: folder,
             memoryPath: ".bot/memory.md",
             tools: []
@@ -344,7 +361,7 @@ public struct BotProfile: Equatable, Sendable {
         BotProfile(
             name: "Maintainer",
             role: .manager,
-            avatar: "diamond",
+            avatar: AvatarShape.maintainer.rawValue,
             workingDirectory: folder,
             memoryPath: ".bot/memory.md",
             tools: toolbox + ["Bash"],

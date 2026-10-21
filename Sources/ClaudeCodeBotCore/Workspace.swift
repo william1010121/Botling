@@ -9,7 +9,7 @@ public final class Workspace: ObservableObject {
         public var id: UUID
         public var name: String
         public var folder: URL
-        /// An `AvatarKind` raw value.
+        /// An `AvatarShape` raw value.
         public var avatar: String
         /// Set for a bot of its own (its folder is under `~/.claudecodebot/bots/`): what it is for.
         public var job: String?
@@ -62,9 +62,8 @@ public final class Workspace: ObservableObject {
 
     public typealias BotFactory = @MainActor (BotProfile, BotStore) -> Bot
 
-    /// Shapes handed out to new projects, in order; the main bot is the circle.
-    static let avatars = ["square", "triangle", "hexagon", "star", "diamond", "clover", "heart", "drop",
-                          "pentagon", "cloud", "octagon", "moon", "pill", "ghost", "burst"]
+    /// Shapes handed out to new projects, in order (`AvatarShape.handedOut`).
+    static let avatars = AvatarShape.handedOut.map(\.rawValue)
 
     @Published public private(set) var projects: [Project] = []
     /// nil = the main bot; else a project's, a bot's, Maintainer's or a group's id.
@@ -220,9 +219,9 @@ public final class Workspace: ObservableObject {
         Self.writeLibraryGuide(in: library, builtIns: builtInPlugins)
         let git = gitForPlugins ?? PluginLibraryGit(folder: library)
         libraryGit = git
-        maintainerProject = Project(id: Self.maintainerID, name: "Maintainer", folder: library, avatar: "diamond")
+        maintainerProject = Project(id: Self.maintainerID, name: "Maintainer", folder: library, avatar: AvatarShape.maintainer.rawValue)
         let codexHome = root.appending(path: "codex")
-        codexProject = Project(id: Self.codexID, name: "Codex", folder: codexHome, avatar: "codex")
+        codexProject = Project(id: Self.codexID, name: "Codex", folder: codexHome, avatar: AvatarShape.codex.rawValue)
         codexRunner = codex
         codexDesk = CodexDesk(folder: FileManager.default.homeDirectoryForCurrentUser)
         codexStore = CodexReviewStore(url: codexHome.appending(path: "reviews.json"))
@@ -1060,21 +1059,11 @@ public final class Workspace: ObservableObject {
         }
         let manifest = plugin.appending(path: "package.json")
         if !files.fileExists(atPath: manifest.path) {
-            let text = """
-            {
-              "name": "ccb-components",
-              "displayName": "Component library",
-              "version": "1.0.0",
-              "description": "Components shown in the chat (choices and so on). One folder per component: template.html and about.md.",
-              "license": "MIT",
-              "engines": { "ccb": "^2.0.0" },
-              "ccb": {
-                "permissions": [],
-                "contributes": { "components": "components" }
-              }
-            }
-
-            """
+            let text = PluginManifest.builtIn(
+                name: "ccb-components", displayName: "Component library",
+                description: "Components shown in the chat (choices and so on). One folder per component: template.html and about.md.",
+                permissions: [], components: "components"
+            ).fileText
             try? Data(text.utf8).write(to: manifest)
         }
         return folder
@@ -1446,30 +1435,13 @@ public final class Workspace: ObservableObject {
         }
         guard isNew else { return conflict }
         try? files.createDirectory(at: plugin.appending(path: "claude/.claude-plugin"), withIntermediateDirectories: true)
-        try? Data("""
-        {
-          "name": "ccb-core",
-          "version": "1.0.0",
-          "description": "Agents ClaudeCodeBot uses itself.",
-          "author": { "name": "ClaudeCodeBot" }
-        }
-
-        """.utf8).write(to: plugin.appending(path: "claude/.claude-plugin/plugin.json"))
-        try? Data("""
-        {
-          "name": "ccb-core",
-          "displayName": "ClaudeCodeBot core",
-          "version": "1.0.0",
-          "description": "Agents ClaudeCodeBot uses itself: component-editor edits component templates (its model is set in Settings).",
-          "license": "MIT",
-          "engines": { "ccb": "^2.0.0" },
-          "ccb": {
-            "permissions": ["claude"],
-            "claude": "claude"
-          }
-        }
-
-        """.utf8).write(to: plugin.appending(path: "package.json"))
+        try? Data(PluginManifest.claudePluginText(name: "ccb-core", description: "Agents ClaudeCodeBot uses itself.").utf8)
+            .write(to: plugin.appending(path: "claude/.claude-plugin/plugin.json"))
+        try? Data(PluginManifest.builtIn(
+            name: "ccb-core", displayName: "ClaudeCodeBot core",
+            description: "Agents ClaudeCodeBot uses itself: component-editor edits component templates (its model is set in Settings).",
+            permissions: [.claude], claude: "claude"
+        ).fileText.utf8).write(to: plugin.appending(path: "package.json"))
         return conflict
     }
 
@@ -1504,31 +1476,13 @@ public final class Workspace: ObservableObject {
         if files.fileExists(atPath: old.path) {
             try? files.moveItem(at: old, to: old.deletingLastPathComponent().appending(path: "teams.v1-backup"))
         }
-        let claudeManifest = """
-        {
-          "name": "ccb-teams",
-          "version": "1.0.0",
-          "description": "ClaudeCodeBot's temporary teams: Research team, Prototype team.",
-          "author": { "name": "ClaudeCodeBot" }
-        }
-
-        """
+        let claudeManifest = PluginManifest.claudePluginText(name: "ccb-teams", description: "ClaudeCodeBot's temporary teams: Research team, Prototype team.")
         try? Data(claudeManifest.utf8).write(to: plugin.appending(path: "claude/.claude-plugin/plugin.json"))
-        let manifest = """
-        {
-          "name": "ccb-teams",
-          "displayName": "Temporary teams",
-          "version": "1.0.0",
-          "description": "Temporary teams the main bot can start. Each team is one agent file in claude/agents/.",
-          "license": "MIT",
-          "engines": { "ccb": "^2.0.0" },
-          "ccb": {
-            "permissions": ["claude"],
-            "claude": "claude"
-          }
-        }
-
-        """
+        let manifest = PluginManifest.builtIn(
+            name: "ccb-teams", displayName: "Temporary teams",
+            description: "Temporary teams the main bot can start. Each team is one agent file in claude/agents/.",
+            permissions: [.claude], claude: "claude"
+        ).fileText
         try? Data(manifest.utf8).write(to: plugin.appending(path: "package.json"))
     }
 

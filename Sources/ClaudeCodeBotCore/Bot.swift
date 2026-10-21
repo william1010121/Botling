@@ -1419,7 +1419,7 @@ public final class Bot: ObservableObject, Identifiable {
         case let .subagentEnded(callID, status, summary):
             id = callID
             // A notification says more than the error, so a failed one counts if any line is it.
-            guard status == "failed" || status == "error" || cutOffByNetwork.contains(callID) || ConnectionErrorText.isConnectionError(summary ?? "") else { return }
+            guard TaskEnd(status) == .failed || cutOffByNetwork.contains(callID) || ConnectionErrorText.isConnectionError(summary ?? "") else { return }
             text = (summary ?? "").split(whereSeparator: \.isNewline).first { ConnectionErrorText.isConnectionErrorLine(String($0)) }.map(String.init) ?? ""
         default:
             return
