@@ -114,11 +114,15 @@ struct ComponentCommandTests {
         #expect(slow.error?.contains("took longer") == true)
         let slowPID = try #require(pid_t(String(contentsOf: folder.appending(path: "slow.pid"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
         #expect(await gone(slowPID))
-        let started = Date()
-        let loud = await execute("sh -c 'trap \"\" TERM; sleep 30 > /dev/null & echo $! > loud.pid; sleep 0.3; yes'", timeout: 10, limit: 1_000)
+        let (loud, elapsed) = await Task.detached {
+            let started = Date()
+            let outcome = ComponentCommands.execute("sh -c 'trap \"\" TERM; sleep 30 > /dev/null & echo $! > loud.pid; sleep 0.3; yes'", in: folder, timeout: 10, limit: 1_000)
+            return (outcome, Date().timeIntervalSince(started))
+        }.value
         #expect(loud.error?.contains("printed more than") == true)
+        // Measure the actual operation, not time waiting to resume on the busy main actor.
         // Stopped soon after it went over, not at the time limit.
-        #expect(Date().timeIntervalSince(started) < 8)
+        #expect(elapsed < 8)
         let loudPID = try #require(pid_t(String(contentsOf: folder.appending(path: "loud.pid"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
         #expect(await gone(loudPID))
     }
