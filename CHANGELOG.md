@@ -119,6 +119,11 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **A bot you call in with @ keeps the work in its own chat.** It always answered from its own
+  main session, but its own chat showed nothing, so the subagent it sent looked detached. Now its
+  own chat and archive keep what it was asked (with the chat it came from) and its reply, with
+  the steps and background work of that turn (not counted unread: you saw it where you asked).
+
 - **Background work no longer wakes empty bubbles.** When a subagent stops while still waiting on
   its own background work (or reports something interim), claude starts a turn of the bot's own;
   its "(still waiting…)" reply used to show as a bubble each time, with the background row jumping
