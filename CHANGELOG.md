@@ -8,6 +8,16 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Changing a built component is one step, and you can see it happen.** Once a component is
+  built, what you type in its panel's "Ask for changes…" is the change: the next version is built
+  right away, with no Build press, and Maintainer is told so plainly (it no longer sometimes waits
+  for Build). Only a request that could mean two different things gets one question, shown with
+  answers to pick; picking one carries the change on. The panel says "Maintainer 正在改…（v3）"
+  with the time since you sent it, then "已更新成 v3" once that version is in the library, or why
+  it was not made; its steps follow the same version. While a change is under way Build is hidden
+  and what you type is queued, shown as such, and sent together as the next version. Rebuilding
+  stays as a quiet "重新建置". A draft still waits for Build it, and says so under its box.
+
 - **"Make into component" starts with a brief from the bot that wrote the reply.** A read-only
   copy of that bot's session (`claude --resume … --fork-session`, its own model, out of the chat;
   the bot is not woken or held up) tells Maintainer what the component is for, your message that

@@ -1,7 +1,7 @@
 import { post } from "./bridge";
 import { componentElement, keepFrames } from "./components";
 import { isComposingEnter, isSendEnter } from "./ime";
-import type { ComponentInfo, PinRefresh, SpecOrigin, SpecState } from "./types";
+import type { ComponentInfo, PinRefresh, SpecChange, SpecOrigin, SpecState } from "./types";
 
 /**
  * The component spec workspace in the right panel (`chat.html?spec=1`): a live preview with
@@ -9,6 +9,11 @@ import type { ComponentInfo, PinRefresh, SpecOrigin, SpecState } from "./types";
  * did), Test run through the usual allow flow, a side conversation with Maintainer whose
  * questions come with suggested answers, and Build it. Every change goes to Swift, which sends
  * the spec back; field edits and the conversation are one state, so they stay in sync.
+ *
+ * A draft is built when Build it is pressed; its say box is talk with Maintainer. Once built,
+ * what is typed in "Ask for changes…" is a change request: the next version is built right
+ * away, and a status line says so ("Maintainer 正在改…（v3）" with the time since, then
+ * "已更新成 v3", or why not). What is typed meanwhile is queued for the next change.
  */
 
 const icons = {
@@ -74,6 +79,12 @@ function button(className: string, text: string, onClick: () => void, label?: st
   return element;
 }
 
+/** "1:05": minutes and seconds since `from`. */
+export function elapsed(from: number, now = Date.now()): string {
+  const seconds = Math.max(0, Math.floor((now - from) / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
 function refreshWords(refresh: PinRefresh, minutes: number): string {
   return refresh === "shown" ? "When shown" : refresh === "interval" ? `Every ${minutes} min` : "Only on ↻";
 }
@@ -83,12 +94,53 @@ export class SpecPanel {
   /** The sample each spec previews with, by spec id (a label). */
   private readonly sample = new Map<string, string>();
   private content: HTMLElement | null = null;
+  /** A change just sent, shown as under way until Swift's spec says so (or soon gives up). */
+  private sending: { id: string; version: number; at: number } | null = null;
+  private ticker: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly root: HTMLElement) {}
 
   update(state: SpecState): void {
     this.state = state;
+    const sent = this.sending;
+    const change = state.change;
+    if (sent) {
+      // Swift's spec has this change (started no earlier than it was sent), or a later one.
+      const caughtUp = !!change && (change.version > sent.version || (change.version === sent.version && change.startedAt >= sent.at - 2000));
+      if (sent.id !== state.id || caughtUp || Date.now() - sent.at > 15_000) this.sending = null;
+    }
     this.draw();
+  }
+
+  /** The change shown: Swift's, or the one just sent before Swift's spec comes back. */
+  private changeOf(state: SpecState): SpecChange | null {
+    const sent = this.sending;
+    if (sent && sent.id === state.id) return { state: "working", version: sent.version, startedAt: sent.at };
+    return state.change ?? null;
+  }
+
+  /** Built (not a draft, not a reply's existing component): typing makes a new version. */
+  private isBuilt(state: SpecState): boolean {
+    return !state.existing && state.version != null;
+  }
+
+  private nextVersion(state: SpecState): number {
+    return (state.version ?? 1) + 1;
+  }
+
+  /** The elapsed time beside "Maintainer 正在改…" ticks while a change is under way. */
+  private tick(working: boolean): void {
+    if (working && !this.ticker) {
+      this.ticker = setInterval(() => {
+        const change = this.state && this.changeOf(this.state);
+        if (!change || change.state !== "working") return this.tick(false);
+        const shown = this.content?.querySelector(".spec-elapsed");
+        if (shown) shown.textContent = elapsed(change.startedAt);
+      }, 1000);
+    } else if (!working && this.ticker) {
+      clearInterval(this.ticker);
+      this.ticker = null;
+    }
   }
 
   private draw(): void {
@@ -104,6 +156,7 @@ export class SpecPanel {
       .map((input) => [input.dataset.keep!, input.value] as const);
 
     const fresh = this.render(state);
+    this.tick(this.changeOf(state)?.state === "working");
     if (this.content) {
       const result = keepFrames(this.content, fresh);
       if (result === fresh) this.content.replaceWith(fresh);
@@ -130,7 +183,9 @@ export class SpecPanel {
   }
 
   private render(state: SpecState): HTMLElement {
-    const panel = el("div", `spec-panel ${state.status}${state.wide ? " wide" : ""}`);
+    const change = this.changeOf(state);
+    const working = state.status === "building" || change?.state === "working";
+    const panel = el("div", `spec-panel ${working ? "building" : state.status}${state.wide ? " wide" : ""}`);
     panel.dataset.spec = state.id;
     panel.append(this.header(state));
     const body = el("div", "spec-body");
@@ -138,9 +193,9 @@ export class SpecPanel {
     const right = el("div", "spec-right");
     left.append(this.preview(state));
     // A built one can be changed here too: Build it then makes a new version.
-    if (state.status === "building") right.append(this.progress(state));
+    if (working) right.append(this.progress(state));
     else right.append(this.fields(state));
-    if (state.status === "done") right.append(this.progress(state));
+    if (!working && state.status === "done") right.append(this.progress(state));
     left.append(this.conversation(state));
     body.append(left, right);
     panel.append(body, this.foot(state));
@@ -155,7 +210,9 @@ export class SpecPanel {
     mark.innerHTML = "<i></i>";
     const titles = el("div", "spec-titles");
     const title = el("div", "spec-title");
-    const words = state.status === "done" ? state.name
+    const change = this.changeOf(state);
+    const words = change?.state === "working" && this.isBuilt(state) ? `Changing ${state.name} → v${change.version}`
+      : state.status === "done" ? state.name
       : state.status === "building" ? `Building ${state.name}`
       : state.existing ? "Add to another bot" : "New component";
     title.textContent = words;
@@ -374,12 +431,16 @@ export class SpecPanel {
         const line = el("div", `spec-step ${step.state}`);
         const dot = el("span", "spec-dot");
         if (step.state === "done") dot.innerHTML = icons.check;
+        if (step.state === "failed") dot.textContent = "!";
         line.append(dot, el("span", "", step.label));
         list.append(line);
       }
       block.append(list);
     }
-    if (state.status === "done") {
+    const change = this.changeOf(state);
+    if (change?.state === "working" && this.isBuilt(state)) {
+      block.append(el("div", "spec-faint", `Maintainer is making v${change.version}. The current version stays under the reply until then.`));
+    } else if (state.status === "done") {
       const on = state.bots.filter((b) => b.on).map((b) => b.name);
       block.append(el("div", "spec-added", on.length ? `Added to ${on.join(", ")}` : `${state.name} is in the library`));
     } else {
@@ -402,7 +463,7 @@ export class SpecPanel {
       row.append(el("div", "spec-words", line.text));
       block.append(row);
     }
-    if (state.status !== "building") {
+    if (state.status !== "building" && this.changeOf(state)?.state !== "working") {
       for (const question of state.questions) {
         const box = el("div", "spec-question");
         box.append(el("div", "spec-question-text", question.text));
@@ -423,19 +484,62 @@ export class SpecPanel {
 
   // MARK: Foot
 
+  /** The change's status line: Maintainer on it (and for how long), its question, landed, or not. */
+  private status(state: SpecState): HTMLElement | null {
+    const change = this.changeOf(state);
+    if (!change || !this.isBuilt(state)) return null;
+    const v = `v${change.version}`;
+    const line = el("div", `spec-status ${change.state}`);
+    line.setAttribute("role", change.state === "failed" ? "alert" : "status");
+    if (change.state === "working") {
+      line.append(el("span", "spinner"), el("span", "spec-status-text", `Maintainer 正在改…（${v}）`), el("span", "spec-elapsed", elapsed(change.startedAt)));
+    } else if (change.state === "asking") {
+      line.append(el("span", "spec-status-text", `Maintainer 有一個問題：選一個答案，就會接著改 ${v}`));
+    } else if (change.state === "updated") {
+      const mark = el("span", "spec-status-mark");
+      mark.innerHTML = icons.check;
+      line.append(mark, el("span", "spec-status-text", `已更新成 ${v}`));
+    } else {
+      line.append(el("span", "spec-status-mark", "!"), el("span", "spec-status-text", `${v} 沒有做出來：${change.error ?? "原因不明"}`));
+    }
+    return line;
+  }
+
   private foot(state: SpecState): HTMLElement {
     const foot = el("div", "spec-foot");
+    const change = this.changeOf(state);
+    const working = state.status === "building" || change?.state === "working";
+    const built = this.isBuilt(state);
+    const status = this.status(state);
+    if (status) foot.append(status);
+    const queued = state.queued ?? [];
+    if (queued.length) {
+      const box = el("div", "spec-queued");
+      const making = change?.state === "working" && built ? `v${change.version}` : "這一版";
+      box.append(el("div", "spec-queued-head", `排入下一次修改（${queued.length}）· ${making} 完成後一起送出`));
+      const list = el("ul");
+      for (const words of queued) list.append(el("li", "", words));
+      box.append(list);
+      foot.append(box);
+    }
     const say = el("div", "spec-say");
     const box = el("textarea");
     box.rows = 1;
     box.dataset.keep = "say";
-    box.placeholder = state.status === "done" ? "Ask for changes…" : "Anything to add? Reply to Maintainer…";
+    box.placeholder = working ? "再補充…（排入下一次修改）" : built ? "Ask for changes…" : "Anything to add? Reply to Maintainer…";
     box.setAttribute("aria-label", box.placeholder);
     const send = button("spec-send", icons.send, () => {
       const text = box.value.trim();
       if (!text) return;
       box.value = "";
       box.dataset.dirty = "";
+      // Built and nothing under way: this is the change, shown as started now.
+      if (built && !working) {
+        this.sending = { id: state.id, version: this.nextVersion(state), at: Date.now() };
+        post({ type: "specSay", id: state.id, text });
+        this.draw();
+        return;
+      }
       post({ type: "specSay", id: state.id, text });
     }, "Send to Maintainer");
     box.addEventListener("input", () => { box.dataset.dirty = "1"; });
@@ -446,17 +550,27 @@ export class SpecPanel {
       }
     });
     say.append(box, send);
-    if (!state.existing) foot.append(say);
-    if (state.status !== "building") {
+    if (!state.existing) {
+      foot.append(say);
+      const hint = working ? "這次修改進行中：現在送出的話會排隊，下一版一起改。"
+        : built ? `送出就會直接建置 v${this.nextVersion(state)}，不用再按建置。`
+        : "Draft: nothing is built until you press Build it. Talk it over with Maintainer here first.";
+      foot.append(el("div", "spec-say-hint", hint));
+    }
+    if (!working) {
       const done = state.status === "done";
       const actions = el("div", "spec-actions");
       if (done) actions.append(button("spec-button ghost", "Hide", () => post({ type: "specClose" })));
       else actions.append(button("spec-button ghost spec-cancel", "Cancel", () => post({ type: "specCancel", id: state.id })));
       actions.append(el("span", "spec-grow"));
-      if (state.questions.length) actions.append(el("span", "spec-faint spec-note", "Open questions use the suggested answers"));
-      const build = button("spec-button primary spec-build", "", () => post({ type: "specBuild", id: state.id }));
-      build.textContent = state.existing ? "Add to bots" : done ? "Build a new version" : "Build it";
+      if (state.questions.length && !built) actions.append(el("span", "spec-faint spec-note", "Open questions use the suggested answers"));
+      // Once built, typing is how it changes: rebuilding is only a secondary action.
+      const rebuild = done && !state.existing;
+      const build = button(`spec-button ${rebuild ? "ghost" : "primary"} spec-build`, "", () => post({ type: "specBuild", id: state.id }));
+      build.textContent = state.existing ? "Add to bots" : rebuild ? "重新建置" : "Build it";
       build.disabled = !state.bots.some((b) => b.on);
+      if (build.disabled) build.title = "Pick at least one bot first";
+      else if (rebuild) build.title = `Build v${this.nextVersion(state)} again from the spec as it is`;
       actions.append(build);
       foot.append(actions);
     } else {
@@ -465,7 +579,7 @@ export class SpecPanel {
       legend.append(button("spec-button ghost", "Hide", () => post({ type: "specClose" })));
       foot.append(legend);
     }
-    if (state.status !== "building" && !state.existing) {
+    if (!working && !state.existing) {
       const legend = el("div", "spec-legend");
       legend.innerHTML = `<span><span class="spec-by user">blue</span> you</span><span><span class="spec-by maintainer">purple</span> Maintainer</span>`;
       foot.append(legend);
