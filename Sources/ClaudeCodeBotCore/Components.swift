@@ -300,7 +300,9 @@ public final class ComponentLibrary: ObservableObject {
         let entries = ([folder] + otherFolders()).flatMap {
             (try? FileManager.default.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)) ?? []
         }
+        let firstScan = modified.isEmpty && names.isEmpty
         let found = Set(entries
+            .filter { firstScan || isWhole($0) }
             .filter { FileManager.default.fileExists(atPath: $0.appending(path: "template.html").path) }
             .map(\.lastPathComponent))
             .sorted()
@@ -320,7 +322,8 @@ public final class ComponentLibrary: ObservableObject {
                 modified[name] = date
                 previous[name] = nil
             }
-            let aboutDate = (try? FileManager.default.attributesOfItem(atPath: aboutURL(name).path)[.modificationDate]) as? Date
+            // A missing about.md is remembered too (as distantPast), so its arrival is a change.
+            let aboutDate = ((try? FileManager.default.attributesOfItem(atPath: aboutURL(name).path)[.modificationDate]) as? Date) ?? .distantPast
             if aboutModified[name] != aboutDate {
                 if aboutModified.keys.contains(name) { catalogChanged = true }
                 aboutModified[name] = aboutDate
@@ -328,6 +331,21 @@ public final class ComponentLibrary: ObservableObject {
             }
         }
         if catalogChanged { onCatalogChanged?() }
+    }
+
+    /// How long a new template may wait for its about.md before it joins the library anyway.
+    static let aboutGrace: TimeInterval = 60
+
+    /// A component folder is ready to be in the library: known already, or its about.md is
+    /// there (Maintainer's editor writes template.html first, then about.md; until then a bot
+    /// told of it would get an empty usage), or its template has waited `aboutGrace` without one.
+    /// Other plugins' components arrive whole, with their plugin.
+    private func isWhole(_ componentFolder: URL) -> Bool {
+        let name = componentFolder.lastPathComponent
+        guard componentFolder.deletingLastPathComponent().standardizedFileURL == folder.standardizedFileURL else { return true }
+        if names.contains(name) || FileManager.default.fileExists(atPath: componentFolder.appending(path: "about.md").path) { return true }
+        let date = (try? FileManager.default.attributesOfItem(atPath: componentFolder.appending(path: "template.html").path)[.modificationDate]) as? Date
+        return date.map { Date().timeIntervalSince($0) > Self.aboutGrace } ?? false
     }
 
     // MARK: Setup

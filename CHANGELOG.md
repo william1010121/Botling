@@ -4,6 +4,23 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+### Fixed
+
+- **A new component reaches the bots with its usage.** Maintainer's editor writes a component's
+  template.html first and its about.md seconds later; the library picked the folder up in
+  between, so every bot was told "Components were updated" with an empty usage for it (and the
+  bot that asked for it was woken with nothing to go on), and when about.md landed nobody heard
+  again. A new component now joins the library once its about.md is there (or after a minute
+  without one), and an about.md that arrives late counts as a change.
+
+- **Maintainer reports in plain words.** After building a component a bot asked for, Maintainer
+  wrote to you about versions, tags, script checks, guessed APIs and pixel sizes, without saying
+  where the component was. Its report is now one or two plain sentences: what it made and where
+  you will see it (handed back to the bot that asked, which shows it in its own chat); a doubt is
+  mentioned only when you need to do something about it.
+
 ## 1.11.0
 
 ### Added
