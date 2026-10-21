@@ -1,6 +1,6 @@
-// Background work under a reply: one small icon for the commands and subagents the bot's turn left
-// running (a spinner while any runs, with how many when more than one; ✓ when all are done; ✕ when
-// any failed), its words in the tooltip. Pressing it lists them (title, status, time); pressing one
+// Background work under a reply: up to three small icons for the commands and subagents the bot's turn
+// left running, each with its count and only those there are (a spinner for the running ones, ✓ for the
+// done ones, ✕ for the failed, stopped or interrupted ones), their words in the tooltip. Pressing it lists them (title, status, time); pressing one
 // shows its last lines of output, which the app reads (`taskOutput` action, answered by `ccb.taskOutput`).
 import { post } from "./bridge";
 import type { TaskChipView } from "./types";
@@ -72,36 +72,34 @@ function markElement(task: TaskChipView): HTMLElement {
   return mark;
 }
 
-/** Under a reply: one small icon for its background work; pressed, a list of it; a task pressed, its output. */
+/** Under a reply: up to three small icons with counts for its background work; pressed, a list of it; a task pressed, its output. */
 export function taskChips(messageID: string, tasks: TaskChipView[]): HTMLElement {
   const strip = document.createElement("div");
   strip.className = "task-chips";
   strip.dataset.message = messageID;
   const now = clock();
   const running = tasks.filter((task) => task.status === "running").length;
-  const anyFailed = tasks.some((task) => task.status !== "running" && task.status !== "completed");
-  const tone = running ? "running" : anyFailed ? "failed" : "done";
+  const done = tasks.filter((task) => task.status === "completed").length;
+  const failed = tasks.length - running - done;
 
   const button = document.createElement("button");
   button.type = "button";
-  button.className = `task-summary ${tone}`;
-  const icon = document.createElement("span");
-  icon.className = "task-icon";
-  icon.setAttribute("aria-hidden", "true");
-  if (running) icon.innerHTML = `<span class="task-spin"></span>`;
-  else icon.textContent = anyFailed ? "✕" : "✓";
-  button.append(icon);
-  if (running && running > 1) {
+  button.className = "task-summary";
+  // Up to three icons side by side, each with its count; only the kinds there are.
+  for (const [tone, n] of [["running", running], ["done", done], ["failed", failed]] as const) {
+    if (!n) continue;
+    const group = document.createElement("span");
+    group.className = `task-group ${tone}`;
+    const icon = document.createElement("span");
+    icon.className = "task-icon";
+    icon.setAttribute("aria-hidden", "true");
+    if (tone === "running") icon.innerHTML = `<span class="task-spin"></span>`;
+    else icon.textContent = tone === "done" ? "✓" : "✕";
     const count = document.createElement("span");
     count.className = "task-count";
-    count.textContent = String(running);
-    button.append(count);
-  }
-  if (running && anyFailed) {
-    const alert = document.createElement("span");
-    alert.className = "task-alert";
-    alert.setAttribute("aria-hidden", "true");
-    button.append(alert);
+    count.textContent = String(n);
+    group.append(icon, count);
+    button.append(group);
   }
   button.title = summaryText(tasks, now);
   button.setAttribute("aria-label", summaryText(tasks, now).split("\n")[0]);

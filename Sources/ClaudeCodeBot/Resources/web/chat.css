@@ -720,23 +720,23 @@ body.viewer { display: block; overflow-y: auto; height: auto; min-height: 100%; 
 /* Make into component: the reply's hover button, a result card's toolbar, the quiet spec chip. */
 .make-component:hover { color: #C4A8F0; }
 .bot-column { display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 520px; }
-/* Background work under a reply: one small icon (spinner, ✓ or ✕); pressed, a list; a task pressed, its output. */
+/* Background work under a reply: up to three small icons with counts (spinner, ✓, ✕); pressed, a list; a task pressed, its output. */
 .task-chips { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding-left: 4px; min-width: 0; max-width: 100%; }
 .task-summary {
-  position: relative; display: inline-flex; align-items: center; gap: 4px; height: 20px; min-width: 20px; padding: 0 5px;
+  display: inline-flex; align-items: center; gap: 8px; height: 20px; min-width: 20px; padding: 0 5px;
   border: none; border-radius: 10px; background: transparent; color: var(--faint);
   font-size: 11px; line-height: 1; cursor: pointer; font-variant-numeric: tabular-nums;
 }
 .task-summary:hover, .task-summary:focus-visible, .task-summary[aria-expanded="true"] { background: var(--chip); }
-.task-summary.running { color: var(--orange-text); }
-.task-summary.done { color: var(--green); }
-.task-summary.failed { color: var(--error); }
+.task-group { display: inline-flex; align-items: center; gap: 3px; }
+.task-group.running { color: var(--orange-text); }
+.task-group.done { color: var(--green); }
+.task-group.failed { color: var(--error); }
 .task-icon { display: inline-flex; align-items: center; justify-content: center; width: 12px; font-size: 11px; }
 .task-spin {
   display: inline-block; width: 10px; height: 10px; border-radius: 50%;
   border: 1.5px solid currentColor; border-right-color: transparent; animation: spin 0.9s linear infinite;
 }
-.task-alert { position: absolute; top: 2px; right: 1px; width: 5px; height: 5px; border-radius: 50%; background: var(--error); }
 .task-list {
   display: flex; flex-direction: column; width: min(360px, 100%); padding: 3px; border: 1px solid var(--line); border-radius: 8px;
 }
