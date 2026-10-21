@@ -9,12 +9,26 @@ struct BotPrompts {
     let resume: String
 
     static let relayPrefix = "(From the main bot) "
+    /// How a message from the app itself (not the user) starts.
+    static let appLead = "(App: "
+    /// The start of the note that wakes a bot, and of the one before it falls asleep: what tells
+    /// these apart from other app notes.
+    static let wakeLead = appLead + "You were just woken up."
+    static let tidyLead = appLead + "You have been idle for a while"
+
+    /// A result as a local page in `folder`: the rule's local part.
+    static func localPage(folder: String) -> String {
+        "one HTML page: a single file with its styles inline, starting with <!doctype html><meta charset=\"utf-8\">, saved to \(folder)/<english-file-name>.html; link it in your reply as [name](file://full path of that file). The app opens it in a window of its own."
+    }
+
+    /// A result as a claude.ai Artifact: the rule's publishing part.
+    static let artifactPage = "one page published as a claude.ai Artifact with the Artifact tool (private by default; follow the tool's own instructions, which load its design skill first); link it in your reply as [name](the https://claude.ai/… link it returns)."
 
     /// What a bot or team is told about results meant for the user, from the user's choice in
     /// Settings; `folder` is its `artifacts` folder, for a local page.
     static func resultsRule(_ choice: ResultPublishing, folder: String) -> String {
-        let local = "one HTML page: a single file with its styles inline, starting with <!doctype html><meta charset=\"utf-8\">, saved to \(folder)/<english-file-name>.html; link it in your reply as [name](file://full path of that file). The app opens it in a window of its own."
-        let artifact = "one page published as a claude.ai Artifact with the Artifact tool (private by default; follow the tool's own instructions, which load its design skill first); link it in your reply as [name](the https://claude.ai/… link it returns)."
+        let local = localPage(folder: folder)
+        let artifact = artifactPage
         let rule = switch choice {
         case .artifactUnlessSensitive:
             "go into \(artifact) Only when the content is sensitive (secrets, credentials, personal data, private work the user marked private, anything the user said to keep local) or the Artifact tool is unavailable or fails (offline, not signed in), make it \(local)"
@@ -70,7 +84,7 @@ struct BotPrompts {
           To get a component changed, a new one made, or one from the shared library added to your own list: end your reply with <component name="component name">what you need</component>; do not change the app yourself.
           Designing chat components (new looks, several kinds to choose from) is Maintainer's: end your reply with one <component> tag per design, carrying the user's words (including /design when they said it); never draw design pages of your own for them.
           When what you just showed is something the user will likely ask for again (a status, a summary of a command's output), you may offer to make it a component: end that reply with <suggest-component name="short-english-name">one line: what it would show and the command that gives its data</suggest-component>. The app only adds a small chip under your reply; nothing happens until the user presses it, and only then does Maintainer build a first version. At most one per reply, not for one-off answers, and never inside code or examples.
-        - When the user says "/design" or asks for a design, the result is a Claude Design on claude.ai, not a local HTML file: with the Artifact tool, run quickstart with intent "design", publish from the Design type it names, and reply with the claude.ai link it returns as [name](link). Do not open it yourself.
+        - When the user says "/design" or asks for a design, the result is a Claude Design on claude.ai, not a local HTML file: \(DesignFlow.steps), and reply with the claude.ai link it returns as [name](link). Do not open it yourself.
           For new features or changed behaviour in ClaudeCodeBot itself (plugins): end your reply with <plugin>what is wanted</plugin>; Maintainer takes it.
           When the user wants to install an outside plugin (git URL, npm package, zip URL): end your reply with <install>source</install>; ClaudeCodeBot checks it and asks the user first. Never download or install it yourself.
         """
@@ -110,8 +124,8 @@ struct BotPrompts {
             \(profile.instructions ?? "")
             """
         }
-        wake = "(App: You were just woken up. Read \(memory) before answering; if the file does not exist, treat this as our first meeting.)"
-        tidy = "(App: You have been idle for a while and are about to fall asleep. Update \(memory) with whatever in this conversation is worth remembering, keeping the four-section format and under 150 lines. Reply only OK when done.)"
+        wake = Self.wakeLead + " Read \(memory) before answering; if the file does not exist, treat this as our first meeting.)"
+        tidy = Self.tidyLead + " and are about to fall asleep. Update \(memory) with whatever in this conversation is worth remembering, keeping the four-section format and under 150 lines. Reply only OK when done.)"
         handoff = "(App: The model is about to change. Write what you are working on and what comes next into the \"\(MemorySection.inProgress.heading)\" section of \(memory), keeping the four-section format. Reply only OK when done.)"
         resume = "(App: You just took over with a new model. Read \(memory) first; if \"\(MemorySection.inProgress.heading)\" has work, carry on with it and say in one sentence what you are doing; otherwise reply only OK.)"
     }

@@ -98,8 +98,8 @@ struct RightStrip: View {
 
     @State private var open: RightPanelLayout.Section?
 
-    private var isCodex: Bool { bot === workspace.codexBot }
-    private var canReview: Bool { !isCodex && bot.profile.role == .manager && !bot.profile.isStandalone }
+    private var isCodex: Bool { bot.profile.capabilities.reviewer }
+    private var canReview: Bool { bot.profile.canBeReviewed }
 
     private var waiting: [Workspace.Waiting] {
         if let group { return workspace.waiting.filter { $0.groupID == group.id } }
@@ -124,7 +124,7 @@ struct RightStrip: View {
                 icon(item)
             }
             Spacer(minLength: 0)
-            if group == nil, !isCodex {
+            if group == nil, bot.profile.capabilities.settings {
                 Button(action: openSettings) {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 14))

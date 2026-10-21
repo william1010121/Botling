@@ -1,10 +1,10 @@
 // Bundles the chat surface into the app's resources (chat.html, chat.js, chat.css; viewer.html and
 // viewer.js, the file window for .md files, share chat.css), and each
-// built-in plugin in plugins/ into Resources/plugins/<name>/ (package.json, dist/web.js and the
-// files its manifest names), and the Node plugin host into Resources/host/host.mjs. Output is
-// committed so `swift build` needs no npm.
+// built-in plugin in plugins/ into Resources/plugins/<name>/ (package.json, its bundles, and what
+// its own build.json says to copy), and the Node plugin host into Resources/host/host.mjs. Output
+// is committed so `swift build` needs no npm.
 import { build } from "esbuild";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,7 +12,6 @@ const here = dirname(fileURLToPath(import.meta.url));
 const resources = join(here, "../Sources/ClaudeCodeBot/Resources");
 const out = join(resources, "web");
 const pluginsOut = join(resources, "plugins");
-const katex = join(here, "node_modules/katex/dist");
 
 rmSync(out, { recursive: true, force: true });
 rmSync(pluginsOut, { recursive: true, force: true });
@@ -50,16 +49,29 @@ cpSync(join(here, "src/chat.html"), join(out, "chat.html"));
 cpSync(join(here, "src/chat.css"), join(out, "chat.css"));
 cpSync(join(here, "src/viewer.html"), join(out, "viewer.html"));
 
-/** Extra files a built-in plugin needs beside its bundle. */
-const assets = {
-  "ccb-latex": (dist) => {
-    cpSync(join(katex, "katex.min.css"), join(dist, "katex.min.css"));
-    mkdirSync(join(dist, "fonts"), { recursive: true });
-    for (const font of readdirSync(join(katex, "fonts")).filter((name) => name.endsWith(".woff2"))) {
-      cpSync(join(katex, "fonts", font), join(dist, "fonts", font));
+/**
+ * Copies what a plugin's build.json lists beside its bundles: `copy` [{from, to, only?}], `from`
+ * relative to Web/ (a file or a folder; `only` keeps a folder's files with that ending), `to`
+ * relative to the plugin's output folder.
+ */
+function copyDeclared(source, target) {
+  const file = join(source, "build.json");
+  if (!existsSync(file)) return;
+  const declared = JSON.parse(readFileSync(file, "utf8"));
+  for (const { from, to, only } of declared.copy ?? []) {
+    const origin = join(here, from);
+    const destination = join(target, to);
+    if (statSync(origin).isDirectory() && only) {
+      mkdirSync(destination, { recursive: true });
+      for (const name of readdirSync(origin).filter((entry) => entry.endsWith(only))) {
+        cpSync(join(origin, name), join(destination, name));
+      }
+    } else {
+      mkdirSync(dirname(destination), { recursive: true });
+      cpSync(origin, destination, { recursive: true });
     }
-  },
-};
+  }
+}
 
 for (const name of readdirSync(join(here, "plugins"))) {
   const source = join(here, "plugins", name);
@@ -88,9 +100,6 @@ for (const name of readdirSync(join(here, "plugins"))) {
       outfile: join(target, manifest.ccb.web),
     });
   }
-  assets[name]?.(join(target, "dist"));
-  for (const extra of ["components", "README.md"]) {
-    if (existsSync(join(source, extra))) cpSync(join(source, extra), join(target, extra), { recursive: true });
-  }
+  copyDeclared(source, target);
 }
 console.log("built", out, pluginsOut);

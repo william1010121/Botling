@@ -73,8 +73,8 @@ public enum ComponentBrief {
         1. Purpose: what the component is for, in one or two sentences.
         2. The user's message: the user's own message that led to that reply, verbatim.
         3. Fields: each data field it should show (name, type, an example value), each marked as one of:
-           - From command: a CLI command gets it. Give the exact command(s) you ran for it (or would run), run in \(folder), and how the output maps to the field.
-           - Optional (bot only): only a bot can write it (explanations, advice, a "next step"); shown only when a bot fills it.
+           - \(ComponentFieldGroup.fromCommand.label): a CLI command gets it. Give the exact command(s) you ran for it (or would run), run in \(folder), and how the output maps to the field.
+           - \(ComponentFieldGroup.botOnly.label): only a bot can write it (explanations, advice, a "next step"); shown only when a bot fills it.
         4. Board command: when some fields are From command, one command (or a short script outline) that prints JSON with just those fields; else "none".
         No words outside the tag.)
         """

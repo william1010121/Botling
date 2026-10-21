@@ -1,0 +1,6 @@
+{
+  "copy": [
+    { "from": "node_modules/katex/dist/katex.min.css", "to": "dist/katex.min.css" },
+    { "from": "node_modules/katex/dist/fonts", "to": "dist/fonts", "only": ".woff2" }
+  ]
+}

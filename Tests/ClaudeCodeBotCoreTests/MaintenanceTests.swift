@@ -146,8 +146,8 @@ struct FolderConsentTests {
         fake.respond = { text in
             if isAppOnly(text) { return "OK" }
             if text.contains("into a ClaudeCodeBot plugin") { return "I need to read the original project first.\n<need-folder>\(source.path)</need-folder>" }
-            if text.contains("The user agreed") { return "Read it, starting now." }
-            if text.contains("did not allow you to read") { return "Then I can't do it." }
+            if text.contains(Workspace.folderAnswer(source, allowed: true)) { return "Read it, starting now." }
+            if text.contains(Workspace.folderAnswer(source, allowed: false)) { return "Then I can't do it." }
             return "Got it"
         }
         let ccb = root.appending(path: "ccb")
@@ -164,7 +164,7 @@ struct FolderConsentTests {
 
         #expect(workspace.choose(0, in: question.id, of: workspace.maintainer))
         await eventually { maintainer.messages.contains { $0.role == .bot && $0.text == "Read it, starting now." } }
-        #expect(maintainer.messages.contains { $0.role == .divider && $0.text == "Handoff → may read laas-copy" })
+        #expect(maintainer.messages.contains { $0.role == .divider && $0.text == Bot.shownDivider(.mayRead("laas-copy"), resumed: false) })
         let restarted = try #require(fake.agents.last)
         #expect(restarted.launch.extraDirectories.map(\.standardizedFileURL.path).contains(source.standardizedFileURL.path))
         #expect(!workspace.choose(0, in: question.id, of: workspace.maintainer))
@@ -196,7 +196,7 @@ struct FolderConsentTests {
         await eventually { workspace.maintainer.messages.contains { $0.role == .notice && $0.isOpenQuestion } }
         let question = try #require(workspace.maintainer.messages.last { $0.role == .notice })
         #expect(workspace.choose(1, in: question.id, of: workspace.maintainer))
-        await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text.contains("did not allow you to read") } }
+        await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text == Workspace.folderAnswer(URL(filePath: "/tmp/elsewhere"), allowed: false) } }
         #expect(workspace.approvedFolders.isEmpty)
         await workspace.putEveryoneToSleep()
     }

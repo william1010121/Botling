@@ -113,18 +113,22 @@ extension Workspace {
         }
     }
 
+    /// How the note to a bot whose component arrived (or was changed) starts.
+    nonisolated static func arrivalLead(_ name: String, changed: Bool) -> String {
+        "(App: Maintainer " + (changed ? "changed the component \"\(name)\" as you asked" : "added the component \"\(name)\" to your list")
+    }
+
     /// `bot` asked (`ask`) and now has `name` on its list (`by` Maintainer, or nil: the app gave
     /// it from the library at once). The bot is woken to answer what the user wanted with it; the
     /// user sees a line about it in that chat.
     func componentArrived(_ name: String, for ask: ComponentAsk, to bot: Bot, by maker: String?, changed: Bool = false) {
         let title = components.shortTitle(of: name).map { "\($0) (\(name))" } ?? name
-        let what = changed ? "changed the component \"\(name)\" as you asked" : "added the component \"\(name)\" to your list"
         let instead = ask.name == name ? "" : " in place of the \"\(ask.name)\" you asked for"
         let request = ask.request.isEmpty ? "" : " (your request: \(Self.shortened(ask.request, to: 200)))"
         let user = ask.userAsked.isEmpty ? "" : " The user had asked you: \"\(ask.userAsked)\"."
         let usage = components.catalog(of: [name])
         bot.queueNote("(App: Here are your components now.)\n" + componentBriefing(for: bot))
-        bot.appMessage("(App: Maintainer \(what)\(instead)\(request).\(user) Answer that now: draw it with <show name=\"\(name)\">…</show> as its usage says, with one short sentence in the user's language. Do not ask Maintainer for it again.)\n\(usage)")
+        bot.appMessage(Self.arrivalLead(name, changed: changed) + "\(instead)\(request).\(user) Answer that now: draw it with <show name=\"\(name)\">…</show> as its usage says, with one short sentence in the user's language. Do not ask Maintainer for it again.)\n\(usage)")
         tell(bot, changed
             ? L("{0} changed {1} as {2} asked.", maker ?? "Maintainer", title, bot.name)
             : L("{0} added {1} to your components.", maker ?? "Maintainer", title), sourceID: Self.maintainerID)

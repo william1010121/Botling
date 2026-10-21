@@ -107,9 +107,13 @@ struct NetworkErrorRecognitionTests {
         let note = NetworkResume.resumeNote(elapsed: 51 * 60, carryOn: true, subagents: [
             .init(description: "Fix login", type: "general-purpose", prompt: "Work in /repo/.bot/worktrees/login. Fix the login bug.", agentID: "a1")
         ])
-        #expect(note.contains("NEW subagent"))
-        #expect(note.contains("Work in /repo/.bot/worktrees/login. Fix the login bug.\n這個任務剛剛被中斷了，請從 worktree 的現況接著做"))
-        #expect(!note.contains("SendMessage"))
+        // Past the window: it starts over with its prompt and the added line, not by its agentId.
+        #expect(NetworkResume.mode(elapsed: 51 * 60, subagents: 1) == .restartSubagents)
+        #expect(note.contains(NetworkResume.restartPrompt("Work in /repo/.bot/worktrees/login. Fix the login bug.")))
+        #expect(!note.contains("a1"))
+        // Within it, or with nothing cut off, it carries on.
+        #expect(NetworkResume.mode(elapsed: 49 * 60, subagents: 1) == .carryOn)
+        #expect(NetworkResume.mode(elapsed: 90 * 60, subagents: 0) == .carryOn)
     }
 }
 
@@ -180,7 +184,7 @@ struct NetworkResumeTests {
         #expect(note.hasPrefix("(App: 網路中斷"))
         #expect(note.contains("Carry on with what you were doing"))
         #expect(bot.messages.last?.role == .divider)
-        #expect(bot.messages.last?.text.contains("接著原本的工作") == true)
+        #expect(bot.lastResume == .carryOn)
     }
 
     @Test func aSubagentCutOffWithinTheWindowIsContinued() async {
@@ -225,10 +229,10 @@ struct NetworkResumeTests {
         clock.advance(minutes: 75)
         bot.networkRestored(at: clock.date)
         let note = agent.sent.last ?? ""
-        #expect(note.contains("NEW subagent"))
-        #expect(note.contains("subagent_type: general-purpose"))
-        #expect(note.contains(prompt + "\n" + NetworkResume.restartLine))
-        #expect(bot.messages.last?.text.contains("重新開始被中斷的子代理") == true)
+        #expect(bot.lastResume == .restartSubagents)
+        #expect(note.contains("general-purpose"))
+        #expect(note.contains(NetworkResume.restartPrompt(prompt)))
+        #expect(bot.messages.last?.role == .divider)
     }
 
     @Test func aProcessThatDiedIsResumedWhileTheCacheIsWarm() async {
@@ -293,10 +297,9 @@ struct StallReminderTests {
         clock.advance(minutes: 14)
         #expect(bot.checkStall(now: clock.date, after: 15 * 60).isEmpty)
         clock.advance(minutes: 2)
-        #expect(bot.checkStall(now: clock.date, after: 15 * 60).count == 1)
+        #expect(bot.checkStall(now: clock.date, after: 15 * 60) == [Bot.Stall(subagent: nil, minutes: 15)])
         #expect(bot.messages.count == count + 1)
         #expect(bot.messages.last?.role == .notice)
-        #expect(bot.messages.last?.text.contains("15 分鐘沒有新的步驟") == true)
         clock.advance(minutes: 30)
         #expect(bot.checkStall(now: clock.date, after: 15 * 60).isEmpty)
 
@@ -323,8 +326,8 @@ struct StallReminderTests {
         await eventually { !bot.isWorking }
 
         clock.advance(minutes: 20)
-        let lines = bot.checkStall(now: clock.date, after: 15 * 60)
-        #expect(lines == ["子代理「Run the tests」已經 15 分鐘沒有新的步驟了。"])
+        #expect(bot.checkStall(now: clock.date, after: 15 * 60) == [Bot.Stall(subagent: "Run the tests", minutes: 15)])
+        #expect(bot.messages.last?.text.contains("Run the tests") == true)
     }
 
     @Test func noReminderWhileItWaitsForYouOrTheNetwork() async {

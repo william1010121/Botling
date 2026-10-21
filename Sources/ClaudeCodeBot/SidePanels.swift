@@ -1197,7 +1197,7 @@ struct DetailPanel: View {
                 Text(bot.name).font(.system(size: 15, weight: .semibold)).lineLimit(1)
                 Spacer()
                 panelButtons
-                if bot !== workspace.codexBot {
+                if bot.profile.capabilities.settings {
                     Button { showingSettings = true } label: {
                         Image(systemName: "slider.horizontal.3")
                             .font(.system(size: 15))
@@ -1295,9 +1295,9 @@ extension DetailPanel {
     /// Codex reviews of this bot's work (every bot's, in Codex's own panel), and, for a project,
     /// the button that has Codex review it now.
     @ViewBuilder var codexSection: some View {
-        let isCodex = bot === workspace.codexBot
+        let isCodex = bot.profile.capabilities.reviewer
         let reviews = workspace.codexReviews(for: bot)
-        let canReview = !isCodex && bot.profile.role == .manager && !bot.profile.isStandalone
+        let canReview = bot.profile.canBeReviewed
         if canReview || !reviews.isEmpty {
             PanelSection(isCodex ? L("Reviews") : L("Codex review")) {
                 VStack(spacing: 6) {

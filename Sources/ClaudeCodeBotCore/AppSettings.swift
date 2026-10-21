@@ -100,6 +100,17 @@ public enum ResultPublishing: String, Codable, CaseIterable, Sendable {
     public static let tool = "Artifact"
 }
 
+/// How a design is made, said in one place for every prompt that asks for one: a Claude Design
+/// on claude.ai, made with the Artifact tool's quickstart and published from the type it names.
+enum DesignFlow {
+    /// The quickstart intent for a design.
+    static let intent = "design"
+    /// The steps, as a clause: "with the Artifact tool, run quickstart …".
+    static var steps: String {
+        "with the \(ResultPublishing.tool) tool, run quickstart with intent \"\(intent)\" and publish from the Design type it names"
+    }
+}
+
 /// Tokens one turn used, from the `usage` on `claude`'s result line (per turn, unlike the cost).
 public struct TokenUsage: Codable, Equatable, Sendable {
     public var input = 0

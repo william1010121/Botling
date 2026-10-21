@@ -491,10 +491,17 @@ public final class Workspace: ObservableObject {
         return lines.joined(separator: "\n")
     }
 
+    /// What Maintainer is told of your answer to a folder question.
+    nonisolated static func folderAnswer(_ folder: URL, allowed: Bool) -> String {
+        allowed
+            ? "(App) The user agreed: you can now read \(folder.path) (read only, do not change files there). Carry on with what you were doing."
+            : "(App) The user did not allow you to read \(folder.path). Find another way, or explain that it can't be done."
+    }
+
     /// Your answer to a folder question.
     private func answerFolder(_ folder: URL, allowed: Bool) {
         guard allowed else {
-            maintainer.relay("(App) The user did not allow you to read \(folder.path). Find another way, or explain that it can't be done.")
+            maintainer.relay(Self.folderAnswer(folder, allowed: false))
             return
         }
         approvedFolders.append(folder)
@@ -504,7 +511,7 @@ public final class Workspace: ObservableObject {
         Task {
             // A new session that can open it (--add-dir), then carry on.
             await maintainer.restart(.mayRead(folder.lastPathComponent))
-            maintainer.relay("(App) The user agreed: you can now read \(folder.path) (read only, do not change files there). Carry on with what you were doing.")
+            maintainer.relay(Self.folderAnswer(folder, allowed: true))
         }
     }
 
@@ -1360,7 +1367,7 @@ public final class Workspace: ObservableObject {
           3. Run the check: \(check). If it fails, fix it, at most 3 rounds; if all 3 fail, use a choices block to tell the user where you are stuck.
           4. git add that plugin folder, git commit -m "<plugin name>: <what you did>", then git tag <plugin name>--v<version>.
           5. Report it to the user. ClaudeCodeBot hot-updates on its own; no restart needed.
-        - The user reads your chat and is not technical: every report is one or two plain sentences, in the user's language, on what you made and where the user will see it. For a component a bot asked for, say you handed it back to that bot, which shows it in its own chat (e.g. "已做好 github-ci，已交回 ClaudeCodeBot，它會在它的聊天裡顯示給你"). Leave out versions, tags, checks, file names, APIs and pixel sizes; mention a doubt only when the user must do something about it, and then say what to do in plain words.
+        - The user reads your chat and is not technical: every report is one or two plain sentences, in the user's language, on what you made and where the user will see it. For a component a bot asked for, say you handed it back to that bot, which shows it in its own chat. Leave out versions, tags, checks, file names, APIs and pixel sizes; mention a doubt only when the user must do something about it, and then say what to do in plain words.
         - Components live in ccb-components/components/<name>/ (template.html, about.md). Never edit template.html or about.md yourself:
           every component request (a new component or a change) goes to a ccb-core:component-editor agent with the Agent tool, run in the background, one agent per component, so several components can be worked on at once. Give it the component folder's path and the request (and any attached pictures).
           A component that will be pinned gets ONE responsive layout that adapts to any width and height (the user drags its Board card to any size from 1x1 to 4x4 and its opened panel taller: CSS grid auto-fill columns, container queries, a summary when short, the key number when tiny; no per-size layouts; ccb.size with px and ccb.onSize, see PLUGINS.md; an about.md "Sizes: 2x2" line is optional, only the size a new pin starts at; on the Board ccb.surface is "board" and <html data-surface="board">: the component is the whole tile, so no own border, background or radius, at most ~12px padding, fill the tile; in the chat ccb.surface is "chat" and <html data-surface="chat">: drawn at its widest size across the whole reply, framed by the bubble, so no own frame there either, as tall as its content; opened above the input box it is "pinned", frameless the same way and as tall as its content) and an "Icon: <SF Symbol name or emoji>" line, and calls ccb.setStatus({text, tone}) with its key value for its chip above the input box (see PLUGINS.md): say so to the editor.
@@ -1372,12 +1379,13 @@ public final class Workspace: ObservableObject {
           Check the library first: if a component there already does what the bot needs (the one-line list in your components note, and its about.md), build nothing: reply with <give-component bot="bot name">component name</give-component> and the app puts it on that bot's list. A request for a component already in the library by its own name is put on the bot's list by the app before it reaches you; change it only if the request asks for a change.
           Otherwise build the new one (as above); once it is in the library the app adds it to the asking bot's list.
           A bot's request carries its id in a <component-declined id="…"> tag. If you will not or cannot do it (or change it), say why in your reply and end it with that tag around one sentence for the bot: <component-declined id="that id">why</component-declined>; the app passes it on. Only that tag closes a request you do not fulfil: a reply that just mentions the component (you are still working on it, or asking the user) leaves it open.
-          A bot already at \(ComponentLibrary.limit): add or build nothing for it; with a choices block of that bot's components, ask the user which one to remove from that bot's list first (the 組件使用統計 card shows which are used least), then <take-component bot="bot name">component name</take-component>. Removing from a list never deletes anything: the library copy stays. Deleting a component from the library itself is yours alone, only when the user asks for that, and never one the user did not pick. Changes to existing components are always fine. Never write these tags inside code or examples.
-        - A message starting "(Component spec <id>) Build the first version" is the user making a bot's reply into a component with one press. It starts with what the component is for (the user's or the bot's own words); the reply after it is the context. Infer the whole spec yourself from them and the library and build it now. Ask nothing: wherever you are unsure, use your best guess (the answer you would have suggested). If a component in the library already does this, reuse it: build nothing, and set similar to it and reuse to true. Its data is the reply's own content: what the bot wrote and organised (and the result page it links, whose words the message includes), in the bot's words and language, shown as a component instead of text or a web page. It may carry the user's own message that led to the reply and a brief from a copy of the bot's session (what it is for, each field, and which ones a CLI command can get, with the exact command): use them. Build only the component, with no data sample: about.md says exactly what JSON a bot gives it with <show>, with its fields in two groups, "From command" and "Optional (bot only)" (the template draws well when optional ones are missing), and, when some fields come from a command, a "Board command: <command>" line (a suggestion, not a Command: the chat still has the bot fill it), and once it is in the library the app asks the bot that wrote the reply to draw it there with that reply's data in full. A Command is optional: give it one only when the user clearly wants live data that changes (test results, git status); a summary, table or write-up needs none, and a shell command the bot ran to read its sources is not one. Otherwise build it as any new component (about.md gets its Command: line when it has one; when its output would go over 1 MB, such as every commit's whole diff, the Command gives a short list and a "Detail command: … {hash}" line plus ccb.runDetail loads the rest on demand, see PLUGINS.md), under a name not already in the library. Never run the command yourself: the user allows it on the component's card. Answer in one or two sentences followed by <component-spec id="<id>">JSON</component-spec> with what you used: name (as built), about, fields [{name, type}], command, refresh (shown, interval or manual), minutes, similar, reuse (no samples). The app adds it to the bot's list and shows it under the reply once it is in the library.
-        - A message starting "(Component <name>) Make it live on the Board" means the user pinned that bot-filled component to a Board: have the component editor add its "Command: …" line from the suggested Board command (as the message says), keeping the data format so bots still fill it in chats. Never run the command yourself; the app switches the pin to it once it is in the library.
-        - A message starting "(Component spec <id>) Change it now" is the user asking, in the panel of a component already built, for a change: build that new version right away (the version it names), changing the same component; never ask the user to press Build or wait for anything first. Only when the request is genuinely ambiguous (two readings that would build different things), build nothing and ask exactly one question in the JSON's questions (2 or 3 short answers and the one you suggest); the answer comes back as the next "Change it now". Answer in one or two sentences followed by <component-spec id="<id>">JSON</component-spec> with only what you changed. The app sees the new version land in the library.
-        - Other messages starting "(Component spec <id>)" are the user shaping a draft (not built yet) in a panel beside the chat. Fill in what you can infer, ask only what you cannot (at most 3 questions, each with 2 or 3 short answers and the one you suggest), and answer in one or two sentences followed by <component-spec id="<id>">JSON</component-spec> holding only what you set or change: the keys above, plus questions [{id, key, text, options [{label, value}], suggested}]; a question's key is the value its answer sets. A draft is built only when the user presses Build it: build nothing and never run the command yourself until a "(Component spec <id>) Build it" message; then build it (or its new version) as the spec says; the app adds it to the chosen bots once it is in the library. Never write these tags inside code or examples.
-        - When a component request says /design or asks for designs to choose from, first make them a Claude Design: with the Artifact tool, quickstart with intent "design", publish from the Design type, using the look of ccb-components (its templates' colours, type and spacing) as the design system, and reply with the claude.ai link. Build the chosen one into ccb-components only after the user picks.
+          A bot already at \(ComponentLibrary.limit): add or build nothing for it; with a choices block of that bot's components, ask the user which one to remove from that bot's list first, then <take-component bot="bot name">component name</take-component>. Removing from a list never deletes anything: the library copy stays. Deleting a component from the library itself is yours alone, only when the user asks for that, and never one the user did not pick. Changes to existing components are always fine. Never write these tags inside code or examples.
+        - The app's component messages start with a header naming the action: "(Component spec <id>; action: …)" or, for the Board, "(Component <name>; action: …)". Go by that action, not by the sentence after it.
+        - Action \(ComponentAction.buildFirst.rawValue) ("\(ComponentAction.buildFirst.header("<id>"))") is the user making a bot's reply into a component with one press. It starts with what the component is for (the user's or the bot's own words); the reply after it is the context. Infer the whole spec yourself from them and the library and build it now. Ask nothing: wherever you are unsure, use your best guess (the answer you would have suggested). If a component in the library already does this, reuse it: build nothing, and set similar to it and reuse to true. Its data is the reply's own content: what the bot wrote and organised (and the result page it links, whose words the message includes), in the bot's words and language, shown as a component instead of text or a web page. It may carry the user's own message that led to the reply and a brief from a copy of the bot's session (what it is for, each field, and which ones a CLI command can get, with the exact command): use them. Build only the component, with no data sample: about.md says exactly what JSON a bot gives it with <show>, with its fields in two groups, "\(ComponentFieldGroup.fromCommand.label)" and "\(ComponentFieldGroup.botOnly.label)" (the template draws well when optional ones are missing), and, when some fields come from a command, a "Board command: <command>" line (a suggestion, not a Command: the chat still has the bot fill it), and once it is in the library the app asks the bot that wrote the reply to draw it there with that reply's data in full. A Command is optional: give it one only when the user clearly wants live data that changes (test results, git status); a summary, table or write-up needs none, and a shell command the bot ran to read its sources is not one. Otherwise build it as any new component (about.md gets its Command: line when it has one; when its output would go over 1 MB, the Command gives a short list and a "Detail command: … {hash}" line plus ccb.runDetail loads the rest on demand, see PLUGINS.md), under a name not already in the library. Never run the command yourself: the user allows it on the component's card. Answer in one or two sentences followed by <component-spec id="<id>">JSON</component-spec> with what you used: name (as built), about, fields [{name, type}], command, refresh (shown, interval or manual), minutes, similar, reuse (no samples). The app adds it to the bot's list and shows it under the reply once it is in the library.
+        - Action \(ComponentAction.liveOnBoard.rawValue) ("\(ComponentAction.liveOnBoard.header("<name>"))") means the user pinned that bot-filled component to a Board: have the component editor add its "Command: …" line from the suggested Board command (as the message says), keeping the data format so bots still fill it in chats. Never run the command yourself; the app switches the pin to it once it is in the library.
+        - Action \(ComponentAction.change.rawValue) ("\(ComponentAction.change.header("<id>"))") is the user asking, in the panel of a component already built, for a change: build that new version right away (the version it names), changing the same component; never ask the user to press Build or wait for anything first. Only when the request is genuinely ambiguous (two readings that would build different things), build nothing and ask exactly one question in the JSON's questions (2 or 3 short answers and the one you suggest); the answer comes back as the next \(ComponentAction.change.rawValue) message. Answer in one or two sentences followed by <component-spec id="<id>">JSON</component-spec> with only what you changed. The app sees the new version land in the library.
+        - Action \(ComponentAction.shape.rawValue) ("\(ComponentAction.shape.header("<id>"))") is the user shaping a draft (not built yet) in a panel beside the chat. Fill in what you can infer, ask only what you cannot (at most 3 questions, each with 2 or 3 short answers and the one you suggest), and answer in one or two sentences followed by <component-spec id="<id>">JSON</component-spec> holding only what you set or change: the keys above, plus questions [{id, key, text, options [{label, value}], suggested}]; a question's key is the value its answer sets. A draft is built only when the user presses Build it: build nothing and never run the command yourself until an action \(ComponentAction.build.rawValue) message ("\(ComponentAction.build.header("<id>"))"); then build it (or its new version) as the spec says; the app adds it to the chosen bots once it is in the library. Never write these tags inside code or examples.
+        - When a component request says /design or asks for designs to choose from, first make them a Claude Design: \(DesignFlow.steps), using the look of ccb-components (its templates' colours, type and spacing) as the design system, and reply with the claude.ai link. Build the chosen one into ccb-components only after the user picks.
         - Plugins built into the app are not here and cannot be edited directly: to change one, copy its whole folder into the plugin library; a plugin with the same name overrides the built-in one (paths in PLUGINS.md).
         - To read a folder outside the plugin library (for example to turn an existing project into a plugin): end your reply with <need-folder>full path</need-folder>, say in one sentence why you need it, then stop and wait.
           Once the user agrees you will receive "(App) The user agreed…"; only then read it. If they refuse, find another way. Only read, never change files there. Folders already allowed need no new request.
@@ -1404,14 +1412,16 @@ public final class Workspace: ObservableObject {
         """
     }
 
-    /// What 1.10.0 and earlier wrote (on Haiku, without the "Make it look good" line, the
-    /// component-shot line or Bash): the app's own text, not an edit, so it is replaced without asking.
-    static var legacyComponentEditorAgent: String {
-        componentEditorAgent(model: .haiku)
-            .replacingOccurrences(of: ComponentPrompts.lookGood + "\n", with: "")
-            .replacingOccurrences(of: ComponentPrompts.shotCheck + "\n", with: "")
-            .replacingOccurrences(of: "tools: Read, Write, Edit, Bash\n", with: "tools: Read, Write, Edit\n")
-    }
+    /// What builds before 1.10.1 wrote into the editor's file, as hashes (`textHash`) of the
+    /// exact text each wrote (1.6.0–1.7.1, 1.8.0, 1.9.0, 1.10.0; computed from those tags): the
+    /// app's own text, not an edit, so it is replaced without asking. Fixed values, so changing
+    /// today's prompt never changes what counts as an old build's file.
+    nonisolated static let legacyComponentEditorHashes: Set<String> = [
+        "c7ff05198aa1eed4134e3248d47fbf1d4d577b27a8b4013fa4f6fd4cd60f7516",
+        "4cad9d371e5e4259d4ac45d729c2c94a32f4bc9890a0b7560122027e2c92cea6",
+        "63a27b73cc7637548fde9a19e3a1075dae2215f524484ecbd76ae9d5f440ddb9",
+        "1d9ebab6f2f968ed5ac6e941a21322775487a0cf6925aa2eb8adcf287e223e3c",
+    ]
 
     /// The editor's file in `library`.
     static func componentEditorFile(in library: URL) -> URL {
@@ -1445,7 +1455,7 @@ public final class Workspace: ObservableObject {
     /// an edit you chose to keep stays until the app's text changes again. `record` remembers
     /// what was written (default: next to the library).
     @discardableResult
-    static func prepareCorePlugin(in library: URL, model: BotModel = .sonnet, record: URL? = nil) -> String? {
+    static func prepareCorePlugin(in library: URL, model: BotModel = .sonnet, record: URL? = nil, legacy: Set<String> = legacyComponentEditorHashes) -> String? {
         let files = FileManager.default
         let plugin = library.appending(path: "ccb-core")
         let editor = componentEditorFile(in: library)
@@ -1460,7 +1470,7 @@ public final class Workspace: ObservableObject {
             let currentHash = current.map(textHash)
             if current == desired {
                 saved.written = textHash(desired)
-            } else if current == nil || currentHash == saved.written || current == legacyComponentEditorAgent {
+            } else if current == nil || currentHash == saved.written || currentHash.map(legacy.contains) == true {
                 try? files.createDirectory(at: editor.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? Data(desired.utf8).write(to: editor)
                 saved = CoreEditorRecord(written: textHash(desired), kept: nil)
@@ -1856,7 +1866,7 @@ public final class Workspace: ObservableObject {
         }
         if let group = group(of: bot), message.role == .bot {
             guard message.isOpenQuestion, let label = message.choices?[safe: index]?.label else { return false }
-            guard answerInGroup(group.id, message, with: "The user picked: \(label)") else {
+            guard answerInGroup(group.id, message, with: Self.pickedNote(label)) else {
                 // Its bot was removed or taken out: nobody would get the answer.
                 bot.markAnswered(Bot.noLongerNeeded, in: messageID)
                 return false
@@ -1866,7 +1876,7 @@ public final class Workspace: ObservableObject {
         }
         if isCalledIn(message, in: bot) {
             guard message.isOpenQuestion, let label = message.choices?[safe: index]?.label else { return false }
-            guard answerCallIn(message, in: bot, with: "The user picked: \(label)") else {
+            guard answerCallIn(message, in: bot, with: Self.pickedNote(label)) else {
                 bot.markAnswered(Bot.noLongerNeeded, in: messageID)
                 return false
             }
@@ -1887,6 +1897,11 @@ public final class Workspace: ObservableObject {
         forEachCopy(of: messageID) { chat, copy in chat.markChosen(index, in: copy.id) }
         return true
     }
+
+    /// What a bot told in words (a group, a called-in bot) hears of a pick on its card.
+    nonisolated static func pickedNote(_ label: String) -> String { "The user picked: \(label)" }
+    /// …and of words typed on it.
+    nonisolated static func answeredNote(_ shown: String) -> String { "The user answered: \(shown)" }
 
     /// What a component sent back in words, with any pictures the user attached in it (`files`,
     /// e.g. in choices' "Other"): an answer to the question in that message (from any chat, kept
@@ -1909,7 +1924,7 @@ public final class Workspace: ObservableObject {
         /// folder, as a line it reads and as attachments on your line.
         func kept() -> (note: String, attachments: [Attachment]) {
             let attachments = files.compactMap { group != nil ? keep($0, in: bot) : bot.keep($0) }
-            let note = attachments.isEmpty ? "" : "\n(Attachments:\n" + attachments.map { "- " + $0.url.path }.joined(separator: "\n") + ")"
+            let note = attachments.isEmpty ? "" : "\n" + Attachment.list(attachments)
             return (note, attachments)
         }
         guard message.isOpenQuestion else {
@@ -1947,7 +1962,7 @@ public final class Workspace: ObservableObject {
             return note
         }
         if let group, message.role == .bot {
-            guard answerInGroup(group.id, message, with: "The user answered: \(shown)\(keptAndShown())") else {
+            guard answerInGroup(group.id, message, with: Self.answeredNote(shown) + keptAndShown()) else {
                 bot.markAnswered(Bot.noLongerNeeded, in: messageID)
                 return false
             }
@@ -1955,7 +1970,7 @@ public final class Workspace: ObservableObject {
             return true
         }
         if isCalledIn(message, in: bot) {
-            guard answerCallIn(message, in: bot, with: "The user answered: \(shown)\(keptAndShown())") else {
+            guard answerCallIn(message, in: bot, with: Self.answeredNote(shown) + keptAndShown()) else {
                 bot.markAnswered(Bot.noLongerNeeded, in: messageID)
                 return false
             }

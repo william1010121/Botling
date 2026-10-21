@@ -213,7 +213,6 @@ struct BotComponentListTests {
         #expect(rules.contains("<take-component bot="))
         #expect(rules.contains("remove from that bot's list"))
         #expect(rules.contains("the library copy stays"))
-        #expect(rules.contains("組件使用統計"))
         await workspace.putEveryoneToSleep()
     }
 
@@ -277,7 +276,7 @@ struct BotComponentListTests {
     @Test func aBotHearsBackWhenTheComponentItAskedForIsAddedAndShowsIt() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
-            if text.contains("Maintainer added the component \"daily-chats-pie\"") {
+            if text.contains(Workspace.arrivalLead("daily-chats-pie", changed: false)) {
                 return "今天的統計：<show name=\"daily-chats-pie\">[]</show>"
             }
             if isAppOnly(text) { return "OK" }
@@ -295,15 +294,14 @@ struct BotComponentListTests {
         await eventually { main.messages.last?.shown.first?.name == "daily-chats-pie" }
         #expect(main.componentList?.contains("daily-chats-pie") == true)
         // What it was told names the component, the user's request, and its usage.
-        let told = try #require(fake.agents.flatMap(\.sent).first { $0.contains("Maintainer added the component") })
+        let told = try #require(fake.agents.flatMap(\.sent).first { $0.contains(Workspace.arrivalLead("daily-chats-pie", changed: false)) })
         #expect(told.contains("今天對話次數統計"))
         #expect(told.contains("<show name=\"daily-chats-pie\">"))
         #expect(told.contains("各 bot 今天的訊息數"))
         // The user sees a short line about it.
         let notice = try #require(main.messages.last { $0.role == .notice })
-        #expect(notice.text.contains("Maintainer added"))
+        #expect(notice.sourceID == Workspace.maintainerID)
         #expect(notice.text.contains("今日對話次數"))
-        #expect(notice.text.contains("your components"))
         await workspace.putEveryoneToSleep()
     }
 
@@ -312,8 +310,8 @@ struct BotComponentListTests {
     @Test func aBotHearsBackWhenMaintainerBuildsOrGivesOne() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
-            if text.contains("Maintainer added the component \"toast\"") { return "<show name=\"toast\">{}</show>" }
-            if text.contains("Maintainer added the component \"weather\"") { return "<show name=\"weather\">{}</show>" }
+            if text.contains(Workspace.arrivalLead("toast", changed: false)) { return "<show name=\"toast\">{}</show>" }
+            if text.contains(Workspace.arrivalLead("weather", changed: false)) { return "<show name=\"weather\">{}</show>" }
             // A note queued before a message (its components changed) comes ahead of it.
             if text.hasSuffix("Warn me on errors") { return "<component name=\"toast\">an error toast</component>" }
             if text.hasSuffix("Forecast please") { return "<component name=\"forecast\">a forecast card</component>" }
@@ -329,15 +327,15 @@ struct BotComponentListTests {
         await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text.contains("toast") } }
         try addComponent("toast", to: workspace)
         await eventually { bot.messages.last?.shown.first?.name == "toast" }
-        let built = try #require(fake.agents.flatMap(\.sent).first { $0.contains("Maintainer added the component \"toast\"") })
+        let built = try #require(fake.agents.flatMap(\.sent).first { $0.contains(Workspace.arrivalLead("toast", changed: false)) })
         #expect(built.contains("Warn me on errors"))
-        #expect(bot.messages.contains { $0.role == .notice && $0.text.contains("Maintainer added toast") })
+        #expect(bot.messages.contains { $0.role == .notice && $0.sourceID == Workspace.maintainerID && $0.text.contains("toast") })
 
         bot.send("Forecast please")
         await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text.contains("forecast") } }
         workspace.handle([.giveComponent(bot: "garden", name: "weather")], from: workspace.maintainerProject)
         await eventually { bot.messages.last?.shown.first?.name == "weather" }
-        let given = try #require(fake.agents.flatMap(\.sent).first { $0.contains("Maintainer added the component \"weather\"") })
+        let given = try #require(fake.agents.flatMap(\.sent).first { $0.contains(Workspace.arrivalLead("weather", changed: false)) })
         #expect(given.contains("Forecast please"))
         #expect(given.contains("\"forecast\""))
         await workspace.putEveryoneToSleep()
@@ -465,7 +463,7 @@ struct BotComponentListTests {
     @Test func aProjectBotIsHandedTheComponentOnceItIsWhole() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
-            if text.contains("Maintainer added the component \"github-ci\"") { return "CI 狀態：<show name=\"github-ci\"></show>" }
+            if text.contains(Workspace.arrivalLead("github-ci", changed: false)) { return "CI 狀態：<show name=\"github-ci\"></show>" }
             if text.hasSuffix("做一個 GitHub CI 組件") { return "<component name=\"github-ci\">a GitHub Actions run list</component>" }
             if isAppOnly(text) { return "OK" }
             return "Got it"
@@ -480,16 +478,16 @@ struct BotComponentListTests {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try "<p>ci</p>".write(to: folder.appending(path: "template.html"), atomically: true, encoding: .utf8)
         workspace.components.rescan()
-        #expect(!fake.agents.flatMap(\.sent).contains { $0.contains("Maintainer added the component \"github-ci\"") })
+        #expect(!fake.agents.flatMap(\.sent).contains { $0.contains(Workspace.arrivalLead("github-ci", changed: false)) })
 
         try Self.githubCIAbout.write(to: folder.appending(path: "about.md"), atomically: true, encoding: .utf8)
         workspace.components.rescan()
         await eventually { bot.messages.last?.shown.first?.name == "github-ci" }
-        let told = try #require(fake.agents.flatMap(\.sent).first { $0.contains("Maintainer added the component \"github-ci\"") })
+        let told = try #require(fake.agents.flatMap(\.sent).first { $0.contains(Workspace.arrivalLead("github-ci", changed: false)) })
         #expect(told.contains("- github-ci: GitHub Actions 建置進度卡片"))
         #expect(told.contains("做一個 GitHub CI 組件"))
         #expect(bot.componentList?.contains("github-ci") == true)
-        #expect(bot.messages.contains { $0.role == .notice && $0.text.contains("Maintainer added") })
+        #expect(bot.messages.contains { $0.role == .notice && $0.sourceID == Workspace.maintainerID })
         await workspace.putEveryoneToSleep()
     }
 

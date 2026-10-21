@@ -18,27 +18,26 @@ struct ResultPublishingTests {
         let system = manager(.artifactUnlessSensitive)
         #expect(AppSettings().resultPublishing == .artifactUnlessSensitive)
         #expect(system == BotPrompts(profile: .manager(name: "garden", avatar: "square", folder: URL(filePath: "/p/garden"))).system)
-        #expect(system.contains("Results meant for the user (reports, comparisons, screenshots, previews) go into one page published as a claude.ai Artifact with the Artifact tool (private by default; follow the tool's own instructions, which load its design skill first)"))
-        #expect(system.contains("[name](the https://claude.ai/… link it returns)"))
-        #expect(system.contains("Only when the content is sensitive (secrets, credentials, personal data, private work the user marked private, anything the user said to keep local) or the Artifact tool is unavailable or fails (offline, not signed in)"))
-        #expect(system.contains("saved to /p/garden/.bot/artifacts/<english-file-name>.html"))
-        #expect(system.contains("[name](file://full path of that file)"))
-        #expect(system.contains("Pictures and videos shown inline stay file:// links."))
+        // The choice's rule is in the prompt: publishing, with the bot's own folder to fall back to.
+        #expect(system.contains(BotPrompts.resultsRule(.artifactUnlessSensitive, folder: "/p/garden/.bot/artifacts")))
+        #expect(system.contains(BotPrompts.artifactPage))
+        #expect(system.contains(BotPrompts.localPage(folder: "/p/garden/.bot/artifacts")))
     }
 
     @Test func alwaysLocalNeverPublishes() {
         let system = manager(.localOnly)
-        #expect(system.contains("Results meant for the user (reports, comparisons, screenshots, previews) go into one HTML page: a single file with its styles inline"))
-        #expect(system.contains("saved to /p/garden/.bot/artifacts/<english-file-name>.html"))
-        #expect(system.contains("The user chose to keep results local: do not publish them with the Artifact tool."))
-        #expect(!system.contains("go into one page published as a claude.ai Artifact"))
+        #expect(system.contains(BotPrompts.resultsRule(.localOnly, folder: "/p/garden/.bot/artifacts")))
+        #expect(system.contains(BotPrompts.localPage(folder: "/p/garden/.bot/artifacts")))
+        #expect(!system.contains(BotPrompts.artifactPage))
     }
 
     @Test func alwaysArtifactPublishesSensitiveOnesTooAndFallsBackOnlyWhenItCannot() {
         let system = manager(.artifactAlways)
-        #expect(system.contains("go into one page published as a claude.ai Artifact with the Artifact tool"))
-        #expect(system.contains("The user chose this for every result, sensitive or not. Only when the Artifact tool is unavailable or fails (offline, not signed in), make it one HTML page"))
-        #expect(!system.contains("Only when the content is sensitive"))
+        #expect(system.contains(BotPrompts.resultsRule(.artifactAlways, folder: "/p/garden/.bot/artifacts")))
+        #expect(system.contains(BotPrompts.artifactPage))
+        // Each choice is a rule of its own.
+        let rules = Set(ResultPublishing.allCases.map { BotPrompts.resultsRule($0, folder: "/f") })
+        #expect(rules.count == ResultPublishing.allCases.count)
     }
 
     @Test func theMainBotHandsWorkOverWhateverTheChoice() {

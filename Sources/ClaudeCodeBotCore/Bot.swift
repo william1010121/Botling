@@ -401,7 +401,7 @@ public final class Bot: ObservableObject, Identifiable {
         }
         if !text.isEmpty { lines.append(text) }
         if !attachments.isEmpty {
-            lines.append("(Attachments:\n" + attachments.map { "- " + $0.url.path }.joined(separator: "\n") + ")")
+            lines.append(Attachment.list(attachments))
         }
         // Whether paused work reported up is read before this turn becomes yours.
         route(Outgoing(text: lines.joined(separator: "\n\n"), images: attachments.filter { $0.kind == .image }, fromUser: true, messageID: message.id))
@@ -449,7 +449,7 @@ public final class Bot: ObservableObject, Identifiable {
         turnFromRelay = true
         var text = BotPrompts.relayPrefix + instruction
         if !attachments.isEmpty {
-            text += "\n\n(Attachments:\n" + attachments.map { "- " + $0.url.path }.joined(separator: "\n") + ")"
+            text += "\n\n" + Attachment.list(attachments)
         }
         route(Outgoing(text: text, images: attachments.filter { $0.kind == .image }, messageID: message.id))
     }
@@ -504,7 +504,7 @@ public final class Bot: ObservableObject, Identifiable {
             markAnswered(shown, in: messageID)
             // Pictures with it are kept, and Claude is told where (a refusal carries only words).
             let kept = files.compactMap(keep)
-            let note = kept.isEmpty ? "" : "\n(Attachments:\n" + kept.map { "- " + $0.url.path }.joined(separator: "\n") + ")"
+            let note = kept.isEmpty ? "" : "\n" + Attachment.list(kept)
             ask.process.answer(ask.request, allow: false, message: "The user did not allow it and said: \(shown)\(note)")
             return true
         }
@@ -1461,6 +1461,9 @@ public final class Bot: ObservableObject, Identifiable {
     /// The network is back (`date`: when that was seen). Within `NetworkResume.warmWindow` of the
     /// failure it goes on in the same session and continues its subagents; later, cut-off
     /// subagents start over as new ones in their worktree with their prompt and one added line.
+    /// How it went on the last time the network came back.
+    public private(set) var lastResume: NetworkResume.Mode?
+
     public func networkRestored(at date: Date) {
         guard let outage, !removed else { return }
         self.outage = nil
@@ -1471,7 +1474,9 @@ public final class Bot: ObservableObject, Identifiable {
             trace.subagent(id).map { NetworkResume.CutOff(description: $0.description, type: $0.type, prompt: $0.prompt, agentID: agentIDs[id]) }
         }
         let note = NetworkResume.resumeNote(elapsed: elapsed, carryOn: outage.turnFailed || outage.lostSession != nil, subagents: cut)
-        append(ChatMessage(role: .divider, text: NetworkResume.restoredText(elapsed: elapsed, warm: warm, subagents: cut.count)))
+        let mode = NetworkResume.mode(elapsed: elapsed, subagents: cut.count)
+        lastResume = mode
+        append(ChatMessage(role: .divider, text: NetworkResume.restoredText(elapsed: elapsed, mode: mode)))
         if phase == .asleep, warm, let session = outage.lostSession {
             // The process went away with it: the same session again, while its cache is warm.
             do {
@@ -1491,27 +1496,38 @@ public final class Bot: ObservableObject, Identifiable {
     /// Reminds you once per quiet spell when the turn under way, or a subagent at work, has shown
     /// no new step for `interval` (0 or less: never). Not while it waits for you or for the network.
     @discardableResult
-    public func checkStall(now date: Date, after interval: TimeInterval) -> [String] {
+    public func checkStall(now date: Date, after interval: TimeInterval) -> [Stall] {
         guard interval > 0, outage == nil, process != nil, !waitingForPermission else { return [] }
         let minutes = max(1, Int((interval / 60).rounded()))
-        var lines: [String] = []
+        var stalls: [Stall] = []
         var quietForeground = false
         for subagent in trace.subagents where subagent.isRunning && !stallReminded.contains(subagent.id) {
             let last = subagentProgress[subagent.id] ?? subagent.startedAt
             guard date.timeIntervalSince(last) >= interval else { continue }
             stallReminded.insert(subagent.id)
             if !subagent.background { quietForeground = true }
-            lines.append("子代理「\(subagent.description.isEmpty ? "Subagent" : subagent.description)」已經 \(minutes) 分鐘沒有新的步驟了。")
+            stalls.append(Stall(subagent: subagent.description.isEmpty ? "Subagent" : subagent.description, minutes: minutes))
         }
         if isWorking, phase == .awake, let last = lastProgress, date.timeIntervalSince(last) >= interval, !stallReminded.contains("") {
             stallReminded.insert("")
             // Waiting on a quiet subagent is that subagent's quiet spell, already said.
-            if !quietForeground { lines.insert("\(name) 已經 \(minutes) 分鐘沒有新的步驟了。", at: 0) }
+            if !quietForeground { stalls.insert(Stall(subagent: nil, minutes: minutes), at: 0) }
         }
-        guard !lines.isEmpty else { return [] }
-        append(ChatMessage(role: .notice, text: lines.joined(separator: "\n") + "\n可能卡住了：可以再等等，或傳訊息問它在做什麼。"))
+        guard !stalls.isEmpty else { return [] }
+        append(ChatMessage(role: .notice, text: stalls.map { $0.line(bot: name) }.joined(separator: "\n") + "\n可能卡住了：可以再等等，或傳訊息問它在做什麼。"))
         unreadCount += 1
-        return lines
+        return stalls
+    }
+
+    /// Who has shown no new step, and for how long.
+    public struct Stall: Equatable, Sendable {
+        /// The quiet subagent's description; nil: the bot's own turn.
+        public var subagent: String?
+        public var minutes: Int
+
+        func line(bot: String) -> String {
+            subagent.map { "子代理「\($0)」已經 \(minutes) 分鐘沒有新的步驟了。" } ?? "\(bot) 已經 \(minutes) 分鐘沒有新的步驟了。"
+        }
     }
 
     // MARK: Routines
