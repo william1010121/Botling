@@ -149,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The settings window: open or not, and at which section (the gear and ⌘, open it).
     let settings = SettingsNavigator()
     private var badge: AnyCancellable?
+    private var telegram: TelegramBridge?
 
     /// A run that only draws a snapshot or checks a plugin, then quits.
     static var isHeadless: Bool {
@@ -178,6 +179,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Preview cards show a picture of their page; a new picture redraws the chats.
         PageShotMaker.shared.install { [workspace] in workspace.objectWillChange.send() }
         connectSelfUpdate()
+        // Optional outbound-only mobile channel. No token or configuration is created here.
+        telegram = TelegramBridge.configured(workspace: workspace, environment: ProcessInfo.processInfo.environment)
+        telegram?.start()
         workspace.startRoutines()
         workspace.startPinRefresh()
         workspace.startWatching()
@@ -250,6 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !Self.isHeadless else { return .terminateNow }
         Task {
+            telegram?.stop()
             await workspace.putEveryoneToSleep()
             // Bots kept awake by background work (and that work) would outlive the app, unseen.
             ChildProcessLedger.shared?.endAll()
