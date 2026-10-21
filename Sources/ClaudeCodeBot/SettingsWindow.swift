@@ -860,7 +860,7 @@ struct DoctorRow: View {
             Group {
                 Text(check.summary).foregroundStyle(check.status == .ok ? Theme.muted : Self.color(check.status))
                 if let path = check.path {
-                    Text(path).lineLimit(1).truncationMode(.middle).foregroundStyle(Theme.faint).textSelection(.enabled)
+                    Text((path as NSString).abbreviatingWithTildeInPath).help(path).lineLimit(1).truncationMode(.middle).foregroundStyle(Theme.faint).textSelection(.enabled)
                 }
             }
             .font(.system(size: 12))

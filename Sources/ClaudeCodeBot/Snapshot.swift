@@ -54,6 +54,25 @@ enum Snapshot {
         guard let path = ProcessInfo.processInfo.environment["CCB_SNAPSHOT"] else { return false }
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         let now = Date()
+        // `CCB_SNAPSHOT_SAMPLE=design`: a /design request answered with a Claude Design's link.
+        if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "design" {
+            BotStore(directory: root.appending(path: "main")).save(messages: [
+                ChatMessage(role: .user, text: "/design three looks for the folded left column, so I can pick one", date: now.addingTimeInterval(-300)),
+                ChatMessage(role: .bot, text: """
+                Here is a Claude Design with three directions side by side: [Folded left column](https://claude.ai/artifact/3f9c2a7e-5b14-4d0e-9a61-c8e2f04b7d35)
+
+                - **A. Faces only**: 56 pt, a ring while a bot works, a dot when it waits on you
+                - **B. Faces and unread counts**: the same strip with a badge per chat
+                - **C. Icons by kind**: main bot, groups, projects and bots in four rows
+
+                Open it on claude.ai to compare them or share the link. Tell me which one, and Maintainer builds it into the app.
+                """, date: now.addingTimeInterval(-240)),
+                ChatMessage(role: .user, text: "B, but keep A's ring while it works.", date: now.addingTimeInterval(-60)),
+                ChatMessage(role: .bot, text: "Got it: B with A's working ring. I've handed it to Maintainer to build; it will say here when the new strip is in.", date: now.addingTimeInterval(-50)),
+            ])
+            draw(root: root, to: path)
+            return true
+        }
         let picture = URL(filePath: #filePath).deletingLastPathComponent()
             .appending(path: "../../docs/flowcharts/flow-4-lifecycle.png").standardizedFileURL
         // A result page, so the sample shows it as a 「網頁預覽卡片」 card.
@@ -153,7 +172,9 @@ enum Snapshot {
             AvatarImages.dataURL(projectID == nil ? .circle : .triangle, eyes: .open)
         }.json()
 
-        let frame = NSRect(x: 0, y: 0, width: 760, height: 1300)
+        // `CCB_SNAPSHOT_HEIGHT=900`: a shorter (or taller) window than 1300 points.
+        let height = ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEIGHT"].flatMap(Double.init) ?? 1300
+        let frame = NSRect(x: 0, y: 0, width: 760, height: height)
         let window = HeadlessRun.offscreenWindow(frame)
         let configuration = WKWebViewConfiguration()
         let handler = Handler(path: path, json: json, plugins: ChatSurface.setPluginsScript(workspace.plugins))
@@ -406,8 +427,12 @@ enum Snapshot {
         // CCB_SETTINGS_SECTION=plugins draws another section.
         navigator.section = ProcessInfo.processInfo.environment["CCB_SETTINGS_SECTION"].flatMap(SettingsSection.init(rawValue:)) ?? .doctor
         Task { @MainActor in
+            // `CCB_SETTINGS_LATEST=0`: the real checks without npm's latest versions (no "is available").
+            if ProcessInfo.processInfo.environment["CCB_SETTINGS_LATEST"] == "0" {
+                workspace.doctor = DoctorModel(doctor: Doctor(latest: { _ in nil }))
+            }
             await workspace.doctor.run(includeLatest: true)
-            let frame = NSRect(x: 0, y: 0, width: 760, height: 600)
+            let frame = NSRect(x: 0, y: 0, width: 760, height: ProcessInfo.processInfo.environment["CCB_SETTINGS_HEIGHT"].flatMap(Double.init) ?? 600)
             let window = HeadlessRun.offscreenWindow(frame)
             window.appearance = NSAppearance(named: .darkAqua)
             let host = NSHostingView(rootView: SettingsWindow(workspace: workspace, navigator: navigator).preferredColorScheme(.dark))
@@ -592,7 +617,9 @@ enum Snapshot {
             ChatMessage(role: .user, text: "好，那順便看一下 README。", date: now.addingTimeInterval(-60)),
             later,
         ])
-        var spec = ComponentSpec(messageID: reply.id, name: "test-summary", about: "Pass and fail counts per test suite", folder: home.path, bots: ["Main bot"])
+        // `CCB_SPEC_FOLDER`: the project folder the spec panel shows (the sample still runs in `home`).
+        let shownFolder = ProcessInfo.processInfo.environment["CCB_SPEC_FOLDER"] ?? home.path
+        var spec = ComponentSpec(messageID: reply.id, name: "test-summary", about: "Pass and fail counts per test suite", folder: shownFolder, bots: ["Main bot"])
         spec.command = "swift test --parallel 2>&1 | python3 .bot/scripts/test-summary.py"
         spec.fields = [
             .init(name: "total", type: "int", by: .maintainer), .init(name: "passed", type: "int", by: .maintainer),
@@ -615,7 +642,7 @@ enum Snapshot {
         spec.draft = 2
         spec.opened = true
         spec.asked = true
-        spec.testRun = ComponentSpec.TestRun(command: spec.command!, folder: home.path)
+        spec.testRun = ComponentSpec.TestRun(command: spec.command!, folder: shownFolder)
         let state = ProcessInfo.processInfo.environment["CCB_SPEC_STATE"] ?? ""
         let filling = ["filling", "filled"].contains(state)
         let built = ["done", "done-ask", "edit"].contains(state) || filling
@@ -656,7 +683,7 @@ enum Snapshot {
             spec.fields[4].by = .maintainer
             if state != "done-ask" {
                 spec.testRun = ComponentSpec.TestRun(
-                    command: spec.command!, folder: home.path,
+                    command: spec.command!, folder: shownFolder,
                     output: #"{"total":382,"passed":380,"failed":2,"seconds":41.2,"failures":[{"suite":"WebBridgeTests","test":"testDropOrder"},{"suite":"ChatStoreTests","test":"testMergeOnSave"}]}"#,
                     ranAt: now.addingTimeInterval(-20), matches: true
                 )
@@ -677,12 +704,12 @@ enum Snapshot {
             try? snapshotTestSummary.write(to: folder.appending(path: "template.html"), atomically: true, encoding: .utf8)
             try? "Pass and fail counts per test suite.\n\(spec.command.map { "Command: \($0)" } ?? "Data: {total, passed, failed, seconds, suites: [{name, passed}]}")\n".write(to: folder.appending(path: "about.md"), atomically: true, encoding: .utf8)
             workspace.components.rescan()
-            if state != "done-ask", let command = spec.command { workspace.componentCommands.approve(command, in: home) }
+            if state != "done-ask", let command = spec.command { workspace.componentCommands.approve(command, in: URL(filePath: shownFolder)) }
         }
         let panelOpen = state.isEmpty || state == "edit" || ProcessInfo.processInfo.environment["CCB_SPEC_PANEL"] == "1"
         if panelOpen { workspace.openSpec(spec.id, in: workspace.mainBot) }
         workspace.setSpecPanelWide(ProcessInfo.processInfo.environment["CCB_SPEC_WIDE"] == "1")
-        let commands = ChatPayload.CommandContext(runs: workspace.componentCommands) { _ in home }
+        let commands = ChatPayload.CommandContext(runs: workspace.componentCommands) { _ in URL(filePath: shownFolder) }
         let chatJSON = ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, commands: commands, specs: true, openSpec: workspace.openSpecID) { projectID in
             AvatarImages.dataURL(projectID == nil ? .circle : .triangle, eyes: .open)
         }.json()

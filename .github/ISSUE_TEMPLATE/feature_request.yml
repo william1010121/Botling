@@ -1,0 +1,20 @@
+name: Feature request
+description: An idea for ClaudeCodeBot.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you want to do
+      description: The situation and what gets in your way today.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: How it could work. Could it be a plugin or a component instead of a change to the app?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Anything you tried
