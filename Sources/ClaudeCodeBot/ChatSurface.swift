@@ -307,14 +307,17 @@ struct ChatSurface: NSViewRepresentable {
             case "componentDetail":
                 // A component's ccb.runDetail(values), passed on by the page with the folder its
                 // card showed. Only a Detail command the user allowed in that folder runs; the
-                // answer goes back to the page, which hands it to the frame that asked.
+                // answer goes back to the page, which hands it to the frame that asked. With a card
+                // (`{save: true}`) its output is that card's data: it finishes into the card even
+                // when another chat is opened meanwhile and this page is gone.
                 if let requestID = body["requestID"] as? Int, let name = body["name"] as? String,
                    let folder = body["folder"] as? String {
                     let values = ComponentCommands.detailValues(body["values"])
+                    let card = body["card"] as? String, command = body["command"] as? String
                     Task { @MainActor [weak view] in
                         let outcome: CommandOutcome
                         if let values {
-                            outcome = await workspace.runComponentDetail(name, values: values, folder: folder)
+                            outcome = await workspace.runComponentDetail(name, values: values, folder: folder, card: card, command: command, in: bot)
                         } else {
                             outcome = CommandOutcome(error: "ccb.runDetail takes an object of text or whole-number values, like {hash: \"2aed630\"}.")
                         }

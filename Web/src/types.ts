@@ -175,6 +175,8 @@ export interface DisplayView {
    * `folder`; the card's Allow allows it with `command`.
    */
   detail?: string | null;
+  /** Which card it is for its command's run: `ccb.runDetail(values, {save: true})` saves into it. */
+  card?: string | null;
   /** How the command's run is going; "failed" also marks a component shown with no data. */
   status?: CommandStatus | null;
   error?: string | null;
@@ -366,7 +368,7 @@ export type Action =
   | { type: "componentReport"; name: string; text: string; images: { name: string; base64: string }[]; rect: { x: number; y: number; width: number; height: number } | null }
   | { type: "componentRevert"; name: string }
   | { type: "componentCommand"; messageID: string; index: number; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean; live?: boolean }
-  | { type: "componentDetail"; requestID: number; name: string; folder: string; values: Record<string, string | number> }
+  | { type: "componentDetail"; requestID: number; name: string; folder: string; values: Record<string, string | number>; card?: string; command?: string }
   | { type: "pin"; id: string; messageID?: string; index?: number; name?: string; spec?: string; refresh: PinRefresh; minutes: number; seconds?: number }
   | { type: "unpin"; id: string }
   | { type: "pinCommand"; id: string; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean; live?: boolean }

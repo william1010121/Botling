@@ -118,6 +118,15 @@ app and publishes it on GitHub Releases.
   suggestion. A last sentence that plainly says the bot will now do something ("開始做…",
   "接著做…", "我再去看…", "Next, I'll…") now blocks the stop too, unless it asks you, offers, or
   names what will bring the result back.
+- **A card's slow scan finishes when you open another chat.** A card whose button runs its
+  component's Detail command for fresh data (the disk usage card's 重新整理, a scan of about a
+  minute) seemed to stop when you switched chats: the scan's result went only to the card's page,
+  never into the card, so coming back showed the old data and Ran time (2.3 GB free instead of
+  27 GB), even when the scan had finished and the card had updated before you left. A template now
+  calls `ccb.runDetail(values, {save: true})` for such a button: the result becomes the card's
+  data, kept on its pin or spec too, the card shows it running (in the chat, on the Board and
+  pinned), it finishes into the card wherever you are meanwhile, and pressing it or ↻ again while
+  it runs starts no second run.
 
 - **A floating pin shows only in its own bot's chat.** A pin floated in one bot's chat (say,
   ClaudeCodeBot's release progress) also floated over every other bot's chat, the main bot's

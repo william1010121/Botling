@@ -23,7 +23,10 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./
  * - `runDetail(values)`: runs the component's `Detail command:` (about.md) with its `{name}`
  *   placeholders filled from `values` (`{hash: "2aed630"}`), in the folder its card's command
  *   runs in, once the user has allowed it there. Resolves to the output (parsed when it is JSON,
- *   else the text) or rejects with an Error saying why.
+ *   else the text) or rejects with an Error saying why. `runDetail(values, {save: true})` (a
+ *   "scan again" button whose output is the card's whole data) also makes the output the card's
+ *   data, as its command's run: the card shows it running, and it finishes into the card even
+ *   when the user opens another chat meanwhile; asking again while it runs waits for that run.
  * - `size`: the size it is drawn at, `{w, h, name, px: {width, height}}`: `w`×`h` Board cells
  *   (any from 1×1 to 4×4), `name` the nearest of 1×1 "small", 2×1 "wide", 1×2 "tall", 2×2 "large",
  *   4×2 "xlarge", and `px` the frame's real width and height. Also `<html data-size="2x1">`, for
@@ -241,7 +244,8 @@ ${imeGuardScript}
       else parent.postMessage({ccb: 'status', text: String(status), tone: null}, '*');
       return Promise.resolve();
     },
-    runDetail(values) {
+    runDetail(values, options) {
+      const save = !!(options && typeof options === 'object' && options.save);
       return new Promise((resolve, reject) => {
         const id = ++detailCount;
         details.set(id, {resolve, reject});
@@ -252,7 +256,7 @@ ${imeGuardScript}
             given[key] = typeof value === 'number' || typeof value === 'string' ? value : String(value);
           }
         }
-        parent.postMessage({ccb: 'runDetail', id, values: given}, '*');
+        parent.postMessage(save ? {ccb: 'runDetail', id, values: given, save} : {ccb: 'runDetail', id, values: given}, '*');
       });
     }
   };
@@ -390,15 +394,26 @@ export function pinStatusAction(id: string, message: { clear?: unknown; text?: u
   return { type: "pinStatus", id, text, tone: typeof message.tone === "string" && message.tone !== "" ? message.tone : null };
 }
 
-/** Where a frame's `ccb.runDetail` goes: its component, and the folder its card showed. */
+/**
+ * Where a frame's `ccb.runDetail` goes: its component, and the folder its card showed; with the
+ * card and its command when its data comes from one (what `{save: true}` saves into).
+ */
 export interface DetailTarget {
   name: string;
   folder: string;
+  card?: string;
+  command?: string;
 }
 
 /** The DetailTarget a card's display gives, when its component has a Detail command. */
 export function detailTarget(display: DisplayView): DetailTarget | null {
-  return display.detail && display.folder ? { name: display.name, folder: display.folder } : null;
+  if (!display.detail || !display.folder) return null;
+  const target: DetailTarget = { name: display.name, folder: display.folder };
+  if (display.card && display.command) {
+    target.card = display.card;
+    target.command = display.command;
+  }
+  return target;
 }
 
 /** runDetail calls sent to Swift, by request number: the frame that asked and its own number. */
@@ -422,7 +437,7 @@ export function detailReply(requestID: number, ok: boolean, value: string): void
 }
 
 /** A frame's runDetail: passed on to Swift with its card's folder, or refused at once. */
-function runDetail(frame: ComponentFrame, source: MessageEventSource, id: unknown, values: unknown): void {
+function runDetail(frame: ComponentFrame, source: MessageEventSource, id: unknown, values: unknown, save = false): void {
   if (typeof id !== "number") return;
   const refuse = (error: string) => (source as Window).postMessage({ ccbDetail: id, ok: false, error }, "*");
   const target = frame.ccbDetail;
@@ -445,7 +460,8 @@ function runDetail(frame: ComponentFrame, source: MessageEventSource, id: unknow
   }
   const requestID = ++detailRequests;
   detailCalls.set(requestID, { source, id });
-  post({ type: "componentDetail", requestID, name: target.name, folder: target.folder, values: given });
+  const into = save && target.card && target.command ? { card: target.card, command: target.command } : {};
+  post({ type: "componentDetail", requestID, name: target.name, folder: target.folder, values: given, ...into });
 }
 
 /**
@@ -628,7 +644,7 @@ window.addEventListener("message", (event) => {
     frame.ccbData = data;
     frame.ccbSave(data);
   } else if (message.ccb === "runDetail" && event.source) {
-    runDetail(frame, event.source, message.id, message.values);
+    runDetail(frame, event.source, message.id, message.values, (message as { save?: unknown }).save === true);
   }
 });
 

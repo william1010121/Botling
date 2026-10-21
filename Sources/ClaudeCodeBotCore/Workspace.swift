@@ -1129,11 +1129,25 @@ public final class Workspace: ObservableObject {
     /// A component's `ccb.runDetail(values)` from a card in `folder` (the one the card showed):
     /// its about.md's Detail command, as it is now, filled with `values` and run there, only if
     /// the user allowed that very template in that folder.
-    public func runComponentDetail(_ name: String, values: [String: String], folder: String) async -> CommandOutcome {
+    /// With `card` and its `command` (`ccb.runDetail(values, {save: true})`) the output becomes
+    /// that card's data, and is kept on its pin or spec, also when the page that asked is gone
+    /// by the time it finishes (another chat was opened). `chat` holds the card's spec.
+    public func runComponentDetail(_ name: String, values: [String: String], folder: String, card: String? = nil, command: String? = nil, in chat: Bot? = nil) async -> CommandOutcome {
         guard let template = components.detailCommand(of: ComponentLibrary.safeName(name)) else {
             return CommandOutcome(error: "The component \"\(name)\" has no Detail command.")
         }
-        return await componentCommands.runDetail(template, values: values, in: URL(filePath: folder))
+        let saving = card.flatMap { card in command.map { (card: card, command: $0) } }
+        let outcome = await componentCommands.runDetail(template, values: values, in: URL(filePath: folder), saving: saving)
+        if let saving {
+            if let owner = chatsWithPins.first(where: { $0.pins.contains { $0.card == saving.card } }),
+               let pin = owner.pins.first(where: { $0.card == saving.card }), pin.command == saving.command {
+                keepOutput(of: pin, in: owner)
+            }
+            if let chat, let spec = chat.specs.first(where: { $0.card == saving.card }) {
+                keepTestRun(of: spec.id, command: saving.command, in: chat)
+            }
+        }
+        return outcome
     }
 
     /// Someone asked for a component change: the user beside a component, or a bot with a

@@ -323,6 +323,35 @@ describe("messages", () => {
     expect(replies).toHaveLength(4);
   });
 
+  it("save a ccb.runDetail's output into its card when asked ({save: true})", async () => {
+    const { componentPage } = await import("../src/components");
+    const page = componentPage("<p>hi</p>", "{}");
+    const script = page.slice(page.indexOf("<script>") + 8, page.indexOf("</script>"));
+    const posted: unknown[] = [];
+    const frame = { addEventListener() {} } as unknown as { ccb: Record<string, (...args: unknown[]) => Promise<unknown>> };
+    new Function("window", "parent", script)(frame, { postMessage: (data: unknown) => posted.push(data) });
+    void frame.ccb.runDetail({ scan: "now" }, { save: true });
+    expect(posted).toEqual([{ ccb: "runDetail", id: 1, values: { scan: "now" }, save: true }]);
+
+    // The page passes the card and its command on, so Swift saves the output into it even
+    // when this page is gone by the time the scan ends.
+    const info = { template: "<p></p>", version: 0, working: false, updated: false, hasPrevious: false };
+    const row = messageElement(message({
+      id: "m33",
+      displays: [{ name: "disk", data: "{}", at: null, command: "scan", folder: "/p", detail: "scan --force {scan}", card: "m33/0", status: "done" }],
+    }), { disk: info });
+    document.body.append(row);
+    const card = row.querySelector<HTMLIFrameElement>(".component-frame")!;
+    card.contentWindow!.postMessage = (() => {}) as Window["postMessage"];
+    const ask = (data: unknown) => window.dispatchEvent(new MessageEvent("message", { data, source: card.contentWindow }));
+    ask({ ccb: "runDetail", id: 1, values: { scan: "now" }, save: true });
+    ask({ ccb: "runDetail", id: 2, values: { scan: "now" } });
+    expect(sent).toEqual([
+      { type: "componentDetail", requestID: expect.any(Number), name: "disk", folder: "/p", values: { scan: "now" }, card: "m33/0", command: "scan" },
+      { type: "componentDetail", requestID: expect.any(Number), name: "disk", folder: "/p", values: { scan: "now" } },
+    ]);
+  });
+
   it("ask to allow a component's Detail command with its command", () => {
     const info = { template: "<p></p>", version: 0, working: false, updated: false, hasPrevious: false };
     const row = messageElement(message({

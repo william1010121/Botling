@@ -134,6 +134,9 @@ enum PluginGuide {
           `{name}` filled in as one quoted argument, in the same folder with the same limits, and resolves to its output (parsed if JSON, else text);
           it rejects with an Error when not allowed yet, a value is missing, extra or not allowed (only letters, digits and `. _ / -`, at most 200,
           no leading `-`), or the command fails. The card's Allow covers both commands; editing the Detail command line asks the user again.
+          When the output is the card's whole data again (a "scan again" button: the Command reads a cache, the Detail command scans anew),
+          `ccb.runDetail(values, { save: true })` makes it the card's data: the card shows it running and it finishes into the card even if
+          the user opens another chat meanwhile; asking again while it runs waits for that run.
           Refreshing by itself: about.md's `Refresh: every 2s` line (or a bot's `<show name="x" refresh="2s">`, which wins) makes a card
           whose data comes from a command run it again every 2 seconds (at least 1s, at most 1h; "5s", "1.5s", "1m" and "500ms" read too),
           but only while the card is on screen: it pauses while scrolled away or while the window is hidden, and waits for each run to end.
