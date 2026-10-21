@@ -3,19 +3,19 @@ import type { PinRefresh } from "./types";
 
 /**
  * How often a pin (or a spec's pin) refreshes by itself, as its menus say it and as the user
- * types it: the quick presets, and a custom "Every [n] sec / min" from 2 seconds to 24 hours.
+ * types it: "Every [n] [sec / min]" from 2 seconds to 24 hours, typed right in the menu.
  * Swift keeps the same bounds (`PinnedComponent.minimumSeconds` / `maximumSeconds`).
  */
 
 export type IntervalUnit = "sec" | "min";
 
-/** The shortest and longest custom interval, in seconds. */
+/** The shortest and longest interval, in seconds. */
 export const intervalBounds = { minSeconds: 2, maxSeconds: 24 * 60 * 60 } as const;
 
 /** A refresh interval as Swift stores it: `seconds`, or whole `minutes`. */
 export type Interval = { seconds: number; minutes?: undefined } | { minutes: number; seconds?: undefined };
 
-/** The quick presets the menu always offers. */
+/** What the menu's minutes row and seconds row show while the pin refreshes in neither unit. */
 export const presetMinutes = 15;
 export const presetSeconds = 5;
 
@@ -39,38 +39,52 @@ export function parseInterval(text: string, unit: IntervalUnit): { interval: Int
   return { interval: unit === "min" ? { minutes: count } : { seconds: count } };
 }
 
-/** Whether a pin's interval is one of the presets (else the menu shows it as its own entry). */
-export function isPreset(minutes: number, seconds?: number | null): boolean {
-  return seconds ? seconds === presetSeconds : minutes === presetMinutes;
+/** One of a menu's two interval rows: the value it shows, and what to do when it is applied. */
+export interface IntervalRow {
+  start: { count: number; unit: IntervalUnit };
+  /** `close`: picked or Return (the menu closes); else it was applied by leaving the field. */
+  set: (interval: Interval, close: boolean) => void;
+}
+
+/** What a row says as a whole, for screen readers and tests: "Every 30 sec". */
+function rowWords(count: string, unit: IntervalUnit): string {
+  return `Every ${count.trim() || "…"} ${unit}`;
 }
 
 /**
- * The custom entry's row in a menu: "Every [n] [sec|min] Set", and a line saying what is wrong
- * when the number is not an interval. Return sets it (never an input method's Return).
+ * An interval row of a refresh menu: "Every [n] [sec|min]", the number and unit editable in place.
+ * Clicking the row (not its fields) picks it as it stands; Return in a field (never an input
+ * method's Return) picks it too; leaving the row after an edit applies it and the menu stays
+ * open. Escape drops the edit; clicking another entry of the menu does too. A number that is not
+ * an interval (2 sec to 24 h) is said under the row and nothing changes.
  */
-export function intervalEditor(start: { count: number; unit: IntervalUnit }, set: (interval: Interval) => void): HTMLElement {
-  const row = document.createElement("div");
-  row.className = "refresh-custom";
+export function intervalRow(row: IntervalRow, checked: boolean): HTMLElement {
+  const holder = document.createElement("div");
+  holder.className = "refresh-interval" + (checked ? " checked" : "");
   const line = document.createElement("div");
-  line.className = "refresh-custom-line";
+  line.className = "refresh-interval-line";
+  const pick = document.createElement("button");
+  pick.className = "refresh-interval-pick";
+  pick.setAttribute("role", "menuitemradio");
+  pick.setAttribute("aria-checked", String(checked));
+  pick.textContent = "Every";
   const count = document.createElement("input");
   count.type = "text";
   count.inputMode = "numeric";
-  count.className = "refresh-custom-count";
-  count.value = String(start.count);
+  count.className = "refresh-interval-count";
+  count.value = String(row.start.count);
   count.setAttribute("aria-label", "Interval");
   const unit = document.createElement("select");
-  unit.className = "refresh-custom-unit";
+  unit.className = "refresh-interval-unit";
   unit.setAttribute("aria-label", "Unit");
   unit.innerHTML = `<option value="sec">sec</option><option value="min">min</option>`;
-  unit.value = start.unit;
-  const apply = document.createElement("button");
-  apply.className = "refresh-custom-set";
-  apply.textContent = "Set";
+  unit.value = row.start.unit;
   const error = document.createElement("div");
-  error.className = "refresh-custom-error";
+  error.className = "refresh-interval-error";
   error.setAttribute("role", "alert");
   error.hidden = true;
+  let edited = false;
+  const say = () => pick.setAttribute("aria-label", rowWords(count.value, unit.value as IntervalUnit));
   const check = () => {
     const parsed = parseInterval(count.value, unit.value as IntervalUnit);
     const wrong = "error" in parsed ? parsed.error : "";
@@ -79,28 +93,48 @@ export function intervalEditor(start: { count: number; unit: IntervalUnit }, set
     count.setAttribute("aria-invalid", String(!!wrong));
     return parsed;
   };
-  const submit = () => {
+  const apply = (close: boolean) => {
     const parsed = check();
-    if ("interval" in parsed) set(parsed.interval);
-    else count.focus();
+    if (!("interval" in parsed)) {
+      count.focus();
+      count.select();
+      return;
+    }
+    edited = false;
+    row.set(parsed.interval, close);
   };
-  count.addEventListener("input", () => { if (!error.hidden) check(); });
-  unit.addEventListener("change", () => { if (!error.hidden) check(); });
+  const changed = () => {
+    edited = true;
+    say();
+    if (!error.hidden) check();
+  };
+  count.addEventListener("input", changed);
+  unit.addEventListener("change", changed);
   for (const field of [count, unit] as HTMLElement[]) {
     field.addEventListener("keydown", (event: KeyboardEvent) => {
       // Arrow keys move the caret or pick a unit here, not the menu's focus.
       if (event.key === "ArrowDown" || event.key === "ArrowUp") event.stopPropagation();
+      if (event.key === "Escape") edited = false;
       if (event.key === "Enter" && !isComposingEnter(event)) {
         event.preventDefault();
-        submit();
+        apply(true);
       }
     });
   }
-  apply.addEventListener("click", (event) => {
+  holder.addEventListener("click", (event) => {
     event.stopPropagation();
-    submit();
+    if (event.target === count || event.target === unit) return;
+    apply(true);
   });
-  line.append(document.createTextNode("Every "), count, unit, apply);
-  row.append(line, error);
-  return row;
+  holder.addEventListener("focusout", (event: FocusEvent) => {
+    const next = event.relatedTarget as Node | null;
+    if (!edited || !holder.isConnected || (next && holder.contains(next))) return;
+    // Another entry of the menu was chosen instead: the edit is dropped.
+    if (next && holder.closest(".pin-menu")?.contains(next)) return;
+    apply(false);
+  });
+  say();
+  line.append(pick, count, unit);
+  holder.append(line, error);
+  return holder;
 }

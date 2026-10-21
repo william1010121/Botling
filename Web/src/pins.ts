@@ -1,6 +1,6 @@
 import { post } from "./bridge";
 import { isComposingEnter } from "./ime";
-import { intervalEditor, isPreset, parseInterval, presetMinutes, presetSeconds, refreshWords, type Interval, type IntervalUnit } from "./refresh";
+import { intervalRow, parseInterval, presetMinutes, presetSeconds, refreshWords, type Interval, type IntervalRow, type IntervalUnit } from "./refresh";
 import { commandCard, componentElement, hasLiveFrame, keepFrames, componentSizes, detailTarget, markPinFrames, maxColumns, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
 import type { ChatState, ChipStatus, ComponentInfo, DisplayView, FloatMenu, PinChoiceView, PinRefresh, PinSize, PinView, SpecChipView } from "./types";
 
@@ -182,7 +182,7 @@ function openPinDialog(anchor: HTMLElement, options: { name: string; command: st
       dialog.append(label);
     }
     const wrong = document.createElement("div");
-    wrong.className = "refresh-custom-error";
+    wrong.className = "refresh-interval-error";
     wrong.setAttribute("role", "alert");
     wrong.hidden = true;
     const hint = document.createElement("div");
@@ -210,7 +210,7 @@ function openPinDialog(anchor: HTMLElement, options: { name: string; command: st
       const count = dialog.querySelector<HTMLInputElement>(".pin-minutes");
       const unit = (dialog.querySelector<HTMLSelectElement>(".pin-unit")?.value ?? "min") as IntervalUnit;
       const parsed = parseInterval(count?.value ?? "", unit);
-      const wrong = dialog.querySelector<HTMLElement>(".refresh-custom-error");
+      const wrong = dialog.querySelector<HTMLElement>(".refresh-interval-error");
       if ("error" in parsed) {
         if (wrong) { wrong.textContent = parsed.error; wrong.hidden = false; }
         count?.setAttribute("aria-invalid", "true");
@@ -250,10 +250,7 @@ function showToast(text: string, undo: () => void): void {
 // MARK: Menus and popups
 
 /** A menu's entry; a heading or note is a line of text, not a button. */
-export interface MenuItem { label: string; run: () => void; checked?: boolean; disabled?: boolean; heading?: boolean; note?: boolean; code?: boolean; sizes?: SizeGrid; custom?: CustomInterval }
-
-/** A menu's "Custom…" entry: it opens "Every [n] [sec|min]" in place, starting at `start`. */
-interface CustomInterval { start: { count: number; unit: IntervalUnit }; set: (interval: Interval) => void }
+export interface MenuItem { label: string; run: () => void; checked?: boolean; disabled?: boolean; heading?: boolean; note?: boolean; code?: boolean; sizes?: SizeGrid; interval?: IntervalRow }
 
 /** A menu's size picker: every size as a 4×4 grid of cells, the current one and the component's hints marked. */
 interface SizeGrid { current: PinSize; hints: PinSize[]; pick: (size: PinSize) => void }
@@ -319,6 +316,23 @@ export function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[]): void {
       menu.append(sizeGrid(item.sizes, menu));
       continue;
     }
+    if (item.interval) {
+      // "Every [n] [sec|min]", typed in place: picked or Return closes the menu; leaving the
+      // field after an edit applies it and checks this row, and the menu stays open.
+      const set = item.interval.set;
+      const row = intervalRow({ start: item.interval.start, set: (interval, close) => {
+        if (close) menu.remove();
+        else {
+          menu.querySelectorAll(".checked").forEach((other) => other.classList.remove("checked"));
+          menu.querySelectorAll("[aria-checked=true]").forEach((other) => other.setAttribute("aria-checked", "false"));
+          row.classList.add("checked");
+          row.querySelector(".refresh-interval-pick")?.setAttribute("aria-checked", "true");
+        }
+        set(interval, close);
+      } }, !!item.checked);
+      menu.append(row);
+      continue;
+    }
     if (item.heading || item.note) {
       const text = document.createElement("div");
       text.className = item.heading ? "pin-menu-heading" : "pin-menu-note" + (item.code ? " code" : "");
@@ -332,21 +346,8 @@ export function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[]): void {
     entry.textContent = item.label;
     if (item.checked) entry.classList.add("checked");
     entry.disabled = !!item.disabled;
-    const custom = item.custom;
     entry.addEventListener("click", (event) => {
       event.stopPropagation();
-      if (custom) {
-        // The menu stays open: the entry becomes the row the interval is typed in.
-        const editor = intervalEditor(custom.start, (interval) => {
-          menu.remove();
-          custom.set(interval);
-        });
-        entry.replaceWith(editor);
-        const count = editor.querySelector<HTMLInputElement>("input");
-        count?.focus();
-        count?.select();
-        return;
-      }
       menu.remove();
       item.run();
     });
@@ -389,6 +390,8 @@ function place(popup: HTMLElement, anchor: HTMLElement): void {
   const close = (event: MouseEvent) => {
     if (!popup.isConnected) return document.removeEventListener("mousedown", close);
     if (!popup.contains(event.target as Node)) {
+      // A refresh row's edit is applied as its field is left (see `intervalRow`), then it closes.
+      if (popup.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
       popup.remove();
       document.removeEventListener("mousedown", close);
     }
@@ -435,25 +438,22 @@ function pinMenu(anchor: HTMLElement, pin: PinView, options: { sizes?: boolean; 
 }
 
 /**
- * How a pin with a command refreshes, as its menu offers it: when shown, every 15 min, every
- * 5 sec, its own interval when it is neither (checked), Custom… (typed: 2 sec to 24 h), only on ↻.
+ * How a pin with a command refreshes, as its menu offers it: when shown, every [n] min, every
+ * [n] sec (both typed in place, 2 sec to 24 h; the row in the pin's unit shows its interval and
+ * is checked), only on ↻.
  */
 export function refreshItems(pin: PinView): MenuItem[] {
   const interval = pin.refresh === "interval";
-  const seconds = pin.seconds || null;
+  const seconds = interval ? pin.seconds || null : null;
   const set = (value: Interval) => post({ type: "setPinRefresh", id: pin.id, refresh: "interval", ...value });
-  const items: MenuItem[] = [
+  const inMinutes = interval && !seconds ? pin.minutes : presetMinutes;
+  const inSeconds = seconds ?? presetSeconds;
+  return [
     { label: refreshWords("shown", pin.minutes), checked: pin.refresh === "shown", run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "shown", minutes: pin.minutes }) },
-    { label: refreshWords("interval", presetMinutes), checked: interval && !seconds && pin.minutes === presetMinutes, run: () => set({ minutes: presetMinutes }) },
-    { label: refreshWords("interval", presetMinutes, presetSeconds), checked: interval && seconds === presetSeconds, run: () => set({ seconds: presetSeconds }) },
+    { label: refreshWords("interval", inMinutes), checked: interval && !seconds, run: () => set({ minutes: inMinutes }), interval: { start: { count: inMinutes, unit: "min" }, set } },
+    { label: refreshWords("interval", inMinutes, inSeconds), checked: !!seconds, run: () => set({ seconds: inSeconds }), interval: { start: { count: inSeconds, unit: "sec" }, set } },
+    { label: refreshWords("manual", pin.minutes), checked: pin.refresh === "manual", run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "manual", minutes: pin.minutes }) },
   ];
-  if (interval && !isPreset(pin.minutes, seconds)) {
-    items.push({ label: refreshWords("interval", pin.minutes, seconds), checked: true, run: () => set(seconds ? { seconds } : { minutes: pin.minutes }) });
-  }
-  const start = interval ? (seconds ? { count: seconds, unit: "sec" as const } : { count: pin.minutes, unit: "min" as const }) : { count: 30, unit: "sec" as const };
-  items.push({ label: "Custom…", run: () => {}, custom: { start, set } });
-  items.push({ label: refreshWords("manual", pin.minutes), checked: pin.refresh === "manual", run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "manual", minutes: pin.minutes }) });
-  return items;
 }
 
 /** The float entry's words, as Swift's `Pins.FloatMenu` says them. */

@@ -242,7 +242,7 @@ describe("the pin's menu", () => {
     const layer = setUp();
     layer.update(state());
     document.querySelector<HTMLButtonElement>(".float-card [aria-label='More']")!.click();
-    expect(entries().map((e) => e.textContent)).toContain("Every 5 sec");
+    expect([...document.querySelectorAll(".pin-menu .refresh-interval-pick")].map((e) => e.getAttribute("aria-label"))).toContain("Every 5 sec");
     entries().find((e) => e.textContent === "Stop floating")!.click();
     expect(sent).toContainEqual({ type: "floatPin", id: "P1", floating: false });
   });
