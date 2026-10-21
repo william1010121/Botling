@@ -564,9 +564,9 @@ function openPicker(): void {
 
 /**
  * The pinned component, with its command's ask, error or wait as in the chat, without the bar.
- * Given a size it is a Board tile: drawn at that size, told it is on the Board. Without, it is
- * opened above the input box, told it is "pinned" (frameless there too); `fill` when the user
- * gave that panel a height, so the page is that height, as on the Board.
+ * On the Board it is drawn at its tile's size and fills it (`fill`). Opened above the input box
+ * or floating in a corner it is told it is "pinned" (frameless there too) and is as tall as its
+ * content; its panel scrolls past its most.
  */
 export function pinBody(pin: PinView, size?: PinSize, fill = !!size, where: PinSurface = size ? "board" : "sheet", info: ComponentInfo | undefined = current.components[pin.name]): HTMLElement {
   const key = where === "sheet" ? `pin-${pin.id}` : `${where}-${pin.id}`;
@@ -579,7 +579,8 @@ export function pinBody(pin: PinView, size?: PinSize, fill = !!size, where: PinS
     post({ type: "pinSave", id: pin.id, data });
   };
   const draw = () => {
-    const drawn = componentElement(pin.name, info, pin.display.data, null, key, pin.display.images, detailTarget(pin.display), size, where === "sheet" ? "pinned" : "board", fill, save);
+    // Opened above the input box or floating, it is "pinned": as tall as its content, under the shared header.
+    const drawn = componentElement(pin.name, info, pin.display.data, null, key, pin.display.images, detailTarget(pin.display), size, where === "board" ? "board" : "pinned", fill, save);
     // Its ccb.setStatus sets this pin's chip.
     markPinFrames(drawn, pin.id);
     return drawn;
@@ -611,24 +612,60 @@ export function whenWords(pin: PinView): string {
   return pin.display.command ? refreshWords(pin.refresh, pin.minutes, pin.seconds) : "Snapshot";
 }
 
+/** What an opened or floating pin's header calls it: its about.md's short name ("發版進度卡"), else its folder name. */
+export function pinTitle(pin: PinView, info: ComponentInfo | undefined = current.components[pin.name]): string {
+  const title = info?.title?.trim();
+  return title ? title : pin.name;
+}
+
+/** What its chip says: what its component set, else its headline (red when its command failed). */
+export function pinStatus(pin: PinView): ChipStatus {
+  return pin.chip ?? { text: pin.headline, tone: pin.display.status === "failed" ? "bad" : "neutral" };
+}
+
+/** A header's buttons beyond ↻: ⋯ always, collapse where the panel can be put away. */
+export interface PinHeadTools {
+  more: (anchor: HTMLElement) => void;
+  close?: () => void;
+}
+
+/** All a header shows, to fill it again only when that changed. */
+export function pinHeadKey(pin: PinView, info: ComponentInfo | undefined): string {
+  return JSON.stringify([pin.name, pinTitle(pin, info), pinStatus(pin), pin.display.status, pin.display.ranAt ?? null, info?.icon ?? null, info?.iconImage ?? null, !!pin.display.command, pin.refresh, pin.minutes, pin.seconds ?? null]);
+}
+
 /**
- * An opened pin's controls, floating over its top-right corner on hover or keyboard focus, as on
- * a Board tile: ↻, ⋯ (name, when it ran, its command, refresh, move, unpin) and collapse.
+ * The header an opened pin (above the input box) and a floating pin share, one line: its icon,
+ * its name (about.md's, not its folder's), its status chip, then ↻ (one with a command), ⋯ and,
+ * given `close`, collapse. Filled into `head`, which is kept, so what listens on it stays.
  */
-function sheetTools(pin: PinView, collapse: () => void, body: HTMLElement): HTMLElement {
-  const tools = document.createElement("div");
-  tools.className = "pin-sheet-tools";
-  tools.setAttribute("role", "toolbar");
-  tools.setAttribute("aria-label", `${pin.name}: ${whenWords(pin)}`);
-  const status = pin.display.status;
+export function fillPinHead(head: HTMLElement, pin: PinView, info: ComponentInfo | undefined, tools: PinHeadTools): void {
+  head.classList.add("pin-head");
+  head.innerHTML = "";
+  const status = pinStatus(pin);
+  head.append(chipIcon(info, status));
+  const title = document.createElement("span");
+  title.className = "pin-head-title";
+  title.textContent = pinTitle(pin, info);
+  title.title = pin.name;
+  const chip = document.createElement("span");
+  chip.className = "pin-head-status";
+  chip.dataset.tone = status.tone;
+  chip.textContent = status.text;
+  const bar = document.createElement("span");
+  bar.className = "pin-head-tools";
+  bar.setAttribute("role", "toolbar");
+  bar.setAttribute("aria-label", `${pinTitle(pin, info)}: ${whenWords(pin)}`);
+  const running = pin.display.status;
   if (pin.display.command) {
-    const refresh = button("pin-tool" + (status === "running" ? " spinning" : ""), `Refresh (${whenWords(pin)})`, icons.refresh, () => refreshPin(pin));
-    refresh.disabled = status === "running" || status === "approve";
-    tools.append(refresh);
+    const refresh = button("pin-tool" + (running === "running" ? " spinning" : ""), `Refresh (${whenWords(pin)})`, icons.refresh, () => refreshPin(pin));
+    refresh.disabled = running === "running" || running === "approve";
+    bar.append(refresh);
   }
-  const more = button("pin-tool", "More", icons.more, () => pinMenu(more, pin, { about: true, report: body }));
-  tools.append(more, button("pin-tool", "Collapse", icons.close, collapse));
-  return tools;
+  const more = button("pin-tool", "More", icons.more, () => tools.more(more));
+  bar.append(more);
+  if (tools.close) bar.append(button("pin-tool", "Collapse", icons.close, tools.close));
+  head.append(title, chip, bar);
 }
 
 // MARK: Chips, the sheet, the Board
@@ -751,11 +788,16 @@ export class PinArea {
   private columns = 0;
   /** While the opened pin's panel is being dragged taller or shorter. */
   private sheetDrag = false;
+  /** The opened pin's header, kept (filled again when what it shows changed). */
+  private readonly sheetHead: HTMLElement;
+  private sheetHeadKey = "";
 
   constructor(area: HTMLElement, board: HTMLElement) {
     this.sheet = document.createElement("section");
     this.sheet.className = "pin-sheet";
     this.sheet.hidden = true;
+    this.sheetHead = document.createElement("div");
+    this.sheetHead.className = "pin-sheet-head pin-head";
     this.dock = document.createElement("div");
     this.dock.className = "pin-dock";
     this.dock.setAttribute("role", "toolbar");
@@ -824,7 +866,7 @@ export class PinArea {
     pins.forEach((pin, index) => {
       // A small status icon: the component's icon, a short value beside it and a dot for its
       // tone; its name and whole line in the tooltip.
-      const status: ChipStatus = pin.chip ?? { text: pin.headline, tone: pin.display.status === "failed" ? "bad" : "neutral" };
+      const status = pinStatus(pin);
       const chip = document.createElement("button");
       chip.className = "pin-chip" + (pin.id === this.openID ? " on" : "") + (pin.display.status === "failed" ? " failed" : "");
       chip.draggable = true;
@@ -887,43 +929,58 @@ export class PinArea {
       if (this.sheetKey) {
         this.sheet.innerHTML = "";
         this.sheetKey = "";
+        this.sheetHeadKey = "";
       }
       return;
     }
     this.sheet.hidden = false;
-    // Its height is not part of it: a panel dragged taller keeps its frame. Whether it has a
-    // height of its own is (the page then fills it).
-    const sized = typeof pin.panelHeight === "number" && pin.panelHeight > 0;
-    if (!this.sheetDrag) this.sheet.style.height = sized ? `${panelHeight(pin.panelHeight!)}px` : "";
-    this.sheet.classList.toggle("sized", sized || !!this.sheetDrag);
-    const key = JSON.stringify([{ ...drawnPart(pin, "sheet"), panelHeight: null }, sized, current.components[pin.name] ?? null]);
+    // As tall as its content; a height the user dragged it to is the most it grows to (it
+    // scrolls past that), so it never shows an empty area under a short component.
+    const capped = typeof pin.panelHeight === "number" && pin.panelHeight > 0;
+    if (!this.sheetDrag) {
+      this.sheet.style.height = "";
+      this.sheet.style.maxHeight = capped ? `${panelHeight(pin.panelHeight!)}px` : "";
+    }
+    this.sheet.classList.toggle("sized", capped || this.sheetDrag);
+    this.sheet.classList.toggle("running", pin.display.status === "running");
+    const info = current.components[pin.name];
+    this.sheet.setAttribute("aria-label", pinTitle(pin, info));
+    const headKey = pinHeadKey(pin, info);
+    if (headKey !== this.sheetHeadKey) {
+      this.sheetHeadKey = headKey;
+      const id = pin.id;
+      fillPinHead(this.sheetHead, pin, info, {
+        more: (anchor) => {
+          const latest = current.pins.find((p) => p.id === id) ?? pin;
+          pinMenu(anchor, latest, { about: true, report: this.sheet.querySelector<HTMLElement>(":scope > .pin-sheet-body") ?? undefined });
+        },
+        close: () => this.close(),
+      });
+    }
+    const key = JSON.stringify([{ ...drawnPart(pin, "sheet"), panelHeight: null }, info ?? null]);
     if (key === this.sheetKey) return;
     this.sheetKey = key;
     // A component that takes live data (ccb.onData) keeps its frame and gets the new data.
     const before = this.sheet.querySelector<HTMLElement>(":scope > .pin-sheet-body");
     const keep = hasLiveFrame(before) ? before : null;
     // Taken out of the page even for a moment, a frame loads again: the body that is kept stays.
-    for (const child of [...this.sheet.children]) if (child !== keep) child.remove();
-    this.sheet.setAttribute("aria-label", pin.name);
-    // Like a Board tile: the component fills the panel, its controls float over it on hover
-    // (and stay in sight while its command runs).
+    for (const child of [...this.sheet.children]) if (child !== keep && child !== this.sheetHead) child.remove();
     this.sheet.classList.remove("hovered");
-    this.sheet.classList.toggle("running", pin.display.status === "running");
     const body = document.createElement("div");
     body.className = "pin-sheet-body";
-    body.append(pinBody(pin, undefined, sized));
+    body.append(pinBody(pin, undefined, false));
     const shown = keep ? keepFrames(keep, body) : body;
     if (shown !== keep) keep?.remove();
-    if (shown.parentElement !== this.sheet) this.sheet.append(shown);
-    shown.before(this.sheetHandle(pin));
-    shown.after(sheetTools(pin, () => this.close(), shown));
+    if (this.sheetHead.parentElement !== this.sheet) this.sheet.prepend(this.sheetHead);
+    if (shown.parentElement !== this.sheet) this.sheetHead.after(shown);
+    this.sheetHead.before(this.sheetHandle(pin));
     if (pin.makingLive) shown.after(liveNote());
   }
 
   /**
    * The grab bar along an opened pin's top edge: the panel rises from the input box, so dragging
-   * it up makes it taller and down shorter, within `panelHeight`'s limits; a double-click gives
-   * it back its content's height. The component hears each step (`ccb.onSize`).
+   * it up makes it taller and down shorter, within `panelHeight`'s limits; that is then the most
+   * it grows to (shorter content, a shorter panel). A double-click takes that limit away. The component hears each step (`ccb.onSize`).
    */
   private sheetHandle(pin: PinView): HTMLElement {
     const handle = document.createElement("div");
@@ -941,15 +998,18 @@ export class PinArea {
       this.sheet.classList.add("sized", "resizing");
       document.body.classList.add("pin-resizing");
       capture(handle, event.pointerId);
+      // While dragged it is exactly that tall; let go, that is the most it grows to.
       const move = (moved: PointerEvent) => {
         height = panelHeight(start + startY - moved.clientY);
         this.sheet.style.height = `${height}px`;
+        this.sheet.style.maxHeight = `${height}px`;
       };
       const up = () => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
         window.removeEventListener("pointercancel", up);
         this.sheetDrag = false;
+        this.sheet.style.height = "";
         this.sheet.classList.remove("resizing");
         document.body.classList.remove("pin-resizing");
         if (height !== Math.round(start)) post({ type: "setPinHeight", id: pin.id, height });

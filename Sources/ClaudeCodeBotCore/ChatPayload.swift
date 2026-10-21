@@ -264,6 +264,9 @@ public struct ChatPayload: Encodable, Equatable {
         var icon: String? = nil
         /// An SF Symbol `icon` drawn as a PNG data URL (the page cannot draw symbols itself).
         var iconImage: String? = nil
+        /// Its short human name from its about.md's first line ("發版進度卡"), for an opened or
+        /// floating pin's header; nil: the page shows its folder name.
+        var title: String? = nil
     }
 
     var botID: String
@@ -443,7 +446,8 @@ public struct ChatPayload: Encodable, Equatable {
                 hasPrevious: library.hasPrevious(name),
                 sizes: library.sizes(of: name).map(\.rawValue),
                 icon: icon,
-                iconImage: icon.flatMap(ComponentIcon.symbolImage)
+                iconImage: icon.flatMap(ComponentIcon.symbolImage),
+                title: library.shortTitle(of: name)
             )
         }
         return ChatPayload(
