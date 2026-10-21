@@ -10,6 +10,10 @@ import { handleMediaClicks } from "./lightbox";
 import { PluginHost, type PluginSpec } from "./plugins";
 import type { ChatState, MessageView, SpecState } from "./types";
 import { escapeHTML } from "./util";
+import { installImeGuard } from "./ime";
+
+// Before anything listens for keys: an input method's Return never reaches a page handler.
+installImeGuard(window);
 
 /** How close to the bottom (px) still counts as being at the bottom. */
 const bottomSlack = 80;

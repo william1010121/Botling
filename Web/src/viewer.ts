@@ -1,5 +1,6 @@
 import { mathPlugin } from "../plugins/ccb-latex/src/math";
 import { post } from "./bridge";
+import { installImeGuard } from "./ime";
 import { createMarkdown } from "./markdown";
 
 /**
@@ -16,6 +17,7 @@ export interface ViewerDocument {
   name: string;
 }
 
+installImeGuard(window);
 const markdown = createMarkdown().use(mathPlugin);
 
 /** A URL from the file made absolute against the file itself (`pics/a.png` → `file:///…/pics/a.png`). */

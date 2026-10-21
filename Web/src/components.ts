@@ -1,4 +1,5 @@
 import { post } from "./bridge";
+import { imeGuardScript } from "./ime";
 import { openMedia } from "./lightbox";
 import { escapeHTML } from "./util";
 import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./types";
@@ -57,6 +58,9 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./
  *   content. One rule for all: `.card { border: 0; background: none; border-radius: 0;
  *   padding: 12px }` with `html[data-surface="board"] .card { height: 100% }`.
  * The frame reports its height and answers to this page, which passes answers on to Swift.
+ * Before the template runs, the frame gets the input-method guard (`ime.ts`): a Return that commits
+ * a Zhuyin or Pinyin candidate never reaches the template's keydown/keypress handlers or submits
+ * its form, so a template's "send on Enter" is safe without checking anything itself.
  */
 export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2", surface: Surface = "chat", fill = surface === "board", saving = false): string {
   const safe = (json: string) => json.replace(/</g, "\\u003c");
@@ -67,6 +71,8 @@ html[data-surface="board"] #ccb-root{height:100%}
 html[data-fill],html[data-fill] body,html[data-fill] #ccb-root{height:100%}html[data-fill] #ccb-root{container-type:size}
 html[data-fill] body{overflow-y:auto;scrollbar-width:none}html[data-fill] body::-webkit-scrollbar{display:none}</style>
 <script>
+// First of all: an input method's Return (Zhuyin, Pinyin) never reaches the template's handlers.
+${imeGuardScript}
 (() => {
   const images = ${safe(JSON.stringify(images))};
   // Whether ccb.save keeps anything here.

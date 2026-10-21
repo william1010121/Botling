@@ -3,6 +3,7 @@ import { EditorState, Prec, StateEffect, type Extension } from "@codemirror/stat
 import { EditorView, keymap, placeholder as placeholderExtension } from "@codemirror/view";
 import { Compartment } from "@codemirror/state";
 import { post } from "./bridge";
+import { isComposingEnter, isComposingKey, isSendEnter } from "./ime";
 import { escapeHTML } from "./util";
 import type { ChatState } from "./types";
 
@@ -76,7 +77,6 @@ export class Composer {
           EditorView.lineWrapping,
           this.placeholder.of(placeholderExtension("")),
           keymap.of([
-            { key: "Enter", run: (view) => (view.composing ? false : this.submit()) },
             { key: "Shift-Enter", run: insertNewlineAndIndent },
             ...defaultKeymap,
             ...historyKeymap,
@@ -88,7 +88,7 @@ export class Composer {
           // Ahead of every keymap: a key pressed while an input method is choosing (Zhuyin, Pinyin)
           // belongs to it, so Return commits the candidate instead of sending.
           Prec.highest(EditorView.domEventHandlers({
-            keydown: (event, view) => event.isComposing || event.keyCode === 229 || view.composing || this.mentionKey(event) || this.onKey(event),
+            keydown: (event, view) => isComposingKey(event) || isComposingEnter(event) || view.composing || this.mentionKey(event) || this.onKey(event) || this.enterKey(event),
           })),
           EditorView.domEventHandlers({
             paste: (event) => this.takeFiles(event.clipboardData),
@@ -207,9 +207,19 @@ export class Composer {
     });
   }
 
+  /** Return alone sends (Shift-Return is a new line); an input method's Return never does. */
+  private enterKey(event: KeyboardEvent): boolean {
+    if (!isSendEnter(event) || event.metaKey || event.ctrlKey || event.altKey) return false;
+    // Nothing to send: Return falls through to the keymap and is a new line, as before.
+    if (!this.submit()) return false;
+    event.preventDefault();
+    return true;
+  }
+
   /** Up/Down choose, Return or Tab put the name in, Escape closes the list. */
   private mentionKey(event: KeyboardEvent): boolean {
     if (this.mentionMatches.length === 0) return false;
+    if (isComposingKey(event) || isComposingEnter(event)) return false;
     // Shift-Return is a new line, Cmd-… a shortcut: not for the list.
     if (event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return false;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
