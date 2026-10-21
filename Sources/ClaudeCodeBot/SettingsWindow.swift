@@ -362,6 +362,7 @@ private struct PermissionsSection: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        ResultsSection(workspace: workspace)
         let approved = workspace.approvedCommands
         PanelSection("Approved component commands") {
             Card {
@@ -456,6 +457,44 @@ private struct PluginsSection: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
             }
+        }
+    }
+}
+
+/// Where bots put reports and other results for you: a claude.ai Artifact or a local HTML page.
+struct ResultsSection: View {
+    @ObservedObject var workspace: Workspace
+
+    var body: some View {
+        PanelSection("Reports and results") {
+            HStack(spacing: 12) {
+                Text("Publish as").font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { workspace.settings.resultPublishing },
+                    set: { workspace.setResultPublishing($0) }
+                )) {
+                    ForEach(ResultPublishing.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .labelsHidden().pickerStyle(.menu).fixedSize()
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+            Text(Self.explanation(workspace.settings.resultPublishing))
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.faint)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    static func explanation(_ choice: ResultPublishing) -> String {
+        switch choice {
+        case .artifactUnlessSensitive:
+            "Bots publish reports as private claude.ai Artifacts you open in your browser. Anything sensitive (keys, personal data, what you said to keep local), or when publishing fails, stays a page in the project's .bot/artifacts folder."
+        case .localOnly:
+            "Bots save every report as a page in the project's .bot/artifacts folder; nothing is published to claude.ai."
+        case .artifactAlways:
+            "Bots publish every report as a private claude.ai Artifact, sensitive or not; a local page only when publishing fails."
         }
     }
 }

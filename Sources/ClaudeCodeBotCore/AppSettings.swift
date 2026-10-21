@@ -45,6 +45,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Nil (a settings file from before it) means none.
     public var globalFloats: [GlobalFloat]?
 
+    /// Where bots put results meant for the user (reports, comparisons, previews). Nil (a
+    /// settings file from before it) means `.artifactUnlessSensitive`.
+    public var resultPublishingChoice: ResultPublishing?
+
+    public var resultPublishing: ResultPublishing { resultPublishingChoice ?? .artifactUnlessSensitive }
+
     public init(developerMode: Bool = false, developerProjectID: UUID? = nil) {
         self.developerMode = developerMode
         self.developerProjectID = developerProjectID
@@ -60,6 +66,29 @@ public struct AppSettings: Codable, Equatable, Sendable {
         guard let data = try? JSONEncoder().encode(self) else { return }
         try? data.write(to: url, options: .atomic)
     }
+}
+
+/// Where bots put results meant for the user: a claude.ai Artifact (published with Claude Code's
+/// Artifact tool, private by default) or one local HTML page in their `artifacts` folder. The
+/// rule they are told comes from it (`BotPrompts.resultsRule`).
+public enum ResultPublishing: String, Codable, CaseIterable, Sendable {
+    /// An Artifact; sensitive content, or no working Artifact tool, a local page.
+    case artifactUnlessSensitive
+    /// Always a local HTML page.
+    case localOnly
+    /// Always an Artifact; a local page only when the tool cannot publish.
+    case artifactAlways
+
+    public var displayName: String {
+        switch self {
+        case .artifactUnlessSensitive: "Artifact, sensitive ones local"
+        case .localOnly: "Always a local HTML page"
+        case .artifactAlways: "Always an Artifact"
+        }
+    }
+
+    /// The Claude Code tool that publishes Artifacts.
+    public static let tool = "Artifact"
 }
 
 /// Tokens one turn used, from the `usage` on `claude`'s result line (per turn, unlike the cost).

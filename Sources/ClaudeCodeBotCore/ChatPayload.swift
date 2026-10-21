@@ -49,6 +49,8 @@ public struct ChatPayload: Encodable, Equatable {
         /// All the chat's background work, on its latest message only (nil on the others): one
         /// row of counts (subagents, waiting, done, failed) that moves down as messages arrive.
         var tasks: [TaskChip]? = nil
+        /// claude.ai Artifacts it links to, drawn as cards under it (the links stay chips too).
+        var artifacts: [ArtifactLink.Card]? = nil
     }
 
     /// Background work under a reply: a command or a subagent, with how it is doing. Times are
@@ -429,7 +431,8 @@ public struct ChatPayload: Encodable, Equatable {
                 component: specs && message.role == .bot
                     ? message.shown.first { $0.name != "choices" && $0.name != PagePreview.component && library?.names.contains($0.name) == true }?.name
                     : nil,
-                tasks: nil
+                tasks: nil,
+                artifacts: artifactCards(for: message)
             )
         }
         // All the chat's background work goes on its latest message, as one row of counts.
@@ -796,6 +799,13 @@ public struct ChatPayload: Encodable, Equatable {
             shown.images = images.isEmpty ? nil : images
         }
         return shown
+    }
+
+    /// Cards for the claude.ai Artifacts a bot's line or a notice links to.
+    static func artifactCards(for message: ChatMessage) -> [ArtifactLink.Card]? {
+        guard message.role == .bot || message.role == .notice else { return nil }
+        let cards = ArtifactLink.cards(in: message.text)
+        return cards.isEmpty ? nil : cards
     }
 
     /// Cards for the result pages a bot's line or a notice links to, when the card component is

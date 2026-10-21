@@ -1,3 +1,4 @@
+import { artifactCard } from "./artifacts";
 import { post } from "./bridge";
 import { pinBar, specPinButton } from "./pins";
 import { answerAction, answerImages, choicesData, commandCard, componentElement, detailTarget, fallbackChoices } from "./components";
@@ -427,6 +428,8 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     holder.append(card, bar);
     appendWide(holder);
   });
+  // claude.ai Artifacts it links to, as cards under the text (the links stay chips too).
+  message.artifacts?.forEach((card) => bubble.append(artifactCard(card)));
   if (message.openable) {
     const open = document.createElement("button");
     open.className = "open-source";

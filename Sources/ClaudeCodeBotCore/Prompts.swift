@@ -10,13 +10,29 @@ struct BotPrompts {
 
     static let relayPrefix = "(From the main bot) "
 
-    init(profile: BotProfile) {
+    /// What a bot or team is told about results meant for the user, from the user's choice in
+    /// Settings; `folder` is its `artifacts` folder, for a local page.
+    static func resultsRule(_ choice: ResultPublishing, folder: String) -> String {
+        let local = "one HTML page: a single file with its styles inline, starting with <!doctype html><meta charset=\"utf-8\">, saved to \(folder)/<english-file-name>.html; link it in your reply as [name](file://full path of that file). The app opens it in a window of its own."
+        let artifact = "one page published as a claude.ai Artifact with the Artifact tool (private by default; follow the tool's own instructions, which load its design skill first); link it in your reply as [name](the https://claude.ai/… link it returns)."
+        let rule = switch choice {
+        case .artifactUnlessSensitive:
+            "go into \(artifact) Only when the content is sensitive (secrets, credentials, personal data, private work the user marked private, anything the user said to keep local) or the Artifact tool is unavailable or fails (offline, not signed in), make it \(local)"
+        case .localOnly:
+            "go into \(local) The user chose to keep results local: do not publish them with the Artifact tool."
+        case .artifactAlways:
+            "go into \(artifact) The user chose this for every result, sensitive or not. Only when the Artifact tool is unavailable or fails (offline, not signed in), make it \(local)"
+        }
+        return "Results meant for the user (reports, comparisons, screenshots, previews) \(rule) Pictures and videos shown inline stay file:// links."
+    }
+
+    init(profile: BotProfile, results: ResultPublishing = .artifactUnlessSensitive) {
         let memory = profile.memoryPath
         let artifacts = profile.artifactsURL.path
         let archive = profile.archiveURL.path
         let results = profile.role == .main
-            ? "- You are the single point of contact. Your job is to hand work over: anything to be built (pages, reports, code, comparisons) goes to a project or a temporary team, and they hand the result page back. Look things up yourself (files, the web) when that answers the user or tells you where the work belongs."
-            : "- Results meant for the user (reports, comparisons, screenshots, previews) go into one HTML page: a single file with its styles inline, starting with <!doctype html><meta charset=\"utf-8\">, saved to \(artifacts)/<english-file-name>.html; link it in your reply as [name](file://full path of that file). The app opens it in a window of its own. Do not paste long text."
+            ? "- You are the single point of contact. Your job is to hand work over: anything to be built (pages, reports, code, comparisons) goes to a project or a temporary team, and they hand the result link back. Look things up yourself (files, the web) when that answers the user or tells you where the work belongs."
+            : "- " + Self.resultsRule(results, folder: artifacts) + " Do not paste long text."
         let style = """
         - The user is like a CEO with very little attention. Reply in the user's language (match the language of their latest message). At most 3 sentences, only the conclusion and the next step.
         - Replies may use markdown (bold, lists, tables, code blocks); the app renders it. When you mention a result or a link, write [name](url) and the app draws it as a clickable chip.

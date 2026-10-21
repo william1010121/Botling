@@ -51,6 +51,15 @@ export interface MessageView {
   component?: string | null;
   /** All the chat's background work, on its latest message only: one row of counts under it. */
   tasks?: TaskChipView[] | null;
+  /** claude.ai Artifacts it links to, drawn as cards under it. */
+  artifacts?: ArtifactCardView[] | null;
+}
+
+/** A claude.ai Artifact a reply links to. */
+export interface ArtifactCardView {
+  title: string;
+  url: string;
+  host: string;
 }
 
 /**
