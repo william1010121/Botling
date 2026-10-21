@@ -159,7 +159,7 @@ function specState(overrides: Partial<SpecState> = {}): SpecState {
 describe("the spec panel", () => {
   it("Ask for changes… does not send on the Return that commits a candidate; plain Return sends; Shift-Return does not", () => {
     const root = document.body.appendChild(document.createElement("div"));
-    new SpecPanel(root).update(specState());
+    new SpecPanel(root).update(specState({ version: 2 }));
     const box = root.querySelector<HTMLTextAreaElement>(".spec-say textarea")!;
     expect(box.placeholder).toBe("Ask for changes…");
     box.value = "失敗的要列名字";
