@@ -8,6 +8,15 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **What you typed but did not send stays in each bot's input box.** Switching bots used to
+  empty the box (the page cleared it whenever another chat's state came in), so a half-written
+  message was lost. Now the input box keeps a draft per chat (a bot, a group, the main bot's
+  "Make a wish" box alike, one mechanism) with its caret: switching away keeps it, coming back
+  puts it back, sending clears it. Drafts survive a restart in `drafts.json` in the app's folder;
+  the page tells the app a moment after typing stops (and at once on switching, leaving the box
+  or sending), not on every key. While an input method is composing, only the committed text is
+  kept. Attached files and the reply target were already kept per bot. Undo starts fresh with
+  each chat's draft, so it never brings back another bot's text.
 - **Board tiles go anywhere on the grid, and dragging is smooth.** A tile used to be put before or
   after another and the Board then packed everything toward the left and the top, so tiles
   jumped around and gaps closed by themselves; a drag also measured every other tile on every

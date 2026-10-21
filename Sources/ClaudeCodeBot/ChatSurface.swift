@@ -183,6 +183,8 @@ struct ChatSurface: NSViewRepresentable {
                 ready = true
                 patcher.reset()
                 pluginRevision = -1
+                // The drafts before the first state, so the first chat shows its own.
+                view?.evaluateJavaScript(workspace.drafts.script)
                 push()
                 view?.evaluateJavaScript("ccb.focus()")
             case "send":
@@ -192,6 +194,11 @@ struct ChatSurface: NSViewRepresentable {
                 inputs.replies[bot.id] = nil
                 let text = body["text"] as? String ?? ""
                 Task { await workspace.send(text, files: files.map(\.url), replyingTo: reply, to: bot) }
+            case "draft":
+                if let chat = body["botID"] as? String {
+                    let text = body["text"] as? String ?? ""
+                    workspace.drafts.set(chat, ComposerDrafts.Draft(text: text, cursor: body["cursor"] as? Int ?? text.utf16.count))
+                }
             case "choose":
                 if let messageID = id("messageID"), let index = body["index"] as? Int {
                     workspace.choose(index, in: messageID, of: bot)

@@ -176,6 +176,8 @@ public final class Workspace: ObservableObject {
     /// The subscription's 5-hour and weekly limits, as a bot's `claude` last reported them.
     @Published public internal(set) var rateLimits: RateLimits
     var rateLimitsURL: URL { root.appending(path: "rate-limits.json") }
+    /// Unsent text in each chat's input box, kept over switching bots and restarts.
+    public private(set) lazy var drafts = ComposerDrafts(url: root.appending(path: "drafts.json"))
     /// The ClaudeCodeBot build running now; nil when not run from an app bundle (`swift run`).
     public var runningBuild: BuildInfo?
     /// Runs the install script, detached, and quits the app (the app sets it).

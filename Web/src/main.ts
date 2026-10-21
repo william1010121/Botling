@@ -10,7 +10,7 @@ import { PinArea } from "./pins";
 import { FloatLayer } from "./float";
 import { handleMediaClicks } from "./lightbox";
 import { PluginHost, type PluginSpec } from "./plugins";
-import type { ChatState, MessageView, SpecState, StatePatch } from "./types";
+import type { ChatState, Draft, MessageView, SpecState, StatePatch } from "./types";
 import { applyPatch } from "./patch";
 import { escapeHTML } from "./util";
 import { installImeGuard } from "./ime";
@@ -106,7 +106,7 @@ class Chat {
     if (switched) {
       this.botID = state.botID;
       this.clearList();
-      this.composer.setText("");
+      // The input box keeps each chat's draft itself (Composer.update).
     }
 
     // A new language (Settings) draws every message again in its words.
@@ -194,6 +194,10 @@ class Chat {
 
   focus(): void {
     this.composer.focus();
+  }
+
+  setDrafts(drafts: Record<string, Draft>): void {
+    this.composer.setDrafts(drafts);
   }
 
   /**
@@ -306,6 +310,8 @@ declare global {
   interface Window {
     ccb: {
       setState(state: ChatState): void;
+      /** The drafts the app kept, by chat: sent once when the page loads. */
+      setDrafts(drafts: Record<string, Draft>): void;
       patchState(patch: StatePatch): void;
       setPlugins(specs: PluginSpec[]): Promise<void>;
       runCommand(id: string): void;
@@ -375,6 +381,7 @@ function setSpec(state: SpecState): void {
 }
 window.ccb = {
   setState: (state) => chat.setState(state),
+  setDrafts: (drafts) => chat.setDrafts(drafts),
   patchState: (patch) => chat.patchState(patch),
   setPlugins: (specs) => chat.plugins.sync(specs),
   runCommand: (id) => chat.plugins.execute(id),

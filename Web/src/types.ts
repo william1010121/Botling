@@ -321,6 +321,12 @@ export interface ComponentInfo {
   title?: string | null;
 }
 
+/** Text typed in a chat's input box but not sent, and where the caret was. */
+export interface Draft {
+  text: string;
+  cursor: number;
+}
+
 export interface ChatState {
   botID: string;
   botName: string;
@@ -366,6 +372,8 @@ export type Action =
   /** A `patchState` could not be applied: send the whole state. */
   | { type: "resync" }
   | { type: "send"; text: string }
+  /** A chat's unsent text and caret changed (empty: none), for the app to keep over a restart. */
+  | { type: "draft"; botID: string; text: string; cursor: number }
   | { type: "choose"; messageID: string; index: number }
   | { type: "answer"; messageID: string; text: string; images?: { name: string; base64: string }[] }
   | { type: "reply"; messageID: string }
