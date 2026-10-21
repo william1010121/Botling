@@ -1,5 +1,5 @@
 import { post } from "./bridge";
-import { detailReply, keepFrames } from "./components";
+import { buildNear, detailReply, keepFrames, releaseFrames } from "./components";
 import { startTaskTicks, taskOutput } from "./tasks";
 import { Composer, sendFile } from "./composer";
 import { extensions, feedback, makeComponents, messageElement, typingElement } from "./messages";
@@ -78,9 +78,15 @@ class Chat {
 
   /** Draws every message again, after a plugin changed how messages are drawn. */
   redraw(): void {
-    this.drawn.clear();
-    this.list.innerHTML = "";
+    this.clearList();
     if (this.last) this.setState(this.last, true);
+  }
+
+  /** Every message gone from the page (another bot's chat, or all drawn again). */
+  private clearList(): void {
+    releaseFrames(this.list);
+    this.list.innerHTML = "";
+    this.drawn.clear();
   }
 
   setState(state: ChatState, redrawing = false): void {
@@ -90,8 +96,7 @@ class Chat {
     this.newestID = state.messages[state.messages.length - 1]?.id ?? null;
     if (switched) {
       this.botID = state.botID;
-      this.list.innerHTML = "";
-      this.drawn.clear();
+      this.clearList();
       this.composer.setText("");
     }
 
@@ -101,14 +106,14 @@ class Chat {
     if (flagged !== feedback.enabled || making !== makeComponents.enabled) {
       feedback.enabled = flagged;
       makeComponents.enabled = making;
-      this.list.innerHTML = "";
-      this.drawn.clear();
+      this.clearList();
     }
 
     // Gone ones first, so they do not make the rest move (a moved frame reloads).
     const keep = new Set(state.messages.map((message) => message.id));
     for (const [id, entry] of this.drawn) {
       if (!keep.has(id)) {
+        releaseFrames(entry.element);
         entry.element.remove();
         this.drawn.delete(id);
       }
@@ -155,6 +160,8 @@ class Chat {
     const sentNow = !switched && !redrawing && newest?.role === "user" && newest.id !== newestBefore;
     if (switched || sentNow) this.stuck = true;
     if (this.stuck) this.scrollToBottom();
+    // The component frames now in view (or near it) are built; the rest once scrolled to.
+    buildNear();
   }
 
   focus(): void {

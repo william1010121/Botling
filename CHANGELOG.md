@@ -68,6 +68,15 @@ app and publishes it on GitHub Releases.
   load only once you open it, so opening a chat no longer reads every screenshot in it. Pictures
   kept before are converted once in the background (in a test copy: 30.9 MB of step pictures
   became 22.9 MB, plus 5.0 MB of small copies).
+- **A chat with many components opens without freezing.** Every component in a chat's history
+  was built when the chat opened, so a 500-message chat with 16 components froze for about
+  3 seconds before the first one showed (and again on each switch back to it). A component in the
+  chat is now built only once it scrolls within about 1500 px of view; until then it holds its
+  place at the height it last had (remembered across launches), and one above the view that grows
+  keeps what you are reading where it is. In that chat, opening it now freezes for about 0.2 s,
+  and a component at the bottom shows in about 0.5 s. Pins, the Board and floating pins are built
+  at once as before. A command card in the history no longer runs its command when the chat
+  opens; it runs once you scroll near it, and its `refresh` waits for that too.
 
 - **A Board card can be dropped between two others.** While a card was dragged, the others
   jumped as soon as the pointer touched one, and a card it had just passed over was ignored when
