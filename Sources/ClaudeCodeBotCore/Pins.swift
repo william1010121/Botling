@@ -124,6 +124,49 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
     /// from its about.md's `Board command:`, so it refreshes on the Board; it shows the bot's
     /// data, with a small note, until that lands.
     public var makingLive = false
+    /// Floated in a corner of the chat window, over any bot's chat (and the Board), so it can be
+    /// watched without asking; nil: it does not float. At most `Pins.maxFloating` float at once.
+    public var float: Floating?
+
+    /// Where a floating pin sits and how it shows: a corner it snaps to, its card's size in
+    /// points (dragged by its corner), and whether it is folded to one line (title and status).
+    public struct Floating: Codable, Equatable, Sendable {
+        public enum Corner: String, Codable, CaseIterable, Sendable {
+            case topRight, topLeft, bottomRight, bottomLeft
+        }
+
+        public static let defaultWidth = 280
+        public static let defaultHeight = 160
+        /// The sizes its card may be dragged to.
+        public static let widths = 200...640
+        public static let heights = 100...480
+
+        public var corner: Corner
+        public var width: Int
+        public var height: Int
+        public var collapsed: Bool
+
+        public init(corner: Corner = .topRight, width: Int = Floating.defaultWidth, height: Int = Floating.defaultHeight, collapsed: Bool = false) {
+            self.corner = corner
+            self.width = Self.clamp(width, Self.widths)
+            self.height = Self.clamp(height, Self.heights)
+            self.collapsed = collapsed
+        }
+
+        static func clamp(_ value: Int, _ range: ClosedRange<Int>) -> Int { min(max(value, range.lowerBound), range.upperBound) }
+
+        private enum CodingKeys: String, CodingKey { case corner, width, height, collapsed }
+
+        // Anything this build does not know falls back to the defaults, so the file still loads.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let corner: String? = try? c.decodeIfPresent(String.self, forKey: .corner)
+            let width: Int? = try? c.decodeIfPresent(Int.self, forKey: .width)
+            let height: Int? = try? c.decodeIfPresent(Int.self, forKey: .height)
+            let collapsed: Bool? = try? c.decodeIfPresent(Bool.self, forKey: .collapsed)
+            self.init(corner: corner.flatMap(Corner.init(rawValue:)) ?? .topRight, width: width ?? Self.defaultWidth, height: height ?? Self.defaultHeight, collapsed: collapsed ?? false)
+        }
+    }
 
     public static let defaultMinutes = 15
     /// A pin refreshed every so often runs at most this often.
@@ -155,7 +198,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         self.seconds = seconds.map { max(Self.minimumSeconds, $0) }
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size, status, panelHeight, savedAt, seconds, makingLive }
+    private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size, status, panelHeight, savedAt, seconds, makingLive, float }
 
     // A value this build does not know (a newer refresh mode or size) falls back, so the rest
     // of the file still loads. The old sizes S, M and L become 1×1, 2×2 and 4×2; any WxH up
@@ -180,6 +223,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         let seconds: Int? = try? c.decodeIfPresent(Int.self, forKey: .seconds)
         self.seconds = seconds.map { max(Self.minimumSeconds, $0) }
         makingLive = (try? c.decodeIfPresent(Bool.self, forKey: .makingLive)) ?? false
+        float = try? c.decodeIfPresent(Floating.self, forKey: .float)
     }
 
     /// The card key its command's runs go under (`ComponentCommands`), apart from chat cards.
@@ -242,6 +286,28 @@ public struct PinStatus: Codable, Equatable, Sendable {
 public enum Pins {
     /// Pins shown again within this many seconds do not run again ("when shown").
     public static let shownCooldown: TimeInterval = 30
+
+    /// The most pins that float at once, over all bots.
+    public static let maxFloating = 2
+
+    /// A pin's float entry in its menu: Float in corner, Stop floating, or Float shown off when
+    /// `maxFloating` float already.
+    public enum FloatMenu: String, Codable, Sendable {
+        case float, stop, full
+
+        public var label: String {
+            switch self {
+            case .float: "Float in corner"
+            case .stop: "Stop floating"
+            case .full: "Float in corner (\(Pins.maxFloating) floating already)"
+            }
+        }
+    }
+
+    /// `pin`'s float entry, with `floating` pins floating now (over all bots).
+    public static func floatMenu(for pin: PinnedComponent, floating: Int) -> FloatMenu {
+        pin.float != nil ? .stop : floating >= maxFloating ? .full : .float
+    }
 
     /// Adds `pin` at the end, unless the same component with the same command is pinned
     /// already. Returns whether it was added.

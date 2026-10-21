@@ -1,6 +1,6 @@
 import { post } from "./bridge";
 import { commandCard, componentElement, hasLiveFrame, keepFrames, componentSizes, detailTarget, markPinFrames, maxColumns, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
-import type { ChatState, ChipStatus, ComponentInfo, DisplayView, PinChoiceView, PinRefresh, PinSize, PinView, SpecChipView } from "./types";
+import type { ChatState, ChipStatus, ComponentInfo, DisplayView, FloatMenu, PinChoiceView, PinRefresh, PinSize, PinView, SpecChipView } from "./types";
 
 /**
  * Components pinned to a bot. In the chat a component shows pin / ↻ / ⋯ on hover; pinning asks
@@ -14,7 +14,7 @@ const current: { botName: string; pins: PinView[]; components: Record<string, Co
   botName: "this bot", pins: [], components: {}, choices: [],
 };
 
-const icons = {
+export const icons = {
   pin: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5M9 10.8a2 2 0 0 1-1.1 1.8l-1.8.9A2 2 0 0 0 5 15.2v.8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.8a2 2 0 0 0-1.1-1.8l-1.8-.9a2 2 0 0 1-1.1-1.8V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>`,
   refresh: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>`,
   more: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg>`,
@@ -31,7 +31,7 @@ function newID(): string {
   return "xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx".replace(/x/g, hex).toUpperCase();
 }
 
-function button(className: string, label: string, html: string, onClick: (event: MouseEvent) => void): HTMLButtonElement {
+export function button(className: string, label: string, html: string, onClick: (event: MouseEvent) => void): HTMLButtonElement {
   const element = document.createElement("button");
   element.className = className;
   element.setAttribute("aria-label", label);
@@ -232,7 +232,7 @@ function showToast(text: string, undo: () => void): void {
 // MARK: Menus and popups
 
 /** A menu's entry; a heading or note is a line of text, not a button. */
-interface MenuItem { label: string; run: () => void; checked?: boolean; disabled?: boolean; heading?: boolean; note?: boolean; code?: boolean; sizes?: SizeGrid }
+export interface MenuItem { label: string; run: () => void; checked?: boolean; disabled?: boolean; heading?: boolean; note?: boolean; code?: boolean; sizes?: SizeGrid }
 
 /** A menu's size picker: every size as a 4×4 grid of cells, the current one and the component's hints marked. */
 interface SizeGrid { current: PinSize; hints: PinSize[]; pick: (size: PinSize) => void }
@@ -282,7 +282,7 @@ function sizeGrid(grid: SizeGrid, menu: HTMLElement): HTMLElement {
   return holder;
 }
 
-function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[]): void {
+export function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[]): void {
   closePopups();
   const menu = document.createElement("div");
   menu.className = "pin-menu pin-popup";
@@ -321,7 +321,7 @@ function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[]): void {
   place(menu, anchor);
 }
 
-function closePopups(): void {
+export function closePopups(): void {
   document.querySelectorAll(".pin-popup").forEach((popup) => popup.remove());
 }
 
@@ -374,12 +374,7 @@ function pinMenu(anchor: HTMLElement, pin: PinView, options: { sizes?: boolean; 
     items.push("-");
   }
   if (pin.display.command) {
-    const live = pin.refresh === "interval" && !!pin.seconds;
-    items.push({ label: refreshWords("shown", pin.minutes), checked: pin.refresh === "shown", run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "shown", minutes: pin.minutes }) });
-    items.push({ label: refreshWords("interval", pin.minutes), checked: pin.refresh === "interval" && !live, run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "interval", minutes: pin.minutes }) });
-    const seconds = pin.seconds || liveSeconds;
-    items.push({ label: refreshWords("interval", pin.minutes, seconds), checked: live, run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "interval", seconds }) });
-    items.push({ label: refreshWords("manual", pin.minutes), checked: pin.refresh === "manual", run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "manual", minutes: pin.minutes }) });
+    items.push(...refreshItems(pin));
     items.push("-");
   }
   if (options.sizes) {
@@ -395,11 +390,40 @@ function pinMenu(anchor: HTMLElement, pin: PinView, options: { sizes?: boolean; 
       : { label: "Report this component…", run: () => reportComponent(anchor, pin.name, info, drawn) });
     items.push("-");
   }
+  // Drawn before it floated (or stopped), its sheet or tile still has the old pin.
+  const float = floatItem(current.pins.find((p) => p.id === pin.id) ?? pin);
+  if (float) items.push(float, "-");
   items.push({ label: "Move earlier", disabled: at <= 0, run: () => post({ type: "movePin", id: pin.id, to: at - 1 }) });
   items.push({ label: "Move later", disabled: at < 0 || at >= current.pins.length - 1, run: () => post({ type: "movePin", id: pin.id, to: at + 1 }) });
   items.push("-");
   items.push({ label: "Unpin", run: () => post({ type: "unpin", id: pin.id }) });
   openMenu(anchor, items);
+}
+
+/** How a pin with a command refreshes, as its menu offers it: when shown, every N min, every N sec, only on ↻. */
+export function refreshItems(pin: PinView): MenuItem[] {
+  const live = pin.refresh === "interval" && !!pin.seconds;
+  const seconds = pin.seconds || liveSeconds;
+  return [
+    { label: refreshWords("shown", pin.minutes), checked: pin.refresh === "shown", run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "shown", minutes: pin.minutes }) },
+    { label: refreshWords("interval", pin.minutes), checked: pin.refresh === "interval" && !live, run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "interval", minutes: pin.minutes }) },
+    { label: refreshWords("interval", pin.minutes, seconds), checked: live, run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "interval", seconds }) },
+    { label: refreshWords("manual", pin.minutes), checked: pin.refresh === "manual", run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "manual", minutes: pin.minutes }) },
+  ];
+}
+
+/** The float entry's words, as Swift's `Pins.FloatMenu` says them. */
+export const floatWords: Record<FloatMenu, string> = {
+  float: "Float in corner",
+  stop: "Stop floating",
+  full: "Float in corner (2 floating already)",
+};
+
+/** "Float in corner" / "Stop floating" (shown off while two float already); none where Swift says nothing. */
+export function floatItem(pin: PinView): MenuItem | null {
+  const menu = pin.floatMenu ?? (pin.float ? "stop" : null);
+  if (!menu) return null;
+  return { label: floatWords[menu], disabled: menu === "full", run: () => post({ type: "floatPin", id: pin.id, floating: menu === "float" }) };
 }
 
 const sizeWords: Record<string, string> = { "1x1": "Small", "2x1": "Wide", "1x2": "Tall", "2x2": "Large", "4x2": "Extra wide" };
@@ -500,10 +524,10 @@ function openPicker(): void {
  * opened above the input box, told it is "pinned" (frameless there too); `fill` when the user
  * gave that panel a height, so the page is that height, as on the Board.
  */
-function pinBody(pin: PinView, size?: PinSize, fill = !!size): HTMLElement {
-  const key = size ? `board-${pin.id}` : `pin-${pin.id}`;
+export function pinBody(pin: PinView, size?: PinSize, fill = !!size, where: PinSurface = size ? "board" : "sheet", info: ComponentInfo | undefined = current.components[pin.name]): HTMLElement {
+  const key = where === "sheet" ? `pin-${pin.id}` : `${where}-${pin.id}`;
   const shown = pin.display.data;
-  const saveKey = `${size ? "board" : "sheet"}:${pin.id}`;
+  const saveKey = `${where}:${pin.id}`;
   if (pinSaves.get(saveKey)?.to !== shown) pinSaves.delete(saveKey);
   // ccb.save(data) keeps new data on the pin; a pinned command's card shows the command's output.
   const save = pin.display.command ? null : (data: string) => {
@@ -511,7 +535,7 @@ function pinBody(pin: PinView, size?: PinSize, fill = !!size): HTMLElement {
     post({ type: "pinSave", id: pin.id, data });
   };
   const draw = () => {
-    const drawn = componentElement(pin.name, current.components[pin.name], pin.display.data, null, key, pin.display.images, detailTarget(pin.display), size, size ? "board" : "pinned", fill, save);
+    const drawn = componentElement(pin.name, info, pin.display.data, null, key, pin.display.images, detailTarget(pin.display), size, where === "sheet" ? "pinned" : "board", fill, save);
     // Its ccb.setStatus sets this pin's chip.
     markPinFrames(drawn, pin.id);
     return drawn;
@@ -530,13 +554,13 @@ function pinBody(pin: PinView, size?: PinSize, fill = !!size): HTMLElement {
   return missing;
 }
 
-function refreshPin(pin: PinView): void {
+export function refreshPin(pin: PinView): void {
   if (!pin.display.command) return;
   post({ type: "pinCommand", id: pin.id, command: pin.display.command, folder: pin.display.folder ?? "", force: true });
 }
 
 /** When it last ran, or how it refreshes: "Updated 10:42", "Running…", "Snapshot". */
-function whenWords(pin: PinView): string {
+export function whenWords(pin: PinView): string {
   if (pin.display.status === "running") return "Running…";
   if (pin.display.ranAt) return `Updated ${pin.display.ranAt}`;
   if (pin.makingLive) return "Making it live…";
@@ -569,7 +593,7 @@ function sheetTools(pin: PinView, collapse: () => void, body: HTMLElement): HTML
  * A chip's icon: the component's emoji, its SF Symbol (a picture Swift drew, used as a mask so it
  * takes the chip's colour), or a generic one; with a dot in its tone unless neutral.
  */
-function chipIcon(info: ComponentInfo | undefined, status: ChipStatus): HTMLElement {
+export function chipIcon(info: ComponentInfo | undefined, status: ChipStatus): HTMLElement {
   const holder = document.createElement("span");
   holder.className = "pin-chip-icon";
   holder.setAttribute("aria-hidden", "true");
@@ -594,18 +618,18 @@ function chipIcon(info: ComponentInfo | undefined, status: ChipStatus): HTMLElem
 }
 
 /** A pin as its sheet or tile draws it: what only its chip shows is left out, so a new chip status does not reload the frame. */
-function drawnPart(pin: PinView, surface?: PinSurface): PinView {
+export function drawnPart(pin: PinView, surface?: PinSurface): PinView {
   // Data its own frame there saved (ccb.save) is what that frame shows already: not a change to draw.
   const saved = surface ? pinSaves.get(`${surface}:${pin.id}`) : undefined;
   const display = saved && saved.to === pin.display.data ? { ...pin.display, data: saved.from } : pin.display;
-  return { ...pin, headline: "", chip: undefined, display };
+  return { ...pin, headline: "", chip: undefined, display, float: undefined, floatMenu: undefined };
 }
 
 /**
  * Keeps the pointer's moves coming to `handle` while it is held, over frames too. A pointer the
  * page does not know (a synthetic event) cannot be captured; the drag goes on without it.
  */
-function capture(handle: HTMLElement, pointer: number): void {
+export function capture(handle: HTMLElement, pointer: number): void {
   try {
     handle.setPointerCapture?.(pointer);
   } catch {
@@ -637,8 +661,8 @@ export function dropSlot(rects: DOMRect[], x: number, y: number, vertical = fals
   return { slot: before ? best : best + 1, rect, before };
 }
 
-/** Where a pin is drawn: its Board tile, or opened above the input box. */
-type PinSurface = "board" | "sheet";
+/** Where a pin is drawn: its Board tile, opened above the input box, or floating in a corner. */
+export type PinSurface = "board" | "sheet" | "float";
 
 /**
  * Pins whose frame saved new data (`ccb.save`), by surface and id ("board:P1"): the data that

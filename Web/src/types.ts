@@ -198,6 +198,28 @@ export interface PinView {
   display: DisplayView;
   /** Filled by a bot; Maintainer is giving its component a command so it refreshes here. */
   makingLive?: boolean | null;
+  /** Where it floats in a corner of the window; absent: it does not float. */
+  float?: FloatView | null;
+  /** Its menu's float entry: Float in corner, Stop floating, or Float shown off (two float already). */
+  floatMenu?: FloatMenu | null;
+}
+
+export type FloatCorner = "topRight" | "topLeft" | "bottomRight" | "bottomLeft";
+export type FloatMenu = "float" | "stop" | "full";
+
+/** Where a floating pin sits: the corner it snaps to, its card's size in px, folded to one line. */
+export interface FloatView {
+  corner: FloatCorner;
+  width: number;
+  height: number;
+  collapsed: boolean;
+}
+
+/** A pin floating in a corner, of any bot, drawn over whichever bot's chat is shown. */
+export interface FloatingPinView {
+  botID: string;
+  botName: string;
+  pin: PinView;
 }
 
 /** A component the pin picker offers: one this bot drew, or one with a Command. */
@@ -277,6 +299,8 @@ export interface ChatState {
   feedback?: boolean;
   /** The bot's pinned components; absent where nothing can be pinned (a subagent). */
   pins?: PinView[] | null;
+  /** The pins floating in a corner, of any bot (at most two). */
+  floating?: FloatingPinView[] | null;
   pinChoices?: PinChoiceView[] | null;
   /** The Board shows instead of the messages. */
   board?: boolean | null;
@@ -314,6 +338,8 @@ export type Action =
   | { type: "movePin"; id: string; to: number }
   | { type: "resizePin"; id: string; size: PinSize }
   | { type: "setPinHeight"; id: string; height: number | null }
+  | { type: "floatPin"; id: string; floating: boolean }
+  | { type: "setPinFloat"; id: string; corner?: FloatCorner; width?: number; height?: number; collapsed?: boolean }
   | { type: "setPinRefresh"; id: string; refresh: PinRefresh; minutes?: number; seconds?: number }
   | { type: "pinStatus"; id: string; text: string | null; tone: string | null }
   | { type: "componentSave"; messageID: string; index: number; data: string }

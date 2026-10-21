@@ -467,7 +467,7 @@ window.addEventListener("message", (event) => {
     if (frame.ccbKey) frameHeights.set(frame.ccbKey, message.height);
   } else if (message.ccb === "hover") {
     // The pointer is over the component: its Board tile (or opened pin) shows its controls.
-    frame.closest(".board-card, .pin-sheet")?.classList.toggle("hovered", !!(message as { on?: unknown }).on);
+    frame.closest(".board-card, .pin-sheet, .float-card")?.classList.toggle("hovered", !!(message as { on?: unknown }).on);
   } else if (message.ccb === "answer" && frame.ccbAnswer) {
     const images = answerImages(message.images);
     if (typeof message.index === "number") frame.ccbAnswer({ index: message.index });
