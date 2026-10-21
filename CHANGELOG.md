@@ -83,6 +83,12 @@ app and publishes it on GitHub Releases.
   the page itself runs only when you open it. A page written again gets a new picture, and until
   a picture is ready the card shows the page as before. Pictures are kept in the app's caches
   folder (at most 400). A preview card nobody edited is updated to the new one.
+- **A streaming reply sends the chat only what changed.** Each update while a bot worked sent the
+  page the whole chat (every message and all components' text, some 180 KB of it alone), which
+  the page then parsed and compared message by message. Now only the messages that are new or
+  different are sent, and the rest are kept as they were; components and the chat's other state
+  are sent only when they change. While a bot works, the chat is updated at most ten times a
+  second, always with the latest state.
 
 - **A Board card can be dropped between two others.** While a card was dragged, the others
   jumped as soon as the pointer touched one, and a card it had just passed over was ignored when

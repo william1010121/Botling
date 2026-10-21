@@ -699,12 +699,58 @@ public struct ChatPayload: Encodable, Equatable {
     }
 
     public func json() -> String {
+        Self.encode(self) ?? "{}"
+    }
+
+    /// Sorted, so the same chat is the same text every time (dictionaries have no order).
+    static func encode<Value: Encodable>(_ value: Value) -> String? {
         let encoder = JSONEncoder()
-        // Sorted, so the same chat is the same text every time (dictionaries have no order):
-        // the page is only sent a state that changed, and redraws only messages that did.
         encoder.outputFormatting = [.withoutEscapingSlashes, .sortedKeys]
-        guard let data = try? encoder.encode(self) else { return "{}" }
+        guard let data = try? encoder.encode(value) else { return nil }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Sends the chat page only what changed since the state it last got, as
+    /// `ccb.patchState({base?, components?, order, changed})`: `base` is the state without its
+    /// messages and components (left out when the same), `components` likewise, `order` every
+    /// message's id, and `changed` the messages that are new or different. A 500-message chat
+    /// otherwise encoded, sent and parsed every message (and ~180 KB of components) on every
+    /// streamed step. The page asks for everything again (`resync`) when it cannot apply one.
+    public struct Patcher {
+        private var base: String?
+        private var components: String?
+        private var messages: [String: Message] = [:]
+        private var order: [String] = []
+
+        public init() {}
+
+        /// The next state goes whole (the page loaded again, or asked for it).
+        public mutating func reset() {
+            self = Patcher()
+        }
+
+        /// The script that brings the page to `payload`; nil when nothing changed.
+        public mutating func script(for payload: ChatPayload) -> String? {
+            var stripped = payload
+            stripped.messages = []
+            stripped.components = [:]
+            let base = ChatPayload.encode(stripped) ?? "{}"
+            let components = ChatPayload.encode(payload.components) ?? "{}"
+            let order = payload.messages.map(\.id)
+            let changed = payload.messages.filter { messages[$0.id] != $0 }
+            guard base != self.base || components != self.components || order != self.order || !changed.isEmpty else { return nil }
+
+            var parts: [String] = []
+            if base != self.base { parts.append("\"base\":" + base) }
+            if components != self.components { parts.append("\"components\":" + components) }
+            parts.append("\"order\":" + (ChatPayload.encode(order) ?? "[]"))
+            parts.append("\"changed\":" + (ChatPayload.encode(changed) ?? "[]"))
+            self.base = base
+            self.components = components
+            self.order = order
+            messages = Dictionary(payload.messages.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+            return "ccb.patchState({" + parts.joined(separator: ",") + "})"
+        }
     }
 
     /// A component in a message; a 「網頁預覽卡片」 gets where to load its page from.

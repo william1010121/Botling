@@ -130,7 +130,13 @@ struct ChatSurface: NSViewRepresentable {
         weak var view: WKWebView?
         var focusObserver: NSObjectProtocol?
         private var ready = false
-        private var lastJSON = ""
+        /// What the page was last sent, so the next update carries only what changed.
+        private var patcher = ChatPayload.Patcher()
+        /// While a bot works, updates come many times a second (each streamed step): the page is
+        /// sent at most one every `workingInterval`, the latest, and the rest are skipped.
+        private static let workingInterval: TimeInterval = 0.1
+        private var lastPush = Date.distantPast
+        private var pushLater = false
         private var pluginRevision = -1
 
         /// Sends the latest plugins and state, when the page is ready and something changed.
@@ -140,10 +146,21 @@ struct ChatSurface: NSViewRepresentable {
                 pluginRevision = surface.plugins.revision
                 view.evaluateJavaScript(ChatSurface.setPluginsScript(surface.plugins))
             }
-            let json = surface.payload.json()
-            guard json != lastJSON else { return }
-            lastJSON = json
-            view.evaluateJavaScript("ccb.setState(\(json))")
+            let group = surface.workspace.group(of: surface.bot)
+            let working = surface.bot.isWorking || group.map { surface.workspace.groupSpeakers[$0.id] != nil } ?? false
+            let wait = Self.workingInterval - Date().timeIntervalSince(lastPush)
+            if working && wait > 0 {
+                guard !pushLater else { return }
+                pushLater = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+                    self?.pushLater = false
+                    self?.push()
+                }
+                return
+            }
+            lastPush = Date()
+            guard let script = patcher.script(for: surface.payload) else { return }
+            view.evaluateJavaScript(script)
         }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -164,7 +181,7 @@ struct ChatSurface: NSViewRepresentable {
             switch type {
             case "ready":
                 ready = true
-                lastJSON = ""
+                patcher.reset()
                 pluginRevision = -1
                 push()
                 view?.evaluateJavaScript("ccb.focus()")
@@ -401,6 +418,10 @@ struct ChatSurface: NSViewRepresentable {
                 let ids = (body["ids"] as? [String])?.compactMap(UUID.init(uuidString:))
                 let owner = pinBot(ids?.first)
                 Task { await workspace.pinsShown(ids, in: owner) }
+            case "resync":
+                // The page could not apply an update: it gets the whole state next.
+                patcher.reset()
+                push()
             case "pluginLoaded":
                 if let name = body["name"] as? String { surface.plugins.markLoaded(name) }
             default:
