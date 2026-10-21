@@ -3,6 +3,7 @@ import { EditorState, Prec, StateEffect, type Extension } from "@codemirror/stat
 import { EditorView, keymap, placeholder as placeholderExtension } from "@codemirror/view";
 import { Compartment } from "@codemirror/state";
 import { post } from "./bridge";
+import { language, t } from "./i18n";
 import { isComposingEnter, isComposingKey, isSendEnter } from "./ime";
 import { escapeHTML } from "./util";
 import type { ChatState } from "./types";
@@ -16,6 +17,11 @@ export class Composer {
   readonly root: HTMLElement;
   readonly view: EditorView;
   private readonly placeholder = new Compartment();
+  /** The editor's own label for screen readers, in the page's language. */
+  private readonly label = new Compartment();
+  /** The language the box's own words were last set in. */
+  private wordsIn = "";
+  private readonly plus: HTMLButtonElement;
   private readonly replyBar: HTMLElement;
   private readonly filesRow: HTMLElement;
   private readonly sendButton: HTMLButtonElement;
@@ -49,8 +55,8 @@ export class Composer {
     const row = document.createElement("div");
     row.className = "composer-row";
     const plus = document.createElement("button");
+    this.plus = plus;
     plus.className = "plus";
-    plus.setAttribute("aria-label", "Add images or files");
     plus.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`;
     plus.addEventListener("click", () => post({ type: "pickFiles" }));
 
@@ -58,7 +64,6 @@ export class Composer {
     editorHost.className = "editor";
     this.sendButton = document.createElement("button");
     this.sendButton.className = "send";
-    this.sendButton.setAttribute("aria-label", "Send");
     this.sendButton.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>`;
     this.sendButton.addEventListener("click", () => this.submit());
     row.append(plus, editorHost, this.sendButton);
@@ -93,10 +98,11 @@ export class Composer {
           EditorView.domEventHandlers({
             paste: (event) => this.takeFiles(event.clipboardData),
           }),
-          EditorView.contentAttributes.of({ "aria-label": "Message" }),
+          this.label.of(EditorView.contentAttributes.of({ "aria-label": "" })),
         ],
       }),
     });
+    this.setWords();
     this.refreshSend();
   }
 
@@ -194,7 +200,8 @@ export class Composer {
           option.append(hint);
           option.title = mention.about;
         }
-        option.setAttribute("aria-label", `/${mention.name}, ${mention.kind}${mention.library ? " in the shared library" : ""}`);
+        const kind = mention.kind === "command" ? t("composer.kindCommand") : t("composer.kindComponent");
+        option.setAttribute("aria-label", `/${mention.name}, ${mention.library ? t("composer.inLibrary", { kind }) : kind}`);
         if (mention.library) option.classList.add("library");
       }
       option.addEventListener("mousedown", (event) => {
@@ -251,7 +258,17 @@ export class Composer {
     this.view.focus();
   }
 
+  /** The box's own words (buttons, the editor's label), again when the language changed. */
+  private setWords(): void {
+    if (this.wordsIn === language()) return;
+    this.wordsIn = language();
+    this.plus.setAttribute("aria-label", t("composer.addFiles"));
+    this.sendButton.setAttribute("aria-label", t("composer.send"));
+    this.view.dispatch({ effects: this.label.reconfigure(EditorView.contentAttributes.of({ "aria-label": t("composer.message") })) });
+  }
+
   update(state: ChatState): void {
+    this.setWords();
     const mentions = mentionsOf(state.mentions);
     const allMentions = mentionsOf([...(state.mentions ?? []), ...(state.allMentions ?? [])]);
     const slashItems = slashItemsOf(state);
@@ -265,7 +282,8 @@ export class Composer {
 
     if (state.replyingTo) {
       this.replyBar.hidden = false;
-      this.replyBar.innerHTML = `<span class="reply-line"></span><span class="reply-text"><span class="reply-who">${escapeHTML(state.replyingTo.who)}</span><span class="reply-preview">${escapeHTML(state.replyingTo.preview)}</span></span><button class="close" aria-label="Cancel reply">×</button>`;
+      this.replyBar.innerHTML = `<span class="reply-line"></span><span class="reply-text"><span class="reply-who">${escapeHTML(state.replyingTo.who)}</span><span class="reply-preview">${escapeHTML(state.replyingTo.preview)}</span></span><button class="close">×</button>`;
+      this.replyBar.querySelector(".close")!.setAttribute("aria-label", t("composer.cancelReply"));
       this.replyBar.querySelector(".close")!.addEventListener("click", () => post({ type: "cancelReply" }));
     } else {
       this.replyBar.hidden = true;
@@ -283,7 +301,7 @@ export class Composer {
         : `<span class="pending-name">${escapeHTML(file.name)}</span>`;
       const remove = document.createElement("button");
       remove.className = "remove";
-      remove.setAttribute("aria-label", `Remove ${file.name}`);
+      remove.setAttribute("aria-label", t("composer.removeFile", { name: file.name }));
       remove.textContent = "×";
       remove.addEventListener("click", () => post({ type: "removeFile", id: file.id }));
       item.append(remove);
@@ -351,7 +369,7 @@ function slashItemsOf(state: ChatState): Mention[] {
   return unique([
     ...(state.slashCommands ?? []).map(({ name, about }): Mention => ({ name, kind: "command", about })),
     ...(state.slashComponents ?? []).map((name): Mention => ({ name, kind: "component" })),
-    ...(state.slashLibrary ?? []).map((name): Mention => ({ name, kind: "component", about: "library", library: true })),
+    ...(state.slashLibrary ?? []).map((name): Mention => ({ name, kind: "component", about: t("composer.library"), library: true })),
   ]);
 }
 

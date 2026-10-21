@@ -51,6 +51,15 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     public var resultPublishing: ResultPublishing { resultPublishingChoice ?? .artifactUnlessSensitive }
 
+    /// The language the app's words are in and bots reply in by default. Nil (System default,
+    /// or a settings file from before it) follows the Mac's preferred languages.
+    public var languageChoice: AppLanguage?
+
+    /// The language in use: the choice, else the first of `preferred` the app has, else English.
+    public func language(preferred: [String] = Locale.preferredLanguages) -> AppLanguage {
+        languageChoice ?? AppLanguage.preferred(preferred)
+    }
+
     public init(developerMode: Bool = false, developerProjectID: UUID? = nil) {
         self.developerMode = developerMode
         self.developerProjectID = developerProjectID
@@ -81,9 +90,9 @@ public enum ResultPublishing: String, Codable, CaseIterable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .artifactUnlessSensitive: "Artifact, sensitive ones local"
-        case .localOnly: "Always a local HTML page"
-        case .artifactAlways: "Always an Artifact"
+        case .artifactUnlessSensitive: L("Artifact, sensitive ones local")
+        case .localOnly: L("Always a local HTML page")
+        case .artifactAlways: L("Always an Artifact")
         }
     }
 

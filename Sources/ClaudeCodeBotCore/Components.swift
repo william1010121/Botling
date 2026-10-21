@@ -337,7 +337,7 @@ public final class ComponentLibrary: ObservableObject {
     /// Puts back the version from before the last change (git), then redraws.
     @discardableResult
     public func revert(_ name: String) async -> String? {
-        guard let git, let path = gitPath(name) else { return "This component has no version history." }
+        guard let git, let path = gitPath(name) else { return L("This component has no version history.") }
         let problem = await blocking { git.revert(path, label: "component \(name)") }
         updated.remove(name)
         previous[name] = nil
@@ -477,12 +477,14 @@ public enum SlashCommands {
         public let about: String
     }
 
-    public static let all = [
-        Command(name: "design", about: "Make a Claude Design and get its claude.ai link"),
-    ]
+    public static var all: [Command] {
+        [Command(name: "design", about: L("Make a Claude Design and get its claude.ai link"))]
+    }
 
     /// Developer mode only, in the developer project's chat: the app answers it (`Workspace.share`).
-    public static let share = Command(name: "share", about: "Share a feature you built: check it, then open a pull request to ClaudeCodeBot")
+    public static var share: Command {
+        Command(name: "share", about: L("Share a feature you built: check it, then open a pull request to ClaudeCodeBot"))
+    }
 }
 
 /// How a component is written; the ccb-core:component-editor agent's instructions.

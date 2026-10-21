@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import MarkdownIt from "markdown-it";
 import { escapeHTML } from "./util";
 
@@ -57,7 +58,7 @@ export function mediaHTML(src: string, label: string): string {
   const url = escapeHTML(src);
   const name = escapeHTML(label);
   if (videoExtensions.test(src.split("?")[0])) {
-    return `<video class="media" src="${url}" controls preload="metadata" aria-label="${name || "Video"}"></video>`;
+    return `<video class="media" src="${url}" controls preload="metadata" aria-label="${name || escapeHTML(t("markdown.video"))}"></video>`;
   }
   return `<img class="media" src="${url}" alt="${name}" data-url="${url}" data-label="${name}" loading="lazy">`;
 }

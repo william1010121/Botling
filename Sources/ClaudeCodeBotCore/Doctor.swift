@@ -97,8 +97,8 @@ public enum DoctorTool: String, CaseIterable, Sendable {
 
     var minimumReason: String {
         switch self {
-        case .claude: "the oldest that takes --effort xhigh"
-        case .codex: "the oldest whose codex exec takes --ephemeral"
+        case .claude: L("the oldest that takes --effort xhigh")
+        case .codex: L("the oldest whose codex exec takes --ephemeral")
         }
     }
 
@@ -175,7 +175,7 @@ public enum DoctorTool: String, CaseIterable, Sendable {
         var check = DoctorCheck(tool: self, status: .ok, path: path?.path, latest: latest?.description, summary: "")
         guard let path else {
             check.status = isRequired ? .failing : .warning
-            check.summary = isRequired ? "Not found. Bots can't start without it." : "Not found. Codex reviews won't run."
+            check.summary = isRequired ? L("Not found. Bots can't start without it.") : L("Not found. Codex reviews won't run.")
             check.fix = installFix
             return check
         }
@@ -183,33 +183,33 @@ public enum DoctorTool: String, CaseIterable, Sendable {
         guard let version = versionOutput.flatMap(CLIVersion.init) else {
             check.status = .warning
             check.summary = versionTimedOut
-                ? "Found, but `\(rawValue) --version` did not answer in \(Int(Doctor.timeout)) s."
-                : "Found, but its version could not be read."
+                ? L("Found, but `{0} --version` did not answer in {1} s.", rawValue, Int(Doctor.timeout))
+                : L("Found, but its version could not be read.")
             return check
         }
         check.version = version.description
         if version < minimum {
             check.status = .failing
-            check.summary = "Version \(version) is older than \(minimum), \(minimumReason)."
+            check.summary = L("Version {0} is older than {1}, {2}.", version, minimum, minimumReason)
             check.fix = updateFix(path)
             return check
         }
         switch auth {
         case .signedOut:
             check.status = .failing
-            check.summary = "Not signed in."
+            check.summary = L("Not signed in.")
             check.fix = loginFix(path)
             return check
         case .unknown:
             check.status = .warning
-            check.summary = "Couldn't tell whether it is signed in."
+            check.summary = L("Couldn't tell whether it is signed in.")
             check.fix = loginFix(path)
             return check
         case .signedIn(let how):
-            check.summary = "Signed in with \(how)."
+            check.summary = L("Signed in with {0}.", how)
         }
         if let latest, version < latest {
-            check.summary += " \(latest) is available."
+            check.summary += " " + L("{0} is available.", latest)
             check.fix = updateFix(path)
         }
         return check

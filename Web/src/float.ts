@@ -1,4 +1,5 @@
 import { post } from "./bridge";
+import { language, t } from "./i18n";
 import { componentSizes, hasLiveFrame, keepFrames, pinSize, resizeFrame, sizeInfo } from "./components";
 import { capture, closePopups, drawnPart, fillPinHead, openMenu, pinBody, pinHeadKey, pinTitle, refreshItems, whenWords, type MenuItem } from "./pins";
 import type { ChatState, ComponentInfo, FloatCorner, FloatView, FloatingPinView, PinSize, PinView } from "./types";
@@ -100,7 +101,7 @@ const innerCorner: Record<FloatCorner, FloatCorner> = {
 function ownerMark(botName: string): HTMLElement {
   const mark = document.createElement("span");
   mark.className = "float-owner";
-  mark.title = `${botName}'s pin, shown in all bots · runs in ${botName}'s folder`;
+  mark.title = t("float.ownerTitle", { bot: botName });
   mark.innerHTML = globe;
   const name = document.createElement("span");
   name.textContent = botName;
@@ -116,9 +117,9 @@ const globe = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" strok
  */
 export function globalItems(entry: { pin: PinView; botName: string; global: boolean; blocked: string | null }): MenuItem[] {
   const id = entry.pin.id;
-  if (entry.global) return [{ label: `Only in ${entry.botName}`, run: () => post({ type: "setPinGlobal", id, global: false }) }];
-  if (entry.blocked) return [{ label: `Show in all bots (${entry.blocked} has 2 floating)`, disabled: true, run: () => {} }];
-  return [{ label: "Show in all bots", run: () => post({ type: "setPinGlobal", id, global: true }) }];
+  if (entry.global) return [{ label: t("float.onlyIn", { bot: entry.botName }), run: () => post({ type: "setPinGlobal", id, global: false }) }];
+  if (entry.blocked) return [{ label: t("float.allBotsBlocked", { bot: entry.blocked }), disabled: true, run: () => {} }];
+  return [{ label: t("float.showInAllBots"), run: () => post({ type: "setPinGlobal", id, global: true }) }];
 }
 
 interface FloatEntry {
@@ -155,7 +156,6 @@ export class FloatLayer {
   constructor(parent: HTMLElement) {
     this.layer = document.createElement("div");
     this.layer.className = "float-layer";
-    this.layer.setAttribute("aria-label", "Floating components");
     parent.append(this.layer);
     window.addEventListener("resize", () => this.layOut());
     const composer = document.getElementById("composer-slot");
@@ -167,6 +167,7 @@ export class FloatLayer {
   }
 
   update(state: ChatState): void {
+    this.layer.setAttribute("aria-label", t("float.layer"));
     const list: FloatingPinView[] = state.subagent ? [] : state.floating ?? [];
     this.components = state.components;
     const keep = new Set(list.map((f) => f.pin.id));
@@ -246,7 +247,7 @@ export class FloatLayer {
     this.movable(entry);
     const handle = document.createElement("div");
     handle.className = "float-resize resize-handle";
-    handle.title = "Drag to resize";
+    handle.title = t("float.dragToResize");
     handle.setAttribute("aria-hidden", "true");
     this.resizable(entry, handle);
     card.append(handle);
@@ -263,16 +264,17 @@ export class FloatLayer {
     const pin = entry.pin;
     const info = this.components[pin.name];
     const title = pinTitle(pin, info);
-    const key = JSON.stringify([pinHeadKey(pin, info), entry.botName, entry.global]);
-    entry.card.title = `${title} · ${entry.botName}${entry.global ? " (in all bots)" : ""}${pin.headline ? ` — ${pin.headline}` : ""}`;
-    entry.card.setAttribute("aria-label", `${title}, floating${entry.global ? ` in all bots, from ${entry.botName}` : ""}`);
+    const key = JSON.stringify([pinHeadKey(pin, info), entry.botName, entry.global, language()]);
+    entry.card.title = `${title} · ${entry.botName}${entry.global ? t("float.inAllBots") : ""}${pin.headline ? ` — ${pin.headline}` : ""}`;
+    entry.card.setAttribute("aria-label", entry.global ? t("float.labelGlobal", { title, bot: entry.botName }) : t("float.label", { title }));
     entry.card.classList.toggle("running", pin.display.status === "running");
     entry.card.classList.toggle("global", entry.global);
     if (key === entry.headKey) return;
     entry.headKey = key;
     fillPinHead(entry.head, pin, info, { more: (anchor) => this.menu(entry, anchor) });
     if (entry.global) entry.head.querySelector(".pin-head-tools")?.before(ownerMark(entry.botName));
-    entry.head.title = "Click to fold or unfold · drag to another corner";
+    entry.head.title = t("float.headTitle");
+    entry.card.querySelector(".float-resize")?.setAttribute("title", t("float.dragToResize"));
   }
 
   /**
@@ -283,7 +285,7 @@ export class FloatLayer {
   private drawBody(entry: FloatEntry): void {
     // It does not rerun itself as a card would: the layer does, only while the window is shown.
     const pin: PinView = { ...entry.pin, display: { ...entry.pin.display, every: null } };
-    const key = JSON.stringify([drawnPart(pin, "float"), this.components[pin.name] ?? null]);
+    const key = JSON.stringify([drawnPart(pin, "float"), this.components[pin.name] ?? null, language()]);
     if (key === entry.bodyKey && entry.body) return;
     entry.bodyKey = key;
     const body = document.createElement("div");
@@ -445,13 +447,13 @@ export class FloatLayer {
     ];
     if (pin.display.command) items.push(...refreshItems(pin), "-");
     if (!isNarrow(window.innerWidth)) {
-      items.push({ label: entry.float.collapsed ? "Unfold" : "Fold to one line", run: () => {
+      items.push({ label: entry.float.collapsed ? t("float.unfold") : t("float.fold"), run: () => {
         this.change(entry, { collapsed: !entry.float.collapsed });
         this.layOut();
       } });
     }
     items.push(...globalItems(entry));
-    items.push({ label: "Stop floating", run: () => post({ type: "floatPin", id: pin.id, floating: false }) });
+    items.push({ label: t("float.stop"), run: () => post({ type: "floatPin", id: pin.id, floating: false }) });
     closePopups();
     openMenu(anchor, items);
   }

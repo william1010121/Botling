@@ -148,7 +148,7 @@ struct RailView: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.side)
         .background {
-            Button("Search bots", action: startSearch)
+            Button(L("Search bots"), action: startSearch)
                 .keyboardShortcut("k", modifiers: .command)
                 .opacity(0)
                 .frame(width: 0, height: 0)
@@ -159,22 +159,22 @@ struct RailView: View {
         // would bump `activity`, redraw, subscribe again, and never stop (a frozen app).
         .onReceive(Publishers.MergeMany(entries.map { $0.bot.$messages.dropFirst().map { _ in () } })) { _ in activity &+= 1 }
         .confirmationDialog(
-            "Remove \"\(removing?.name ?? "")\"?",
+            L("Remove \"{0}\"?", removing?.name ?? ""),
             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
             presenting: removing
         ) { project in
-            Button("Remove bot", role: .destructive) { workspace.removeBot(project.id) }
+            Button(L("Remove bot"), role: .destructive) { workspace.removeBot(project.id) }
         } message: { project in
-            Text("It stops at once. Its notes stay in \(project.folder.path).")
+            Text(L("It stops at once. Its notes stay in {0}.", project.folder.path))
         }
         .confirmationDialog(
-            "Delete the group \"\(deletingGroup?.name ?? "")\"?",
+            L("Delete the group \"{0}\"?", deletingGroup?.name ?? ""),
             isPresented: Binding(get: { deletingGroup != nil }, set: { if !$0 { deletingGroup = nil } }),
             presenting: deletingGroup
         ) { group in
-            Button("Delete group", role: .destructive) { workspace.deleteGroup(group.id) }
+            Button(L("Delete group"), role: .destructive) { workspace.deleteGroup(group.id) }
         } message: { _ in
-            Text("Its conversation is deleted. The bots in it keep their own chats and memory.")
+            Text(L("Its conversation is deleted. The bots in it keep their own chats and memory."))
         }
         .sheet(item: $editingGroup) { group in
             GroupForm(workspace: workspace, group: group) { name, members in
@@ -226,11 +226,11 @@ struct RailView: View {
                     let (pinned, rest) = arranged
                     VStack(spacing: 2) {
                         if !pinned.isEmpty {
-                            sectionTitle("Pinned").frame(height: 28)
+                            sectionTitle(L("Pinned")).frame(height: 28)
                             ForEach(pinned) { entryRow($0) }
                         }
                         HStack {
-                            sectionTitle("Chats")
+                            sectionTitle(L("Chats"))
                             Button { editingGroup = ChatGroup(name: "", members: []) } label: {
                                 Image(systemName: "plus")
                                     .font(.system(size: 12))
@@ -239,8 +239,8 @@ struct RailView: View {
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            .help("New group: pick the bots you want in one conversation")
-                            .accessibilityLabel("New group")
+                            .help(L("New group: pick the bots you want in one conversation"))
+                            .accessibilityLabel(L("New group"))
                         }
                         .padding(.top, pinned.isEmpty ? 0 : 6)
                         ForEach(rest) { entryRow($0) }
@@ -263,7 +263,7 @@ struct RailView: View {
 
             HStack(spacing: 0) {
                 Button(action: addProject) {
-                    Label("Add project", systemImage: "plus")
+                    Label(L("Add project"), systemImage: "plus")
                         .font(.system(size: 14))
                         .foregroundStyle(Theme.faint)
                         .lineLimit(1)
@@ -275,7 +275,7 @@ struct RailView: View {
                 .buttonStyle(.plain)
                 Spacer(minLength: 0)
                 Button { makingBot.toggle() } label: {
-                    Label("New bot", systemImage: "sparkles")
+                    Label(L("New bot"), systemImage: "sparkles")
                         .font(.system(size: 14))
                         .foregroundStyle(Theme.faint)
                         .lineLimit(1)
@@ -285,7 +285,7 @@ struct RailView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("A bot of its own, with its own memory and routines (a morning news bot, say)")
+                .help(L("A bot of its own, with its own memory and routines (a morning news bot, say)"))
                 Button { showingQuickSettings.toggle() } label: {
                     Image(systemName: "gearshape")
                         .font(.system(size: 14))
@@ -297,8 +297,8 @@ struct RailView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Settings: today's cost, auto-approve, plugins")
-                .accessibilityLabel("Settings")
+                .help(L("Settings: today's cost, auto-approve, plugins"))
+                .accessibilityLabel(L("Settings"))
                 .popover(isPresented: $showingQuickSettings, arrowEdge: .top) {
                     SettingsPopover(workspace: workspace, registry: workspace.plugins, open: openSettings)
                 }
@@ -324,13 +324,13 @@ struct RailView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.faint)
-            TextField("Search bots", text: $query)
+            TextField(L("Search bots"), text: $query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .focused($searchFocused)
                 .onSubmit { if let first = hits.first { open(first) } }
                 .onExitCommand(perform: endSearch)
-                .accessibilityLabel("Search bots")
+                .accessibilityLabel(L("Search bots"))
             if query.isEmpty {
                 Text(RailLayout.searchShortcut)
                     .font(.system(size: 11))
@@ -344,15 +344,15 @@ struct RailView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Clear search (Esc)")
-                .accessibilityLabel("Clear search")
+                .help(L("Clear search (Esc)"))
+                .accessibilityLabel(L("Clear search"))
             }
         }
         .padding(.horizontal, 10)
         .frame(height: 30)
         .background(RoundedRectangle(cornerRadius: 8).fill(Theme.bubble))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(searchFocused ? Theme.blue.opacity(0.6) : Theme.line, lineWidth: 1))
-        .help("Search bots by name or project folder (\(RailLayout.searchShortcut))")
+        .help(L("Search bots by name or project folder ({0})", RailLayout.searchShortcut))
     }
 
     /// What the search kept, or "No bots match".
@@ -397,8 +397,8 @@ struct RailView: View {
                 if let action { action() } else { workspace.select(group.id) }
             }
             .contextMenu {
-                Button("Edit group…") { editingGroup = group }
-                Button("Delete group…", role: .destructive) { deletingGroup = group }
+                Button(L("Edit group…")) { editingGroup = group }
+                Button(L("Delete group…"), role: .destructive) { deletingGroup = group }
             }
         case .project(let project, let bot):
             let pinned = workspace.isPinned(project.id)
@@ -412,10 +412,10 @@ struct RailView: View {
                 if let action { action() } else { workspace.select(project.id) }
             }
             .contextMenu {
-                Button(pinned ? "Unpin" : "Pin") { workspace.togglePin(project.id) }
+                Button(pinned ? L("Unpin") : L("Pin")) { workspace.togglePin(project.id) }
                 if project.isBot {
                     Divider()
-                    Button("Remove bot…", role: .destructive) { removing = project }
+                    Button(L("Remove bot…"), role: .destructive) { removing = project }
                 }
             }
             if subagents { SubagentRows(bot: bot, workspace: workspace) }
@@ -427,8 +427,8 @@ struct RailView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
-        panel.prompt = "Add as project"
-        panel.message = "Pick a project folder; ClaudeCodeBot will give it a manager."
+        panel.prompt = L("Add as project")
+        panel.message = L("Pick a project folder; ClaudeCodeBot will give it a manager.")
         if panel.runModal() == .OK, let folder = panel.url {
             workspace.addProject(folder: folder)
         }
@@ -446,7 +446,7 @@ private struct UnreadBadge: View {
             .padding(.horizontal, 6)
             .frame(minWidth: 20, minHeight: 20)
             .background(Capsule().fill(Theme.blue))
-            .accessibilityLabel("\(count) unread")
+            .accessibilityLabel(L("{0} unread", count))
     }
 }
 
@@ -469,7 +469,7 @@ private struct GroupRow: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(group.name).font(.system(size: 15)).lineLimit(1)
                     if let speaker = workspace.groupSpeakers[group.id].flatMap(workspace.speakerName(for:)) {
-                        Text("\(speaker) is writing…")
+                        Text(L("{0} is writing…", speaker))
                             .font(.system(size: 12))
                             .foregroundStyle(Color(hex: 0x8DB5FF))
                             .lineLimit(1)
@@ -493,7 +493,7 @@ private struct GroupRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Group \(group.name)\(workspace.groupHasQuestion(group.id) ? ", waiting on you" : "")")
+        .accessibilityLabel(workspace.groupHasQuestion(group.id) ? L("Group {0}, waiting on you", group.name) : L("Group {0}", group.name))
     }
 }
 
@@ -518,10 +518,10 @@ private struct GroupForm: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(isNew ? "New group" : "Edit group").font(.system(size: 15, weight: .semibold))
-            TextField("Group name, e.g. Blog team", text: $name)
+            Text(isNew ? L("New group") : L("Edit group")).font(.system(size: 15, weight: .semibold))
+            TextField(L("Group name, e.g. Blog team"), text: $name)
                 .textFieldStyle(.roundedBorder)
-            Text("Who is in it").font(.system(size: 12)).foregroundStyle(Theme.faint)
+            Text(L("Who is in it")).font(.system(size: 12)).foregroundStyle(Theme.faint)
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(workspace.everyMember, id: \.id) { member in
@@ -542,8 +542,8 @@ private struct GroupForm: View {
             .frame(maxHeight: 280)
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button(isNew ? "Create" : "Save") {
+                Button(L("Cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(isNew ? L("Create") : L("Save")) {
                     save(name, Array(picked))
                     dismiss()
                 }
@@ -593,19 +593,19 @@ struct GroupPanel: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Rename, add or take out members")
-                .accessibilityLabel("Edit group")
+                .help(L("Rename, add or take out members"))
+                .accessibilityLabel(L("Edit group"))
             }
             .frame(height: 40)
 
             let waiting = workspace.waiting.filter { $0.groupID == group.id }
             if !waiting.isEmpty {
-                PanelSection("Waiting on you") {
+                PanelSection(L("Waiting on you")) {
                     WaitingList(workspace: workspace, items: waiting)
                 }
             }
 
-            PanelSection("In the group") {
+            PanelSection(L("In the group")) {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(workspace.members(of: group), id: \.id) { member in
                         GroupMemberRow(
@@ -616,7 +616,7 @@ struct GroupPanel: View {
                             workspace.select(member.id == Workspace.mainBotID ? nil : member.id)
                         }
                     }
-                    Text("Without @, everyone here reads your message in turn and answers only if it concerns them. @name talks to one of them.")
+                    Text(L("Without @, everyone here reads your message in turn and answers only if it concerns them. @name talks to one of them."))
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.faint)
                         .padding(.top, 4)
@@ -627,7 +627,7 @@ struct GroupPanel: View {
 
             let results = Array(chat.results.prefix(3))
             if !results.isEmpty {
-                PanelSection("Just done") {
+                PanelSection(L("Just done")) {
                     VStack(spacing: 6) {
                         ForEach(results, id: \.self) { chip in
                             Button { ResultWindows.open(chip) } label: {
@@ -679,14 +679,14 @@ struct WaitingList: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("Ignore: take it off this list without answering")
-                    .accessibilityLabel("Ignore")
+                    .help(L("Ignore: take it off this list without answering"))
+                    .accessibilityLabel(L("Ignore"))
                 }
                 .frame(minHeight: 52)
                 .background(RoundedRectangle(cornerRadius: 14).fill(Color(hex: 0x2A2116)))
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: 0x6B4A1F)))
                 .contextMenu {
-                    Button("Ignore") { workspace.ignoreWaiting(item) }
+                    Button(L("Ignore")) { workspace.ignoreWaiting(item) }
                 }
             }
         }
@@ -706,7 +706,7 @@ struct GroupMemberRow: View {
                 AvatarView(kind: kind, size: 22, eyes: bot.eyes)
                 Text(bot.name).font(.system(size: 13)).lineLimit(1)
                 Spacer()
-                Text(bot.waitingForPermission ? "Waiting for your OK" : writing ? "Writing…" : bot.statusText)
+                Text(bot.waitingForPermission ? L("Waiting for your OK") : writing ? L("Writing…") : bot.statusText)
                     .font(.system(size: 12))
                     .foregroundStyle(bot.waitingForPermission ? Theme.orange : Theme.faint)
             }
@@ -725,13 +725,13 @@ private struct NewBotForm: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TextField("Name, e.g. Morning news", text: $name)
-            TextField("Its job, e.g. every day at 08:00, the top 5 tech stories", text: $job, axis: .vertical)
+            TextField(L("Name, e.g. Morning news"), text: $name)
+            TextField(L("Its job, e.g. every day at 08:00, the top 5 tech stories"), text: $job, axis: .vertical)
                 .lineLimit(2...4)
             HStack {
                 Spacer()
-                Button("Cancel") { done(nil, nil) }.buttonStyle(.plain).foregroundStyle(Theme.muted)
-                Button("Create") { done(name, job) }.disabled(!canCreate)
+                Button(L("Cancel")) { done(nil, nil) }.buttonStyle(.plain).foregroundStyle(Theme.muted)
+                Button(L("Create")) { done(name, job) }.disabled(!canCreate)
             }
         }
         .textFieldStyle(.roundedBorder)
@@ -783,15 +783,15 @@ private struct MaintainerRow: View {
             }
             .buttonStyle(.plain)
             .padding(.bottom, 4)
-            .accessibilityLabel("Maintainer, \(status)")
+            .accessibilityLabel(L("Maintainer, {0}", status))
         }
     }
 
     private var status: String {
-        if let (name, change) = library.working.first { return "Component \(name): \(change)" }
+        if let (name, change) = library.working.first { return L("Component {0}: {1}", name, change) }
         if bot.outage != nil { return NetworkResume.label }
-        if bot.isWorking { return "Working" }
-        return bot.hasUnread ? "Done, click to see" : bot.statusText
+        if bot.isWorking { return L("Working") }
+        return bot.hasUnread ? L("Done, click to see") : bot.statusText
     }
 }
 
@@ -827,18 +827,18 @@ private struct CodexRow: View {
         }
         .buttonStyle(.plain)
         .padding(.bottom, 4)
-        .help("Codex reviews changes read-only, with no memory. Call it into a chat with @Codex.")
-        .accessibilityLabel("Codex, \(status)")
+        .help(L("Codex reviews changes read-only, with no memory. Call it into a chat with @Codex."))
+        .accessibilityLabel(L("Codex, {0}", status))
     }
 
     private var busy: Bool { bot.isWorking || workspace.codexIsReviewing }
 
     private var status: String {
         if let review = workspace.codexReviews.last(where: { $0.state == .reviewing }) {
-            return review.agent.map { "Reviewing \($0)" } ?? "Reviewing \(URL(filePath: review.folder).lastPathComponent)"
+            return L("Reviewing {0}", review.agent ?? URL(filePath: review.folder).lastPathComponent)
         }
-        if bot.isWorking { return "Reading" }
-        return "Read-only reviewer"
+        if bot.isWorking { return L("Reading") }
+        return L("Read-only reviewer")
     }
 }
 
@@ -891,12 +891,12 @@ private struct BotRow: View {
                 }
                 .buttonStyle(.plain)
                 .padding(.trailing, 8)
-                .help(pinned ? "Unpin" : "Pin to the top")
-                .accessibilityLabel(pinned ? "Unpin \(bot.name)" : "Pin \(bot.name)")
+                .help(pinned ? L("Unpin") : L("Pin to the top"))
+                .accessibilityLabel(pinned ? L("Unpin {0}", bot.name) : L("Pin {0}", bot.name))
             }
         }
         .onHover { hovering = $0 }
-        .accessibilityLabel("\(bot.name), \(bot.statusText)\(waiting ? ", waiting on you" : "")\(pinned == true ? ", pinned" : "")")
+        .accessibilityLabel([bot.name, bot.statusText, waiting ? L("waiting on you") : nil, pinned == true ? L("pinned") : nil].compactMap { $0 }.joined(separator: ", "))
     }
 }
 
@@ -917,7 +917,7 @@ private struct SubagentRows: View {
             }
             if more > 0 {
                 Button { showsAll.toggle() } label: {
-                    Text(showsAll ? "Show less" : "Show \(more) more")
+                    Text(showsAll ? L("Show less") : L("Show {0} more", more))
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.faint)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -926,7 +926,7 @@ private struct SubagentRows: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(showsAll ? "Show fewer subagents of \(bot.name)" : "Show \(more) more subagents of \(bot.name)")
+                .accessibilityLabel(showsAll ? L("Show fewer subagents of {0}", bot.name) : L("Show {0} more subagents of {1}", more, bot.name))
             }
         }
     }
@@ -968,7 +968,7 @@ private struct SubagentRow: View {
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.faint)
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(subagent.description.isEmpty ? "Subagent" : subagent.description)
+                        Text(subagent.description.isEmpty ? L("Subagent") : subagent.description)
                             .font(.system(size: 13))
                             .foregroundStyle(subagent.isRunning || loop?.isActive == true ? Theme.text : Theme.muted)
                             .lineLimit(1)
@@ -992,7 +992,7 @@ private struct SubagentRow: View {
             }
             .buttonStyle(.plain)
             .help(subagent.prompt)
-            .accessibilityLabel("Subagent of \(bot.name): \(subagent.description), \(subagent.status.rawValue)")
+            .accessibilityLabel(L("Subagent of {0}: {1}, {2}", bot.name, subagent.description, subagent.status.rawValue))
             Button(action: settle) {
                 Group {
                     if showsSettle {
@@ -1006,14 +1006,14 @@ private struct SubagentRow: View {
             }
             .buttonStyle(.plain)
             .allowsHitTesting(showsSettle)
-            .help(subagent.isRunning ? "Settle: move to Settled in the right column (it keeps working)" : "Settle: move to Settled in the right column")
-            .accessibilityLabel("Settle subagent \(subagent.description)")
+            .help(subagent.isRunning ? L("Settle: move to Settled in the right column (it keeps working)") : L("Settle: move to Settled in the right column"))
+            .accessibilityLabel(L("Settle subagent {0}", subagent.description))
             .padding(.trailing, 6)
         }
         .background(RoundedRectangle(cornerRadius: 10).fill(selected ? Theme.selected : .clear))
         .onHover { hovering = $0 }
         .contextMenu {
-            Button("Settle") { settle() }
+            Button(L("Settle")) { settle() }
         }
     }
 
@@ -1053,7 +1053,7 @@ struct SettledList: View {
             }
             if more > 0 {
                 Button { showsAll.toggle() } label: {
-                    Text(showsAll ? "Show less" : "Show \(more) more")
+                    Text(showsAll ? L("Show less") : L("Show {0} more", more))
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.faint)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1062,7 +1062,7 @@ struct SettledList: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(showsAll ? "Show fewer settled subagents" : "Show \(more) more settled subagents")
+                .accessibilityLabel(showsAll ? L("Show fewer settled subagents") : L("Show {0} more settled subagents", more))
             }
         }
     }
@@ -1073,7 +1073,7 @@ struct SettledList: View {
             Button { workspace.view(subagent: subagent.id, of: bot) } label: {
                 HStack(spacing: 10) {
                     SubagentRows.mark(subagent.mark).frame(width: 10)
-                    Text(subagent.description.isEmpty ? "Subagent" : subagent.description)
+                    Text(subagent.description.isEmpty ? L("Subagent") : subagent.description)
                         .font(.system(size: 13))
                         .foregroundStyle(subagent.isRunning ? Theme.text : Theme.muted)
                         .lineLimit(1)
@@ -1085,7 +1085,7 @@ struct SettledList: View {
             }
             .buttonStyle(.plain)
             .help(subagent.prompt)
-            .accessibilityLabel("Settled subagent: \(subagent.description), \(subagent.status.rawValue)")
+            .accessibilityLabel(L("Settled subagent: {0}, {1}", subagent.description, subagent.status.rawValue))
             Button { bot.unsettleSubagent(subagent.id) } label: {
                 Image(systemName: "arrow.uturn.backward")
                     .font(.system(size: 11))
@@ -1094,13 +1094,13 @@ struct SettledList: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Back to the left column")
-            .accessibilityLabel("Bring \(subagent.description) back to the left column")
+            .help(L("Back to the left column"))
+            .accessibilityLabel(L("Bring {0} back to the left column", subagent.description))
             .padding(.trailing, 4)
         }
         .background(RoundedRectangle(cornerRadius: 12).fill(selected ? Theme.selected : Theme.bubble))
         .contextMenu {
-            Button("Back to the Left Column") { bot.unsettleSubagent(subagent.id) }
+            Button(L("Back to the Left Column")) { bot.unsettleSubagent(subagent.id) }
         }
     }
 }
@@ -1167,12 +1167,12 @@ struct DetailPanel: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .frame(width: 32, height: 40)
-            .accessibilityLabel("More panels")
+            .accessibilityLabel(L("More panels"))
         }
     }
 
     private func panelPage(_ key: String) -> some View {
-        let title = plugins.panels().first { "\($0.plugin.name)/\($0.panel.id)" == key }?.panel.title ?? "Panel"
+        let title = plugins.panels().first { "\($0.plugin.name)/\($0.panel.id)" == key }?.panel.title ?? L("Panel")
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 4) {
                 Button { openPanel = nil } label: {
@@ -1182,7 +1182,7 @@ struct DetailPanel: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Back")
+                .accessibilityLabel(L("Back"))
                 Text(title).font(.system(size: 15, weight: .semibold))
             }
             PanelView(key: key, workspace: workspace, plugins: plugins)
@@ -1206,11 +1206,11 @@ struct DetailPanel: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Settings")
+                    .accessibilityLabel(L("Settings"))
                 }
             }
 
-            PanelSection("Now") {
+            PanelSection(L("Now")) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 10) {
                         Circle().fill(bot.statusColor).frame(width: 8, height: 8)
@@ -1237,7 +1237,7 @@ struct DetailPanel: View {
                                 Text(run.spec.title).font(.system(size: 13))
                                 Spacer()
                                 TimelineView(.periodic(from: .now, by: 30)) { context in
-                                    Text("\(max(1, Int(context.date.timeIntervalSince(run.startedAt) / 60))) min")
+                                    Text(L("{0} min", max(1, Int(context.date.timeIntervalSince(run.startedAt) / 60))))
                                         .font(.system(size: 12))
                                         .monospacedDigit()
                                         .foregroundStyle(Theme.faint)
@@ -1253,7 +1253,7 @@ struct DetailPanel: View {
             }
 
             if bot.profile.role == .main, !workspace.waiting.isEmpty {
-                PanelSection("Waiting on you") {
+                PanelSection(L("Waiting on you")) {
                     WaitingList(workspace: workspace, items: workspace.waiting)
                 }
             }
@@ -1262,7 +1262,7 @@ struct DetailPanel: View {
 
             let results = Array(bot.results.prefix(3))
             if !results.isEmpty {
-                PanelSection(bot.profile.role == .main ? "Just done" : "Results") {
+                PanelSection(bot.profile.role == .main ? L("Just done") : L("Results")) {
                     VStack(spacing: 6) {
                         ForEach(results, id: \.self) { chip in
                             Button { ResultWindows.open(chip) } label: {
@@ -1283,7 +1283,7 @@ struct DetailPanel: View {
             }
 
             if !bot.trace.settled.isEmpty {
-                PanelSection("Settled") {
+                PanelSection(L("Settled")) {
                     SettledList(bot: bot, workspace: workspace)
                 }
             }
@@ -1299,7 +1299,7 @@ extension DetailPanel {
         let reviews = workspace.codexReviews(for: bot)
         let canReview = !isCodex && bot.profile.role == .manager && !bot.profile.isStandalone
         if canReview || !reviews.isEmpty {
-            PanelSection(isCodex ? "Reviews" : "Codex review") {
+            PanelSection(isCodex ? L("Reviews") : L("Codex review")) {
                 VStack(spacing: 6) {
                     ForEach(reviews.prefix(isCodex ? 12 : 3)) { review in
                         CodexReviewCard(review: review, showsOwner: isCodex ? workspace.speakerName(for: review.ownerID) : nil) {
@@ -1313,8 +1313,8 @@ extension DetailPanel {
                 }
             }
         } else if isCodex {
-            PanelSection("Reviews") {
-                Text("Nothing reviewed yet. Turn on Codex review in a bot's Settings, press Review with Codex in a project, or call @Codex in a chat.")
+            PanelSection(L("Reviews")) {
+                Text(L("Nothing reviewed yet. Turn on Codex review in a bot's Settings, press Review with Codex in a project, or call @Codex in a chat."))
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.faint)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1337,7 +1337,7 @@ private struct SleepCountdown: View {
             .font(.system(size: 13))
             .foregroundStyle(Theme.faint)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Falls asleep in \(seconds / 60) min \(seconds % 60) s")
+            .accessibilityLabel(L("Falls asleep in {0} min {1} s", seconds / 60, seconds % 60))
         }
     }
 }
@@ -1366,14 +1366,14 @@ private struct SettingsPage: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Back")
-                Text("Settings").font(.system(size: 15, weight: .semibold))
+                .accessibilityLabel(L("Back"))
+                Text(L("Settings")).font(.system(size: 15, weight: .semibold))
             }
 
-            PanelSection("Model and thinking") {
+            PanelSection(L("Model and thinking")) {
                 VStack(spacing: 0) {
                     DropdownRow(
-                        title: "Model",
+                        title: L("Model"),
                         choices: BotModel.allCases,
                         chosen: bot.switchTarget ?? bot.model,
                         label: { $0.displayName },
@@ -1383,20 +1383,20 @@ private struct SettingsPage: View {
                     }
                     Rectangle().fill(Theme.line).frame(height: 1)
                     DropdownRow(
-                        title: "Subagent model",
+                        title: L("Subagent model"),
                         choices: [nil] + BotModel.allCases.map(Optional.some),
                         chosen: bot.subagentModel,
-                        label: { $0?.displayName ?? "Same as bot" },
+                        label: { $0?.displayName ?? L("Same as bot") },
                         disabled: bot.isSwitching
                     ) { model in
                         Task { await bot.setSubagentModel(model) }
                     }
                     Rectangle().fill(Theme.line).frame(height: 1)
                     DropdownRow(
-                        title: "Thinking effort",
+                        title: L("Thinking effort"),
                         choices: [nil] + EffortLevel.allCases.map(Optional.some),
                         chosen: bot.effort,
-                        label: { $0?.displayName ?? "Default" },
+                        label: { $0?.displayName ?? L("Default") },
                         disabled: bot.isSwitching
                     ) { level in
                         Task { await bot.setEffort(level) }
@@ -1423,13 +1423,13 @@ private struct SettingsPage: View {
                     .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
                 }
 
-                SettingNote("Subagents use their own model and effort when their definition names one. Default effort leaves it to the model. Awake, a change restarts the bot in the same conversation just before its next message; asleep, it applies when it wakes.")
+                SettingNote(L("Subagents use their own model and effort when their definition names one. Default effort leaves it to the model. Awake, a change restarts the bot in the same conversation just before its next message; asleep, it applies when it wakes."))
             }
 
-            PanelSection("Codex review for subagents") {
+            PanelSection(L("Codex review for subagents")) {
                 VStack(spacing: 0) {
                     DropdownRow(
-                        title: "Codex review",
+                        title: L("Codex review"),
                         choices: CodexReviewMode.allCases,
                         chosen: bot.codexSettings.mode,
                         label: { $0.displayName }
@@ -1441,7 +1441,7 @@ private struct SettingsPage: View {
                     if bot.codexSettings.mode != .off {
                         Rectangle().fill(Theme.line).frame(height: 1)
                         HStack {
-                            Text("Max fix rounds").foregroundStyle(Theme.text)
+                            Text(L("Max fix rounds")).foregroundStyle(Theme.text)
                             Spacer()
                             Stepper(value: Binding(
                                 get: { bot.codexSettings.maxRounds },
@@ -1460,7 +1460,7 @@ private struct SettingsPage: View {
                         .frame(height: 44)
                         Rectangle().fill(Theme.line).frame(height: 1)
                         DropdownRow(
-                            title: "Send back to fix",
+                            title: L("Send back to fix"),
                             choices: CodexSendBack.allCases,
                             chosen: bot.codexSettings.sendBack,
                             label: { $0.displayName }
@@ -1473,10 +1473,10 @@ private struct SettingsPage: View {
                 }
                 .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
                 .clipShape(RoundedRectangle(cornerRadius: 14))
-                SettingNote("When a subagent finishes a code change, Codex reviews its diff read-only. Findings go back to the same subagent to fix, then Codex looks again, until clean or the round limit. Codex keeps no memory: every round is a fresh review.")
+                SettingNote(L("When a subagent finishes a code change, Codex reviews its diff read-only. Findings go back to the same subagent to fix, then Codex looks again, until clean or the round limit. Codex keeps no memory: every round is a fresh review."))
             }
 
-            PanelSection("Routines") {
+            PanelSection(L("Routines")) {
                 VStack(spacing: 6) {
                     ForEach(bot.routines) { routine in
                         RoutineRow(bot: bot, routine: routine)
@@ -1485,7 +1485,7 @@ private struct SettingsPage: View {
                         AddRoutineForm(bot: bot) { adding = false }
                     } else {
                         Button { adding = true } label: {
-                            Label("Add one", systemImage: "plus")
+                            Label(L("Add one"), systemImage: "plus")
                                 .font(.system(size: 14))
                                 .foregroundStyle(Theme.faint)
                                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -1497,13 +1497,13 @@ private struct SettingsPage: View {
             }
 
             if !bot.alwaysAllowed.isEmpty {
-                PanelSection("Always allowed") {
+                PanelSection(L("Always allowed")) {
                     VStack(spacing: 0) {
                         ForEach(bot.alwaysAllowed, id: \.self) { tool in
                             HStack {
                                 Text(tool).font(.system(size: 14))
                                 Spacer()
-                                Button("Ask again") { bot.forget(alwaysAllowed: tool) }
+                                Button(L("Ask again")) { bot.forget(alwaysAllowed: tool) }
                                     .buttonStyle(.plain)
                                     .font(.system(size: 13))
                                     .foregroundStyle(Theme.muted)
@@ -1513,7 +1513,7 @@ private struct SettingsPage: View {
                         }
                     }
                     .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
-                    .help("Tools you let this bot use without asking. Takes effect the next time it wakes.")
+                    .help(L("Tools you let this bot use without asking. Takes effect the next time it wakes."))
                 }
             }
 
@@ -1527,9 +1527,9 @@ private struct SettingsPage: View {
 
     private func label(for step: HandoffStep) -> String {
         switch step {
-        case .writing: "Writing handoff"
-        case .stopping: "Stopping \(bot.model.displayName)"
-        case .starting: "Starting \((bot.switchTarget ?? bot.model).displayName)"
+        case .writing: L("Writing handoff")
+        case .stopping: L("Stopping {0}", bot.model.displayName)
+        case .starting: L("Starting {0}", (bot.switchTarget ?? bot.model).displayName)
         }
     }
 }
@@ -1587,7 +1587,7 @@ private struct RoutineRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(routine.title).foregroundStyle(routine.enabled ? Theme.text : Theme.muted)
                 if let time = routine.schedule.everyDayTime {
-                    DatePicker("Time", selection: binding(hour: time.hour, minute: time.minute), displayedComponents: .hourAndMinute)
+                    DatePicker(L("Time"), selection: binding(hour: time.hour, minute: time.minute), displayedComponents: .hourAndMinute)
                         .labelsHidden()
                         .datePickerStyle(.field)
                         .font(.system(size: 13))
@@ -1612,7 +1612,7 @@ private struct RoutineRow: View {
         .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
         .help(routine.instruction)
         .contextMenu {
-            Button("Delete", role: .destructive) { bot.removeRoutine(routine.id) }
+            Button(L("Delete"), role: .destructive) { bot.removeRoutine(routine.id) }
         }
     }
 
@@ -1636,16 +1636,16 @@ private struct AddRoutineForm: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TextField("Name, e.g. Check progress", text: $title)
-            TextField("What to do (one sentence, or @file)", text: $instruction, axis: .vertical)
+            TextField(L("Name, e.g. Check progress"), text: $title)
+            TextField(L("What to do (one sentence, or @file)"), text: $instruction, axis: .vertical)
                 .lineLimit(1...3)
             HStack {
-                DatePicker("Every day", selection: $time, displayedComponents: .hourAndMinute)
+                DatePicker(L("Every day"), selection: $time, displayedComponents: .hourAndMinute)
                     .datePickerStyle(.field)
                     .fixedSize()
                 Spacer()
-                Button("Cancel", action: done).buttonStyle(.plain).foregroundStyle(Theme.muted)
-                Button("Add") {
+                Button(L("Cancel"), action: done).buttonStyle(.plain).foregroundStyle(Theme.muted)
+                Button(L("Add")) {
                     let parts = Calendar.current.dateComponents([.hour, .minute], from: time)
                     bot.addRoutine(
                         title: title.trimmingCharacters(in: .whitespaces),

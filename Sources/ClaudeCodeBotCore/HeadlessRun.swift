@@ -21,6 +21,17 @@ public enum HeadlessRun {
         environmentKeys.contains { environment[$0] != nil } || flags.contains { arguments.contains($0) }
     }
 
+    /// The language a snapshot draws in: `--language ja` or `CCB_LANGUAGE=ja` (any of
+    /// `AppLanguage`'s codes); nil when neither is given.
+    public static func language(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        arguments: [String] = CommandLine.arguments
+    ) -> AppLanguage? {
+        let code = arguments.firstIndex(of: "--language").flatMap { $0 + 1 < arguments.count ? arguments[$0 + 1] : nil }
+            ?? environment["CCB_LANGUAGE"]
+        return code.flatMap { AppLanguage(rawValue: $0) ?? AppLanguage.preferred([$0]) }
+    }
+
     /// No Dock icon, no menu bar, never the active app.
     @MainActor
     public static func quiet(_ app: NSApplication) {

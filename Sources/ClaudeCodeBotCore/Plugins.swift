@@ -236,9 +236,9 @@ public final class PluginRegistry: ObservableObject {
         rescan(force: true)
         let title = plugin(name)?.manifest.title ?? name
         if plugin(name)?.usingPrevious == true {
-            onNotice?("Plugin \"\(title)\": the new version failed; using the previous version and handed it to Maintainer: \(message)")
+            onNotice?(L("Plugin \"{0}\": the new version failed; using the previous version and handed it to Maintainer: {1}", title, message))
         } else {
-            onNotice?("Plugin \"\(title)\" failed and was disabled for now: \(message)")
+            onNotice?(L("Plugin \"{0}\" failed and was disabled for now: {1}", title, message))
         }
         onBroken?(name, message)
     }
@@ -275,7 +275,7 @@ public final class PluginRegistry: ObservableObject {
     /// Back to the version before its last change (a new commit); it then hot-reloads.
     @discardableResult
     public func revert(_ name: String) async -> String? {
-        guard let path = gitPath(name) else { return "Built-in plugins have no version history." }
+        guard let path = gitPath(name) else { return L("Built-in plugins have no version history.") }
         let git = git
         let label = plugin(name)?.manifest.title ?? name
         let problem = await blocking { git.revert(path, label: label) }
@@ -288,7 +288,7 @@ public final class PluginRegistry: ObservableObject {
     /// Takes a plugin out of the library (git history keeps it).
     @discardableResult
     public func remove(_ name: String) async -> String? {
-        guard let path = gitPath(name) else { return "Built-in plugins can't be removed, only turned off." }
+        guard let path = gitPath(name) else { return L("Built-in plugins can't be removed, only turned off.") }
         let git = git
         let label = plugin(name)?.manifest.title ?? name
         let problem = await blocking { git.remove(path, label: label) }
@@ -571,7 +571,7 @@ public final class PluginRegistry: ObservableObject {
     public func install(_ proposal: InstallProposal) async -> String? {
         guard proposal.problems.isEmpty else { return proposal.problems.joined(separator: "; ") }
         if let existing = plugin(proposal.manifest.name), existing.builtIn == false, state.installed?[existing.name] == nil {
-            return "The plugin library already has its own \"\(existing.name)\"; it won't be replaced by an outside one."
+            return L("The plugin library already has its own \"{0}\"; it won't be replaced by an outside one.", existing.name)
         }
         let target = library.appending(path: proposal.manifest.name)
         let git = git
@@ -583,7 +583,7 @@ public final class PluginRegistry: ObservableObject {
             do {
                 try files.copyItem(at: proposal.folder, to: target)
             } catch {
-                return "Couldn't put it into the plugin library: \(error.localizedDescription)"
+                return L("Couldn't put it into the plugin library: {0}", error.localizedDescription)
             }
             git.run(["add", "-A", "--", proposal.manifest.name])
             git.run(["commit", "-q", "-m", "Install \(label) (\(source))", "--", proposal.manifest.name])
@@ -634,7 +634,7 @@ public final class PluginRegistry: ObservableObject {
                 guard let self else { return }
                 claudeChecking.remove(name)
                 claudeChecks[name] = (print, problem)
-                if let problem { onNotice?("The Claude part of plugin \"\(title)\" failed the check and is not loaded for now: \(problem)") }
+                if let problem { onNotice?(L("The Claude part of plugin \"{0}\" failed the check and is not loaded for now: {1}", title, problem)) }
                 revision += 1
                 // The files may have changed again while it was checked.
                 checkClaudeParts()

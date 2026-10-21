@@ -49,8 +49,8 @@ struct BoardSwitch: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            segment("Chat", icon: "bubble.left", on: !board) { set(false) }
-            segment("Board", icon: "square.grid.2x2", on: board) { set(true) }
+            segment(L("Chat"), icon: "bubble.left", on: !board) { set(false) }
+            segment(L("Board"), icon: "square.grid.2x2", on: board) { set(true) }
         }
         .padding(2)
         .background(RoundedRectangle(cornerRadius: 9).fill(Theme.bubble))
@@ -62,7 +62,7 @@ struct BoardSwitch: View {
                 .opacity(0)
                 .accessibilityHidden(true)
         )
-        .help("Chat or Board (⌃⌘B)")
+        .help(L("Chat or Board (⌃⌘B)"))
     }
 
     private func segment(_ title: String, icon: String, on: Bool, action: @escaping () -> Void) -> some View {

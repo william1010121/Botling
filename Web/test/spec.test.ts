@@ -1,6 +1,7 @@
 /// <reference types="node" />
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
+import { setLanguage } from "../src/i18n";
 import { feedback, makeComponents, messageElement } from "../src/messages";
 import { SpecPanel } from "../src/spec";
 import type { ComponentInfo, MessageView, SpecState } from "../src/types";
@@ -324,12 +325,12 @@ describe("the spec workspace in the right panel", () => {
     expect(done.querySelector(".spec-added")?.textContent).toContain("Added to ClaudeCodeBot, Arbor");
   });
 
-  it("Edit spec on a built one: its fields can be changed and 重新建置 makes a new version", () => {
+  it("Edit spec on a built one: its fields can be changed and Rebuild makes a new version", () => {
     const root = panel(spec({ status: "done", preview: "test-summary", questions: [] }));
     expect(root.querySelector("input[data-key='command']")).not.toBeNull();
     expect(root.querySelector(".spec-cancel")).toBeNull();
     const build = root.querySelector<HTMLButtonElement>(".spec-build")!;
-    expect(build.textContent).toBe("重新建置");
+    expect(build.textContent).toBe("Rebuild");
     click(build);
     expect(sent).toEqual([{ type: "specBuild", id: "S1" }]);
   });
@@ -356,7 +357,10 @@ describe("the spec workspace in the right panel", () => {
   });
 });
 
+// In Traditional Chinese, the words this panel was first written with.
 describe("changing a built component from its panel", () => {
+  beforeEach(() => setLanguage("zh-Hant"));
+  afterEach(() => setLanguage("en"));
   function panel(state: SpecState): HTMLElement {
     document.body.innerHTML = `<div id="spec-root"></div>`;
     const root = document.getElementById("spec-root")!;
@@ -369,7 +373,7 @@ describe("changing a built component from its panel", () => {
   it("Ask for changes sends the change at once; no Build press needed", () => {
     const root = panel(built());
     const box = root.querySelector<HTMLTextAreaElement>(".spec-say textarea")!;
-    expect(box.placeholder).toBe("Ask for changes…");
+    expect(box.placeholder).toBe("想怎麼改…");
     expect(root.querySelector(".spec-say-hint")?.textContent).toContain("v3");
     // Rebuild stays only as a secondary action.
     const rebuild = root.querySelector<HTMLButtonElement>(".spec-build")!;
@@ -443,7 +447,7 @@ describe("changing a built component from its panel", () => {
     }));
     expect(root.querySelector(".spec-status")?.textContent).toContain("Maintainer 有一個問題");
     const answers = [...root.querySelectorAll(".spec-question button")];
-    expect(answers.map((a) => a.textContent)).toEqual(["字變小 · suggested", "卡片變窄"]);
+    expect(answers.map((a) => a.textContent)).toEqual(["字變小 · 建議", "卡片變窄"]);
     click(answers[1]);
     expect(sent).toEqual([{ type: "specAnswer", id: "S1", question: "q1", option: 1 }]);
   });
@@ -451,9 +455,9 @@ describe("changing a built component from its panel", () => {
   it("a draft keeps Build it, and says nothing is built until it is pressed", () => {
     const root = panel(spec());
     const build = root.querySelector<HTMLButtonElement>(".spec-build")!;
-    expect(build.textContent).toBe("Build it");
+    expect(build.textContent).toBe("建置");
     expect(build.classList.contains("primary")).toBe(true);
-    expect(root.querySelector(".spec-say-hint")?.textContent).toContain("Build it");
+    expect(root.querySelector(".spec-say-hint")?.textContent).toContain("建置");
     expect(root.querySelector(".spec-status")).toBeNull();
   });
 });

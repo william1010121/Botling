@@ -19,6 +19,17 @@ public enum EffortLevel: String, CaseIterable, Codable, Sendable {
 
     public var displayName: String {
         switch self {
+        case .low: L("Low")
+        case .medium: L("Medium")
+        case .high: L("High")
+        case .xhigh: L("Extra high")
+        case .max: L("Max")
+        }
+    }
+
+    /// Its name in English, for what bots are told (`displayName` is in the app's language).
+    public var englishName: String {
+        switch self {
         case .low: "Low"
         case .medium: "Medium"
         case .high: "High"

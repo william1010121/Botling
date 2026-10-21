@@ -1,7 +1,9 @@
 import { post } from "./bridge";
+import { t, type Key } from "./i18n";
 import { componentElement, keepFrames } from "./components";
 import { handleMediaClicks } from "./lightbox";
 import { mediaHTML } from "./markdown";
+import { escapeHTML } from "./util";
 import { isComposingEnter, isSendEnter } from "./ime";
 import { refreshWords } from "./refresh";
 import type { ComponentInfo, PinRefresh, SpecChange, SpecOrigin, SpecState } from "./types";
@@ -87,6 +89,12 @@ function button(className: string, text: string, onClick: () => void, label?: st
   return element;
 }
 
+/** The samples the app names itself (their labels stay its keys), in the page's language; others as written. */
+const sampleNames: Record<string, Key> = { "This reply": "spec.sampleReply", "This page": "spec.samplePage", "Test run": "spec.testRun", Empty: "spec.sampleEmpty" };
+function sampleWords(label: string): string {
+  return sampleNames[label] ? t(sampleNames[label]) : label;
+}
+
 /** "1:05": minutes and seconds since `from`. */
 export function elapsed(from: number, now = Date.now()): string {
   const seconds = Math.max(0, Math.floor((now - from) / 1000));
@@ -136,7 +144,7 @@ export class SpecPanel {
     return (state.version ?? 1) + 1;
   }
 
-  /** The elapsed time beside "Maintainer 正在改…" ticks while a change is under way. */
+  /** The elapsed time beside "Maintainer is changing it…" ticks while a change is under way. */
   private tick(working: boolean): void {
     if (working && !this.ticker) {
       this.ticker = setInterval(() => {
@@ -219,21 +227,21 @@ export class SpecPanel {
     const titles = el("div", "spec-titles");
     const title = el("div", "spec-title");
     const change = this.changeOf(state);
-    const words = change?.state === "working" && this.isBuilt(state) ? `Changing ${state.name} → v${change.version}`
+    const words = change?.state === "working" && this.isBuilt(state) ? t("spec.changing", { name: state.name, v: `v${change.version}` })
       : state.status === "done" ? state.name
-      : state.status === "building" ? `Building ${state.name}`
-      : state.existing ? "Add to another bot" : "New component";
+      : state.status === "building" ? t("spec.building", { name: state.name })
+      : state.existing ? t("spec.addToAnother") : t("spec.newComponent");
     title.textContent = words;
     if (state.status === "draft" && !state.existing) title.append(el("code", "spec-name-tag", state.name));
     const subtitle = el("div", "spec-subtitle", state.status === "done"
-      ? (state.bots.some((b) => b.on) ? `Added to ${state.bots.filter((b) => b.on).map((b) => b.name).join(", ")}` : "In the library")
+      ? (state.bots.some((b) => b.on) ? t("spec.addedTo", { bots: state.bots.filter((b) => b.on).map((b) => b.name).join(", ") }) : t("spec.inLibrary"))
       : `Maintainer · ${state.from}`);
     titles.append(title, subtitle);
     head.append(mark, titles);
-    if (state.status === "draft" && !state.existing) head.append(el("span", "spec-draft", `draft ${state.draft}`));
+    if (state.status === "draft" && !state.existing) head.append(el("span", "spec-draft", t("spec.draft", { n: state.draft })));
     head.append(
-      button("spec-icon", state.wide ? icons.narrow : icons.expand, () => post({ type: "specWide", wide: !state.wide }), state.wide ? "Narrower" : "Wider"),
-      button("spec-icon", icons.collapse, () => post({ type: "specClose" }), "Collapse to the chip"),
+      button("spec-icon", state.wide ? icons.narrow : icons.expand, () => post({ type: "specWide", wide: !state.wide }), state.wide ? t("spec.narrower") : t("spec.wider")),
+      button("spec-icon", icons.collapse, () => post({ type: "specClose" }), t("spec.collapse")),
     );
     return head;
   }
@@ -243,20 +251,21 @@ export class SpecPanel {
   private preview(state: SpecState): HTMLElement {
     const block = el("section", "spec-block spec-preview");
     const head = el("div", "spec-block-head");
-    head.append(el("span", "spec-label", state.status === "done" ? "Live" : "Preview"));
+    head.append(el("span", "spec-label", state.status === "done" ? t("spec.live") : t("spec.preview")));
     head.append(el("span", "spec-grow"));
     const samples = this.samples(state);
     const chosen = this.chosenSample(state, samples);
     if (samples.length > 1) {
       const group = el("div", "spec-samples spec-seg");
       group.setAttribute("role", "group");
-      group.setAttribute("aria-label", "Sample data");
+      group.setAttribute("aria-label", t("spec.sampleData"));
       for (const sample of samples) {
         const tab = button(sample === chosen ? "on" : "", "", () => {
           this.sample.set(state.id, sampleKey(sample));
           this.draw();
         });
-        tab.textContent = sample.label;
+        // The app's own samples come named in the page's language; Maintainer's as written.
+        tab.textContent = sample.kind ? sample.label : sampleWords(sample.label);
         tab.setAttribute("aria-pressed", String(sample === chosen));
         group.append(tab);
       }
@@ -294,7 +303,7 @@ export class SpecPanel {
     const value = el("div", "spec-value");
     value.append(...(Array.isArray(content) ? content : [content]));
     // Maintainer's values only get its colour; yours say so too.
-    if (by === "user") value.append(el("span", "spec-by user", "Edited by you"));
+    if (by === "user") value.append(el("span", "spec-by user", t("spec.editedByYou")));
     row.append(value);
     return row;
   }
@@ -320,13 +329,13 @@ export class SpecPanel {
   private fields(state: SpecState): HTMLElement {
     const block = el("section", "spec-block spec-fields");
     const head = el("div", "spec-block-head");
-    head.append(el("span", "spec-label", "Spec"));
+    head.append(el("span", "spec-label", t("spec.spec")));
     if (!state.existing) head.append(el("code", "spec-name-tag", state.name));
     block.append(head);
 
     if (!state.existing) {
-      block.append(this.field(state, "name", "Name", this.input(state, "name", state.name, "short-english-name", true)));
-      block.append(this.field(state, "about", "About", this.input(state, "about", state.about, "What it shows, in a sentence")));
+      block.append(this.field(state, "name", t("spec.name"), this.input(state, "name", state.name, "short-english-name", true)));
+      block.append(this.field(state, "about", t("spec.about"), this.input(state, "about", state.about, t("spec.aboutPlaceholder"))));
 
       const data = el("div", "spec-data");
       for (const field of state.fields) {
@@ -334,35 +343,35 @@ export class SpecPanel {
         chip.append(document.createTextNode(field.name + " "), el("b", "", field.type));
         data.append(chip);
       }
-      if (!state.fields.length) data.append(el("span", "spec-faint", "None yet"));
+      if (!state.fields.length) data.append(el("span", "spec-faint", t("spec.noneYet")));
       const edit = this.input(state, "fields", state.fields.map((f) => `${f.name}: ${f.type}`).join(", "), "name: type, …", true);
       edit.classList.add("spec-fields-edit");
-      block.append(this.field(state, "fields", "Data", [data, edit]));
+      block.append(this.field(state, "fields", t("spec.data"), [data, edit]));
 
-      const command = this.input(state, "command", state.command ?? "", "Command that prints the data (optional)", true);
+      const command = this.input(state, "command", state.command ?? "", t("spec.commandPlaceholder"), true);
       const line = el("div", "spec-command");
       line.append(command);
       if (state.command) {
-        line.append(button("spec-button small spec-test-run", `${icons.run}Test run`, () => {
+        line.append(button("spec-button small spec-test-run", `${icons.run}${escapeHTML(t("spec.testRun"))}`, () => {
           post({ type: "specTestRun", id: state.id, command: state.command ?? "", folder: state.folder });
         }));
       }
       const commandParts: HTMLElement[] = [line];
       if (state.testRun) commandParts.push(this.testRun(state));
-      block.append(this.field(state, "command", "Command", commandParts));
-      block.append(this.field(state, "folder", "Folder", el("code", "spec-folder", state.folder)));
+      block.append(this.field(state, "command", t("pins.command"), commandParts));
+      block.append(this.field(state, "folder", t("spec.folder"), el("code", "spec-folder", state.folder)));
 
       const refresh = el("div", "spec-refresh spec-seg");
       refresh.dataset.key = "refresh";
       refresh.setAttribute("role", "group");
-      refresh.setAttribute("aria-label", "Refresh");
+      refresh.setAttribute("aria-label", t("pins.refresh"));
       for (const mode of ["shown", "interval", "manual"] as PinRefresh[]) {
         const option = button(mode === state.refresh ? "on" : "", "", () => post({ type: "specEdit", id: state.id, key: "refresh", value: mode }));
         option.textContent = refreshWords(mode, state.minutes);
         option.setAttribute("aria-pressed", String(mode === state.refresh));
         refresh.append(option);
       }
-      block.append(this.field(state, "refresh", "Refresh", refresh));
+      block.append(this.field(state, "refresh", t("pins.refresh"), refresh));
     }
 
     const bots = el("div", "spec-bots");
@@ -375,7 +384,7 @@ export class SpecPanel {
       chip.setAttribute("aria-pressed", String(bot.on));
       bots.append(chip);
     }
-    block.append(this.field(state, "bots", "Bots", bots));
+    block.append(this.field(state, "bots", t("spec.bots"), bots));
 
     if (!state.existing && state.similar) {
       const similar = el("div", "spec-similar");
@@ -383,12 +392,12 @@ export class SpecPanel {
       const about = el("span", "spec-faint", state.similarAbout ? ` ${state.similarAbout}` : "");
       const choice = el("div", "spec-seg");
       const fresh = button(state.reuse ? "new" : "new on", "", () => post({ type: "specEdit", id: state.id, key: "reuse", value: "false" }));
-      fresh.textContent = "A new one";
+      fresh.textContent = t("spec.newOne");
       const reuse = button(state.reuse ? "reuse on" : "reuse", "", () => post({ type: "specEdit", id: state.id, key: "reuse", value: "true" }));
-      reuse.textContent = `Reuse ${state.similar}`;
+      reuse.textContent = t("spec.reuse", { name: state.similar });
       choice.append(fresh, reuse);
       similar.append(name, about, choice);
-      block.append(this.field(state, "reuse", "Similar", similar));
+      block.append(this.field(state, "reuse", t("spec.similar"), similar));
     }
     return block;
   }
@@ -399,28 +408,28 @@ export class SpecPanel {
     const box = el("div", `spec-test ${run.status}`);
     if (run.status === "approve") {
       const ask = el("div", "command-approve");
-      ask.append(el("div", "", "Test run runs this command in"));
+      ask.append(el("div", "", t("spec.testRunLine")));
       ask.append(el("code", "command-folder", run.folder));
       ask.append(el("pre", "command-full", run.command));
       const actions = el("div", "command-actions");
-      const allow = button("primary command-allow", "Allow and run", () => {
+      const allow = button("primary command-allow", escapeHTML(t("command.allow")), () => {
         allow.disabled = true;
         post({ type: "specTestRun", id: state.id, command: run.command, folder: run.folder, approve: true });
       });
-      actions.append(allow, el("span", "command-note", "Remembered for this command in this folder."));
+      actions.append(allow, el("span", "command-note", t("spec.remembered")));
       ask.append(actions);
       box.append(ask);
     } else if (run.status === "running" || run.status === "idle") {
-      box.innerHTML = `<span class="spinner" aria-hidden="true"></span><span>Running…</span>`;
+      box.innerHTML = `<span class="spinner" aria-hidden="true"></span><span>${escapeHTML(t("command.running"))}</span>`;
     } else if (run.status === "failed") {
       const problem = el("div", "command-error");
       problem.setAttribute("role", "alert");
-      problem.append(el("strong", "", "The command failed"), el("pre", "", run.error ?? ""));
+      problem.append(el("strong", "", t("command.failed")), el("pre", "", run.error ?? ""));
       box.append(problem);
     } else {
       const check = el("div", `spec-check${run.matches === false ? " off" : ""}`);
       check.innerHTML = run.matches === false ? "" : icons.check;
-      check.append(document.createTextNode(`${run.ranAt ? `Ran ${run.ranAt}` : "Ran"} · ${run.matches === false ? "output does not match the fields" : "output matches the fields"}`));
+      check.append(document.createTextNode(`${run.ranAt ? t("command.ran", { when: run.ranAt }) : t("spec.ran")} · ${run.matches === false ? t("spec.outputMismatch") : t("spec.outputMatches")}`));
       box.append(check, el("pre", "spec-output", (run.output ?? "").slice(0, 600)));
     }
     return box;
@@ -444,12 +453,12 @@ export class SpecPanel {
     }
     const change = this.changeOf(state);
     if (change?.state === "working" && this.isBuilt(state)) {
-      block.append(el("div", "spec-faint", `Maintainer is making v${change.version}. The current version stays under the reply until then.`));
+      block.append(el("div", "spec-faint", t("spec.makingVersion", { v: `v${change.version}` })));
     } else if (state.status === "done") {
       const on = state.bots.filter((b) => b.on).map((b) => b.name);
-      block.append(el("div", "spec-added", on.length ? `Added to ${on.join(", ")}` : `${state.name} is in the library`));
+      block.append(el("div", "spec-added", on.length ? t("spec.addedTo", { bots: on.join(", ") }) : t("spec.isInLibrary", { name: state.name })));
     } else {
-      block.append(el("div", "spec-faint", "Maintainer is building it. You can collapse this and keep chatting; it shows under the reply once it is added."));
+      block.append(el("div", "spec-faint", t("spec.buildingNote")));
     }
     return block;
   }
@@ -468,7 +477,7 @@ export class SpecPanel {
       const words = el("div", "spec-words", line.text);
       // Pictures Maintainer showed (a component shot's contact sheet): click for the lightbox.
       for (const url of line.images ?? []) {
-        words.insertAdjacentHTML("beforeend", mediaHTML(url, "Component shot"));
+        words.insertAdjacentHTML("beforeend", mediaHTML(url, t("spec.componentShot")));
       }
       row.append(words);
       block.append(row);
@@ -481,14 +490,14 @@ export class SpecPanel {
         question.options.forEach((option, index) => {
           const suggested = index === question.suggested;
           const answer = button(`spec-answer${suggested ? " suggested" : ""}`, "", () => post({ type: "specAnswer", id: state.id, question: question.id, option: index }));
-          answer.textContent = suggested ? `${option.label} · suggested` : option.label;
+          answer.textContent = suggested ? `${option.label} · ${t("pins.suggested")}` : option.label;
           answers.append(answer);
         });
         box.append(answers);
         block.append(box);
       }
     }
-    if (!block.childElementCount) block.append(el("div", "spec-faint", "Maintainer fills in what it can tell from the reply and asks only what it can't."));
+    if (!block.childElementCount) block.append(el("div", "spec-faint", t("spec.fillsIn")));
     return block;
   }
 
@@ -502,15 +511,15 @@ export class SpecPanel {
     const line = el("div", `spec-status ${change.state}`);
     line.setAttribute("role", change.state === "failed" ? "alert" : "status");
     if (change.state === "working") {
-      line.append(el("span", "spinner"), el("span", "spec-status-text", `Maintainer 正在改…（${v}）`), el("span", "spec-elapsed", elapsed(change.startedAt)));
+      line.append(el("span", "spinner"), el("span", "spec-status-text", t("spec.statusWorking", { v })), el("span", "spec-elapsed", elapsed(change.startedAt)));
     } else if (change.state === "asking") {
-      line.append(el("span", "spec-status-text", `Maintainer 有一個問題：選一個答案，就會接著改 ${v}`));
+      line.append(el("span", "spec-status-text", t("spec.statusAsking", { v })));
     } else if (change.state === "updated") {
       const mark = el("span", "spec-status-mark");
       mark.innerHTML = icons.check;
-      line.append(mark, el("span", "spec-status-text", `已更新成 ${v}`));
+      line.append(mark, el("span", "spec-status-text", t("spec.statusUpdated", { v })));
     } else {
-      line.append(el("span", "spec-status-mark", "!"), el("span", "spec-status-text", `${v} 沒有做出來：${change.error ?? "原因不明"}`));
+      line.append(el("span", "spec-status-mark", "!"), el("span", "spec-status-text", t("spec.statusFailed", { v, error: change.error ?? t("spec.reasonUnknown") })));
     }
     return line;
   }
@@ -525,8 +534,8 @@ export class SpecPanel {
     const queued = state.queued ?? [];
     if (queued.length) {
       const box = el("div", "spec-queued");
-      const making = change?.state === "working" && built ? `v${change.version}` : "這一版";
-      box.append(el("div", "spec-queued-head", `排入下一次修改（${queued.length}）· ${making} 完成後一起送出`));
+      const making = change?.state === "working" && built ? `v${change.version}` : t("spec.thisVersion");
+      box.append(el("div", "spec-queued-head", t("spec.queued", { n: queued.length, making })));
       const list = el("ul");
       for (const words of queued) list.append(el("li", "", words));
       box.append(list);
@@ -536,7 +545,7 @@ export class SpecPanel {
     const box = el("textarea");
     box.rows = 1;
     box.dataset.keep = "say";
-    box.placeholder = working ? "再補充…（排入下一次修改）" : built ? "Ask for changes…" : "Anything to add? Reply to Maintainer…";
+    box.placeholder = working ? t("spec.sayQueued") : built ? t("spec.sayChange") : t("spec.sayDraft");
     box.setAttribute("aria-label", box.placeholder);
     const send = button("spec-send", icons.send, () => {
       const text = box.value.trim();
@@ -551,7 +560,7 @@ export class SpecPanel {
         return;
       }
       post({ type: "specSay", id: state.id, text });
-    }, "Send to Maintainer");
+    }, t("spec.sendToMaintainer"));
     box.addEventListener("input", () => { box.dataset.dirty = "1"; });
     box.addEventListener("keydown", (event) => {
       if (isSendEnter(event)) {
@@ -562,36 +571,36 @@ export class SpecPanel {
     say.append(box, send);
     if (!state.existing) {
       foot.append(say);
-      const hint = working ? "這次修改進行中：現在送出的話會排隊，下一版一起改。"
-        : built ? `送出就會直接建置 v${this.nextVersion(state)}，不用再按建置。`
-        : "Draft: nothing is built until you press Build it. Talk it over with Maintainer here first.";
+      const hint = working ? t("spec.hintWorking")
+        : built ? t("spec.hintBuilt", { v: `v${this.nextVersion(state)}` })
+        : t("spec.hintDraft");
       foot.append(el("div", "spec-say-hint", hint));
     }
     if (!working) {
       const done = state.status === "done";
       const actions = el("div", "spec-actions");
-      if (done) actions.append(button("spec-button ghost", "Hide", () => post({ type: "specClose" })));
-      else actions.append(button("spec-button ghost spec-cancel", "Cancel", () => post({ type: "specCancel", id: state.id })));
+      if (done) actions.append(button("spec-button ghost", escapeHTML(t("spec.hide")), () => post({ type: "specClose" })));
+      else actions.append(button("spec-button ghost spec-cancel", escapeHTML(t("common.cancel")), () => post({ type: "specCancel", id: state.id })));
       actions.append(el("span", "spec-grow"));
-      if (state.questions.length && !built) actions.append(el("span", "spec-faint spec-note", "Open questions use the suggested answers"));
+      if (state.questions.length && !built) actions.append(el("span", "spec-faint spec-note", t("spec.openQuestions")));
       // Once built, typing is how it changes: rebuilding is only a secondary action.
       const rebuild = done && !state.existing;
       const build = button(`spec-button ${rebuild ? "ghost" : "primary"} spec-build`, "", () => post({ type: "specBuild", id: state.id }));
-      build.textContent = state.existing ? "Add to bots" : rebuild ? "重新建置" : "Build it";
+      build.textContent = state.existing ? t("spec.addToBots") : rebuild ? t("spec.rebuild") : t("spec.buildIt");
       build.disabled = !state.bots.some((b) => b.on);
-      if (build.disabled) build.title = "Pick at least one bot first";
-      else if (rebuild) build.title = `Build v${this.nextVersion(state)} again from the spec as it is`;
+      if (build.disabled) build.title = t("spec.pickBot");
+      else if (rebuild) build.title = t("spec.rebuildTitle", { v: `v${this.nextVersion(state)}` });
       actions.append(build);
       foot.append(actions);
     } else {
       const legend = el("div", "spec-actions");
       legend.append(el("span", "spec-grow"));
-      legend.append(button("spec-button ghost", "Hide", () => post({ type: "specClose" })));
+      legend.append(button("spec-button ghost", escapeHTML(t("spec.hide")), () => post({ type: "specClose" })));
       foot.append(legend);
     }
     if (!working && !state.existing) {
       const legend = el("div", "spec-legend");
-      legend.innerHTML = `<span><span class="spec-by user">blue</span> you</span><span><span class="spec-by maintainer">purple</span> Maintainer</span>`;
+      legend.innerHTML = `<span><span class="spec-by user">${escapeHTML(t("spec.blue"))}</span> ${escapeHTML(t("spec.you"))}</span><span><span class="spec-by maintainer">${escapeHTML(t("spec.purple"))}</span> Maintainer</span>`;
       foot.append(legend);
     }
     return foot;

@@ -8,6 +8,19 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **ClaudeCodeBot speaks your language (for 1.14.0).** Settings → General → Language picks
+  English, 繁體中文, 简体中文, 日本語 or 한국어; "System default" (the default) follows the Mac's
+  preferred languages and falls back to English. The app's own words change at once, without a
+  restart: menus, the settings window, the left column and right panel, Codex reviews, the chat
+  page's labels and buttons ("Worked · 5 steps", "Open ›", subagent cards, pins, the background-work
+  row, the spec panel), placeholders such as "Message <bot>…" and the notices the app writes. What
+  bots write, components, file paths and your own data are never translated.
+- **Bots reply in the language you picked (a prompt rule change).** Every bot's, temporary team's and
+  Codex chat's briefing used to say "Reply in the user's language (match the language of their
+  latest message)"; it now says to reply in the language chosen in Settings by default, and still in
+  yours when you write in another language. Changing the language tells bots that are already awake
+  with their next message. Snapshots take `--language <code>` (or `CCB_LANGUAGE`).
+
 - **A floating pin can show in every bot's chat.** A floating card's ⋯ has "Show in all bots":
   the card then floats in the corner of every chat (Main, project bots, Maintainer, Codex), with a
   small globe and its own bot's name in its header. It stays that bot's pin: its Command runs in

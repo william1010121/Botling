@@ -15,13 +15,13 @@ struct SettingsPopover: View {
         let isToday = spending.day == Spending.today()
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Today").font(.system(size: 12)).foregroundStyle(Theme.faint)
+                Text(L("Today")).font(.system(size: 12)).foregroundStyle(Theme.faint)
                 Spacer()
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(Workspace.tokenCount(isToday ? spending.tokens.total : 0))
                         .font(.system(size: 20, weight: .semibold))
                         .monospacedDigit()
-                    Text("tokens")
+                    Text(L("tokens"))
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.muted)
                 }
@@ -30,19 +30,19 @@ struct SettingsPopover: View {
                 RateLimitCards(limits: workspace.rateLimits)
             }
             divider
-            SettingSwitch("Auto-approve safe actions", isOn: Binding(
+            SettingSwitch(L("Auto-approve safe actions"), isOn: Binding(
                 get: { workspace.settings.autoApprovesSafeActions },
                 set: { workspace.setAutoApprovesSafeActions($0) }
             ))
-            SettingSwitch("Develop ClaudeCodeBot itself", isOn: DeveloperSection.binding(workspace))
+            SettingSwitch(L("Develop ClaudeCodeBot itself"), isOn: DeveloperSection.binding(workspace))
             divider
             VStack(spacing: 0) {
                 if workspace.doctor.needsAttention {
-                    link("Claude Code needs attention", detail: "Doctor ›", color: DoctorRow.color(.failing)) { open(.doctor) }
+                    link(L("Claude Code needs attention"), detail: L("Doctor ›"), color: DoctorRow.color(.failing)) { open(.doctor) }
                 }
-                link("Plugins", detail: "\(registry.plugins.filter(\.enabled).count) on") { open(.plugins) }
-                link("Usage by bot", detail: "›") { open(.usage) }
-                link("All settings…", detail: "⌘ ,", color: Theme.blue) { open(nil) }
+                link(L("Plugins"), detail: L("{0} on", registry.plugins.filter(\.enabled).count)) { open(.plugins) }
+                link(L("Usage by bot"), detail: "›") { open(.usage) }
+                link(L("All settings…"), detail: "⌘ ,", color: Theme.blue) { open(nil) }
             }
         }
         .font(.system(size: 14))
@@ -81,8 +81,8 @@ struct RateLimitCards: View {
             let now = context.date
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
-                    card("5 hours", limits.fiveHour, now: now) { RateLimitText.countdown($0, now: now) }
-                    card("Week", limits.week, now: now) { RateLimitText.resetDay($0, now: now) }
+                    card(L("5 hours"), limits.fiveHour, now: now) { RateLimitText.countdown($0, now: now) }
+                    card(L("Week"), limits.week, now: now) { RateLimitText.resetDay($0, now: now) }
                 }
                 if let since = limits.staleSince(now: now) {
                     Text(RateLimitText.asOf(since, now: now))
@@ -111,7 +111,7 @@ struct RateLimitCards: View {
             .padding(2.5)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 13))
-                Text(window.map(reset) ?? "no data")
+                Text(window.map(reset) ?? L("no data"))
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.faint)
                     .lineLimit(1)
@@ -126,7 +126,7 @@ struct RateLimitCards: View {
         .frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: 8).fill(Color(hex: 0x232328)))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title) limit, \(window.map { RateLimitText.percent($0, now: now) } ?? "no data") used, \(window.map(reset) ?? "")")
+        .accessibilityLabel(L("{0} limit, {1} used, {2}", title, window.map { RateLimitText.percent($0, now: now) } ?? L("no data"), window.map(reset) ?? ""))
     }
 }
 
@@ -185,7 +185,7 @@ struct SettingsWindow: View {
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Settings")
+                Text(L("Settings"))
                     .font(.system(size: 15, weight: .semibold))
                     .padding(.horizontal, 10)
                     .padding(.bottom, 14)
@@ -214,13 +214,14 @@ struct SettingsWindow: View {
                 HStack {
                     Text(navigator.section.title).font(.system(size: 15, weight: .semibold))
                     Spacer()
-                    Button("Done") { navigator.close() }.keyboardShortcut(.defaultAction)
+                    Button(L("Done")) { navigator.close() }.keyboardShortcut(.defaultAction)
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 20)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 28) {
                         switch navigator.section {
+                        case .general: LanguageSection(workspace: workspace)
                         case .usage: UsageSection(workspace: workspace)
                         case .permissions: PermissionsSection(workspace: workspace, commands: workspace.componentCommands)
                         case .plugins: PluginsSection(registry: workspace.plugins, host: workspace.pluginHost, workspace: workspace)
@@ -268,13 +269,13 @@ private struct UsageSection: View {
         let spending = workspace.spending
         let isToday = spending.day == Spending.today()
         let tokens = isToday ? spending.tokens : TokenUsage()
-        PanelSection("Usage today") {
+        PanelSection(L("Usage today")) {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 10) {
-                    tile("Cost", Workspace.dollars(isToday ? spending.spent : 0))
-                    tile("Tokens", Workspace.tokenCount(tokens.total))
+                    tile(L("Cost"), Workspace.dollars(isToday ? spending.spent : 0))
+                    tile(L("Tokens"), Workspace.tokenCount(tokens.total))
                 }
-                Text("In \(Workspace.tokenCount(tokens.input)) · out \(Workspace.tokenCount(tokens.output)) · cache write \(Workspace.tokenCount(tokens.cacheWrite)) · cache read \(Workspace.tokenCount(tokens.cacheRead))")
+                Text(L("In {0} · out {1} · cache write {2} · cache read {3}", Workspace.tokenCount(tokens.input), Workspace.tokenCount(tokens.output), Workspace.tokenCount(tokens.cacheWrite), Workspace.tokenCount(tokens.cacheRead)))
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
             }
@@ -282,10 +283,10 @@ private struct UsageSection: View {
         let bots = isToday ? Set(spending.byBot.keys).union(spending.tokensByBot.keys).sorted {
             (spending.byBot[$0] ?? 0, spending.tokensByBot[$0]?.total ?? 0) > (spending.byBot[$1] ?? 0, spending.tokensByBot[$1]?.total ?? 0)
         } : []
-        PanelSection("By bot") {
+        PanelSection(L("By bot")) {
             Card {
                 if bots.isEmpty {
-                    Text("No bot has used anything today.")
+                    Text(L("No bot has used anything today."))
                         .font(.system(size: 14))
                         .foregroundStyle(Theme.faint)
                         .padding(.horizontal, 14)
@@ -299,7 +300,7 @@ private struct UsageSection: View {
         }
         if !spending.history.isEmpty {
             let days = Array(spending.history.reversed())
-            PanelSection("Earlier days") {
+            PanelSection(L("Earlier days")) {
                 Card {
                     ForEach(days, id: \.day) { day in
                         row(day.day, day.spent, day.tokens.total)
@@ -325,7 +326,7 @@ private struct UsageSection: View {
         HStack(spacing: 12) {
             Text(name).lineLimit(1)
             Spacer()
-            Text("\(Workspace.tokenCount(tokens)) tokens").foregroundStyle(Theme.faint).monospacedDigit()
+            Text(L("{0} tokens", Workspace.tokenCount(tokens))).foregroundStyle(Theme.faint).monospacedDigit()
             Text(Workspace.dollars(cost)).monospacedDigit().frame(width: 72, alignment: .trailing)
         }
         .font(.system(size: 14))
@@ -342,21 +343,21 @@ private struct PermissionsSection: View {
     @ObservedObject var commands: ComponentCommands
 
     var body: some View {
-        PanelSection("Auto mode") {
+        PanelSection(L("Auto mode")) {
             VStack(alignment: .leading, spacing: 10) {
                 Toggle(isOn: Binding(
                     get: { workspace.settings.autoApprovesSafeActions },
                     set: { workspace.setAutoApprovesSafeActions($0) }
                 )) {
-                    Text("Auto-approve safe actions").font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(L("Auto-approve safe actions")).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .toggleStyle(.switch)
                 .padding(.horizontal, 14)
                 .frame(height: 44)
                 .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
                 Text(workspace.settings.autoApprovesSafeActions
-                     ? "Bots use Claude Code's auto mode: reading, searching and ordinary commands just run; a safety check blocks risky ones (deleting files that were there before, sending data out, force pushes, downloading and running code). It is not a guarantee. Anything it still wants your OK for comes as a card in the chat."
-                     : "Bots ask in the chat before each tool they are not always allowed to use.")
+                     ? L("Bots use Claude Code's auto mode: reading, searching and ordinary commands just run; a safety check blocks risky ones (deleting files that were there before, sending data out, force pushes, downloading and running code). It is not a guarantee. Anything it still wants your OK for comes as a card in the chat.")
+                     : L("Bots ask in the chat before each tool they are not always allowed to use."))
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
                     .fixedSize(horizontal: false, vertical: true)
@@ -364,10 +365,10 @@ private struct PermissionsSection: View {
         }
         ResultsSection(workspace: workspace)
         let approved = workspace.approvedCommands
-        PanelSection("Approved component commands") {
+        PanelSection(L("Approved component commands")) {
             Card {
                 if approved.isEmpty {
-                    Text("None yet. A component asks before it first runs a command.")
+                    Text(L("None yet. A component asks before it first runs a command."))
                         .font(.system(size: 14))
                         .foregroundStyle(Theme.faint)
                         .padding(.horizontal, 14)
@@ -386,12 +387,12 @@ private struct PermissionsSection: View {
                             .foregroundStyle(Theme.faint)
                             .lineLimit(1)
                             .help(item.folder)
-                        Button("Forget") { workspace.forget(item) }
+                        Button(L("Forget")) { workspace.forget(item) }
                             .buttonStyle(.plain)
                             .font(.system(size: 13))
                             .foregroundStyle(Theme.muted)
-                            .help("Ask again before this command runs in \(item.owner)")
-                            .accessibilityLabel("Forget \(item.command)")
+                            .help(L("Ask again before this command runs in {0}", item.owner))
+                            .accessibilityLabel(L("Forget {0}", item.command))
                     }
                     .padding(.horizontal, 14)
                     .frame(minHeight: 44)
@@ -400,11 +401,11 @@ private struct PermissionsSection: View {
             }
         }
         if workspace.ignoredWaitingCount > 0 {
-            PanelSection("Ignored") {
+            PanelSection(L("Ignored")) {
                 HStack {
-                    Text("\(workspace.ignoredWaitingCount) item(s) taken off \"Waiting on you\"")
+                    Text(L("{0} item(s) taken off \"Waiting on you\"", workspace.ignoredWaitingCount))
                     Spacer()
-                    Button("Show again") { workspace.showIgnoredWaiting() }
+                    Button(L("Show again")) { workspace.showIgnoredWaiting() }
                         .buttonStyle(.plain)
                         .foregroundStyle(Theme.blue)
                 }
@@ -427,7 +428,7 @@ private struct PluginsSection: View {
     @State private var source = ""
 
     var body: some View {
-        PanelSection("Installed") {
+        PanelSection(L("Installed")) {
             VStack(spacing: 0) {
                 ForEach(registry.plugins) { plugin in
                     PluginRow(registry: registry, plugin: plugin, open: open == plugin.name) {
@@ -444,19 +445,49 @@ private struct PluginsSection: View {
                 Text(problem).font(.system(size: 12)).foregroundStyle(Theme.errorText)
             }
             ForEach(registry.problems.keys.sorted(), id: \.self) { folder in
-                Text("Couldn't read \"\(folder)\": \(registry.problems[folder]?.joined(separator: "; ") ?? "")")
+                Text(L("Couldn't read \"{0}\": {1}", folder, registry.problems[folder]?.joined(separator: "; ") ?? ""))
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.errorText)
             }
         }
         if let workspace {
             ComponentEditorSection(workspace: workspace)
-            PanelSection("Add plugin") {
+            PanelSection(L("Add plugin")) {
                 AddPluginRow(workspace: workspace, source: $source)
-                Text("ClaudeCodeBot asks before installing. A folder needs a package.json.")
+                Text(L("ClaudeCodeBot asks before installing. A folder needs a package.json."))
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
             }
+        }
+    }
+}
+
+/// Settings → General: the language of the app's words, which bots also reply in by default.
+/// "System default" follows the Mac's preferred languages (English when it has none of them).
+struct LanguageSection: View {
+    @ObservedObject var workspace: Workspace
+
+    var body: some View {
+        PanelSection(L("Language")) {
+            HStack(spacing: 12) {
+                Text(L("App language")).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { workspace.settings.languageChoice },
+                    set: { workspace.setLanguage($0) }
+                )) {
+                    Text(L("System default ({0})", AppLanguage.preferred().nativeName)).tag(AppLanguage?.none)
+                    Divider()
+                    ForEach(AppLanguage.allCases, id: \.self) { Text($0.nativeName).tag(Optional($0)) }
+                }
+                .labelsHidden().pickerStyle(.menu).fixedSize()
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+            Text(L("ClaudeCodeBot's menus, buttons and messages change at once. Bots reply in this language by default; when you write to them in another language, they answer in yours."))
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.faint)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -466,9 +497,9 @@ struct ResultsSection: View {
     @ObservedObject var workspace: Workspace
 
     var body: some View {
-        PanelSection("Reports and results") {
+        PanelSection(L("Reports and results")) {
             HStack(spacing: 12) {
-                Text("Publish as").font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
+                Text(L("Publish as")).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
                 Picker("", selection: Binding(
                     get: { workspace.settings.resultPublishing },
                     set: { workspace.setResultPublishing($0) }
@@ -490,11 +521,11 @@ struct ResultsSection: View {
     static func explanation(_ choice: ResultPublishing) -> String {
         switch choice {
         case .artifactUnlessSensitive:
-            "Bots publish reports as private claude.ai Artifacts you open in your browser. Anything sensitive (keys, personal data, what you said to keep local), or when publishing fails, stays a page in the project's .bot/artifacts folder."
+            L("Bots publish reports as private claude.ai Artifacts you open in your browser. Anything sensitive (keys, personal data, what you said to keep local), or when publishing fails, stays a page in the project's .bot/artifacts folder.")
         case .localOnly:
-            "Bots save every report as a page in the project's .bot/artifacts folder; nothing is published to claude.ai."
+            L("Bots save every report as a page in the project's .bot/artifacts folder; nothing is published to claude.ai.")
         case .artifactAlways:
-            "Bots publish every report as a private claude.ai Artifact, sensitive or not; a local page only when publishing fails."
+            L("Bots publish every report as a private claude.ai Artifact, sensitive or not; a local page only when publishing fails.")
         }
     }
 }
@@ -504,9 +535,9 @@ private struct ComponentEditorSection: View {
     @ObservedObject var workspace: Workspace
 
     var body: some View {
-        PanelSection("Component editor") {
+        PanelSection(L("Component editor")) {
             HStack(spacing: 12) {
-                Text("Model").font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
+                Text(L("Model")).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
                 Picker("", selection: Binding(
                     get: { workspace.settings.componentEditor },
                     set: { workspace.setComponentEditorModel($0) }
@@ -518,7 +549,7 @@ private struct ComponentEditorSection: View {
             .padding(.horizontal, 14)
             .frame(height: 44)
             .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-            Text("The agent Maintainer hands component changes to. A change here rewrites its file in ccb-core; awake bots pick it up before their next message.")
+            Text(L("The agent Maintainer hands component changes to. A change here rewrites its file in ccb-core; awake bots pick it up before their next message."))
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.faint)
                 .fixedSize(horizontal: false, vertical: true)
@@ -542,8 +573,8 @@ private struct PluginRow: View {
                 Button(action: toggleOpen) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(plugin.manifest.title).foregroundStyle(plugin.enabled ? Theme.text : Theme.muted)
-                        Text(plugin.builtIn ? "Built-in · \(plugin.manifest.version)"
-                             : plugin.installedFrom.map { "External · \(plugin.manifest.version) · \($0)" } ?? plugin.manifest.version)
+                        Text(plugin.builtIn ? L("Built-in · {0}", plugin.manifest.version)
+                             : plugin.installedFrom.map { L("External · {0} · {1}", plugin.manifest.version, $0) } ?? plugin.manifest.version)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .font(.system(size: 12))
@@ -561,10 +592,10 @@ private struct PluginRow: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.small)
-                .accessibilityLabel("Enable \(plugin.manifest.title)")
+                .accessibilityLabel(L("Enable {0}", plugin.manifest.title))
             }
             if let failure = plugin.failure {
-                Text(plugin.usingPrevious ? "New version failed, using the previous one: \(failure)" : "Failed and disabled: \(failure)")
+                Text(plugin.usingPrevious ? L("New version failed, using the previous one: {0}", failure) : L("Failed and disabled: {0}", failure))
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.errorText)
             }
@@ -584,18 +615,18 @@ private struct PluginRow: View {
         .contentShape(Rectangle())
         .contextMenu {
             if !plugin.builtIn {
-                Button("Revert to previous version") { Task { report(await registry.revert(plugin.name)) } }
+                Button(L("Revert to previous version")) { Task { report(await registry.revert(plugin.name)) } }
                     .disabled(!registry.hasPrevious(plugin.name))
-                Button("Remove", role: .destructive) { confirmingRemove = true }
+                Button(L("Remove"), role: .destructive) { confirmingRemove = true }
             }
         }
-        .confirmationDialog("Remove \"\(plugin.manifest.title)\"?", isPresented: $confirmingRemove) {
-            Button("Remove", role: .destructive) { Task { report(await registry.remove(plugin.name)) } }
+        .confirmationDialog(L("Remove \"{0}\"?", plugin.manifest.title), isPresented: $confirmingRemove) {
+            Button(L("Remove"), role: .destructive) { Task { report(await registry.remove(plugin.name)) } }
         } message: {
-            Text("The plugin library's git history is kept, so it can be recovered later.")
+            Text(L("The plugin library's git history is kept, so it can be recovered later."))
         }
-        .alert("Couldn't finish", isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
-            Button("OK") { problem = nil }
+        .alert(L("Couldn't finish"), isPresented: Binding(get: { problem != nil }, set: { if !$0 { problem = nil } })) {
+            Button(L("OK")) { problem = nil }
         } message: {
             Text(problem ?? "")
         }
@@ -618,30 +649,30 @@ private struct AddPluginRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                TextField("Git URL, npm name or .zip URL", text: $source)
+                TextField(L("Git URL, npm name or .zip URL"), text: $source)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit(add)
-                Button("Add", action: add).disabled(source.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button(L("Add"), action: add).disabled(source.trimmingCharacters(in: .whitespaces).isEmpty)
                 Button {
                     let panel = NSOpenPanel()
                     panel.canChooseDirectories = true
                     panel.canChooseFiles = false
-                    panel.prompt = "Add as plugin"
-                    panel.message = "Pick a plugin folder (one with a package.json)."
+                    panel.prompt = L("Add as plugin")
+                    panel.message = L("Pick a plugin folder (one with a package.json).")
                     if panel.runModal() == .OK, let folder = panel.url {
                         Task { await workspace.proposeInstall(folder.path, trusted: true) }
                     }
                 } label: {
                     Image(systemName: "folder")
                 }
-                .help("Add from folder")
-                .accessibilityLabel("Add plugin from folder")
+                .help(L("Add from folder"))
+                .accessibilityLabel(L("Add plugin from folder"))
             }
             .font(.system(size: 13))
             ForEach(workspace.fetching, id: \.self) { item in
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text("Fetching \(item)…").font(.system(size: 12)).foregroundStyle(Theme.faint).lineLimit(1)
+                    Text(L("Fetching {0}…", item)).font(.system(size: 12)).foregroundStyle(Theme.faint).lineLimit(1)
                 }
             }
         }
@@ -670,7 +701,7 @@ private struct SettingControl: View {
             Spacer()
             if setting.secret == true {
                 // Kept in the keychain; ClaudeCodeBot never shows it again.
-                SecureField(registry.secret(plugin, key) == nil ? "Not set" : "Saved in Keychain", text: $secret)
+                SecureField(registry.secret(plugin, key) == nil ? L("Not set") : L("Saved in Keychain"), text: $secret)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 140)
                     .onSubmit {
@@ -708,11 +739,11 @@ struct DeveloperSection: View {
 
     var body: some View {
         let folders = workspace.projects.filter { !$0.isBot }
-        PanelSection("Developer mode") {
+        PanelSection(L("Developer mode")) {
             VStack(alignment: .leading, spacing: 10) {
                 Card {
                     Toggle(isOn: Self.binding(workspace)) {
-                        Text("Develop ClaudeCodeBot itself").font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
+                        Text(L("Develop ClaudeCodeBot itself")).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .toggleStyle(.switch)
                     .padding(.horizontal, 14)
@@ -720,13 +751,13 @@ struct DeveloperSection: View {
                     if workspace.settings.developerMode {
                         RowDivider()
                         HStack {
-                            Text("Its source").font(.system(size: 14))
+                            Text(L("Its source")).font(.system(size: 14))
                             Spacer()
-                            Picker("Its source", selection: Binding(
+                            Picker(L("Its source"), selection: Binding(
                                 get: { workspace.settings.developerProjectID },
                                 set: { workspace.setDeveloperMode(true, project: $0) }
                             )) {
-                                Text("Choose a project").tag(UUID?.none)
+                                Text(L("Choose a project")).tag(UUID?.none)
                                 ForEach(folders) { project in
                                     Text(project.name).tag(Optional(project.id))
                                 }
@@ -740,8 +771,8 @@ struct DeveloperSection: View {
                     }
                 }
                 Text(workspace.settings.developerMode
-                     ? "\(workspace.developerProject?.name ?? "That project")'s manager may install new builds (you confirm; one that does not start is rolled back), take screenshots of this window, and gets what you flag as \"not right\" in any chat."
-                     : "Off for everyone who only uses ClaudeCodeBot. Turn it on to let one project's manager work on the app itself.")
+                     ? L("{0}'s manager may install new builds (you confirm; one that does not start is rolled back), take screenshots of this window, and gets what you flag as \"not right\" in any chat.", workspace.developerProject?.name ?? L("That project"))
+                     : L("Off for everyone who only uses ClaudeCodeBot. Turn it on to let one project's manager work on the app itself."))
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
                     .fixedSize(horizontal: false, vertical: true)
@@ -776,12 +807,12 @@ struct DoctorSection: View {
     @ObservedObject var model: DoctorModel
 
     var body: some View {
-        PanelSection("Command-line tools") {
+        PanelSection(L("Command-line tools")) {
             Card {
                 if model.checks.isEmpty {
                     HStack(spacing: 10) {
                         ProgressView().controlSize(.small)
-                        Text("Checking…").foregroundStyle(Theme.muted)
+                        Text(L("Checking…")).foregroundStyle(Theme.muted)
                     }
                     .font(.system(size: 14))
                     .padding(16)
@@ -793,17 +824,17 @@ struct DoctorSection: View {
                 }
             }
             HStack(spacing: 10) {
-                Button("Run again") { Task { await model.run(includeLatest: true) } }
+                Button(L("Run again")) { Task { await model.run(includeLatest: true) } }
                     .disabled(model.isRunning)
                 if model.isRunning {
                     ProgressView().controlSize(.small)
                 } else if let checkedAt = model.checkedAt {
-                    Text("Checked \(checkedAt.formatted(date: .omitted, time: .shortened))")
+                    Text(L("Checked {0}", checkedAt.formatted(date: .omitted, time: .shortened)))
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.faint)
                 }
             }
-            Text("Bots run Claude Code; Codex reviews run Codex. Each check has a \(Int(Doctor.timeout))-second limit and spends no tokens.")
+            Text(L("Bots run Claude Code; Codex reviews run Codex. Each check has a {0}-second limit and spends no tokens.", Int(Doctor.timeout)))
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.faint)
         }
@@ -829,11 +860,11 @@ struct DoctorRow: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Circle().fill(Self.color(check.status)).frame(width: 9, height: 9)
-                    .accessibilityLabel(check.status == .ok ? "OK" : check.status == .warning ? "Warning" : "Failing")
+                    .accessibilityLabel(check.status == .ok ? L("OK") : check.status == .warning ? L("Warning") : L("Failing"))
                 Text(check.tool.name).font(.system(size: 14, weight: .medium))
                 Text(check.version ?? "—").font(.system(size: 13)).monospacedDigit().foregroundStyle(Theme.muted)
                 Spacer()
-                Text("needs \(check.tool.minimum.description)+").font(.system(size: 12)).foregroundStyle(Theme.faint)
+                Text(L("needs {0}+", check.tool.minimum.description)).font(.system(size: 12)).foregroundStyle(Theme.faint)
             }
             Group {
                 Text(check.summary).foregroundStyle(check.status == .ok ? Theme.muted : Self.color(check.status))
@@ -851,13 +882,13 @@ struct DoctorRow: View {
                         .truncationMode(.middle)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Button(copied ? "Copied" : "Copy") {
+                    Button(copied ? L("Copied") : L("Copy")) {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(fix, forType: .string)
                         copied = true
                     }
                     .controlSize(.small)
-                    .help("Copy the command, then run it in Terminal")
+                    .help(L("Copy the command, then run it in Terminal"))
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -880,7 +911,7 @@ struct DoctorDot: View {
             Circle().fill(Color(hex: 0xFF5F57)).frame(width: 7, height: 7)
                 .offset(x: -6, y: 6)
                 .allowsHitTesting(false)
-                .accessibilityLabel("Claude Code needs attention")
+                .accessibilityLabel(L("Claude Code needs attention"))
         }
     }
 }

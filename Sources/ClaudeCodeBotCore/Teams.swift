@@ -91,10 +91,10 @@ public struct TeamRun: Identifiable, Equatable, Sendable {
 }
 
 enum TeamPrompts {
-    static func system(_ spec: TeamSpec, folder: URL, results: ResultPublishing = .artifactUnlessSensitive) -> String {
+    static func system(_ spec: TeamSpec, folder: URL, results: ResultPublishing = .artifactUnlessSensitive, language: AppLanguage = .english) -> String {
         """
         \(spec.role)
-        - Reply in the user's language (match the language of their latest message; the task below is written in it). Your working folder is \(folder.path); read and write only there.
+        - \(BotPrompts.languageRule(language)) The task below may be written in the user's language. Your working folder is \(folder.path); read and write only there.
         - \(BotPrompts.resultsRule(results, folder: folder.appending(path: "artifacts").path))
         - Do not ask questions: when unsure, make reasonable assumptions and write them down in the result page.
         - Your final reply is at most 3 sentences: what you did, the conclusion, then the result's link, [result name](url).

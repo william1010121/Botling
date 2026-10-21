@@ -30,7 +30,7 @@ public enum MarkdownFile {
     /// `window.ccbDocument = {text, base, name};` for `file`, or nil when it cannot be read.
     public static func documentScript(for file: URL) -> String? {
         guard let data = try? Data(contentsOf: file), let text = decode(data) else { return nil }
-        let object = ["text": text, "base": file.standardizedFileURL.absoluteString, "name": file.lastPathComponent]
+        let object = ["text": text, "base": file.standardizedFileURL.absoluteString, "name": file.lastPathComponent, "lang": L10n.language.rawValue]
         guard let json = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else { return nil }
         return "window.ccbDocument = \(String(decoding: json, as: UTF8.self));"
     }

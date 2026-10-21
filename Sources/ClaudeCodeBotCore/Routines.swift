@@ -114,13 +114,13 @@ public struct CronSchedule: Equatable, Sendable {
         guard let time = dailyTime, fields[2] == "*", fields[3] == "*" else { return text }
         let clock = String(format: "%02d:%02d", time.hour, time.minute)
         switch fields[4] {
-        case "*": return "Every day \(clock)"
-        case "1-5": return "Weekdays \(clock)"
-        case "0,6", "6,0", "6-7": return "Weekends \(clock)"
+        case "*": return L("Every day {0}", clock)
+        case "1-5": return L("Weekdays {0}", clock)
+        case "0,6", "6,0", "6-7": return L("Weekends {0}", clock)
         default:
-            let names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+            let names = [L("Sun"), L("Mon"), L("Tue"), L("Wed"), L("Thu"), L("Fri"), L("Sat")]
             let days = weekdays.subtracting([7]).sorted().map { names[$0] }
-            return days.joined(separator: ", ") + " \(clock)"
+            return L("{0} {1}", days.joined(separator: L(", ")), clock)
         }
     }
 

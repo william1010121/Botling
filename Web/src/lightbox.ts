@@ -1,4 +1,6 @@
 import { post } from "./bridge";
+import { t } from "./i18n";
+import { escapeHTML } from "./util";
 
 const imageExtensions = /\.(png|jpe?g|gif|webp|heic|heif|bmp|tiff?|svg|avif)$/i;
 
@@ -20,12 +22,14 @@ export function openLightbox(url: string, label: string): void {
   box.className = "lightbox";
   box.setAttribute("role", "dialog");
   box.setAttribute("aria-modal", "true");
-  box.setAttribute("aria-label", label || "Picture");
+  box.setAttribute("aria-label", label || t("lightbox.picture"));
+  const openWords = escapeHTML(t("lightbox.openInPreview"));
+  const revealWords = escapeHTML(t("lightbox.showInFinder"));
   box.innerHTML = `
     <div class="lightbox-bar">
-      <button class="lightbox-open" type="button" title="Open in Preview">Open in Preview</button>
-      ${url.startsWith("file:") ? `<button class="lightbox-reveal" type="button" title="Show in Finder">Show in Finder</button>` : ""}
-      <button class="lightbox-close" type="button" aria-label="Close" title="Close (Esc)">✕</button>
+      <button class="lightbox-open" type="button" title="${openWords}">${openWords}</button>
+      ${url.startsWith("file:") ? `<button class="lightbox-reveal" type="button" title="${revealWords}">${revealWords}</button>` : ""}
+      <button class="lightbox-close" type="button" aria-label="${escapeHTML(t("common.close"))}" title="${escapeHTML(t("lightbox.closeEsc"))}">✕</button>
     </div>
     <div class="lightbox-stage"><img class="lightbox-image" alt=""></div>
     <div class="lightbox-caption"></div>`;

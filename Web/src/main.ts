@@ -1,3 +1,4 @@
+import { setLanguage, t } from "./i18n";
 import { post } from "./bridge";
 import { buildNear, detailReply, keepFrames, releaseFrames } from "./components";
 import { startTaskTicks, taskOutput } from "./tasks";
@@ -108,6 +109,9 @@ class Chat {
       this.composer.setText("");
     }
 
+    // A new language (Settings) draws every message again in its words.
+    if (setLanguage(state.lang)) this.clearList();
+
     // Turning developer mode on or off redraws every reply with or without its flag.
     const flagged = !!state.feedback && !state.subagent;
     const making = !!state.makeComponents && !state.subagent;
@@ -210,9 +214,9 @@ class Chat {
     }
     const { title, owner, status, type } = state.subagent;
     bar.className = status;
-    bar.innerHTML = `<button class="back" aria-label="Back to ${escapeHTML(owner)}'s chat">‹ ${escapeHTML(owner)}</button><div class="subagent-heading"><span class="title"></span><span class="meta"></span></div>`;
+    bar.innerHTML = `<button class="back" aria-label="${escapeHTML(t("subagent.back", { bot: owner }))}">‹ ${escapeHTML(owner)}</button><div class="subagent-heading"><span class="title"></span><span class="meta"></span></div>`;
     bar.querySelector(".title")!.textContent = title;
-    bar.querySelector(".meta")!.textContent = [`Subagent of ${owner}`, type, statusWord(status), "watch only"].filter(Boolean).join(" · ");
+    bar.querySelector(".meta")!.textContent = [t("subagent.of", { bot: owner }), type, statusWord(status), t("subagent.watchOnly")].filter(Boolean).join(" · ");
     bar.querySelector(".back")!.addEventListener("click", () => post({ type: "closeSubagent" }));
   }
 
@@ -340,7 +344,7 @@ function drawPanel(): void {
     document.body.append(root);
   }
   if (!entry) {
-    root.innerHTML = `<p class="panel-empty">This panel is not ready yet.</p>`;
+    root.innerHTML = `<p class="panel-empty">${escapeHTML(t("panel.notReady"))}</p>`;
     return;
   }
   panelDispose?.();
@@ -357,6 +361,7 @@ chat.plugins.onPanels = () => drawPanel();
 let specPanel: SpecPanel | null = null;
 if (new URLSearchParams(location.search).has("spec")) document.body.classList.add("spec-mode");
 function setSpec(state: SpecState): void {
+  setLanguage(state.lang);
   if (!specPanel) {
     let root = document.getElementById("spec-root");
     if (!root) {

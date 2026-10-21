@@ -135,7 +135,9 @@ extension Workspace {
         )
         codexReviews.append(review)
         codexStore.save(codexReviews)
-        tell(bot, "Codex is reviewing **\(who)**'s change (up to \(review.maxRounds) fix round\(review.maxRounds == 1 ? "" : "s")).", sourceID: Self.codexID)
+        tell(bot, review.maxRounds == 1
+            ? L("Codex is reviewing **{0}**'s change (up to 1 fix round).", who)
+            : L("Codex is reviewing **{0}**'s change (up to {1} fix rounds).", who, review.maxRounds), sourceID: Self.codexID)
         runCodexRound(review.id)
     }
 
@@ -183,7 +185,7 @@ extension Workspace {
         guard codexReview(id)?.state == .reviewing else { return }
         update(id) { $0.state = .empty }
         guard let review = codexReview(id), let bot = member(review.ownerID) else { return }
-        tell(bot, "**Codex review** of \(URL(filePath: review.folder).lastPathComponent): no changes to review (\(review.reviewedScope.displayName.lowercased())).", sourceID: Self.codexID)
+        tell(bot, L("**Codex review** of {0}: no changes to review ({1}).", URL(filePath: review.folder).lastPathComponent, review.reviewedScope.displayName.lowercased()), sourceID: Self.codexID)
     }
 
     func finishCodexRound(_ id: UUID, _ output: CodexOutput) {
@@ -202,17 +204,22 @@ extension Workspace {
         case .clean:
             update(id) { $0.state = .clean }
             let left = review.openFindings.count
-            tell(bot, "**Codex · clean** — \(who)'s change \(review.round == 1 ? "has nothing to fix" : "is clean after \(review.round) rounds")\(left > 0 ? " (\(left) lower finding\(left == 1 ? "" : "s") left open)" : "").", sourceID: Self.codexID)
+            let clean = review.round == 1 ? L("**Codex · clean** — {0}'s change has nothing to fix", who) : L("**Codex · clean** — {0}'s change is clean after {1} rounds", who, review.round)
+            let open = left == 0 ? "" : left == 1 ? L(" (1 lower finding left open)") : L(" ({0} lower findings left open)", left)
+            tell(bot, clean + open + L("."), sourceID: Self.codexID)
             bot.appMessage("(App: Codex review of \(Self.quote(who))'s change is clean after \(review.round) round\(review.round == 1 ? "" : "s")\(left > 0 ? "; \(left) finding\(left == 1 ? "" : "s") below the level your settings send back stay open in the report" : ""). If \(Self.quote(who)) is waiting for the review, tell it with SendMessage to finish its task now (merge, clean up as its task says), then report the result to the user in one sentence.)")
         case let .fix(findings):
             update(id) { $0.markSent(Set(findings.map(\.id))); $0.state = .fixing }
-            tell(bot, "**Codex · round \(review.round)** found \(findings.count) to fix in \(who)'s change; sent back to \(who):\n" + Self.list(findings), sourceID: Self.codexID)
+            tell(bot, L("**Codex · round {0}** found {1} to fix in {2}'s change; sent back to {2}:", review.round, findings.count, who) + "\n" + Self.list(findings), sourceID: Self.codexID)
             bot.appMessage(Self.fixMessage(codexReview(id) ?? review, findings))
         case let .stuck(findings):
             update(id) { $0.state = .stuck }
-            let card = tell(bot, "**Codex · stopped at max rounds** — \(findings.count) finding\(findings.count == 1 ? "" : "s") left in \(who)'s change after \(review.round) rounds:\n" + Self.list(findings), choices: [
-                Choice(label: "Fix once more", detail: "Send them back to \(who) for one more round", recommended: true),
-                Choice(label: "Accept as is", detail: "\(who) finishes; they stay open in the report")
+            let stopped = findings.count == 1
+                ? L("**Codex · stopped at max rounds** — 1 finding left in {0}'s change after {1} rounds:", who, review.round)
+                : L("**Codex · stopped at max rounds** — {0} findings left in {1}'s change after {2} rounds:", findings.count, who, review.round)
+            let card = tell(bot, stopped + "\n" + Self.list(findings), choices: [
+                Choice(label: L("Fix once more"), detail: L("Send them back to {0} for one more round", who), recommended: true),
+                Choice(label: L("Accept as is"), detail: L("{0} finishes; they stay open in the report", who))
             ], sourceID: Self.codexID)
             codexQuestions[card] = id
             refreshWaiting()
@@ -225,7 +232,7 @@ extension Workspace {
         update(id) { $0.state = .failed; $0.error = message }
         guard let review = codexReview(id), let bot = member(review.ownerID) else { return }
         let who = review.agent ?? URL(filePath: review.folder).lastPathComponent
-        tell(bot, "**Codex could not review** \(who)'s change: \(message)", sourceID: Self.codexID)
+        tell(bot, L("**Codex could not review** {0}'s change: {1}", who, message), sourceID: Self.codexID)
         if review.kind == .loop {
             bot.appMessage("(App: Codex could not review \(Self.quote(who))'s change: \(Self.firstLine(of: message)). Tell the user in one sentence and ask whether \(Self.quote(who)) should finish without the review.)")
         }
@@ -295,7 +302,7 @@ extension Workspace {
     public func reviewWithCodex(_ bot: Bot, scope: CodexScope? = nil, spec: String? = nil) -> UUID? {
         guard let ownerID = ownerID(of: bot), bot !== codexBot else { return nil }
         guard let repository = GitDiff.repositoryRoot(bot.profile.workingDirectory) else {
-            tell(bot, "Codex reviews changes in a git repository; \(bot.profile.workingDirectory.lastPathComponent) is not one.", sourceID: Self.codexID)
+            tell(bot, L("Codex reviews changes in a git repository; {0} is not one.", bot.profile.workingDirectory.lastPathComponent), sourceID: Self.codexID)
             return nil
         }
         if let running = codexReviews.last(where: { $0.kind == .single && $0.ownerID == ownerID && $0.state == .reviewing }) {
@@ -382,10 +389,11 @@ extension Workspace {
     static func singleNotice(_ review: CodexReview) -> String {
         let counts = CodexSeverity.allCases.compactMap { severity -> String? in
             let n = review.count(severity, status: [.open])
-            return n == 0 ? nil : "\(n) \(severity.rawValue)"
+            return n == 0 ? nil : "\(n) \(severity.displayName.lowercased())"
         }
-        if counts.isEmpty { return "**Codex review** of \(URL(filePath: review.folder).lastPathComponent): nothing to fix. \(review.summary)" }
-        return "**Codex review** of \(URL(filePath: review.folder).lastPathComponent): \(counts.joined(separator: " · ")). The report is under Results.\n\n\(review.summary)"
+        let folder = URL(filePath: review.folder).lastPathComponent
+        if counts.isEmpty { return L("**Codex review** of {0}: nothing to fix.", folder) + " \(review.summary)" }
+        return L("**Codex review** of {0}: {1}. The report is under Results.", folder, counts.joined(separator: " · ")) + "\n\n\(review.summary)"
     }
 
     /// What the bot is told to send back to its subagent.

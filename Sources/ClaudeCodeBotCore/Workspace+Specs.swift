@@ -499,8 +499,13 @@ extension Workspace {
             specs[at].conversation += events.map { .init(kind: .event, text: $0) }
         }
         if !added.isEmpty || !full.isEmpty || had.isEmpty {
-            var text = added.isEmpty ? (had.isEmpty ? "\(name) is in the library, but on no bot's list yet." : "") : "\(name) added to \(added.joined(separator: ", "))."
-            if !full.isEmpty { text += (text.isEmpty ? "" : " ") + "Not added to \(full.joined(separator: ", ")): \(full.count == 1 ? "its list is" : "their lists are") full (\(ComponentLibrary.limit) components); take one off first." }
+            var text = added.isEmpty ? (had.isEmpty ? L("{0} is in the library, but on no bot's list yet.", name) : "") : L("{0} added to {1}.", name, added.joined(separator: ", "))
+            if !full.isEmpty {
+                let why = full.count == 1
+                    ? L("Not added to {0}: its list is full ({1} components); take one off first.", full.joined(separator: ", "), ComponentLibrary.limit)
+                    : L("Not added to {0}: their lists are full ({1} components); take one off first.", full.joined(separator: ", "), ComponentLibrary.limit)
+                text += (text.isEmpty ? "" : " ") + why
+            }
             tell(chat, text)
         }
         askToFill(id, component: name, in: chat)
@@ -625,24 +630,24 @@ extension Workspace {
             case .failed: "failed"
             }
             steps = [
-                .init(label: "Sent to Maintainer", state: "done"),
-                .init(label: change.state == .asking ? "Maintainer asks one question" : "Maintainer makes \(v)", state: change.state == .asking ? "doing" : made),
-                .init(label: "\(v) in the library", state: change.state == .updated ? "done" : change.state == .failed ? "failed" : "todo"),
+                .init(label: L("Sent to Maintainer"), state: "done"),
+                .init(label: change.state == .asking ? L("Maintainer asks one question") : L("Maintainer makes {0}", v), state: change.state == .asking ? "doing" : made),
+                .init(label: L("{0} in the library", v), state: change.state == .updated ? "done" : change.state == .failed ? "failed" : "todo"),
             ]
             if change.state == .updated, let writer = spec.filledBy {
-                steps?.append(spec.fillError != nil ? .init(label: "\(writer) did not fill it", state: "todo")
-                    : .init(label: "Filled by \(writer)", state: spec.filling ? "doing" : "done"))
+                steps?.append(spec.fillError != nil ? .init(label: L("{0} did not fill it", writer), state: "todo")
+                    : .init(label: L("Filled by {0}", writer), state: spec.filling ? "doing" : "done"))
             }
         } else if spec.status != .draft, spec.existing == nil, !spec.reuse {
             let built = spec.status == .done
             steps = [
-                .init(label: "Sent to Maintainer", state: "done"),
-                .init(label: "Built into the library", state: built ? "done" : "doing"),
-                .init(label: "Add to " + (spec.bots.isEmpty ? "its bots" : spec.bots.joined(separator: ", ")), state: built ? "done" : "todo"),
+                .init(label: L("Sent to Maintainer"), state: "done"),
+                .init(label: L("Built into the library"), state: built ? "done" : "doing"),
+                .init(label: spec.bots.isEmpty ? L("Add to its bots") : L("Add to {0}", spec.bots.joined(separator: ", ")), state: built ? "done" : "todo"),
             ]
             if built, let writer = spec.filledBy {
-                steps?.append(spec.fillError != nil ? .init(label: "\(writer) did not fill it", state: "todo")
-                    : .init(label: "Filled by \(writer)", state: spec.filling ? "doing" : "done"))
+                steps?.append(spec.fillError != nil ? .init(label: L("{0} did not fill it", writer), state: "todo")
+                    : .init(label: L("Filled by {0}", writer), state: spec.filling ? "doing" : "done"))
             }
         }
         let reply = chat.messages.first { $0.id == spec.messageID }
@@ -825,6 +830,8 @@ public struct SpecPayload: Encodable, Equatable {
     /// What the user typed during a build: it goes with the next change.
     var queued: [String]
     var wide: Bool
+    /// The language of the panel's own words, as `ChatPayload.lang`.
+    var lang: String = L10n.language.rawValue
 
     public func json() -> String {
         let encoder = JSONEncoder()

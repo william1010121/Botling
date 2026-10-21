@@ -44,8 +44,17 @@ public struct ComponentSpec: Codable, Equatable, Identifiable, Sendable {
             /// The result page it was made from.
             case page
 
-            /// The tab's words for it.
+            /// The tab's words for it, in the app's language.
             public var label: String {
+                switch self {
+                case .testRun: L("Test run")
+                case .reply: L("This reply")
+                case .page: L("This page")
+                }
+            }
+
+            /// Its English label, which a spec saved before samples had a kind was known by.
+            var englishLabel: String {
                 switch self {
                 case .testRun: "Test run"
                 case .reply: "This reply"
@@ -78,7 +87,7 @@ public struct ComponentSpec: Codable, Equatable, Identifiable, Sendable {
             data = try container.decode(String.self, forKey: .data)
             // Saved before samples had a kind: the app's own were known by their English label.
             kind = try container.decodeIfPresent(Kind.self, forKey: .kind)
-                ?? (container.contains(.kind) ? nil : [Kind.testRun, .reply, .page].first { $0.label == label })
+                ?? (container.contains(.kind) ? nil : [Kind.testRun, .reply, .page].first { $0.englishLabel == label })
         }
 
         /// Writes `kind` even when nil, so one of Maintainer's that reads like the app's stays Maintainer's.

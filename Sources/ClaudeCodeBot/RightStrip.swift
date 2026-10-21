@@ -77,8 +77,8 @@ struct RightToggle: View {
         }
         .buttonStyle(.plain)
         .keyboardShortcut("i", modifiers: [.control, .command])
-        .help(collapsed ? "Show right panel (⌃⌘I)" : "Hide right panel (⌃⌘I)")
-        .accessibilityLabel(collapsed ? "Show right panel" : "Hide right panel")
+        .help(collapsed ? L("Show right panel") + " (⌃⌘I)" : L("Hide right panel") + " (⌃⌘I)")
+        .accessibilityLabel(collapsed ? L("Show right panel") : L("Hide right panel"))
     }
 }
 
@@ -133,8 +133,8 @@ struct RightStrip: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("\(bot.name)'s settings")
-                .accessibilityLabel("Bot settings")
+                .help(L("{0}'s settings", bot.name))
+                .accessibilityLabel(L("Bot settings"))
             }
         }
         .frame(width: RightPanelLayout.collapsedWidth)
@@ -170,7 +170,7 @@ struct RightStrip: View {
     private var faceDetail: String {
         if let group {
             let speaker = workspace.groupSpeakers[group.id].flatMap(workspace.speakerName(for:))
-            return speaker.map { "\($0) is writing…" } ?? workspace.members(of: group).map(\.name).joined(separator: ", ")
+            return speaker.map { L("{0} is writing…", $0) } ?? workspace.members(of: group).map(\.name).joined(separator: ", ")
         }
         let doing = bot.profile.role == .manager
             ? MemoryFile.items(at: bot.profile.memoryURL, section: "In progress").first
@@ -226,11 +226,11 @@ struct RightStrip: View {
     /// The open panel's heading for the section.
     private func title(_ section: RightPanelLayout.Section) -> String {
         switch section {
-        case .waiting: "Waiting on you"
-        case .members: "In the group"
-        case .codex: isCodex ? "Reviews" : "Codex review"
-        case .results: bot.profile.role == .main || group != nil ? "Just done" : "Results"
-        case .settled: "Settled"
+        case .waiting: L("Waiting on you")
+        case .members: L("In the group")
+        case .codex: isCodex ? L("Reviews") : L("Codex review")
+        case .results: bot.profile.role == .main || group != nil ? L("Just done") : L("Results")
+        case .settled: L("Settled")
         }
     }
 
@@ -266,11 +266,11 @@ struct RightStrip: View {
                     let running = reviews.contains { $0.kind == .single && $0.state == .reviewing }
                     CodexReviewButton(workspace: workspace, bot: bot, running: running) { id in
                         open = nil
-                        CodexReportWindows.open(id, title: "Codex review", workspace: workspace)
+                        CodexReportWindows.open(id, title: L("Codex review"), workspace: workspace)
                     }
                 }
                 if reviews.isEmpty, !canReview {
-                    Text("Nothing reviewed yet.").font(.system(size: 13)).foregroundStyle(Theme.faint)
+                    Text(L("Nothing reviewed yet.")).font(.system(size: 13)).foregroundStyle(Theme.faint)
                 }
             }
         case .results:
@@ -309,7 +309,7 @@ private struct StripFlyout<Content: View>: View {
             HStack {
                 Text(title).font(.system(size: 12)).foregroundStyle(Theme.faint)
                 Spacer()
-                Text("Esc to close").font(.system(size: 11)).foregroundStyle(Theme.faint)
+                Text(L("Esc to close")).font(.system(size: 11)).foregroundStyle(Theme.faint)
             }
             ViewThatFits(in: .vertical) {
                 content()
@@ -364,6 +364,6 @@ private struct StripFace<Face: View>: View {
         .onChange(of: detail) { _, detail in
             if hovering { tip = RightTip(title: title, detail: detail, color: color, midY: midY) }
         }
-        .accessibilityLabel("\(title), \(detail). Show the panel")
+        .accessibilityLabel(L("{0}, {1}. Show the panel", title, detail))
     }
 }

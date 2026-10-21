@@ -404,6 +404,8 @@ enum Snapshot {
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
+        // `CCB_LANGUAGE=ja`: drawn in that language, picked in Settings → General.
+        if let language = HeadlessRun.language() { workspace.setLanguage(language) }
         let navigator = SettingsNavigator()
         // CCB_SETTINGS_SECTION=plugins draws another section.
         navigator.section = ProcessInfo.processInfo.environment["CCB_SETTINGS_SECTION"].flatMap(SettingsSection.init(rawValue:)) ?? .doctor

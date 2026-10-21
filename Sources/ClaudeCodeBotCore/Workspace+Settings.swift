@@ -3,6 +3,7 @@ import Foundation
 
 /// The sections of ClaudeCodeBot's settings window, in the order its sidebar lists them.
 public enum SettingsSection: String, CaseIterable, Identifiable, Sendable {
+    case general
     case usage
     case permissions
     case plugins
@@ -14,12 +15,13 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Sendable {
 
     public var title: String {
         switch self {
-        case .usage: "Usage"
-        case .permissions: "Permissions"
-        case .plugins: "Plugins"
-        case .developer: "Developer mode"
-        case .releases: "Release planner"
-        case .doctor: "Doctor"
+        case .general: L("General")
+        case .usage: L("Usage")
+        case .permissions: L("Permissions")
+        case .plugins: L("Plugins")
+        case .developer: L("Developer mode")
+        case .releases: L("Release planner")
+        case .doctor: L("Doctor")
         }
     }
 }

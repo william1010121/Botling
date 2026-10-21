@@ -132,7 +132,7 @@ public final class ComponentCommands: ObservableObject {
         if let data = outcome.data {
             runs[card] = State(status: .done, data: data, error: nil, ranAt: outcome.ranAt)
         } else {
-            runs[card] = State(status: .failed, data: nil, error: outcome.error ?? "The command failed.", ranAt: outcome.ranAt)
+            runs[card] = State(status: .failed, data: nil, error: outcome.error ?? L("The command failed."), ranAt: outcome.ranAt)
         }
     }
 
@@ -167,11 +167,11 @@ public final class ComponentCommands: ObservableObject {
     /// Why a value cannot go into a Detail command, or nil when it can: only letters, digits and
     /// `. _ / -`, at most 200 of them, not starting with `-` (it would read as an option).
     public nonisolated static func problem(withValue value: String, for name: String) -> String? {
-        if value.isEmpty { return "The value for {\(name)} is empty." }
-        if value.count > 200 { return "The value for {\(name)} is longer than 200 characters." }
-        if value.hasPrefix("-") { return "The value for {\(name)} starts with \"-\"." }
+        if value.isEmpty { return L("The value for {0} is empty.", "{\(name)}") }
+        if value.count > 200 { return L("The value for {0} is longer than 200 characters.", "{\(name)}") }
+        if value.hasPrefix("-") { return L("The value for {0} starts with \"-\".", "{\(name)}") }
         if value.unicodeScalars.contains(where: { !allowed.contains($0) }) {
-            return "The value for {\(name)} may only have letters, digits and . _ / -."
+            return L("The value for {0} may only have letters, digits and . _ / -.", "{\(name)}")
         }
         return nil
     }
@@ -184,10 +184,10 @@ public final class ComponentCommands: ObservableObject {
     public nonisolated static func detailCommand(_ template: String, values: [String: String]) -> Result<String, DetailProblem> {
         let names = placeholders(in: template)
         if let unknown = values.keys.sorted().first(where: { !names.contains($0) }) {
-            return .failure(DetailProblem("The Detail command has no {\(unknown)}."))
+            return .failure(DetailProblem(L("The Detail command has no {0}.", "{\(unknown)}")))
         }
         if let missing = names.first(where: { values[$0] == nil }) {
-            return .failure(DetailProblem("No value for {\(missing)}."))
+            return .failure(DetailProblem(L("No value for {0}.", "{\(missing)}")))
         }
         for name in names {
             if let problem = problem(withValue: values[name]!, for: name) { return .failure(DetailProblem(problem)) }
@@ -213,7 +213,7 @@ public final class ComponentCommands: ObservableObject {
     /// again while it runs waits for the same run instead of starting another.
     public func runDetail(_ template: String, values: [String: String], in folder: URL, saving card: (card: String, command: String)? = nil) async -> CommandOutcome {
         guard isApproved(detail: template, in: folder) else {
-            return CommandOutcome(error: "This component's Detail command is not allowed yet: press \"Allow and run\" on its card first.")
+            return CommandOutcome(error: L("This component's Detail command is not allowed yet: press \"Allow and run\" on its card first."))
         }
         let command: String
         switch Self.detailCommand(template, values: values) {
@@ -224,10 +224,10 @@ public final class ComponentCommands: ObservableObject {
         guard let card, isApproved(card.command, in: folder) else { return await blocking { runner(command, folder) } }
         if let running = saving[card.card] {
             if running.command == command { return await running.run.value }
-            return CommandOutcome(error: "This card is already running a command: try again once it is done.")
+            return CommandOutcome(error: L("This card is already running a command: try again once it is done."))
         }
         if runs[card.card]?.status == .running {
-            return CommandOutcome(error: "This card's command is running: try again once it is done.")
+            return CommandOutcome(error: L("This card's command is running: try again once it is done."))
         }
         let previous = run(of: card.card, command: card.command, in: folder)
         ranWith[card.card] = Self.what(card.command, folder)
@@ -239,7 +239,7 @@ public final class ComponentCommands: ObservableObject {
         if let data = outcome.data {
             runs[card.card] = State(status: .done, data: data, error: nil, ranAt: outcome.ranAt)
         } else {
-            runs[card.card] = State(status: .failed, data: previous?.data, error: outcome.error ?? "The command failed.", ranAt: outcome.ranAt)
+            runs[card.card] = State(status: .failed, data: previous?.data, error: outcome.error ?? L("The command failed."), ranAt: outcome.ranAt)
         }
         return outcome
     }
@@ -266,7 +266,7 @@ public final class ComponentCommands: ObservableObject {
     /// JSON (as a JSON string the page parses), or why it did not run.
     public nonisolated static func detailReplyScript(_ requestID: Int, _ outcome: CommandOutcome) -> String {
         let ok = outcome.data != nil
-        let text = outcome.data ?? outcome.error ?? "The Detail command failed."
+        let text = outcome.data ?? outcome.error ?? L("The Detail command failed.")
         let quoted = (try? JSONSerialization.data(withJSONObject: text, options: [.fragmentsAllowed]))
             .map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
         return "ccb.detailReply(\(requestID), \(ok), \(quoted))"
@@ -290,7 +290,7 @@ public final class ComponentCommands: ObservableObject {
     public nonisolated static func execute(_ command: String, in folder: URL, timeout: TimeInterval, limit: Int) -> CommandOutcome {
         var isFolder: ObjCBool = false
         guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isFolder), isFolder.boolValue else {
-            return CommandOutcome(error: "The project folder \(folder.path) is not there.")
+            return CommandOutcome(error: L("The project folder {0} is not there.", folder.path))
         }
         let process = Process()
         process.executableURL = URL(filePath: "/bin/zsh")
@@ -326,7 +326,7 @@ public final class ComponentCommands: ObservableObject {
         } catch {
             out.fileHandleForReading.readabilityHandler = nil
             err.fileHandleForReading.readabilityHandler = nil
-            return CommandOutcome(error: "Couldn't start the command: \(error.localizedDescription)")
+            return CommandOutcome(error: L("Couldn't start the command: {0}", error.localizedDescription))
         }
         // The shell leads its own process group (Process starts it so), and what it starts joins
         // it: stopping the command stops all of them, not just the shell.
@@ -354,15 +354,15 @@ public final class ComponentCommands: ObservableObject {
         try? err.fileHandleForReading.close()
         let (stdout, stderr, overflow) = collected.result()
         if overflow {
-            return CommandOutcome(error: "The command printed more than \(limit / 1000) KB, so it was stopped.")
+            return CommandOutcome(error: L("The command printed more than {0} KB, so it was stopped.", limit / 1000))
         }
         if timedOut {
-            return CommandOutcome(error: "The command took longer than \(Int(timeout)) seconds, so it was stopped." + tail(stderr))
+            return CommandOutcome(error: L("The command took longer than {0} seconds, so it was stopped.", Int(timeout)) + tail(stderr))
         }
         let text = String(decoding: stdout, as: UTF8.self)
         if process.terminationReason == .uncaughtSignal || process.terminationStatus != 0 {
             let said = String(decoding: stderr, as: UTF8.self).isEmpty ? text : String(decoding: stderr, as: UTF8.self)
-            return CommandOutcome(error: "The command failed (exit code \(process.terminationStatus))." + tail(Data(said.utf8)))
+            return CommandOutcome(error: L("The command failed (exit code {0}).", process.terminationStatus) + tail(Data(said.utf8)))
         }
         return CommandOutcome(data: data(fromOutput: text))
     }

@@ -1,6 +1,7 @@
 /// <reference types="node" />
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
+import { setLanguage } from "../src/i18n";
 import { messageElement } from "../src/messages";
 import { bucketOf, countTasks, describeCron, elapsed, nextCronFire, resetTaskChips, setTaskClock, taskOutput, tickTaskChips, until } from "../src/tasks";
 import type { MessageView, TaskChipView } from "../src/types";
@@ -33,8 +34,11 @@ function list(element: HTMLElement): HTMLElement {
   return element.querySelector<HTMLElement>(".task-list")!;
 }
 
+// The row's words as the app's Traditional Chinese has them; the English ones are checked last.
 describe("background task chips", () => {
+  afterEach(() => setLanguage("en"));
   beforeEach(() => {
+    setLanguage("zh-Hant");
     sent.length = 0;
     document.body.innerHTML = "";
     setTaskClock(() => now);
@@ -89,7 +93,7 @@ describe("background task chips", () => {
     // Each its own glyph.
     const glyphs = groups.map((g) => g.querySelector(".task-icon")!.innerHTML);
     expect(new Set(glyphs).size).toBe(4);
-    expect(summary(row).getAttribute("aria-label")).toBe("背景工作：2 subagent 執行中、1 等待中、2 成功、3 錯誤");
+    expect(summary(row).getAttribute("aria-label")).toBe("背景工作：2 個子代理執行中、1 等待中、2 成功、3 錯誤");
     expect(group(row, "agent")!.title).toContain("Review the diff");
     expect(group(row, "agent")!.title).not.toContain("跑測試與建置");
     expect(group(row, "waiting")!.title).toContain("3 分 12 秒");
@@ -274,5 +278,28 @@ describe("background task chips", () => {
     const fired = items(row).find((line) => line.dataset.task === "o")!;
     expect(fired.textContent).toContain("已觸發");
     expect(fired.querySelector<HTMLElement>(".task-mark")!.dataset.kind).toBeUndefined();
+  });
+});
+
+describe("background task chips in English and Japanese", () => {
+  afterEach(() => setLanguage("en"));
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    setTaskClock(() => now);
+    resetTaskChips();
+  });
+
+  it("say times, schedules and counts in the page's language", () => {
+    setLanguage("en");
+    expect(elapsed(192_000)).toBe("3 min 12 sec");
+    expect(until(20 * 60_000)).toBe("in 20 min");
+    expect(until(3 * 24 * 3600_000)).toBe("in 3 days");
+    expect(describeCron("0 9 * * *")).toBe("Daily 09:00");
+    expect(describeCron("30 18 * * 1,4")).toBe("Every Mon, Thu 18:30");
+    const row = messageElement(reply([task({ id: "a", kind: "agent", title: "Review" }), task({ id: "c", status: "completed", ended: now })]), {});
+    expect(summary(row).getAttribute("aria-label")).toBe("Background work: 1 subagent running, 1 done");
+    setLanguage("ja");
+    expect(describeCron("30 18 * * 1,4")).toBe("毎週月、木 18:30");
+    expect(until(20 * 60_000)).toBe("20 分後");
   });
 });

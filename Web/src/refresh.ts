@@ -1,4 +1,5 @@
 import { isComposingEnter } from "./ime";
+import { pieces, t } from "./i18n";
 import type { PinRefresh } from "./types";
 
 /**
@@ -21,8 +22,8 @@ export const presetSeconds = 5;
 
 /** "When shown", "Every 15 min", "Every 30 sec", "Only on ↻". */
 export function refreshWords(refresh: PinRefresh, minutes: number, seconds?: number | null): string {
-  if (refresh === "interval") return seconds ? `Every ${seconds} sec` : `Every ${minutes} min`;
-  return refresh === "shown" ? "When shown" : "Only on ↻";
+  if (refresh === "interval") return seconds ? t("refresh.everySeconds", { n: seconds }) : t("refresh.everyMinutes", { n: minutes });
+  return refresh === "shown" ? t("refresh.whenShown") : t("refresh.onlyManual");
 }
 
 /**
@@ -31,11 +32,11 @@ export function refreshWords(refresh: PinRefresh, minutes: number, seconds?: num
  */
 export function parseInterval(text: string, unit: IntervalUnit): { interval: Interval } | { error: string } {
   const trimmed = text.trim();
-  if (!/^\d+$/.test(trimmed)) return { error: "Type a whole number" };
+  if (!/^\d+$/.test(trimmed)) return { error: t("refresh.wholeNumber") };
   const count = Number(trimmed);
   const seconds = unit === "min" ? count * 60 : count;
-  if (seconds < intervalBounds.minSeconds) return { error: `At least ${intervalBounds.minSeconds} sec` };
-  if (seconds > intervalBounds.maxSeconds) return { error: "At most 24 h (1440 min)" };
+  if (seconds < intervalBounds.minSeconds) return { error: t("refresh.atLeast", { n: intervalBounds.minSeconds }) };
+  if (seconds > intervalBounds.maxSeconds) return { error: t("refresh.atMost") };
   return { interval: unit === "min" ? { minutes: count } : { seconds: count } };
 }
 
@@ -48,7 +49,8 @@ export interface IntervalRow {
 
 /** What a row says as a whole, for screen readers and tests: "Every 30 sec". */
 function rowWords(count: string, unit: IntervalUnit): string {
-  return `Every ${count.trim() || "…"} ${unit}`;
+  const n = count.trim() || "…";
+  return unit === "min" ? t("refresh.everyMinutes", { n }) : t("refresh.everySeconds", { n });
 }
 
 /**
@@ -67,17 +69,16 @@ export function intervalRow(row: IntervalRow, checked: boolean): HTMLElement {
   pick.className = "refresh-interval-pick";
   pick.setAttribute("role", "menuitemradio");
   pick.setAttribute("aria-checked", String(checked));
-  pick.textContent = "Every";
   const count = document.createElement("input");
   count.type = "text";
   count.inputMode = "numeric";
   count.className = "refresh-interval-count";
   count.value = String(row.start.count);
-  count.setAttribute("aria-label", "Interval");
+  count.setAttribute("aria-label", t("refresh.interval"));
   const unit = document.createElement("select");
   unit.className = "refresh-interval-unit";
-  unit.setAttribute("aria-label", "Unit");
-  unit.innerHTML = `<option value="sec">sec</option><option value="min">min</option>`;
+  unit.setAttribute("aria-label", t("refresh.unit"));
+  for (const [value, word] of [["sec", t("refresh.sec")], ["min", t("refresh.min")]]) unit.add(new Option(word, value));
   unit.value = row.start.unit;
   const error = document.createElement("div");
   error.className = "refresh-interval-error";
@@ -134,7 +135,21 @@ export function intervalRow(row: IntervalRow, checked: boolean): HTMLElement {
     apply(false);
   });
   say();
-  line.append(pick, count, unit);
+  // "Every [n] [unit]" in the page's language; the first words are the button that picks the row.
+  for (const piece of pieces("refresh.everyRow")) {
+    if (typeof piece !== "string") line.append(piece.mark === "n" ? count : unit);
+    else if (!piece.trim()) continue;
+    else if (!pick.textContent) {
+      pick.textContent = piece.trim();
+      line.append(pick);
+    } else {
+      const words = document.createElement("span");
+      words.className = "refresh-interval-words";
+      words.textContent = piece.trim();
+      line.append(words);
+    }
+  }
+  if (!line.contains(pick)) line.prepend(pick);
   holder.append(line, error);
   return holder;
 }

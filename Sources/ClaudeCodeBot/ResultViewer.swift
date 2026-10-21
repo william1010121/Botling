@@ -79,7 +79,7 @@ struct ResultViewer: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Open in browser")
+                .accessibilityLabel(L("Open in browser"))
                 Button(action: close) {
                     Image(systemName: "xmark")
                         .foregroundStyle(Theme.muted)
@@ -88,7 +88,7 @@ struct ResultViewer: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.cancelAction)
-                .accessibilityLabel("Close")
+                .accessibilityLabel(L("Close"))
             }
             PageView(url: result.url)
                 .clipShape(RoundedRectangle(cornerRadius: 14))

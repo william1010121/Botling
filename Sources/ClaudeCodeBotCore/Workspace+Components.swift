@@ -126,8 +126,8 @@ extension Workspace {
         bot.queueNote("(App: Here are your components now.)\n" + componentBriefing(for: bot))
         bot.appMessage("(App: Maintainer \(what)\(instead)\(request).\(user) Answer that now: draw it with <show name=\"\(name)\">…</show> as its usage says, with one short sentence in the user's language. Do not ask Maintainer for it again.)\n\(usage)")
         tell(bot, changed
-            ? "\(maker ?? "Maintainer") changed \(title) as \(bot.name) asked."
-            : "\(maker ?? "Maintainer") added \(title) to your components.", sourceID: Self.maintainerID)
+            ? L("{0} changed {1} as {2} asked.", maker ?? "Maintainer", title, bot.name)
+            : L("{0} added {1} to your components.", maker ?? "Maintainer", title), sourceID: Self.maintainerID)
     }
 
     /// Maintainer replied: a request it answered without giving, building or changing the
@@ -149,7 +149,7 @@ extension Workspace {
             }
             let user = ask.userAsked.isEmpty ? "" : " The user had asked you: \"\(ask.userAsked)\"."
             bot.appMessage("(App: Maintainer did not add the component \"\(ask.name)\" you asked for\(ask.changing ? " (or change it)" : ""). Maintainer said: \"\(Self.shortened(reply.text, to: 500))\".\(user) Tell the user in one or two sentences, in their language, that it is not available and why, then answer their request as well as you can without it. Do not ask Maintainer for it again.)")
-            tell(bot, "Maintainer did not \(ask.changing ? "change" : "add") \(ask.name): \(Self.shortened(Self.firstLine(of: reply.text), to: 160))", sourceID: Self.maintainerID)
+            tell(bot, (ask.changing ? L("Maintainer did not change {0}:", ask.name) : L("Maintainer did not add {0}:", ask.name)) + " " + Self.shortened(Self.firstLine(of: reply.text), to: 160), sourceID: Self.maintainerID)
         }
     }
 
@@ -203,10 +203,10 @@ extension Workspace {
     func dropComponent(_ name: String, shownIn message: ChatMessage, in chat: Bot) {
         let owner = message.role == .bot ? (message.sourceID.flatMap(member) ?? chat) : chat
         if takeComponent(name, from: owner) {
-            tell(chat, "Took \"\(name)\" off \(owner.name)'s components. The shared library keeps it; to delete it from there, ask Maintainer.")
+            tell(chat, L("Took \"{0}\" off {1}'s components. The shared library keeps it; to delete it from there, ask Maintainer.", name, owner.name))
             owner.queueNote("(App: The user took \"\(name)\" off your components; it stays in the shared library.)\n" + componentBriefing(for: owner))
         } else {
-            tell(chat, "\"\(name)\" is not on \(owner.name)'s components; nothing changed.")
+            tell(chat, L("\"{0}\" is not on {1}'s components; nothing changed.", name, owner.name))
         }
     }
 }

@@ -107,9 +107,9 @@ extension Workspace {
             if member.id == Self.mainBotID { deliverInboxes() }
             switch answer {
             case .busy:
-                unheard.append("\(member.name) (busy)")
+                unheard.append(L("{0} (busy)", member.name))
             case let .failed(why):
-                unheard.append("\(member.name) (\(Self.firstLine(of: why)))")
+                unheard.append(L("{0} ({1})", member.name, Self.firstLine(of: why)))
             case .reply(var text, let steps):
                 if let filter = bot.replyFilter?() { text = await filter(text) }
                 let parsed = ReplyParser.parseAll(text)
@@ -129,7 +129,7 @@ extension Workspace {
             refreshWaiting()
         }
         if !unheard.isEmpty {
-            tell(chat, "Did not answer this time: \(unheard.joined(separator: ", ")).")
+            tell(chat, L("Did not answer this time: {0}.", unheard.joined(separator: ", ")))
         }
     }
 

@@ -6,9 +6,9 @@ public enum CodexSeverity: String, Codable, CaseIterable, Comparable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .high: "High"
-        case .medium: "Medium"
-        case .low: "Low"
+        case .high: L("High")
+        case .medium: L("Medium")
+        case .low: L("Low")
         }
     }
 
@@ -94,7 +94,7 @@ public struct CodexOutput: Codable, Equatable, Sendable {
 
     /// The reply Codex's chat shows: the verdict, then one line per finding, worst first.
     public var markdown: String {
-        var lines = [summary.isEmpty ? (findings.isEmpty ? "Nothing to report." : "Found \(findings.count) to look at.") : summary]
+        var lines = [summary.isEmpty ? (findings.isEmpty ? L("Nothing to report.") : L("Found {0} to look at.", findings.count)) : summary]
         let sorted = findings.enumerated().sorted { ($0.element.severity, $0.offset) < ($1.element.severity, $1.offset) }.map(\.element)
         if !sorted.isEmpty { lines.append("") }
         for item in sorted {
@@ -192,10 +192,10 @@ public enum CodexPrompts {
 
     /// Codex's chat (its own, or called into another with @): the user's words, answered
     /// read-only in `folder`.
-    public static func chat(_ text: String, folder: URL) -> String {
+    public static func chat(_ text: String, folder: URL, language: AppLanguage = .english) -> String {
         """
         \(rules)
-        Your working folder is \(folder.path). The user is talking to you in a chat app. If they ask for a review, review what they name (by default \(scope(base: nil)), or the current branch against its base when they say so) and put each problem in findings, as a code reviewer would: file, line, severity (high, medium, low), title (one sentence), scenario (the concrete failure and the fix in a few words). For anything else, answer in summary in at most 3 sentences and leave findings empty. Reply in the language of the user's lines.
+        Your working folder is \(folder.path). The user is talking to you in a chat app. If they ask for a review, review what they name (by default \(scope(base: nil)), or the current branch against its base when they say so) and put each problem in findings, as a code reviewer would: file, line, severity (high, medium, low), title (one sentence), scenario (the concrete failure and the fix in a few words). For anything else, answer in summary in at most 3 sentences and leave findings empty. \(BotPrompts.languageRule(language))
 
         \(text)
         """
@@ -417,11 +417,11 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
         let text = queue.removeFirst()
         let folder = desk.folder
         let step = "codex-\(UUID().uuidString)"
-        continuation.yield(.trace(.toolUse(id: step, tool: "Codex", title: "Codex reads \(folder.lastPathComponent)", detail: folder.path, parent: nil)))
+        continuation.yield(.trace(.toolUse(id: step, tool: "Codex", title: L("Codex reads {0}", folder.lastPathComponent), detail: folder.path, parent: nil)))
         current = Task { [weak self, runner, desk] in
             let event: AgentEvent
             do {
-                let output = try await runner.run(CodexRequest(prompt: CodexPrompts.chat(text, folder: folder), folder: folder))
+                let output = try await runner.run(CodexRequest(prompt: CodexPrompts.chat(text, folder: folder, language: L10n.language), folder: folder))
                 self?.continuation.yield(.trace(.toolResult(id: step, output: "\(output.findings.count) finding(s)", failed: false, parent: nil)))
                 if !output.findings.isEmpty { desk.onFindings?(output, folder) }
                 event = .reply(output.markdown, isError: false)

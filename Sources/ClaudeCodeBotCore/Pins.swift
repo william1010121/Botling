@@ -330,9 +330,9 @@ public enum Pins {
 
         public var label: String {
             switch self {
-            case .float: "Float in corner"
-            case .stop: "Stop floating"
-            case .full: "Float in corner (\(Pins.maxFloating) floating already)"
+            case .float: L("Float in corner")
+            case .stop: L("Stop floating")
+            case .full: L("Float in corner ({0} floating already)", Pins.maxFloating)
             }
         }
     }
@@ -377,9 +377,9 @@ public enum Pins {
         case let text as String:
             return firstLine(text)
         case let number as NSNumber:
-            return CFGetTypeID(number) == CFBooleanGetTypeID() ? (number.boolValue ? "Yes" : "No") : number.stringValue
+            return CFGetTypeID(number) == CFBooleanGetTypeID() ? (number.boolValue ? L("Yes") : L("No")) : number.stringValue
         case let list as [Any]:
-            guard let first = list.first else { return "Nothing yet" }
+            guard let first = list.first else { return L("Nothing yet") }
             let line = depth < 2 ? headline(of: first, depth: depth + 1) : ""
             return list.count > 1 && !line.isEmpty ? "\(line) · \(list.count)" : line
         case let object as [String: Any]:

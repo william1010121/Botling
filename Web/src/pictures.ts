@@ -1,3 +1,5 @@
+import { t } from "./i18n";
+
 /** A picture going with a report, as the Swift side saves it. */
 export interface Picture {
   name: string;
@@ -19,7 +21,8 @@ export function acceptPictures(box: HTMLElement, textarea: HTMLTextAreaElement, 
       images.push(image);
       const item = document.createElement("div");
       item.className = "report-image";
-      item.innerHTML = `<img alt=""><button class="remove" aria-label="Remove picture">×</button>`;
+      item.innerHTML = `<img alt=""><button class="remove">×</button>`;
+      item.querySelector(".remove")!.setAttribute("aria-label", t("pictures.remove"));
       item.querySelector("img")!.src = url;
       item.querySelector("img")!.alt = image.name;
       item.querySelector(".remove")!.addEventListener("click", () => {
