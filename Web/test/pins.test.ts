@@ -489,7 +489,7 @@ describe("the Board", () => {
       const [card, asking] = [...document.querySelectorAll<HTMLElement>(".board-card")];
       // No header row: the body, then the floating tools.
       expect(card.querySelector(".board-card-head, .board-card-title, .pin-when")).toBeNull();
-      expect([...card.children].map((child) => child.className)).toEqual(["board-card-body", "board-card-tools", "board-resize resize-handle"]);
+      expect([...card.children].map((child) => child.className)).toEqual(["board-card-body", "board-card-tools", "board-move resize-handle", "board-resize-e resize-handle", "board-resize-s resize-handle", "board-resize resize-handle"]);
       // The component's frame fills the tile with no padding around it.
       const body = card.querySelector<HTMLElement>(".board-card-body")!;
       expect(getComputedStyle(body).padding).toMatch(/^(0px|)$/);
@@ -620,6 +620,80 @@ describe("the Board", () => {
     window.dispatchEvent(pointer("pointerup", 20, 20));
     expect(sent).toEqual([]);
     expect([card.style.gridColumn, card.style.gridRow]).toEqual(["span 4", "span 2"]);
+  });
+
+  it("a tile is moved by dragging it with the mouse, though its component's frame covers it", () => {
+    const area = setUp();
+    const pins = [pin({ id: "P1", size: "2x2" }), pin({ id: "P2", size: "1x1" }), pin({ id: "P3", size: "2x1" })];
+    area.update(state({ board: true, pins }));
+    sent.length = 0;
+    const cards = () => [...document.querySelectorAll<HTMLElement>(".board-card")];
+    const [first, second, third] = cards();
+    const frames = first.querySelectorAll("iframe.component-frame");
+    // Where each tile is on screen: three in a row, 200px apart (jsdom lays nothing out).
+    const place = (card: HTMLElement, left: number) => {
+      card.getBoundingClientRect = () => ({ left, top: 0, right: left + 150, bottom: 150, width: 150, height: 150, x: left, y: 0, toJSON() {} }) as DOMRect;
+    };
+    place(first, 0); place(second, 200); place(third, 400);
+    const pointer = (type: string, x: number, y: number) => new PointerEvent(type, { clientX: x, clientY: y, button: 0, bubbles: true });
+    // The grip on its tools and a grab bar along its top edge are drag handles of its own, in the
+    // page (not HTML drag and drop, whose drops land in the frames that cover the tiles).
+    const bar = first.querySelector<HTMLElement>(".board-move")!;
+    expect(bar).not.toBeNull();
+    expect(first.querySelector<HTMLElement>(".board-grip")!.draggable).toBe(false);
+    bar.dispatchEvent(pointer("pointerdown", 75, 5));
+    expect(document.body.classList.contains("pin-resizing")).toBe(true);
+    // A small wobble is a click, not a move.
+    window.dispatchEvent(pointer("pointermove", 77, 6));
+    expect(first.classList.contains("moving")).toBe(false);
+    // It follows the pointer…
+    window.dispatchEvent(pointer("pointermove", 175, 45));
+    expect(first.classList.contains("moving")).toBe(true);
+    expect(first.style.transform).toBe("translate(100px, 40px)");
+    // …and over another tile takes its place at once, the others making room.
+    window.dispatchEvent(pointer("pointermove", 475, 45));
+    expect(cards().map((c) => c.dataset.id)).toEqual(["P2", "P3", "P1"]);
+    expect(sent).toEqual([]);
+    window.dispatchEvent(pointer("pointerup", 475, 45));
+    expect(sent).toEqual([{ type: "movePin", id: "P1", to: 2 }]);
+    expect(first.classList.contains("moving")).toBe(false);
+    expect(first.style.transform).toBe("");
+    expect(document.body.classList.contains("pin-resizing")).toBe(false);
+    // Swift agrees: the same tiles, same frames, not loaded again.
+    area.update(state({ board: true, pins: [pins[1], pins[2], pins[0]] }));
+    expect(cards()).toEqual([second, third, first]);
+    expect(first.querySelectorAll("iframe.component-frame")[0]).toBe(frames[0]);
+    // Dragged by the grip and let go where it began: nothing asked.
+    sent.length = 0;
+    place(second, 0); place(third, 200); place(first, 400);
+    first.querySelector<HTMLElement>(".board-grip")!.dispatchEvent(pointer("pointerdown", 410, 10));
+    window.dispatchEvent(pointer("pointermove", 480, 60));
+    window.dispatchEvent(pointer("pointerup", 480, 60));
+    expect(sent).toEqual([]);
+    expect(cards().map((c) => c.dataset.id)).toEqual(["P2", "P3", "P1"]);
+  });
+
+  it("a tile's right and bottom edges resize it too, one way each", () => {
+    const area = setUp();
+    area.update(state({ board: true, pins: [pin({ size: "2x2" })] }));
+    sent.length = 0;
+    const card = document.querySelector<HTMLElement>(".board-card")!;
+    const pointer = (type: string, x: number, y: number) => new PointerEvent(type, { clientX: x, clientY: y, button: 0, bubbles: true });
+    const right = card.querySelector<HTMLElement>(".board-resize-e")!;
+    const bottom = card.querySelector<HTMLElement>(".board-resize-s")!;
+    expect([right, bottom].every(Boolean)).toBe(true);
+    right.dispatchEvent(pointer("pointerdown", 0, 0));
+    window.dispatchEvent(pointer("pointermove", 164, 400));
+    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["span 3", "span 2"]);
+    window.dispatchEvent(pointer("pointerup", 164, 400));
+    expect(sent).toEqual([{ type: "resizePin", id: "P1", size: "3x2" }]);
+    area.update(state({ board: true, pins: [pin({ size: "3x2" })] }));
+    sent.length = 0;
+    bottom.dispatchEvent(pointer("pointerdown", 0, 0));
+    window.dispatchEvent(pointer("pointermove", -400, -164));
+    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["span 3", "span 1"]);
+    window.dispatchEvent(pointer("pointerup", -400, -164));
+    expect(sent).toEqual([{ type: "resizePin", id: "P1", size: "3x1" }]);
   });
 
   it("a component in the chat is drawn at the widest size it has, 2×2 when it names none", () => {
