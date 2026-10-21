@@ -320,14 +320,15 @@ public enum ComponentSpecs {
     // MARK: The first draft
 
     /// What the app can tell from a reply alone: the data a component in it was drawn with (its
-    /// fields and a sample), the command that gave that card its data (the card's own), a name, the
-    /// bot's folder, and a library component about the same thing. The reply's own content is the
+    /// fields and a sample), the command that gave that card its data (the card's own), a name and
+    /// the bot's folder. Whether a library component already does the same is Maintainer's call
+    /// (its `similar`), not a match of words. The reply's own content is the
     /// data: a shell command the bot ran while writing it (reading a file, running the tests) is
     /// only a hint for Maintainer (`lastCommand`), never the component's command by itself.
     @MainActor
     public static func draft(from message: ChatMessage, bot: String, folder: URL, library: ComponentLibrary?, page: String? = nil) -> ComponentSpec {
         let names = Set(library?.names ?? [])
-        let shown = message.shown.filter { $0.name != "choices" && $0.name != PagePreview.component }
+        let shown = message.shown.filter { !ComponentLibrary.isBuiltIn($0.name) }
         let existing = page == nil ? shown.first(where: { names.contains($0.name) })?.name : nil
         let first = shown.first
         let command = page == nil ? first?.command : nil
@@ -351,9 +352,6 @@ public enum ComponentSpecs {
         } else {
             let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
             spec.samples = [ComponentSpec.Sample(.reply, data: jsonString(["text": text]))]
-        }
-        if existing == nil, let library {
-            spec.similar = similar(to: spec.name, command: ran, text: message.text, in: library)
         }
         return spec
     }
@@ -395,19 +393,7 @@ public enum ComponentSpecs {
 
     /// Keys in the order the JSON text has them (a dictionary keeps none).
     private static func keyOrder(of json: String, among keys: [String]) -> [String] {
-        var places: [String: Int] = [:]
-        for key in keys {
-            let quoted = "\"" + key + "\""
-            if let range = json.range(of: quoted) {
-                places[key] = json.distance(from: json.startIndex, to: range.lowerBound)
-            } else {
-                places[key] = Int.max
-            }
-        }
-        return keys.sorted { a, b in
-            let x = places[a] ?? Int.max, y = places[b] ?? Int.max
-            return x != y ? x < y : a < b
-        }
+        JSONKeyOrder.sorted(keys, as: json)
     }
 
     private static let isoDate = try! NSRegularExpression(pattern: #"^\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}.*)?$"#)
@@ -430,29 +416,6 @@ public enum ComponentSpecs {
         default:
             return "text"
         }
-    }
-
-    private static let stopWords: Set<String> = ["the", "and", "for", "with", "from", "run", "runs", "this", "that", "into", "show", "shows", "card", "list", "json"]
-
-    /// A library component whose name or about.md shares words with this one's name and command,
-    /// the one sharing most. The question and preview cards are never offered.
-    @MainActor
-    static func similar(to name: String, command: String?, text: String, in library: ComponentLibrary) -> String? {
-        let words = Set((name + " " + (command ?? "")).lowercased()
-            .split { !($0.isASCII && ($0.isLetter || $0.isNumber)) }
-            .map(String.init)
-            .filter { $0.count >= 3 && !stopWords.contains($0) })
-        guard !words.isEmpty else { return nil }
-        var best: (String, Int)?
-        for candidate in library.names where candidate != "choices" && candidate != PagePreview.component && candidate != name {
-            let about = (try? String(contentsOf: library.aboutURL(candidate), encoding: .utf8)) ?? ""
-            let theirs = Set((candidate + " " + about).lowercased()
-                .split { !($0.isASCII && ($0.isLetter || $0.isNumber)) }
-                .map(String.init))
-            let score = words.intersection(theirs).count
-            if score > 0, score > (best?.1 ?? 0) { best = (candidate, score) }
-        }
-        return best?.0
     }
 
     // MARK: Changing it
@@ -753,7 +716,7 @@ public enum ComponentSpecs {
     /// component is still filled by a bot in the chat; the Board command is only made its Command
     /// once the user pins it to the Board (`Workspace.makeLive`).
     static func fieldGroups(live: Bool) -> String {
-        var text = "In about.md list the data fields in two groups: \"From command\" (fields a CLI command can get, run in the bot's folder) and \"Optional (bot only)\" (what only a bot can write: explanations, advice, a next step; there only when a bot fills it). The template must draw well when every optional field is missing."
+        var text = "In about.md list the data fields in two groups: \"\(ComponentFieldGroup.fromCommand.label)\" (fields a CLI command can get, run in the bot's folder) and \"\(ComponentFieldGroup.botOnly.label)\" (what only a bot can write: explanations, advice, a next step; there only when a bot fills it). The template must draw well when every optional field is missing."
         if !live {
             text += " When there are From command fields, add a line \"Board command: <command>\" to about.md suggesting how to get them (not a \"Command:\" line): it is only a suggestion, used when the user pins the component to the Board, and the component is still filled by a bot in the chat with <show>."
         }
@@ -769,7 +732,7 @@ public enum ComponentSpecs {
     /// The first ask: fill in what can be inferred, ask only what cannot.
     static func draftRequest(_ spec: ComponentSpec, reply: String, pages: [ReplyPage] = [], ran: String? = nil, from bot: String) -> String {
         """
-        (Component spec \(spec.id.uuidString)) \(purposeLine(spec, from: bot))
+        \(ComponentAction.shape.header(spec.id.uuidString)) \(purposeLine(spec, from: bot))
         The user wants to make \(bot)'s reply into a component and is shaping it in a side panel; the reply is the context. \(replyBlock(reply, pages: pages))
         The app's first draft:
         \(summary(of: spec))
@@ -793,7 +756,7 @@ public enum ComponentSpecs {
             context += "\(bot)'s brief for you (written by a copy of the session that wrote the reply, so it knows what it did and which commands it ran):\n" + brief + "\n"
         }
         var text = """
-        (Component spec \(spec.id.uuidString)) Build the first version now. \(purposeLine(spec, from: bot))
+        \(ComponentAction.buildFirst.header(spec.id.uuidString)) Build the first version now. \(purposeLine(spec, from: bot))
         The user wants it built right away from \(bot)'s reply, given here as context. \(replyBlock(reply, pages: pages))
         \(context)The app's first draft:
         \(summary(of: spec))
@@ -808,7 +771,7 @@ public enum ComponentSpecs {
 
     /// What the user said in the side panel, with their edits since.
     static func sayRequest(_ spec: ComponentSpec, text: String) -> String {
-        var said = "(Component spec \(spec.id.uuidString)) "
+        var said = ComponentAction.shape.header(spec.id.uuidString) + " "
         said += text.isEmpty ? "The user changed the spec." : "The user says: \(text)"
         if !spec.pendingEdits.isEmpty { said += "\nTheir edits: " + spec.pendingEdits.joined(separator: "; ") }
         said += "\nThe spec now:\n\(summary(of: spec))\n\(tagNote(spec))"
@@ -821,7 +784,7 @@ public enum ComponentSpecs {
     static func changeRequest(_ spec: ComponentSpec, said: [String], version: Int) -> String {
         let id = spec.id.uuidString
         let name = spec.built ?? spec.name
-        var text = "(Component spec \(id)) Change it now: build v\(version) of the component \"\(name)\" with this change, right away."
+        var text = ComponentAction.change.header(id) + " Change it now: build v\(version) of the component \"\(name)\" with this change, right away."
         let words = said.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         if words.count == 1 {
             text += "\nThe user asks: \(words[0])"
@@ -842,7 +805,7 @@ public enum ComponentSpecs {
 
     /// Build it.
     static func buildRequest(_ spec: ComponentSpec) -> String {
-        var text = "(Component spec \(spec.id.uuidString)) Build it: make the component \"\(spec.name)\" now, as the spec says.\n\(summary(of: spec))"
+        var text = ComponentAction.build.header(spec.id.uuidString) + " Build it: make the component \"\(spec.name)\" now, as the spec says.\n\(summary(of: spec))"
         if !spec.pendingEdits.isEmpty { text += "\nThe user's last edits: " + spec.pendingEdits.joined(separator: "; ") }
         text += "\nHave the component editor write template.html and about.md"
         if let command = spec.command {
@@ -858,8 +821,8 @@ public enum ComponentSpecs {
     /// The user pinned a bot-filled component to the Board: Maintainer gives it a Command from
     /// its suggested Board command, so the same component refreshes there.
     static func boardCommandRequest(component name: String, suggested: String, folder: String, bot: String, brief: String? = nil) -> String {
-        var text = "(Component \(name)) Make it live on the Board: the user pinned \(name) to \(bot)'s Board. A bot fills it today; its about.md suggests \"Board command: \(suggested)\" for its From command fields."
-        text += " Have the component editor add a \"Command: …\" line to about.md: a command (or a small script in the component's folder, run by its full path) that prints the same JSON the template reads, with the From command fields (the Optional (bot only) ones left out: the template already draws without them). It runs in \(folder)."
+        var text = ComponentAction.liveOnBoard.header(name) + " Make it live on the Board: the user pinned \(name) to \(bot)'s Board. A bot fills it today; its about.md suggests \"Board command: \(suggested)\" for its From command fields."
+        text += " Have the component editor add a \"Command: …\" line to about.md: a command (or a small script in the component's folder, run by its full path) that prints the same JSON the template reads, with the \(ComponentFieldGroup.fromCommand.label) fields (the \(ComponentFieldGroup.botOnly.label) ones left out: the template already draws without them). It runs in \(folder)."
         text += " Keep the Board command line and the data format as they are: bots still fill it in chats with <show>, and their data wins there. Add a \"Refresh: every …\" line only if the data changes within seconds. It stays the same component (no separate Board version)."
         text += " Never run the command yourself: the user allows it on the pinned card. Once the Command is in the library the app switches the pin to it."
         if let brief, !brief.isEmpty { text += "\nThe brief it was built from:\n" + clip(brief, 4_000) }
@@ -911,5 +874,58 @@ public enum ComponentSpecs {
 
     static func clip(_ text: String, _ limit: Int) -> String {
         text.count > limit ? String(text.prefix(limit - 1)) + "…" : text
+    }
+}
+
+/// Keys of a JSON object in the order its text has them, which a decoded dictionary loses.
+enum JSONKeyOrder {
+    static func sorted(_ keys: [String], as json: String) -> [String] {
+        var places: [String: Int] = [:]
+        for key in keys {
+            let quoted = "\"" + key + "\""
+            places[key] = json.range(of: quoted).map { json.distance(from: json.startIndex, to: $0.lowerBound) } ?? Int.max
+        }
+        return keys.sorted { a, b in
+            let x = places[a] ?? Int.max, y = places[b] ?? Int.max
+            return x != y ? x < y : a < b
+        }
+    }
+}
+
+/// What the app asks Maintainer to do with a component, named by an id in the message's header
+/// (`(Component spec <id>; action: change)`): Maintainer's instructions dispatch on these ids,
+/// built from here too, never on the sentence that follows.
+public enum ComponentAction: String, CaseIterable, Sendable {
+    /// One press on a reply: infer the whole spec and build the first version now.
+    case buildFirst = "build-first"
+    /// The user shaping a draft in its panel: fill in, ask, build nothing yet.
+    case shape
+    /// The user pressed Build on a draft.
+    case build
+    /// A change to a built component, typed in its panel: build the new version now.
+    case change
+    /// A bot-filled component pinned to a Board: give it its Command.
+    case liveOnBoard = "live-on-board"
+
+    /// The header that starts the message, for a spec's id (or, for `liveOnBoard`, the
+    /// component's name).
+    public func header(_ subject: String) -> String {
+        self == .liveOnBoard ? "(Component \(subject); action: \(rawValue))" : "(Component spec \(subject); action: \(rawValue))"
+    }
+}
+
+/// The two groups about.md lists a component's data fields in. Every prompt that asks for them
+/// names them from here, so the brief, the request and the editor's instructions agree.
+public enum ComponentFieldGroup: CaseIterable, Sendable {
+    /// Fields a CLI command can get.
+    case fromCommand
+    /// What only a bot can write (explanations, advice); there only when a bot fills it.
+    case botOnly
+
+    public var label: String {
+        switch self {
+        case .fromCommand: "From command"
+        case .botOnly: "Optional (bot only)"
+        }
     }
 }

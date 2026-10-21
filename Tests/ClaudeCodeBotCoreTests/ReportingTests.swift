@@ -73,7 +73,11 @@ struct ReportingTests {
         await eventually { manager.messages.last?.text == "OK, doing that." }
 
         #expect(manager.messages.first { $0.id == asked.id }?.chosen == 1)
-        #expect(fake.agents[0].sent.last == "(Replying to what you said earlier: \"Should we support succulents?\")\n\nNot yet")
+        // The pick goes as the option's words, as a reply to that question (which it quotes).
+        let sent = try #require(fake.agents[0].sent.last)
+        #expect(sent.hasSuffix("Not yet"))
+        #expect(sent.contains("Should we support succulents?"))
+        #expect(manager.messages.last { $0.role == .user }?.replyTo == asked.id)
         #expect(manager.openQuestion == nil)
     }
 
@@ -96,7 +100,10 @@ struct ReportingTests {
         let asked = try #require(manager.openQuestion)
         #expect(workspace.choose(0, in: asked.id, of: manager))
         await eventually { manager.messages.last?.text == "OK, doing that." }
-        #expect(fake.agents[0].sent.last == "(Replying to what you said earlier: \"Should we support succulents?\")\n\nSupport them")
+        let sent = try #require(fake.agents[0].sent.last)
+        #expect(sent.hasSuffix("Support them"))
+        #expect(sent.contains("Should we support succulents?"))
+        #expect(manager.messages.last { $0.role == .user }?.replyTo == asked.id)
         #expect(workspace.waiting.isEmpty)
     }
 

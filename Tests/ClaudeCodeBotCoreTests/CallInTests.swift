@@ -75,7 +75,7 @@ struct CallInTests {
     @Test func aBotNamedWithAtAnswersInThisChatUnderItsOwnName() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
-            if text.contains("(App: The user called you into") {
+            if text.contains(Workspace.calledInLead) {
                 // It sees the chat it was called into, and who it is there.
                 #expect(text.contains("\"garden\"'s chat"))
                 #expect(text.contains("User (newest): @Maintainer the flag is broken"))
@@ -127,8 +127,8 @@ struct CallInTests {
     @Test func aPickOnACalledInBotsLineGoesBackToThatBot() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
-            if text.contains("(App: The user called you into") {
-                if text.contains("The user picked: Today") { return "Done today, then." }
+            if text.contains(Workspace.calledInLead) {
+                if text.contains(Workspace.pickedNote("Today")) { return "Done today, then." }
                 return "When?\n<choices>\n* Today | fast\n- Tomorrow\n</choices>"
             }
             return isAppOnly(text) ? "OK" : "Got it"

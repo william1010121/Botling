@@ -40,7 +40,7 @@ extension Workspace {
     public func saveComponentData(_ data: String, messageID: UUID, index: Int, in bot: Bot) -> Bool {
         guard ComponentState.isKeepable(data),
               let message = bot.messages.first(where: { $0.id == messageID }), message.role == .bot,
-              message.shown.indices.contains(index), message.shown[index].name != "choices",
+              message.shown.indices.contains(index), message.shown[index].name != ComponentLibrary.choices,
               ChatPayload.command(of: message.shown[index], in: message, library: components) == nil else { return false }
         return bot.saveComponentData(data, at: index, in: messageID)
     }

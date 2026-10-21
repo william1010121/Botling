@@ -239,8 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Clicking the Dock icon with only result windows open brings the main window back.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        let main = NSApp.windows.first { $0.identifier?.rawValue.contains("AppWindow") == true || $0.title == "ClaudeCodeBot" }
-        if let main {
+        if let main = MainWindowProbe.window {
             main.makeKeyAndOrderFront(nil)
             return false
         }
@@ -317,7 +316,8 @@ enum AppError: LocalizedError {
 }
 
 /// Remembers the window the chat lands in, so "a picture of the main window" is that window and
-/// never a result, review or settings window that happens to be as large.
+/// never a result, review or settings window that happens to be as large, and the Dock finds it
+/// again by what it holds rather than by its title or SwiftUI's name for it.
 private struct MainWindowProbe: NSViewRepresentable {
     @MainActor static weak var window: NSWindow?
 

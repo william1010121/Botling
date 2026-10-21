@@ -57,6 +57,39 @@ struct PluginTests {
         #expect(PluginRegistry.compatible("*"))
         #expect(!PluginRegistry.compatible("^3.0.0"))
         #expect(!PluginRegistry.compatible("^2.4.0"))
+        // Upper bounds, sets and alternatives mean what npm means by them.
+        #expect(!PluginRegistry.compatible("<2.0.0"))
+        #expect(PluginRegistry.compatible("<2.1.0"))
+        #expect(PluginRegistry.compatible(">=1.0.0 <3.0.0"))
+        #expect(!PluginRegistry.compatible(">=1.0.0 <2.0.0"))
+        #expect(PluginRegistry.compatible("^1.0.0 || ^2.0.0"))
+        #expect(PluginRegistry.compatible("2.x"))
+        #expect(PluginRegistry.compatible("1.5 - 2.0"))
+        #expect(!PluginRegistry.compatible(">2"))
+        #expect(!PluginRegistry.compatible("not a range"))
+    }
+
+    /// A library from when the app was called Deck: only the fields that name plugins change.
+    @Test func aDeckLibraryIsRenamedFieldByField() throws {
+        let library = root.appending(path: "deck-library")
+        let folder = library.appending(path: "deck-notes")
+        try FileManager.default.createDirectory(at: folder.appending(path: "claude/.claude-plugin"), withIntermediateDirectories: true)
+        // Compact JSON (no space after the colon), and a description that mentions "deck-" too.
+        try #"{"name":"deck-notes","description":"Notes for \"deck-\" users","deck":{"web":"dist/web.js"}}"#.write(to: folder.appending(path: "package.json"), atomically: true, encoding: .utf8)
+        try #"{"name":"deck-notes"}"#.write(to: folder.appending(path: "claude/.claude-plugin/plugin.json"), atomically: true, encoding: .utf8)
+        try #"{"disabled":["deck-notes"],"settings":{"deck-notes":{}},"failures":{}}"#.write(to: root.appending(path: "plugins.json"), atomically: true, encoding: .utf8)
+        Workspace.migrateFromDeck(library: library, root: root)
+        let moved = library.appending(path: "ccb-notes")
+        let manifest = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: moved.appending(path: "package.json"))) as? [String: Any])
+        #expect(manifest["name"] as? String == "ccb-notes")
+        #expect(manifest["deck"] == nil)
+        #expect((manifest["ccb"] as? [String: Any])?["web"] as? String == "dist/web.js")
+        #expect(manifest["description"] as? String == #"Notes for "deck-" users"#)
+        let claude = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: moved.appending(path: "claude/.claude-plugin/plugin.json"))) as? [String: Any])
+        #expect(claude["name"] as? String == "ccb-notes")
+        let state = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: root.appending(path: "plugins.json"))) as? [String: Any])
+        #expect(state["disabled"] as? [String] == ["ccb-notes"])
+        #expect((state["settings"] as? [String: Any])?.keys.sorted() == ["ccb-notes"])
     }
 
     @Test func libraryPluginsReplaceBuiltInsAndBrokenOnesAreListed() throws {

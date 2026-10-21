@@ -79,8 +79,8 @@ struct ComponentSpecTests {
         #expect(spec.samples.first?.kind == .reply)
         #expect(spec.existing == nil)
         #expect(spec.status == .draft)
-        // A component in the library about the same thing is offered for reuse.
-        #expect(spec.similar == "build-status")
+        // Whether one in the library does the same is Maintainer's call, not the app's guess.
+        #expect(spec.similar == nil)
         #expect(!spec.reuse)
     }
 
@@ -134,7 +134,7 @@ struct ComponentSpecTests {
         #expect(saved.map(\.id) == [spec.id])
         // Maintainer infers the spec and builds it now, asking nothing.
         let relay = try #require(relays(workspace).last)
-        #expect(relay.text.hasPrefix("(Component spec \(spec.id.uuidString)) Build the first version"))
+        #expect(relay.text.hasPrefix(ComponentAction.buildFirst.header(spec.id.uuidString)))
         #expect(relay.text.contains("swift test --parallel"))
         #expect(relay.text.contains("ask nothing"))
         #expect(relay.text.contains("best guess"))
@@ -325,7 +325,8 @@ struct ComponentSpecTests {
         workspace.pressSpec(spec.id, in: bot)
         let ask = try #require(relays(workspace).last).text
         // What it is for comes first, in the bot's own words; then the reply, as context.
-        #expect(ask.hasPrefix("(Component spec \(spec.id.uuidString)) Build the first version now. What it is for, in garden's words: \(purpose)"))
+        #expect(ask.hasPrefix(ComponentAction.buildFirst.header(spec.id.uuidString)))
+        #expect(ask.split(separator: "\n").first?.contains(purpose) == true)
         let said = try #require(ask.range(of: purpose)).lowerBound
         let context = try #require(ask.range(of: "The reply:")).lowerBound
         #expect(said < context)
@@ -343,10 +344,14 @@ struct ComponentSpecTests {
         let bot = workspace.mainBot
         let reply = featureListReply(in: bot)
         let spec = try #require(workspace.makeComponent(from: reply.id, purpose: "勾選要宣傳的功能", in: bot))
-        #expect(try #require(relays(workspace).last).text.hasPrefix("(Component spec \(spec.id.uuidString)) Build the first version now. What it is for, in the user's words: 勾選要宣傳的功能"))
+        let typed = try #require(relays(workspace).last).text
+        #expect(typed.hasPrefix(ComponentAction.buildFirst.header(spec.id.uuidString)))
+        #expect(typed.split(separator: "\n").first?.contains("勾選要宣傳的功能") == true)
         let other = testReply(in: bot)
         let plain = try #require(workspace.makeComponent(from: other.id, in: bot))
-        #expect(try #require(relays(workspace).last).text.hasPrefix("(Component spec \(plain.id.uuidString)) Build the first version now. What it is for: \(bot.name)'s reply below"))
+        let untyped = try #require(relays(workspace).last).text
+        #expect(untyped.hasPrefix(ComponentAction.buildFirst.header(plain.id.uuidString)))
+        #expect(untyped.split(separator: "\n").first?.contains("勾選要宣傳的功能") == false)
     }
 
     @Test func onceBuiltTheBotThatWroteTheReplyFillsItInFull() async throws {
@@ -813,7 +818,10 @@ struct ComponentSpecTests {
         let bot = try garden(in: workspace)
         workspace.takeComponent("build-status", from: bot)
         let reply = testReply(in: bot)
-        let spec = draftSpec(from: reply, in: bot, in: workspace)
+        var spec = draftSpec(from: reply, in: bot, in: workspace)
+        // Maintainer finds the library one that does the same.
+        workspace.handle([.componentSpec(id: spec.id.uuidString, json: #"{"similar":"build-status"}"#)], from: workspace.maintainerProject)
+        spec = try #require(bot.specs.first { $0.id == spec.id })
         #expect(spec.similar == "build-status")
         workspace.editSpec(spec.id, key: "reuse", value: "true", in: bot)
         let asked = workspace.maintainer.messages.filter { $0.role == .relay }.count
@@ -881,9 +889,11 @@ struct ComponentSpecTests {
         #expect(rules.contains("nothing happens until the user presses it"))
         let workspace = makeWorkspace()
         let maintainer = workspace.maintainerInstructions()
-        #expect(maintainer.contains("(Component spec <id>)"))
+        // Every action the app sends is one Maintainer is told about, by its header.
+        for action in ComponentAction.allCases {
+            #expect(maintainer.contains(action.header(action == .liveOnBoard ? "<name>" : "<id>")))
+        }
         #expect(maintainer.contains("<component-spec id="))
-        #expect(maintainer.contains("(Component spec <id>) Build the first version"))
         #expect(maintainer.contains("Ask nothing"))
         #expect(maintainer.contains("best guess"))
         // A reply's own content is its data; a command only for live data.

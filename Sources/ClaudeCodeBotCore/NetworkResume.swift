@@ -45,22 +45,29 @@ public enum NetworkResume {
         return kind == nil || kind == "no_response"
     }
 
-    /// "agentId: a1b2c3" in an Agent tool result: the id SendMessage continues it with.
-    public static func agentID(in output: String) -> String? {
-        guard let range = output.range(of: #"agentId: ([A-Za-z0-9_\-]+)"#, options: .regularExpression) else { return nil }
-        return String(output[range].dropFirst("agentId: ".count))
-    }
-
     /// The chat line when a run fails this way.
     static func lostText(_ detail: String) -> String {
         let detail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
         return "\(label)：連不上 Claude（\(detail.isEmpty ? "connection lost" : detail)）。網路恢復後會自動接著做。"
     }
 
+    /// How a bot goes on once the network is back.
+    public enum Mode: Equatable, Sendable {
+        /// The same work (and its subagents, with SendMessage) carries on.
+        case carryOn
+        /// Cut off too long ago: its subagents start over as new ones.
+        case restartSubagents
+    }
+
+    /// Back within `warmWindow`, or with no subagent cut off: it carries on; else subagents start over.
+    public static func mode(elapsed: TimeInterval, subagents: Int) -> Mode {
+        elapsed <= warmWindow || subagents == 0 ? .carryOn : .restartSubagents
+    }
+
     /// The divider when it comes back.
-    static func restoredText(elapsed: TimeInterval, warm: Bool, subagents: Int) -> String {
+    static func restoredText(elapsed: TimeInterval, mode: Mode) -> String {
         let minutes = max(1, Int((elapsed / 60).rounded()))
-        let how = warm || subagents == 0 ? "接著原本的工作" : "重新開始被中斷的子代理"
+        let how = mode == .carryOn ? "接著原本的工作" : "重新開始被中斷的子代理"
         return "網路恢復 · 中斷約 \(minutes) 分鐘 · \(how)"
     }
 
@@ -96,7 +103,7 @@ public enum NetworkResume {
             parts.append("Carry on with what you were doing when it dropped, from where you left off; do not start over or redo finished steps.")
         }
         guard !subagents.isEmpty else { return parts.joined(separator: "\n") }
-        if elapsed <= warmWindow {
+        if mode(elapsed: elapsed, subagents: subagents.count) == .carryOn {
             parts.append("These subagents were cut off by it. Continue each one where it stopped by sending it a message with SendMessage (to: its agentId), so it keeps its context; only if it can no longer be reached, start a new one of the same type in the same worktree with its original prompt plus the line \"\(restartLine)\".")
             for subagent in subagents {
                 parts.append("- \"\(subagent.description)\"" + (subagent.agentID.map { " (agentId: \($0))" } ?? "") + (subagent.type.map { ", subagent_type: \($0)" } ?? ""))

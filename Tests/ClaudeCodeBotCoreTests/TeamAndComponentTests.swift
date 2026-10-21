@@ -245,14 +245,13 @@ struct ComponentTests {
         #expect(app.contains(ComponentPrompts.lookGood))
         #expect(try String(contentsOf: library.appending(path: "ccb-core/package.json"), encoding: .utf8).contains("its model is set in Settings"))
 
-        // What 1.10.0 wrote is the app's own text: replaced without asking.
+        // What an older build wrote (known by its fixed hash) is the app's own text: replaced
+        // without asking.
         let manifest = library.appending(path: "ccb-core/package.json")
         try "{ \"name\": \"ccb-core\", \"version\": \"1.0.7\" }".write(to: manifest, atomically: true, encoding: .utf8)
-        try Workspace.legacyComponentEditorAgent.write(to: editor, atomically: true, encoding: .utf8)
-        #expect(!Workspace.legacyComponentEditorAgent.contains(ComponentPrompts.lookGood))
-        #expect(!Workspace.legacyComponentEditorAgent.contains(ComponentPrompts.shotCheck))
-        #expect(Workspace.legacyComponentEditorAgent.contains("tools: Read, Write, Edit\n"))
-        #expect(Workspace.prepareCorePlugin(in: library) == nil)
+        let older = "---\nname: component-editor\nmodel: haiku\ntools: Read, Write, Edit\n---\nAn older build's words.\n"
+        try older.write(to: editor, atomically: true, encoding: .utf8)
+        #expect(Workspace.prepareCorePlugin(in: library, legacy: [Workspace.textHash(older)]) == nil)
         #expect(try String(contentsOf: editor, encoding: .utf8) == app)
         #expect(try String(contentsOf: manifest, encoding: .utf8).contains("1.0.7"))
 

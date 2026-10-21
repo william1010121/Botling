@@ -172,6 +172,12 @@ public struct FeedbackNote: Codable, Equatable, Sendable {
 
 /// A file sent along with a message.
 public struct Attachment: Codable, Equatable, Hashable, Sendable {
+    /// How a message lists the files with it for the bot: "(Attachments:\n- path …)".
+    static let listLead = "(Attachments:\n"
+    static func list(_ attachments: [Attachment]) -> String {
+        listLead + attachments.map { "- " + $0.url.path }.joined(separator: "\n") + ")"
+    }
+
     public enum Kind: String, Codable, Sendable {
         case image, video, file
     }
@@ -270,6 +276,30 @@ public struct BotProfile: Equatable, Sendable {
     /// It reads and writes memory.md (wakes reading it, tidies it before sleeping). Codex keeps
     /// none: every turn starts fresh.
     public var keepsMemory = true
+    /// What its chat offers besides messages; the views ask this rather than which bot it is.
+    public var capabilities = Capabilities()
+
+    /// What a bot's chat offers besides messages.
+    public struct Capabilities: Equatable, Sendable {
+        /// A Board and pinned components.
+        public var board = true
+        /// Making a component out of one of its replies.
+        public var specs = true
+        /// A settings panel of its own (model, effort, Codex review, …).
+        public var settings = true
+        /// It reviews others' work: its panel lists every bot's reviews.
+        public var reviewer = false
+
+        public init(board: Bool = true, specs: Bool = true, settings: Bool = true, reviewer: Bool = false) {
+            self.board = board
+            self.specs = specs
+            self.settings = settings
+            self.reviewer = reviewer
+        }
+    }
+
+    /// A reviewer can review its work: a project's manager (not a bot of its own, not a reviewer).
+    public var canBeReviewed: Bool { !capabilities.reviewer && role == .manager && !isStandalone }
 
     public init(name: String, role: Role, avatar: String, workingDirectory: URL, memoryPath: String, tools: [String], instructions: String? = nil, job: String? = nil) {
         self.name = name
@@ -356,6 +386,7 @@ public struct BotProfile: Equatable, Sendable {
             tools: []
         )
         profile.keepsMemory = false
+        profile.capabilities = Capabilities(board: false, specs: false, settings: false, reviewer: true)
         return profile
     }
 

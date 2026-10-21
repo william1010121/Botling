@@ -1192,7 +1192,7 @@ struct DetailPanel: View {
                 Text(bot.name).font(.system(size: 15, weight: .semibold)).lineLimit(1)
                 Spacer()
                 panelButtons
-                if bot !== workspace.codexBot {
+                if bot.profile.capabilities.settings {
                     Button { showingSettings = true } label: {
                         Image(systemName: "slider.horizontal.3")
                             .font(.system(size: 15))
@@ -1218,7 +1218,7 @@ struct DetailPanel: View {
                     .frame(minHeight: 24)
                     // A manager: the first thing under "In progress" in its memory.md.
                     if bot.profile.role == .manager,
-                       let doing = MemoryFile.items(at: bot.profile.memoryURL, section: "In progress").first {
+                       let doing = MemoryFile.items(at: bot.profile.memoryURL, section: .inProgress).first {
                         Text(doing)
                             .font(.system(size: 13))
                             .foregroundStyle(Theme.muted)
@@ -1290,7 +1290,7 @@ extension DetailPanel {
     /// Codex reviews of this bot's work (every bot's, in Codex's own panel), and, for a project,
     /// the button that has Codex review it now.
     @ViewBuilder var codexSection: some View {
-        let isCodex = bot === workspace.codexBot
+        let isCodex = bot.profile.capabilities.reviewer
         let reviews = workspace.codexReviews(for: bot)
         let canReview = workspace.canRequestReview(of: bot)
         if canReview || !reviews.isEmpty {

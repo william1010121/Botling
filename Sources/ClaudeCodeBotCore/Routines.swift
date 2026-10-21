@@ -163,20 +163,31 @@ public struct Routine: Identifiable, Equatable, Sendable {
         self.enabled = enabled
     }
 
-    /// The part before the colon (":" or the full-width "："), or the start of the task.
-    public var title: String {
-        if let colon = task.firstIndex(where: { $0 == "：" || $0 == ":" }) {
-            let name = task[..<colon].trimmingCharacters(in: .whitespaces)
-            if !name.isEmpty && name.count <= 20 { return name }
+    /// Where "Name: what to do" divides: the first full-width "：", or ":" followed by a space
+    /// (so a task that starts with a URL, "https://…", has no name). Nil: no name.
+    private var nameEnd: (name: Range<String.Index>, rest: String.Index)? {
+        var index = task.startIndex
+        while index < task.endIndex {
+            let next = task.index(after: index)
+            if task[index] == "：" || (task[index] == ":" && (next == task.endIndex || task[next].isWhitespace)) {
+                let name = task[..<index].trimmingCharacters(in: .whitespaces)
+                return name.isEmpty ? nil : (task.startIndex..<index, next)
+            }
+            index = next
         }
+        return nil
+    }
+
+    /// The name before the colon, or the start of the task.
+    public var title: String {
+        if let parts = nameEnd { return task[parts.name].trimmingCharacters(in: .whitespaces) }
         return task.count > 16 ? String(task.prefix(16)) + "…" : task
     }
 
     /// What to do: the part after the colon, or the whole task.
     public var instruction: String {
-        guard let colon = task.firstIndex(where: { $0 == "：" || $0 == ":" }),
-              task[..<colon].trimmingCharacters(in: .whitespaces).count <= 20 else { return task }
-        return task[task.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        guard let parts = nameEnd else { return task }
+        return task[parts.rest...].trimmingCharacters(in: .whitespaces)
     }
 
     /// `@path`: a file the bot should open and follow.

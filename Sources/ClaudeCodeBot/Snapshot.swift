@@ -498,7 +498,7 @@ enum Snapshot {
         let bot = workspace.selectedBot
         let tip = RightTip(
             title: bot.name,
-            detail: RightPanelLayout.nowDetail(status: bot.statusText, doing: MemoryFile.items(at: bot.profile.memoryURL, section: "In progress").first),
+            detail: RightPanelLayout.nowDetail(status: bot.statusText, doing: MemoryFile.items(at: bot.profile.memoryURL, section: .inProgress).first),
             color: bot.statusColor,
             midY: 36 + 20
         )

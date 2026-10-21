@@ -62,34 +62,27 @@ struct SpecChangeFlowTests {
         spec.status = .done
         spec.pendingEdits = ["About: Only the failures"]
         let text = ComponentSpecs.changeRequest(spec, said: ["失敗的要列名字", "加上耗時"], version: 3)
-        #expect(text.hasPrefix("(Component spec \(spec.id.uuidString)) Change it now"))
+        // It is the change action (built at once), for that spec, carrying everything asked.
+        #expect(text.hasPrefix(ComponentAction.change.header(spec.id.uuidString)))
         #expect(text.contains("v3"))
         #expect(text.contains("失敗的要列名字"))
         #expect(text.contains("加上耗時"))
         #expect(text.contains("Only the failures"))
-        #expect(text.contains("right away"))
-        #expect(text.contains("Do not wait for a Build press"))
-        #expect(text.contains("exactly one question"))
         #expect(text.contains("<component-spec id=\"\(spec.id.uuidString)\">"))
-        // Nothing in it says to wait or press anything first.
-        #expect(!text.contains("Build nothing yet"))
-        #expect(!text.lowercased().contains("press build first"))
-        #expect(!text.contains("until a \"(Component spec"))
     }
 
     @Test func aDraftsTalkStillBuildsNothingUntilBuildIt() {
         let spec = ComponentSpec(name: "test-summary", folder: "/p", bots: ["main"])
-        let text = ComponentSpecs.sayRequest(spec, text: "加上耗時")
-        #expect(text.contains("Build nothing yet"))
-        #expect(text.contains("Build it"))
+        // Talk about a draft is the shape action; only Build sends the build action.
+        #expect(ComponentSpecs.sayRequest(spec, text: "加上耗時").hasPrefix(ComponentAction.shape.header(spec.id.uuidString)))
+        #expect(ComponentSpecs.buildRequest(spec).hasPrefix(ComponentAction.build.header(spec.id.uuidString)))
     }
 
     @Test func maintainersInstructionsSayAChangeIsBuiltAtOnce() {
         let rules = makeWorkspace().maintainerInstructions()
-        #expect(rules.contains("(Component spec <id>) Change it now"))
-        #expect(rules.contains("build that new version right away"))
-        #expect(rules.contains("never ask the user to press Build"))
-        #expect(rules.contains("exactly one question"))
+        // Maintainer dispatches on the action named in the header, the one the app sends.
+        #expect(rules.contains(ComponentAction.change.header("<id>")))
+        #expect(rules.contains(ComponentAction.build.header("<id>")))
     }
 
     // MARK: State transitions

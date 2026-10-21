@@ -119,6 +119,29 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **Logic reads structure, not wording (hardcode audit, Medium: matching, display text, special
+  cases, prompts, tests).** A background subagent's id and output file, and whether it went to the
+  background, come from claude's structured result (the words only for results without one); a
+  subagent's name from its call, not its activity line; a restart's reason is kept typed, not
+  parsed back from its divider. memory.md's four sections have one definition shared by the prompt,
+  the app and its panels; headings a bot wrote in its own words are read by place, and placeholder
+  words ("無", "none") are no longer listed. Tool-result pictures leave no "(image)" line behind.
+  A routine's name ends at "Name: " (a task starting with a URL keeps it whole). A component made
+  from a reply is no longer matched to a "similar" library one by English keywords: that is
+  Maintainer's call. Plugin validation and Codex sign-in go by exit status; the main window is found
+  by what it holds, not its title; `engines.ccb` ranges are read as npm semver ranges (upper
+  bounds, `||`, hyphen ranges); the Deck migration edits JSON fields, not text; a pin's chip line
+  comes from its data's shape, not a list of field names; built-in plugins declare the files they
+  bundle in their own build.json; which views a bot gets (Board, specs, settings, reviews) is its
+  profile's capabilities. Older component-editor files are known by fixed hashes of what each
+  build wrote.
+- **Prompt rule changes.** Bots are told memory.md's headings from the same list the app reads and
+  to leave an empty section empty (no "none" line). Maintainer's component messages carry an action
+  id in their header ("(Component spec <id>; action: change)"), and its instructions dispatch on
+  those ids rather than on phrases like "Change it now"; its generic rules no longer name
+  github-ci, the 組件使用統計 card or "every commit's whole diff". The design flow (Artifact
+  quickstart, intent "design") is worded once for the bots' and Maintainer's prompts.
+
 - **A bot you call in with @ keeps the work in its own chat.** It always answered from its own
   main session, but its own chat showed nothing, so the subagent it sent looked detached. Now its
   own chat and archive keep what it was asked (with the chat it came from) and its reply, with

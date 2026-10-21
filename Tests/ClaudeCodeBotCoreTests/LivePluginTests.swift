@@ -142,7 +142,8 @@ struct LivePortTests {
         // Done when Maintainer has said something after being allowed and is idle again.
         await eventually({
             !maintainer.isWorking && maintainer.phase == .awake
-                && maintainer.messages.last(where: { $0.role == .relay })?.text.contains("The user agreed") == true
+                && workspace.approvedFolders.contains { $0.standardizedFileURL == source.standardizedFileURL }
+                && maintainer.messages.last(where: { $0.role == .relay })?.text.contains(source.path) == true
                 && maintainer.messages.last?.role == .bot
         }, timeout: 1800)
         print("maintainer:\n" + maintainer.messages.map { "[\($0.role)] \($0.text)" }.joined(separator: "\n"))

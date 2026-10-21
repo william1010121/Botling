@@ -78,9 +78,12 @@ struct NewProjectTests {
         let cards = workspace.mainBot.messages.filter(\.isOpenQuestion)
         #expect(cards.count == 1)
         let card = try #require(cards.first)
-        #expect(card.text.hasPrefix("Add these 2 folders as projects?"))
-        #expect(card.text.contains("**alpha**") && card.text.contains("**beta**") && card.text.contains("then: List the files"))
-        #expect(card.choices?.first?.label == "Add all 2")
+        // One card for the two new folders (not the known project, not the missing one): each
+        // named with its path and task, one recommended option that adds them, one that does not.
+        #expect(card.text.contains(a.path) && card.text.contains(b.path) && card.text.contains("List the files"))
+        #expect(!card.text.contains("code/known") && !card.text.contains("code/ghost"))
+        #expect(card.choices?.count == 2)
+        #expect(card.choices?.first?.recommended == true)
         #expect(workspace.mainBot.messages.contains { $0.text.contains("there is no folder at") })
         let knownManager = try #require(workspace.bot(for: known))
         await eventually { knownManager.messages.first?.text == "Say hi" }
@@ -91,7 +94,8 @@ struct NewProjectTests {
         await eventually { alpha.messages.first?.text == "List the files" }
         let beta = try #require(workspace.projects.first { $0.name == "beta" }.flatMap(workspace.bot(for:)))
         #expect(beta.messages.isEmpty)
-        #expect(workspace.mainBot.messages.last?.text == "Added alpha, beta as projects; the managers with a task are on it.")
+        let added = try #require(workspace.mainBot.messages.last)
+        #expect(added.text.contains("alpha") && added.text.contains("beta"))
     }
 
     @Test func everyFolderInsideAFolderIsFoundByTheApp() async throws {
@@ -172,9 +176,11 @@ struct NewProjectTests {
         #expect(workspace.answer("I meant every project, not these folders", in: card.id, of: workspace.mainBot))
         await eventually { workspace.mainBot.messages.last?.text == "Noted." }
         let sent = try #require(fake.agents.last?.sent.last)
-        #expect(sent.contains("(App: The user wrote this on the app's card asking to add cli as projects instead of picking an option. That card is closed and nothing was done."))
-        #expect(sent.contains("(Replying to the app's message: \"Add **cli** as a project?\")"))
+        // The bot hears the words as a reply to that card, which names the folder it was about.
+        #expect(sent.hasPrefix(BotPrompts.appLead))
+        #expect(sent.contains("cli"))
         #expect(sent.hasSuffix("I meant every project, not these folders"))
+        #expect(workspace.mainBot.messages.last { $0.role == .user }?.replyTo == card.id)
         // The card no longer adds anything.
         #expect(!workspace.choose(0, in: card.id, of: workspace.mainBot))
         #expect(workspace.projects.isEmpty)

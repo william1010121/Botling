@@ -57,7 +57,7 @@ public final class ComponentUsage {
     /// i.e. that component is installed).
     public static func components(in message: ChatMessage, previews: Bool) -> [String] {
         var names = message.shown.map(\.name)
-        if let choices = message.choices, !choices.isEmpty { names.append("choices") }
+        if let choices = message.choices, !choices.isEmpty { names.append(ComponentLibrary.choices) }
         if previews, message.role == .bot || message.role == .notice, message.text.contains("](file:") {
             let shown = message.shown.compactMap { $0.name == PagePreview.component ? PagePreview.page(inCard: $0.data) : nil }
             names += PagePreview.linkedCards(in: message.text, skipping: shown).map { _ in PagePreview.component }

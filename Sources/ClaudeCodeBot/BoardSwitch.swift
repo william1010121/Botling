@@ -9,7 +9,7 @@ struct BoardMode: ViewModifier {
     @ObservedObject var inputs: ChatInputs
     let bot: Bot
 
-    private var available: Bool { workspace.viewingSubagent == nil && bot !== workspace.codexBot }
+    private var available: Bool { workspace.viewingSubagent == nil && bot.profile.capabilities.board }
     private var on: Bool { available && inputs.boards.contains(bot.id) }
 
     func body(content: Content) -> some View {

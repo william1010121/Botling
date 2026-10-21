@@ -210,7 +210,7 @@ public final class Bot: ObservableObject, Identifiable {
     private var interruptions = 0
     /// It should restart (new plugins, a model, a new folder) before its next real message, with
     /// this divider. Nothing restarts an idle bot: it costs nothing until someone writes.
-    private var pendingRestart: String?
+    private var pendingRestart: RestartReason?
     /// The restart waiting is only for plugins: when they changed back, it is not needed.
     private var pendingRestartForPluginsOnly = false
     /// Whether the session `sessionID` names can be `--resume`d (claude kept its transcript).
@@ -410,7 +410,7 @@ public final class Bot: ObservableObject, Identifiable {
         }
         if !text.isEmpty { lines.append(text) }
         if !attachments.isEmpty {
-            lines.append("(Attachments:\n" + attachments.map { "- " + $0.url.path }.joined(separator: "\n") + ")")
+            lines.append(Attachment.list(attachments))
         }
         // Whether paused work reported up is read before this turn becomes yours.
         route(Outgoing(text: lines.joined(separator: "\n\n"), images: attachments.filter { $0.kind == .image }, fromUser: true, messageID: message.id))
@@ -458,7 +458,7 @@ public final class Bot: ObservableObject, Identifiable {
         turnFromRelay = true
         var text = BotPrompts.relayPrefix + instruction
         if !attachments.isEmpty {
-            text += "\n\n(Attachments:\n" + attachments.map { "- " + $0.url.path }.joined(separator: "\n") + ")"
+            text += "\n\n" + Attachment.list(attachments)
         }
         route(Outgoing(text: text, images: attachments.filter { $0.kind == .image }, messageID: message.id))
     }
@@ -513,7 +513,7 @@ public final class Bot: ObservableObject, Identifiable {
             markAnswered(shown, in: messageID)
             // Pictures with it are kept, and Claude is told where (a refusal carries only words).
             let kept = files.compactMap(keep)
-            let note = kept.isEmpty ? "" : "\n(Attachments:\n" + kept.map { "- " + $0.url.path }.joined(separator: "\n") + ")"
+            let note = kept.isEmpty ? "" : "\n" + Attachment.list(kept)
             ask.process.answer(ask.request, allow: false, message: "The user did not allow it and said: \(shown)\(note)")
             return true
         }
@@ -1453,7 +1453,8 @@ public final class Bot: ObservableObject, Identifiable {
         case let .toolUse(_, _, _, _, parent), let .toolResult(_, _, _, parent), let .toolImages(_, _, parent), let .text(_, parent): parent
         case let .subagentStarted(id, _, _, _, _): id
         case let .subagentWaiting(id): id
-        case .subagentEnded, .subagentNamed, .backgroundCommandStarted, .monitorStarted, .scheduleCalled, .scheduleResult: nil
+        case let .launchResult(_, _, parent): parent
+        case .subagentEnded, .subagentNamed, .subagentDescribed, .backgroundCommandStarted, .monitorStarted, .scheduleCalled, .scheduleResult: nil
         }
     }
 
@@ -1463,9 +1464,12 @@ public final class Bot: ObservableObject, Identifiable {
         let id: String
         let text: String
         switch step {
+        case let .launchResult(callID, result, _):
+            if trace.subagent(callID) != nil, let agentID = result.agentID { agentIDs[callID] = agentID }
+            return
         case let .toolResult(callID, output, _, _):
             guard trace.subagent(callID) != nil else { return }
-            if let agentID = NetworkResume.agentID(in: output) { agentIDs[callID] = agentID }
+            if agentIDs[callID] == nil, let agentID = LaunchText.agentID(in: output) { agentIDs[callID] = agentID }
             id = callID
             text = output
         case let .subagentEnded(callID, status, summary):
@@ -1509,6 +1513,9 @@ public final class Bot: ObservableObject, Identifiable {
     /// The network is back (`date`: when that was seen). Within `NetworkResume.warmWindow` of the
     /// failure it goes on in the same session and continues its subagents; later, cut-off
     /// subagents start over as new ones in their worktree with their prompt and one added line.
+    /// How it went on the last time the network came back.
+    public private(set) var lastResume: NetworkResume.Mode?
+
     public func networkRestored(at date: Date) {
         guard let outage, !removed else { return }
         self.outage = nil
@@ -1519,7 +1526,9 @@ public final class Bot: ObservableObject, Identifiable {
             trace.subagent(id).map { NetworkResume.CutOff(description: $0.description, type: $0.type, prompt: $0.prompt, agentID: agentIDs[id]) }
         }
         let note = NetworkResume.resumeNote(elapsed: elapsed, carryOn: outage.turnFailed || outage.lostSession != nil, subagents: cut)
-        append(ChatMessage(role: .divider, text: NetworkResume.restoredText(elapsed: elapsed, warm: warm, subagents: cut.count)))
+        let mode = NetworkResume.mode(elapsed: elapsed, subagents: cut.count)
+        lastResume = mode
+        append(ChatMessage(role: .divider, text: NetworkResume.restoredText(elapsed: elapsed, mode: mode)))
         if phase == .asleep, warm, let session = outage.lostSession {
             // The process went away with it: the same session again, while its cache is warm.
             do {
@@ -1539,27 +1548,38 @@ public final class Bot: ObservableObject, Identifiable {
     /// Reminds you once per quiet spell when the turn under way, or a subagent at work, has shown
     /// no new step for `interval` (0 or less: never). Not while it waits for you or for the network.
     @discardableResult
-    public func checkStall(now date: Date, after interval: TimeInterval) -> [String] {
+    public func checkStall(now date: Date, after interval: TimeInterval) -> [Stall] {
         guard interval > 0, outage == nil, process != nil, !waitingForPermission else { return [] }
         let minutes = max(1, Int((interval / 60).rounded()))
-        var lines: [String] = []
+        var stalls: [Stall] = []
         var quietForeground = false
         for subagent in trace.subagents where subagent.isRunning && !stallReminded.contains(subagent.id) {
             let last = subagentProgress[subagent.id] ?? subagent.startedAt
             guard date.timeIntervalSince(last) >= interval else { continue }
             stallReminded.insert(subagent.id)
             if !subagent.background { quietForeground = true }
-            lines.append("子代理「\(subagent.description.isEmpty ? "Subagent" : subagent.description)」已經 \(minutes) 分鐘沒有新的步驟了。")
+            stalls.append(Stall(subagent: subagent.description.isEmpty ? "Subagent" : subagent.description, minutes: minutes))
         }
         if isWorking, phase == .awake, let last = lastProgress, date.timeIntervalSince(last) >= interval, !stallReminded.contains("") {
             stallReminded.insert("")
             // Waiting on a quiet subagent is that subagent's quiet spell, already said.
-            if !quietForeground { lines.insert("\(name) 已經 \(minutes) 分鐘沒有新的步驟了。", at: 0) }
+            if !quietForeground { stalls.insert(Stall(subagent: nil, minutes: minutes), at: 0) }
         }
-        guard !lines.isEmpty else { return [] }
-        append(ChatMessage(role: .notice, text: lines.joined(separator: "\n") + "\n可能卡住了：可以再等等，或傳訊息問它在做什麼。"))
+        guard !stalls.isEmpty else { return [] }
+        append(ChatMessage(role: .notice, text: stalls.map { $0.line(bot: name) }.joined(separator: "\n") + "\n可能卡住了：可以再等等，或傳訊息問它在做什麼。"))
         unreadCount += 1
-        return lines
+        return stalls
+    }
+
+    /// Who has shown no new step, and for how long.
+    public struct Stall: Equatable, Sendable {
+        /// The quiet subagent's description; nil: the bot's own turn.
+        public var subagent: String?
+        public var minutes: Int
+
+        func line(bot: String) -> String {
+            subagent.map { "子代理「\($0)」已經 \(minutes) 分鐘沒有新的步驟了。" } ?? "\(bot) 已經 \(minutes) 分鐘沒有新的步驟了。"
+        }
     }
 
     // MARK: Routines
@@ -1712,7 +1732,7 @@ public final class Bot: ObservableObject, Identifiable {
             append(ChatMessage(role: .divider, text: L("Switched to {0}", newModel.displayName)))
             return
         }
-        await restart(divider: "Handoff → \(newModel.displayName)")
+        await restart(.model(newModel))
     }
 
     /// Picks the model its subagents use. Awake: restarts before its next message, like a model
@@ -1721,7 +1741,7 @@ public final class Bot: ObservableObject, Identifiable {
         guard newModel != subagentModel else { return }
         subagentModel = newModel
         store?.save(subagentModel: newModel)
-        await restart(divider: "Handoff → subagents on \(newModel?.displayName ?? "the same model")")
+        await restart(.subagentModel(newModel))
     }
 
     /// Picks how hard it thinks. Awake: restarts before its next message; asleep: the next wake.
@@ -1729,7 +1749,7 @@ public final class Bot: ObservableObject, Identifiable {
         guard newEffort != effort else { return }
         effort = newEffort
         store?.save(effort: newEffort)
-        await restart(divider: "Handoff → \(newEffort?.englishName ?? "default") effort")
+        await restart(.effort(newEffort))
     }
 
     /// Codex review of its subagents' work. Takes effect at once: an awake bot is told with its
@@ -1779,7 +1799,7 @@ public final class Bot: ObservableObject, Identifiable {
             return
         }
         let waiting = pendingRestart != nil
-        await restart(divider: "Handoff → loading new plugins")
+        await restart(.plugins)
         if !waiting, pendingRestart != nil { pendingRestartForPluginsOnly = true }
     }
 
@@ -1787,13 +1807,13 @@ public final class Bot: ObservableObject, Identifiable {
     /// nothing to do, the next wake has it. Awake: marked, and done just before its next real
     /// message (see `restartsBeforeMessage`): an idle bot costs nothing, and a turn or a
     /// subagent at work is never cut off. Several restarts asked for make one.
-    public func restart(divider: String) async {
+    public func restart(_ reason: RestartReason) async {
         guard phase != .asleep else {
             pendingRestart = nil
             pendingRestartForPluginsOnly = false
             return
         }
-        pendingRestart = divider
+        pendingRestart = reason
         pendingRestartForPluginsOnly = false
     }
 
@@ -1809,7 +1829,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// transcript of it, a handoff written into memory.md and a new session. Then the messages
     /// that waited go on.
     private func restartWaiting() async {
-        guard let divider = pendingRestart else {
+        guard let reason = pendingRestart else {
             if phase == .switching(.stopping) { phase = .awake }
             await flushQueue()
             return
@@ -1824,49 +1844,23 @@ public final class Bot: ObservableObject, Identifiable {
             return
         }
         if let session = sessionID, sessionExists(session, profile.workingDirectory) {
-            await resume(session, divider: divider)
+            await resume(session, reason: reason)
         } else {
-            await handOver(divider: divider)
+            await handOver(reason: reason)
         }
     }
 
-    /// A restart's divider as the chat shows it, in the app's language; `divider` itself stays
-    /// English, since its reason is also what the bot is told.
-    static func shownDivider(_ divider: String) -> String {
-        for (prefix, shown) in [("Handoff → ", L("Handoff → {0}", "{0}")), ("Restarted → ", L("Restarted → {0}", "{0}"))] where divider.hasPrefix(prefix) {
-            return shown.replacingOccurrences(of: "{0}", with: shownReason(String(divider.dropFirst(prefix.count))))
-        }
-        return divider
-    }
-
-    /// The reason after "Handoff → ", in the app's language.
-    static func shownReason(_ reason: String) -> String {
-        if reason.hasPrefix("subagents on ") {
-            let model = String(reason.dropFirst("subagents on ".count))
-            return model == "the same model" ? L("subagents on the same model") : L("subagents on {0}", model)
-        }
-        if reason.hasPrefix("may read ") { return L("may read {0}", String(reason.dropFirst("may read ".count))) }
-        if reason.hasSuffix(" effort") {
-            let level = String(reason.dropLast(" effort".count))
-            return L("{0} effort", EffortLevel.allCases.first { $0.englishName == level }?.displayName ?? L("default"))
-        }
-        switch reason {
-        case "loading new plugins": return L("loading new plugins")
-        case "auto-approving safe actions": return L("auto-approving safe actions")
-        case "asking before tools": return L("asking before tools")
-        default: return reason
-        }
-    }
-
-    static func resumedDivider(_ divider: String) -> String {
-        divider.hasPrefix("Handoff → ") ? "Restarted → " + divider.dropFirst("Handoff → ".count) : divider
+    /// A restart's divider as the chat shows it, in the app's language: a handoff (a new session
+    /// reading memory) or a restart in the same session.
+    static func shownDivider(_ reason: RestartReason, resumed: Bool) -> String {
+        resumed ? L("Restarted → {0}", reason.shown) : L("Handoff → {0}", reason.shown)
     }
 
     /// Ends the process and goes on in the same session (`--resume`) with what it starts with
     /// now: no handoff turn, no memory read back, the prompt cache stays warm. claude keeps the
     /// session's first system prompt on `--resume` (a new `--append-system-prompt` is ignored),
     /// so what may have changed since (the briefing) goes with the next message.
-    private func resume(_ session: UUID, divider: String) async {
+    private func resume(_ session: UUID, reason: RestartReason) async {
         cancelIdle()
         switchTarget = model
         phase = .switching(.stopping)
@@ -1876,12 +1870,11 @@ public final class Bot: ObservableObject, Identifiable {
         do {
             _ = try start(resuming: session)
             phase = .awake
-            append(ChatMessage(role: .divider, text: Self.shownDivider(Self.resumedDivider(divider))))
+            append(ChatMessage(role: .divider, text: Self.shownDivider(reason, resumed: true)))
             resumeProbe = true
             resumeRetry = nil
-            let reason = divider.hasPrefix("Handoff → ") ? String(divider.dropFirst("Handoff → ".count)) : divider
             let briefing = wakeNote?() ?? ""
-            let note = "(App: ClaudeCodeBot restarted you in this same conversation (\(reason)); carry on as before." + (briefing.isEmpty ? ")" : " What the app tells you at a wake, as it is now:)\n" + briefing)
+            let note = "(App: ClaudeCodeBot restarted you in this same conversation (\(reason.told)); carry on as before." + (briefing.isEmpty ? ")" : " What the app tells you at a wake, as it is now:)\n" + briefing)
             pendingNote = [note, pendingNote].compactMap { $0 }.joined(separator: "\n\n")
             scheduleIdle()
         } catch {
@@ -1894,7 +1887,7 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     /// Writes a handoff, stops, and starts a new session on its model reading it.
-    private func handOver(divider: String) async {
+    private func handOver(reason: RestartReason) async {
         cancelIdle()
         switchTarget = model
         phase = .switching(.writing)
@@ -1903,7 +1896,7 @@ public final class Bot: ObservableObject, Identifiable {
         phase = .switching(.stopping)
         await finishProcess()
         phase = .switching(.starting)
-        append(ChatMessage(role: .divider, text: Self.shownDivider(divider)))
+        append(ChatMessage(role: .divider, text: Self.shownDivider(reason, resumed: false)))
         do {
             _ = try start()
             let briefing = wakeNote?() ?? ""
@@ -2114,5 +2107,42 @@ struct EarlyReplies {
 
     static func normalized(_ text: String) -> String {
         text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// Why a bot restarts to pick up what it starts with: kept as what it is, and put in words only
+/// for its divider (in the app's language) and for what the bot is told (English).
+public enum RestartReason: Equatable, Sendable {
+    case model(BotModel)
+    case subagentModel(BotModel?)
+    case effort(EffortLevel?)
+    case plugins
+    /// Maintainer may now read a folder (its last path component).
+    case mayRead(String)
+    /// Auto mode turned on (true) or off.
+    case autoApprove(Bool)
+
+    /// What the bot is told, in English.
+    var told: String {
+        switch self {
+        case let .model(model): model.displayName
+        case let .subagentModel(model): "subagents on \(model?.displayName ?? "the same model")"
+        case let .effort(level): "\(level?.englishName ?? "default") effort"
+        case .plugins: "loading new plugins"
+        case let .mayRead(folder): "may read \(folder)"
+        case let .autoApprove(on): on ? "auto-approving safe actions" : "asking before tools"
+        }
+    }
+
+    /// Its divider's words, in the app's language.
+    var shown: String {
+        switch self {
+        case let .model(model): model.displayName
+        case let .subagentModel(model): model.map { L("subagents on {0}", $0.displayName) } ?? L("subagents on the same model")
+        case let .effort(level): L("{0} effort", level?.displayName ?? L("default"))
+        case .plugins: L("loading new plugins")
+        case let .mayRead(folder): L("may read {0}", folder)
+        case let .autoApprove(on): on ? L("auto-approving safe actions") : L("asking before tools")
+        }
     }
 }

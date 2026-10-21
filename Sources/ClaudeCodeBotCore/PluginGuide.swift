@@ -123,7 +123,7 @@ enum PluginGuide {
           Data from a command: about.md's `Command: <command>` line fills the component with what it prints (run in the bot's folder after the user
           presses "Allow and run" on the card; JSON output is the data, other output one string; at most \#(ComponentCommands.limitsText)). It is optional,
           only for live data that changes: most components draw the data a bot gives them with `<show>`, and one made from a bot's reply shows that reply.
-          Fields in two groups: about.md lists the data fields under "From command" (a CLI command can get them) and "Optional (bot only)"
+          Fields in two groups: about.md lists the data fields under "\#(ComponentFieldGroup.fromCommand.label)" (a CLI command can get them) and "\#(ComponentFieldGroup.botOnly.label)"
           (explanations, advice, a next step: only a bot can write them, so they are there only when a bot fills it); the template draws well
           without any optional field. A component bots fill that has From command fields gets a `Board command: <command>` line: only a
           suggestion, not run in the chat. When the user pins it to the Board, Maintainer adds a `Command:` line from it (a command or a small

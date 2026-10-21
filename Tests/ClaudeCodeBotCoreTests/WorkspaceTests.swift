@@ -125,9 +125,9 @@ struct WorkspaceTests {
         1. Error states
         * Scheduling
         """
-        #expect(MemoryFile.items(in: text, section: "Waiting on you").isEmpty)
-        #expect(MemoryFile.items(in: text, section: "In progress") == ["Error states", "Scheduling"])
-        #expect(MemoryFile.items(in: text, section: "Current status") == ["Working on the error states."])
+        #expect(MemoryFile.items(in: text, section: .waitingOnYou).isEmpty)
+        #expect(MemoryFile.items(in: text, section: .inProgress) == ["Error states", "Scheduling"])
+        #expect(MemoryFile.items(in: text, section: .currentStatus) == ["Working on the error states."])
     }
 
     @Test func managersGetCodingToolsAndTheMainBotDoesNot() {

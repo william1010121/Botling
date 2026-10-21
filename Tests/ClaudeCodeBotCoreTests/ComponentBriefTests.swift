@@ -101,8 +101,7 @@ struct ComponentBriefTests {
         let prompt = ComponentBrief.request(reply: message, asked: Self.asked, folder: "/tmp/garden")
         #expect(prompt.contains("<component-brief>"))
         #expect(prompt.contains("verbatim"))
-        #expect(prompt.contains("From command"))
-        #expect(prompt.contains("Optional (bot only)"))
+        for group in ComponentFieldGroup.allCases { #expect(prompt.contains(group.label)) }
         #expect(prompt.contains("Board command"))
         #expect(prompt.contains("/tmp/garden"))
         #expect(prompt.contains(Self.asked))
@@ -163,7 +162,7 @@ struct ComponentBriefTests {
         #expect(job.folder.standardizedFileURL == bot.profile.workingDirectory.standardizedFileURL)
         #expect(job.prompt.contains(Self.asked))
         let relay = try #require(relays(workspace).first)
-        #expect(relay.text.hasPrefix("(Component spec \(spec.id.uuidString)) Build the first version"))
+        #expect(relay.text.hasPrefix(ComponentAction.buildFirst.header(spec.id.uuidString)))
         #expect(relay.text.contains("Purpose: GPU load at a glance."))
         #expect(relay.text.contains(Self.asked))
         #expect(relay.text.contains("GPU 0 使用率 87%"))
@@ -185,7 +184,7 @@ struct ComponentBriefTests {
         let spec = try #require(workspace.makeComponent(from: reply.id, in: bot))
         await eventually { !relays(workspace).isEmpty }
         let relay = try #require(relays(workspace).first)
-        #expect(relay.text.hasPrefix("(Component spec \(spec.id.uuidString)) Build the first version"))
+        #expect(relay.text.hasPrefix(ComponentAction.buildFirst.header(spec.id.uuidString)))
         #expect(relay.text.contains(Self.asked))
         #expect(!relay.text.contains("brief for you"))
         #expect(bot.specs.first?.brief == nil)
@@ -238,15 +237,14 @@ struct ComponentBriefTests {
     @Test func maintainerIsToldToSplitFieldsAndSuggestABoardCommand() {
         let spec = ComponentSpec(name: "gpu", folder: "/tmp", bots: ["main"])
         let request = ComponentSpecs.firstBuildRequest(spec, reply: "GPU 87%", asked: Self.asked, brief: "Purpose: GPU", from: "main")
-        #expect(request.contains("From command"))
-        #expect(request.contains("Optional (bot only)"))
+        for group in ComponentFieldGroup.allCases { #expect(request.contains(group.label)) }
         #expect(request.contains("Board command:"))
         #expect(request.contains("missing"))
         #expect(request.contains(Self.asked))
         #expect(request.contains("Purpose: GPU"))
         let build = ComponentSpecs.buildRequest(spec)
-        #expect(build.contains("Optional (bot only)"))
-        #expect(ComponentPrompts.system.contains("Optional (bot only)"))
+        #expect(build.contains(ComponentFieldGroup.botOnly.label))
+        #expect(ComponentPrompts.system.contains(ComponentFieldGroup.botOnly.label))
         #expect(ComponentPrompts.system.contains("Board command:"))
         #expect(PluginGuide.text(builtIns: "/x").contains("Board command:"))
     }
@@ -286,7 +284,7 @@ struct ComponentBriefTests {
         #expect(relay.text.contains("nvidia-smi --query-gpu=utilization.gpu --format=csv"))
         #expect(relay.text.contains("Command:"))
         #expect(relay.text.contains(bot.profile.workingDirectory.path))
-        #expect(relay.text.contains("Never run the command yourself"))
+        #expect(relay.text.hasPrefix(ComponentAction.liveOnBoard.header("gpu-card")))
         // The pin says so while it waits.
         let view = ChatPayload.pin(view: try #require(bot.pins.first), context: workspace.pinContext(for: bot, board: true))
         #expect(view.makingLive == true)

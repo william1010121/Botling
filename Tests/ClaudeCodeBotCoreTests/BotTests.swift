@@ -102,7 +102,7 @@ final class FakeLauncher: @unchecked Sendable {
 
 /// The prompts whose replies the chat never shows.
 func isAppOnly(_ text: String) -> Bool {
-    text.hasPrefix("(App: ") && !text.hasPrefix("(App: You were just woken up")
+    text.hasPrefix(BotPrompts.appLead) && !text.hasPrefix(BotPrompts.wakeLead)
 }
 
 @MainActor
@@ -280,7 +280,7 @@ struct BotTests {
     @Test func messageDuringTidyIsSentAfterSleeping() async {
         let fake = FakeLauncher()
         // Hold the tidy reply so a message can arrive mid-tidy.
-        fake.respond = { text in text.hasPrefix("(App: You have been idle") ? nil : "Got it" }
+        fake.respond = { text in text.hasPrefix(BotPrompts.tidyLead) ? nil : "Got it" }
         let bot = makeBot(fake, idle: 0.05)
 
         bot.send("hi")

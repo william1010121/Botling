@@ -33,6 +33,13 @@ enum StreamEvent {
                     if TraceBook.subagentTools.contains(name), let agent = input["name"] as? String, !agent.isEmpty {
                         events.append(.trace(.subagentNamed(id: id, name: agent)))
                     }
+                    // What it is for, from the call itself rather than its activity line.
+                    if TraceBook.subagentTools.contains(name) {
+                        let about = (input["description"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        let firstLine = about.split(whereSeparator: \.isNewline).first.map(String.init) ?? about
+                        let said = firstLine.isEmpty ? (input["prompt"] as? String ?? "").split(whereSeparator: \.isNewline).first.map(String.init) ?? "" : firstLine
+                        if !said.isEmpty { events.append(.trace(.subagentDescribed(id: id, description: said.count > 60 ? String(said.prefix(60)) + "…" : said))) }
+                    }
                     return events
                 case "text":
                     guard let text = block["text"] as? String, !text.isEmpty else { return [] }
@@ -51,6 +58,10 @@ enum StreamEvent {
                 // What a scheduling call of its own did, from the structured result.
                 if parent == nil, !failed, let result = ScheduleResult(object["tool_use_result"]) {
                     events.append(.trace(.scheduleResult(id: id, result: result)))
+                }
+                // What a call that started background work or a subagent gave back, structured.
+                if !failed, let launch = LaunchResult(object["tool_use_result"]) {
+                    events.append(.trace(.launchResult(id: id, result: launch, parent: parent)))
                 }
                 events.append(.trace(.toolResult(id: id, output: output, failed: failed, parent: parent)))
                 if failed, let denial = classifierDenial(id: id, output: output, parent: parent, meta: object["tool_result_meta"]) {
@@ -143,16 +154,13 @@ enum StreamEvent {
         summary.hasSuffix("is waiting on its own background work")
     }
 
-    /// A tool result's content: a string, or text blocks (images say so in words).
+    /// A tool result's content: a string, or its text blocks. Its pictures come apart
+    /// (`images(of:)`, kept on the step), not as words in the text.
     static func text(of content: Any?) -> String {
         if let text = content as? String { return text }
         guard let blocks = content as? [[String: Any]] else { return "" }
         return blocks.compactMap { block -> String? in
-            switch block["type"] as? String {
-            case "text": block["text"] as? String
-            case "image": "(image)"
-            default: nil
-            }
+            block["type"] as? String == "text" ? block["text"] as? String : nil
         }.joined(separator: "\n")
     }
 

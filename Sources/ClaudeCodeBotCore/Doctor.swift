@@ -136,19 +136,19 @@ public enum DoctorTool: String, CaseIterable, Sendable {
         return .signedIn(method.isEmpty ? "signed in" : method)
     }
 
-    /// `codex login status`: "Logged in using ChatGPT", "Logged in using an API key - sk-…" (the
-    /// key is never kept), "Not logged in".
+    /// `codex login status` has no JSON: it exits 0 when signed in ("Logged in using ChatGPT",
+    /// "Logged in using an API key - sk-…"; the key is never kept) and 1 otherwise, for "Not
+    /// logged in" and for an error alike. The exit status decides signed in; the words only name
+    /// how, and tell signing out from an error.
     static func parseCodexAuth(_ output: String, exitCode: Int32) -> DoctorAuth {
-        for line in output.split(whereSeparator: \.isNewline) {
-            if line.contains("Not logged in") { return .signedOut }
-            if let range = line.range(of: "Logged in using ") {
-                let how = line[range.upperBound...]
-                if how.localizedCaseInsensitiveContains("API key") { return .signedIn("API key") }
-                if how.contains("ChatGPT") { return .signedIn("ChatGPT") }
-                return .signedIn(how.split(separator: " ").first.map(String.init) ?? "signed in")
-            }
+        let lines = output.split(whereSeparator: \.isNewline).map(String.init)
+        guard exitCode == 0 else {
+            return lines.contains { $0.localizedCaseInsensitiveContains("not logged in") } ? .signedOut : .unknown
         }
-        return .unknown
+        let how = lines.lazy.compactMap { line in line.range(of: "Logged in using ").map { String(line[$0.upperBound...]) } }.first ?? ""
+        if how.localizedCaseInsensitiveContains("API key") { return .signedIn("API key") }
+        if how.localizedCaseInsensitiveContains("ChatGPT") { return .signedIn("ChatGPT") }
+        return .signedIn(how.split(separator: " ").first.map(String.init) ?? "signed in")
     }
 
     var installFix: String { "npm i -g \(package)@latest" }

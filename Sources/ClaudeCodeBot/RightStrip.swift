@@ -98,7 +98,7 @@ struct RightStrip: View {
 
     @State private var open: RightPanelLayout.Section?
 
-    private var isCodex: Bool { bot === workspace.codexBot }
+    private var isCodex: Bool { bot.profile.capabilities.reviewer }
     private var canReview: Bool { workspace.canRequestReview(of: bot) }
 
     private var waiting: [Workspace.Waiting] {
@@ -124,7 +124,7 @@ struct RightStrip: View {
                 icon(item)
             }
             Spacer(minLength: 0)
-            if group == nil, !isCodex {
+            if group == nil, bot.profile.capabilities.settings {
                 Button(action: openSettings) {
                     Image(systemName: "slider.horizontal.3")
                         .font(.system(size: 14))
@@ -173,7 +173,7 @@ struct RightStrip: View {
             return speaker.map { L("{0} is writing…", $0) } ?? workspace.members(of: group).map(\.name).joined(separator: ", ")
         }
         let doing = bot.profile.role == .manager
-            ? MemoryFile.items(at: bot.profile.memoryURL, section: "In progress").first
+            ? MemoryFile.items(at: bot.profile.memoryURL, section: .inProgress).first
             : bot.profile.role == .main ? workspace.runningTeams.map(\.spec.title).first : nil
         return RightPanelLayout.nowDetail(status: bot.statusText, doing: doing)
     }

@@ -31,7 +31,7 @@ struct GroupChatTests {
     @Test func everyoneInTheGroupReadsInTurnAndOnlyThoseWithSomethingToSayAnswer() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
-            guard text.contains("(App: Group chat") else { return isAppOnly(text) ? "OK" : "Got it" }
+            guard text.contains(Workspace.groupTurnLead) else { return isAppOnly(text) ? "OK" : "Got it" }
             if text.contains("you are \"Main bot\"") { return "I can check the garden project." }
             if text.contains("you are \"garden\"") {
                 // It sees what the main bot said before it.
@@ -67,7 +67,7 @@ struct GroupChatTests {
     @Test func anAtNameGoesOnlyToThatMember() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
-            guard text.contains("(App: Group chat") else { return isAppOnly(text) ? "OK" : "Got it" }
+            guard text.contains(Workspace.groupTurnLead) else { return isAppOnly(text) ? "OK" : "Got it" }
             #expect(text.contains("is addressed to you"))
             return "On it."
         }
@@ -98,8 +98,8 @@ struct GroupChatTests {
     @Test func aPickOnABotsLineGoesBackToThatBot() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
-            guard text.contains("(App: Group chat") else { return isAppOnly(text) ? "OK" : "Got it" }
-            if text.contains("The user picked: Today") { return "Done today, then." }
+            guard text.contains(Workspace.groupTurnLead) else { return isAppOnly(text) ? "OK" : "Got it" }
+            if text.contains(Workspace.pickedNote("Today")) { return "Done today, then." }
             return "When?\n<choices>\n* Today | fast\n- Tomorrow\n</choices>"
         }
         let workspace = makeWorkspace(fake)
@@ -122,8 +122,8 @@ struct GroupChatTests {
     @Test func aPictureAnsweredOnABotsLineGoesBackToThatBotAsAFile() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
-            guard text.contains("(App: Group chat") else { return isAppOnly(text) ? "OK" : "Got it" }
-            if text.contains("The user answered: Like this\n(Attachments:\n- ") { return "Got the picture." }
+            guard text.contains(Workspace.groupTurnLead) else { return isAppOnly(text) ? "OK" : "Got it" }
+            if text.contains(Workspace.answeredNote("Like this") + "\n" + Attachment.listLead) { return "Got the picture." }
             return "Which look?\n<choices>\n* Round\n- Square\n</choices>"
         }
         let workspace = makeWorkspace(fake)
@@ -194,7 +194,7 @@ struct GroupChatTests {
     @Test func yourOwnChatWaitsWhileTheBotTakesItsGroupTurn() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
-            if text.contains("(App: Group chat") { return nil }
+            if text.contains(Workspace.groupTurnLead) { return nil }
             return isAppOnly(text) ? "OK" : "Own reply"
         }
         let workspace = makeWorkspace(fake)
@@ -251,7 +251,7 @@ struct GroupChatTests {
     @Test func aBusyBotIsSkippedAndOneThatNeverAnswersTimesOut() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
-            if text.contains("(App: Group chat") { return text.contains("you are \"garden\"") ? nil : "PASS" }
+            if text.contains(Workspace.groupTurnLead) { return text.contains("you are \"garden\"") ? nil : "PASS" }
             return isAppOnly(text) ? "OK" : nil
         }
         let workspace = makeWorkspace(fake)
@@ -282,7 +282,7 @@ struct GroupChatTests {
     @Test func tagsActOnlyForTheMainBotAndBotsYouNamed() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
-            guard text.contains("(App: Group chat") else { return isAppOnly(text) ? "OK" : "Got it" }
+            guard text.contains(Workspace.groupTurnLead) else { return isAppOnly(text) ? "OK" : "Got it" }
             if text.contains("you are \"Main bot\"") { return "PASS" }
             #expect(text.contains("you are \"garden\""))
             return "Sure.\n<new-bot name=\"Sneaky\">x</new-bot>\n<team name=\"research\">y</team>"
@@ -354,7 +354,7 @@ struct GroupChatTests {
 
     @Test func aToolQuestionAskedInAGroupTurnShowsInThatGroup() async throws {
         let fake = FakeLauncher()
-        fake.respond = { text in text.contains("(App: Group chat") ? nil : isAppOnly(text) ? "OK" : "Got it" }
+        fake.respond = { text in text.contains(Workspace.groupTurnLead) ? nil : isAppOnly(text) ? "OK" : "Got it" }
         let workspace = makeWorkspace(fake)
         let (group, chat) = try makeGroup(workspace, members: [Workspace.mainBotID])
         let (_, other) = try makeGroup(workspace, "Other", members: [Workspace.mainBotID])
@@ -375,7 +375,7 @@ struct GroupChatTests {
 
     @Test func aRemovedBotLeavesItsGroupsAndItsQuestionsClose() async throws {
         let fake = FakeLauncher()
-        fake.respond = { text in text.contains("(App: Group chat") ? "Which?\n<choices>\n* A\n- B\n</choices>" : isAppOnly(text) ? "OK" : "Got it" }
+        fake.respond = { text in text.contains(Workspace.groupTurnLead) ? "Which?\n<choices>\n* A\n- B\n</choices>" : isAppOnly(text) ? "OK" : "Got it" }
         let workspace = makeWorkspace(fake)
         let garden = workspace.addProject(folder: try folder("garden"))
         let news = try #require(workspace.createBot(name: "News", job: "x"))

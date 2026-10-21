@@ -49,7 +49,22 @@ struct ParsingTests {
 struct LegacyMemoryTests {
     @Test func memoryFilesWithTheOldHeadingsAreStillRead() {
         let text = "## 進行中\n- 右側面板\n## 等你決定的事\n- 封面圖\n"
-        #expect(MemoryFile.items(in: text, section: "In progress") == ["右側面板"])
-        #expect(MemoryFile.items(in: text, section: "Waiting on you") == ["封面圖"])
+        #expect(MemoryFile.items(in: text, section: .inProgress) == ["右側面板"])
+        #expect(MemoryFile.items(in: text, section: .waitingOnYou) == ["封面圖"])
+    }
+
+    /// A bot that wrote the four headings in its own words: the sections are found by place.
+    @Test func translatedHeadingsAreReadByPlace() {
+        let text = "## 現況\n做錯誤狀態\n## 処理中\n- 錯誤狀態\n## 待確認\n- 封面圖\n## 決定\n- 2026-10-18 Astro\n"
+        #expect(MemoryFile.items(in: text, section: .inProgress) == ["錯誤狀態"])
+        #expect(MemoryFile.items(in: text, section: .waitingOnYou) == ["封面圖"])
+    }
+
+    /// The prompt names every section the app reads, in order.
+    @Test func thePromptTeachesTheSectionsTheAppReads() {
+        let system = BotPrompts(profile: .manager(name: "x", avatar: "square", folder: URL(filePath: "/p/x"))).system
+        let places = MemorySection.allCases.compactMap { system.range(of: "## " + $0.heading)?.lowerBound }
+        #expect(places.count == MemorySection.allCases.count)
+        #expect(places == places.sorted())
     }
 }

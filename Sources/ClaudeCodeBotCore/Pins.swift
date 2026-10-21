@@ -361,21 +361,21 @@ public enum Pins {
         pins.insert(pin, at: min(max(index, 0), pins.count))
     }
 
-    /// One short line for a pin's chip, from its data: a `summary`, `headline` or `title` the
-    /// data gives; else the first item of a list (its hash, title or name, and the like); else
-    /// the first line of text. Empty when there is nothing to say.
+    /// One short line for a pin's chip when its component sets none (`ccb.setStatus`), from the
+    /// shape of its data, not from what its fields are called: a `summary`, `headline` or
+    /// `title` the data gives; else its first list (the first item, and how many); else its
+    /// first two short values; else the first line of text. Empty when there is nothing to say.
     public static func headline(_ json: String, limit: Int = 48) -> String {
         guard let value = try? JSONSerialization.jsonObject(with: Data(json.utf8), options: .fragmentsAllowed) else {
             return clip(firstLine(json), limit)
         }
-        return clip(headline(of: value, depth: 0), limit)
+        return clip(headline(of: value, json: json, depth: 0), limit)
     }
 
+    /// The conventional names for a line that sums the data up.
     private static let summaryKeys = ["summary", "headline", "title"]
-    private static let listKeys = ["commits", "rows", "items", "components", "entries", "results"]
-    private static let itemKeys = ["hash", "subject", "title", "name", "city", "bot", "label", "condition", "message", "date"]
 
-    private static func headline(of value: Any, depth: Int) -> String {
+    private static func headline(of value: Any, json: String, depth: Int) -> String {
         switch value {
         case let text as String:
             return firstLine(text)
@@ -383,34 +383,24 @@ public enum Pins {
             return CFGetTypeID(number) == CFBooleanGetTypeID() ? (number.boolValue ? L("Yes") : L("No")) : number.stringValue
         case let list as [Any]:
             guard let first = list.first else { return L("Nothing yet") }
-            let line = depth < 2 ? headline(of: first, depth: depth + 1) : ""
+            let line = depth < 2 ? headline(of: first, json: json, depth: depth + 1) : ""
             return list.count > 1 && !line.isEmpty ? "\(line) · \(list.count)" : line
         case let object as [String: Any]:
             for key in summaryKeys {
                 if let text = object[key] as? String, !text.trimmingCharacters(in: .whitespaces).isEmpty { return firstLine(text) }
             }
-            if depth < 2 {
-                for key in listKeys {
-                    if let list = object[key] as? [Any] { return headline(of: list, depth: depth + 1) }
-                }
+            let keys = JSONKeyOrder.sorted(Array(object.keys), as: json)
+            if depth < 2, let list = keys.lazy.compactMap({ object[$0] as? [Any] }).first {
+                return headline(of: list, json: json, depth: depth + 1)
             }
-            let parts = itemKeys.compactMap { key -> String? in
-                switch object[key] {
-                case let text as String: let line = firstLine(text); return line.isEmpty ? nil : line
-                case let number as NSNumber: return number.stringValue
-                default: return nil
-                }
-            }
-            if !parts.isEmpty { return parts.prefix(2).joined(separator: " · ") }
-            // Else the first short values it has, in key order (dictionaries keep none).
-            let simple = object.keys.sorted().compactMap { key -> String? in
+            let parts = keys.compactMap { key -> String? in
                 switch object[key] {
                 case let text as String: let line = firstLine(text); return line.isEmpty ? nil : line
                 case let number as NSNumber where CFGetTypeID(number) != CFBooleanGetTypeID(): return "\(key) \(number.stringValue)"
                 default: return nil
                 }
             }
-            return simple.prefix(2).joined(separator: " · ")
+            return parts.prefix(2).joined(separator: " · ")
         default:
             return ""
         }

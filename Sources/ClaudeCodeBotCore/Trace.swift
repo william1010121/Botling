@@ -36,6 +36,12 @@ public enum TraceEvent: Equatable, Sendable {
     /// The structured result of a call the bot itself made (its `tool_use_result`), when it is
     /// a scheduling one's: what was scheduled or taken back. Comes just before its `toolResult`.
     case scheduleResult(id: String, result: ScheduleResult)
+    /// The structured result of a call that started background work or a subagent (its
+    /// `tool_use_result`): its agentId, output file, whether it went on in the background. Comes
+    /// just before its `toolResult`.
+    case launchResult(id: String, result: LaunchResult, parent: String?)
+    /// What a subagent call said it is for (the Agent call's `description`).
+    case subagentDescribed(id: String, description: String)
 }
 
 /// What a ScheduleWakeup or CronCreate call asked for.
@@ -205,6 +211,8 @@ public struct TraceBook: Equatable, Sendable {
     public private(set) var tasks: [BackgroundTask] = []
     /// ScheduleWakeup and CronCreate calls of the turn under way, until their results come.
     private var scheduleCalls: [String: ScheduleCall] = [:]
+    /// Structured launch results waiting for their call's `toolResult`.
+    private var launches: [String: LaunchResult] = [:]
     /// Subagents kept once ended; running ones are always kept.
     static let keptSubagents = 40
     /// Longest detail or output kept for one step.
@@ -233,12 +241,13 @@ public struct TraceBook: Equatable, Sendable {
                 steps.append(step)
             }
             guard isSubagent, subagentIndex(id) == nil else { return false }
-            subagents.append(Subagent(id: id, description: Self.subagentName(title), prompt: detail, startedAt: date, parentID: parent))
+            subagents.append(Subagent(id: id, description: "", prompt: detail, startedAt: date, parentID: parent))
             trim()
             return true
         case let .toolResult(id, output, failed, parent):
+            let launch = launches.removeValue(forKey: id)
             if parent == nil, let at = tasks.firstIndex(where: { $0.id == id }) {
-                tasks[at].outputFile = BackgroundTask.outputFile(in: output) ?? tasks[at].outputFile
+                tasks[at].outputFile = launch?.outputFile ?? LaunchText.outputFile(in: output) ?? tasks[at].outputFile
             }
             // A call whose structured result did not come (refused, failed) schedules nothing.
             if parent == nil { scheduleCalls[id] = nil }
@@ -257,7 +266,7 @@ public struct TraceBook: Equatable, Sendable {
             // The call that started a subagent returned: unless it runs on in the background,
             // that is its result.
             guard let index = subagentIndex(id), subagents[index].isRunning,
-                  !subagents[index].background, !Self.launchedInBackground(output) else { return false }
+                  !subagents[index].background, !(launch?.background ?? LaunchText.launchedInBackground(output)) else { return false }
             end(index, status: failed ? .failed : .completed, result: output, at: date)
             trim()
             return true
@@ -329,6 +338,13 @@ public struct TraceBook: Equatable, Sendable {
         case let .scheduleResult(id, result):
             if let call = scheduleCalls.removeValue(forKey: id) { addSchedule(id, call: call, result: result, at: date) }
             return false
+        case let .launchResult(id, result, _):
+            launches[id] = result
+            return false
+        case let .subagentDescribed(id, description):
+            guard let index = subagentIndex(id), subagents[index].description.isEmpty else { return false }
+            subagents[index].description = description
+            return true
         }
     }
 
@@ -375,7 +391,7 @@ public struct TraceBook: Equatable, Sendable {
     /// subagents: their work is theirs), once.
     private mutating func addTask(_ id: String, kind: BackgroundTask.Kind, title: String, at date: Date) {
         guard let step = steps.last(where: { $0.id == id }), !tasks.contains(where: { $0.id == id }) else { return }
-        let title = title.isEmpty ? Self.subagentName(step.title) : title
+        let title = title.isEmpty ? (subagentIndex(id).map { subagents[$0].description }.flatMap { $0.isEmpty ? nil : $0 } ?? step.title) : title
         var task = BackgroundTask(id: id, kind: kind, title: title, startedAt: date)
         if let detail = step.detail, !detail.isEmpty { task.detail = detail.count > 600 ? String(detail.prefix(600)) + "…" : detail }
         tasks.append(task)
@@ -554,16 +570,6 @@ public struct TraceBook: Equatable, Sendable {
         guard ended.count > Self.keptSubagents else { return }
         let drop = Set(ended.prefix(ended.count - Self.keptSubagents).map(\.id))
         subagents.removeAll { drop.contains($0.id) }
-    }
-
-    /// "Delegate Read a.txt" → "Read a.txt".
-    static func subagentName(_ title: String) -> String {
-        title.hasPrefix("Delegate ") ? String(title.dropFirst("Delegate ".count)) : title
-    }
-
-    /// The tool result of an Agent call that went to the background.
-    static func launchedInBackground(_ output: String) -> Bool {
-        output.hasPrefix("Async agent launched")
     }
 
     static func shorten(_ text: String) -> String {
