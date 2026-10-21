@@ -265,6 +265,10 @@ public final class Bot: ObservableObject, Identifiable {
         let real = saved.filter { $0.type != nil || !$0.prompt.isEmpty || !$0.steps.isEmpty }
         var book = TraceBook(subagents: real)
         book.imageFolder = store.map { $0.directory.appending(path: StepImages.folderName) }
+        // Pictures kept before they were made smaller: once, away from the main thread.
+        if let folder = book.imageFolder, FileManager.default.fileExists(atPath: folder.path) {
+            Task.detached(priority: .background) { StepImages.compressExisting(in: folder) }
+        }
         if real.count != saved.count { store?.save(subagents: real) }
         if book.stopLeftovers() { store?.save(subagents: book.subagents) }
         trace = book

@@ -228,10 +228,12 @@ export interface StepView {
   images?: StepImage[] | null;
 }
 
-/** A picture a tool call gave back: the `file:` URL to load, and its name. */
+/** A picture a tool call gave back: the `file:` URL to open, its name, and its small copy. */
 export interface StepImage {
   url: string;
   name: string;
+  /** A small copy to show in the chat (`url` opens on click); absent to show `url`. */
+  thumb?: string | null;
 }
 
 export interface ComponentInfo {

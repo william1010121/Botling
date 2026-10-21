@@ -120,6 +120,8 @@ public struct ChatPayload: Encodable, Equatable {
     public struct StepImage: Encodable, Equatable {
         var url: String
         var name: String
+        /// A small copy to show in the chat (`url` opens when it is clicked); nil to show `url`.
+        var thumb: String? = nil
     }
 
     /// The top of the page while you look at a subagent (no input box: you only watch it).
@@ -655,13 +657,15 @@ public struct ChatPayload: Encodable, Equatable {
         )
     }
 
-    /// The pictures a step shows: the files it kept that are still there, or, for a Read that
-    /// gave back a picture (kept before pictures were, or since pruned), the file it read.
+    /// The pictures a step shows: the files it kept that are still there (made smaller since,
+    /// perhaps, with a small copy for the chat), or, for a Read that gave back a picture (kept
+    /// before pictures were, or since pruned), the file it read.
     static func images(of step: Step) -> [StepImage]? {
         let manager = FileManager.default
         let name = step.detail.map { ($0 as NSString).lastPathComponent }
-        let kept = (step.images ?? []).filter { manager.fileExists(atPath: $0) }.map { path in
-            StepImage(url: URL(filePath: path).absoluteString, name: name ?? (path as NSString).lastPathComponent)
+        let kept = (step.images ?? []).compactMap(StepImages.existing).map { path in
+            let file = URL(filePath: path)
+            return StepImage(url: file.absoluteString, name: name ?? file.lastPathComponent, thumb: StepImages.thumb(for: file)?.absoluteString)
         }
         if !kept.isEmpty { return kept }
         guard step.tool == "Read", let detail = step.detail, step.output?.contains("(image)") == true else { return nil }

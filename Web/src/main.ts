@@ -31,6 +31,13 @@ class Chat {
   /** Pinned components: chips above the input box, and the Board. */
   private readonly pins: PinArea;
   private readonly drawn = new Map<string, { key: string; element: HTMLElement }>();
+  /**
+   * The components as text, and a number that changes whenever that text does: a message that
+   * draws components is redrawn when they change, by the number in its key. (Putting the text
+   * itself in every such message's key copied ~180 KB per message on every update.)
+   */
+  private componentsText = "";
+  private componentsMark = 0;
   private typing: HTMLElement | null = null;
   private botID: string | null = null;
   private last: ChatState | null = null;
@@ -102,10 +109,15 @@ class Chat {
         this.drawn.delete(id);
       }
     }
+    const componentsText = JSON.stringify(state.components);
+    if (componentsText !== this.componentsText) {
+      this.componentsText = componentsText;
+      this.componentsMark += 1;
+    }
     let previous: Element | null = null;
     for (const message of state.messages) {
       // A stamp is part of the row it heads.
-      const key = JSON.stringify([message, message.choices || message.displays || message.display || message.previews ? state.components : null]);
+      const key = JSON.stringify([message, message.choices || message.displays || message.display || message.previews ? this.componentsMark : null]);
       let entry = this.drawn.get(message.id);
       if (!entry || entry.key !== key) {
         let element = this.render(message, state);

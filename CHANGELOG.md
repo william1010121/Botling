@@ -50,6 +50,17 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **A long chat redraws faster while a bot works.** Each update the page compared every message
+  that shows a component against the whole components text (~180 KB) again; a 500-message chat
+  spent 25-45 ms of every streamed step on that. It now compares the components once per update
+  (a step or a new reply redraws in about 10 ms there).
+- **Step pictures take less room and load when you look.** A big screenshot a tool call gave
+  back is kept as JPEG when that is clearly smaller (PNGs with see-through parts stay PNG), with a
+  small copy (640 px) that the step shows; clicking it opens the full picture. A step's pictures
+  load only once you open it, so opening a chat no longer reads every screenshot in it. Pictures
+  kept before are converted once in the background (in a test copy: 30.9 MB of step pictures
+  became 22.9 MB, plus 5.0 MB of small copies).
+
 - **A Board card can be dropped between two others.** While a card was dragged, the others
   jumped as soon as the pointer touched one, and a card it had just passed over was ignored when
   the pointer came back, so after overshooting there was no way to land between A and B. The
