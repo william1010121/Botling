@@ -1,6 +1,7 @@
-// Background work under a reply: a chip for each command or subagent the bot's turn left running,
-// with how long it has run, then how it ended. Pressing one shows its last lines of output, which
-// the app reads (`taskOutput` action, answered by `ccb.taskOutput`).
+// Background work under a reply: one small icon for the commands and subagents the bot's turn left
+// running (a spinner while any runs, with how many when more than one; ✓ when all are done; ✕ when
+// any failed), its words in the tooltip. Pressing it lists them (title, status, time); pressing one
+// shows its last lines of output, which the app reads (`taskOutput` action, answered by `ccb.taskOutput`).
 import { post } from "./bridge";
 import type { TaskChipView } from "./types";
 
@@ -11,7 +12,7 @@ export function setTaskClock(now: () => number): void {
   clock = now;
 }
 
-/** Chips open now, by "message/task", with the output last shown (null: still being read). */
+/** Tasks open now, by "message/task", with the output last shown (null: still being read). */
 const open = new Map<string, string | null>();
 
 function key(messageID: string, taskID: string): string {
@@ -36,54 +37,118 @@ const ended: Record<string, { mark: string; words: string; tone: string }> = {
   interrupted: { mark: "✕", words: "已中斷（App 重開）", tone: "failed" },
 };
 
-function label(task: TaskChipView, now: number): { mark: string; text: string; tone: string } {
-  if (task.status === "running") {
-    return { mark: "⏳", text: `${task.title} · ${elapsed(now - task.started)}`, tone: "running" };
-  }
-  const end = ended[task.status] ?? ended.killed;
-  const took = task.ended != null && task.status !== "interrupted" && task.status !== "stopped" ? ` · ${elapsed(task.ended - task.started)}` : "";
-  return { mark: end.mark, text: `${task.title} · ${end.mark} ${end.words}${took}`, tone: end.tone };
+/** Replies whose list of tasks is open. */
+const expanded = new Set<string>();
+
+function endOf(task: TaskChipView) {
+  return ended[task.status] ?? ended.killed;
 }
 
-function drawChip(chip: HTMLElement, task: TaskChipView, now: number): void {
-  const { mark, text, tone } = label(task, now);
-  chip.className = `task-chip ${tone}`;
-  const icon = chip.querySelector(".task-mark")!;
-  const words = chip.querySelector(".task-words")!;
-  // An ended chip's mark is in its words ("✓ 完成"); a running one leads with ⏳.
-  icon.textContent = task.status === "running" ? mark : "";
-  words.textContent = text;
+/** What a task's line says after its title: its time, or how it ended (and how long it took). */
+function status(task: TaskChipView, now: number): string {
+  if (task.status === "running") return elapsed(now - task.started);
+  const end = endOf(task);
+  if (task.status === "completed") return task.ended != null ? elapsed(task.ended - task.started) : end.words;
+  const took = task.ended != null && task.status === "failed" ? ` · ${elapsed(task.ended - task.started)}` : "";
+  return `${end.words}${took}`;
 }
 
-/** The strip of chips under a reply, and the output box of the one opened. */
+/** The tooltip: counts, then a line per task. */
+function summaryText(tasks: TaskChipView[], now: number): string {
+  const running = tasks.filter((task) => task.status === "running").length;
+  const done = tasks.filter((task) => task.status === "completed").length;
+  const failed = tasks.length - running - done;
+  const counts = [running && `${running} 執行中`, done && `${done} 完成`, failed && `${failed} 失敗`].filter(Boolean).join("、");
+  const lines = tasks.map((task) => `${task.status === "running" ? "⋯" : endOf(task).mark} ${task.title} · ${status(task, now)}`);
+  return [`背景工作：${counts}`, ...lines, "按一下看清單"].join("\n");
+}
+
+function markElement(task: TaskChipView): HTMLElement {
+  const mark = document.createElement("span");
+  mark.className = "task-mark";
+  mark.setAttribute("aria-hidden", "true");
+  if (task.status === "running") mark.innerHTML = `<span class="task-spin"></span>`;
+  else mark.textContent = endOf(task).mark;
+  return mark;
+}
+
+/** Under a reply: one small icon for its background work; pressed, a list of it; a task pressed, its output. */
 export function taskChips(messageID: string, tasks: TaskChipView[]): HTMLElement {
   const strip = document.createElement("div");
   strip.className = "task-chips";
-  const row = document.createElement("div");
-  row.className = "task-chip-row";
+  strip.dataset.message = messageID;
+  const now = clock();
+  const running = tasks.filter((task) => task.status === "running").length;
+  const anyFailed = tasks.some((task) => task.status !== "running" && task.status !== "completed");
+  const tone = running ? "running" : anyFailed ? "failed" : "done";
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `task-summary ${tone}`;
+  const icon = document.createElement("span");
+  icon.className = "task-icon";
+  icon.setAttribute("aria-hidden", "true");
+  if (running) icon.innerHTML = `<span class="task-spin"></span>`;
+  else icon.textContent = anyFailed ? "✕" : "✓";
+  button.append(icon);
+  if (running && running > 1) {
+    const count = document.createElement("span");
+    count.className = "task-count";
+    count.textContent = String(running);
+    button.append(count);
+  }
+  if (running && anyFailed) {
+    const alert = document.createElement("span");
+    alert.className = "task-alert";
+    alert.setAttribute("aria-hidden", "true");
+    button.append(alert);
+  }
+  button.title = summaryText(tasks, now);
+  button.setAttribute("aria-label", summaryText(tasks, now).split("\n")[0]);
+  // The times in the tooltip are as of now.
+  button.addEventListener("pointerenter", () => (button.title = summaryText(tasks, clock())));
+
+  const list = document.createElement("div");
+  list.className = "task-list";
   const panel = document.createElement("pre");
   panel.className = "task-output";
   panel.hidden = true;
   panel.dataset.message = messageID;
-  strip.append(row, panel);
-  const now = clock();
-  const chips: HTMLButtonElement[] = [];
+  strip.append(button, list, panel);
+
+  const lines: HTMLButtonElement[] = [];
   const show = (task: TaskChipView | null) => {
     const shown = task ? open.get(key(messageID, task.id)) : undefined;
-    panel.hidden = !task;
+    panel.hidden = !task || !expanded.has(messageID);
     panel.dataset.task = task?.id ?? "";
     panel.textContent = task ? (shown ?? "讀取中…") : "";
-    for (const chip of chips) chip.setAttribute("aria-expanded", String(!!task && chip.dataset.task === task.id));
+    for (const line of lines) line.setAttribute("aria-expanded", String(!!task && line.dataset.task === task.id));
   };
+  const setExpanded = (on: boolean) => {
+    list.hidden = !on;
+    button.setAttribute("aria-expanded", String(on));
+    if (on) expanded.add(messageID);
+    else expanded.delete(messageID);
+    show(tasks.find((task) => open.has(key(messageID, task.id))) ?? null);
+  };
+  button.addEventListener("click", () => setExpanded(!expanded.has(messageID)));
+
   for (const task of tasks) {
-    const chip = document.createElement("button");
-    chip.dataset.task = task.id;
-    chip.dataset.message = messageID;
-    chip.dataset.started = String(task.started);
-    chip.innerHTML = `<span class="task-mark" aria-hidden="true"></span><span class="task-words"></span>`;
-    chip.title = [task.kind === "agent" ? "背景 subagent" : "背景指令", task.detail].filter(Boolean).join("：");
-    drawChip(chip, task, now);
-    chip.addEventListener("click", () => {
+    const line = document.createElement("button");
+    line.type = "button";
+    line.className = `task-item ${task.status === "running" ? "running" : endOf(task).tone}`;
+    line.dataset.task = task.id;
+    line.dataset.message = messageID;
+    line.dataset.started = String(task.started);
+    line.title = [task.kind === "agent" ? "背景 subagent" : "背景指令", task.detail].filter(Boolean).join("：");
+    const name = document.createElement("span");
+    name.className = "task-name";
+    name.textContent = task.title;
+    const time = document.createElement("span");
+    time.className = "task-time";
+    time.textContent = status(task, now);
+    line.append(markElement(task), name, time);
+    line.addEventListener("click", () => {
       const id = key(messageID, task.id);
       if (open.has(id)) {
         open.delete(id);
@@ -96,14 +161,14 @@ export function taskChips(messageID: string, tasks: TaskChipView[]): HTMLElement
       show(task);
       post({ type: "taskOutput", messageID, taskID: task.id });
     });
-    chips.push(chip);
-    row.append(chip);
+    lines.push(line);
+    list.append(line);
   }
-  show(tasks.find((task) => open.has(key(messageID, task.id))) ?? null);
+  setExpanded(expanded.has(messageID));
   return strip;
 }
 
-/** The app's answer to an opened chip: its output, into its box (also after a redraw). */
+/** The app's answer to an opened task: its output, into its box (also after a redraw). */
 export function taskOutput(messageID: string, taskID: string, text: string): void {
   const id = key(messageID, taskID);
   if (!open.has(id)) return;
@@ -114,17 +179,16 @@ export function taskOutput(messageID: string, taskID: string, text: string): voi
   }
 }
 
-/** Moves the time on in every running chip; an open running one reads its output again now and then. */
+/** Moves the time on in every running task's line; an open running one reads its output again every 5 seconds. */
 export function tickTaskChips(now: number = clock()): void {
-  for (const chip of document.querySelectorAll<HTMLElement>(".task-chip.running")) {
-    const started = Number(chip.dataset.started);
-    const words = chip.querySelector(".task-words");
-    if (!words || !Number.isFinite(started)) continue;
-    const title = (words.textContent ?? "").replace(/ · [^·]*$/, "");
-    words.textContent = `${title} · ${elapsed(now - started)}`;
-    const messageID = chip.dataset.message;
-    const taskID = chip.dataset.task;
-    if (messageID && taskID && open.has(key(messageID, taskID)) && Math.floor(now / 1000) % 5 === 0) {
+  for (const line of document.querySelectorAll<HTMLElement>(".task-item.running")) {
+    const started = Number(line.dataset.started);
+    const time = line.querySelector(".task-time");
+    if (!time || !Number.isFinite(started)) continue;
+    time.textContent = elapsed(now - started);
+    const messageID = line.dataset.message;
+    const taskID = line.dataset.task;
+    if (messageID && taskID && expanded.has(messageID) && open.has(key(messageID, taskID)) && Math.floor(now / 1000) % 5 === 0) {
       post({ type: "taskOutput", messageID, taskID });
     }
   }
