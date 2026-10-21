@@ -106,6 +106,15 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **Background work no longer wakes empty bubbles.** When a subagent stops while still waiting on
+  its own background work (or reports something interim), claude starts a turn of the bot's own;
+  its "(still waiting…)" reply used to show as a bubble each time, with the background row jumping
+  under it. A turn the bot starts itself (a background task's notification woke it, even one that
+  came while it was busy) may now answer just `<no-reply/>`: no bubble, nothing unread, and the
+  background row stays on the reply that started the work while its chips still update. Bots are
+  told to answer that way when a notification has nothing new for you and to report real news as
+  usual. A turn you started always shows (the tag is just taken out). A notification without its
+  tool call is no longer dropped.
 - **Finished background work is cleared when you write again.** Done, failed and stopped work
   (the ✓ and ✕ counts) piled up and carried over to every new message. It now stays only until
   your next message; what is still running carries over to the bot's newest reply. Replies before

@@ -95,11 +95,15 @@ enum StreamEvent {
                     maxRetries: (object["max_retries"] as? NSNumber)?.intValue ?? 0
                 )]
             case "task_notification":
-                guard let id = object["tool_use_id"] as? String else { return [] }
+                // Every notification counts (it may start a turn of the bot's own), so one
+                // without its call is still read, by its task.
+                guard let id = object["tool_use_id"] as? String ?? object["task_id"] as? String else { return [] }
                 let status = object["status"] as? String ?? "completed"
                 let summary = object["summary"] as? String
                 // Not a report: it stopped with a Monitor or background command of its own still
-                // running, and claude says so again each time that work wakes it.
+                // running, and claude says so again each time that work wakes it. Only for the
+                // subagent's card (it keeps running); whether the bot's next turn shows is up to
+                // the bot (`<no-reply/>`), not these words.
                 if status == "completed", object["handback"] == nil, summary.map(Self.isStillWaiting) == true {
                     return [.trace(.subagentWaiting(id: id))]
                 }
