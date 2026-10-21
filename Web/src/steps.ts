@@ -22,10 +22,10 @@ const chevron = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" str
  * folds to one "Worked · 2 notes · 5 steps" line, so only the final reply is in sight; opened,
  * its words show in order as its own words, and each run of tool calls between them folds to a chip.
  */
-export function stepsElement(listID: string, steps: StepView[]): HTMLElement {
+export function stepsElement(listID: string, steps: StepView[], earlier = false): HTMLElement {
   const parts = segments(steps);
   if (!parts.some((part) => part.text)) {
-    const wrap = foldedRun(listID, steps, true);
+    const wrap = foldedRun(listID, steps, true, earlier);
     wrap.classList.replace("steps-run", "steps");
     return wrap;
   }
@@ -43,7 +43,7 @@ export function stepsElement(listID: string, steps: StepView[]): HTMLElement {
   ].join(" · ");
   const body = document.createElement("div");
   body.className = "steps-body";
-  parts.forEach((part, index) => body.append(part.text ? prose(part.text) : foldedRun(`${listID}#${index}`, part.steps, false)));
+  parts.forEach((part, index) => body.append(part.text ? prose(part.text) : foldedRun(`${listID}#${index}`, part.steps, false, earlier)));
   const setOpen = (open: boolean) => {
     wrap.classList.toggle("open", open);
     toggle.setAttribute("aria-expanded", String(open));
@@ -112,8 +112,12 @@ function liveRun(steps: StepView[]): HTMLElement[] {
   return parts;
 }
 
-/** A run of tool calls folded to one line ("Worked · 5 steps", or "5 steps" between words). */
-function foldedRun(listID: string, steps: StepView[], worked: boolean): HTMLElement {
+/**
+ * A run of tool calls folded to one line ("Worked · 5 steps", or "5 steps" between words). In a
+ * reply before your latest line (`earlier`), finished subagents leave the folded view: only
+ * running ones stay in sight, and unfolding still lists them all.
+ */
+function foldedRun(listID: string, steps: StepView[], worked: boolean, earlier = false): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "steps-run";
   const tools = steps.filter((step) => step.kind !== "text").length;
@@ -128,14 +132,15 @@ function foldedRun(listID: string, steps: StepView[], worked: boolean): HTMLElem
   toggle.querySelector("span")!.textContent = label.join(" · ");
   const list = stepList(steps);
   // Subagents stay in sight while folded, so you can open one without unfolding everything.
+  const inSight = earlier ? subagents.filter((step) => step.status === "running") : subagents;
   const cards = document.createElement("div");
   cards.className = "step-list";
-  for (const step of subagents) cards.append(subagentCard(step));
+  for (const step of inSight) cards.append(subagentCard(step));
   const setOpen = (open: boolean) => {
     wrap.classList.toggle("open", open);
     toggle.setAttribute("aria-expanded", String(open));
     list.hidden = !open;
-    cards.hidden = open || subagents.length === 0;
+    cards.hidden = open || inSight.length === 0;
     if (open) openLists.add(listID);
     else openLists.delete(listID);
   };

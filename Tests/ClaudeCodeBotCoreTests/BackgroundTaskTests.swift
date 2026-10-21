@@ -201,15 +201,65 @@ struct BackgroundTaskTests {
         let data = Data(payload.json().utf8)
         let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         let messages = try #require(object["messages"] as? [[String: Any]])
-        // Not under the replies that started them, nor on the divider: on your line, the latest one it can go under.
+        // Not under the reply that started it, nor on your line or the divider: on the bot's latest reply.
         #expect(messages[0]["tasks"] == nil)
-        #expect(messages[1]["tasks"] == nil)
+        #expect(messages[2]["tasks"] == nil)
         #expect(messages[3]["tasks"] == nil)
-        let tasks = try #require(messages[2]["tasks"] as? [[String: Any]])
-        #expect(tasks.map { $0["id"] as? String } == ["B", "A"])
+        let tasks = try #require(messages[1]["tasks"] as? [[String: Any]])
+        // The failed review finished before you wrote: it is cleared; the running tests carry over.
+        #expect(tasks.map { $0["id"] as? String } == ["B"])
         // Each says which message started it, so its output can be asked for.
-        #expect(tasks.map { $0["message"] as? String } == [first.id.uuidString, second.id.uuidString])
+        #expect(tasks.map { $0["message"] as? String } == [first.id.uuidString])
         #expect(ChatPayload.backgroundRowIndex(in: [user]) == nil)
+    }
+
+    @Test func theRowNeverGoesUnderYourLine() {
+        var reply = ChatMessage(role: .bot, text: "Started the tests.")
+        reply.backgroundTasks = [BackgroundTask(id: "B", kind: .command, title: "Run tests")]
+        let user = ChatMessage(role: .user, text: "And now?")
+        #expect(ChatPayload.backgroundRowIndex(in: [reply, user]) == 0)
+        #expect(ChatPayload.backgroundRowIndex(in: [reply, user, ChatMessage(role: .bot, text: "Here.")]) == 2)
+    }
+
+    @Test func finishedWorkIsClearedWhenYouWriteAgain() {
+        let start = Date(timeIntervalSince1970: 1_000)
+        func task(_ id: String, _ status: BackgroundTask.Status, ended: TimeInterval?) -> BackgroundTask {
+            var task = BackgroundTask(id: id, kind: .agent, title: id, status: status, startedAt: start)
+            task.endedAt = ended.map { Date(timeIntervalSince1970: $0) }
+            return task
+        }
+        var old = ChatMessage(role: .bot, text: "Two subagents.", date: Date(timeIntervalSince1970: 1_010))
+        // Done and stopped before you wrote; one ended after; one still running.
+        old.backgroundTasks = [task("done", .completed, ended: 1_050), task("stopped", .stopped, ended: nil), task("late", .failed, ended: 1_200), task("running", .running, ended: nil)]
+        let user = ChatMessage(role: .user, text: "Next thing", date: Date(timeIntervalSince1970: 1_100))
+        var reply = ChatMessage(role: .bot, text: "On it.", date: Date(timeIntervalSince1970: 1_110))
+        reply.backgroundTasks = [task("fresh", .completed, ended: 1_150)]
+        #expect(ChatPayload.shownBackgroundTasks(in: [old, user, reply]).map(\.task.id) == ["late", "running", "fresh"])
+        // Your next line clears the finished ones; the running one carries over.
+        let again = ChatMessage(role: .user, text: "Thanks", date: Date(timeIntervalSince1970: 1_300))
+        #expect(ChatPayload.shownBackgroundTasks(in: [old, user, reply, again]).map(\.task.id) == ["running"])
+        // Nothing left to show: no row.
+        var done = old
+        done.backgroundTasks = [task("done", .completed, ended: 1_050)]
+        #expect(ChatPayload.backgroundRowIndex(in: [done, user]) == nil)
+    }
+
+    @Test func earlierRepliesFoldTheirFinishedSubagentsAway() throws {
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-bgtask-\(UUID().uuidString)")
+        let store = BotStore(directory: home.appending(path: "store"))
+        var old = ChatMessage(role: .bot, text: "Sent a subagent.")
+        old.steps = [Step(id: "s1", kind: .subagent, title: "Look around", done: true)]
+        let user = ChatMessage(role: .user, text: "Next thing")
+        var reply = ChatMessage(role: .bot, text: "Sent another.")
+        reply.steps = [Step(id: "s2", kind: .subagent, title: "Look again")]
+        store.save(messages: [old, user, reply])
+        let bot = Bot(profile: .main(home: home), launcher: FakeLauncher().launcher, store: store)
+        let payload = ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil) { _ in "data:bot" }
+        let object = try #require(try JSONSerialization.jsonObject(with: Data(payload.json().utf8)) as? [String: Any])
+        let messages = try #require(object["messages"] as? [[String: Any]])
+        #expect(messages[0]["earlier"] as? Bool == true)
+        #expect(messages[1]["earlier"] == nil)
+        #expect(messages[2]["earlier"] == nil)
     }
 
     @Test func theTailOfAnOutputFileIsItsLastLines() throws {

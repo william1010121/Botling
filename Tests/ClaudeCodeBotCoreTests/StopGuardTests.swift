@@ -37,6 +37,35 @@ struct StopGuardTests {
         #expect(StopGuard.output(for: decision) == nil)
     }
 
+    /// A real reply that ended its turn on "下一步…開始做" and was let through: it blocks even when
+    /// Haiku reads it as a mere suggestion.
+    @Test func blocksANextStepItSaysItWillStartWithoutAsking() async {
+        let calls = Calls()
+        let reply = "1.13.0-dev（389d00d）已經換上，截圖看起來正常：網頁預覽卡片改成顯示截圖，背景工作的 subagent 狀態也只出現在最後一則。下一步照先前說好的，開始做 1.14.0 的多國語言。"
+        let decision = await StopGuard.decide(input: input(["last_assistant_message": reply]), environment: [:], classify: classifier(false, calls))
+        #expect(decision == .block(reason: StopGuard.blockReason))
+        for promise in [
+            "測試都過了。接著做 README 的更新。",
+            "好，我再去看一下 log。",
+            "Merged. Next, I'll start on the translations.",
+            "Done with the build.\n\nNow I'll update the docs."
+        ] {
+            #expect(StopGuard.statesPromise(promise), "\(promise)")
+        }
+        for done in [
+            "測試全部通過，已 commit 在 bot/x。要我 push 嗎？",
+            "下一步可以做多國語言，要開始做嗎？",
+            "已經開始做 1.14.0 的多國語言，背景 subagent 做完會通知我再回報。",
+            "Done: all tests pass.",
+            "I'll wait for your answer.",
+            "接下來要做哪一個？\n<choices>\n- A\n- B\n</choices>",
+            "如果你要的話，我可以接著做 README。",
+            "Next steps you could take: add translations. Let me know."
+        ] {
+            #expect(!StopGuard.statesPromise(done), "\(done)")
+        }
+    }
+
     @Test func allowsWithoutAskingWhenTheHookAlreadyBlocked() async {
         let calls = Calls()
         let decision = await StopGuard.decide(input: input(["stop_hook_active": true, "last_assistant_message": "I'll check."]), environment: [:], classify: classifier(true, calls))

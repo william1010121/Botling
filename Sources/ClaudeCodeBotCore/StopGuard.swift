@@ -61,7 +61,23 @@ public enum StopGuard {
         // Nothing said, or a question the user answers by picking: the user moves next.
         if text.isEmpty || text.contains("<choices") { return .allow }
         guard let promises = try? await classify(String(text.suffix(4000))) else { return .allow }
-        return promises ? .block(reason: blockReason) : .allow
+        // Haiku may read a plainly stated next step ("下一步…開始做…") as a suggestion: its last
+        // sentence settles it.
+        return promises || statesPromise(text) ? .block(reason: blockReason) : .allow
+    }
+
+    /// Whether the message's last sentence says the bot itself will now do something ("下一步…開始做
+    /// X", "接著做…", "我再去看…", "Next, I'll…"), and neither asks the user, offers, nor names
+    /// something (a background task, a subagent, a notification) that will bring it back.
+    static func statesPromise(_ message: String) -> Bool {
+        let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasSuffix("?") || text.hasSuffix("？") { return false }
+        guard let last = text.split(separator: #/[。！？!?\n]|\.(?=\s|$)/#)
+            .map({ $0.trimmingCharacters(in: .whitespaces) })
+            .last(where: { !$0.isEmpty }) else { return false }
+        let promise = #/開始(做|動手|處理|進行|實作|寫|改|跑)|接著(做|處理|進行|改|寫|跑|來)|(接下來|下一步)我?(會|就|來|要|去)|我(會|再|來|去|就|馬上|現在|這就)(去|來)?(做|處理|看|查|確認|改|寫|跑|跟進|開始|動手|進行|整理|更新|研究|試)|\b(I'll|I will|I'm going to|I am going to|let me|next,? I|now I)\b/#.ignoresCase()
+        let handedBack = #/嗎|呢|吗|要不要|要我|可以|如果|的話|你(要|想|決定|選|確認|同意)|等|告訴我|已|背景|subagent|通知|喚醒|做完會|background|wake|notif|let me know|if you|would you|want me|could|wait/#.ignoresCase()
+        return last.contains(promise) && !last.contains(handedBack)
     }
 
     /// The hook's stdout for this decision (nothing lets the stop through).
@@ -91,11 +107,12 @@ public enum StopGuard {
         message nothing happens until the user writes again.
         Answer PROMISE if the message says the assistant will now do something itself without the user \
         ("I'll check…", "Let me look into it and report back", "接下來我會確認…", "我去看一下再回報", \
-        "稍後回報") and no background task, subagent, team, build, schedule or app notification is \
-        named as what will bring the result back.
+        "稍後回報", "下一步照先前說好的，開始做 X", "Next, I'll start on X") and no background task, \
+        subagent, team, build, schedule or app notification is named as what will bring the result back.
         Answer OK if the work is done or reported; if it asks the user a question or waits for the \
         user's answer, choice or permission; if it says a background task, subagent, team, build or \
-        notification will wake it or report back; or if it only suggests next steps the user may ask for.
+        notification will wake it or report back; or if it only offers next steps the user may ask for \
+        ("要我…嗎？", "you could…"). A next step it states it is starting now is a PROMISE.
         Reply with exactly one word: PROMISE or OK.
         """
 

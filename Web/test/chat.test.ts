@@ -611,6 +611,23 @@ describe("messages", () => {
     expect(lists[0].querySelector("pre")?.textContent).toBe("swift test");
   });
 
+  it("fold an earlier reply's finished subagents away, keeping running ones in sight", () => {
+    const step = (id: string, title: string, status: string) =>
+      ({ id, kind: "subagent" as const, tool: null, title, detail: null, output: null, failed: false, done: status !== "running", status, count: 0 });
+    const steps = [step("a1", "Stopped one", "stopped"), step("a2", "Done one", "completed"), step("a3", "Still going", "running")];
+    const cards = (row: HTMLElement) => [...row.querySelectorAll<HTMLElement>(".steps > .step-list:not([hidden]) .subagent-title")].map((card) => card.textContent);
+    // The latest reply keeps every card in sight while folded.
+    expect(cards(messageElement(message({ id: "e1", text: "Sent three.", steps }), {}))).toEqual(["Stopped one", "Done one", "Still going"]);
+    // One before your latest line: only the running one; unfolded, all three are still listed.
+    const earlier = messageElement(message({ id: "e2", text: "Sent three.", steps, earlier: true }), {});
+    expect(cards(earlier)).toEqual(["Still going"]);
+    earlier.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
+    expect(earlier.querySelectorAll(".steps > .step-list:not([hidden]) .subagent-card").length).toBe(3);
+    // All finished: no cards line at all.
+    const settled = messageElement(message({ id: "e3", text: "Sent two.", steps: steps.slice(0, 2), earlier: true }), {});
+    expect(cards(settled)).toEqual([]);
+  });
+
   it("show the bot's words between tool calls in sight, each run of calls folded between them", () => {
     const step = (id: string, kind: "tool" | "text" | "subagent", title: string, extra: Partial<import("../src/types").StepView> = {}) =>
       ({ id, kind, tool: null, title, detail: null, output: null, failed: false, done: true, status: null, count: null, ...extra });

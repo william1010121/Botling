@@ -46,11 +46,15 @@ public struct ChatPayload: Encodable, Equatable {
         /// The library component the reply already is ("Add to another bot…" instead of "Make
         /// into component").
         var component: String? = nil
-        /// All the chat's background work, on its latest message only (nil on the others): one
-        /// row of counts (subagents, waiting, done, failed) that moves down as messages arrive.
+        /// The chat's background work (all that runs, and what finished since your latest line), on
+        /// the bot's latest reply only (nil on the others): one row of counts (subagents, waiting,
+        /// done, failed) that moves down as replies arrive.
         var tasks: [TaskChip]? = nil
         /// claude.ai Artifacts it links to, drawn as cards under it (the links stay chips too).
         var artifacts: [ArtifactLink.Card]? = nil
+        /// Before your latest line: its finished subagents leave the folded steps line (the
+        /// unfolded steps still list them).
+        var earlier: Bool? = nil
     }
 
     /// Background work under a reply: a command or a subagent, with how it is doing. Times are
@@ -357,11 +361,24 @@ public struct ChatPayload: Encodable, Equatable {
         }
     }
 
-    /// Where the chat's background-work row goes: its latest message one can be drawn under (a
-    /// reply, a notice or your own line), when the chat has any background work at all.
+    /// Where the chat's background-work row goes: the bot's latest reply (or notice), never your
+    /// own line, when there is background work to show at all.
     static func backgroundRowIndex(in messages: [ChatMessage]) -> Int? {
-        guard messages.contains(where: { !($0.backgroundTasks ?? []).isEmpty }) else { return nil }
-        return messages.lastIndex { [.bot, .notice, .user].contains($0.role) }
+        guard !shownBackgroundTasks(in: messages).isEmpty else { return nil }
+        return messages.lastIndex { [.bot, .notice].contains($0.role) }
+    }
+
+    /// The background work the row shows, with the message that started each: all that still
+    /// runs, and what finished since your latest line. Your next line clears the finished ones.
+    static func shownBackgroundTasks(in messages: [ChatMessage]) -> [(task: BackgroundTask, message: UUID)] {
+        let lastYours = messages.lastIndex { $0.role == .user }
+        return messages.enumerated().flatMap { index, message in
+            (message.backgroundTasks ?? []).compactMap { task -> (task: BackgroundTask, message: UUID)? in
+                guard let lastYours, !task.isRunning, index < lastYours,
+                      (task.endedAt ?? .distantPast) <= messages[lastYours].date else { return (task, message.id) }
+                return nil
+            }
+        }
     }
 
     /// Builds the payload. `avatar` gives a face as a data URL: the bot's own (nil project), or a
@@ -437,8 +454,12 @@ public struct ChatPayload: Encodable, Equatable {
         }
         // All the chat's background work goes on its latest message, as one row of counts.
         if let at = backgroundRowIndex(in: bot.messages) {
-            messages[at].tasks = bot.messages.flatMap { message in
-                (message.backgroundTasks ?? []).map { TaskChip($0, from: message.id) }
+            messages[at].tasks = shownBackgroundTasks(in: bot.messages).map { TaskChip($0.task, from: $0.message) }
+        }
+        // Replies before your latest line fold their finished subagents away (still in their steps).
+        if let lastYours = bot.messages.lastIndex(where: { $0.role == .user }) {
+            for index in messages.indices where index < lastYours && messages[index].steps != nil {
+                messages[index].earlier = true
             }
         }
         let reply = replyingTo.flatMap { id in bot.messages.first { $0.id == id } }.map {
