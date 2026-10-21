@@ -91,14 +91,19 @@ public struct TeamRun: Identifiable, Equatable, Sendable {
 }
 
 enum TeamPrompts {
-    static func system(_ spec: TeamSpec, folder: URL) -> String {
+    static func system(_ spec: TeamSpec, folder: URL, results: ResultPublishing = .artifactUnlessSensitive) -> String {
         """
         \(spec.role)
         - Reply in the user's language (match the language of their latest message; the task below is written in it). Your working folder is \(folder.path); read and write only there.
-        - Make the result a one-page HTML file: a single file with its styles inline, saved to \(folder.appending(path: "artifacts").path)/<english-file-name>.html.
+        - \(BotPrompts.resultsRule(results, folder: folder.appending(path: "artifacts").path))
         - Do not ask questions: when unsure, make reasonable assumptions and write them down in the result page.
-        - Your final reply is at most 3 sentences: what you did, the conclusion, then [result name](file://full path of the result file).
+        - Your final reply is at most 3 sentences: what you did, the conclusion, then the result's link, [result name](url).
         """
+    }
+
+    /// The tools a team runs with: its own, plus the Artifact tool when results may be published.
+    static func tools(_ spec: TeamSpec, results: ResultPublishing) -> [String] {
+        results == .localOnly || spec.tools.contains(ResultPublishing.tool) ? spec.tools : spec.tools + [ResultPublishing.tool]
     }
 
     static func task(_ task: String) -> String {

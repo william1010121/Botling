@@ -8,6 +8,24 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **A floating pin can show in every bot's chat.** A floating card's ⋯ has "Show in all bots":
+  the card then floats in the corner of every chat (Main, project bots, Maintainer, Codex), with a
+  small globe and its own bot's name in its header. It stays that bot's pin: its Command runs in
+  that bot's folder and refreshes once on its interval, not once per chat, and where it sits and
+  its size are kept with it. "Only in <bot>" takes it back to its own chat; unpinning it, stopping
+  it floating or removing its bot takes it out of every chat. Cards shown in all bots stack first
+  in their corner, then the chat's own, and count toward the two floating cards a chat shows; when
+  a chat already has two, "Show in all bots" says which chat has no room.
+
+- **Results go to a claude.ai Artifact by default.** Reports, comparisons, screenshots and
+  previews the bots make for you are published as one private claude.ai Artifact page and linked
+  in the reply; anything sensitive (secrets, personal data, work you asked to keep local) still
+  becomes a local HTML page, and so does a result when the Artifact tool is unavailable. A reply's
+  Artifact links show as cards with an Open button that opens them in your browser, where you are
+  signed in, and the Results list marks them with a Safari icon. Settings → Permissions → Reports
+  and results picks where results go: Artifact with sensitive ones local (the default), always a
+  local HTML page, or always an Artifact. Changing it tells bots that are already awake. Bots and
+  temporary teams may now use the Artifact tool without asking (not when results stay local).
 - **Pick any refresh interval for a pin.** A pin's refresh menu keeps its four choices (When
   shown, Every [15] [min], Every [5] [sec], Only on ↻), and in the two "Every" rows the number
   and the unit are typed right in place, from 2 seconds to 24 hours: Return or leaving the field
@@ -88,6 +106,11 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **A floating pin shows only in its own bot's chat.** A pin floated in one bot's chat (say,
+  ClaudeCodeBot's release progress) also floated over every other bot's chat, the main bot's
+  included. It now floats only where it was floated, unless shown in all bots, and the two-card
+  limit is per chat.
+
 - **A floating pin and an opened pin look the same, and fit their content.** Both now have one
   header: the component's icon, its own name from its about.md ("發版進度卡", not the folder name
   "release-progress"), its status, ↻ and ⋯ (and collapse above the input box), with the same
@@ -107,6 +130,27 @@ app and publishes it on GitHub Releases.
   load only once you open it, so opening a chat no longer reads every screenshot in it. Pictures
   kept before are converted once in the background (in a test copy: 30.9 MB of step pictures
   became 22.9 MB, plus 5.0 MB of small copies).
+- **A chat with many components opens without freezing.** Every component in a chat's history
+  was built when the chat opened, so a 500-message chat with 16 components froze for about
+  3 seconds before the first one showed (and again on each switch back to it). A component in the
+  chat is now built only once it scrolls within about 1500 px of view; until then it holds its
+  place at the height it last had (remembered across launches), and one above the view that grows
+  keeps what you are reading where it is. In that chat, opening it now freezes for about 0.2 s,
+  and a component at the bottom shows in about 0.5 s. Pins, the Board and floating pins are built
+  at once as before. A command card in the history no longer runs its command when the chat
+  opens; it runs once you scroll near it, and its `refresh` waits for that too.
+- **Web page preview cards show a picture instead of running the page.** Every 「網頁預覽卡片」
+  loaded its whole page (scripts, charts, video) in the chat each time it was drawn. The app now
+  takes a picture of each page once, offscreen and one page at a time, and the card shows that;
+  the page itself runs only when you open it. A page written again gets a new picture, and until
+  a picture is ready the card shows the page as before. Pictures are kept in the app's caches
+  folder (at most 400). A preview card nobody edited is updated to the new one.
+- **A streaming reply sends the chat only what changed.** Each update while a bot worked sent the
+  page the whole chat (every message and all components' text, some 180 KB of it alone), which
+  the page then parsed and compared message by message. Now only the messages that are new or
+  different are sent, and the rest are kept as they were; components and the chat's other state
+  are sent only when they change. While a bot works, the chat is updated at most ten times a
+  second, always with the latest state.
 
 - **A Board card can be dropped between two others.** While a card was dragged, the others
   jumped as soon as the pointer touched one, and a card it had just passed over was ignored when

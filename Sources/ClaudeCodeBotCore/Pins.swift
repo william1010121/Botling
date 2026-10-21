@@ -124,8 +124,9 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
     /// from its about.md's `Board command:`, so it refreshes on the Board; it shows the bot's
     /// data, with a small note, until that lands.
     public var makingLive = false
-    /// Floated in a corner of the chat window, over any bot's chat (and the Board), so it can be
-    /// watched without asking; nil: it does not float. At most `Pins.maxFloating` float at once.
+    /// Floated in a corner of its bot's chat window (and the Board), so it can be watched without
+    /// asking, and over every bot's chat once shown in all bots (`GlobalFloat`); nil: it does not
+    /// float. A chat shows at most `Pins.maxFloating` floating cards.
     public var float: Floating?
 
     /// Where a floating pin sits and how it shows: a corner it snaps to, its card's size in
@@ -300,12 +301,26 @@ public struct PinStatus: Codable, Equatable, Sendable {
     }
 }
 
+/// A floating pin shown over every bot's chat, not only its own ("Show in all bots"): the chat
+/// that holds it (`Workspace.pinChatID(of:)`, stable across launches) and the pin's id. Kept in
+/// the app's settings; one whose chat or pin is gone, or that no longer floats, is dropped.
+public struct GlobalFloat: Codable, Hashable, Sendable {
+    public var botID: UUID
+    public var pinID: UUID
+
+    public init(botID: UUID, pinID: UUID) {
+        self.botID = botID
+        self.pinID = pinID
+    }
+}
+
 /// A bot's pins, in the order they show.
 public enum Pins {
     /// Pins shown again within this many seconds do not run again ("when shown").
     public static let shownCooldown: TimeInterval = 30
 
-    /// The most pins that float at once, over all bots.
+    /// The most floating cards one chat shows: its own floating pins and those of other bots
+    /// shown in all bots.
     public static let maxFloating = 2
 
     /// A pin's float entry in its menu: Float in corner, Stop floating, or Float shown off when
@@ -322,7 +337,7 @@ public enum Pins {
         }
     }
 
-    /// `pin`'s float entry, with `floating` pins floating now (over all bots).
+    /// `pin`'s float entry, with `floating` cards floating now in its chat.
     public static func floatMenu(for pin: PinnedComponent, floating: Int) -> FloatMenu {
         pin.float != nil ? .stop : floating >= maxFloating ? .full : .float
     }

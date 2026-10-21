@@ -283,7 +283,7 @@ struct RightStrip: View {
                         HStack {
                             Text(chip.label).fontWeight(.semibold).lineLimit(1)
                             Spacer()
-                            Image(systemName: "arrow.up.right").font(.system(size: 12)).foregroundStyle(Theme.faint)
+                            Image(systemName: ArtifactLink.isArtifact(chip.url) ? "safari" : "arrow.up.right").font(.system(size: 12)).foregroundStyle(Theme.faint)
                         }
                         .padding(.horizontal, 12)
                         .frame(height: 36)

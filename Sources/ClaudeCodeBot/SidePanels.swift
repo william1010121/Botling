@@ -634,7 +634,7 @@ struct GroupPanel: View {
                                 HStack {
                                     Text(chip.label).lineLimit(1)
                                     Spacer()
-                                    Image(systemName: "arrow.up.right").font(.system(size: 12)).foregroundStyle(Theme.faint)
+                                    Image(systemName: ArtifactLink.isArtifact(chip.url) ? "safari" : "arrow.up.right").font(.system(size: 12)).foregroundStyle(Theme.faint)
                                 }
                                 .padding(.horizontal, 14)
                                 .frame(height: 44)
@@ -1269,7 +1269,7 @@ struct DetailPanel: View {
                                 HStack {
                                     Text(chip.label).lineLimit(1)
                                     Spacer()
-                                    Image(systemName: "arrow.up.right").font(.system(size: 12)).foregroundStyle(Theme.faint)
+                                    Image(systemName: ArtifactLink.isArtifact(chip.url) ? "safari" : "arrow.up.right").font(.system(size: 12)).foregroundStyle(Theme.faint)
                                 }
                                 .padding(.horizontal, 14)
                                 .frame(height: 44)

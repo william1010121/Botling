@@ -789,10 +789,31 @@ enum ComponentDefaults {
     - 不需要使用者回答，不會呼叫 `ccb.answer`。
     """
 
-    /// The preview card up to 1.9, held to 480px: in a reply drawn wide it left a gap on the right.
+    /// The preview card up to 1.12, which always loaded the page in a frame (no `shot` picture).
+    static var previewTemplateWithoutShot: String {
+        previewTemplate
+            .replacingOccurrences(of: ".shot iframe, .shot img { position:absolute;", with: ".shot iframe { position:absolute;")
+            .replacingOccurrences(of: """
+                // A picture of the page once the app has taken one (the page then runs only in its own
+                // window); until then the page itself, in a frame.
+                const frame = document.createElement(data.shot ? 'img' : 'iframe');
+                frame.src = data.shot || data.src;
+                if (data.shot) frame.alt = ''; else frame.setAttribute('sandbox', 'allow-scripts');
+
+            """, with: """
+                const frame = document.createElement('iframe');
+                frame.src = data.src;
+                frame.setAttribute('sandbox', 'allow-scripts');
+
+            """)
+    }
+
+    /// Earlier shipped cards, replaced when nobody edited them: up to 1.12 (no picture), and up to
+    /// 1.9, held to 480px (in a reply drawn wide it left a gap on the right).
     static var olderPreviewTemplates: [String] {
-        [previewTemplate.replacingOccurrences(of: ".card { box-sizing:border-box; width:100%; border-radius:14px;",
-                                              with: ".card { box-sizing:border-box; width:100%; max-width:480px; border-radius:14px;")]
+        [previewTemplateWithoutShot,
+         previewTemplateWithoutShot.replacingOccurrences(of: ".card { box-sizing:border-box; width:100%; border-radius:14px;",
+                                                         with: ".card { box-sizing:border-box; width:100%; max-width:480px; border-radius:14px;")]
     }
 
     static let previewTemplate = """
@@ -804,7 +825,7 @@ enum ComponentDefaults {
       .card { box-sizing:border-box; width:100%; border-radius:14px; border:1px solid var(--line); background:var(--bg); color:var(--text); overflow:hidden; }
       .shot { position:relative; display:block; width:100%; height:270px; overflow:hidden; background:#FFFFFF; border-bottom:1px solid var(--line); cursor:pointer; }
       .shot:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
-      .shot iframe { position:absolute; top:0; left:0; width:1280px; height:800px; border:0; background:#FFFFFF; transform-origin:0 0; pointer-events:none; }
+      .shot iframe, .shot img { position:absolute; top:0; left:0; width:1280px; height:800px; border:0; background:#FFFFFF; transform-origin:0 0; pointer-events:none; }
       .empty { display:flex; align-items:center; justify-content:center; height:96px; padding:0 16px; background:var(--empty); color:var(--muted); font-size:13px; text-align:center; border-bottom:1px solid var(--line); }
       .foot { display:flex; align-items:center; gap:12px; padding:8px 8px 8px 14px; }
       .names { flex:1; min-width:0; }
@@ -829,9 +850,11 @@ enum ComponentDefaults {
         shot.tabIndex = 0;
         shot.setAttribute('role', 'button');
         shot.setAttribute('aria-label', '開啟完整頁面：' + title);
-        const frame = document.createElement('iframe');
-        frame.src = data.src;
-        frame.setAttribute('sandbox', 'allow-scripts');
+        // A picture of the page once the app has taken one (the page then runs only in its own
+        // window); until then the page itself, in a frame.
+        const frame = document.createElement(data.shot ? 'img' : 'iframe');
+        frame.src = data.shot || data.src;
+        if (data.shot) frame.alt = ''; else frame.setAttribute('sandbox', 'allow-scripts');
         frame.setAttribute('aria-hidden', 'true');
         frame.tabIndex = -1;
         shot.append(frame);

@@ -5,7 +5,8 @@ import type { ChatState, ComponentInfo, FloatCorner, FloatView, FloatingPinView,
 
 /**
  * Pins floated in a corner of the window ("Float in corner" in a pin's menu): a small card over
- * the chat and the Board, of whichever bot, so something live (a release build's progress) can
+ * the chat and the Board, only in its own bot's chat unless it is shown in all bots ("Show in all
+ * bots" in its ⋯; then it carries its bot's name in its header, and stacks first), so something live (a release build's progress) can
  * be watched without asking. It draws the pin's component as its Board tile does, keeps a live
  * frame (`ccb.onData`) when new data comes, and reruns a pin refreshed every few seconds only
  * while the window is shown. Its header is the one an opened pin has (pins.ts `fillPinHead`), and
@@ -95,9 +96,37 @@ const innerCorner: Record<FloatCorner, FloatCorner> = {
   topRight: "bottomLeft", topLeft: "bottomRight", bottomRight: "topLeft", bottomLeft: "topRight",
 };
 
+/** A card shown in all bots carries its bot's name in its header: a small globe and the name. */
+function ownerMark(botName: string): HTMLElement {
+  const mark = document.createElement("span");
+  mark.className = "float-owner";
+  mark.title = `${botName}'s pin, shown in all bots · runs in ${botName}'s folder`;
+  mark.innerHTML = globe;
+  const name = document.createElement("span");
+  name.textContent = botName;
+  mark.append(name);
+  return mark;
+}
+
+const globe = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>`;
+
+/**
+ * Its menu's "Show in all bots" (off, saying which chat has no room, when one already shows the
+ * most cards), or, shown in all bots, "Only in <its bot>".
+ */
+export function globalItems(entry: { pin: PinView; botName: string; global: boolean; blocked: string | null }): MenuItem[] {
+  const id = entry.pin.id;
+  if (entry.global) return [{ label: `Only in ${entry.botName}`, run: () => post({ type: "setPinGlobal", id, global: false }) }];
+  if (entry.blocked) return [{ label: `Show in all bots (${entry.blocked} has 2 floating)`, disabled: true, run: () => {} }];
+  return [{ label: "Show in all bots", run: () => post({ type: "setPinGlobal", id, global: true }) }];
+}
+
 interface FloatEntry {
   pin: PinView;
   botName: string;
+  /** Shown in all bots' chats; `blocked`: the chat that has no room for one more. */
+  global: boolean;
+  blocked: string | null;
   card: HTMLElement;
   head: HTMLElement;
   body: HTMLElement | null;
@@ -150,7 +179,7 @@ export class FloatLayer {
       this.pending.delete(id);
     }
     const appeared: PinView[] = [];
-    for (const { pin, botName } of list) {
+    for (const { pin, botName, global, blocked } of list) {
       let entry = this.entries.get(pin.id);
       if (!entry) {
         entry = this.create(pin, botName);
@@ -159,11 +188,13 @@ export class FloatLayer {
       }
       entry.pin = pin;
       entry.botName = botName;
+      entry.global = global === true;
+      entry.blocked = blocked ?? null;
       entry.float = this.merged(pin);
       this.drawHead(entry);
       this.drawBody(entry);
     }
-    // In the order Swift gives (one bot's after another's); a card is moved only when out of
+    // In the order Swift gives (those shown in all bots first, then this chat's own); a card is moved only when out of
     // place, since a frame taken out of the page loads again.
     let previous: Element | null = null;
     for (const { pin } of list) {
@@ -210,7 +241,7 @@ export class FloatLayer {
     const head = document.createElement("div");
     head.className = "float-head pin-head";
     card.append(head);
-    const entry: FloatEntry = { pin, botName, card, head, body: null, bodyKey: "", headKey: "", float: this.merged(pin), rect: { left: 0, top: 0, width: 0, height: 0, maxHeight: 0 } };
+    const entry: FloatEntry = { pin, botName, global: false, blocked: null, card, head, body: null, bodyKey: "", headKey: "", float: this.merged(pin), rect: { left: 0, top: 0, width: 0, height: 0, maxHeight: 0 } };
     this.observer?.observe(card);
     this.movable(entry);
     const handle = document.createElement("div");
@@ -232,13 +263,15 @@ export class FloatLayer {
     const pin = entry.pin;
     const info = this.components[pin.name];
     const title = pinTitle(pin, info);
-    const key = JSON.stringify([pinHeadKey(pin, info), entry.botName]);
-    entry.card.title = `${title} · ${entry.botName}${pin.headline ? ` — ${pin.headline}` : ""}`;
-    entry.card.setAttribute("aria-label", `${title}, floating`);
+    const key = JSON.stringify([pinHeadKey(pin, info), entry.botName, entry.global]);
+    entry.card.title = `${title} · ${entry.botName}${entry.global ? " (in all bots)" : ""}${pin.headline ? ` — ${pin.headline}` : ""}`;
+    entry.card.setAttribute("aria-label", `${title}, floating${entry.global ? ` in all bots, from ${entry.botName}` : ""}`);
     entry.card.classList.toggle("running", pin.display.status === "running");
+    entry.card.classList.toggle("global", entry.global);
     if (key === entry.headKey) return;
     entry.headKey = key;
     fillPinHead(entry.head, pin, info, { more: (anchor) => this.menu(entry, anchor) });
+    if (entry.global) entry.head.querySelector(".pin-head-tools")?.before(ownerMark(entry.botName));
     entry.head.title = "Click to fold or unfold · drag to another corner";
   }
 
@@ -402,7 +435,7 @@ export class FloatLayer {
     });
   }
 
-  /** Its ⋯: whose it is, how it refreshes, fold, stop floating. */
+  /** Its ⋯: whose it is, how it refreshes, fold, show in all bots or only its own, stop floating. */
   private menu(entry: FloatEntry, anchor: HTMLElement): void {
     const pin = entry.pin;
     const items: (MenuItem | "-")[] = [
@@ -417,6 +450,7 @@ export class FloatLayer {
         this.layOut();
       } });
     }
+    items.push(...globalItems(entry));
     items.push({ label: "Stop floating", run: () => post({ type: "floatPin", id: pin.id, floating: false }) });
     closePopups();
     openMenu(anchor, items);

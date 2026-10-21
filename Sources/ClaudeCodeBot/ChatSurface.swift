@@ -112,7 +112,7 @@ struct ChatSurface: NSViewRepresentable {
             pins: bot === workspace.codexBot ? nil : workspace.pinContext(for: bot, board: inputs.boards.contains(bot.id)),
             specs: bot !== workspace.codexBot,
             openSpec: workspace.openSpecID,
-            floating: workspace.floatingPinViews(),
+            floating: workspace.floatingPinViews(in: bot),
             avatar: { projectID in
                 if let projectID, let kind = workspace.avatar(for: projectID) {
                     return AvatarImages.dataURL(kind, eyes: .open)
@@ -130,7 +130,13 @@ struct ChatSurface: NSViewRepresentable {
         weak var view: WKWebView?
         var focusObserver: NSObjectProtocol?
         private var ready = false
-        private var lastJSON = ""
+        /// What the page was last sent, so the next update carries only what changed.
+        private var patcher = ChatPayload.Patcher()
+        /// While a bot works, updates come many times a second (each streamed step): the page is
+        /// sent at most one every `workingInterval`, the latest, and the rest are skipped.
+        private static let workingInterval: TimeInterval = 0.1
+        private var lastPush = Date.distantPast
+        private var pushLater = false
         private var pluginRevision = -1
 
         /// Sends the latest plugins and state, when the page is ready and something changed.
@@ -140,10 +146,21 @@ struct ChatSurface: NSViewRepresentable {
                 pluginRevision = surface.plugins.revision
                 view.evaluateJavaScript(ChatSurface.setPluginsScript(surface.plugins))
             }
-            let json = surface.payload.json()
-            guard json != lastJSON else { return }
-            lastJSON = json
-            view.evaluateJavaScript("ccb.setState(\(json))")
+            let group = surface.workspace.group(of: surface.bot)
+            let working = surface.bot.isWorking || group.map { surface.workspace.groupSpeakers[$0.id] != nil } ?? false
+            let wait = Self.workingInterval - Date().timeIntervalSince(lastPush)
+            if working && wait > 0 {
+                guard !pushLater else { return }
+                pushLater = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+                    self?.pushLater = false
+                    self?.push()
+                }
+                return
+            }
+            lastPush = Date()
+            guard let script = patcher.script(for: surface.payload) else { return }
+            view.evaluateJavaScript(script)
         }
 
         func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -153,8 +170,8 @@ struct ChatSurface: NSViewRepresentable {
             let inputs = surface.inputs
             let workspace = surface.workspace
             func id(_ key: String) -> UUID? { (body[key] as? String).flatMap(UUID.init(uuidString:)) }
-            // A pin's message goes to the bot that holds it: a floating card shows over any bot's
-            // chat. Another bot's change redraws this chat too.
+            // A pin's message goes to the bot that holds it: a floating card shown in all bots
+            // is another bot's. Another bot's change redraws this chat too.
             func pinBot(_ pinID: UUID?) -> Bot {
                 guard let pinID, let owner = workspace.bot(holdingPin: pinID), owner !== bot else { return bot }
                 workspace.objectWillChange.send()
@@ -164,7 +181,7 @@ struct ChatSurface: NSViewRepresentable {
             switch type {
             case "ready":
                 ready = true
-                lastJSON = ""
+                patcher.reset()
                 pluginRevision = -1
                 push()
                 view?.evaluateJavaScript("ccb.focus()")
@@ -348,6 +365,9 @@ struct ChatSurface: NSViewRepresentable {
             case "floatPin":
                 // Float in corner / Stop floating, from its menu (at most two float at once).
                 if let pinID = id("id"), let on = body["floating"] as? Bool { workspace.floatPin(pinID, on, in: pinBot(pinID)) }
+            case "setPinGlobal":
+                // A floating card's "Show in all bots" / "Only in <its bot>".
+                if let pinID = id("id"), let on = body["global"] as? Bool { workspace.setPinGlobal(pinID, on, in: pinBot(pinID)) }
             case "setPinFloat":
                 // A floating card dragged to another corner, resized, or folded to one line.
                 if let pinID = id("id") {
@@ -401,6 +421,10 @@ struct ChatSurface: NSViewRepresentable {
                 let ids = (body["ids"] as? [String])?.compactMap(UUID.init(uuidString:))
                 let owner = pinBot(ids?.first)
                 Task { await workspace.pinsShown(ids, in: owner) }
+            case "resync":
+                // The page could not apply an update: it gets the whole state next.
+                patcher.reset()
+                push()
             case "pluginLoaded":
                 if let name = body["name"] as? String { surface.plugins.markLoaded(name) }
             default:

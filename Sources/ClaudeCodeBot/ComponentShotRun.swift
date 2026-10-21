@@ -104,7 +104,7 @@ enum ComponentShotRun {
             let json = ChatPayload.make(
                 bot: bot, components: ready.components, pending: [], replyingTo: nil,
                 pins: surface == .chat ? nil : ready.pinContext(for: bot, board: surface == .board),
-                floating: surface == .floating ? ready.floatingPinViews() : nil
+                floating: surface == .floating ? ready.floatingPinViews(in: bot) : nil
             ) { projectID in
                 AvatarImages.dataURL(projectID == nil ? .circle : .triangle, eyes: .open)
             }.json()

@@ -599,6 +599,15 @@ body.watching #composer-slot { display: none; }
 .pin-head-status[data-tone="warning"] { color: var(--orange-text); background: rgba(247, 194, 127, 0.13); }
 .pin-head-status[data-tone="bad"] { color: var(--error); background: rgba(255, 138, 128, 0.14); }
 .pin-head-tools { margin-left: auto; display: flex; align-items: center; gap: 1px; flex: none; }
+/* A floating card shown in all bots: whose pin it is, a small globe and that bot's name. */
+.float-owner {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 40%; flex: 0 1 auto;
+  padding: 1px 7px 1px 6px; border-radius: 7px; background: rgba(76, 141, 255, 0.14); color: var(--link);
+  font-size: 11px; white-space: nowrap; overflow: hidden;
+}
+.float-owner svg { flex: none; }
+.float-owner span { overflow: hidden; text-overflow: ellipsis; }
+.float-owner + .pin-head-tools { margin-left: 4px; }
 .pin-head-tools .pin-tool { width: 26px; height: 26px; }
 /* The component under the header: as tall as its content (its frame reports its height), the
    body scrolling once the card is at its most. */
@@ -1035,7 +1044,7 @@ img.media { cursor: zoom-in; }
 }
 .spec-built-head > .pin-tool, .spec-built-head > .pin-badge { margin-left: 2px; }
 
-/* Pins floated in a corner (float.ts): small cards over the chat and the Board, of any bot, never
+/* Pins floated in a corner (float.ts): small cards over the chat and the Board, of this bot (or shown in all bots), never
    over the input box (float.ts places them above it). Semi-opaque, so what is under them shows a
    little; folded (or in a narrow window) just their head line: icon, name, status. */
 .float-layer { position: fixed; inset: 0; z-index: 30; pointer-events: none; }
@@ -1067,3 +1076,18 @@ img.media { cursor: zoom-in; }
 .float-resize[data-edge="topRight"]::before { border-right-width: 2px; border-top-width: 2px; border-top-right-radius: 6px; }
 .float-card:hover > .float-resize, .float-card.hovered > .float-resize, .float-card.resizing > .float-resize { opacity: 1; }
 body.spec-mode .float-layer { display: none; }
+
+/* A claude.ai Artifact a reply links to: title, host, Open (in the browser, where the user is signed in). */
+.artifact-card {
+  display: flex; align-items: center; gap: 12px; margin-top: 10px; padding: 8px 8px 8px 14px;
+  border: 1px solid #303037; border-radius: 14px; background: #232328;
+}
+.artifact-names { flex: 1; min-width: 0; }
+.artifact-title { font-size: 14px; font-weight: 600; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-host { margin-top: 2px; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-open {
+  flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px;
+  border-radius: 10px; border: 1px solid #2F4F8F; background: #1E2A44; color: var(--text); font: inherit; font-size: 13px; cursor: pointer;
+}
+.artifact-open:hover { background: #26375A; }
+.artifact-open:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }

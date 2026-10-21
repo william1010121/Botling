@@ -376,7 +376,7 @@ export type SaveHandler = (json: string) => void;
  * A component's frame: its answer handler, the use it is (`ccbKey`), and what it was drawn from
  * (`ccbDrawn`), so a redrawn message can keep a frame whose component did not change.
  */
-type ComponentFrame = HTMLIFrameElement & { ccbAnswer?: AnswerHandler | null; ccbSave?: SaveHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDrawnFor?: (data: string) => string; ccbShape?: string; ccbData?: string; ccbLive?: boolean; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbPin?: string | null };
+type ComponentFrame = HTMLIFrameElement & { ccbPending?: string | null; ccbAnswer?: AnswerHandler | null; ccbSave?: SaveHandler | null; ccbKey?: string; ccbDrawn?: string; ccbDrawnFor?: (data: string) => string; ccbShape?: string; ccbData?: string; ccbLive?: boolean; ccbDetail?: DetailTarget | null; ccbSize?: PinSize; ccbPin?: string | null };
 
 /** Marks the component frames in `element` as pin `id`'s: their `ccb.setStatus` sets its chip. */
 export function markPinFrames(element: HTMLElement | null, id: string): void {
@@ -451,8 +451,141 @@ function runDetail(frame: ComponentFrame, source: MessageEventSource, id: unknow
 /**
  * The height each component last had, by message and component. A redrawn frame starts at it
  * instead of collapsing to its default and growing again once loaded, which made the chat jump.
+ * Kept in the page's storage too, so a chat opened after a restart has its placeholders (frames
+ * not built yet) at the height they will have.
  */
 const frameHeights = new Map<string, number>();
+const heightsKey = "ccb.frameHeights";
+/** The most heights kept; the oldest go first. */
+const heightsKept = 3000;
+let heightsTimer: ReturnType<typeof setTimeout> | null = null;
+try {
+  const saved = JSON.parse(localStorage.getItem(heightsKey) ?? "null") as unknown;
+  if (saved && typeof saved === "object") {
+    for (const [key, value] of Object.entries(saved as Record<string, unknown>)) {
+      if (typeof value === "number" && value > 0) frameHeights.set(key, value);
+    }
+  }
+} catch { /* no storage: heights last as long as the page */ }
+
+function rememberHeight(key: string, height: number): void {
+  if (frameHeights.get(key) === height) return;
+  frameHeights.delete(key);
+  frameHeights.set(key, height);
+  while (frameHeights.size > heightsKept) frameHeights.delete(frameHeights.keys().next().value!);
+  heightsTimer ??= setTimeout(() => {
+    heightsTimer = null;
+    try { localStorage.setItem(heightsKey, JSON.stringify(Object.fromEntries(frameHeights))); } catch { /* full or blocked */ }
+  }, 1000);
+}
+
+/**
+ * Lazy frames. A chat's component frames are built only once they come within `lazyMargin`
+ * pixels of the visible part of the chat: a long chat holds tens of components, and building
+ * every one at once (each its own page, scripts and all) took seconds on opening it. Until then
+ * the frame is an empty placeholder at the height it last had (or `placeholderHeight`), so the
+ * scroll position does not move when it is built. Pinned, Board and floating copies are always
+ * on show and are built at once, as is everything when the page has no IntersectionObserver.
+ */
+export const lazyMargin = 1500;
+export const placeholderHeight = 200;
+const nearWork = new Map<Element, () => void>();
+let nearObserver: IntersectionObserver | null | undefined;
+
+function observer(): IntersectionObserver | null {
+  if (nearObserver !== undefined) return nearObserver;
+  if (typeof IntersectionObserver === "undefined") return (nearObserver = null);
+  nearObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      const work = nearWork.get(entry.target);
+      forgetNear(entry.target);
+      work?.();
+    }
+  }, { root: document.getElementById("scroller"), rootMargin: `${lazyMargin}px 0px` });
+  return nearObserver;
+}
+
+/** Calls `work` once `element` comes near the visible chat; false (nothing done) when it cannot tell. */
+export function whenNear(element: Element, work: () => void): boolean {
+  const watcher = observer();
+  if (!watcher) return false;
+  nearWork.set(element, work);
+  watcher.observe(element);
+  return true;
+}
+
+function forgetNear(element: Element): void {
+  if (!nearWork.delete(element)) return;
+  nearObserver?.unobserve(element);
+}
+
+/**
+ * Does the waiting work of everything already near the visible chat, measured now: called once
+ * a redraw has settled, so what shows when a chat opens is built at once (the observer reports
+ * only at the next rendering, which a window drawn offscreen, as for a snapshot, never has).
+ */
+export function buildNear(): void {
+  if (!nearWork.size) return;
+  const box = document.getElementById("scroller")?.getBoundingClientRect();
+  if (!box || box.height <= 0) return;
+  const [top, bottom] = [box.top - lazyMargin, box.bottom + lazyMargin];
+  for (const [element, work] of [...nearWork]) {
+    if (!element.isConnected) continue;
+    const rect = element.getBoundingClientRect();
+    // Hidden (a folded part, the Board showing instead): it waits.
+    if (rect.width <= 0 && rect.height <= 0) continue;
+    if (rect.bottom < top || rect.top > bottom) continue;
+    forgetNear(element);
+    work();
+  }
+}
+
+/** Stops waiting for the frames and cards in `root` to come near: they are gone from the page. */
+export function releaseFrames(root: Element): void {
+  if (!nearWork.size) return;
+  forgetNear(root);
+  for (const element of waitingIn(root)) forgetNear(element);
+}
+
+/** The frames not built yet and the cards waiting for their first run in `root`. */
+function waitingIn(root: Element): Element[] {
+  return [...root.querySelectorAll<ComponentFrame>("iframe.component-frame, .command-waiting")]
+    .filter((element) => !(element instanceof HTMLIFrameElement) || !frameBuilt(element));
+}
+
+/** Gives a lazy frame its page now (it came near the visible chat). */
+function buildFrame(frame: ComponentFrame): void {
+  forgetNear(frame);
+  const page = frame.ccbPending;
+  if (page == null) return;
+  frame.ccbPending = null;
+  frame.classList.remove("pending");
+  frame.srcdoc = page;
+}
+
+/** Whether every component frame in `element` has its page. */
+function builtFrames(element: Element): boolean {
+  return [...element.querySelectorAll<HTMLIFrameElement>("iframe.component-frame")].every(frameBuilt);
+}
+
+/** Whether the frame has its page (a lazy one is not built until it comes near). */
+export function frameBuilt(frame: HTMLIFrameElement): boolean {
+  return (frame as ComponentFrame).ccbPending == null;
+}
+
+/**
+ * A frame above the visible part of the chat changed height (it was built, or its content
+ * grew): the chat scrolls by as much, so what you are reading stays where it is. WebKit has no
+ * scroll anchoring of its own.
+ */
+function keepReading(frame: HTMLElement, before: DOMRect, height: number): void {
+  const scroller = frame.closest<HTMLElement>("#scroller");
+  if (!scroller) return;
+  const delta = height - before.height;
+  if (!delta || before.bottom > scroller.getBoundingClientRect().top + 1) return;
+  scroller.scrollTop += delta;
+}
 
 // Frames are found by their window when they speak, so a message sent before the frame's own
 // load event is not lost.
@@ -463,8 +596,10 @@ window.addEventListener("message", (event) => {
     .find((candidate) => candidate.contentWindow === event.source);
   if (!frame) return;
   if (message.ccb === "size" && typeof message.height === "number" && message.height > 0) {
+    const before = frame.getBoundingClientRect();
     frame.style.height = `${message.height}px`;
-    if (frame.ccbKey) frameHeights.set(frame.ccbKey, message.height);
+    keepReading(frame, before, message.height);
+    if (frame.ccbKey) rememberHeight(frame.ccbKey, message.height);
   } else if (message.ccb === "hover") {
     // The pointer is over the component: its Board tile (or opened pin) shows its controls.
     frame.closest(".board-card, .pin-sheet, .float-card")?.classList.toggle("hovered", !!(message as { on?: unknown }).on);
@@ -526,7 +661,8 @@ export function answerAction(messageID: string, answer: ComponentAnswer): Action
 
 /**
  * A component with its report flag beside it (shown on hover), or nothing if no template.
- * `key` names this use of it (the message it is in), so a redraw keeps its height.
+ * `key` names this use of it (the message it is in), so a redraw keeps its height. `lazy`: in the
+ * chat's history, its frame is built only once it comes near the visible chat (`whenNear`).
  */
 export function componentElement(
   name: string,
@@ -540,6 +676,7 @@ export function componentElement(
   surface: Surface = "chat",
   fill = surface === "board",
   onSave: SaveHandler | null = null,
+  lazy = false,
 ): HTMLElement | null {
   if (!info) return null;
   const wrap = document.createElement("div");
@@ -566,7 +703,15 @@ export function componentElement(
   frame.ccbData = data;
   const drawnSize = size ?? chatSize(info);
   frame.ccbSize = drawnSize;
-  frame.srcdoc = componentPage(info.template, data, images ?? {}, drawnSize, surface, fill, !!onSave);
+  const page = componentPage(info.template, data, images ?? {}, drawnSize, surface, fill, !!onSave);
+  if (lazy && whenNear(frame, () => buildFrame(frame))) {
+    // A placeholder until it comes near, as tall as it will be (or a guess, kept from then on).
+    frame.ccbPending = page;
+    frame.classList.add("pending");
+    if (!frame.style.height) frame.style.height = `${placeholderHeight}px`;
+  } else {
+    frame.srcdoc = page;
+  }
   // Resized before its page ran: tell it once it has loaded.
   frame.addEventListener("load", () => {
     if (frame.ccbSize && frame.ccbSize !== drawnSize) resizeFrame(frame, frame.ccbSize);
@@ -583,12 +728,16 @@ export function componentElement(
  * was) if any frame was kept, otherwise `fresh`, which the caller puts in its place.
  */
 export function keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement {
-  if (old.tagName !== fresh.tagName) return fresh;
+  const replaced = () => {
+    releaseFrames(old);
+    return fresh;
+  };
+  if (old.tagName !== fresh.tagName) return replaced();
   const oldFrames = new Map<string, ComponentFrame>();
   for (const frame of old.querySelectorAll<ComponentFrame>("iframe.component-frame")) {
     if (frame.ccbKey && frame.ccbDrawn && !oldFrames.has(frame.ccbKey)) oldFrames.set(frame.ccbKey, frame);
   }
-  if (!oldFrames.size) return fresh;
+  if (!oldFrames.size) return replaced();
   // Each fresh element kept as its old one: the frames, and the elements around them.
   const kept = new Map<Element, Element>([[fresh, old]]);
   const keptFrames = new Set<Element>();
@@ -621,7 +770,10 @@ export function keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement {
       before.contentWindow?.postMessage({ ccbData: frame.ccbData }, "*");
     }
   }
-  if (!keptFrames.size) return fresh;
+  if (!keptFrames.size) return replaced();
+  // The fresh copies of kept frames are dropped, and so are the old elements nothing kept.
+  for (const frame of keptFrames) forgetNear(frame);
+  const waiting = waitingIn(old);
   const patch = (target: Element, source: Element) => {
     for (const { name } of [...target.attributes]) {
       if (!source.hasAttribute(name)) target.removeAttribute(name);
@@ -646,6 +798,7 @@ export function keepFrames(old: HTMLElement, fresh: HTMLElement): HTMLElement {
     }
   };
   patch(old, fresh);
+  for (const element of waiting) if (!old.contains(element)) forgetNear(element);
   return old;
 }
 
@@ -704,7 +857,8 @@ export function refreshDueCards(now = Date.now()): number {
       liveDue.set(key, now + every * 1000);
       continue;
     }
-    if (now < due || !onScreen(card)) continue;
+    // Not on screen, or its frame not built yet (it is built once near): it waits.
+    if (now < due || !onScreen(card) || !builtFrames(card)) continue;
     liveDue.set(key, now + every * 1000);
     liveRuns.get(key)?.();
     ran += 1;
@@ -726,7 +880,7 @@ export function commandCard(
   messageID: string,
   index: number,
   draw: () => HTMLElement | null,
-  options: { send?: CommandSend; bar?: boolean } = {},
+  options: { send?: CommandSend; bar?: boolean; lazy?: boolean } = {},
 ): HTMLElement {
   const card = document.createElement("div");
   card.className = "command-card";
@@ -828,14 +982,18 @@ export function commandCard(
     if (component) card.append(component);
   } else {
     // Allowed and not run yet (ask once per command and folder), or running for the first time.
+    // In the chat's history only once it comes near the visible chat: opening a long chat after
+    // a restart ran every card's command at once.
     const key = JSON.stringify([messageID, index, shown.folder, shown.command]);
-    if (status === "idle" && !requestedRuns.has(key)) {
-      requestedRuns.add(key);
-      run({});
-    }
     const waiting = document.createElement("div");
     waiting.className = "command-waiting";
     waiting.innerHTML = `<span class="spinner" aria-hidden="true"></span><span>Running the command…</span>`;
+    const first = () => {
+      if (requestedRuns.has(key)) return;
+      requestedRuns.add(key);
+      run({});
+    };
+    if (status === "idle" && !requestedRuns.has(key) && !(options.lazy && whenNear(waiting, first))) first();
     card.append(waiting);
   }
   return card;

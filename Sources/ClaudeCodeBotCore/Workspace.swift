@@ -306,6 +306,7 @@ public final class Workspace: ObservableObject {
         loadGroups()
         setUpCodex()
         dropStalePins()
+        dropStaleGlobalFloats()
         if let editedEditor { askAboutEditedEditor(editedEditor) }
         refreshWaiting()
     }
@@ -842,6 +843,7 @@ public final class Workspace: ObservableObject {
         if selection == id { select(nil) }
         saveProjects()
         dropStalePins()
+        dropStaleGlobalFloats()
         if let plugin = project.plugin {
             removedPluginBots.insert(Self.removalKey(plugin: plugin, name: project.name))
             try? JSONEncoder().encode(removedPluginBots.sorted()).write(to: removedBotsURL, options: .atomic)
@@ -1237,8 +1239,8 @@ public final class Workspace: ObservableObject {
                 model: spec.model,
                 sessionID: run.id,
                 workingDirectory: folder,
-                systemPrompt: TeamPrompts.system(spec, folder: folder),
-                tools: spec.tools,
+                systemPrompt: TeamPrompts.system(spec, folder: folder, results: settings.resultPublishing),
+                tools: TeamPrompts.tools(spec, results: settings.resultPublishing),
                 pluginDirectories: plugins.claudeDirectories(),
                 pluginTools: plugins.claudeTools(),
                 environment: plugins.secretEnvironment()
@@ -1533,6 +1535,23 @@ public final class Workspace: ObservableObject {
         bot.pluginTools = { [weak self] in self?.plugins.claudeTools() ?? [] }
         bot.pluginEnvironment = { [weak self] in self?.plugins.secretEnvironment() ?? [:] }
         bot.autoMode = { [weak self] in self?.settings.autoApprovesSafeActions ?? false }
+        bot.resultPublishing = { [weak self] in self?.settings.resultPublishing ?? .artifactUnlessSensitive }
+    }
+
+    /// Where bots put results for the user. A new session starts with the rule in its system
+    /// prompt; an awake one (whose `--resume` keeps the old prompt) hears it with its next message.
+    public func setResultPublishing(_ choice: ResultPublishing) {
+        guard choice != settings.resultPublishing else { return }
+        settings.resultPublishingChoice = choice
+        settings.save(to: settingsURL)
+        for bot in Array(managers.values) where bot.profile.role == .manager {
+            bot.queueNote(Self.resultsNote(choice, for: bot.profile))
+        }
+    }
+
+    /// What an awake bot is told when the user changes where results go.
+    static func resultsNote(_ choice: ResultPublishing, for profile: BotProfile) -> String {
+        "(App: The user changed where results go. From now on this replaces the rule you were given: \(BotPrompts.resultsRule(choice, folder: profile.artifactsURL.path)))"
     }
 
     /// Turns auto mode for bots on or off. Awake bots start again (once free) in the new mode.

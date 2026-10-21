@@ -1,5 +1,5 @@
 import { post } from "./bridge";
-import { detailReply, keepFrames } from "./components";
+import { buildNear, detailReply, keepFrames, releaseFrames } from "./components";
 import { startTaskTicks, taskOutput } from "./tasks";
 import { Composer, sendFile } from "./composer";
 import { extensions, feedback, makeComponents, messageElement, typingElement } from "./messages";
@@ -9,7 +9,8 @@ import { PinArea } from "./pins";
 import { FloatLayer } from "./float";
 import { handleMediaClicks } from "./lightbox";
 import { PluginHost, type PluginSpec } from "./plugins";
-import type { ChatState, MessageView, SpecState } from "./types";
+import type { ChatState, MessageView, SpecState, StatePatch } from "./types";
+import { applyPatch } from "./patch";
 import { escapeHTML } from "./util";
 import { installImeGuard } from "./ime";
 
@@ -31,9 +32,14 @@ class Chat {
   private readonly composer: Composer;
   /** Pinned components: chips above the input box, and the Board. */
   private readonly pins: PinArea;
-  /** Pins floated in a corner, of any bot, over the chat and the Board. */
+  /** Pins floated in a corner of this chat (and other bots' shown in all bots), over the chat and the Board. */
   private readonly floats: FloatLayer;
-  private readonly drawn = new Map<string, { key: string; element: HTMLElement }>();
+  /**
+   * Each message drawn: its element, and the key it was drawn from. `message` and `mark` are what
+   * the key was made of, so an update that hands back the same message object (`patchState`)
+   * skips making the key again.
+   */
+  private readonly drawn = new Map<string, { key: string; element: HTMLElement; message: MessageView; mark: number }>();
   /**
    * The components as text, and a number that changes whenever that text does: a message that
    * draws components is redrawn when they change, by the number in its key. (Putting the text
@@ -41,6 +47,8 @@ class Chat {
    */
   private componentsText = "";
   private componentsMark = 0;
+  /** The components object `componentsText` was made from (a patch hands the same one back). */
+  private componentsSeen: unknown = null;
   private typing: HTMLElement | null = null;
   private botID: string | null = null;
   private last: ChatState | null = null;
@@ -78,9 +86,15 @@ class Chat {
 
   /** Draws every message again, after a plugin changed how messages are drawn. */
   redraw(): void {
-    this.drawn.clear();
-    this.list.innerHTML = "";
+    this.clearList();
     if (this.last) this.setState(this.last, true);
+  }
+
+  /** Every message gone from the page (another bot's chat, or all drawn again). */
+  private clearList(): void {
+    releaseFrames(this.list);
+    this.list.innerHTML = "";
+    this.drawn.clear();
   }
 
   setState(state: ChatState, redrawing = false): void {
@@ -90,8 +104,7 @@ class Chat {
     this.newestID = state.messages[state.messages.length - 1]?.id ?? null;
     if (switched) {
       this.botID = state.botID;
-      this.list.innerHTML = "";
-      this.drawn.clear();
+      this.clearList();
       this.composer.setText("");
     }
 
@@ -101,29 +114,38 @@ class Chat {
     if (flagged !== feedback.enabled || making !== makeComponents.enabled) {
       feedback.enabled = flagged;
       makeComponents.enabled = making;
-      this.list.innerHTML = "";
-      this.drawn.clear();
+      this.clearList();
     }
 
     // Gone ones first, so they do not make the rest move (a moved frame reloads).
     const keep = new Set(state.messages.map((message) => message.id));
     for (const [id, entry] of this.drawn) {
       if (!keep.has(id)) {
+        releaseFrames(entry.element);
         entry.element.remove();
         this.drawn.delete(id);
       }
     }
-    const componentsText = JSON.stringify(state.components);
-    if (componentsText !== this.componentsText) {
-      this.componentsText = componentsText;
-      this.componentsMark += 1;
+    if (state.components !== this.componentsSeen) {
+      this.componentsSeen = state.components;
+      const componentsText = JSON.stringify(state.components);
+      if (componentsText !== this.componentsText) {
+        this.componentsText = componentsText;
+        this.componentsMark += 1;
+      }
     }
     let previous: Element | null = null;
     for (const message of state.messages) {
-      // A stamp is part of the row it heads.
-      const key = JSON.stringify([message, message.choices || message.displays || message.display || message.previews ? this.componentsMark : null]);
       let entry = this.drawn.get(message.id);
-      if (!entry || entry.key !== key) {
+      const mark = message.choices || message.displays || message.display || message.previews ? this.componentsMark : -1;
+      // The very message drawn last time, with the same components: nothing to do.
+      const same = !!entry && entry.message === message && entry.mark === mark;
+      // A stamp is part of the row it heads.
+      const key = same ? entry!.key : JSON.stringify([message, mark < 0 ? null : mark]);
+      if (entry && entry.key === key) {
+        entry.message = message;
+        entry.mark = mark;
+      } else {
         let element = this.render(message, state);
         if (entry) {
           // Components that did not change keep their frames, so they do not load again.
@@ -131,7 +153,7 @@ class Chat {
           if (kept === element) entry.element.replaceWith(element);
           element = kept;
         }
-        entry = { key, element };
+        entry = { key, element, message, mark };
         this.drawn.set(message.id, entry);
       }
       const expected: Element | null = previous ? previous.nextElementSibling : this.list.firstElementChild;
@@ -155,6 +177,15 @@ class Chat {
     const sentNow = !switched && !redrawing && newest?.role === "user" && newest.id !== newestBefore;
     if (switched || sentNow) this.stuck = true;
     if (this.stuck) this.scrollToBottom();
+    // The component frames now in view (or near it) are built; the rest once scrolled to.
+    buildNear();
+  }
+
+  /** An update with only what changed (see `StatePatch`); asks for everything when it cannot. */
+  patchState(patch: StatePatch): void {
+    const state = applyPatch(this.last, patch);
+    if (state) this.setState(state);
+    else post({ type: "resync" });
   }
 
   focus(): void {
@@ -271,6 +302,7 @@ declare global {
   interface Window {
     ccb: {
       setState(state: ChatState): void;
+      patchState(patch: StatePatch): void;
       setPlugins(specs: PluginSpec[]): Promise<void>;
       runCommand(id: string): void;
       showPanel(key: string): void;
@@ -338,6 +370,7 @@ function setSpec(state: SpecState): void {
 }
 window.ccb = {
   setState: (state) => chat.setState(state),
+  patchState: (patch) => chat.patchState(patch),
   setPlugins: (specs) => chat.plugins.sync(specs),
   runCommand: (id) => chat.plugins.execute(id),
   hostReply: (callID, ok, value) => chat.plugins.hostReply(callID, ok, value),

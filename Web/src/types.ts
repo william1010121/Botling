@@ -51,6 +51,15 @@ export interface MessageView {
   component?: string | null;
   /** All the chat's background work, on its latest message only: one row of counts under it. */
   tasks?: TaskChipView[] | null;
+  /** claude.ai Artifacts it links to, drawn as cards under it. */
+  artifacts?: ArtifactCardView[] | null;
+}
+
+/** A claude.ai Artifact a reply links to. */
+export interface ArtifactCardView {
+  title: string;
+  url: string;
+  host: string;
 }
 
 /**
@@ -230,11 +239,15 @@ export interface FloatView {
   collapsed: boolean;
 }
 
-/** A pin floating in a corner, of any bot, drawn over whichever bot's chat is shown. */
+/** A pin floating in a corner of this chat: this bot's own, or another bot's shown in all bots. */
 export interface FloatingPinView {
   botID: string;
   botName: string;
   pin: PinView;
+  /** Shown in every bot's chat ("Show in all bots"); absent: only in its own bot's. */
+  global?: boolean | null;
+  /** Not global, and that chat already shows the most floating cards: its name ("Show in all bots" is off). */
+  blocked?: string | null;
 }
 
 /** A component the pin picker offers: one this bot drew, or one with a Command. */
@@ -318,7 +331,7 @@ export interface ChatState {
   feedback?: boolean;
   /** The bot's pinned components; absent where nothing can be pinned (a subagent). */
   pins?: PinView[] | null;
-  /** The pins floating in a corner, of any bot (at most two). */
+  /** The pins floating in a corner of this chat (at most two): those shown in all bots first, then its own. */
   floating?: FloatingPinView[] | null;
   pinChoices?: PinChoiceView[] | null;
   /** The Board shows instead of the messages. */
@@ -329,6 +342,8 @@ export interface ChatState {
 
 export type Action =
   | { type: "ready" }
+  /** A `patchState` could not be applied: send the whole state. */
+  | { type: "resync" }
   | { type: "send"; text: string }
   | { type: "choose"; messageID: string; index: number }
   | { type: "answer"; messageID: string; text: string; images?: { name: string; base64: string }[] }
@@ -358,6 +373,7 @@ export type Action =
   | { type: "resizePin"; id: string; size: PinSize }
   | { type: "setPinHeight"; id: string; height: number | null }
   | { type: "floatPin"; id: string; floating: boolean }
+  | { type: "setPinGlobal"; id: string; global: boolean }
   | { type: "setPinFloat"; id: string; corner?: FloatCorner; width?: number; height?: number; collapsed?: boolean }
   | { type: "setPinRefresh"; id: string; refresh: PinRefresh; minutes?: number; seconds?: number }
   | { type: "pinStatus"; id: string; text: string | null; tone: string | null }
@@ -380,3 +396,15 @@ export type Action =
   | { type: "pluginLoaded"; name: string; version: string }
   | { type: "command"; id: string }
   | { type: "hostCall"; plugin: string; method: string; params: unknown; callID: number };
+
+/**
+ * What `ccb.patchState(...)` gets: only what changed since the last state. `base` is the state
+ * without its messages and components, and is left out when it is the same, as `components`
+ * is; `order` is every message's id, `changed` the messages that are new or different.
+ */
+export interface StatePatch {
+  base?: Omit<ChatState, "messages" | "components">;
+  components?: ChatState["components"];
+  order: string[];
+  changed: MessageView[];
+}

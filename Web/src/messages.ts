@@ -1,3 +1,4 @@
+import { artifactCard } from "./artifacts";
 import { post } from "./bridge";
 import { pinBar, specPinButton } from "./pins";
 import { answerAction, answerImages, choicesData, commandCard, componentElement, detailTarget, fallbackChoices } from "./components";
@@ -251,10 +252,11 @@ function editSpecButton(spec: SpecChipView): HTMLButtonElement {
 function builtSpec(spec: SpecChipView, components: Record<string, ComponentInfo>): HTMLElement | null {
   const display = spec.display!;
   const name = spec.component!;
-  const draw = () => componentElement(name, components[name], display.data, null, `spec-${spec.id}`, display.images, detailTarget(display));
+  const draw = () => componentElement(name, components[name], display.data, null, `spec-${spec.id}`, display.images, detailTarget(display), undefined, "chat", false, null, true);
   const card = display.command
     ? commandCard(display, `spec:${spec.id}`, 0, draw, {
         send: (request) => post({ type: "specCommand", id: spec.id, ...request }),
+        lazy: true,
       })
     : draw();
   if (!card) return null;
@@ -405,7 +407,7 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
   displays.filter((d) => !inline.includes(d)).forEach(appendComponent);
   // Result pages it links to, as preview cards under the text (the links stay chips too).
   message.previews?.forEach((preview, index) => {
-    const card = componentElement(preview.name, components[preview.name], preview.data, null, `${message.id}/preview-${index}`);
+    const card = componentElement(preview.name, components[preview.name], preview.data, null, `${message.id}/preview-${index}`, null, null, undefined, "chat", false, null, true);
     if (!card) return;
     if (!makeComponents.enabled || message.role !== "bot") {
       appendWide(card);
@@ -427,6 +429,8 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     holder.append(card, bar);
     appendWide(holder);
   });
+  // claude.ai Artifacts it links to, as cards under the text (the links stay chips too).
+  message.artifacts?.forEach((card) => bubble.append(artifactCard(card)));
   if (message.openable) {
     const open = document.createElement("button");
     open.className = "open-source";
@@ -444,7 +448,7 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
 function componentView(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>): HTMLElement | null {
   // Data from a command: the card around it asks to allow it, runs it, or says why it failed.
   const element = display.command || display.status
-    ? commandCard(display, message.id, index, () => drawComponent(message, display, index, components))
+    ? commandCard(display, message.id, index, () => drawComponent(message, display, index, components), { lazy: true })
     : drawComponent(message, display, index, components);
   // In a chat that can pin, hovering it shows pin / ↻ / ⋯.
   if (!element || display.pinned === undefined || display.pinned === null) return element;
@@ -477,7 +481,7 @@ function drawComponent(message: MessageView, display: DisplayView, index: number
     ? (data: string) => post({ type: "componentSave", messageID: message.id, index, data })
     : null;
   return componentElement(display.name, components[display.name], display.data, answer,
-    index === 0 ? message.id : `${message.id}/show-${index}`, display.images, detailTarget(display), undefined, "chat", false, save);
+    index === 0 ? message.id : `${message.id}/show-${index}`, display.images, detailTarget(display), undefined, "chat", false, save, true);
 }
 
 /** Answered questions you opened again, by message id; the rest stay folded to one line. */
@@ -494,7 +498,7 @@ function choicesElement(message: MessageView, components: Record<string, Compone
         if (action) post(action);
       }
     : null;
-  const component = componentElement("choices", components.choices, choicesData(choices, message.chosen ?? null, message.answer ?? null), onAnswer, message.id);
+  const component = componentElement("choices", components.choices, choicesData(choices, message.chosen ?? null, message.answer ?? null), onAnswer, message.id, null, null, undefined, "chat", false, null, true);
   const options = component ?? fallbackChoices(choices, message.chosen ?? null, message.answer ?? null, onAnswer ? (index) => onAnswer({ index }) : null);
   if (message.open) return options;
   // Opened again after answering: a way to fold it back.

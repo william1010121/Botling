@@ -49,6 +49,8 @@ public struct ChatPayload: Encodable, Equatable {
         /// All the chat's background work, on its latest message only (nil on the others): one
         /// row of counts (subagents, waiting, done, failed) that moves down as messages arrive.
         var tasks: [TaskChip]? = nil
+        /// claude.ai Artifacts it links to, drawn as cards under it (the links stay chips too).
+        var artifacts: [ArtifactLink.Card]? = nil
     }
 
     /// Background work under a reply: a command or a subagent, with how it is doing. Times are
@@ -180,7 +182,7 @@ public struct ChatPayload: Encodable, Equatable {
         public var board: Bool
         /// Where pinned components' Detail commands are read from.
         public var library: ComponentLibrary?
-        /// How many pins float now (over all bots): whether one more may.
+        /// How many floating cards the chat shows now: whether one more may float there.
         public var floating: Int
 
         public init(runs: ComponentCommands, folder: URL, board: Bool = false, library: ComponentLibrary? = nil, floating: Int = 0) {
@@ -219,16 +221,24 @@ public struct ChatPayload: Encodable, Equatable {
         var floatMenu: Pins.FloatMenu? = nil
     }
 
-    /// A pin floating in a corner, drawn over whichever bot's chat is shown: its bot, and the pin.
+    /// A pin floating in a corner of a chat: its own bot's, or another bot's shown in all bots.
+    /// Its bot, and the pin.
     public struct FloatingPin: Encodable, Equatable {
         var botID: String
         var botName: String
         var pin: Pin
+        /// Shown in every bot's chat ("Show in all bots"); nil: only in its own.
+        var global: Bool? = nil
+        /// Not global, and a chat that already shows `Pins.maxFloating` cards would get one more:
+        /// that chat's name, for its menu's "Show in all bots" (off). Nil: it may be.
+        var blocked: String? = nil
 
-        public init(botID: String, botName: String, pin: Pin) {
+        public init(botID: String, botName: String, pin: Pin, global: Bool = false, blocked: String? = nil) {
             self.botID = botID
             self.botName = botName
             self.pin = pin
+            self.global = global ? true : nil
+            self.blocked = blocked
         }
     }
 
@@ -310,7 +320,8 @@ public struct ChatPayload: Encodable, Equatable {
     var pinChoices: [PinChoice]? = nil
     /// The Board is showing instead of the messages.
     var board: Bool? = nil
-    /// The pins floating in a corner, of any bot; nil where none can show (a subagent).
+    /// The pins floating in a corner of this chat: its own, and other bots' shown in all bots;
+    /// nil where none can show (a subagent).
     var floating: [FloatingPin]? = nil
     /// Replies can be made into components (their hover column and result cards say so).
     var makeComponents: Bool? = nil
@@ -420,7 +431,8 @@ public struct ChatPayload: Encodable, Equatable {
                 component: specs && message.role == .bot
                     ? message.shown.first { $0.name != "choices" && $0.name != PagePreview.component && library?.names.contains($0.name) == true }?.name
                     : nil,
-                tasks: nil
+                tasks: nil,
+                artifacts: artifactCards(for: message)
             )
         }
         // All the chat's background work goes on its latest message, as one row of counts.
@@ -728,12 +740,58 @@ public struct ChatPayload: Encodable, Equatable {
     }
 
     public func json() -> String {
+        Self.encode(self) ?? "{}"
+    }
+
+    /// Sorted, so the same chat is the same text every time (dictionaries have no order).
+    static func encode<Value: Encodable>(_ value: Value) -> String? {
         let encoder = JSONEncoder()
-        // Sorted, so the same chat is the same text every time (dictionaries have no order):
-        // the page is only sent a state that changed, and redraws only messages that did.
         encoder.outputFormatting = [.withoutEscapingSlashes, .sortedKeys]
-        guard let data = try? encoder.encode(self) else { return "{}" }
+        guard let data = try? encoder.encode(value) else { return nil }
         return String(decoding: data, as: UTF8.self)
+    }
+
+    /// Sends the chat page only what changed since the state it last got, as
+    /// `ccb.patchState({base?, components?, order, changed})`: `base` is the state without its
+    /// messages and components (left out when the same), `components` likewise, `order` every
+    /// message's id, and `changed` the messages that are new or different. A 500-message chat
+    /// otherwise encoded, sent and parsed every message (and ~180 KB of components) on every
+    /// streamed step. The page asks for everything again (`resync`) when it cannot apply one.
+    public struct Patcher {
+        private var base: String?
+        private var components: String?
+        private var messages: [String: Message] = [:]
+        private var order: [String] = []
+
+        public init() {}
+
+        /// The next state goes whole (the page loaded again, or asked for it).
+        public mutating func reset() {
+            self = Patcher()
+        }
+
+        /// The script that brings the page to `payload`; nil when nothing changed.
+        public mutating func script(for payload: ChatPayload) -> String? {
+            var stripped = payload
+            stripped.messages = []
+            stripped.components = [:]
+            let base = ChatPayload.encode(stripped) ?? "{}"
+            let components = ChatPayload.encode(payload.components) ?? "{}"
+            let order = payload.messages.map(\.id)
+            let changed = payload.messages.filter { messages[$0.id] != $0 }
+            guard base != self.base || components != self.components || order != self.order || !changed.isEmpty else { return nil }
+
+            var parts: [String] = []
+            if base != self.base { parts.append("\"base\":" + base) }
+            if components != self.components { parts.append("\"components\":" + components) }
+            parts.append("\"order\":" + (ChatPayload.encode(order) ?? "[]"))
+            parts.append("\"changed\":" + (ChatPayload.encode(changed) ?? "[]"))
+            self.base = base
+            self.components = components
+            self.order = order
+            messages = Dictionary(payload.messages.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+            return "ccb.patchState({" + parts.joined(separator: ",") + "})"
+        }
     }
 
     /// A component in a message; a 「網頁預覽卡片」 gets where to load its page from.
@@ -787,6 +845,13 @@ public struct ChatPayload: Encodable, Equatable {
             shown.images = images.isEmpty ? nil : images
         }
         return shown
+    }
+
+    /// Cards for the claude.ai Artifacts a bot's line or a notice links to.
+    static func artifactCards(for message: ChatMessage) -> [ArtifactLink.Card]? {
+        guard message.role == .bot || message.role == .notice else { return nil }
+        let cards = ArtifactLink.cards(in: message.text)
+        return cards.isEmpty ? nil : cards
     }
 
     /// Cards for the result pages a bot's line or a notice links to, when the card component is
