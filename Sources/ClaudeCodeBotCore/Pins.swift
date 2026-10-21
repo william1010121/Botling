@@ -115,6 +115,11 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
     public var seconds: Int?
     /// Its card on the Board.
     public var size: Size
+    /// Where its card sits on the Board: its top-left cell, columns and rows from 0 (free
+    /// placement, gaps kept; see Web/src/board-layout.ts). Nil until the Board first lays it out:
+    /// a pin from before free placement, or a new one, takes the first free cells in pin order,
+    /// where the old packed Board drew it, and the page then sends that place to keep.
+    public var place: Place?
     /// How tall it opens above the input box, in points, once the user has dragged that panel's
     /// edge; nil: as tall as its content (up to the panel's limit).
     public var panelHeight: Int?
@@ -131,6 +136,25 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
     /// asking, and over every bot's chat once shown in all bots (`GlobalFloat`); nil: it does not
     /// float. A chat shows at most `Pins.maxFloating` floating cards.
     public var float: Floating?
+
+    /// A Board card's top-left cell.
+    public struct Place: Codable, Equatable, Hashable, Sendable {
+        public var col: Int
+        public var row: Int
+
+        /// Kept at 0 or more; a column past a narrower Board's edge is moved left by the page when drawn.
+        public init(col: Int, row: Int) {
+            self.col = max(0, col)
+            self.row = max(0, row)
+        }
+
+        private enum CodingKeys: String, CodingKey { case col, row }
+
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.init(col: try c.decode(Int.self, forKey: .col), row: try c.decode(Int.self, forKey: .row))
+        }
+    }
 
     /// Where a floating pin sits and how it shows: a corner it snaps to, its card's size in
     /// points once dragged by its corner (nil until then: the page gives it a width that fits a
@@ -220,7 +244,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         self.seconds = seconds.map(Self.clampSeconds)
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size, status, panelHeight, savedAt, seconds, makingLive, float }
+    private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size, place, status, panelHeight, savedAt, seconds, makingLive, float }
 
     // A value this build does not know (a newer refresh mode or size) falls back, so the rest
     // of the file still loads. The old sizes S, M and L become 1×1, 2×2 and 4×2; any WxH up
@@ -238,6 +262,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         self.minutes = Self.clampMinutes(minutes ?? Self.defaultMinutes)
         let size: String? = try? c.decodeIfPresent(String.self, forKey: .size)
         self.size = size.flatMap(Size.init(spelled:)) ?? .large
+        place = try? c.decodeIfPresent(Place.self, forKey: .place)
         status = try? c.decodeIfPresent(PinStatus.self, forKey: .status)
         let height: Int? = try? c.decodeIfPresent(Int.self, forKey: .panelHeight)
         panelHeight = Self.clampedPanelHeight(height)
@@ -359,6 +384,17 @@ public enum Pins {
         guard let from = pins.firstIndex(where: { $0.id == id }) else { return }
         let pin = pins.remove(at: from)
         pins.insert(pin, at: min(max(index, 0), pins.count))
+    }
+
+    /// Board cards put where the page laid them out (a drop, a resize and what it pushed down, or
+    /// the first layout of pins without a place), with a new size for those that have one. Ids
+    /// not pinned are ignored; the pins' order (their chips) is unchanged.
+    public static func arrange(_ places: [(id: UUID, place: PinnedComponent.Place, size: PinnedComponent.Size?)], in pins: inout [PinnedComponent]) {
+        for entry in places {
+            guard let at = pins.firstIndex(where: { $0.id == entry.id }) else { continue }
+            pins[at].place = entry.place
+            if let size = entry.size { pins[at].size = size }
+        }
     }
 
     /// One short line for a pin's chip when its component sets none (`ccb.setStatus`), from the

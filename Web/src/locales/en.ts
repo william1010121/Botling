@@ -244,6 +244,8 @@ export const en = {
   "pins.dragToMoveLower": "drag to move",
   "pins.sizeLabel": "Size: {size}",
   "pins.dragToMove": "Drag to move",
+  "pins.dropSwap": "Swap",
+  "pins.dropPush": "Push down",
   // spec.ts: the component spec panel
   "spec.changing": "Changing {name} → {v}",
   "spec.building": "Building {name}",

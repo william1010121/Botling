@@ -363,8 +363,9 @@ describe("the Board", () => {
     const cards = document.querySelectorAll<HTMLElement>(".board-card");
     expect(cards).toHaveLength(2);
     expect(cards[0].classList.contains("size-4x2")).toBe(true);
-    expect([cards[0].style.gridColumn, cards[0].style.gridRow]).toEqual(["span 4", "span 2"]);
-    expect([cards[1].style.gridColumn, cards[1].style.gridRow]).toEqual(["span 1", "span 1"]);
+    // Each at its own cells: without places yet, the first free ones in pin order (4 columns until measured).
+    expect([cards[0].style.gridColumn, cards[0].style.gridRow]).toEqual(["1 / span 4", "1 / span 2"]);
+    expect([cards[1].style.gridColumn, cards[1].style.gridRow]).toEqual(["1 / span 1", "3 / span 1"]);
     expect(document.querySelector(".board-title")?.textContent).toBe("ClaudeCodeBot");
     expect(sent).toEqual([{ type: "pinShown", ids: null }]);
     // Drawn again with nothing changed: not asked again, and the card is the same element.
@@ -394,7 +395,9 @@ describe("the Board", () => {
     expect(document.querySelectorAll(".pin-size-grid button.lit")).toHaveLength(12);
     expect(document.querySelector(".pin-size-caption")?.textContent).toBe("3×4");
     cell("4×3").click();
-    expect(sent.at(-1)).toEqual({ type: "resizePin", id: "P1", size: "4x3" });
+    // It grows where it is and pushes the card it now overlaps down; both are kept together.
+    expect(sent.at(-1)).toEqual({ type: "arrangePins", places: [{ id: "P1", col: 0, row: 0, size: "4x3" }, { id: "P2", col: 0, row: 3 }] });
+    expect(document.querySelectorAll<HTMLElement>(".board-card")[1].style.gridRow).toBe("4 / span 2");
     expect(document.querySelector(".pin-menu")).toBeNull();
     // One whose about.md names no sizes may still be any size.
     expect(sizesIn(menuOf(1))).toEqual(every);
@@ -521,15 +524,29 @@ describe("the Board", () => {
       expect(grid().style.getPropertyValue("--board-cols")).toBe("7");
       expect(grid().style.getPropertyValue("--board-cell")).toBe("150px");
       const spans = () => [...document.querySelectorAll<HTMLElement>(".board-card")].map((card) => `${card.style.gridColumn}/${card.style.gridRow}`);
-      expect(spans()).toEqual(["span 4/span 2", "span 2/span 1", "span 1/span 2", "span 1/span 1"]);
-      // The add tile is one cell.
-      expect(document.querySelector<HTMLElement>(".board-add")!.style.gridColumn).toBe("");
+      // Pins from before free placement are drawn where the packed Board drew them, and those
+      // places are sent to be kept (once).
+      expect(spans()).toEqual(["1 / span 4/1 / span 2", "5 / span 2/1 / span 1", "7 / span 1/1 / span 2", "5 / span 1/2 / span 1"]);
+      expect(sent.filter((m) => m.type === "arrangePins")).toEqual([{ type: "arrangePins", places: [
+        { id: "P1", col: 0, row: 0 }, { id: "P2", col: 4, row: 0 }, { id: "P3", col: 6, row: 0 }, { id: "P4", col: 4, row: 1 },
+      ] }]);
+      // The add tile is one cell, after the last tile.
+      const add = document.querySelector<HTMLElement>(".board-add")!;
+      expect([add.style.gridColumn, add.style.gridRow]).toEqual(["6", "2"]);
+      // Kept places are drawn as they are, gaps and all, and nothing is sent again.
+      const placed = [pin({ size: "4x2", place: { col: 3, row: 1 } }), pin({ id: "P2", size: "2x1", place: { col: 0, row: 4 } }), pins[2], pins[3]];
+      area.update(state({ board: true, pins: placed }));
+      expect(spans().slice(0, 2)).toEqual(["4 / span 4/2 / span 2", "1 / span 2/5 / span 1"]);
+      expect(sent.filter((m) => m.type === "arrangePins")).toHaveLength(1);
       // A narrow Board has fewer columns; a card wider than that spans them all, never more.
       width = 330;
-      area.update(state({ board: true, pins }));
+      area.update(state({ board: true, pins: placed }));
       expect(grid().style.getPropertyValue("--board-cols")).toBe("2");
       expect(grid().style.getPropertyValue("--board-cell")).toBe("158px");
-      expect(spans()[0]).toBe("span 2/span 2");
+      // A kept place past its edge is drawn moved left (and is not changed).
+      expect(spans()[0]).toBe("1 / span 2/2 / span 2");
+      area.update(state({ board: true, pins }));
+      expect(spans()[0]).toBe("1 / span 2/1 / span 2");
     } finally {
       style.remove();
     }
@@ -568,25 +585,25 @@ describe("the Board", () => {
     expect(document.body.classList.contains("pin-resizing")).toBe(true);
     // Two cells wider and one taller: 4×3, the tile and its component follow at once.
     window.dispatchEvent(pointer("pointermove", 2 * 164, 164));
-    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["span 4", "span 3"]);
+    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["1 / span 4", "1 / span 3"]);
     expect(card.querySelector(".board-size")?.textContent).toBe("4×3");
     expect(told).toEqual([{ ccbSize: { w: 4, h: 3, name: "xlarge" } }]);
     // Past 4×4 it stops there; smaller than a cell, 1×1.
     window.dispatchEvent(pointer("pointermove", 2000, 2000));
-    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["span 4", "span 4"]);
+    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["1 / span 4", "1 / span 4"]);
     window.dispatchEvent(pointer("pointermove", -2000, -2000));
-    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["span 1", "span 1"]);
+    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["1 / span 1", "1 / span 1"]);
     // Halfway into a cell snaps to the nearer.
     window.dispatchEvent(pointer("pointermove", 164 + 90, 60));
-    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["span 4", "span 2"]);
+    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["1 / span 4", "1 / span 2"]);
     expect(sent).toEqual([]);
     window.dispatchEvent(pointer("pointerup", 164 + 90, 60));
-    expect(sent).toEqual([{ type: "resizePin", id: "P1", size: "4x2" }]);
+    expect(sent).toEqual([{ type: "arrangePins", places: [{ id: "P1", col: 0, row: 0, size: "4x2" }] }]);
     expect(card.classList.contains("resizing")).toBe(false);
     expect(document.body.classList.contains("pin-resizing")).toBe(false);
     // Kept at that size until Swift says so, then it is the card's size, same frame.
-    expect(card.style.gridColumn).toBe("span 4");
-    area.update(state({ board: true, pins: [pin({ size: "4x2" })] }));
+    expect(card.style.gridColumn).toBe("1 / span 4");
+    area.update(state({ board: true, pins: [pin({ size: "4x2", place: { col: 0, row: 0 } })] }));
     expect(document.querySelector(".board-card")).toBe(card);
     expect(card.querySelector(".component-frame")).toBe(frame);
     expect(card.dataset.preview).toBeUndefined();
@@ -597,121 +614,135 @@ describe("the Board", () => {
     window.dispatchEvent(pointer("pointermove", 20, 20));
     window.dispatchEvent(pointer("pointerup", 20, 20));
     expect(sent).toEqual([]);
-    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["span 4", "span 2"]);
+    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["1 / span 4", "1 / span 2"]);
   });
 
-  it("a tile is moved by dragging it with the mouse, though its component's frame covers it", () => {
+  /** Frames run only when flushed, so a test sees what one frame does. */
+  function frames() {
+    const queue: FrameRequestCallback[] = [];
+    const raf = window.requestAnimationFrame;
+    const caf = window.cancelAnimationFrame;
+    window.requestAnimationFrame = (paint) => queue.push(paint);
+    window.cancelAnimationFrame = (n) => { if (queue[n - 1]) queue[n - 1] = () => {}; };
+    return {
+      pending: () => queue.filter(Boolean).length,
+      flush: () => { const now = queue.splice(0); now.forEach((paint) => paint(0)); },
+      restore: () => { window.requestAnimationFrame = raf; window.cancelAnimationFrame = caf; },
+    };
+  }
+
+  it("a tile is dropped on any free cells, leaving gaps; it follows the pointer once a frame and a ghost shows its cells", () => {
     const area = setUp();
-    const pins = [pin({ id: "P1", size: "2x2" }), pin({ id: "P2", size: "1x1" }), pin({ id: "P3", size: "2x1" })];
+    const pins = [pin({ id: "P1", size: "2x2", place: { col: 0, row: 0 } }), pin({ id: "P2", size: "1x1", place: { col: 2, row: 0 } }), pin({ id: "P3", size: "2x1", place: { col: 0, row: 2 } })];
     area.update(state({ board: true, pins }));
     sent.length = 0;
     const cards = () => [...document.querySelectorAll<HTMLElement>(".board-card")];
     const [first, second, third] = cards();
-    const frames = first.querySelectorAll("iframe.component-frame");
-    // Where each tile is on screen: three in a row, 200px apart (jsdom lays nothing out).
-    const place = (card: HTMLElement, left: number) => {
-      card.getBoundingClientRect = () => ({ left, top: 0, right: left + 150, bottom: 150, width: 150, height: 150, x: left, y: 0, toJSON() {} }) as DOMRect;
-    };
-    place(first, 0); place(second, 200); place(third, 400);
-    const pointer = (type: string, x: number, y: number) => new PointerEvent(type, { clientX: x, clientY: y, button: 0, bubbles: true });
-    // The grip on its tools and a grab bar along its top edge are drag handles of its own, in the
-    // page (not HTML drag and drop, whose drops land in the frames that cover the tiles).
-    const bar = first.querySelector<HTMLElement>(".board-move")!;
-    expect(bar).not.toBeNull();
-    expect(first.querySelector<HTMLElement>(".board-grip")!.draggable).toBe(false);
-    bar.dispatchEvent(pointer("pointerdown", 75, 5));
-    expect(document.body.classList.contains("pin-resizing")).toBe(true);
-    // A small wobble is a click, not a move.
-    window.dispatchEvent(pointer("pointermove", 77, 6));
-    expect(first.classList.contains("moving")).toBe(false);
-    // It follows the pointer…
-    window.dispatchEvent(pointer("pointermove", 175, 45));
-    expect(first.classList.contains("moving")).toBe(true);
-    expect(first.style.transform).toBe("translate(100px, 40px)");
-    // …the others staying put, a line showing where it will go (past P3's middle: after it)…
-    window.dispatchEvent(pointer("pointermove", 480, 45));
-    expect(cards().map((c) => c.dataset.id)).toEqual(["P1", "P2", "P3"]);
-    expect(document.querySelector(".board-drop-line")).not.toBeNull();
-    expect(sent).toEqual([]);
-    // …and letting go puts it there.
-    window.dispatchEvent(pointer("pointerup", 480, 45));
-    expect(cards().map((c) => c.dataset.id)).toEqual(["P2", "P3", "P1"]);
-    expect(sent).toEqual([{ type: "movePin", id: "P1", to: 2 }]);
-    expect(first.classList.contains("moving")).toBe(false);
-    expect(first.style.transform).toBe("");
-    expect(document.body.classList.contains("pin-resizing")).toBe(false);
-    // Swift agrees: the same tiles, same frames, not loaded again.
-    area.update(state({ board: true, pins: [pins[1], pins[2], pins[0]] }));
-    expect(cards()).toEqual([second, third, first]);
-    expect(first.querySelectorAll("iframe.component-frame")[0]).toBe(frames[0]);
-    // Dragged by the grip and let go where it began: nothing asked.
-    sent.length = 0;
-    place(second, 0); place(third, 200); place(first, 400);
-    first.querySelector<HTMLElement>(".board-grip")!.dispatchEvent(pointer("pointerdown", 410, 10));
-    window.dispatchEvent(pointer("pointermove", 480, 60));
-    window.dispatchEvent(pointer("pointerup", 480, 60));
-    expect(sent).toEqual([]);
-    expect(cards().map((c) => c.dataset.id)).toEqual(["P2", "P3", "P1"]);
+    const frame = first.querySelector("iframe.component-frame");
+    const cells = () => cards().map((c) => `${c.style.gridColumn}/${c.style.gridRow}`);
+    expect(cells()).toEqual(["1 / span 2/1 / span 2", "3 / span 1/1 / span 1", "1 / span 2/3 / span 1"]);
+    const clock = frames();
+    try {
+      const pointer = (type: string, x: number, y: number) => new PointerEvent(type, { clientX: x, clientY: y, button: 0, bubbles: true });
+      // The grip on its tools and a grab bar along its top edge are drag handles of its own, in
+      // the page (not HTML drag and drop, whose drops land in the frames that cover the tiles).
+      const bar = first.querySelector<HTMLElement>(".board-move")!;
+      expect(first.querySelector<HTMLElement>(".board-grip")!.draggable).toBe(false);
+      bar.dispatchEvent(pointer("pointerdown", 75, 5));
+      expect(document.body.classList.contains("pin-resizing")).toBe(true);
+      // A small wobble is a click, not a move.
+      window.dispatchEvent(pointer("pointermove", 77, 6));
+      expect(first.classList.contains("moving")).toBe(false);
+      // Many pointer moves in one frame are drawn once, at that frame, by its transform alone.
+      window.dispatchEvent(pointer("pointermove", 200, 100));
+      window.dispatchEvent(pointer("pointermove", 300, 150));
+      window.dispatchEvent(pointer("pointermove", 75 + 338, 5 + 184));
+      expect(first.classList.contains("moving")).toBe(true);
+      expect(clock.pending()).toBe(1);
+      expect(first.style.transform).toBe("");
+      clock.flush();
+      expect(first.style.transform).toBe("translate3d(338px, 184px, 0)");
+      // Two cells right, one down (cells of 150px and 14px gaps until measured): free cells.
+      const ghost = document.querySelector<HTMLElement>(".board-grid > .board-ghost")!;
+      expect(ghost.dataset.mode).toBe("free");
+      expect(ghost.style.transform).toBe("translate3d(328px, 164px, 0)");
+      expect([ghost.style.width, ghost.style.height]).toEqual(["314px", "314px"]);
+      // Nothing else is laid out again while it moves, and nothing is asked yet.
+      expect(cells()).toEqual(["1 / span 2/1 / span 2", "3 / span 1/1 / span 1", "1 / span 2/3 / span 1"]);
+      expect(sent).toEqual([]);
+      // Let go: it is at column 3, row 2, its old cells left empty; the others did not move.
+      window.dispatchEvent(pointer("pointerup", 75 + 338, 5 + 184));
+      expect(sent).toEqual([{ type: "arrangePins", places: [{ id: "P1", col: 2, row: 1 }] }]);
+      expect(cells()).toEqual(["3 / span 2/2 / span 2", "3 / span 1/1 / span 1", "1 / span 2/3 / span 1"]);
+      expect(document.querySelector(".board-ghost")).toBeNull();
+      expect(first.classList.contains("moving")).toBe(false);
+      expect(document.body.classList.contains("pin-resizing")).toBe(false);
+      // The cards stayed in the page as they were: same order, same frame.
+      expect(cards()).toEqual([first, second, third]);
+      expect(first.querySelector("iframe.component-frame")).toBe(frame);
+      // It glides into its cells from under the pointer, then is there.
+      expect(first.style.transform).toBe("translate3d(10px, 20px, 0)");
+      clock.flush();
+      expect(first.style.transform).toBe("");
+      // Swift agrees: the same tiles, same frames, not loaded again.
+      area.update(state({ board: true, pins: [{ ...pins[0], place: { col: 2, row: 1 } }, pins[1], pins[2]] }));
+      expect(cards()).toEqual([first, second, third]);
+      expect(first.querySelector("iframe.component-frame")).toBe(frame);
+      expect(cells()[0]).toBe("3 / span 2/2 / span 2");
+      // Dragged by the grip and let go where it began: nothing asked.
+      sent.length = 0;
+      first.querySelector<HTMLElement>(".board-grip")!.dispatchEvent(pointer("pointerdown", 410, 10));
+      window.dispatchEvent(pointer("pointermove", 440, 40));
+      clock.flush();
+      expect(document.querySelector<HTMLElement>(".board-ghost")!.dataset.mode).toBe("home");
+      window.dispatchEvent(pointer("pointerup", 440, 40));
+      expect(sent).toEqual([]);
+      expect(cells()[0]).toBe("3 / span 2/2 / span 2");
+    } finally {
+      clock.restore();
+    }
   });
 
-  it("a tile dropped on a gap or another tile's left half goes before it, shown by a line while dragging", () => {
+  it("a tile dropped on another swaps with it when that one fits where it was, else pushes what it covers down", () => {
     const area = setUp();
-    const pins = [pin({ id: "A", size: "1x1" }), pin({ id: "B", size: "1x1" }), pin({ id: "C", size: "1x1" })];
+    const pins = [pin({ id: "A", size: "1x1", place: { col: 0, row: 0 } }), pin({ id: "B", size: "1x1", place: { col: 1, row: 0 } }), pin({ id: "C", size: "2x1", place: { col: 0, row: 1 } })];
     area.update(state({ board: true, pins }));
-    const cards = () => [...document.querySelectorAll<HTMLElement>(".board-card")];
-    const ids = () => cards().map((c) => c.dataset.id);
-    // Three tiles in a row, 150px wide with a 14px gap (jsdom lays nothing out).
-    const place = (card: HTMLElement, left: number) => {
-      card.getBoundingClientRect = () => ({ left, top: 0, right: left + 150, bottom: 150, width: 150, height: 150, x: left, y: 0, toJSON() {} }) as DOMRect;
-    };
-    const lay = () => cards().forEach((card, i) => place(card, i * 164));
-    lay();
+    const card = (id: string) => document.querySelector<HTMLElement>(`.board-card[data-id="${id}"]`)!;
+    const ghost = () => document.querySelector<HTMLElement>(".board-ghost");
     const pointer = (type: string, x: number, y: number) => new PointerEvent(type, { clientX: x, clientY: y, button: 0, bubbles: true });
-    const drag = (id: string, path: [number, number][]) => {
-      const card = cards().find((c) => c.dataset.id === id)!;
-      const r = card.getBoundingClientRect();
-      card.querySelector<HTMLElement>(".board-move")!.dispatchEvent(pointer("pointerdown", r.left + 75, 5));
-      for (const [x, y] of path) window.dispatchEvent(pointer("pointermove", x, y));
-    };
-    const line = () => document.querySelector<HTMLElement>(".board-drop-line");
-
-    // C over A, then back over B's left half (overshooting first must not matter).
-    sent.length = 0;
-    drag("C", [[300, 60], [100, 60], [30, 60], [100, 60], [180, 60]]);
-    // The others stay put while dragging; a line shows where it will go: between A and B.
-    expect(ids()).toEqual(["A", "B", "C"]);
-    expect(line()).not.toBeNull();
-    expect(line()!.style.left).toBe(`${150 + 7 - 2}px`);
-    window.dispatchEvent(pointer("pointerup", 180, 60));
-    expect(sent).toEqual([{ type: "movePin", id: "C", to: 1 }]);
-    expect(ids()).toEqual(["A", "C", "B"]);
-    expect(line()).toBeNull();
-
-    // In the gap between two tiles: between them too.
-    area.update(state({ board: true, pins }));
-    lay();
-    sent.length = 0;
-    drag("C", [[200, 60], [157, 60]]);
-    window.dispatchEvent(pointer("pointerup", 157, 60));
-    expect(sent).toEqual([{ type: "movePin", id: "C", to: 1 }]);
-
-    // A tile's right half: after it.
-    area.update(state({ board: true, pins }));
-    lay();
-    sent.length = 0;
-    drag("A", [[250, 60], [290, 60]]);
-    window.dispatchEvent(pointer("pointerup", 290, 60));
-    expect(sent).toEqual([{ type: "movePin", id: "A", to: 1 }]);
-
-    // The first tile's left half: first.
-    area.update(state({ board: true, pins }));
-    lay();
-    sent.length = 0;
-    drag("C", [[200, 60], [20, 60]]);
-    expect(line()!.style.left).toBe(`${0 - 7 - 2}px`);
-    window.dispatchEvent(pointer("pointerup", 20, 60));
-    expect(sent).toEqual([{ type: "movePin", id: "C", to: 0 }]);
-    expect(ids()).toEqual(["C", "A", "B"]);
+    const clock = frames();
+    const move = (x: number, y: number) => { window.dispatchEvent(pointer("pointermove", x, y)); clock.flush(); };
+    try {
+      // A onto B (one tile, same size): they swap; B is outlined and the ghost says so.
+      sent.length = 0;
+      card("A").querySelector<HTMLElement>(".board-move")!.dispatchEvent(pointer("pointerdown", 75, 5));
+      move(75 + 164, 5);
+      expect(ghost()!.dataset.mode).toBe("swap");
+      expect(ghost()!.textContent).toBe("Swap");
+      expect(card("B").classList.contains("drop-hit")).toBe(true);
+      expect(card("C").classList.contains("drop-hit")).toBe(false);
+      window.dispatchEvent(pointer("pointerup", 75 + 164, 5));
+      expect(sent).toEqual([{ type: "arrangePins", places: [{ id: "A", col: 1, row: 0 }, { id: "B", col: 0, row: 0 }] }]);
+      expect(card("B").classList.contains("drop-hit")).toBe(false);
+      // C (2×1) onto the row of both: they are pushed straight down, nothing moves sideways.
+      sent.length = 0;
+      card("C").querySelector<HTMLElement>(".board-move")!.dispatchEvent(pointer("pointerdown", 150, 170));
+      move(150, 170 - 164);
+      expect(ghost()!.dataset.mode).toBe("push");
+      expect(ghost()!.textContent).toBe("Push down");
+      expect(["A", "B"].every((id) => card(id).classList.contains("drop-hit"))).toBe(true);
+      window.dispatchEvent(pointer("pointerup", 150, 170 - 164));
+      expect(sent).toEqual([{ type: "arrangePins", places: [{ id: "A", col: 1, row: 1 }, { id: "B", col: 0, row: 1 }, { id: "C", col: 0, row: 0 }] }]);
+      expect([card("A"), card("B"), card("C")].map((c) => c.style.gridRow)).toEqual(["2 / span 1", "2 / span 1", "1 / span 1"]);
+      // Dragged far past the Board's edge, it stays inside it, just below the others at most.
+      sent.length = 0;
+      card("C").querySelector<HTMLElement>(".board-move")!.dispatchEvent(pointer("pointerdown", 150, 5));
+      move(5000, 5000);
+      window.dispatchEvent(pointer("pointerup", 5000, 5000));
+      expect(sent).toEqual([{ type: "arrangePins", places: [{ id: "C", col: 2, row: 2 }] }]);
+    } finally {
+      clock.restore();
+    }
   });
 
   it("a tile's right and bottom edges resize it too, one way each", () => {
@@ -725,16 +756,16 @@ describe("the Board", () => {
     expect([right, bottom].every(Boolean)).toBe(true);
     right.dispatchEvent(pointer("pointerdown", 0, 0));
     window.dispatchEvent(pointer("pointermove", 164, 400));
-    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["span 3", "span 2"]);
+    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["1 / span 3", "1 / span 2"]);
     window.dispatchEvent(pointer("pointerup", 164, 400));
-    expect(sent).toEqual([{ type: "resizePin", id: "P1", size: "3x2" }]);
+    expect(sent).toEqual([{ type: "arrangePins", places: [{ id: "P1", col: 0, row: 0, size: "3x2" }] }]);
     area.update(state({ board: true, pins: [pin({ size: "3x2" })] }));
     sent.length = 0;
     bottom.dispatchEvent(pointer("pointerdown", 0, 0));
     window.dispatchEvent(pointer("pointermove", -400, -164));
-    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["span 3", "span 1"]);
+    expect([card.style.gridColumn, card.style.gridRow]).toEqual(["1 / span 3", "1 / span 1"]);
     window.dispatchEvent(pointer("pointerup", -400, -164));
-    expect(sent).toEqual([{ type: "resizePin", id: "P1", size: "3x1" }]);
+    expect(sent).toEqual([{ type: "arrangePins", places: [{ id: "P1", col: 0, row: 0, size: "3x1" }] }]);
   });
 
   it("a component in the chat is drawn at the widest size it has, 2×2 when it names none", () => {

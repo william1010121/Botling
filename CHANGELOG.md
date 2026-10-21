@@ -8,6 +8,25 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Board tiles go anywhere on the grid, and dragging is smooth.** A tile used to be put before or
+  after another and the Board then packed everything toward the left and the top, so tiles
+  jumped around and gaps closed by themselves; a drag also measured every other tile on every
+  pointer event and a drop moved the tile in the page, loading its component again. Now each tile
+  keeps its own cell (`place` in pins.json: its top-left column and row) and a drop puts it on any
+  cells it fits, gaps and all. While dragging, the tile follows the pointer by its transform once
+  a frame (nothing else is laid out, no component is drawn again, nothing is measured), and a
+  ghost snapped to the grid shows where it lands: blue on free cells, amber where it would swap or
+  push, with those tiles outlined; near the Board's edge it scrolls. The rule, one for every drop:
+  on free cells it goes there; on cells of exactly one tile that fits in the cells it left, the two
+  swap; otherwise it goes there and what it overlaps is pushed straight down (and what those then
+  overlap). Resizing a tile (its corner and edges, or its size menu) keeps its top-left cell and
+  pushes what it now overlaps down the same way. Nothing ever moves up or sideways. A Board saved
+  before keeps exactly the look it had: tiles without a place get the cells the packed Board gave
+  them, and those are saved the first time the Board is shown. The Add tile follows the last tile
+  instead of filling a gap. In a 3 s drag over a 12-tile Board, time in the drag handler per pointer
+  event fell from about 0.1-0.4 ms to 0.015-0.06 ms and style recalculations from about 760 to
+  about 230 (one per frame instead of one per event).
+
 - **ClaudeCodeBot speaks your language (for 1.14.0).** Settings → General → Language picks
   English, 繁體中文, 简体中文, 日本語 or 한국어; "System default" (the default) follows the Mac's
   preferred languages and falls back to English. The app's own words change at once, without a

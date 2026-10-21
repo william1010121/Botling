@@ -243,6 +243,8 @@ export const ko: Dictionary = {
   "pins.dragToMoveLower": "드래그하여 이동",
   "pins.sizeLabel": "크기: {size}",
   "pins.dragToMove": "드래그하여 이동",
+  "pins.dropSwap": "서로 바꾸기",
+  "pins.dropPush": "아래로 밀기",
   // spec.ts: the component spec panel
   "spec.changing": "{name} 변경 중 → {v}",
   "spec.building": "{name} 만드는 중",

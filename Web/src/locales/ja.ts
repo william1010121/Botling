@@ -243,6 +243,8 @@ export const ja: Dictionary = {
   "pins.dragToMoveLower": "ドラッグで移動",
   "pins.sizeLabel": "サイズ：{size}",
   "pins.dragToMove": "ドラッグで移動",
+  "pins.dropSwap": "入れ替え",
+  "pins.dropPush": "下へ押し出す",
   // spec.ts: the component spec panel
   "spec.changing": "{name} を変更中 → {v}",
   "spec.building": "{name} を作成中",

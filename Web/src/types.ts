@@ -225,6 +225,8 @@ export interface PinView {
   /** What its chip shows beside its icon (what the component set, else `headline` cut short). */
   chip?: ChipStatus;
   size: PinSize;
+  /** Its Board card's top-left cell (columns and rows from 0); absent: not laid out yet, the Board places it and sends that back. */
+  place?: { col: number; row: number } | null;
   /** How tall it opens above the input box, as the user dragged its panel; absent: its content's height. */
   panelHeight?: number | null;
   refresh: PinRefresh;
@@ -390,6 +392,7 @@ export type Action =
   | { type: "pinShown"; ids: string[] | null }
   | { type: "movePin"; id: string; to: number }
   | { type: "resizePin"; id: string; size: PinSize }
+  | { type: "arrangePins"; places: { id: string; col: number; row: number; size?: PinSize }[] }
   | { type: "setPinHeight"; id: string; height: number | null }
   | { type: "floatPin"; id: string; floating: boolean }
   | { type: "setPinGlobal"; id: string; global: boolean }
