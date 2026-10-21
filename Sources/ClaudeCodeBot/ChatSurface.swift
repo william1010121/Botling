@@ -302,7 +302,10 @@ struct ChatSurface: NSViewRepresentable {
                 let refresh = (body["refresh"] as? String).flatMap(PinnedComponent.Refresh.init(rawValue:)) ?? .shown
                 let minutes = body["minutes"] as? Int ?? PinnedComponent.defaultMinutes
                 let seconds = body["seconds"] as? Int
-                if let messageID = id("messageID"), let index = body["index"] as? Int {
+                if let specID = id("spec") {
+                    // The component made from a reply, drawn under it.
+                    workspace.pin(spec: specID, in: bot, id: pinID, refresh: refresh, minutes: minutes, seconds: seconds)
+                } else if let messageID = id("messageID"), let index = body["index"] as? Int {
                     workspace.pin(messageID: messageID, index: index, in: bot, id: pinID, refresh: refresh, minutes: minutes, seconds: seconds)
                 } else if let name = body["name"] as? String {
                     workspace.pin(named: name, in: bot, id: pinID, refresh: refresh, minutes: minutes, seconds: seconds)

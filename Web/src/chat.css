@@ -974,3 +974,11 @@ img.media { cursor: zoom-in; }
 .lightbox.actual .lightbox-stage { overflow: auto; align-items: flex-start; justify-content: flex-start; }
 .lightbox.actual .lightbox-image { max-width: none; max-height: none; margin: auto; cursor: zoom-out; }
 .lightbox-caption { padding: 0 24px 16px; text-align: center; color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+
+/* A bot-filled pin while Maintainer gives its component a command (making it live on the Board). */
+.pin-live-note {
+  position: absolute; left: 10px; bottom: 8px; z-index: 3; pointer-events: none;
+  font-size: 11px; line-height: 16px; color: #A0A0A8; background: rgba(27, 27, 31, 0.86);
+  padding: 2px 8px; border-radius: 8px;
+}
+.spec-built-head > .pin-tool, .spec-built-head > .pin-badge { margin-left: 2px; }

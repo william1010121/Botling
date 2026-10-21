@@ -273,7 +273,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let executable = locator.locate() else { throw AppError.claudeNotFound }
             var launch = launch
             // Every bot gets the stop guard: no ending a turn on a promise nothing will keep.
-            if let app = Bundle.main.executablePath {
+            // A fork asked for a component brief only reads and answers once.
+            if !launch.forkSession, let app = Bundle.main.executablePath {
                 launch.stopHookCommand = StopGuard.command(app: app, claude: executable.path)
             }
             return try ClaudeAgentProcess.launcher(executable: executable)(launch)

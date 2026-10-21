@@ -1,5 +1,5 @@
 import { post } from "./bridge";
-import { pinBar } from "./pins";
+import { pinBar, specPinButton } from "./pins";
 import { answerAction, answerImages, choicesData, commandCard, componentElement, detailTarget, fallbackChoices } from "./components";
 import type { ComponentAnswer } from "./components";
 import { mediaHTML, renderMarkdown } from "./markdown";
@@ -257,6 +257,8 @@ function builtSpec(spec: SpecChipView, components: Record<string, ComponentInfo>
   label.innerHTML = spec.status === "building" ? `<span class="spinner" aria-hidden="true"></span><span></span>` : `${cubeIcon}<span></span>`;
   label.querySelector("span:not(.spinner)")!.textContent = spec.status === "building" ? `Building a new version · ${name}` : `Component · ${name}`;
   head.append(label, editSpecButton(spec));
+  // Pinned, a bot-filled one is made live on the Board (Maintainer gives it a command).
+  if (spec.status === "done") head.append(specPinButton(spec));
   box.append(head, card);
   return box;
 }

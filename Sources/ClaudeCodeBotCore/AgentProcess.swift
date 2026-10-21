@@ -98,6 +98,11 @@ public struct AgentLaunch: Equatable, Sendable {
     public var sessionID: UUID
     /// Go on with the session `sessionID` names (`--resume`) instead of starting it.
     public var resume = false
+    /// With `resume`: go on in a copy of that session (`--fork-session`), leaving it as it was.
+    public var forkSession = false
+    /// Keep the session's transcript so it can be resumed; false: `--no-session-persistence`
+    /// (a one-off fork nobody resumes).
+    public var persistSession = true
     public var workingDirectory: URL
     public var systemPrompt: String
     public var tools: [String] = ["Read", "Write", "Edit"]
@@ -160,13 +165,19 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
             "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--verbose",
-            launch.resume ? "--resume" : "--session-id", launch.sessionID.uuidString.lowercased(),
+            launch.resume || launch.forkSession ? "--resume" : "--session-id", launch.sessionID.uuidString.lowercased(),
             "--model", launch.model.rawValue,
             "--permission-mode", launch.autoMode ? "auto" : "acceptEdits",
             // Plugins' skills are used through the Skill tool.
             "--allowedTools", (launch.tools + (launch.pluginDirectories.isEmpty || launch.tools.contains("Skill") ? [] : ["Skill"]) + launch.pluginTools).joined(separator: ","),
             "--append-system-prompt", launch.systemPrompt
         ]
+        if launch.forkSession {
+            arguments.append("--fork-session")
+        }
+        if !launch.persistSession {
+            arguments.append("--no-session-persistence")
+        }
         if launch.asksPermission {
             // Bots ask in the chat with <choices>; AskUserQuestion would arrive as a permission
             // request that cannot carry the user's answer.

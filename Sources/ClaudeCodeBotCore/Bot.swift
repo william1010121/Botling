@@ -760,6 +760,7 @@ public final class Bot: ObservableObject, Identifiable {
         let parsed = ReplyParser.parseAll(text)
         var message = ChatMessage(role: isError ? .error : .bot, text: parsed.body, choices: parsed.choices)
         if !parsed.displays.isEmpty { message.displays = parsed.displays }
+        message.session = sessionID
         message.steps = trace.takeSteps()
         message.backgroundTasks = trace.takeTasks()
         if append(message) { unreadCount += 1 }

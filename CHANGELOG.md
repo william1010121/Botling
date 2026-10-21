@@ -8,6 +8,19 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **"Make into component" starts with a brief from the bot that wrote the reply.** A read-only
+  copy of that bot's session (`claude --resume … --fork-session`, its own model, out of the chat;
+  the bot is not woken or held up) tells Maintainer what the component is for, your message that
+  led to the reply, each data field and whether a command can get it (the exact command) or only
+  a bot can (explanations, advice). Without a brief (no session left, or no answer within two
+  minutes) Maintainer still gets your message with the reply.
+- **Components list their fields in two groups.** about.md has "From command" and "Optional (bot
+  only)" fields, the template draws without the optional ones, and a `Board command:` line
+  suggests how a command gets the rest; in the chat the bot still fills it.
+- **A bot-filled component pinned to the Board becomes live.** Pinning it (also from under the
+  reply it was made from) has Maintainer add a Command from its Board command, so the same
+  component refreshes on the Board (↻ or its Refresh interval, once you allow the command); until
+  then the pin shows the bot's data with "Making it live…".
 - **Components keep their own state.** A component can call `ccb.save(data)` to keep new data
   for itself, so a todo list's ticks and new items stay: in the chat message (chat.json) or on
   its pin (pins.json; a pin keeps its own copy), also after a restart. Saving does not answer the

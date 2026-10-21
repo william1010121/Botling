@@ -194,6 +194,8 @@ public struct ChatPayload: Encodable, Equatable {
         var seconds: Int? = nil
         /// The component as drawn, with its command's run as for a card in the chat.
         var display: Display
+        /// Maintainer is giving it a command so it refreshes here ("making it live…").
+        var makingLive: Bool? = nil
     }
 
     /// A component the picker offers: one this bot drew, or one with a Command.
@@ -539,7 +541,8 @@ public struct ChatPayload: Encodable, Equatable {
         default: Pins.headline(shown.status == nil ? pin.data : shown.data)
         }
         let chip = Pins.chip(status: pin.status, headline: headline, command: shown.status.flatMap(ComponentCommands.Status.init(rawValue:)), hasData: pin.data != "null")
-        return Pin(id: pin.id.uuidString, name: pin.name, headline: headline, chip: chip, size: pin.size.rawValue, panelHeight: pin.panelHeight, refresh: pin.refresh.rawValue, minutes: pin.minutes, seconds: pin.seconds, display: shown)
+        return Pin(id: pin.id.uuidString, name: pin.name, headline: headline, chip: chip, size: pin.size.rawValue, panelHeight: pin.panelHeight, refresh: pin.refresh.rawValue, minutes: pin.minutes, seconds: pin.seconds, display: shown,
+                   makingLive: pin.makingLive && pin.command == nil ? true : nil)
     }
 
     /// The picker's list: components this bot drew (newest use first), then its own others (the

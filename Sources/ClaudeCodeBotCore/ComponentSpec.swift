@@ -161,6 +161,9 @@ public struct ComponentSpec: Codable, Equatable, Identifiable, Sendable {
     public var filled: String?
     /// Why it did not draw it (it answered without the component, or could not answer).
     public var fillError: String?
+    /// What a fork of the bot that wrote the reply told Maintainer about it (`ComponentBrief`):
+    /// its purpose, the user's message, each field and whether a command can get it.
+    public var brief: String?
     public var createdAt: Date
 
     public init(id: UUID = UUID(), messageID: UUID? = nil, name: String, about: String = "", folder: String, bots: [String], createdAt: Date = Date()) {
@@ -636,6 +639,23 @@ public enum ComponentSpecs {
         return text
     }
 
+    /// The two groups of data fields about.md lists, and the suggested Board command: the
+    /// component is still filled by a bot in the chat; the Board command is only made its Command
+    /// once the user pins it to the Board (`Workspace.makeLive`).
+    static func fieldGroups(live: Bool) -> String {
+        var text = "In about.md list the data fields in two groups: \"From command\" (fields a CLI command can get, run in the bot's folder) and \"Optional (bot only)\" (what only a bot can write: explanations, advice, a next step; there only when a bot fills it). The template must draw well when every optional field is missing."
+        if !live {
+            text += " When there are From command fields, add a line \"Board command: <command>\" to about.md suggesting how to get them (not a \"Command:\" line): it is only a suggestion, used when the user pins the component to the Board, and the component is still filled by a bot in the chat with <show>."
+        }
+        return text
+    }
+
+    /// The user's own message that led to the reply, as Maintainer reads it.
+    static func askedBlock(_ asked: String?) -> String? {
+        guard let asked = asked?.trimmingCharacters(in: .whitespacesAndNewlines), !asked.isEmpty else { return nil }
+        return "The user's own message that led to the reply (verbatim):\n" + clip(asked, 4_000)
+    }
+
     /// The first ask: fill in what can be inferred, ask only what cannot.
     static func draftRequest(_ spec: ComponentSpec, reply: String, pages: [ReplyPage] = [], ran: String? = nil, from bot: String) -> String {
         """
@@ -655,15 +675,20 @@ public enum ComponentSpecs {
     /// page it links follow as context. Maintainer builds only the component (template.html, and
     /// about.md with its data format), no data sample: once it is in the library the app asks the
     /// bot that wrote the reply to draw it there with that reply's data (`fillRequest`).
-    static func firstBuildRequest(_ spec: ComponentSpec, reply: String, pages: [ReplyPage] = [], ran: String? = nil, from bot: String) -> String {
+    static func firstBuildRequest(_ spec: ComponentSpec, reply: String, pages: [ReplyPage] = [], ran: String? = nil, asked: String? = nil, brief: String? = nil, from bot: String) -> String {
         let live = spec.command != nil
+        var context = ""
+        if let asked = askedBlock(asked) { context += asked + "\n" }
+        if let brief = brief?.trimmingCharacters(in: .whitespacesAndNewlines), !brief.isEmpty {
+            context += "\(bot)'s brief for you (written by a copy of the session that wrote the reply, so it knows what it did and which commands it ran):\n" + brief + "\n"
+        }
         var text = """
         (Component spec \(spec.id.uuidString)) Build the first version now. \(purposeLine(spec, from: bot))
         The user wants it built right away from \(bot)'s reply, given here as context. \(replyBlock(reply, pages: pages))
-        The app's first draft:
+        \(context)The app's first draft:
         \(summary(of: spec))
         \(dataNote(spec, ran: ran, from: bot))
-        Infer the rest from the reply and the library, and ask nothing: wherever you are unsure, use your best guess (the answer you would have suggested). If a component in the library already does this, reuse it: build nothing and set "similar" to it and "reuse" to true. Otherwise have the component editor write template.html and about.md under a name not already in the library.
+        Infer the rest from the reply, the brief and the library, and ask nothing: wherever you are unsure, use your best guess (the answer you would have suggested). If a component in the library already does this, reuse it: build nothing and set "similar" to it and "reuse" to true. Otherwise have the component editor write template.html and about.md under a name not already in the library. \(fieldGroups(live: live))
         """
         text += " Never run the command yourself. Once it is in the library the app adds it to " + spec.bots.joined(separator: ", ")
         text += live ? " and shows it under the reply; do not add it to lists yourself." : ", then asks \(bot), who wrote the reply, to draw it under the reply with all of that reply's data, following about.md; do not add it to lists yourself."
@@ -690,7 +715,19 @@ public enum ComponentSpecs {
         } else {
             text += "; about.md says what JSON a bot gives it with <show>: once it is built the app asks the bot that wrote the reply to draw it there with that reply's data"
         }
-        text += ". The data fields above are what the template reads. Once it is in the library the app adds it to " + spec.bots.joined(separator: ", ") + "; do not add it to lists yourself."
+        text += ". The data fields above are what the template reads. " + fieldGroups(live: spec.command != nil)
+        text += " Once it is in the library the app adds it to " + spec.bots.joined(separator: ", ") + "; do not add it to lists yourself."
+        return text
+    }
+
+    /// The user pinned a bot-filled component to the Board: Maintainer gives it a Command from
+    /// its suggested Board command, so the same component refreshes there.
+    static func boardCommandRequest(component name: String, suggested: String, folder: String, bot: String, brief: String? = nil) -> String {
+        var text = "(Component \(name)) Make it live on the Board: the user pinned \(name) to \(bot)'s Board. A bot fills it today; its about.md suggests \"Board command: \(suggested)\" for its From command fields."
+        text += " Have the component editor add a \"Command: …\" line to about.md: a command (or a small script in the component's folder, run by its full path) that prints the same JSON the template reads, with the From command fields (the Optional (bot only) ones left out: the template already draws without them). It runs in \(folder)."
+        text += " Keep the Board command line and the data format as they are: bots still fill it in chats with <show>, and their data wins there. Add a \"Refresh: every …\" line only if the data changes within seconds. It stays the same component (no separate Board version)."
+        text += " Never run the command yourself: the user allows it on the pinned card. Once the Command is in the library the app switches the pin to it."
+        if let brief, !brief.isEmpty { text += "\nThe brief it was built from:\n" + clip(brief, 4_000) }
         return text
     }
 

@@ -120,6 +120,10 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
     /// When the component last kept new data itself (`ccb.save`, see `ComponentState`); nil:
     /// `data` is what it was pinned or last refreshed with.
     public var savedAt: Date?
+    /// Filled by a bot (no command) and Maintainer was asked to give its component a Command
+    /// from its about.md's `Board command:`, so it refreshes on the Board; it shows the bot's
+    /// data, with a small note, until that lands.
+    public var makingLive = false
 
     public static let defaultMinutes = 15
     /// A pin refreshed every so often runs at most this often.
@@ -151,7 +155,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         self.seconds = seconds.map { max(Self.minimumSeconds, $0) }
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size, status, panelHeight, savedAt, seconds }
+    private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size, status, panelHeight, savedAt, seconds, makingLive }
 
     // A value this build does not know (a newer refresh mode or size) falls back, so the rest
     // of the file still loads. The old sizes S, M and L become 1×1, 2×2 and 4×2; any WxH up
@@ -175,6 +179,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         savedAt = try? c.decodeIfPresent(Date.self, forKey: .savedAt)
         let seconds: Int? = try? c.decodeIfPresent(Int.self, forKey: .seconds)
         self.seconds = seconds.map { max(Self.minimumSeconds, $0) }
+        makingLive = (try? c.decodeIfPresent(Bool.self, forKey: .makingLive)) ?? false
     }
 
     /// The card key its command's runs go under (`ComponentCommands`), apart from chat cards.
