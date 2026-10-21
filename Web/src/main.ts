@@ -31,7 +31,7 @@ class Chat {
   private readonly composer: Composer;
   /** Pinned components: chips above the input box, and the Board. */
   private readonly pins: PinArea;
-  /** Pins floated in a corner, of any bot, over the chat and the Board. */
+  /** Pins floated in a corner of this chat (and other bots' shown in all bots), over the chat and the Board. */
   private readonly floats: FloatLayer;
   private readonly drawn = new Map<string, { key: string; element: HTMLElement }>();
   /**

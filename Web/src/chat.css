@@ -599,6 +599,15 @@ body.watching #composer-slot { display: none; }
 .pin-head-status[data-tone="warning"] { color: var(--orange-text); background: rgba(247, 194, 127, 0.13); }
 .pin-head-status[data-tone="bad"] { color: var(--error); background: rgba(255, 138, 128, 0.14); }
 .pin-head-tools { margin-left: auto; display: flex; align-items: center; gap: 1px; flex: none; }
+/* A floating card shown in all bots: whose pin it is, a small globe and that bot's name. */
+.float-owner {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 40%; flex: 0 1 auto;
+  padding: 1px 7px 1px 6px; border-radius: 7px; background: rgba(76, 141, 255, 0.14); color: var(--link);
+  font-size: 11px; white-space: nowrap; overflow: hidden;
+}
+.float-owner svg { flex: none; }
+.float-owner span { overflow: hidden; text-overflow: ellipsis; }
+.float-owner + .pin-head-tools { margin-left: 4px; }
 .pin-head-tools .pin-tool { width: 26px; height: 26px; }
 /* The component under the header: as tall as its content (its frame reports its height), the
    body scrolling once the card is at its most. */
@@ -1035,7 +1044,7 @@ img.media { cursor: zoom-in; }
 }
 .spec-built-head > .pin-tool, .spec-built-head > .pin-badge { margin-left: 2px; }
 
-/* Pins floated in a corner (float.ts): small cards over the chat and the Board, of any bot, never
+/* Pins floated in a corner (float.ts): small cards over the chat and the Board, of this bot (or shown in all bots), never
    over the input box (float.ts places them above it). Semi-opaque, so what is under them shows a
    little; folded (or in a narrow window) just their head line: icon, name, status. */
 .float-layer { position: fixed; inset: 0; z-index: 30; pointer-events: none; }

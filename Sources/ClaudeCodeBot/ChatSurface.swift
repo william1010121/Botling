@@ -112,7 +112,7 @@ struct ChatSurface: NSViewRepresentable {
             pins: bot === workspace.codexBot ? nil : workspace.pinContext(for: bot, board: inputs.boards.contains(bot.id)),
             specs: bot !== workspace.codexBot,
             openSpec: workspace.openSpecID,
-            floating: workspace.floatingPinViews(),
+            floating: workspace.floatingPinViews(in: bot),
             avatar: { projectID in
                 if let projectID, let kind = workspace.avatar(for: projectID) {
                     return AvatarImages.dataURL(kind, eyes: .open)
@@ -153,8 +153,8 @@ struct ChatSurface: NSViewRepresentable {
             let inputs = surface.inputs
             let workspace = surface.workspace
             func id(_ key: String) -> UUID? { (body[key] as? String).flatMap(UUID.init(uuidString:)) }
-            // A pin's message goes to the bot that holds it: a floating card shows over any bot's
-            // chat. Another bot's change redraws this chat too.
+            // A pin's message goes to the bot that holds it: a floating card shown in all bots
+            // is another bot's. Another bot's change redraws this chat too.
             func pinBot(_ pinID: UUID?) -> Bot {
                 guard let pinID, let owner = workspace.bot(holdingPin: pinID), owner !== bot else { return bot }
                 workspace.objectWillChange.send()
@@ -348,6 +348,9 @@ struct ChatSurface: NSViewRepresentable {
             case "floatPin":
                 // Float in corner / Stop floating, from its menu (at most two float at once).
                 if let pinID = id("id"), let on = body["floating"] as? Bool { workspace.floatPin(pinID, on, in: pinBot(pinID)) }
+            case "setPinGlobal":
+                // A floating card's "Show in all bots" / "Only in <its bot>".
+                if let pinID = id("id"), let on = body["global"] as? Bool { workspace.setPinGlobal(pinID, on, in: pinBot(pinID)) }
             case "setPinFloat":
                 // A floating card dragged to another corner, resized, or folded to one line.
                 if let pinID = id("id") {

@@ -304,6 +304,7 @@ public final class Workspace: ObservableObject {
         loadGroups()
         setUpCodex()
         dropStalePins()
+        dropStaleGlobalFloats()
         if let editedEditor { askAboutEditedEditor(editedEditor) }
         refreshWaiting()
     }
@@ -837,6 +838,7 @@ public final class Workspace: ObservableObject {
         if selection == id { select(nil) }
         saveProjects()
         dropStalePins()
+        dropStaleGlobalFloats()
         if let plugin = project.plugin {
             removedPluginBots.insert(Self.removalKey(plugin: plugin, name: project.name))
             try? JSONEncoder().encode(removedPluginBots.sorted()).write(to: removedBotsURL, options: .atomic)

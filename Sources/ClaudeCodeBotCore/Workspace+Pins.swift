@@ -15,21 +15,102 @@ extension Workspace {
 
     /// What drawing a chat's pins needs.
     public func pinContext(for bot: Bot, board: Bool = false) -> ChatPayload.PinContext {
-        ChatPayload.PinContext(runs: componentCommands, folder: pinFolder(for: bot), board: board, library: components, floating: floatingPins().count)
+        ChatPayload.PinContext(runs: componentCommands, folder: pinFolder(for: bot), board: board, library: components, floating: floatingPins(in: bot).count)
     }
 
     // MARK: Floating in a corner
 
-    /// The pins floating in a corner of the chat window, of every bot, in the order of the bots
+    /// A chat's id that stays the same across launches (`Bot.id` does not): the main bot's
+    /// fixed id, a project's or bot's, a group's. Nil for a chat that cannot hold pins.
+    public func pinChatID(of bot: Bot) -> UUID? {
+        if bot === mainBot { return Self.mainBotID }
+        if let id = managers.first(where: { $0.value === bot })?.key { return id }
+        return groupChats.first { $0.value === bot }?.key
+    }
+
+    /// The chat `pinChatID(of:)` names, if it is still there.
+    public func pinChat(_ id: UUID) -> Bot? {
+        id == Self.mainBotID ? mainBot : managers[id] ?? groupChats[id]
+    }
+
+    /// Floating pins shown over every bot's chat, in the order they were made so: only those
+    /// whose chat and pin are still there and still float.
+    public var globalFloats: [GlobalFloat] {
+        var seen = Set<UUID>()
+        return (settings.globalFloats ?? []).filter { ref in
+            guard let bot = pinChat(ref.botID), bot.pins.contains(where: { $0.id == ref.pinID && $0.float != nil }) else { return false }
+            return seen.insert(ref.pinID).inserted
+        }
+    }
+
+    /// Whether a floating pin shows in all bots' chats.
+    public func isGlobalFloat(_ id: UUID) -> Bool {
+        globalFloats.contains { $0.pinID == id }
+    }
+
+    /// Forgets global floats whose chat or pin is gone, or that stopped floating.
+    func dropStaleGlobalFloats() {
+        guard let saved = settings.globalFloats, saved != globalFloats else { return }
+        settings.globalFloats = globalFloats.isEmpty ? nil : globalFloats
+        settings.save(to: settingsURL)
+    }
+
+    /// The floating pins of every bot (shown in its chat or in all), in the order of the bots
     /// and their pins.
     public func floatingPins() -> [(bot: Bot, pin: PinnedComponent)] {
         chatsWithPins.flatMap { bot in bot.pins.filter { $0.float != nil }.map { (bot: bot, pin: $0) } }
     }
 
-    /// The floating pins as every chat's page draws them, over whichever bot's chat is shown.
-    public func floatingPinViews() -> [ChatPayload.FloatingPin] {
-        floatingPins().map { entry in
-            ChatPayload.FloatingPin(botID: entry.bot.id.uuidString, botName: entry.bot.name, pin: ChatPayload.pin(view: entry.pin, context: pinContext(for: entry.bot)))
+    /// The floating cards a chat would show with no limit: other bots' shown in all bots (in
+    /// the order they were made so), then its own (global ones among them, in that order too).
+    private func wantedFloats(in chat: Bot) -> (global: [(bot: Bot, pin: PinnedComponent)], own: [PinnedComponent]) {
+        let global = globalFloats.compactMap { ref -> (bot: Bot, pin: PinnedComponent)? in
+            guard let bot = pinChat(ref.botID), let pin = bot.pins.first(where: { $0.id == ref.pinID }) else { return nil }
+            return (bot, pin)
+        }
+        let own = chat.pins.filter { $0.float != nil }
+        return (global, own)
+    }
+
+    /// The floating cards a chat shows, in the order they stack from their corner: those shown
+    /// in all bots first (the same place in every chat), then the chat's own. At most
+    /// `Pins.maxFloating`: the chat's own always show, other bots' fill what room is left.
+    public func floatingPins(in chat: Bot) -> [(bot: Bot, pin: PinnedComponent, global: Bool)] {
+        let (global, own) = wantedFloats(in: chat)
+        let ownIDs = Set(own.map(\.id))
+        var room = max(0, Pins.maxFloating - own.count)
+        var shown: [(bot: Bot, pin: PinnedComponent, global: Bool)] = []
+        for entry in global {
+            if ownIDs.contains(entry.pin.id) {
+                shown.append((entry.bot, entry.pin, true))
+            } else if room > 0 {
+                room -= 1
+                shown.append((entry.bot, entry.pin, true))
+            }
+        }
+        let globalIDs = Set(global.map(\.pin.id))
+        shown += own.filter { !globalIDs.contains($0.id) }.map { (bot: chat, pin: $0, global: false) }
+        return shown
+    }
+
+    /// Why a floating pin of `bot` cannot be shown in all bots: the first other chat that shows
+    /// `Pins.maxFloating` cards already. Nil: it can (or already is).
+    public func globalFloatBlocked(_ id: UUID, in bot: Bot) -> String? {
+        guard !isGlobalFloat(id) else { return nil }
+        for chat in chatsWithPins + [codexBot] where chat !== bot {
+            let (global, own) = wantedFloats(in: chat)
+            let ownIDs = Set(own.map(\.id))
+            let count = own.count + global.filter { !ownIDs.contains($0.pin.id) }.count
+            if count + 1 > Pins.maxFloating { return chat.name }
+        }
+        return nil
+    }
+
+    /// The floating cards a chat's page draws: its own, and other bots' shown in all bots.
+    public func floatingPinViews(in chat: Bot) -> [ChatPayload.FloatingPin] {
+        floatingPins(in: chat).map { entry in
+            ChatPayload.FloatingPin(botID: entry.bot.id.uuidString, botName: entry.bot.name, pin: ChatPayload.pin(view: entry.pin, context: pinContext(for: entry.bot)),
+                                    global: entry.global, blocked: entry.global ? nil : globalFloatBlocked(entry.pin.id, in: entry.bot))
         }
     }
 
@@ -38,17 +119,36 @@ extension Workspace {
         chatsWithPins.first { $0.pins.contains { $0.id == id } }
     }
 
-    /// Floats a pin in a corner (at the defaults) or stops it. Floating one more than
-    /// `Pins.maxFloating` does not; returns whether it floats (or stopped) as asked.
+    /// Floats a pin in a corner of its bot's chat (at the defaults) or stops it (and so stops it
+    /// showing in all bots). Floating one more than `Pins.maxFloating` cards in that chat does
+    /// not; returns whether it floats (or stopped) as asked.
     @discardableResult
     public func floatPin(_ id: UUID, _ on: Bool, in bot: Bot) -> Bool {
         guard let pin = bot.pins.first(where: { $0.id == id }) else { return false }
-        if on, pin.float == nil, floatingPins().count >= Pins.maxFloating { return false }
+        if on, pin.float == nil, floatingPins(in: bot).count >= Pins.maxFloating { return false }
         objectWillChange.send()
         bot.editPins { pins in
             guard let at = pins.firstIndex(where: { $0.id == id }) else { return }
             pins[at].float = on ? (pins[at].float ?? PinnedComponent.Floating()) : nil
         }
+        if !on { dropStaleGlobalFloats() }
+        return true
+    }
+
+    /// Shows a floating pin over every bot's chat ("Show in all bots"), or only its own again
+    /// ("Only in …"). It stays the owning bot's pin: its command runs in that bot's folder, and
+    /// where it sits is kept with it. Not when it does not float, or a chat would show more than
+    /// `Pins.maxFloating` cards (`globalFloatBlocked`); returns whether it changed as asked.
+    @discardableResult
+    public func setPinGlobal(_ id: UUID, _ on: Bool, in bot: Bot) -> Bool {
+        guard let chatID = pinChatID(of: bot), bot.pins.contains(where: { $0.id == id && $0.float != nil }) else { return false }
+        guard on != isGlobalFloat(id) else { return true }
+        if on, globalFloatBlocked(id, in: bot) != nil { return false }
+        objectWillChange.send()
+        let kept = globalFloats.filter { $0.pinID != id }
+        let list = on ? kept + [GlobalFloat(botID: chatID, pinID: id)] : kept
+        settings.globalFloats = list.isEmpty ? nil : list
+        settings.save(to: settingsURL)
         return true
     }
 
@@ -186,6 +286,7 @@ extension Workspace {
 
     public func unpin(_ id: UUID, in bot: Bot) {
         bot.editPins { $0.removeAll { $0.id == id } }
+        dropStaleGlobalFloats()
     }
 
     public func movePin(_ id: UUID, to index: Int, in bot: Bot) {
@@ -284,9 +385,11 @@ extension Workspace {
                 let folder = pinFolder(for: bot)
                 let due = bot.pins.filter { pin in
                     guard let command = pin.command, componentCommands.isApproved(command, in: folder) else { return false }
-                    // A floating pin refreshed every few seconds is rerun by the page, only while
-                    // the window is shown.
-                    if pin.float != nil, pin.refresh == .interval, pin.seconds != nil { return false }
+                    // A floating pin refreshed every few seconds is rerun by the page that shows
+                    // it, only while the window is shown: one shown in all bots, or one of the
+                    // chat on screen. One floating only in another chat runs here as any pin.
+                    if pin.float != nil, pin.refresh == .interval, pin.seconds != nil,
+                       bot === selectedBot || isGlobalFloat(pin.id) { return false }
                     return pin.isDue(at: now, lastRan: lastRan(pin))
                 }
                 if !due.isEmpty { group.addTask { await self.run(due, in: bot) } }

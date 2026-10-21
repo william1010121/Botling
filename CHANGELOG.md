@@ -8,6 +8,15 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **A floating pin can show in every bot's chat.** A floating card's ⋯ has "Show in all bots":
+  the card then floats in the corner of every chat (Main, project bots, Maintainer, Codex), with a
+  small globe and its own bot's name in its header. It stays that bot's pin: its Command runs in
+  that bot's folder and refreshes once on its interval, not once per chat, and where it sits and
+  its size are kept with it. "Only in <bot>" takes it back to its own chat; unpinning it, stopping
+  it floating or removing its bot takes it out of every chat. Cards shown in all bots stack first
+  in their corner, then the chat's own, and count toward the two floating cards a chat shows; when
+  a chat already has two, "Show in all bots" says which chat has no room.
+
 - **Pick any refresh interval for a pin.** A pin's refresh menu keeps its four choices (When
   shown, Every [15] [min], Every [5] [sec], Only on ↻), and in the two "Every" rows the number
   and the unit are typed right in place, from 2 seconds to 24 hours: Return or leaving the field
@@ -87,6 +96,11 @@ app and publishes it on GitHub Releases.
   (a reply with nothing else adds no empty bubble).
 
 ### Fixed
+
+- **A floating pin shows only in its own bot's chat.** A pin floated in one bot's chat (say,
+  ClaudeCodeBot's release progress) also floated over every other bot's chat, the main bot's
+  included. It now floats only where it was floated, unless shown in all bots, and the two-card
+  limit is per chat.
 
 - **A floating pin and an opened pin look the same, and fit their content.** Both now have one
   header: the component's icon, its own name from its about.md ("發版進度卡", not the folder name

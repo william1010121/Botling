@@ -180,7 +180,7 @@ public struct ChatPayload: Encodable, Equatable {
         public var board: Bool
         /// Where pinned components' Detail commands are read from.
         public var library: ComponentLibrary?
-        /// How many pins float now (over all bots): whether one more may.
+        /// How many floating cards the chat shows now: whether one more may float there.
         public var floating: Int
 
         public init(runs: ComponentCommands, folder: URL, board: Bool = false, library: ComponentLibrary? = nil, floating: Int = 0) {
@@ -219,16 +219,24 @@ public struct ChatPayload: Encodable, Equatable {
         var floatMenu: Pins.FloatMenu? = nil
     }
 
-    /// A pin floating in a corner, drawn over whichever bot's chat is shown: its bot, and the pin.
+    /// A pin floating in a corner of a chat: its own bot's, or another bot's shown in all bots.
+    /// Its bot, and the pin.
     public struct FloatingPin: Encodable, Equatable {
         var botID: String
         var botName: String
         var pin: Pin
+        /// Shown in every bot's chat ("Show in all bots"); nil: only in its own.
+        var global: Bool? = nil
+        /// Not global, and a chat that already shows `Pins.maxFloating` cards would get one more:
+        /// that chat's name, for its menu's "Show in all bots" (off). Nil: it may be.
+        var blocked: String? = nil
 
-        public init(botID: String, botName: String, pin: Pin) {
+        public init(botID: String, botName: String, pin: Pin, global: Bool = false, blocked: String? = nil) {
             self.botID = botID
             self.botName = botName
             self.pin = pin
+            self.global = global ? true : nil
+            self.blocked = blocked
         }
     }
 
@@ -310,7 +318,8 @@ public struct ChatPayload: Encodable, Equatable {
     var pinChoices: [PinChoice]? = nil
     /// The Board is showing instead of the messages.
     var board: Bool? = nil
-    /// The pins floating in a corner, of any bot; nil where none can show (a subagent).
+    /// The pins floating in a corner of this chat: its own, and other bots' shown in all bots;
+    /// nil where none can show (a subagent).
     var floating: [FloatingPin]? = nil
     /// Replies can be made into components (their hover column and result cards say so).
     var makeComponents: Bool? = nil

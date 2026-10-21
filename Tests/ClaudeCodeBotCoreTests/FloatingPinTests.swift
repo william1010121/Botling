@@ -2,8 +2,9 @@ import Foundation
 import Testing
 @testable import ClaudeCodeBotCore
 
-/// A pin floated in a corner of the chat window: kept in pins.json, at most two at once (over
-/// any bot's chat), its menu saying Float or Stop floating.
+/// A pin floated in a corner of the chat window: kept in pins.json, shown in its own bot's chat
+/// only unless shown in all bots (a reference in settings.json), at most two cards per chat, its
+/// menu saying Float or Stop floating.
 @MainActor
 struct FloatingPinTests {
     let root = FileManager.default.temporaryDirectory.appending(path: "ccb-float-\(UUID().uuidString)")
@@ -24,7 +25,7 @@ struct FloatingPinTests {
     }
 
     func payload(_ workspace: Workspace, bot: Bot) throws -> [String: Any] {
-        let json = ChatPayload.make(bot: bot, components: workspace.components, pending: [], replyingTo: nil, commands: workspace.commandContext(for: bot), pins: workspace.pinContext(for: bot), floating: workspace.floatingPinViews()) { _ in "" }.json()
+        let json = ChatPayload.make(bot: bot, components: workspace.components, pending: [], replyingTo: nil, commands: workspace.commandContext(for: bot), pins: workspace.pinContext(for: bot), floating: workspace.floatingPinViews(in: bot)) { _ in "" }.json()
         return try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
     }
 
@@ -80,37 +81,45 @@ struct FloatingPinTests {
 
     // MARK: At most two
 
-    @Test func atMostTwoFloatAcrossBots() throws {
-        let workspace = makeWorkspace()
-        try addComponent("a", command: "printf 1", to: workspace)
-        try addComponent("b", command: "printf 2", to: workspace)
-        try addComponent("c", command: "printf 3", to: workspace)
-        let main = workspace.mainBot
-        let folder = root.appending(path: "code/garden")
+    func garden(_ workspace: Workspace, _ name: String = "garden") throws -> Bot {
+        let folder = root.appending(path: "code/\(name)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let garden = try #require(workspace.bot(for: workspace.addProject(folder: folder)))
+        return try #require(workspace.bot(for: workspace.addProject(folder: folder, select: false)))
+    }
+
+    @Test func atMostTwoFloatInOneChat() throws {
+        let workspace = makeWorkspace()
+        for name in ["a", "b", "c", "d"] { try addComponent(name, command: "printf \(name)", to: workspace) }
+        let main = workspace.mainBot
+        let garden = try garden(workspace)
         let a = try #require(workspace.pin(named: "a", in: main))
         let b = try #require(workspace.pin(named: "b", in: garden))
         let c = try #require(workspace.pin(named: "c", in: main))
+        let d = try #require(workspace.pin(named: "d", in: main))
 
         #expect(workspace.floatPin(a.id, true, in: main))
         #expect(workspace.floatPin(b.id, true, in: garden))
-        // A third does not: two already float (one in another bot's chat).
-        #expect(!workspace.floatPin(c.id, true, in: main))
-        #expect(main.pins.first { $0.id == c.id }?.float == nil)
-        #expect(workspace.floatingPins().map(\.pin.id) == [a.id, b.id])
+        // Another bot's float is not in this chat: a second one here still may.
+        #expect(workspace.floatPin(c.id, true, in: main))
+        // A third here does not.
+        #expect(!workspace.floatPin(d.id, true, in: main))
+        #expect(main.pins.first { $0.id == d.id }?.float == nil)
+        #expect(workspace.floatingPins(in: main).map(\.pin.id) == [a.id, c.id])
+        #expect(workspace.floatingPins(in: garden).map(\.pin.id) == [b.id])
 
         // Its menu says so: Float, Stop floating, or full.
         #expect(Pins.floatMenu(for: main.pins[0], floating: 2) == .stop)
-        #expect(Pins.floatMenu(for: main.pins[1], floating: 2) == .full)
-        #expect(Pins.floatMenu(for: main.pins[1], floating: 1) == .float)
+        #expect(Pins.floatMenu(for: main.pins[2], floating: 2) == .full)
+        #expect(Pins.floatMenu(for: main.pins[2], floating: 1) == .float)
         #expect(Pins.FloatMenu.full.label == "Float in corner (2 floating already)")
         #expect(Pins.FloatMenu.float.label == "Float in corner")
         #expect(Pins.FloatMenu.stop.label == "Stop floating")
+        #expect(workspace.pinContext(for: main).floating == 2)
+        #expect(workspace.pinContext(for: garden).floating == 1)
 
         #expect(workspace.floatPin(a.id, false, in: main))
-        #expect(workspace.floatPin(c.id, true, in: main))
-        #expect(BotStore(directory: root.appending(path: "ccb/main")).loadPins().first { $0.id == c.id }?.float == PinnedComponent.Floating())
+        #expect(workspace.floatPin(d.id, true, in: main))
+        #expect(BotStore(directory: root.appending(path: "ccb/main")).loadPins().first { $0.id == d.id }?.float == PinnedComponent.Floating())
     }
 
     @Test func whereItFloatsIsKept() throws {
@@ -136,36 +145,231 @@ struct FloatingPinTests {
 
     // MARK: The page
 
-    @Test func theFloatingPinsShowOverEveryBotsChat() throws {
+    @Test func aFloatingPinShowsOnlyInItsOwnBotsChat() throws {
+        // As 1.12.0 had it, a pin floated in a project's chat showed over the main bot's too.
         let workspace = makeWorkspace()
         try addComponent("build", command: "printf '{\"title\":\"Building 40%\"}'", to: workspace)
         let main = workspace.mainBot
-        let folder = root.appending(path: "code/garden")
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let garden = try #require(workspace.bot(for: workspace.addProject(folder: folder)))
-        let pin = try #require(workspace.pin(named: "build", in: main, refresh: .interval, seconds: 5))
-        workspace.floatPin(pin.id, true, in: main)
-        // Seen from another bot's chat: the card, whose bot it is, and where it floats.
-        let seen = try payload(workspace, bot: garden)
+        let project = workspace.addProject(folder: try { let f = root.appending(path: "code/ClaudeCodeBot"); try FileManager.default.createDirectory(at: f, withIntermediateDirectories: true); return f }())
+        let bot = try #require(workspace.bot(for: project))
+        let pin = try #require(workspace.pin(named: "build", in: bot, refresh: .interval, seconds: 5))
+        #expect(workspace.floatPin(pin.id, true, in: bot))
+        // In its own chat: the card, whose bot it is, and where it floats.
+        #expect(workspace.selectedBot === bot)
+        let seen = try payload(workspace, bot: workspace.selectedBot)
         let floating = try #require(seen["floating"] as? [[String: Any]])
         #expect(floating.count == 1)
-        #expect(floating[0]["botID"] as? String == main.id.uuidString)
-        #expect(floating[0]["botName"] as? String == main.name)
+        #expect(floating[0]["botName"] as? String == bot.name)
+        #expect(floating[0]["global"] == nil)
         let view = try #require(floating[0]["pin"] as? [String: Any])
         #expect(view["id"] as? String == pin.id.uuidString)
         #expect(view["seconds"] as? Int == 5)
-        #expect((view["display"] as? [String: Any])?["command"] as? String == "printf '{\"title\":\"Building 40%\"}'")
         let float = try #require(view["float"] as? [String: Any])
         #expect(float["corner"] as? String == "topRight")
-        // Not resized: no size, so the page fits it to its content.
         #expect(float["width"] == nil && float["height"] == nil)
         #expect(float["collapsed"] as? Bool == false)
-        // The pin's own menu entry, in its bot's chat.
-        let own = try #require(try payload(workspace, bot: main)["pins"] as? [[String: Any]])
+        let own = try #require(seen["pins"] as? [[String: Any]])
         #expect(own[0]["floatMenu"] as? String == "stop")
-        // Which bot holds a pin, so the card's ↻ and menu reach it from any chat.
-        #expect(workspace.bot(holdingPin: pin.id) === main)
+
+        // Switching to the main bot's chat: it is gone; and to Maintainer's, Codex's.
+        workspace.select(nil)
+        #expect(workspace.selectedBot === main)
+        #expect((try payload(workspace, bot: workspace.selectedBot)["floating"] as? [[String: Any]])?.isEmpty == true)
+        #expect(workspace.floatingPinViews(in: workspace.maintainer).isEmpty)
+        #expect(workspace.floatingPinViews(in: workspace.codexBot).isEmpty)
+        // Back in its own chat it shows again.
+        workspace.select(project.id)
+        #expect((try payload(workspace, bot: workspace.selectedBot)["floating"] as? [[String: Any]])?.count == 1)
+        // Which bot holds a pin, so the card's ↻ and menu reach it.
+        #expect(workspace.bot(holdingPin: pin.id) === bot)
         #expect(workspace.bot(holdingPin: UUID()) == nil)
+    }
+
+    // MARK: Shown in all bots
+
+    @Test func aFloatingPinShownInAllBotsFloatsInEveryChatAndRunsInItsOwnFolder() throws {
+        let workspace = makeWorkspace()
+        try addComponent("release", command: "python3 .bot/artifacts/release-progress.py", to: workspace)
+        let main = workspace.mainBot
+        let code = try garden(workspace, "ClaudeCodeBot")
+        let other = try garden(workspace, "garden")
+        let pin = try #require(workspace.pin(named: "release", in: code, refresh: .interval, minutes: 5))
+        // Only a floating pin can be.
+        #expect(!workspace.setPinGlobal(pin.id, true, in: code))
+        #expect(workspace.floatPin(pin.id, true, in: code))
+        #expect(workspace.setPinGlobal(pin.id, true, in: code))
+        #expect(workspace.isGlobalFloat(pin.id))
+
+        for chat in [main, other, workspace.maintainer, workspace.codexBot, code] {
+            let views = try #require(try payload(workspace, bot: chat)["floating"] as? [[String: Any]])
+            #expect(views.count == 1)
+            #expect(views[0]["global"] as? Bool == true)
+            // Its owner's name for the header's mark, and its command in the owner's folder.
+            #expect(views[0]["botName"] as? String == code.name)
+            let display = try #require((views[0]["pin"] as? [String: Any])?["display"] as? [String: Any])
+            #expect(display["command"] as? String == "python3 .bot/artifacts/release-progress.py")
+            #expect(display["folder"] as? String == workspace.pinFolder(for: code).path)
+        }
+        // Where it sits is the pin's own, set from any chat.
+        workspace.setPinFloat(pin.id, corner: .bottomLeft, width: 420, in: code)
+        #expect(workspace.floatingPins(in: main)[0].pin.float?.corner == .bottomLeft)
+        #expect(workspace.floatingPins(in: main)[0].pin.float?.width == 420)
+
+        // "Only in ClaudeCodeBot": back to its own chat.
+        #expect(workspace.setPinGlobal(pin.id, false, in: code))
+        #expect(workspace.floatingPins(in: main).isEmpty)
+        #expect(workspace.floatingPins(in: code).count == 1)
+        #expect(workspace.settings.globalFloats == nil)
+    }
+
+    @Test func aGlobalFloatRefreshesOnceNotOncePerChat() async throws {
+        let workspace = makeWorkspace()
+        try addComponent("slow", command: "printf 1", to: workspace)
+        try addComponent("live", command: "printf 2", to: workspace)
+        let code = try garden(workspace, "ClaudeCodeBot")
+        _ = try garden(workspace, "garden")
+        let folder = workspace.pinFolder(for: code)
+        workspace.componentCommands.approve("printf 1", in: folder)
+        workspace.componentCommands.approve("printf 2", in: folder)
+        let slow = try #require(workspace.pin(named: "slow", in: code, refresh: .interval, minutes: 5))
+        let live = try #require(workspace.pin(named: "live", in: code, refresh: .interval, seconds: 5))
+        for pin in [slow, live] {
+            workspace.floatPin(pin.id, true, in: code)
+            workspace.setPinGlobal(pin.id, true, in: code)
+        }
+        // Every minutes: the app's one timer, in its owner's folder, under its one card key.
+        await workspace.refreshDuePins()
+        #expect(workspace.componentCommands.runs[slow.card]?.data == "1")
+        #expect(workspace.componentCommands.runs.keys.filter { $0.hasPrefix("pin/") }.sorted() == [slow.card])
+        // Every few seconds: left to the one page, whichever chat is shown.
+        #expect(workspace.selectedBot === workspace.mainBot)
+        #expect(workspace.componentCommands.runs[live.card] == nil)
+    }
+
+    @Test func aPinFloatingOnlyInAnotherChatIsRefreshedByTheApp() async throws {
+        // Not on the page (another chat is shown), its seconds refresh is the app's, as any pin's.
+        let workspace = makeWorkspace()
+        try addComponent("live", command: "printf 2", to: workspace)
+        let code = try garden(workspace, "ClaudeCodeBot")
+        workspace.componentCommands.approve("printf 2", in: workspace.pinFolder(for: code))
+        let live = try #require(workspace.pin(named: "live", in: code, refresh: .interval, seconds: 5))
+        workspace.floatPin(live.id, true, in: code)
+        await workspace.refreshDuePins()
+        #expect(workspace.componentCommands.runs[live.card]?.data == "2")
+    }
+
+    @Test func globalFloatsCountTowardEachChatsTwo() throws {
+        let workspace = makeWorkspace()
+        for name in ["a", "b", "c", "d"] { try addComponent(name, command: "printf \(name)", to: workspace) }
+        let main = workspace.mainBot
+        let code = try garden(workspace, "ClaudeCodeBot")
+        let other = try garden(workspace, "garden")
+        let g = try #require(workspace.pin(named: "a", in: code))
+        let m1 = try #require(workspace.pin(named: "b", in: main))
+        let m2 = try #require(workspace.pin(named: "c", in: main))
+        let o1 = try #require(workspace.pin(named: "d", in: other))
+        workspace.floatPin(g.id, true, in: code)
+        workspace.floatPin(m1.id, true, in: main)
+        workspace.floatPin(m2.id, true, in: main)
+        // Main shows two already: no room there for one more.
+        #expect(workspace.globalFloatBlocked(g.id, in: code) == main.name)
+        #expect(!workspace.setPinGlobal(g.id, true, in: code))
+        let blocked = try #require(try payload(workspace, bot: code)["floating"] as? [[String: Any]])
+        #expect(blocked[0]["blocked"] as? String == main.name)
+        workspace.floatPin(m2.id, false, in: main)
+        #expect(workspace.globalFloatBlocked(g.id, in: code) == nil)
+        #expect(workspace.setPinGlobal(g.id, true, in: code))
+        // In every chat the one shown in all bots stacks first, then the chat's own.
+        #expect(workspace.floatingPins(in: main).map(\.pin.id) == [g.id, m1.id])
+        #expect(workspace.floatingPins(in: main).map(\.global) == [true, false])
+        // It takes one of each chat's two: main is full now, garden has room for one of its own.
+        #expect(!workspace.floatPin(m2.id, true, in: main))
+        #expect(workspace.floatPin(o1.id, true, in: other))
+        #expect(workspace.floatingPins(in: other).map(\.pin.id) == [g.id, o1.id])
+        #expect(try payload(workspace, bot: main)["pins"].flatMap { $0 as? [[String: Any]] }?.first { $0["id"] as? String == m2.id.uuidString }?["floatMenu"] as? String == "full")
+    }
+
+    @Test func globalFloatsAreReferencesKeptInSettings() throws {
+        let workspace = makeWorkspace()
+        try addComponent("a", command: "printf 1", to: workspace)
+        let code = try garden(workspace, "ClaudeCodeBot")
+        let project = try #require(workspace.projects.first { workspace.bot(for: $0) === code })
+        let pin = try #require(workspace.pin(named: "a", in: code))
+        workspace.floatPin(pin.id, true, in: code)
+        workspace.setPinGlobal(pin.id, true, in: code)
+        // The chat's stable id (not the bot object's) and the pin's: no copy of the pin.
+        #expect(workspace.settings.globalFloats == [GlobalFloat(botID: project.id, pinID: pin.id)])
+        let text = try String(contentsOf: root.appending(path: "ccb/settings.json"), encoding: .utf8)
+        #expect(text.contains(pin.id.uuidString) && !text.contains("printf 1"))
+
+        // A restart: shown in all bots still, with the owner's latest pin.
+        let reopened = makeWorkspace()
+        #expect(reopened.isGlobalFloat(pin.id))
+        let shown = reopened.floatingPins(in: reopened.mainBot)
+        #expect(shown.map(\.pin.id) == [pin.id])
+        #expect(shown[0].bot.name == code.name)
+        // The owner's change shows everywhere: it is the same pin.
+        let owner = try #require(reopened.bot(holdingPin: pin.id))
+        reopened.setPinStatus(pin.id, text: "Shipping", tone: "good", in: owner)
+        #expect(reopened.floatingPins(in: reopened.mainBot)[0].pin.status?.text == "Shipping")
+        // The main bot's own pins keep the main bot's id.
+        try addComponent("b", command: "printf 2", to: reopened)
+        let mine = try #require(reopened.pin(named: "b", in: reopened.mainBot))
+        reopened.floatPin(mine.id, true, in: reopened.mainBot)
+        reopened.setPinGlobal(mine.id, true, in: reopened.mainBot)
+        #expect(reopened.settings.globalFloats?.last == GlobalFloat(botID: Workspace.mainBotID, pinID: mine.id))
+    }
+
+    @Test func aGlobalFloatWhoseBotOrPinIsGoneIsDropped() throws {
+        let workspace = makeWorkspace()
+        try addComponent("a", command: "printf 1", to: workspace)
+        try addComponent("b", command: "printf 2", to: workspace)
+        let code = try garden(workspace, "ClaudeCodeBot")
+        let a = try #require(workspace.pin(named: "a", in: code))
+        let b = try #require(workspace.pin(named: "b", in: code))
+        for pin in [a, b] {
+            workspace.floatPin(pin.id, true, in: code)
+            #expect(workspace.setPinGlobal(pin.id, true, in: code))
+        }
+        // Stopped floating: no longer in all bots, and not again when floated anew.
+        workspace.floatPin(a.id, false, in: code)
+        #expect(workspace.settings.globalFloats?.map(\.pinID) == [b.id])
+        workspace.floatPin(a.id, true, in: code)
+        #expect(!workspace.isGlobalFloat(a.id))
+        #expect(workspace.floatingPins(in: workspace.mainBot).map(\.pin.id) == [b.id])
+        // Unpinned in its bot: gone from every chat and from settings.
+        workspace.unpin(b.id, in: code)
+        #expect(workspace.floatingPins(in: workspace.mainBot).isEmpty)
+        #expect(workspace.settings.globalFloats == nil)
+
+        // Its bot removed.
+        guard let diary = workspace.createBot(name: "Diary", job: "z"), let bot = workspace.bot(for: diary) else {
+            Issue.record("not made")
+            return
+        }
+        let c = try #require(workspace.pin(named: "a", in: bot))
+        workspace.floatPin(c.id, true, in: bot)
+        workspace.setPinGlobal(c.id, true, in: bot)
+        #expect(workspace.floatingPins(in: workspace.mainBot).map(\.pin.id) == [c.id])
+        workspace.removeBot(diary.id)
+        #expect(workspace.floatingPins(in: workspace.mainBot).isEmpty)
+        #expect(workspace.settings.globalFloats == nil)
+
+        // A settings file naming a chat or pin that is not there: dropped when the app opens.
+        var settings = workspace.settings
+        settings.globalFloats = [GlobalFloat(botID: UUID(), pinID: UUID()), GlobalFloat(botID: Workspace.mainBotID, pinID: UUID())]
+        try JSONEncoder().encode(settings).write(to: root.appending(path: "ccb/settings.json"))
+        let reopened = makeWorkspace()
+        #expect(reopened.globalFloats.isEmpty)
+        #expect(reopened.settings.globalFloats == nil)
+        let saved = try JSONDecoder().decode(AppSettings.self, from: Data(contentsOf: root.appending(path: "ccb/settings.json")))
+        #expect(saved.globalFloats == nil)
+    }
+
+    @Test func oldSettingsWithoutGlobalFloatsStillLoad() throws {
+        let old = #"{"developerMode":false,"pinnedBots":[]}"#
+        let settings = try JSONDecoder().decode(AppSettings.self, from: Data(old.utf8))
+        #expect(settings.globalFloats == nil)
     }
 
     @Test func aFloatingPinRefreshedInSecondsIsLeftToThePage() async throws {
