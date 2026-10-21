@@ -1,4 +1,5 @@
 import { post } from "./bridge";
+import { openMedia } from "./lightbox";
 import { escapeHTML } from "./util";
 import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./types";
 
@@ -467,8 +468,8 @@ window.addEventListener("message", (event) => {
     else if (images.length) frame.ccbAnswer({ text: typeof message.text === "string" ? message.text : "", images });
     else if (typeof message.text === "string" && message.text.trim() !== "") frame.ccbAnswer({ text: message.text });
   } else if (message.ccb === "open" && typeof message.url === "string" && message.url !== "") {
-    // Opened full-size the way a link chip is: a file in a window of its own.
-    post({ type: "openURL", url: message.url, label: typeof message.label === "string" ? message.label : "" });
+    // Opened full-size the way a link chip is: a picture in the lightbox, a page in a window of its own.
+    openMedia(message.url, typeof message.label === "string" ? message.label : "");
   } else if (message.ccb === "reviewWithCodex") {
     // Passed on as strings or null; Swift checks them against the bot's repository.
     post(codexReviewAction(message));

@@ -697,7 +697,7 @@ describe("messages", () => {
     expect(current.querySelector(".step-title")?.textContent).toBe("Edit a.swift");
   });
 
-  it("show the pictures a tool call gave back in its OUT box, full size on click", () => {
+  it("show the pictures a tool call gave back in its OUT box, in the lightbox on click", () => {
     const row = messageElement(message({ id: "r-img", text: "Looked.", steps: [
       { id: "p1", kind: "tool", tool: "Read", title: "Read login.png", detail: "/Users/me/login.png", output: "(image)", failed: false, done: true, status: null, count: null,
         images: [{ url: "file:///Users/me/login.png", name: "login.png" }] },
@@ -713,7 +713,10 @@ describe("messages", () => {
     // The words standing for the picture go; nothing else to say, so no text box.
     expect(blocks[1].querySelector("pre")).toBeNull();
     image.click();
-    expect(sent).toEqual([{ type: "openURL", url: "file:///Users/me/login.png", label: "login.png" }]);
+    // Seen large in the lightbox over the chat, not in a window of its own.
+    expect(sent).toEqual([]);
+    expect(document.querySelector(".lightbox .lightbox-image")?.getAttribute("src")).toBe("file:///Users/me/login.png");
+    document.querySelector<HTMLButtonElement>(".lightbox-close")!.click();
   });
 
   it("flag a bot's reply as not right in developer mode only", async () => {

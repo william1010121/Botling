@@ -187,6 +187,12 @@ struct ChatSurface: NSViewRepresentable {
                     let label = (body["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? url.lastPathComponent
                     ResultWindows.open(Chip(label: label, url: url))
                 }
+            case "openExternal", "revealFile":
+                // The lightbox's secondary buttons: only a picture file on disk, never an app or a script.
+                if let text = body["url"] as? String, let url = URL(string: text), ImageFile.isOpenable(url) {
+                    if type == "revealFile" { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                    else { NSWorkspace.shared.open(url) }
+                }
             case "codexReview":
                 // A component's ccb.reviewWithCodex: checked against the bot's repository (a
                 // commit that is not in it, a spec outside its folder or home); a bad call is dropped.

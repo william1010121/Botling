@@ -6,6 +6,7 @@ import { extensions, feedback, makeComponents, messageElement, typingElement } f
 import { SpecPanel } from "./spec";
 import { statusWord } from "./steps";
 import { PinArea } from "./pins";
+import { handleMediaClicks } from "./lightbox";
 import { PluginHost, type PluginSpec } from "./plugins";
 import type { ChatState, MessageView, SpecState } from "./types";
 import { escapeHTML } from "./util";
@@ -207,14 +208,9 @@ class Chat {
     observer.observe(this.scroller);
   }
 
-  /** Chips, images and file chips open outside the page: web links in the browser, files in a window. */
+  /** Pictures open in a lightbox over the chat; other chips and files open outside the page. */
   private handleClicks(): void {
-    document.addEventListener("click", (event) => {
-      const target = (event.target as HTMLElement).closest<HTMLElement>("[data-url]");
-      if (!target) return;
-      event.preventDefault();
-      post({ type: "openURL", url: target.dataset.url!, label: target.dataset.label || target.textContent?.trim() || "" });
-    });
+    handleMediaClicks(document);
   }
 
   /** Files dropped anywhere on the chat are attached. */
