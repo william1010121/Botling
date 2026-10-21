@@ -53,10 +53,13 @@ export interface MessageView {
   tasks?: TaskChipView[] | null;
 }
 
-/** A command or subagent a reply's turn left running in the background. Times in ms since 1970. */
+/**
+ * Work a reply's turn left running in the background: a command, a subagent, a Monitor, or a
+ * scheduled wake-up / cron job. Times in ms since 1970.
+ */
 export interface TaskChipView {
   id: string;
-  kind: "command" | "agent";
+  kind: "command" | "agent" | "monitor" | "wakeup" | "cron";
   title: string;
   /** stopped: its bot's process ended; interrupted: the app restarted while it ran. */
   status: "running" | "completed" | "failed" | "killed" | "stopped" | "interrupted";
@@ -65,6 +68,11 @@ export interface TaskChipView {
   detail: string | null;
   /** The message whose turn started it (its output is asked for by that id); the one it is drawn under if missing. */
   message?: string;
+  /** A wake-up's or one-shot cron job's time. */
+  fires?: number | null;
+  /** A cron job's five fields ("30 9 * * 1-5"), and whether it fires on every match. */
+  schedule?: string | null;
+  recurring?: boolean | null;
 }
 
 /**

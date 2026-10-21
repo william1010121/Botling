@@ -58,6 +58,44 @@ public struct CronSchedule: Equatable, Sendable {
         return nil
     }
 
+    /// The first minute after `date` when this would run, within a year; nil when there is none.
+    /// Skips whole months, days and hours that cannot match.
+    public func nextTime(after date: Date, calendar: Calendar = .current) -> Date? {
+        guard var time = calendar.dateInterval(of: .minute, for: date)?.end else { return nil }
+        let limit = date.addingTimeInterval(366 * 24 * 3600)
+        while time <= limit {
+            let parts = calendar.dateComponents([.minute, .hour, .day, .month, .weekday], from: time)
+            guard let minute = parts.minute, let hour = parts.hour, let day = parts.day,
+                  let month = parts.month, let weekday = parts.weekday else { return nil }
+            if !months.contains(month) {
+                guard let next = calendar.dateInterval(of: .month, for: time)?.end else { return nil }
+                time = next
+                continue
+            }
+            let dayMatch = days.contains(day)
+            let weekdayMatch = weekdays.contains(weekday - 1)
+            let dayOK = switch (daysRestricted, weekdaysRestricted) {
+            case (true, true): dayMatch || weekdayMatch
+            case (true, false): dayMatch
+            case (false, true): weekdayMatch
+            case (false, false): true
+            }
+            if !dayOK {
+                guard let next = calendar.dateInterval(of: .day, for: time)?.end else { return nil }
+                time = next
+                continue
+            }
+            if !hours.contains(hour) {
+                guard let next = calendar.dateInterval(of: .hour, for: time)?.end else { return nil }
+                time = next
+                continue
+            }
+            if minutes.contains(minute) { return time }
+            time = time.addingTimeInterval(60)
+        }
+        return nil
+    }
+
     /// `HH:mm` when it runs once a day at one time; nil for anything else.
     public var dailyTime: (hour: Int, minute: Int)? {
         guard minutes.count == 1, hours.count == 1, let minute = minutes.first, let hour = hours.first else { return nil }

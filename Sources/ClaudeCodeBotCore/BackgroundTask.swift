@@ -1,12 +1,24 @@
 import Foundation
 
-/// Work a bot's turn left running in the background: a Bash call with `run_in_background`, or an
-/// Agent call that was not told to wait (`task_started` with `is_backgrounded`). Drawn as a chip
-/// under the reply of that turn, and kept in the message, so it shows how it ended even after the
-/// turn, or the app, is long gone.
+/// Work a bot's turn left running in the background: a Bash call with `run_in_background`, an
+/// Agent call that was not told to wait (`task_started` with `is_backgrounded`), a Monitor (a watch
+/// that wakes the bot on each event), or something scheduled to wake it later (ScheduleWakeup,
+/// CronCreate). Drawn as a chip under the reply of that turn, and kept in the message, so it shows
+/// how it ended even after the turn, or the app, is long gone.
 public struct BackgroundTask: Codable, Equatable, Identifiable, Sendable {
     public enum Kind: String, Codable, Sendable {
         case command, agent
+        /// A Monitor call: claude runs its command (or holds its socket) and wakes the bot on each
+        /// line, until it ends, times out or is stopped.
+        case monitor
+        /// A ScheduleWakeup call (a dynamic /loop): claude wakes the bot once, at `fireAt`.
+        case wakeup
+        /// A CronCreate call: claude wakes the bot on `schedule`, again and again (`recurring`) or
+        /// once, until CronDelete (`jobID`) or the session ends.
+        case cron
+
+        /// Waits on a clock rather than on a process.
+        public var isScheduled: Bool { self == .wakeup || self == .cron }
     }
 
     public enum Status: String, Codable, Sendable {
@@ -43,6 +55,14 @@ public struct BackgroundTask: Codable, Equatable, Identifiable, Sendable {
     public var detail: String?
     /// Cut off (stopped or interrupted), and its bot has been told so.
     public var told: Bool?
+    /// When it fires next, for a wake-up or a one-shot cron job.
+    public var fireAt: Date?
+    /// A cron job's five fields ("*/30 * * * *").
+    public var schedule: String?
+    /// A cron job that fires on every match (not once).
+    public var recurring: Bool?
+    /// The cron job's id ("5381432a"), which CronDelete names.
+    public var jobID: String?
 
     public init(id: String, kind: Kind, title: String, status: Status = .running, startedAt: Date = Date()) {
         self.id = id
@@ -60,9 +80,40 @@ public struct BackgroundTask: Codable, Equatable, Identifiable, Sendable {
     /// Running for longer than this, with no word, it no longer keeps its bot awake (claude
     /// may have lost track of it): a bot does not stay up forever on a chip.
     static let holdsBotAwakeFor: TimeInterval = 6 * 3600
+    /// claude lets a recurring cron job go after this long (and a bot stays up for one until then:
+    /// sleeping would end the session it lives in).
+    static let cronLasts: TimeInterval = 7 * 24 * 3600
+    /// A wake-up that should have fired this long ago, with no word from its bot since, no longer
+    /// keeps it awake.
+    static let wakeupGrace: TimeInterval = 15 * 60
+
+    /// It keeps its bot awake now (sleeping would end it, or the session it fires in).
+    func holdsBotAwake(now: Date) -> Bool {
+        guard isRunning else { return false }
+        switch kind {
+        case .wakeup: return now < (fireAt ?? startedAt).addingTimeInterval(Self.wakeupGrace)
+        case .cron:
+            if recurring == false, let fireAt { return now < fireAt.addingTimeInterval(Self.wakeupGrace) }
+            return now.timeIntervalSince(startedAt) < Self.cronLasts
+        default: return now.timeIntervalSince(startedAt) < Self.holdsBotAwakeFor
+        }
+    }
+
+    /// When it is due to be over without a word from claude: a wake-up or one-shot job fires
+    /// (`fireAt`); a recurring job expires. Nil for work that reports its own end.
+    var dueAt: Date? {
+        guard isRunning else { return nil }
+        switch kind {
+        case .wakeup: return fireAt ?? startedAt
+        case .cron: return recurring == false ? fireAt : startedAt.addingTimeInterval(Self.cronLasts)
+        default: return nil
+        }
+    }
 
     mutating func end(_ status: String, summary: String?, at date: Date) {
         self.status = Status(notification: status)
+        // A watch that timed out or was stopped did its job; only a failed one is an error.
+        if kind == .monitor, self.status == .killed { self.status = .completed }
         endedAt = date
         if let summary, !summary.isEmpty { self.summary = TraceBook.shorten(summary) }
     }
@@ -91,6 +142,53 @@ public struct BackgroundTask: Codable, Equatable, Identifiable, Sendable {
         return nil
     }
 
+    /// What the result of a ScheduleWakeup call says: when it fires ("Next wakeup scheduled for
+    /// 14:03:00 (in 1200s)"), counted from `date`. Nil when nothing was scheduled (the loop
+    /// ended, or this call stopped it).
+    static func wakeupFire(in result: String, at date: Date) -> Date? {
+        guard result.hasPrefix("Next wakeup scheduled"),
+              let range = result.range(of: #"\(in (\d+)s\)"#, options: .regularExpression) else { return nil }
+        let seconds = result[range].dropFirst(4).dropLast(2)
+        return Double(seconds).map { date.addingTimeInterval($0) }
+    }
+
+    /// The job id in the result of a CronCreate call ("Scheduled recurring job 5381432a (Every 30
+    /// minutes)…", "Scheduled one-shot task 1a2b3c4d (…)"). Nil when it was not scheduled.
+    static func cronJob(in result: String) -> String? {
+        guard let range = result.range(of: #"^Scheduled (recurring job|one-shot task) \S+"#, options: .regularExpression) else { return nil }
+        return result[range].split(separator: " ").last.map(String.init)
+    }
+
+    /// Scheduled work a call took back: a cron job (CronDelete: "Cancelled job 5381432a."), or every
+    /// wake-up still to come (ScheduleWakeup with `stop`: "Loop stopped — …").
+    public enum Cancellation: Equatable, Sendable {
+        case cron(String)
+        case wakeups
+
+        public init?(tool: String, result: String) {
+            switch tool {
+            case "CronDelete":
+                guard let range = result.range(of: #"^Cancelled job \S+"#, options: .regularExpression) else { return nil }
+                var id = String(result[range].dropFirst("Cancelled job ".count))
+                if id.hasSuffix(".") { id.removeLast() }
+                self = .cron(id)
+            case "ScheduleWakeup":
+                guard result.hasPrefix("Loop stopped") else { return nil }
+                self = .wakeups
+            default:
+                return nil
+            }
+        }
+
+        func matches(_ task: BackgroundTask) -> Bool {
+            guard task.isRunning else { return false }
+            switch self {
+            case let .cron(id): return task.kind == .cron && task.jobID == id
+            case .wakeups: return task.kind == .wakeup
+            }
+        }
+    }
+
     /// The last `lines` lines a command printed: colors taken out, a line redrawn in place
     /// (`\r`) as it ended up, blank lines left out. Reads only the end of a big file. Nil when
     /// there is no such file.
@@ -111,6 +209,18 @@ public struct BackgroundTask: Codable, Equatable, Identifiable, Sendable {
             return line.count > 300 ? String(line.prefix(300)) + "…" : line
         }
         return kept.suffix(lines).joined(separator: "\n")
+    }
+}
+
+extension BackgroundTask {
+    /// As it is once its time came (see `settleDueSchedules`); unchanged when not due.
+    func settled(now: Date) -> BackgroundTask {
+        guard let due = dueAt, due <= now else { return self }
+        var task = self
+        task.status = .completed
+        task.endedAt = kind == .cron && recurring != false ? due : max(due, startedAt)
+        task.summary = kind == .cron && recurring != false ? "Expired (claude ends a recurring job after 7 days)." : "Fired."
+        return task
     }
 }
 
@@ -149,11 +259,44 @@ extension Array where Element == ChatMessage {
         return any
     }
 
-    /// Background work still going that its bot started not too long ago (sleeping would end it).
+    /// Background work still going that its bot started not too long ago, or scheduled work still
+    /// to fire (sleeping would end it).
     func hasBackgroundWorkRunning(now: Date = Date()) -> Bool {
         contains { message in
-            message.backgroundTasks?.contains { $0.isRunning && now.timeIntervalSince($0.startedAt) < BackgroundTask.holdsBotAwakeFor } == true
+            message.backgroundTasks?.contains { $0.holdsBotAwake(now: now) } == true
         }
+    }
+
+    /// Scheduled work taken back (a cron job deleted, a loop stopped): it leaves the list, as it
+    /// will never run. True if any went.
+    @discardableResult
+    mutating func cancelScheduled(_ cancellation: BackgroundTask.Cancellation) -> Bool {
+        var any = false
+        for index in indices {
+            guard let tasks = self[index].backgroundTasks, tasks.contains(where: cancellation.matches) else { continue }
+            let kept = tasks.filter { !cancellation.matches($0) }
+            self[index].backgroundTasks = kept.isEmpty ? nil : kept
+            any = true
+        }
+        return any
+    }
+
+    /// Scheduled work whose time came: a wake-up or one-shot job fired (its bot is at work again, so
+    /// it did), a recurring job expired. True if any changed.
+    @discardableResult
+    mutating func settleDueSchedules(now: Date) -> Bool {
+        var any = false
+        for index in indices {
+            guard let tasks = self[index].backgroundTasks, tasks.contains(where: { $0.dueAt.map { $0 <= now } == true }) else { continue }
+            self[index].backgroundTasks = tasks.map { $0.settled(now: now) }
+            any = true
+        }
+        return any
+    }
+
+    /// The soonest time scheduled work is due, nil when none is.
+    var nextScheduleDue: Date? {
+        flatMap { $0.backgroundTasks ?? [] }.compactMap(\.dueAt).min()
     }
 
     /// Cut-off work its bot has not been told about yet, oldest first.

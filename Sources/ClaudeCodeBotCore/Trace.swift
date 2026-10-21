@@ -26,6 +26,51 @@ public enum TraceEvent: Equatable, Sendable {
     /// A shell command went on in the background (`task_started`, `local_bash`); `id` is the
     /// Bash call. It ends with a `task_notification`, read as `subagentEnded` with that id.
     case backgroundCommandStarted(id: String, description: String)
+    /// A Monitor on a socket or an MCP server went on watching (`task_started`, `monitor_ws` or
+    /// `monitor_mcp`); `id` is the call. (A Monitor running a command is a `local_bash` task:
+    /// `backgroundCommandStarted`, told apart by its tool.) It ends with a `task_notification`.
+    case monitorStarted(id: String, description: String)
+    /// A ScheduleWakeup or CronCreate call the bot made, with what it asked for. Once its result
+    /// says it was scheduled, it is waiting work.
+    case scheduleCalled(id: String, call: ScheduleCall)
+}
+
+/// What a ScheduleWakeup or CronCreate call asked for.
+public struct ScheduleCall: Equatable, Sendable {
+    public var kind: BackgroundTask.Kind
+    /// Its line: the wake-up's reason, or the start of the job's prompt.
+    public var title: String
+    /// The prompt it wakes the bot with.
+    public var prompt: String
+    /// CronCreate: the five fields, and whether it fires on every match (claude's default).
+    public var cron: String?
+    public var recurring: Bool
+
+    public init(kind: BackgroundTask.Kind, title: String, prompt: String, cron: String? = nil, recurring: Bool = true) {
+        self.kind = kind
+        self.title = title
+        self.prompt = prompt
+        self.cron = cron
+        self.recurring = recurring
+    }
+
+    /// From a tool call's input: nil for any other tool, or a ScheduleWakeup that stops the loop.
+    static func from(tool: String, input: [String: Any]) -> ScheduleCall? {
+        let prompt = (input["prompt"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let firstLine = prompt.split(whereSeparator: \.isNewline).first.map(String.init) ?? prompt
+        let short = firstLine.count > 60 ? String(firstLine.prefix(60)) + "…" : firstLine
+        switch tool {
+        case "ScheduleWakeup":
+            guard input["stop"] as? Bool != true else { return nil }
+            let reason = (input["reason"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return ScheduleCall(kind: .wakeup, title: reason.isEmpty ? short : reason, prompt: prompt)
+        case "CronCreate":
+            guard let cron = input["cron"] as? String else { return nil }
+            return ScheduleCall(kind: .cron, title: short, prompt: prompt, cron: cron, recurring: input["recurring"] as? Bool ?? true)
+        default:
+            return nil
+        }
+    }
 }
 
 /// A picture in a tool result, as it came (decoded from its base64). Only passed along: the step
@@ -155,6 +200,8 @@ public struct TraceBook: Equatable, Sendable {
     public private(set) var subagents: [Subagent]
     /// Background work the turn under way started (its reply's chips).
     public private(set) var tasks: [BackgroundTask] = []
+    /// ScheduleWakeup and CronCreate calls of the turn under way, until their results come.
+    private var scheduleCalls: [String: ScheduleCall] = [:]
     /// Subagents kept once ended; running ones are always kept.
     static let keptSubagents = 40
     /// Longest detail or output kept for one step.
@@ -189,6 +236,9 @@ public struct TraceBook: Equatable, Sendable {
         case let .toolResult(id, output, failed, parent):
             if parent == nil, let at = tasks.firstIndex(where: { $0.id == id }) {
                 tasks[at].outputFile = BackgroundTask.outputFile(in: output) ?? tasks[at].outputFile
+            }
+            if parent == nil, let call = scheduleCalls.removeValue(forKey: id), !failed {
+                addSchedule(id, call: call, result: output, at: date)
             }
             let output = Self.shorten(output)
             if let parent {
@@ -264,10 +314,56 @@ public struct TraceBook: Equatable, Sendable {
             subagents[index].name = name
             return true
         case let .backgroundCommandStarted(id, description):
-            addTask(id, kind: .command, title: description, at: date)
+            // A Monitor running a command is a background shell task too.
+            let isMonitor = steps.last(where: { $0.id == id })?.tool == "Monitor"
+            addTask(id, kind: isMonitor ? .monitor : .command, title: description, at: date)
+            return false
+        case let .monitorStarted(id, description):
+            addTask(id, kind: .monitor, title: description, at: date)
+            return false
+        case let .scheduleCalled(id, call):
+            scheduleCalls[id] = call
             return false
         }
     }
+
+    /// A ScheduleWakeup or CronCreate call that scheduled something: waiting work, until it fires
+    /// (or, for a recurring job, until it is deleted or expires).
+    private mutating func addSchedule(_ id: String, call: ScheduleCall, result: String, at date: Date) {
+        guard !tasks.contains(where: { $0.id == id }) else { return }
+        var task = BackgroundTask(id: id, kind: call.kind, title: call.title, startedAt: date)
+        switch call.kind {
+        case .wakeup:
+            guard let fire = BackgroundTask.wakeupFire(in: result, at: date) else { return }
+            task.fireAt = fire
+        case .cron:
+            guard let job = BackgroundTask.cronJob(in: result) else { return }
+            task.jobID = job
+            task.schedule = call.cron
+            task.recurring = call.recurring
+            task.fireAt = call.cron.flatMap(CronSchedule.init)?.nextTime(after: date)
+        default:
+            return
+        }
+        if !call.prompt.isEmpty { task.detail = call.prompt.count > 600 ? String(call.prompt.prefix(600)) + "…" : call.prompt }
+        tasks.append(task)
+    }
+
+    /// Scheduled work of the turn under way taken back (see `Array.cancelScheduled`).
+    @discardableResult
+    public mutating func cancelScheduled(_ cancellation: BackgroundTask.Cancellation) -> Bool {
+        let before = tasks.count
+        tasks.removeAll(where: cancellation.matches)
+        return tasks.count != before
+    }
+
+    /// Scheduled work of the turn under way whose time came (see `Array.settleDueSchedules`).
+    public mutating func settleDueSchedules(now: Date) {
+        tasks = tasks.map { $0.settled(now: now) }
+    }
+
+    /// The soonest scheduled work of the turn under way is due.
+    var nextScheduleDue: Date? { tasks.compactMap(\.dueAt).min() }
 
     /// A chip for background work the bot itself started in this turn (not one of its
     /// subagents: their work is theirs), once.

@@ -111,6 +111,8 @@ public final class Bot: ObservableObject, Identifiable {
     private var sessionRules: [String] = []
     /// Recent tool calls by id (tool, what it ran or touched), to show and allow a blocked one.
     private var toolCalls: [String: (tool: String, detail: String)] = [:]
+    /// The soonest a wake-up or cron job of this bot is due (see `settleDueSchedules`).
+    private var scheduleDue: Date?
     /// Blocked calls already shown (claude says so twice: its frame and the tool result).
     private var deniedCalls: Set<String> = []
     /// A tool question waits for you (the row says so instead of "Working").
@@ -285,14 +287,20 @@ public final class Bot: ObservableObject, Identifiable {
             let tail = await Task.detached(priority: .utility) { BackgroundTask.tail(of: path) }.value
             if let tail, !tail.isEmpty { return tail }
         }
-        if let summary = task.summary, !task.isRunning || task.kind == .command { return summary }
+        if task.kind.isScheduled {
+            // What it wakes the bot with, and when.
+            let when = task.fireAt.map { "Fires \($0.formatted(date: .abbreviated, time: .shortened))" }
+            let schedule = task.schedule.map { "cron \($0)" + (task.recurring == false ? " (once)" : "") }
+            return [[schedule, task.isRunning ? when : task.summary].compactMap { $0 }.joined(separator: " · "), task.detail ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        }
+        if let summary = task.summary, !task.isRunning || task.kind == .command || task.kind == .monitor { return summary }
         if task.kind == .agent, let subagent = trace.subagent(taskID) {
             if !subagent.isRunning, let result = subagent.result, !result.isEmpty { return result }
             let recent = subagent.steps.suffix(4).map { $0.kind == .text ? "· \($0.title.split(whereSeparator: \.isNewline).first.map(String.init) ?? "")" : "› \($0.title)" }
             if !recent.isEmpty { return recent.joined(separator: "\n") }
         }
         switch task.status {
-        case .running: return task.kind == .agent ? "Working; nothing to show yet." : "No output yet."
+        case .running: return task.kind == .agent ? "Working; nothing to show yet." : task.kind == .monitor ? "Watching; no event yet." : "No output yet."
         case .stopped: return "The bot's process ended before this reported back."
         case .interrupted: return "The app restarted while this ran; it was killed."
         default: return "No output was kept."
@@ -672,7 +680,13 @@ public final class Bot: ObservableObject, Identifiable {
         let tasks = messages.untoldCutOffTasks
         guard !tasks.isEmpty else { return nil }
         let lines = tasks.map { task in
-            let kind = task.kind == .command ? "background command" : "background subagent"
+            let kind = switch task.kind {
+            case .command: "background command"
+            case .agent: "background subagent"
+            case .monitor: "Monitor"
+            case .wakeup: "scheduled wake-up (ScheduleWakeup)"
+            case .cron: "cron job (CronCreate \(task.schedule ?? ""))"
+            }
             let why = task.status == .interrupted ? "killed when the app restarted" : "stopped when your previous session ended"
             let started = task.startedAt.formatted(.dateTime.month(.twoDigits).day(.twoDigits).hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
             var line = "- \(kind) \"\(task.title)\" (started \(started), \(why))"
@@ -1067,6 +1081,7 @@ public final class Bot: ObservableObject, Identifiable {
     private func handle(_ event: AgentEvent, from source: AgentProcess) {
         guard source === process else { return }
         noteProgress(of: event)
+        settleDueSchedules()
         switch event {
         case .reply, .earlyReply, .trace, .permission, .usage:
             // The resumed session is alive.
@@ -1091,7 +1106,16 @@ public final class Bot: ObservableObject, Identifiable {
                 if toolCalls.count > 500 { toolCalls.removeAll() }
                 toolCalls[id] = (tool, detail)
             }
-            if trace.apply(step) { store?.save(subagents: trace.subagents) }
+            if trace.apply(step, at: now()) { store?.save(subagents: trace.subagents) }
+            if case let .toolResult(id, output, false, nil) = step, let tool = toolCalls[id]?.tool {
+                if let cancellation = BackgroundTask.Cancellation(tool: tool, result: output) {
+                    trace.cancelScheduled(cancellation)
+                    if messages.cancelScheduled(cancellation) { store?.save(messages: messages) }
+                    scheduleDue = [messages.nextScheduleDue, trace.nextScheduleDue].compactMap { $0 }.min()
+                } else if let due = trace.nextScheduleDue, scheduleDue.map({ due < $0 }) ?? true {
+                    scheduleDue = due
+                }
+            }
             if case let .subagentEnded(id, status, summary) = step,
                messages.endBackgroundTask(id, status: status, summary: summary, at: now()) {
                 store?.save(messages: messages)
@@ -1300,13 +1324,23 @@ public final class Bot: ObservableObject, Identifiable {
         if retryingConnection { retryingConnection = false }
     }
 
+    /// A wake-up or one-shot cron job whose time came fired (claude is at work again, which is
+    /// how it fires), a recurring job expired: their chips say so. Cheap until one is due.
+    private func settleDueSchedules() {
+        guard let due = scheduleDue, now() >= due else { return }
+        let date = now()
+        trace.settleDueSchedules(now: date)
+        if messages.settleDueSchedules(now: date) { store?.save(messages: messages) }
+        scheduleDue = [messages.nextScheduleDue, trace.nextScheduleDue].compactMap { $0 }.min()
+    }
+
     /// The subagent a trace event belongs to, if any.
     static func subagentID(of step: TraceEvent) -> String? {
         switch step {
         case let .toolUse(_, _, _, _, parent), let .toolResult(_, _, _, parent), let .toolImages(_, _, parent), let .text(_, parent): parent
         case let .subagentStarted(id, _, _, _, _): id
         case let .subagentWaiting(id): id
-        case .subagentEnded, .subagentNamed, .backgroundCommandStarted: nil
+        case .subagentEnded, .subagentNamed, .backgroundCommandStarted, .monitorStarted, .scheduleCalled: nil
         }
     }
 

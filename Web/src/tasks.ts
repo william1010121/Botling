@@ -1,7 +1,8 @@
 // The chat's background work, as one row under its latest message (the app puts every task of the chat
 // there, and none under the others): up to four small icons with counts, only those there are —
-// subagents still working, other work still waiting (background commands), work done, work
-// failed (stopped or interrupted too). Pressing one opens the list, grouped by those four and filtered
+// subagents still working, other work still waiting (background commands, Monitors, scheduled
+// wake-ups and cron jobs, each with its own mark in the list), work done, work failed (stopped or
+// interrupted too). Pressing one opens the list, grouped by those four and filtered
 // to the one pressed; pressing a task shows its last lines of output, which the app reads (`taskOutput`
 // action with the id of the message that started it, answered by `ccb.taskOutput`).
 import { post } from "./bridge";
@@ -37,6 +38,25 @@ export function countTasks(tasks: TaskChipView[]): Record<TaskBucket, number> {
   for (const task of tasks) counts[bucketOf(task)] += 1;
   return counts;
 }
+
+/** Marks for kinds of waiting work in the list (the row's icons stay the four). */
+const kindIcons: Partial<Record<TaskChipView["kind"], string>> = {
+  // An eye: a Monitor watching.
+  monitor: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="2.6"/></svg>`,
+  // An alarm clock: a wake-up set for later.
+  wakeup: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="7.5"/><path d="M12 9.5V13l2.2 1.8M4.5 4.5 7 2.5M19.5 4.5 17 2.5"/></svg>`,
+  // Arrows around: a cron job that comes back.
+  cron: `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4"/></svg>`,
+};
+
+/** What each kind is, for a line's tooltip. */
+const kindWords: Record<TaskChipView["kind"], string> = {
+  command: "背景指令",
+  agent: "背景 subagent",
+  monitor: "監看（Monitor）",
+  wakeup: "排程喚醒（ScheduleWakeup）",
+  cron: "排程工作（CronCreate）",
+};
 
 const icons: Record<TaskBucket, string> = {
   // A small bot head, gently pulsing while it works.
@@ -74,6 +94,146 @@ export function elapsed(ms: number): string {
   return `${seconds} 秒`;
 }
 
+/** "45 秒後", "20 分後", "3 小時 5 分後", "2 天後"; "即將觸發" once it is time. */
+export function until(ms: number): string {
+  if (ms <= 0) return "即將觸發";
+  const seconds = Math.ceil(ms / 1000);
+  if (seconds < 60) return `${seconds} 秒後`;
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return `${minutes} 分後`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return minutes % 60 ? `${hours} 小時 ${minutes % 60} 分後` : `${hours} 小時後`;
+  return `${Math.round(hours / 24)} 天後`;
+}
+
+interface Cron {
+  minutes: Set<number>;
+  hours: Set<number>;
+  days: Set<number>;
+  months: Set<number>;
+  weekdays: Set<number>;
+  daysRestricted: boolean;
+  weekdaysRestricted: boolean;
+}
+
+/** A cron field ("*", "5", "1-5", "1,3", "*\/15", "0-30/10") as its values; null if it is not one. */
+function cronValues(field: string, low: number, high: number): Set<number> | null {
+  const values = new Set<number>();
+  for (const part of field.split(",")) {
+    const [range, stepText] = part.split("/");
+    const step = stepText === undefined ? 1 : Number(stepText);
+    if (!Number.isInteger(step) || step <= 0) return null;
+    let from: number;
+    let to: number;
+    if (range === "*") [from, to] = [low, high];
+    else if (range.includes("-")) [from, to] = range.split("-").map(Number) as [number, number];
+    else [from, to] = [Number(range), stepText === undefined ? Number(range) : high];
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < low || to > high || from > to) return null;
+    for (let value = from; value <= to; value += step) values.add(value);
+  }
+  return values.size ? values : null;
+}
+
+function parseCron(text: string): Cron | null {
+  const fields = text.trim().split(/\s+/);
+  if (fields.length !== 5) return null;
+  const sets = [cronValues(fields[0], 0, 59), cronValues(fields[1], 0, 23), cronValues(fields[2], 1, 31), cronValues(fields[3], 1, 12), cronValues(fields[4], 0, 7)];
+  if (sets.some((set) => !set)) return null;
+  const [minutes, hours, days, months, weekdays] = sets as Set<number>[];
+  if (weekdays.has(7)) weekdays.add(0);
+  return { minutes, hours, days, months, weekdays, daysRestricted: fields[2] !== "*", weekdaysRestricted: fields[4] !== "*" };
+}
+
+/** The first minute after `now` (local time) when a cron line runs, within a year; null if none or not a cron line. */
+export function nextCronFire(text: string, now: number): number | null {
+  const cron = parseCron(text);
+  if (!cron) return null;
+  const time = new Date(now);
+  time.setSeconds(0, 0);
+  time.setMinutes(time.getMinutes() + 1);
+  const limit = now + 366 * 24 * 3600 * 1000;
+  while (time.getTime() <= limit) {
+    if (!cron.months.has(time.getMonth() + 1)) {
+      time.setMonth(time.getMonth() + 1, 1);
+      time.setHours(0, 0, 0, 0);
+      continue;
+    }
+    const dayMatch = cron.days.has(time.getDate());
+    const weekdayMatch = cron.weekdays.has(time.getDay());
+    const dayOK = cron.daysRestricted && cron.weekdaysRestricted ? dayMatch || weekdayMatch : cron.daysRestricted ? dayMatch : cron.weekdaysRestricted ? weekdayMatch : true;
+    if (!dayOK) {
+      time.setDate(time.getDate() + 1);
+      time.setHours(0, 0, 0, 0);
+      continue;
+    }
+    if (!cron.hours.has(time.getHours())) {
+      time.setHours(time.getHours() + 1, 0, 0, 0);
+      continue;
+    }
+    if (cron.minutes.has(time.getMinutes())) return time.getTime();
+    time.setMinutes(time.getMinutes() + 1);
+  }
+  return null;
+}
+
+const weekdayNames = ["日", "一", "二", "三", "四", "五", "六"];
+
+function hhmm(hour: number, minute: number): string {
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+/** A cron line in words: "每 30 分鐘", "每小時 :07", "每天 09:00", "平日 09:00", "每週一、四 18:30", "10/22 09:00"; the line itself when it is not that simple. */
+export function describeCron(text: string): string {
+  const cron = parseCron(text);
+  if (!cron) return text;
+  const fields = text.trim().split(/\s+/);
+  const [minute, hour, day, month, weekday] = fields;
+  const one = (set: Set<number>) => (set.size === 1 ? [...set][0] : null);
+  const allDays = day === "*" && month === "*" && weekday === "*";
+  const step = /^\*\/(\d+)$/;
+  if (step.test(minute) && hour === "*" && allDays) return `每 ${minute.match(step)![1]} 分鐘`;
+  if (minute === "*" && hour === "*" && allDays) return "每分鐘";
+  const m = one(cron.minutes);
+  if (m === null) return text;
+  if (hour === "*" && allDays) return `每小時 :${String(m).padStart(2, "0")}`;
+  if (step.test(hour) && allDays) return `每 ${hour.match(step)![1]} 小時`;
+  const h = one(cron.hours);
+  if (h === null) return text;
+  const at = hhmm(h, m);
+  if (day === "*" && month === "*") {
+    if (weekday === "*") return `每天 ${at}`;
+    if (weekday === "1-5") return `平日 ${at}`;
+    if (weekday === "0,6" || weekday === "6,0" || weekday === "6-7") return `週末 ${at}`;
+    const days = [...cron.weekdays].filter((d) => d !== 7).sort((a, b) => a - b);
+    return `每週${days.map((d) => weekdayNames[d]).join("、")} ${at}`;
+  }
+  const d = one(cron.days);
+  const mo = one(cron.months);
+  if (d !== null && mo !== null && weekday === "*") return `${mo}/${d} ${at}`;
+  if (d !== null && month === "*" && weekday === "*") return `每月 ${d} 日 ${at}`;
+  return text;
+}
+
+/** What scheduled work's line says while it waits: when it fires next ("20 分後", "每天 09:00 · 3 小時後"). */
+function scheduledWords(kind: string, fires: number | null, schedule: string | null, recurring: boolean, now: number): string {
+  if (kind === "cron" && schedule) {
+    const next = recurring ? nextCronFire(schedule, now) : fires;
+    const words = recurring ? describeCron(schedule) : `一次 ${describeCron(schedule)}`;
+    return next != null ? `${words} · ${until(next - now)}` : words;
+  }
+  return fires != null ? until(fires - now) : "等待中";
+}
+
+/** A running line's time: how long it has run, or, for scheduled work, when it fires. */
+function runningWords(item: { kind: string; started: number; fires: number | null; schedule: string | null; recurring: boolean }, now: number): string {
+  if (item.kind === "wakeup" || item.kind === "cron") return scheduledWords(item.kind, item.fires, item.schedule, item.recurring, now);
+  return elapsed(now - item.started);
+}
+
+function runningOf(task: TaskChipView): { kind: string; started: number; fires: number | null; schedule: string | null; recurring: boolean } {
+  return { kind: task.kind, started: task.started, fires: task.fires ?? null, schedule: task.schedule ?? null, recurring: task.recurring !== false };
+}
+
 const endWords: Record<string, string> = {
   completed: "完成",
   failed: "失敗",
@@ -84,8 +244,11 @@ const endWords: Record<string, string> = {
 
 /** What a task's line says after its title: its time, or how it ended (and how long it took). */
 function status(task: TaskChipView, now: number): string {
-  if (task.status === "running") return elapsed(now - task.started);
+  if (task.status === "running") return runningWords(runningOf(task), now);
   const words = endWords[task.status] ?? endWords.killed;
+  if (task.status === "completed" && (task.kind === "wakeup" || task.kind === "cron")) {
+    return task.kind === "cron" && task.recurring !== false ? `${describeCron(task.schedule ?? "")} · 已到期` : "已觸發";
+  }
   if (task.status === "completed") return task.ended != null ? elapsed(task.ended - task.started) : words;
   const took = task.ended != null && task.status === "failed" ? ` · ${elapsed(task.ended - task.started)}` : "";
   return `${words}${took}`;
@@ -175,14 +338,25 @@ export function taskChips(messageID: string, tasks: TaskChipView[]): HTMLElement
     item.dataset.task = task.id;
     item.dataset.message = origin(task);
     item.dataset.started = String(task.started);
-    item.title = [task.kind === "agent" ? "背景 subagent" : "背景指令", task.detail].filter(Boolean).join("：");
+    item.dataset.kind = task.kind;
+    if (task.fires != null) item.dataset.fires = String(task.fires);
+    if (task.schedule) item.dataset.schedule = task.schedule;
+    if (task.recurring === false) item.dataset.recurring = "false";
+    item.title = [kindWords[task.kind] ?? kindWords.command, task.detail].filter(Boolean).join("：");
     const name = document.createElement("span");
     name.className = "task-name";
     name.textContent = task.title;
     const time = document.createElement("span");
     time.className = "task-time";
     time.textContent = status(task, now);
-    item.append(iconElement(bucket, "task-mark"), name, time);
+    // Waiting work shows what kind it is; the rest how it went.
+    const mark = iconElement(bucket, "task-mark");
+    const glyph = bucket === "waiting" ? kindIcons[task.kind] : undefined;
+    if (glyph) {
+      mark.innerHTML = glyph;
+      mark.dataset.kind = task.kind;
+    }
+    item.append(mark, name, time);
     item.addEventListener("click", () => {
       const id = key(origin(task), task.id);
       if (open.has(id)) {
@@ -266,7 +440,11 @@ export function tickTaskChips(now: number = clock()): void {
     const started = Number(line.dataset.started);
     const time = line.querySelector(".task-time");
     if (!time || !Number.isFinite(started)) continue;
-    time.textContent = elapsed(now - started);
+    const fires = line.dataset.fires != null ? Number(line.dataset.fires) : null;
+    time.textContent = runningWords(
+      { kind: line.dataset.kind ?? "command", started, fires: fires != null && Number.isFinite(fires) ? fires : null, schedule: line.dataset.schedule ?? null, recurring: line.dataset.recurring !== "false" },
+      now,
+    );
     const messageID = line.dataset.message;
     const taskID = line.dataset.task;
     if (messageID && taskID && view.expanded && open.has(key(messageID, taskID)) && Math.floor(now / 1000) % 5 === 0) {
