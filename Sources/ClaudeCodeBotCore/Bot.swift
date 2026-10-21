@@ -175,11 +175,16 @@ public final class Bot: ObservableObject, Identifiable {
     /// Work it was doing (handed over, a routine) when you wrote: it answers you first, then is
     /// told to carry on. Holds whether that work reports up like handed-over work.
     private var pausedWork: Bool?
-    /// The turn under way was started by claude itself only to say a subagent is still waiting
-    /// on its own background work: nothing new, so its reply does not show.
-    private var quietTurn = false
-    /// That quiet turn was paused for you: the work it carries on with after stays quiet.
-    private var pausedQuiet = false
+    /// Who started the turn under way: you, the app (handed-over work, a note), or claude itself
+    /// because background work told it something (a `task_notification`, a wake-up). Nil
+    /// between turns.
+    enum TurnOrigin: Equatable { case user, app, background }
+    private var turnOrigin: TurnOrigin?
+    /// A `task_notification` came (whatever it said, busy or not): the next turn claude starts
+    /// itself is background work's, even if nothing marked it started.
+    private var backgroundWake = false
+    /// Who started the work paused for you: what it carries on with after is theirs again.
+    private var pausedOrigin: TurnOrigin?
     static let pauseNote = "(App: I stopped what you were doing to ask you this. Answer me first; you will be told to carry on with it after.)"
     static let resumeNote = "(App: Now carry on with what you were doing before the user's message, where you left off.)"
 
@@ -589,7 +594,7 @@ public final class Bot: ObservableObject, Identifiable {
                 // subagents in the background carry on and still report back.
                 trace.dropSteps()
                 pausedWork = turnFromRelay
-                pausedQuiet = quietTurn
+                pausedOrigin = turnOrigin
                 turnFromRelay = false
                 var mine = outgoing
                 mine.text = Self.pauseNote + "\n\n" + outgoing.text
@@ -640,7 +645,7 @@ public final class Bot: ObservableObject, Identifiable {
         // A turn you started, or one you are adding to; anything else is not yours to add to.
         turnInput = outgoing.fromUser && (!isWorking || turnInput != nil) ? outgoing : nil
         // You said something: the reply is yours to see.
-        if outgoing.fromUser { quietTurn = false }
+        if outgoing.fromUser || !isWorking { turnOrigin = outgoing.fromUser ? .user : .app }
         if !isWorking { noteProgress() }
         isWorking = true
         if resumeProbe, resumeRetry == nil, groupReply == nil { resumeRetry = outgoing }
@@ -666,6 +671,7 @@ public final class Bot: ObservableObject, Identifiable {
             phase = .awake
             isWorking = true
             turnInput = outgoing.fromUser ? outgoing : nil
+            turnOrigin = outgoing.fromUser ? .user : .app
             let note = wakeNote?() ?? ""
             let recent = recentChat(leavingOut: outgoing.messageID)
             let wakeLine = profile.keepsMemory ? prompts.wake : ""
@@ -799,7 +805,8 @@ public final class Bot: ObservableObject, Identifiable {
     /// as working. Its result line (the same words, or the reply of the work the hook sent it
     /// back to) ends the turn. Not for turns whose reply goes elsewhere or is not shown.
     private func showEarly(_ text: String) {
-        guard interruptions == 0, internalReply == nil, groupReply == nil, !dropNextReply, !quietTurn,
+        guard interruptions == 0, internalReply == nil, groupReply == nil, !dropNextReply,
+              !(fromBackground && ReplyParser.saysNoReply(text)),
               replyFilter?() == nil, outage == nil else { return }
         // Your message is answered: what you write now is a new one.
         turnInput = nil
@@ -823,9 +830,10 @@ public final class Bot: ObservableObject, Identifiable {
             // It answered you; now back to what it was doing.
             pausedWork = nil
             turnFromRelay = fromRelay
-            quietTurn = pausedQuiet
-            pausedQuiet = false
+            let origin = pausedOrigin
+            pausedOrigin = nil
             deliver(Outgoing(text: Self.resumeNote))
+            if let origin { turnOrigin = origin }
             return
         }
         afterTurn()
@@ -1131,14 +1139,10 @@ public final class Bot: ObservableObject, Identifiable {
             }
             noteSubagentEnd(step)
             switch step {
-            case .subagentWaiting:
-                // claude wakes it to say a subagent is still waiting on its own work (each
-                // time a Monitor or background command of that subagent reports): a turn with
-                // nothing new for you, unless something else comes in it.
-                if !isWorking, internalReply == nil, groupReply == nil { quietTurn = true }
-            case .subagentEnded:
-                // A real report: the turn tells you about it.
-                quietTurn = false
+            case .subagentWaiting, .subagentEnded:
+                // claude tells the bot (a turn of its own, now or once the one under way ends).
+                // Whether that turn has anything for you is the bot's to say (`<no-reply/>`).
+                backgroundWake = true
             default:
                 break
             }
@@ -1153,6 +1157,8 @@ public final class Bot: ObservableObject, Identifiable {
             if !isWorking, internalReply == nil, groupReply == nil, Self.startsATurn(step) {
                 cancelIdle()
                 isWorking = true
+                turnOrigin = .background
+                backgroundWake = false
             } else if case .subagentEnded = step, !isWorking, phase == .awake, sleepsAt != nil {
                 // Its report turn comes next: the countdown starts over, so the bot does not
                 // begin tidying in the moment between the two.
@@ -1173,7 +1179,7 @@ public final class Bot: ObservableObject, Identifiable {
             // Words already shown as this turn's reply (before its Stop hook ran): the turn just ends.
             if !isError, interruptions == 0, let shown = early.matching(text) {
                 turnInput = nil
-                quietTurn = false
+                endTurnOrigin()
                 trace.dropSteps()
                 finishTurn(reply: shown, requests: early.requests)
                 return
@@ -1189,8 +1195,8 @@ public final class Bot: ObservableObject, Identifiable {
                 interruptions = 0
             }
             turnInput = nil
-            let quiet = quietTurn
-            quietTurn = false
+            let fromBackground = self.fromBackground
+            endTurnOrigin()
             // `<choices>` and other tags written before a tool call are not in claude's result
             // (only the words after the last call are): they count as part of the reply.
             let lifted = trace.liftReplyTags()
@@ -1217,8 +1223,9 @@ public final class Bot: ObservableObject, Identifiable {
                 showNetworkLoss(text)
                 return
             }
-            if quiet, !isError {
-                // "Still running": no bubble, and nothing unread.
+            if fromBackground, !isError, ReplyParser.saysNoReply(text) {
+                // Background work woke it with nothing for you: no bubble, and nothing unread.
+                // (A turn you or the app started always shows; the tag is just taken out.)
                 trace.dropSteps()
                 isWorking = false
                 reloadRoutines()
@@ -1248,8 +1255,9 @@ public final class Bot: ObservableObject, Identifiable {
             turnInput = nil
             interruptions = 0
             if !lostToNetwork { pausedWork = nil }
-            quietTurn = false
-            pausedQuiet = false
+            turnOrigin = nil
+            backgroundWake = false
+            pausedOrigin = nil
             early = EarlyReplies()
             if trace.stopRunning() { store?.save(subagents: trace.subagents) }
             if messages.stopBackgroundTasks(as: .stopped, at: now()) { store?.save(messages: messages) }
@@ -1302,6 +1310,18 @@ public final class Bot: ObservableObject, Identifiable {
         case let .toolUse(_, _, _, _, parent), let .text(_, parent): parent == nil
         default: false
         }
+    }
+
+    /// The turn under way is one claude started itself because background work told it
+    /// something: only such a turn may go unshown (`<no-reply/>`).
+    private var fromBackground: Bool {
+        turnOrigin == .background || (turnOrigin == nil && backgroundWake)
+    }
+
+    /// The turn is over: the next one says again who started it.
+    private func endTurnOrigin() {
+        if fromBackground { backgroundWake = false }
+        turnOrigin = nil
     }
 
     private func afterTurn() {
@@ -1420,6 +1440,7 @@ public final class Bot: ObservableObject, Identifiable {
                 let process = try start(resuming: session)
                 phase = .awake
                 isWorking = true
+                turnOrigin = .app
                 process.send(note)
                 return
             } catch {

@@ -69,6 +69,14 @@ public enum ReplyParser {
         options: .dotMatchesLineSeparators
     )
 
+    /// The reply carries `<no-reply/>` (outside code): it has nothing for the user. Only a turn
+    /// claude started itself (background work told it something) is left unshown for it; in
+    /// any other turn the tag is just taken out.
+    public static func saysNoReply(_ reply: String) -> Bool {
+        let mask = masked(reply)
+        return noReplyTag.firstMatch(in: mask as String, range: NSRange(location: 0, length: mask.length)) != nil
+    }
+
     public static func parse(_ reply: String) -> (body: String, choices: [Choice]?) {
         let parsed = parseAll(reply)
         return (parsed.body, parsed.choices)
@@ -98,6 +106,8 @@ public enum ReplyParser {
         options: .dotMatchesLineSeparators
     )
     private static let screenshotTag = try! NSRegularExpression(pattern: #"<app-screenshot\s*/?>(?:\s*</app-screenshot>)?"#)
+    /// `<no-reply/>`: the turn claude started itself has nothing for the user.
+    private static let noReplyTag = try! NSRegularExpression(pattern: #"<no-reply\s*/>|<no-reply>\s*</no-reply>"#)
     private static let openQuestionTag = try! NSRegularExpression(
         pattern: #"<open-question\s+from\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:/>|>\s*</open-question>)"#
     )
@@ -201,6 +211,7 @@ public enum ReplyParser {
         take(projectTag) { projects.insert(.newProject(folder: $0[0].trimmingCharacters(in: .whitespaces), task: $0[1]), at: 0) }
         requests += projects
         take(buildTag, first: true) { requests.append(.installBuild(path: $0[0].trimmingCharacters(in: .whitespaces), note: $0[1])) }
+        take(noReplyTag) { _ in }
         var screenshot = false
         take(screenshotTag) { _ in screenshot = true }
         if screenshot { requests.append(.appScreenshot) }
