@@ -213,9 +213,12 @@ struct LocalizationTests {
     @Test func coreWordsFollowTheLanguage() {
         defer { L10n.language = .english }
         L10n.language = .japanese
-        #expect(Bot.shownDivider("Handoff → loading new plugins") == "引き継ぎ → 新しいプラグインを読み込み")
-        #expect(Bot.shownDivider("Restarted → High effort") == "再起動 → 思考レベル：高")
-        #expect(Bot.shownDivider("Handoff → subagents on Opus") == "引き継ぎ → サブエージェントは Opus")
+        #expect(Bot.shownDivider(.plugins, resumed: false) == L("Handoff → {0}", L("loading new plugins")))
+        #expect(Bot.shownDivider(.effort(.high), resumed: true) == L("Restarted → {0}", L("{0} effort", EffortLevel.high.displayName)))
+        #expect(Bot.shownDivider(.subagentModel(.opus), resumed: false) != Bot.shownDivider(.subagentModel(.opus), resumed: true))
+        #expect(Bot.shownDivider(.plugins, resumed: false) != "Handoff → loading new plugins")
+        // What the bot is told stays English whatever the app's language.
+        #expect(RestartReason.effort(.high).told == "High effort")
         #expect(CodexSeverity.high.displayName == "高")
         #expect(EffortLevel.xhigh.englishName == "Extra high")
         #expect(ResultPublishing.localOnly.displayName == "常にローカルの HTML ページ")
@@ -224,6 +227,6 @@ struct LocalizationTests {
         #expect(Bot.noLongerNeeded == "已不需要")
         #expect(Pins.FloatMenu.full.label == "浮在角落（已有 2 個浮動中）")
         L10n.language = .english
-        #expect(Bot.shownDivider("Handoff → may read laas-copy") == "Handoff → may read laas-copy")
+        #expect(Bot.shownDivider(.mayRead("laas-copy"), resumed: false).contains("laas-copy"))
     }
 }

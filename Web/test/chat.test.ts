@@ -745,7 +745,7 @@ describe("messages", () => {
 
   it("show the pictures a tool call gave back in its OUT box, in the lightbox on click", () => {
     const row = messageElement(message({ id: "r-img", text: "Looked.", steps: [
-      { id: "p1", kind: "tool", tool: "Read", title: "Read login.png", detail: "/Users/me/login.png", output: "(image)", failed: false, done: true, status: null, count: null,
+      { id: "p1", kind: "tool", tool: "Read", title: "Read login.png", detail: "/Users/me/login.png", output: "", failed: false, done: true, status: null, count: null,
         images: [{ url: "file:///Users/me/login.png", name: "login.png" }] },
     ] }), {});
     document.body.append(row);
@@ -758,7 +758,7 @@ describe("messages", () => {
     const image = blocks[1].querySelector<HTMLImageElement>("img.step-image")!;
     expect(image.getAttribute("src")).toBe("file:///Users/me/login.png");
     expect(image.alt).toBe("login.png");
-    // The words standing for the picture go; nothing else to say, so no text box.
+    // A picture and no words: no text box.
     expect(blocks[1].querySelector("pre")).toBeNull();
     image.click();
     // Seen large in the lightbox over the chat, not in a window of its own.
@@ -769,7 +769,7 @@ describe("messages", () => {
 
   it("show a picture's small copy in the step, and the full one in the lightbox on click", () => {
     const row = messageElement(message({ id: "r-thumb", text: "Looked.", steps: [
-      { id: "p2", kind: "tool", tool: "Bash", title: "screenshot", detail: null, output: "(image)", failed: false, done: true, status: null, count: null,
+      { id: "p2", kind: "tool", tool: "Bash", title: "screenshot", detail: null, output: "", failed: false, done: true, status: null, count: null,
         images: [{ url: "file:///chat/step-images/a.jpg", name: "a.jpg", thumb: "file:///chat/step-images/thumbs/a.jpg" }] },
     ] }), {});
     document.body.append(row);

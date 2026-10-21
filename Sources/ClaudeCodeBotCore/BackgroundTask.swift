@@ -126,22 +126,6 @@ public struct BackgroundTask: Codable, Equatable, Identifiable, Sendable {
         return "ccb.taskOutput(\(quoted(messageID)), \(quoted(taskID)), \(quoted(text)))"
     }
 
-    /// The file named in the result of the call that launched it: "Output is being written to:
-    /// …" (Bash), "output_file: …" (Agent).
-    static func outputFile(in result: String) -> String? {
-        for marker in ["Output is being written to: ", "output_file: "] {
-            guard let range = result.range(of: marker) else { continue }
-            let rest = result[range.upperBound...]
-            var line = String(rest.prefix { !$0.isNewline })
-            // A path may have spaces; the sentence after it starts ". You will be notified".
-            if let end = line.range(of: ". You ") { line = String(line[..<end.lowerBound]) }
-            var path = line.trimmingCharacters(in: .whitespaces)
-            if path.hasSuffix(".") { path.removeLast() }
-            if !path.isEmpty { return path }
-        }
-        return nil
-    }
-
     /// Scheduled work a call took back: a cron job (CronDelete), or every wake-up still to come
     /// (ScheduleWakeup with `stop`). Read from the call's structured result, not its words.
     public enum Cancellation: Equatable, Sendable {
@@ -330,5 +314,64 @@ public struct ScheduleResult: Equatable, Sendable {
         jobID = (object["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         stopped = object["stopped"] as? Bool ?? false
         guard fireAt != nil || jobID != nil || stopped || object["scheduledFor"] != nil else { return nil }
+    }
+}
+
+/// The structured result (`tool_use_result`) claude gives a call that started background work:
+/// an Agent call `{status: "async_launched", agentId, outputFile, …}` (a subagent that finished at
+/// once: `{status: "completed", agentId, …}`), a Bash call sent to the background
+/// `{backgroundTaskId, …}`. Read instead of the words for the model, which change between versions.
+public struct LaunchResult: Equatable, Sendable {
+    /// The id SendMessage continues the subagent with.
+    public var agentID: String?
+    /// The file its output goes to.
+    public var outputFile: String?
+    /// It went on in the background: the call's return is not its result.
+    public var background = false
+
+    public init(agentID: String? = nil, outputFile: String? = nil, background: Bool = false) {
+        self.agentID = agentID
+        self.outputFile = outputFile
+        self.background = background
+    }
+
+    /// Nil when it has none of these fields (another tool's result, or an error).
+    init?(_ value: Any?) {
+        guard let object = value as? [String: Any] else { return nil }
+        func text(_ key: String) -> String? { (object[key] as? String).flatMap { $0.isEmpty ? nil : $0 } }
+        agentID = text("agentId")
+        outputFile = text("outputFile") ?? text("output_file") ?? text("outputPath")
+        background = object["status"] as? String == "async_launched" || object["isAsync"] as? Bool == true || text("backgroundTaskId") != nil
+        guard agentID != nil || outputFile != nil || background else { return nil }
+    }
+}
+
+/// The words claude gives the model when a call starts background work, for results that come
+/// without a structured result (a subagent's own calls, older claude): the one place they are read.
+enum LaunchText {
+    /// The file named in the result: "Output is being written to: …" (Bash), "output_file: …" (Agent).
+    static func outputFile(in result: String) -> String? {
+        for marker in ["Output is being written to: ", "output_file: "] {
+            guard let range = result.range(of: marker) else { continue }
+            let rest = result[range.upperBound...]
+            var line = String(rest.prefix { !$0.isNewline })
+            // A path may have spaces; the sentence after it starts ". You will be notified".
+            if let end = line.range(of: ". You ") { line = String(line[..<end.lowerBound]) }
+            var path = line.trimmingCharacters(in: .whitespaces)
+            if path.hasSuffix(".") { path.removeLast() }
+            if !path.isEmpty { return path }
+        }
+        return nil
+    }
+
+    /// "agentId: a1b2c3" in an Agent tool result.
+    static func agentID(in output: String) -> String? {
+        guard let range = output.range(of: #"agentId: ([A-Za-z0-9_\-]+)"#, options: .regularExpression) else { return nil }
+        return String(output[range].dropFirst("agentId: ".count))
+    }
+
+    /// The result of an Agent call that went to the background.
+    static func launchedInBackground(_ output: String) -> Bool {
+        output.hasPrefix("Async agent launched")
     }
 }

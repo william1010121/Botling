@@ -24,12 +24,30 @@ enum SubagentRun {
 @MainActor
 struct TraceTests {
     @Test func streamLinesBecomeTraceEvents() {
-        #expect(StreamEvent.events(in: SubagentRun.spawn) == [.trace(.toolUse(id: "toolu_A", tool: "Agent", title: "Delegate Read a.txt and report content", detail: "Read the file named a.txt and report it.", parent: nil))])
+        #expect(StreamEvent.events(in: SubagentRun.spawn) == [
+            .trace(.toolUse(id: "toolu_A", tool: "Agent", title: "Delegate Read a.txt and report content", detail: "Read the file named a.txt and report it.", parent: nil)),
+            .trace(.subagentDescribed(id: "toolu_A", description: "Read a.txt and report content")),
+        ])
         #expect(StreamEvent.events(in: SubagentRun.started) == [.trace(.subagentStarted(id: "toolu_A", description: "Read a.txt and report content", type: "general-purpose", prompt: "Read the file named a.txt and report it.", background: true))])
         #expect(StreamEvent.events(in: SubagentRun.launched) == [.trace(.toolResult(id: "toolu_A", output: "Async agent launched successfully.", failed: false, parent: nil))])
         #expect(StreamEvent.events(in: SubagentRun.subagentSays) == [.trace(.text("Looking for it.", parent: "toolu_A"))])
         #expect(StreamEvent.events(in: SubagentRun.readResult) == [.trace(.toolResult(id: "toolu_R", output: "1\thello world", failed: false, parent: "toolu_A"))])
         #expect(StreamEvent.events(in: SubagentRun.notification) == [.trace(.subagentEnded(id: "toolu_A", status: "completed", summary: "It says hello world."))])
+    }
+
+    /// claude's structured result for a call that started work in the background is read, not
+    /// its words: a reworded result still sends the subagent to the background with its id.
+    @Test func aLaunchIsReadFromTheStructuredResult() throws {
+        let line = #"{"type":"user","parent_tool_use_id":null,"message":{"role":"user","content":[{"tool_use_id":"toolu_A","type":"tool_result","content":[{"type":"text","text":"Started it."}]}]},"tool_use_result":{"status":"async_launched","agentId":"ab5d","outputFile":"/tmp/x/ab5d.output"}}"#
+        let events = StreamEvent.events(in: line)
+        #expect(events.first == .trace(.launchResult(id: "toolu_A", result: LaunchResult(agentID: "ab5d", outputFile: "/tmp/x/ab5d.output", background: true), parent: nil)))
+        var book = TraceBook()
+        book.apply(.toolUse(id: "toolu_A", tool: "Agent", title: "Delegate x", detail: "x", parent: nil))
+        for case let .trace(event) in events { book.apply(event) }
+        #expect(try #require(book.subagent("toolu_A")).isRunning)
+        // Another tool's result is none.
+        #expect(LaunchResult(["stdout": "hi", "interrupted": false]) == nil)
+        #expect(LaunchResult(["backgroundTaskId": "bh62"])?.background == true)
     }
 
     @Test func aBackgroundShellCommandIsNoSubagent() {
@@ -286,6 +304,7 @@ struct TraceTests {
     @Test func aSubagentInTheForegroundEndsWithItsToolResult() {
         var book = TraceBook()
         book.apply(.toolUse(id: "A", tool: "Task", title: "Delegate Check the tests", detail: "Run the tests", parent: nil))
+        book.apply(.subagentDescribed(id: "A", description: "Check the tests"))
         book.apply(.toolUse(id: "B", tool: "Bash", title: "Run swift test", detail: "swift test", parent: "A"))
         book.apply(.toolResult(id: "B", output: "fail", failed: true, parent: "A"))
         book.apply(.toolResult(id: "A", output: "Two tests fail.", failed: false, parent: nil))

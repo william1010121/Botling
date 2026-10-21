@@ -454,7 +454,7 @@ public struct ChatPayload: Encodable, Equatable {
                     : nil,
                 specs: specs ? specChips(for: message, in: bot, open: openSpec, library: library, commands: commands) : nil,
                 component: specs && message.role == .bot
-                    ? message.shown.first { $0.name != "choices" && $0.name != PagePreview.component && library?.names.contains($0.name) == true }?.name
+                    ? message.shown.first { !ComponentLibrary.isBuiltIn($0.name) && library?.names.contains($0.name) == true }?.name
                     : nil,
                 tasks: nil,
                 artifacts: artifactCards(for: message)
@@ -646,7 +646,7 @@ public struct ChatPayload: Encodable, Equatable {
         var commands: [String: String] = [:]
         var order: [String] = []
         for message in bot.messages.reversed() where message.role == .bot {
-            for instance in message.shown.reversed() where available.contains(instance.name) && instance.name != "choices" {
+            for instance in message.shown.reversed() where available.contains(instance.name) && instance.name != ComponentLibrary.choices {
                 if uses[instance.name] == nil {
                     order.append(instance.name)
                     if let command = command(of: instance, in: message, library: library) { commands[instance.name] = command }
@@ -747,8 +747,8 @@ public struct ChatPayload: Encodable, Equatable {
     }
 
     /// The pictures a step shows: the files it kept that are still there (made smaller since,
-    /// perhaps, with a small copy for the chat), or, for a Read that gave back a picture (kept
-    /// before pictures were, or since pruned), the file it read.
+    /// perhaps, with a small copy for the chat), or, for a Read that gave back no words, only a
+    /// picture (since pruned), the file it read.
     static func images(of step: Step) -> [StepImage]? {
         let manager = FileManager.default
         let name = step.detail.map { ($0 as NSString).lastPathComponent }
@@ -757,7 +757,7 @@ public struct ChatPayload: Encodable, Equatable {
             return StepImage(url: file.absoluteString, name: name ?? file.lastPathComponent, thumb: StepImages.thumb(for: file)?.absoluteString)
         }
         if !kept.isEmpty { return kept }
-        guard step.tool == "Read", let detail = step.detail, step.output?.contains("(image)") == true else { return nil }
+        guard step.tool == "Read", step.done, !step.failed, (step.output ?? "").isEmpty, let detail = step.detail else { return nil }
         let file = URL(filePath: detail)
         guard ComponentImages.isImage(file), manager.fileExists(atPath: file.path) else { return nil }
         return [StepImage(url: file.absoluteString, name: file.lastPathComponent)]

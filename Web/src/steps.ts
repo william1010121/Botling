@@ -174,7 +174,7 @@ function toolLine(step: StepView): HTMLElement {
   const body = document.createElement("div");
   body.className = "step-body";
   if (step.detail) body.append(block(t("steps.in"), step.detail));
-  if (step.output || images.length) body.append(block(step.failed ? t("steps.error") : t("steps.out"), outputText(step.output ?? "", images), images));
+  if (step.output || images.length) body.append(block(step.failed ? t("steps.error") : t("steps.out"), (step.output ?? "").trim(), images));
   const setOpen = (open: boolean) => {
     // Pictures load once their step is first opened (a long chat has dozens of screenshots).
     if (open) for (const image of body.querySelectorAll<HTMLImageElement>("img[data-src]")) {
@@ -204,12 +204,6 @@ function block(label: string, text: string, images: StepImage[] = []): HTMLEleme
   }
   for (const picture of images) wrap.append(stepImage(picture));
   return wrap;
-}
-
-/** The output's words without the "(image)" lines that stood for the pictures now shown. */
-function outputText(output: string, images: StepImage[]): string {
-  if (!images.length) return output;
-  return output.split("\n").filter((line) => line.trim() !== "(image)").join("\n").trim();
 }
 
 /**

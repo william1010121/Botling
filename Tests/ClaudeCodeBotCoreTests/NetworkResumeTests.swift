@@ -81,8 +81,8 @@ struct NetworkErrorRecognitionTests {
     }
 
     @Test func agentIDIsReadFromTheToolResult() {
-        #expect(NetworkResume.agentID(in: "API Error: Connection error.\nagentId: a7f3c2e (use SendMessage with to: 'a7f3c2e')") == "a7f3c2e")
-        #expect(NetworkResume.agentID(in: "Done.") == nil)
+        #expect(LaunchText.agentID(in: "API Error: Connection error.\nagentId: a7f3c2e (use SendMessage with to: 'a7f3c2e')") == "a7f3c2e")
+        #expect(LaunchText.agentID(in: "Done.") == nil)
     }
 
     @Test func apiRetryWithoutAStatusIsConnectionTrouble() {

@@ -316,14 +316,15 @@ public enum ComponentSpecs {
     // MARK: The first draft
 
     /// What the app can tell from a reply alone: the data a component in it was drawn with (its
-    /// fields and a sample), the command that gave that card its data (the card's own), a name, the
-    /// bot's folder, and a library component about the same thing. The reply's own content is the
+    /// fields and a sample), the command that gave that card its data (the card's own), a name and
+    /// the bot's folder. Whether a library component already does the same is Maintainer's call
+    /// (its `similar`), not a match of words. The reply's own content is the
     /// data: a shell command the bot ran while writing it (reading a file, running the tests) is
     /// only a hint for Maintainer (`lastCommand`), never the component's command by itself.
     @MainActor
     public static func draft(from message: ChatMessage, bot: String, folder: URL, library: ComponentLibrary?, page: String? = nil) -> ComponentSpec {
         let names = Set(library?.names ?? [])
-        let shown = message.shown.filter { $0.name != "choices" && $0.name != PagePreview.component }
+        let shown = message.shown.filter { !ComponentLibrary.isBuiltIn($0.name) }
         let existing = page == nil ? shown.first(where: { names.contains($0.name) })?.name : nil
         let first = shown.first
         let command = page == nil ? first?.command : nil
@@ -347,9 +348,6 @@ public enum ComponentSpecs {
         } else {
             let text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
             spec.samples = [ComponentSpec.Sample(.reply, data: jsonString(["text": text]))]
-        }
-        if existing == nil, let library {
-            spec.similar = similar(to: spec.name, command: ran, text: message.text, in: library)
         }
         return spec
     }
@@ -426,29 +424,6 @@ public enum ComponentSpecs {
         default:
             return "text"
         }
-    }
-
-    private static let stopWords: Set<String> = ["the", "and", "for", "with", "from", "run", "runs", "this", "that", "into", "show", "shows", "card", "list", "json"]
-
-    /// A library component whose name or about.md shares words with this one's name and command,
-    /// the one sharing most. The question and preview cards are never offered.
-    @MainActor
-    static func similar(to name: String, command: String?, text: String, in library: ComponentLibrary) -> String? {
-        let words = Set((name + " " + (command ?? "")).lowercased()
-            .split { !($0.isASCII && ($0.isLetter || $0.isNumber)) }
-            .map(String.init)
-            .filter { $0.count >= 3 && !stopWords.contains($0) })
-        guard !words.isEmpty else { return nil }
-        var best: (String, Int)?
-        for candidate in library.names where candidate != "choices" && candidate != PagePreview.component && candidate != name {
-            let about = (try? String(contentsOf: library.aboutURL(candidate), encoding: .utf8)) ?? ""
-            let theirs = Set((candidate + " " + about).lowercased()
-                .split { !($0.isASCII && ($0.isLetter || $0.isNumber)) }
-                .map(String.init))
-            let score = words.intersection(theirs).count
-            if score > 0, score > (best?.1 ?? 0) { best = (candidate, score) }
-        }
-        return best?.0
     }
 
     // MARK: Changing it

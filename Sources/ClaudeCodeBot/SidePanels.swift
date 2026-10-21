@@ -1223,7 +1223,7 @@ struct DetailPanel: View {
                     .frame(minHeight: 24)
                     // A manager: the first thing under "In progress" in its memory.md.
                     if bot.profile.role == .manager,
-                       let doing = MemoryFile.items(at: bot.profile.memoryURL, section: "In progress").first {
+                       let doing = MemoryFile.items(at: bot.profile.memoryURL, section: .inProgress).first {
                         Text(doing)
                             .font(.system(size: 13))
                             .foregroundStyle(Theme.muted)

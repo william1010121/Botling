@@ -76,8 +76,14 @@ public final class ComponentLibrary: ObservableObject {
     /// has no cap.
     public static let limit = 20
 
+    /// The app's own question card: a reply's <choices> buttons. Its state is the pick, not data.
+    public static let choices = "choices"
     /// What every bot has from the start: the choices buttons and the result page preview card.
-    public static let builtIns = ["choices", PagePreview.component]
+    /// The app draws these itself; they are never a reply's own component, a spec or a pin.
+    public static let builtIns = [choices, PagePreview.component]
+
+    /// One of the app's own cards (`builtIns`).
+    public static func isBuiltIn(_ name: String) -> Bool { builtIns.contains(name) }
 
     /// Where new components are made: the ccb-components plugin.
     public let folder: URL
@@ -414,7 +420,7 @@ public final class ComponentLibrary: ObservableObject {
 
     private func seedDefaults() {
         let defaults = [
-            ("choices", ComponentDefaults.choicesTemplate, ComponentDefaults.choicesAbout, ComponentDefaults.olderChoicesTemplates, ComponentDefaults.olderChoicesAbouts),
+            (ComponentLibrary.choices, ComponentDefaults.choicesTemplate, ComponentDefaults.choicesAbout, ComponentDefaults.olderChoicesTemplates, ComponentDefaults.olderChoicesAbouts),
             (PagePreview.component, ComponentDefaults.previewTemplate, ComponentDefaults.previewAbout, ComponentDefaults.olderPreviewTemplates, [])
         ]
         for (name, template, about, olderTemplates, olderAbouts) in defaults {

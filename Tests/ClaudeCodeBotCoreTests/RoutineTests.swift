@@ -18,6 +18,18 @@ struct CronTests {
         #expect(!routine.schedule.matches(day(8, 16)))
     }
 
+    /// The name ends at the "Name: " colon, whatever its length; a URL's colon is no name.
+    @Test func theNameEndsAtItsColon() throws {
+        let url = try #require(Routine.parse("0 9 * * * https://example.com/report open and summarise"))
+        #expect(url.instruction == "https://example.com/report open and summarise")
+        let named = try #require(Routine.parse("0 9 * * * Morning check of every open pull request: list them"))
+        #expect(named.title == "Morning check of every open pull request")
+        #expect(named.instruction == "list them")
+        let wide = try #require(Routine.parse("0 9 * * * 晨報：整理新聞"))
+        #expect(wide.title == "晨報")
+        #expect(wide.instruction == "整理新聞")
+    }
+
     /// Whether a routine runs every day at one time comes from its fields, not its description.
     @Test func everyDayTimeIsReadFromTheFields() throws {
         let daily = try #require(CronSchedule("15 8 * * *")?.everyDayTime)

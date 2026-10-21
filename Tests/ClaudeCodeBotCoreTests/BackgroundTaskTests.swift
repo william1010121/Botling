@@ -27,9 +27,9 @@ struct BackgroundTaskTests {
     }
 
     @Test func theLaunchResultNamesTheOutputFile() {
-        #expect(BackgroundTask.outputFile(in: "Command running in background with ID: bh62. Output is being written to: /tmp/x/bh62.output. You will be notified when it completes.") == "/tmp/x/bh62.output")
-        #expect(BackgroundTask.outputFile(in: "Async agent launched successfully.\nagentId: ab5d\noutput_file: /tmp/x/ab5d.output") == "/tmp/x/ab5d.output")
-        #expect(BackgroundTask.outputFile(in: "hello") == nil)
+        #expect(LaunchText.outputFile(in: "Command running in background with ID: bh62. Output is being written to: /tmp/x/bh62.output. You will be notified when it completes.") == "/tmp/x/bh62.output")
+        #expect(LaunchText.outputFile(in: "Async agent launched successfully.\nagentId: ab5d\noutput_file: /tmp/x/ab5d.output") == "/tmp/x/ab5d.output")
+        #expect(LaunchText.outputFile(in: "hello") == nil)
     }
 
     @Test func aTurnCollectsItsBackgroundWorkAsChips() {

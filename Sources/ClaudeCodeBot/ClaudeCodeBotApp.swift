@@ -25,6 +25,7 @@ struct ClaudeCodeBotApp: App {
                 Color.clear.frame(width: 1, height: 1).background(HiddenWindow())
             } else {
                 RootView(workspace: delegate.workspace, settings: delegate.settings)
+                    .background(MainWindowMarker())
                     .frame(minWidth: 980, minHeight: 620)
                     .preferredColorScheme(.dark)
             }
@@ -238,8 +239,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Clicking the Dock icon with only result windows open brings the main window back.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        let main = NSApp.windows.first { $0.identifier?.rawValue.contains("AppWindow") == true || $0.title == "ClaudeCodeBot" }
-        if let main {
+        if let main = MainWindowMarker.window {
             main.makeKeyAndOrderFront(nil)
             return false
         }
@@ -313,6 +313,22 @@ enum AppError: LocalizedError {
         case .claudeNotFound: L("The claude command was not found. Please install Claude Code first.")
         }
     }
+}
+
+/// Remembers the window the chat is in: the main window, found again by what it holds rather
+/// than by its title or SwiftUI's name for it.
+private struct MainWindowMarker: NSViewRepresentable {
+    @MainActor static weak var window: NSWindow?
+
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window { MainWindowMarker.window = window }
+        }
+    }
+
+    func makeNSView(context: Context) -> NSView { Probe() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 /// Sends the window it lands in offscreen (a headless run's SwiftUI window).

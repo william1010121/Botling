@@ -503,7 +503,7 @@ public final class Workspace: ObservableObject {
         let maintainer = maintainer
         Task {
             // A new session that can open it (--add-dir), then carry on.
-            await maintainer.restart(divider: "Handoff → may read \(folder.lastPathComponent)")
+            await maintainer.restart(.mayRead(folder.lastPathComponent))
             maintainer.relay("(App) The user agreed: you can now read \(folder.path) (read only, do not change files there). Carry on with what you were doing.")
         }
     }
@@ -1003,26 +1003,26 @@ public final class Workspace: ObservableObject {
 
     /// A plugin library from when the app was called Deck: plugins named `deck-*` whose
     /// package.json has a `deck` field. Renamed to `ccb-*` with a `ccb` field, once, and committed.
+    /// The JSON files are read and only those fields changed; anything else in them stays.
     static func migrateFromDeck(library: URL, root: URL) {
         let files = FileManager.default
         var changed = false
         for folder in (try? files.contentsOfDirectory(at: library, includingPropertiesForKeys: nil)) ?? [] {
             let manifest = folder.appending(path: "package.json")
-            if var text = try? String(contentsOf: manifest, encoding: .utf8), text.contains("\"deck\"") {
-                text = text.replacingOccurrences(of: "\"deck\"", with: "\"ccb\"")
-                    .replacingOccurrences(of: "\"name\": \"deck-", with: "\"name\": \"ccb-")
-                try? Data(text.utf8).write(to: manifest)
-                changed = true
+            if var object = readJSONObject(manifest), let deck = object["deck"] {
+                if object["ccb"] == nil { object["ccb"] = deck }
+                object["deck"] = nil
+                if let name = object["name"] as? String { object["name"] = renamedFromDeck(name) }
+                if writeJSONObject(object, to: manifest) { changed = true }
             }
             let claude = folder.appending(path: "claude/.claude-plugin/plugin.json")
-            if var text = try? String(contentsOf: claude, encoding: .utf8), text.contains("\"deck-") {
-                text = text.replacingOccurrences(of: "\"name\": \"deck-", with: "\"name\": \"ccb-")
-                try? Data(text.utf8).write(to: claude)
-                changed = true
+            if var object = readJSONObject(claude), let name = object["name"] as? String, renamedFromDeck(name) != name {
+                object["name"] = renamedFromDeck(name)
+                if writeJSONObject(object, to: claude) { changed = true }
             }
             let name = folder.lastPathComponent
-            if name.hasPrefix("deck-") {
-                let renamed = library.appending(path: "ccb-" + name.dropFirst(5))
+            if renamedFromDeck(name) != name {
+                let renamed = library.appending(path: renamedFromDeck(name))
                 if !files.fileExists(atPath: renamed.path) {
                     try? files.moveItem(at: folder, to: renamed)
                     changed = true
@@ -1034,14 +1034,39 @@ public final class Workspace: ObservableObject {
             try? files.removeItem(at: oldGuide)
             changed = true
         }
+        // The app's state names plugins: in its off list and as keys of its tables.
         let state = root.appending(path: "plugins.json")
-        if let text = try? String(contentsOf: state, encoding: .utf8), text.contains("deck-") {
-            try? Data(text.replacingOccurrences(of: "\"deck-", with: "\"ccb-").utf8).write(to: state)
+        if var object = readJSONObject(state) {
+            var renamed = false
+            for (key, value) in object {
+                if let names = value as? [String] {
+                    let new = names.map(renamedFromDeck)
+                    if new != names { object[key] = new; renamed = true }
+                } else if let table = value as? [String: Any], table.keys.contains(where: { renamedFromDeck($0) != $0 }) {
+                    object[key] = Dictionary(table.map { (renamedFromDeck($0.key), $0.value) }, uniquingKeysWith: { first, _ in first })
+                    renamed = true
+                }
+            }
+            if renamed { _ = writeJSONObject(object, to: state) }
         }
         guard changed, files.fileExists(atPath: library.appending(path: ".git").path) else { return }
         let git = PluginLibraryGit(folder: library)
         git.run(["add", "-A"])
         git.run(["commit", "-q", "-m", "Rename plugins for ClaudeCodeBot (deck-* → ccb-*)"])
+    }
+
+    /// `deck-x` → `ccb-x`; any other name as it is.
+    static func renamedFromDeck(_ name: String) -> String {
+        name.hasPrefix("deck-") ? "ccb-" + name.dropFirst("deck-".count) : name
+    }
+
+    private static func readJSONObject(_ url: URL) -> [String: Any]? {
+        (try? Data(contentsOf: url)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    }
+
+    private static func writeJSONObject(_ object: [String: Any], to url: URL) -> Bool {
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]) else { return false }
+        return (try? data.write(to: url, options: .atomic)) != nil
     }
 
     /// The component library is the `ccb-components` plugin. Components from before plugins
@@ -1611,7 +1636,7 @@ public final class Workspace: ObservableObject {
         settings.autoApprove = on
         settings.save(to: settingsURL)
         for bot in [mainBot] + Array(managers.values) where bot.phase != .asleep {
-            Task { await bot.restart(divider: on ? "Handoff → auto-approving safe actions" : "Handoff → asking before tools") }
+            Task { await bot.restart(.autoApprove(on)) }
         }
     }
 
@@ -1655,7 +1680,7 @@ public final class Workspace: ObservableObject {
             if let question = self.managers[project.id]?.messages.last(where: \.isOpenQuestion) {
                 return [Waiting(projectID: project.id, text: Self.firstLine(of: question.text), messageID: question.id)]
             }
-            return MemoryFile.items(at: project.notesFolder.appending(path: "memory.md"), section: "Waiting on you")
+            return MemoryFile.items(at: project.notesFolder.appending(path: "memory.md"), section: .waitingOnYou)
                 .map { Waiting(projectID: project.id, text: $0) }
         }
         // Copies of a bot's question are counted with the original.

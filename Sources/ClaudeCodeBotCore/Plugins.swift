@@ -739,16 +739,11 @@ public final class PluginRegistry: ObservableObject {
         return problems
     }
 
-    /// `^2.0.0`, `~2.0.0`, `>=2.0.0`, `2.x`, `*`.
+    /// Whether this app's plugin API (`apiVersion`, every patch of it) is in an npm semver range:
+    /// comparators (`>=2.0.0 <3`), `^`, `~`, x-ranges (`2.x`, `*`), hyphen ranges (`1.0 - 2.1`)
+    /// and `||`. Pre-release tags are not supported: such a range is not compatible.
     nonisolated static func compatible(_ range: String) -> Bool {
-        let range = range.trimmingCharacters(in: .whitespaces)
-        if range == "*" { return true }
-        let digits = range.drop { !$0.isNumber }
-        let parts = digits.split(separator: ".").map { Int($0.prefix { $0.isNumber }) }
-        guard let major = parts.first ?? nil else { return false }
-        let minor = parts.count > 1 ? parts[1] ?? 0 : 0
-        if range.hasPrefix(">=") { return (major, minor) <= (apiVersion.major, apiVersion.minor) }
-        return major == apiVersion.major && minor <= apiVersion.minor
+        SemverRange(range)?.contains(SemverRange.Version(apiVersion.major, apiVersion.minor, Int.max)) ?? false
     }
 
     nonisolated private static func describe(_ error: Error) -> String {
@@ -762,5 +757,126 @@ public final class PluginRegistry: ObservableObject {
         default:
             return error.localizedDescription
         }
+    }
+}
+
+/// An npm semver range, enough of it for `engines.ccb`: a set of `||` alternatives, each a list of
+/// comparators that must all hold.
+struct SemverRange: Sendable {
+    struct Version: Comparable, Sendable {
+        var major: Int, minor: Int, patch: Int
+        init(_ major: Int, _ minor: Int, _ patch: Int) {
+            self.major = major
+            self.minor = minor
+            self.patch = patch
+        }
+        static func < (a: Version, b: Version) -> Bool {
+            (a.major, a.minor, a.patch) < (b.major, b.minor, b.patch)
+        }
+    }
+
+    enum Comparator: Sendable {
+        case atLeast(Version), above(Version), below(Version), atMost(Version)
+
+        func holds(_ version: Version) -> Bool {
+            switch self {
+            case let .atLeast(bound): version >= bound
+            case let .above(bound): version > bound
+            case let .below(bound): version < bound
+            case let .atMost(bound): version <= bound
+            }
+        }
+    }
+
+    /// Alternatives (`||`), each comparators that must all hold; an empty list is any version.
+    let alternatives: [[Comparator]]
+
+    init?(_ text: String) {
+        var alternatives: [[Comparator]] = []
+        for part in text.components(separatedBy: "||") {
+            guard let set = Self.comparators(part) else { return nil }
+            alternatives.append(set)
+        }
+        self.alternatives = alternatives
+    }
+
+    func contains(_ version: Version) -> Bool {
+        alternatives.contains { $0.allSatisfy { $0.holds(version) } }
+    }
+
+    /// A version as written: up to three numbers, any of them `x`, `X` or `*` (or left out).
+    /// Nil numbers are wildcards. Nil for anything else (a pre-release tag, words).
+    private static func partial(_ text: String) -> [Int?]? {
+        var text = Substring(text)
+        if text.hasPrefix("v") || text.hasPrefix("=") { text = text.dropFirst() }
+        if text.isEmpty { return [] }
+        var numbers: [Int?] = []
+        for piece in text.split(separator: ".", omittingEmptySubsequences: false) {
+            if ["x", "X", "*"].contains(piece) { numbers.append(nil) }
+            else if let number = Int(piece), number >= 0 { numbers.append(number) }
+            else { return nil }
+        }
+        guard numbers.count <= 3 else { return nil }
+        // Once a number is a wildcard, the rest are too.
+        if let first = numbers.firstIndex(where: { $0 == nil }) { numbers = Array(numbers[..<first]) }
+        return numbers
+    }
+
+    /// The lowest version a partial one stands for, and the first one past it (nil: no end).
+    private static func span(_ numbers: [Int?]) -> (low: Version, high: Version?) {
+        let given = numbers.compactMap { $0 }
+        let low = Version(given.first ?? 0, given.count > 1 ? given[1] : 0, given.count > 2 ? given[2] : 0)
+        switch given.count {
+        case 0: return (low, nil)
+        case 1: return (low, Version(low.major + 1, 0, 0))
+        case 2: return (low, Version(low.major, low.minor + 1, 0))
+        default: return (low, Version(low.major, low.minor, low.patch + 1))
+        }
+    }
+
+    private static func comparators(_ text: String) -> [Comparator]? {
+        var tokens = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        // "1.2 - 2.3": a hyphen range.
+        if tokens.count == 3, tokens[1] == "-" {
+            guard let low = partial(tokens[0]), let high = partial(tokens[2]) else { return nil }
+            let end = span(high)
+            return [.atLeast(span(low).low)] + (end.high.map { [.below($0)] } ?? [])
+        }
+        // ">= 2.0" written with a space.
+        var joined: [String] = []
+        while !tokens.isEmpty {
+            let token = tokens.removeFirst()
+            if [">", ">=", "<", "<=", "=", "^", "~"].contains(token), !tokens.isEmpty { joined.append(token + tokens.removeFirst()) }
+            else { joined.append(token) }
+        }
+        var result: [Comparator] = []
+        for token in joined {
+            let op = [">=", "<=", ">", "<", "^", "~", "="].first { token.hasPrefix($0) } ?? ""
+            guard let numbers = partial(String(token.dropFirst(op.count))) else { return nil }
+            let (low, high) = span(numbers)
+            let given = numbers.count
+            switch op {
+            case "^":
+                // Up to the next change of the first number that is not 0.
+                let next: Version? = given == 0 ? nil
+                    : low.major > 0 || given == 1 ? Version(low.major + 1, 0, 0)
+                    : low.minor > 0 || given == 2 ? Version(0, low.minor + 1, 0)
+                    : Version(0, 0, low.patch + 1)
+                result.append(.atLeast(low))
+                if let next { result.append(.below(next)) }
+            case "~":
+                let next: Version? = given == 0 ? nil : given == 1 ? Version(low.major + 1, 0, 0) : Version(low.major, low.minor + 1, 0)
+                result.append(.atLeast(low))
+                if let next { result.append(.below(next)) }
+            case ">=": result.append(.atLeast(low))
+            case ">": if let high { result.append(.atLeast(high)) } else { result.append(.below(Version(0, 0, 0))) }
+            case "<": result.append(.below(low))
+            case "<=": if let high { result.append(.below(high)) }
+            default:
+                result.append(.atLeast(low))
+                if let high { result.append(.below(high)) }
+            }
+        }
+        return result
     }
 }

@@ -5,7 +5,7 @@ import Testing
 @testable import ClaudeCodeBotCore
 
 /// A tool call that gives back a picture (a Read of a .png, a screenshot) shows it in its OUT box,
-/// not just "(image)". The picture is kept as a file beside the chat, never as base64 in it.
+/// not as words. The picture is kept as a file beside the chat, never as base64 in it.
 @MainActor
 struct StepImageTests {
     /// A 1×1 PNG.
@@ -19,7 +19,7 @@ struct StepImageTests {
         let events = StreamEvent.events(in: Self.readResult)
         let data = try #require(Data(base64Encoded: Self.pixel))
         #expect(events == [
-            .trace(.toolResult(id: "toolu_P", output: "(image)", failed: false, parent: nil)),
+            .trace(.toolResult(id: "toolu_P", output: "", failed: false, parent: nil)),
             .trace(.toolImages(id: "toolu_P", images: [ToolImage(mediaType: "image/png", data: data)], parent: nil)),
         ])
         // Text only: no pictures event.
@@ -56,7 +56,7 @@ struct StepImageTests {
         book.imageFolder = root
         book.apply(.toolUse(id: "A", tool: "Agent", title: "Delegate Look", detail: "Look", parent: nil))
         book.apply(.toolUse(id: "R", tool: "Read", title: "Read a.png", detail: "/a.png", parent: "A"))
-        book.apply(.toolResult(id: "R", output: "(image)", failed: false, parent: "A"))
+        book.apply(.toolResult(id: "R", output: "", failed: false, parent: "A"))
         book.apply(.toolImages(id: "R", images: [ToolImage(mediaType: "image/jpeg", data: Data([0xFF, 0xD8, 0xFF]))], parent: "A"))
         let path = try #require(book.subagent("A")?.steps.last?.images?.first)
         #expect(path.hasSuffix(".jpg"))
@@ -70,17 +70,17 @@ struct StepImageTests {
         try Data(base64Encoded: Self.pixel)!.write(to: read)
         let bot = Bot(profile: .main(home: root.appending(path: "home")), launcher: FakeLauncher().launcher)
 
-        let saved = Step(id: "1", kind: .tool, tool: "Read", title: "Read login.png", detail: read.path, output: "(image)", done: true, images: [kept.path])
+        let saved = Step(id: "1", kind: .tool, tool: "Read", title: "Read login.png", detail: read.path, output: "", done: true, images: [kept.path])
         #expect(ChatPayload.stepView(saved, in: bot).images == [.init(url: kept.absoluteString, name: "login.png")])
 
-        // Saved before pictures were kept: a Read that gave back a picture shows the file it read.
-        let old = Step(id: "2", kind: .tool, tool: "Read", title: "Read login.png", detail: read.path, output: "(image)", done: true)
+        // Its kept picture pruned: a Read that gave back only a picture shows the file it read.
+        let old = Step(id: "2", kind: .tool, tool: "Read", title: "Read login.png", detail: read.path, output: "", done: true)
         #expect(ChatPayload.stepView(old, in: bot).images == [.init(url: read.absoluteString, name: "login.png")])
 
         // A kept picture that is gone falls back the same way; a gone file shows nothing.
-        let gone = Step(id: "3", kind: .tool, tool: "Read", title: "Read login.png", detail: read.path, output: "(image)", done: true, images: [root.appending(path: "gone.png").path])
+        let gone = Step(id: "3", kind: .tool, tool: "Read", title: "Read login.png", detail: read.path, output: "", done: true, images: [root.appending(path: "gone.png").path])
         #expect(ChatPayload.stepView(gone, in: bot).images == [.init(url: read.absoluteString, name: "login.png")])
-        let nothing = Step(id: "4", kind: .tool, tool: "Read", title: "Read x.png", detail: root.appending(path: "x.png").path, output: "(image)", done: true)
+        let nothing = Step(id: "4", kind: .tool, tool: "Read", title: "Read x.png", detail: root.appending(path: "x.png").path, output: "", done: true)
         #expect(ChatPayload.stepView(nothing, in: bot).images == nil)
         // A text Read of a picture file (an .svg's source) is text, not a picture.
         let text = Step(id: "5", kind: .tool, tool: "Read", title: "Read login.png", detail: read.path, output: "1\t<svg>", done: true)
@@ -130,7 +130,7 @@ struct StepImageTests {
 
         // The page shows the small copy and opens the full one.
         let bot = Bot(profile: .main(home: root.appending(path: "home")), launcher: FakeLauncher().launcher)
-        let step = Step(id: "1", kind: .tool, tool: "Bash", title: "screenshot", output: "(image)", done: true, images: [path])
+        let step = Step(id: "1", kind: .tool, tool: "Bash", title: "screenshot", output: "", done: true, images: [path])
         #expect(ChatPayload.stepView(step, in: bot).images == [.init(url: URL(filePath: path).absoluteString, name: URL(filePath: path).lastPathComponent, thumb: thumb.absoluteString)])
     }
 
@@ -170,7 +170,7 @@ struct StepImageTests {
         // A step that names the PNG shows the JPEG that replaced it, with its small copy.
         let jpeg = old.deletingPathExtension().appendingPathExtension("jpg")
         let bot = Bot(profile: .main(home: root.appending(path: "home")), launcher: FakeLauncher().launcher)
-        let step = Step(id: "1", kind: .tool, tool: "Bash", title: "screenshot", output: "(image)", done: true, images: [old.path])
+        let step = Step(id: "1", kind: .tool, tool: "Bash", title: "screenshot", output: "", done: true, images: [old.path])
         let shown = try #require(ChatPayload.stepView(step, in: bot).images?.first)
         #expect(shown.url == jpeg.absoluteString)
         #expect(shown.thumb == StepImages.thumb(for: jpeg)?.absoluteString)

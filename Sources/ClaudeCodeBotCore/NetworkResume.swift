@@ -45,12 +45,6 @@ public enum NetworkResume {
         return kind == nil || kind == "no_response"
     }
 
-    /// "agentId: a1b2c3" in an Agent tool result: the id SendMessage continues it with.
-    public static func agentID(in output: String) -> String? {
-        guard let range = output.range(of: #"agentId: ([A-Za-z0-9_\-]+)"#, options: .regularExpression) else { return nil }
-        return String(output[range].dropFirst("agentId: ".count))
-    }
-
     /// The chat line when a run fails this way.
     static func lostText(_ detail: String) -> String {
         let detail = detail.trimmingCharacters(in: .whitespacesAndNewlines)

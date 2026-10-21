@@ -46,6 +46,16 @@ struct DoctorTests {
         #expect(DoctorTool.parseCodexAuth("Logged in using an API key - sk-proj-***abcd", exitCode: 0) == .signedIn("API key"))
         #expect(DoctorTool.parseCodexAuth("Not logged in", exitCode: 1) == .signedOut)
         #expect(DoctorTool.parseCodexAuth("Error loading configuration: config.toml:3:1: bad", exitCode: 1) == .unknown)
+        // Signed in is its exit status: other words still count.
+        #expect(DoctorTool.parseCodexAuth("Authenticated with a workspace token", exitCode: 0) != .unknown)
+    }
+
+    /// `claude plugin validate`: its exit status decides; what it printed is kept whole.
+    @Test func pluginValidationGoesByTheExitStatus() {
+        #expect(ClaudePluginValidator.problem(status: 0, output: "All good") == nil)
+        let problem = ClaudePluginValidator.problem(status: 1, output: "Checking…\n  • agents/x.md: missing name\n")
+        #expect(problem?.contains("agents/x.md: missing name") == true)
+        #expect(ClaudePluginValidator.problem(status: 2, output: "") != nil)
     }
 
     // MARK: One row

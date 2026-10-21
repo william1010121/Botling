@@ -79,8 +79,8 @@ struct ComponentSpecTests {
         #expect(spec.samples.first?.kind == .reply)
         #expect(spec.existing == nil)
         #expect(spec.status == .draft)
-        // A component in the library about the same thing is offered for reuse.
-        #expect(spec.similar == "build-status")
+        // Whether one in the library does the same is Maintainer's call, not the app's guess.
+        #expect(spec.similar == nil)
         #expect(!spec.reuse)
     }
 
@@ -813,7 +813,10 @@ struct ComponentSpecTests {
         let bot = try garden(in: workspace)
         workspace.takeComponent("build-status", from: bot)
         let reply = testReply(in: bot)
-        let spec = draftSpec(from: reply, in: bot, in: workspace)
+        var spec = draftSpec(from: reply, in: bot, in: workspace)
+        // Maintainer finds the library one that does the same.
+        workspace.handle([.componentSpec(id: spec.id.uuidString, json: #"{"similar":"build-status"}"#)], from: workspace.maintainerProject)
+        spec = try #require(bot.specs.first { $0.id == spec.id })
         #expect(spec.similar == "build-status")
         workspace.editSpec(spec.id, key: "reuse", value: "true", in: bot)
         let asked = workspace.maintainer.messages.filter { $0.role == .relay }.count

@@ -173,7 +173,7 @@ struct RightStrip: View {
             return speaker.map { L("{0} is writing…", $0) } ?? workspace.members(of: group).map(\.name).joined(separator: ", ")
         }
         let doing = bot.profile.role == .manager
-            ? MemoryFile.items(at: bot.profile.memoryURL, section: "In progress").first
+            ? MemoryFile.items(at: bot.profile.memoryURL, section: .inProgress).first
             : bot.profile.role == .main ? workspace.runningTeams.map(\.spec.title).first : nil
         return RightPanelLayout.nowDetail(status: bot.statusText, doing: doing)
     }

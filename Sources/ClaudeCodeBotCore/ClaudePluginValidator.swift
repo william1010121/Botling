@@ -26,12 +26,15 @@ public enum ClaudePluginValidator {
         }
     }
 
+    /// Its exit status says whether it passed; what it printed is kept as it is (its lines
+    /// joined, cut short), whatever words or symbols it uses.
     static func problem(status: Int32, output: String) -> String? {
-        if status == 0, output.contains("Validation passed") { return nil }
+        if status == 0 { return nil }
         let lines = output.split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { $0.hasPrefix("❯") || $0.hasPrefix("✘") }
-            .map { $0.drop { $0 == "❯" || $0 == "✘" || $0 == " " } }
-        return lines.isEmpty ? "Failed (\(status))" : lines.joined(separator: "; ")
+            .filter { !$0.isEmpty }
+        let text = lines.joined(separator: "; ")
+        guard !text.isEmpty else { return "Failed (\(status))" }
+        return text.count > 1_000 ? String(text.prefix(1_000)) + "…" : text
     }
 }
