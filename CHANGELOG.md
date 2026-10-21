@@ -8,6 +8,16 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **A bot can't end its turn on a promise.** Every bot now has a Claude Code Stop hook (only in
+  the `--settings` the app passes it; your own settings files are untouched). When a turn is
+  about to end, the app (`ClaudeCodeBot --stop-guard`) has Haiku read the last reply; one that
+  promises work nothing will trigger ("接下來我會確認…", "I'll check and report back") sends the
+  bot back to do it now, or to start a background task that will wake it. Replies that ask you
+  something (a `<choices>` block included), and turns with background tasks or subagents still
+  running, end as before without the check; a stop the hook already sent back once is never
+  sent back again, and any error or a check slower than 15 seconds lets the turn end. The check
+  runs Haiku without tools or hooks, adds about 6–8 seconds to the end of each turn, and costs
+  about $0.0003.
 - **Release planner: vote on shared features with 👍, and pick the next version.** With
   developer mode on, Settings → Release planner lists the open PRs labelled
   `community-feature`, most 👍 first (other reactions are not votes; a tie puts the older PR

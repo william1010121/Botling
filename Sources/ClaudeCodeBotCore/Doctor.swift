@@ -251,7 +251,8 @@ public enum CommandRunner {
         var timedOut: Bool { lock.withLock { _timedOut } }
     }
 
-    static func runBlocking(_ executable: URL, _ arguments: [String], timeout: TimeInterval) -> CommandResult? {
+    /// `environment` adds to (or, with nil, takes out of) the environment it would otherwise get.
+    static func runBlocking(_ executable: URL, _ arguments: [String], timeout: TimeInterval, environment changes: [String: String?] = [:]) -> CommandResult? {
         guard FileManager.default.isExecutableFile(atPath: executable.path) else { return nil }
         let process = Process()
         process.executableURL = executable
@@ -261,6 +262,7 @@ public enum CommandRunner {
         let folder = executable.deletingLastPathComponent().path
         environment["PATH"] = ([folder] + (environment["PATH"] ?? "").split(separator: ":").map(String.init).filter { $0 != folder }).joined(separator: ":")
         environment["NO_COLOR"] = "1"
+        for (key, value) in changes { environment[key] = value }
         process.environment = environment
         process.standardInput = FileHandle.nullDevice
         let pipe = Pipe()

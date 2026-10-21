@@ -124,6 +124,8 @@ public struct AgentLaunch: Equatable, Sendable {
     /// The model its subagents use (`CLAUDE_CODE_SUBAGENT_MODEL`); nil: the same as its own.
     /// An agent whose definition names a model keeps that one.
     public var subagentModel: BotModel? = nil
+    /// The command Claude Code runs as its `Stop` hook (see `StopGuard`); nil: none.
+    public var stopHookCommand: String? = nil
 }
 
 public typealias AgentLauncher = @Sendable (AgentLaunch) throws -> AgentProcess
@@ -177,8 +179,8 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         for directory in launch.pluginDirectories {
             arguments += ["--plugin-dir", directory.path]
         }
-        if !launch.allowRules.isEmpty {
-            arguments += ["--settings", Self.settingsJSON(allowing: launch.allowRules)]
+        if !launch.allowRules.isEmpty || launch.stopHookCommand != nil {
+            arguments += ["--settings", Self.settingsJSON(allowing: launch.allowRules, stopHook: launch.stopHookCommand)]
         }
         if let effort = launch.effort {
             arguments += ["--effort", effort.rawValue]
@@ -186,9 +188,12 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         return arguments
     }
 
-    /// `{"permissions":{"allow":[…]}}`: the flag settings layer's allow rules.
-    static func settingsJSON(allowing rules: [String]) -> String {
-        let settings: [String: Any] = ["permissions": ["allow": rules]]
+    /// `{"permissions":{"allow":[…]},"hooks":{"Stop":[…]}}`: the flag settings layer's allow rules
+    /// and the stop guard. Only this session's layer: the user's own settings files stay as they are.
+    static func settingsJSON(allowing rules: [String], stopHook: String? = nil) -> String {
+        var settings: [String: Any] = [:]
+        if !rules.isEmpty { settings["permissions"] = ["allow": rules] }
+        if let stopHook { settings["hooks"] = StopGuard.hooksSettings(command: stopHook) }
         return (try? JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
     }
 
