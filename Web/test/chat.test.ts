@@ -703,6 +703,8 @@ describe("messages", () => {
         images: [{ url: "file:///Users/me/login.png", name: "login.png" }] },
     ] }), {});
     document.body.append(row);
+    // Nothing loads while the step is closed.
+    expect(row.querySelector("img.step-image")!.hasAttribute("src")).toBe(false);
     row.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
     row.querySelector<HTMLButtonElement>(".step-head")!.click();
     const blocks = row.querySelectorAll<HTMLElement>(".step-block");
@@ -716,6 +718,21 @@ describe("messages", () => {
     // Seen large in the lightbox over the chat, not in a window of its own.
     expect(sent).toEqual([]);
     expect(document.querySelector(".lightbox .lightbox-image")?.getAttribute("src")).toBe("file:///Users/me/login.png");
+    document.querySelector<HTMLButtonElement>(".lightbox-close")!.click();
+  });
+
+  it("show a picture's small copy in the step, and the full one in the lightbox on click", () => {
+    const row = messageElement(message({ id: "r-thumb", text: "Looked.", steps: [
+      { id: "p2", kind: "tool", tool: "Bash", title: "screenshot", detail: null, output: "(image)", failed: false, done: true, status: null, count: null,
+        images: [{ url: "file:///chat/step-images/a.jpg", name: "a.jpg", thumb: "file:///chat/step-images/thumbs/a.jpg" }] },
+    ] }), {});
+    document.body.append(row);
+    row.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
+    row.querySelector<HTMLButtonElement>(".step-head")!.click();
+    const image = row.querySelector<HTMLImageElement>("img.step-image")!;
+    expect(image.getAttribute("src")).toBe("file:///chat/step-images/thumbs/a.jpg");
+    image.click();
+    expect(document.querySelector(".lightbox .lightbox-image")?.getAttribute("src")).toBe("file:///chat/step-images/a.jpg");
     document.querySelector<HTMLButtonElement>(".lightbox-close")!.click();
   });
 

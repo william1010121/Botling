@@ -1,3 +1,5 @@
+import CoreGraphics
+import CryptoKit
 import Foundation
 import Testing
 @testable import ClaudeCodeBotCore
@@ -89,5 +91,105 @@ struct StepImageTests {
         let json = #"{"id":"1","kind":"tool","tool":"Read","title":"Read a","detail":"/a","output":"(image)","failed":false,"done":true}"#
         let step = try JSONDecoder().decode(Step.self, from: Data(json.utf8))
         #expect(step.images == nil)
+    }
+
+    // MARK: Smaller pictures
+
+    /// A `width`×`height` PNG of noise (big as PNG, like a busy screenshot); `seeThrough` makes
+    /// its top rows half transparent.
+    static func noisePNG(width: Int = 1000, height: Int = 900, seeThrough: Bool = false) throws -> Data {
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        var seed: UInt32 = 2_463_534_242
+        for index in pixels.indices where index % 4 != 3 {
+            seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5
+            pixels[index] = UInt8(truncatingIfNeeded: seed) & 0xF0
+        }
+        if seeThrough { for index in stride(from: 3, to: width * 4 * 20, by: 4) { pixels[index] = 128 } }
+        let info = seeThrough ? CGImageAlphaInfo.premultipliedLast : CGImageAlphaInfo.noneSkipLast
+        let image = try #require(pixels.withUnsafeMutableBytes { buffer in
+            CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info.rawValue)?.makeImage()
+        })
+        return try #require(StepImages.encode(image, as: .png))
+    }
+
+    @Test func aBigScreenshotIsKeptAsJPEGWithASmallCopyForTheChat() throws {
+        let png = try Self.noisePNG()
+        let path = try #require(StepImages.save([ToolImage(mediaType: "image/png", data: png)], in: root).first)
+        #expect(path.hasSuffix(".jpg"))
+        let kept = try #require(FileManager.default.contents(atPath: path))
+        #expect(kept.count < png.count * 9 / 10)
+        #expect(kept.starts(with: [0xFF, 0xD8, 0xFF]))
+        let thumb = try #require(StepImages.thumb(for: URL(filePath: path)))
+        #expect(thumb.path.hasPrefix(root.appending(path: "thumbs").path))
+        #expect(thumb.pathExtension == "jpg")
+        #expect(try Data(contentsOf: thumb).count < kept.count / 2)
+
+        // The same picture again is the same file, not converted twice.
+        #expect(StepImages.save([ToolImage(mediaType: "image/png", data: png)], in: root) == [path])
+
+        // The page shows the small copy and opens the full one.
+        let bot = Bot(profile: .main(home: root.appending(path: "home")), launcher: FakeLauncher().launcher)
+        let step = Step(id: "1", kind: .tool, tool: "Bash", title: "screenshot", output: "(image)", done: true, images: [path])
+        #expect(ChatPayload.stepView(step, in: bot).images == [.init(url: URL(filePath: path).absoluteString, name: URL(filePath: path).lastPathComponent, thumb: thumb.absoluteString)])
+    }
+
+    @Test func aSeeThroughPictureStaysPNGAndSmallOnesStayAsTheyAre() throws {
+        let png = try Self.noisePNG(seeThrough: true)
+        let path = try #require(StepImages.save([ToolImage(mediaType: "image/png", data: png)], in: root).first)
+        #expect(path.hasSuffix(".png"))
+        #expect(FileManager.default.contents(atPath: path) == png)
+        #expect(StepImages.thumb(for: URL(filePath: path))?.pathExtension == "png")
+
+        // A small picture: as it came, no small copy.
+        let small = try Self.noisePNG(width: 200, height: 150)
+        let smallPath = try #require(StepImages.save([ToolImage(mediaType: "image/png", data: small)], in: root).first)
+        #expect(FileManager.default.contents(atPath: smallPath) == small)
+        #expect(StepImages.thumb(for: URL(filePath: smallPath)) == nil)
+    }
+
+    @Test func picturesKeptBeforeAreMadeSmallerOnceAndTheirStepsStillFindThem() throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let png = try Self.noisePNG()
+        let hash = SHA256.hash(data: png).prefix(16).map { String(format: "%02x", $0) }.joined()
+        let old = root.appending(path: "\(hash).png")
+        try png.write(to: old)
+        let small = root.appending(path: "small.png")
+        try Data(base64Encoded: Self.pixel)!.write(to: small)
+
+        let done = try #require(StepImages.compressExisting(in: root))
+        #expect(done.converted == 1)
+        #expect(done.thumbs == 1)
+        #expect(done.before == png.count + Data(base64Encoded: Self.pixel)!.count)
+        #expect(done.after < done.before * 9 / 10)
+        #expect(!FileManager.default.fileExists(atPath: old.path))
+        #expect(FileManager.default.contents(atPath: small.path) == Data(base64Encoded: Self.pixel))
+        // Once per folder.
+        #expect(StepImages.compressExisting(in: root) == nil)
+
+        // A step that names the PNG shows the JPEG that replaced it, with its small copy.
+        let jpeg = old.deletingPathExtension().appendingPathExtension("jpg")
+        let bot = Bot(profile: .main(home: root.appending(path: "home")), launcher: FakeLauncher().launcher)
+        let step = Step(id: "1", kind: .tool, tool: "Bash", title: "screenshot", output: "(image)", done: true, images: [old.path])
+        let shown = try #require(ChatPayload.stepView(step, in: bot).images?.first)
+        #expect(shown.url == jpeg.absoluteString)
+        #expect(shown.thumb == StepImages.thumb(for: jpeg)?.absoluteString)
+        #expect(shown.thumb != nil)
+        // Saving that picture again finds the JPEG.
+        #expect(StepImages.save([ToolImage(mediaType: "image/png", data: png)], in: root) == [jpeg.path])
+    }
+
+    @Test func pruningTakesASmallCopyWithItsPicture() throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let png = try Self.noisePNG()
+        let path = try #require(StepImages.save([ToolImage(mediaType: "image/png", data: png)], in: root).first)
+        let thumb = try #require(StepImages.thumb(for: URL(filePath: path)))
+        try FileManager.default.setAttributes([.modificationDate: Date.distantPast], ofItemAtPath: path)
+        for index in 0..<StepImages.kept { try Data([UInt8(index % 256)]).write(to: root.appending(path: "f\(index).gif")) }
+        StepImages.prune(root, keeping: [])
+        #expect(!FileManager.default.fileExists(atPath: path))
+        #expect(!FileManager.default.fileExists(atPath: thumb.path))
+        // The thumbs folder itself does not count as a picture.
+        #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).filter { $0.hasSuffix(".gif") }.count == StepImages.kept)
     }
 }

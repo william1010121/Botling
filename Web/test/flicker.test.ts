@@ -155,4 +155,23 @@ describe("components in the chat", () => {
     expect(document.querySelector(".row[data-id=\"m4\"] .folded-choice")?.textContent).toContain("B");
     expect(document.querySelector(".row[data-id=\"m4\"] iframe")).toBeNull();
   });
+
+  it("redraw a message with components only when the components change, not on every new state", () => {
+    const shown = message({ id: "m5", text: "Here", displays: [{ name: "card", data: "{}", at: null }] });
+    const plain = message({ id: "m6", text: "Plain words" });
+    window.ccb.setState(state([shown, plain]));
+    const row = () => document.querySelector(".row[data-id=\"m5\"]");
+    const before = row();
+    const plainBefore = document.querySelector(".row[data-id=\"m6\"]");
+    // The same components, sent again as a new object: nothing is redrawn.
+    window.ccb.setState(state([shown, plain], { components: JSON.parse(JSON.stringify(components)) }));
+    expect(row()).toBe(before);
+    // A template changed: the message drawing it is drawn again; the plain one is not.
+    window.ccb.setState(state([shown, plain], { components: { ...components, card: info("<p>card v2</p>", { version: 1 }) } }));
+    expect(frames().find((frame) => frame.srcdoc.includes("card v2"))).toBeTruthy();
+    expect(document.querySelector(".row[data-id=\"m6\"]")).toBe(plainBefore);
+    // And back again: drawn again with the old template.
+    window.ccb.setState(state([shown, plain]));
+    expect(frames().some((frame) => frame.srcdoc.includes("card v2"))).toBe(false);
+  });
 });

@@ -170,6 +170,11 @@ function toolLine(step: StepView): HTMLElement {
   if (step.detail) body.append(block("In", step.detail));
   if (step.output || images.length) body.append(block(step.failed ? "Error" : "Out", outputText(step.output ?? "", images), images));
   const setOpen = (open: boolean) => {
+    // Pictures load once their step is first opened (a long chat has dozens of screenshots).
+    if (open) for (const image of body.querySelectorAll<HTMLImageElement>("img[data-src]")) {
+      image.src = image.dataset.src!;
+      delete image.dataset.src;
+    }
     body.hidden = !open;
     head.setAttribute("aria-expanded", String(open));
     line.classList.toggle("open", open);
@@ -201,11 +206,16 @@ function outputText(output: string, images: StepImage[]): string {
   return output.split("\n").filter((line) => line.trim() !== "(image)").join("\n").trim();
 }
 
-/** A picture fit to the box (at most so tall); click it to see it large in the lightbox. */
+/**
+ * A picture fit to the box (at most so tall); click it to see it large in the lightbox. The box
+ * shows its small copy when it has one (the lightbox the full picture); it loads when its step is
+ * opened (`data-src` till then).
+ */
 function stepImage(picture: StepImage): HTMLElement {
   const image = document.createElement("img");
   image.className = "step-image";
-  image.src = picture.url;
+  image.dataset.src = picture.thumb ?? picture.url;
+  image.dataset.full = picture.url;
   image.alt = picture.name;
   image.title = picture.name;
   image.loading = "lazy";
