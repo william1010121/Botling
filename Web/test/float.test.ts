@@ -290,3 +290,75 @@ describe("the pin's menu", () => {
     expect(sent).toContainEqual({ type: "floatPin", id: "P1", floating: false });
   });
 });
+
+describe("a floating pin shown in all bots", () => {
+  const entries = () => [...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")];
+  const more = () => document.querySelector<HTMLButtonElement>(".float-card [aria-label='More']")!.click();
+
+  it("in another bot's chat, carries its own bot's name in its header and runs in that bot's folder", () => {
+    const layer = setUp();
+    layer.update(state({ botID: "b2", botName: "Main", floating: [{ botID: "b1", botName: "ClaudeCodeBot", global: true, pin: pin({ display: { ...pin().display, folder: "/code/ClaudeCodeBot" } }) }] }));
+    const card = document.querySelector<HTMLElement>(".float-card")!;
+    expect(card.classList.contains("global")).toBe(true);
+    const owner = card.querySelector<HTMLElement>(".float-head .float-owner")!;
+    expect(owner.textContent).toBe("ClaudeCodeBot");
+    expect(owner.querySelector("svg")).not.toBeNull();
+    // Between the status and the tools, in the one shared header.
+    expect(owner.nextElementSibling?.classList.contains("pin-head-tools")).toBe(true);
+    expect(card.getAttribute("aria-label")).toBe("建置進度, floating in all bots, from ClaudeCodeBot");
+    // ↻ runs its command in its own bot's folder, whichever chat shows it.
+    card.querySelector<HTMLButtonElement>("[aria-label^='Refresh']")!.click();
+    expect(sent).toContainEqual(expect.objectContaining({ type: "pinCommand", id: "P1", command: "make status", folder: "/code/ClaudeCodeBot" }));
+  });
+
+  it("one floating only in its own bot's chat has no owner mark", () => {
+    const layer = setUp();
+    layer.update(state());
+    expect(document.querySelector(".float-owner")).toBeNull();
+    expect(document.querySelector(".float-card")!.classList.contains("global")).toBe(false);
+  });
+
+  it("switching to another bot's chat, a pin floating only in its own goes", () => {
+    const layer = setUp();
+    layer.update(state({ botID: "b1", botName: "Release bot" }));
+    expect(document.querySelectorAll(".float-card")).toHaveLength(1);
+    // Swift gives the other chat only its own floats and those shown in all bots.
+    layer.update(state({ botID: "b2", botName: "Other bot", floating: [] }));
+    expect(document.querySelector(".float-card")).toBeNull();
+  });
+
+  it("stacks first, in the order Swift gives, and the mark follows a promotion", () => {
+    const layer = setUp();
+    layer.update(state({ floating: [{ botID: "b1", botName: "ClaudeCodeBot", global: true, pin: pin({ id: "G" }) }, { botID: "b2", botName: "Other bot", pin: pin({ id: "OWN" }) }] }));
+    expect([...document.querySelectorAll<HTMLElement>(".float-card")].map((c) => c.dataset.id)).toEqual(["G", "OWN"]);
+    expect([...document.querySelectorAll<HTMLElement>(".float-card")].map((c) => !!c.querySelector(".float-owner"))).toEqual([true, false]);
+    // Promoted: the mark comes, the frame stays.
+    const frame = document.querySelector(".float-card[data-id='OWN'] iframe");
+    layer.update(state({ floating: [{ botID: "b1", botName: "ClaudeCodeBot", global: true, pin: pin({ id: "G" }) }, { botID: "b2", botName: "Other bot", global: true, pin: pin({ id: "OWN" }) }] }));
+    expect(document.querySelector(".float-card[data-id='OWN'] .float-owner")?.textContent).toBe("Other bot");
+    expect(document.querySelector(".float-card[data-id='OWN'] iframe")).toBe(frame);
+  });
+
+  it("its menu shows it in all bots, or only in its own again", () => {
+    const layer = setUp();
+    layer.update(state());
+    more();
+    expect(entries().map((e) => e.textContent)).toContain("Show in all bots");
+    entries().find((e) => e.textContent === "Show in all bots")!.click();
+    expect(sent).toContainEqual({ type: "setPinGlobal", id: "P1", global: true });
+    layer.update(state({ floating: [{ botID: "b1", botName: "ClaudeCodeBot", global: true, pin: pin() }] }));
+    more();
+    expect(entries().map((e) => e.textContent)).not.toContain("Show in all bots");
+    entries().find((e) => e.textContent === "Only in ClaudeCodeBot")!.click();
+    expect(sent).toContainEqual({ type: "setPinGlobal", id: "P1", global: false });
+  });
+
+  it("says which chat has no room when it cannot be shown in all bots", () => {
+    const layer = setUp();
+    layer.update(state({ floating: [{ botID: "b1", botName: "Release bot", blocked: "Garden", pin: pin() }] }));
+    more();
+    const item = entries().find((e) => e.textContent?.startsWith("Show in all bots"))!;
+    expect(item.textContent).toBe("Show in all bots (Garden has 2 floating)");
+    expect(item.disabled).toBe(true);
+  });
+});

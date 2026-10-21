@@ -105,6 +105,7 @@ extension Workspace {
         saveGroups()
         try? FileManager.default.removeItem(at: groupsFolder.appending(path: id.uuidString))
         if selection == id { select(nil) }
+        dropStaleGlobalFloats()
         refreshWaiting()
     }
 

@@ -40,6 +40,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     public var componentEditor: BotModel { componentEditorModel ?? .sonnet }
 
+    /// Floating pins shown over every bot's chat ("Show in all bots"), by the chat that holds
+    /// each and the pin: references, not copies, so the owning bot's pin stays the one source.
+    /// Nil (a settings file from before it) means none.
+    public var globalFloats: [GlobalFloat]?
+
     public init(developerMode: Bool = false, developerProjectID: UUID? = nil) {
         self.developerMode = developerMode
         self.developerProjectID = developerProjectID
