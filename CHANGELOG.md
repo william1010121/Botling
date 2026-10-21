@@ -8,6 +8,15 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **All the background work is on the latest message, with subagents on their own.** Instead of
+  icons under each reply that started something, the chat's latest message (yours or the bot's)
+  carries one row for all of the chat's background work, and it moves down as messages arrive.
+  Up to four icons with counts, each only when there is one: subagents still working (a small
+  bot head), other work still waiting (an hourglass: background commands), done (✓)
+  and failed (✕, also stopped or interrupted). Pressing an icon opens the list grouped by those
+  four and filtered to the one pressed, with tabs to see all or another kind; pressing a task
+  still shows its last lines of output.
+
 - **Changing a built component is one step, and you can see it happen.** Once a component is
   built, what you type in its panel's "Ask for changes…" is the change: the next version is built
   right away, with no Build press, and Maintainer is told so plainly (it no longer sometimes waits

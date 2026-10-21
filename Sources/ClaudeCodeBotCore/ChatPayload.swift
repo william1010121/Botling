@@ -46,7 +46,8 @@ public struct ChatPayload: Encodable, Equatable {
         /// The library component the reply already is ("Add to another bot…" instead of "Make
         /// into component").
         var component: String? = nil
-        /// Work the reply's turn left running in the background: a chip each, under it.
+        /// All the chat's background work, on its latest message only (nil on the others): one
+        /// row of counts (subagents, waiting, done, failed) that moves down as messages arrive.
         var tasks: [TaskChip]? = nil
     }
 
@@ -63,8 +64,11 @@ public struct ChatPayload: Encodable, Equatable {
         var ended: Double?
         /// The command or the subagent's task, for the chip's tooltip.
         var detail: String?
+        /// The message whose turn started it (its output is asked for by that message's id).
+        var message: String
 
-        init(_ task: BackgroundTask) {
+        init(_ task: BackgroundTask, from messageID: UUID) {
+            message = messageID.uuidString
             id = task.id
             kind = task.kind.rawValue
             title = task.title
@@ -331,6 +335,13 @@ public struct ChatPayload: Encodable, Equatable {
         }
     }
 
+    /// Where the chat's background-work row goes: its latest message one can be drawn under (a
+    /// reply, a notice or your own line), when the chat has any background work at all.
+    static func backgroundRowIndex(in messages: [ChatMessage]) -> Int? {
+        guard messages.contains(where: { !($0.backgroundTasks ?? []).isEmpty }) else { return nil }
+        return messages.lastIndex { [.bot, .notice, .user].contains($0.role) }
+    }
+
     /// Builds the payload. `avatar` gives a face as a data URL: the bot's own (nil project), or a
     /// project's for its notices.
     @MainActor
@@ -357,7 +368,7 @@ public struct ChatPayload: Encodable, Equatable {
         let speaker = group?.speaker ?? callIn?.speaker
         // Someone called in is answering while the bot itself is not.
         let guest = bot.isWorking ? nil : callIn?.typing
-        let messages = bot.messages.enumerated().map { index, message -> Message in
+        var messages = bot.messages.enumerated().map { index, message -> Message in
             let face: String? = switch message.role {
             // In a group chat each line has the face of the bot that said it.
             // So does a bot called into a bot's own chat.
@@ -398,8 +409,14 @@ public struct ChatPayload: Encodable, Equatable {
                 component: specs && message.role == .bot
                     ? message.shown.first { $0.name != "choices" && $0.name != PagePreview.component && library?.names.contains($0.name) == true }?.name
                     : nil,
-                tasks: message.backgroundTasks.map { $0.map(TaskChip.init) }
+                tasks: nil
             )
+        }
+        // All the chat's background work goes on its latest message, as one row of counts.
+        if let at = backgroundRowIndex(in: bot.messages) {
+            messages[at].tasks = bot.messages.flatMap { message in
+                (message.backgroundTasks ?? []).map { TaskChip($0, from: message.id) }
+            }
         }
         let reply = replyingTo.flatMap { id in bot.messages.first { $0.id == id } }.map {
             Reply(
