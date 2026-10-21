@@ -113,10 +113,10 @@ extension Workspace {
             case let .failed(why):
                 unheard.append(L("{0} ({1})", member.name, Self.firstLine(of: why)))
             case let .reply(text, steps):
+                let hostName = everyMember.first { $0.bot === chat }?.name ?? chat.name
                 // You named it, so its tags act as they would in its own chat.
                 _ = await postGuestReply(text, steps: steps, from: member, bot: bot, into: chat, seen: selectedBot === chat,
-                                         policy: .init(passes: false, tagsAct: true)) { line in
-                    let hostName = everyMember.first { $0.bot === chat }?.name ?? chat.name
+                                         policy: .init(passes: false, tagsAct: true)) { [hostName] line in
                     bot.keepCallIn(asked: L("Called into {0}'s chat with @: {1}", hostName, asked), at: askedAt, reply: line)
                 }
             }
