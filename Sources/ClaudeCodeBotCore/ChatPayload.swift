@@ -159,6 +159,9 @@ public struct ChatPayload: Encodable, Equatable {
         /// Its component's Detail command (about.md), which `ccb.runDetail` fills and runs in
         /// `folder`; allowed together with `command` on the card.
         var detail: String?
+        /// Which card it is for its command's run (`ccb.runDetail(values, {save: true})` saves
+        /// into it); set with `detail`.
+        var card: String?
         var status: String?
         var error: String?
         var ranAt: String?
@@ -551,6 +554,7 @@ public struct ChatPayload: Encodable, Equatable {
         shown.command = command
         shown.folder = folder.path
         shown.detail = detail
+        shown.card = detail == nil ? nil : spec.card
         guard let runs else {
             shown.status = ComponentCommands.Status.approve.rawValue
             return shown
@@ -582,6 +586,7 @@ public struct ChatPayload: Encodable, Equatable {
         let detail = context.library?.detailCommand(of: pin.name)
         if detail != nil {
             shown.detail = detail
+            shown.card = pin.card
             shown.folder = context.folder.path
         }
         if let command = pin.command {
@@ -819,6 +824,7 @@ public struct ChatPayload: Encodable, Equatable {
         let detail = message.role == .bot ? library?.detailCommand(of: instance.name) : nil
         if detail != nil {
             shown.detail = detail
+            shown.card = card
             shown.folder = (commands?.folder(message) ?? fallbackFolder).path
         }
         guard let command = command(of: instance, in: message, library: library) else {

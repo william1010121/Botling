@@ -449,6 +449,123 @@ struct ComponentCommandTests {
         #expect(ComponentCommands.detailReplyScript(3, CommandOutcome(data: #"{"a":"</script>"}"#)) == #"ccb.detailReply(3, true, "{\"a\":\"<\/script>\"}")"#)
         #expect(ComponentCommands.detailReplyScript(4, CommandOutcome(error: "No \"x\".")) == #"ccb.detailReply(4, false, "No \"x\".")"#)
     }
+
+    // MARK: Leaving the page while a card runs
+
+    @Test func aSavedDetailRunFinishesIntoItsCardAfterThePageIsLeft() async throws {
+        // The card's own "rescan" button: a slow forced scan, whose output is the card's data.
+        let gate = DispatchSemaphore(value: 0)
+        let ran = Ran()
+        let commands = ComponentCommands(approvalsURL: root.appending(path: "a.json")) { command, _ in
+            ran.add(command)
+            if command.contains("--force") {
+                gate.wait()
+                return CommandOutcome(data: #"{"free":27}"#)
+            }
+            return CommandOutcome(data: #"{"free":2.3}"#)
+        }
+        let folder = URL(filePath: "/p")
+        let template = "scan --force {scan}"
+        commands.approve("scan", in: folder)
+        commands.approve(detail: template, in: folder)
+        await commands.run(card: "m/0", command: "scan", in: folder)
+        #expect(commands.state(for: "m/0", command: "scan", detail: template, in: folder).data == #"{"free":2.3}"#)
+
+        // Pressed, then the user switches to another chat: the frame that asked is gone (its
+        // task dropped, its answer has nowhere to go).
+        let asked = Task { await commands.runDetail(template, values: ["scan": "now"], in: folder, saving: (card: "m/0", command: "scan")) }
+        while commands.runs["m/0"]?.status != .running { await Task.yield() }
+        asked.cancel()
+        // Back on the chat, the card shows it still running, with the data it had.
+        var state = commands.state(for: "m/0", command: "scan", detail: template, in: folder)
+        #expect(state.status == .running)
+        #expect(state.data == #"{"free":2.3}"#)
+        // Pressing it again, or ↻, starts no second run: it waits for the one under way.
+        let again = Task { await commands.runDetail(template, values: ["scan": "now"], in: folder, saving: (card: "m/0", command: "scan")) }
+        await commands.run(card: "m/0", command: "scan", in: folder, force: true)
+        gate.signal()
+        #expect(await asked.value.data == #"{"free":27}"#)
+        #expect(await again.value.data == #"{"free":27}"#)
+        #expect(ran.all == ["scan", "scan --force 'now'"])
+        // The finished scan is the card's data now, wherever it is drawn next.
+        state = commands.state(for: "m/0", command: "scan", detail: template, in: folder)
+        #expect(state.status == .done)
+        #expect(state.data == #"{"free":27}"#)
+        // A plain Detail call (a commit's diff) leaves the card's data as it was.
+        gate.signal()
+        #expect(await commands.runDetail(template, values: ["scan": "x"], in: folder).data == #"{"free":27}"#)
+        #expect(commands.runs["m/0"]?.status == .done)
+        #expect(commands.runs["m/0"]?.data == #"{"free":27}"#)
+    }
+
+    @Test func aRefreshedCardStillShowsItsNewDataAfterAnotherChatWasOpened() async throws {
+        let workspace = makeWorkspace()
+        let component = workspace.components.folder.appending(path: "disk")
+        try FileManager.default.createDirectory(at: component, withIntermediateDirectories: true)
+        try "<pre></pre>".write(to: component.appending(path: "template.html"), atomically: true, encoding: .utf8)
+        let detail = #"printf '{"free":27,"scan":"%s"}' {scan}"#
+        try "Disk.\nCommand: `cat free.json`\nDetail command: `\(detail)`".write(to: component.appending(path: "about.md"), atomically: true, encoding: .utf8)
+        workspace.components.rescan()
+        let bot = workspace.mainBot
+        let folder = bot.profile.workingDirectory
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try #"{"free":2.3}"#.write(to: folder.appending(path: "free.json"), atomically: true, encoding: .utf8)
+        var message = ChatMessage(role: .bot, text: "Disk:")
+        message.displays = [ComponentInstance(name: "disk", data: "null")]
+        bot.post(message, unread: false)
+        // The chat page as the app sends it: only what changed, all of it again after a switch.
+        var patcher = ChatPayload.Patcher()
+        func page(_ chat: Bot) -> ChatPayload {
+            ChatPayload.make(bot: chat, components: workspace.components, pending: [], replyingTo: nil, commands: workspace.commandContext(for: chat)) { _ in "" }
+        }
+        func cardAfterSwitchingBack() throws -> [String: Any] {
+            _ = patcher.script(for: page(workspace.codexBot))
+            let sent = patcher.script(for: page(bot))
+            let script = try #require(sent)
+            let json = script.dropFirst("ccb.patchState(".count).dropLast()
+            let patch = try object(String(json))
+            let changed = try #require(patch["changed"] as? [[String: Any]])
+            let shown = try #require(changed.first { $0["id"] as? String == message.id.uuidString })
+            return try #require((shown["displays"] as? [[String: Any]])?.first)
+        }
+        await workspace.runComponentCommand(messageID: message.id, index: 0, in: bot, command: "cat free.json", folder: folder.path, detail: detail, approve: true)
+        _ = patcher.script(for: page(bot))
+        #expect(try cardAfterSwitchingBack()["data"] as? String == #"{"free":2.3}"#)
+        let firstRan = try #require(workspace.componentCommands.runs["\(message.id.uuidString)/0"]?.ranAt)
+
+        // ↻ on the card's header: new output, still there after another chat was opened.
+        try #"{"free":5}"#.write(to: folder.appending(path: "free.json"), atomically: true, encoding: .utf8)
+        await workspace.runComponentCommand(messageID: message.id, index: 0, in: bot, force: true)
+        var card = try cardAfterSwitchingBack()
+        #expect(card["data"] as? String == #"{"free":5}"#)
+        #expect(card["status"] as? String == "done")
+
+        // The component's own "rescan" button (ccb.runDetail(values, {save: true})).
+        #expect(card["card"] as? String == "\(message.id.uuidString)/0")
+        let outcome = await workspace.runComponentDetail("disk", values: ["scan": "now"], folder: folder.path, card: card["card"] as? String, command: card["command"] as? String, in: bot)
+        #expect(outcome.data == #"{"free":27,"scan":"now"}"#)
+        card = try cardAfterSwitchingBack()
+        #expect(card["data"] as? String == #"{"free":27,"scan":"now"}"#)
+        #expect(try #require(workspace.componentCommands.runs["\(message.id.uuidString)/0"]?.ranAt) > firstRan)
+    }
+
+    @Test func aSavedDetailRunIsKeptOnItsPin() async throws {
+        let workspace = makeWorkspace()
+        let component = workspace.components.folder.appending(path: "disk")
+        try FileManager.default.createDirectory(at: component, withIntermediateDirectories: true)
+        try "<pre></pre>".write(to: component.appending(path: "template.html"), atomically: true, encoding: .utf8)
+        try "Disk.\nCommand: `printf '{\"free\":2}'`\nDetail command: `printf '{\"free\":27,\"scan\":\"%s\"}' {scan}`".write(to: component.appending(path: "about.md"), atomically: true, encoding: .utf8)
+        workspace.components.rescan()
+        let bot = workspace.mainBot
+        let pin = try #require(workspace.pin(named: "disk", in: bot))
+        let folder = workspace.pinFolder(for: bot)
+        await workspace.runPin(pin.id, in: bot, command: #"printf '{"free":2}'"#, folder: folder.path, detail: #"printf '{"free":27,"scan":"%s"}' {scan}"#, approve: true)
+        #expect(bot.pins.first?.data == #"{"free":2}"#)
+        let outcome = await workspace.runComponentDetail("disk", values: ["scan": "now"], folder: folder.path, card: pin.card, command: #"printf '{"free":2}'"#)
+        #expect(outcome.data == #"{"free":27,"scan":"now"}"#)
+        // Kept on the pin, so the Board and its chip show it, after a restart too.
+        #expect(bot.pins.first?.data == #"{"free":27,"scan":"now"}"#)
+    }
 }
 
 private final class Counter: @unchecked Sendable {

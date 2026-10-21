@@ -201,10 +201,17 @@ public final class ComponentCommands: ObservableObject {
         public init(_ message: String) { self.message = message }
     }
 
+    /// Detail runs whose output becomes their card's data, by card: the command line and its run.
+    private var saving: [String: (command: String, run: Task<CommandOutcome, Never>)] = [:]
+
     /// Runs a component's Detail command `template` with `values` in `folder` (a card's
     /// `ccb.runDetail`): only once the user has allowed that template there, with the same time
     /// limit, output cap and stopping as the card's own command. The data is JSON as for a run.
-    public func runDetail(_ template: String, values: [String: String], in folder: URL) async -> CommandOutcome {
+    /// `saving` (`ccb.runDetail(values, {save: true})`, a card's "scan again" button) makes the
+    /// output that card's data, as a run of its `command` would: the card shows it running, and
+    /// the run finishes into the card even if the page that asked is left or drawn anew. Asking
+    /// again while it runs waits for the same run instead of starting another.
+    public func runDetail(_ template: String, values: [String: String], in folder: URL, saving card: (card: String, command: String)? = nil) async -> CommandOutcome {
         guard isApproved(detail: template, in: folder) else {
             return CommandOutcome(error: "This component's Detail command is not allowed yet: press \"Allow and run\" on its card first.")
         }
@@ -214,7 +221,27 @@ public final class ComponentCommands: ObservableObject {
         case .failure(let problem): return CommandOutcome(error: problem.message)
         }
         let runner = runner
-        return await blocking { runner(command, folder) }
+        guard let card, isApproved(card.command, in: folder) else { return await blocking { runner(command, folder) } }
+        if let running = saving[card.card] {
+            if running.command == command { return await running.run.value }
+            return CommandOutcome(error: "This card is already running a command: try again once it is done.")
+        }
+        if runs[card.card]?.status == .running {
+            return CommandOutcome(error: "This card's command is running: try again once it is done.")
+        }
+        let previous = run(of: card.card, command: card.command, in: folder)
+        ranWith[card.card] = Self.what(card.command, folder)
+        runs[card.card] = State(status: .running, data: previous?.data, error: nil, ranAt: previous?.ranAt)
+        let run = Task { await blocking { runner(command, folder) } }
+        saving[card.card] = (command, run)
+        let outcome = await run.value
+        saving[card.card] = nil
+        if let data = outcome.data {
+            runs[card.card] = State(status: .done, data: data, error: nil, ranAt: outcome.ranAt)
+        } else {
+            runs[card.card] = State(status: .failed, data: previous?.data, error: outcome.error ?? "The command failed.", ranAt: outcome.ranAt)
+        }
+        return outcome
     }
 
     /// A runDetail call's values as text: strings, and whole numbers written out; nil when

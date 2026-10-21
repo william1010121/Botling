@@ -350,7 +350,7 @@ extension Workspace {
     }
 
     /// A finished run's output, saved on the pin so it shows after a restart too.
-    private func keepOutput(of pin: PinnedComponent, in bot: Bot) {
+    func keepOutput(of pin: PinnedComponent, in bot: Bot) {
         guard let state = componentCommands.runs[pin.card], state.status == .done, let data = state.data else { return }
         bot.editPins { pins in
             guard let at = pins.firstIndex(where: { $0.id == pin.id }), pins[at].command == pin.command else { return }

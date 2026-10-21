@@ -383,7 +383,7 @@ extension Workspace {
     }
 
     /// A finished test run, kept on the spec: its output, whether it fits the fields, a sample.
-    private func keepTestRun(of id: UUID, command: String, in chat: Bot) {
+    func keepTestRun(of id: UUID, command: String, in chat: Bot) {
         guard let card = chat.specs.first(where: { $0.id == id })?.card, let state = componentCommands.runs[card],
               state.status == .done || state.status == .failed else { return }
         chat.editSpecs { specs in
