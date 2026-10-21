@@ -900,6 +900,20 @@ public final class Bot: ObservableObject, Identifiable {
         if append(message), unread { unreadCount += 1 }
     }
 
+    /// A turn it took in another chat, called in there with @ (its own session answered it):
+    /// kept in its own chat and archive too, as what it was asked there and its reply, with the
+    /// work that turn left running. Not unread: you read it where you called it in.
+    public func keepCallIn(asked: String, at date: Date, reply line: ChatMessage) {
+        append(ChatMessage(role: .notice, text: asked, date: date))
+        var copy = ChatMessage(role: .bot, text: line.text)
+        copy.displays = line.displays
+        copy.steps = line.steps
+        copy.session = sessionID
+        copy.backgroundTasks = trace.takeTasks()
+        if copy.text.isEmpty, copy.displays == nil, copy.backgroundTasks == nil { return }
+        append(copy)
+    }
+
     /// Puts earlier lines in, in date order (notices moving over from another chat).
     public func adopt(_ older: [ChatMessage]) {
         guard !older.isEmpty else { return }
