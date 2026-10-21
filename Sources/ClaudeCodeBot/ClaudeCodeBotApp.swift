@@ -162,7 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if Self.isHeadless {
             for window in NSApp.windows { HeadlessRun.hide(window) }
         }
-        if Snapshot.runIfRequested() || PluginCheck.runIfRequested() {
+        if Snapshot.runIfRequested() || PluginCheck.runIfRequested() || ComponentShotRun.runIfRequested() {
             return
         }
         // Started with `swift run`, the app has no bundle; make it a normal foreground app.
@@ -290,6 +290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return await ClaudePluginValidator.validate(folder, executable: executable)
             },
             checkCommand: Bundle.main.executablePath.map { "'\($0)' --check-plugin" },
+            shotCommand: Bundle.main.executablePath.map { "'\($0)' --component-shot" },
             launcher: launcher
         ) { profile, store in
             Bot(profile: profile, idleInterval: idle, launcher: launcher, store: store)

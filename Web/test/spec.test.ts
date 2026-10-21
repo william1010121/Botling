@@ -264,6 +264,15 @@ describe("the spec workspace in the right panel", () => {
     expect(sent).toEqual([{ type: "specSay", id: "S1", text: "失敗的要列名字" }]);
   });
 
+  it("a contact sheet in Maintainer's words shows under them as a picture", () => {
+    const root = panel(spec({ conversation: [{ kind: "maintainer", text: "Checked it on every surface.", images: ["file:///tmp/shot/contact-sheet.png"] }] }));
+    const line = root.querySelector(".spec-line.maintainer .spec-words")!;
+    expect(line.textContent).toContain("Checked it on every surface.");
+    const picture = line.querySelector<HTMLImageElement>("img.media")!;
+    expect(picture.getAttribute("src")).toBe("file:///tmp/shot/contact-sheet.png");
+    expect(picture.dataset.url).toBe("file:///tmp/shot/contact-sheet.png");
+  });
+
   it("Test run asks to allow the exact command and folder first", () => {
     const root = panel(spec({ testRun: { status: "approve", command: "swift test --parallel", folder: "/Users/me/ClaudeCodeBot", output: null, error: null, ranAt: null, matches: null } }));
     const ask = root.querySelector(".spec-test .command-approve")!;
