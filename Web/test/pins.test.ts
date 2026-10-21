@@ -430,7 +430,7 @@ describe("the Board", () => {
     expect([...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")].map((b) => b.getAttribute("aria-label"))).toEqual(every);
     menuOf(1).find((b) => b.textContent === "Move earlier")!.click();
     expect(sent.at(-1)).toEqual({ type: "movePin", id: "P2", to: 0 });
-    menuOf(0).find((b) => b.textContent === "Every 15 min")!.click();
+    menuOf(0).find((b) => b.getAttribute("aria-label") === "Every 15 min")!.click();
     expect(sent.at(-1)).toEqual({ type: "setPinRefresh", id: "P1", refresh: "interval", minutes: 15 });
     menuOf(1).find((b) => b.textContent === "Unpin")!.click();
     expect(sent.at(-1)).toEqual({ type: "unpin", id: "P2" });
@@ -815,8 +815,6 @@ describe("a pin's refresh interval", () => {
     click(document.querySelector(".board-card [aria-label='More']"));
     return [...document.querySelectorAll<HTMLButtonElement>(".pin-menu > button")];
   };
-  const labels = (entries: HTMLButtonElement[]) => entries.map((b) => b.textContent);
-  const checked = () => [...document.querySelectorAll(".pin-menu > button.checked")].map((b) => b.textContent);
   const enter = (target: Element) => target.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
 
   it("reads a typed number in sec or min, from 2 sec to 24 h", () => {
@@ -840,67 +838,132 @@ describe("a pin's refresh interval", () => {
     expect(refreshWords("manual", 2)).toBe("Only on ↻");
   });
 
-  it("keeps the presets and adds Custom…; a custom interval shows as its own checked entry", () => {
-    expect(labels(menu()).slice(0, 5)).toEqual(["When shown", "Every 15 min", "Every 5 sec", "Custom…", "Only on ↻"]);
-    expect(checked()).toEqual(["When shown"]);
-    expect(labels(menu({ refresh: "interval", minutes: 15 })).slice(0, 5)).toEqual(["When shown", "Every 15 min", "Every 5 sec", "Custom…", "Only on ↻"]);
-    expect(checked()).toEqual(["Every 15 min"]);
-    expect(labels(menu({ refresh: "interval", minutes: 15, seconds: 30 })).slice(0, 6)).toEqual(["When shown", "Every 15 min", "Every 5 sec", "Every 30 sec", "Custom…", "Only on ↻"]);
-    expect(checked()).toEqual(["Every 30 sec"]);
-    expect(labels(menu({ refresh: "interval", minutes: 2 })).slice(0, 6)).toEqual(["When shown", "Every 15 min", "Every 5 sec", "Every 2 min", "Custom…", "Only on ↻"]);
-    expect(checked()).toEqual(["Every 2 min"]);
+  const rows = () => [...document.querySelectorAll<HTMLElement>(".pin-menu .refresh-interval")];
+  const fields = (row: HTMLElement) => ({
+    count: row.querySelector<HTMLInputElement>(".refresh-interval-count")!,
+    unit: row.querySelector<HTMLSelectElement>(".refresh-interval-unit")!,
+    pick: row.querySelector<HTMLButtonElement>(".refresh-interval-pick")!,
+    error: row.querySelector<HTMLElement>(".refresh-interval-error")!,
+  });
+  const words = () => [...document.querySelectorAll<HTMLElement>(".pin-menu > button, .pin-menu .refresh-interval-pick")].map((b) => b.getAttribute("aria-label") ?? b.textContent);
+  const ticked = () => [...document.querySelectorAll<HTMLElement>(".pin-menu > button.checked, .pin-menu .refresh-interval.checked .refresh-interval-pick")].map((b) => b.getAttribute("aria-label") ?? b.textContent);
+  const type = (field: HTMLInputElement | HTMLSelectElement, value: string) => {
+    field.value = value;
+    field.dispatchEvent(new Event(field instanceof HTMLSelectElement ? "change" : "input"));
+  };
+
+  it("has no extra entry: the two interval rows show the pin's own interval in its unit, checked", () => {
+    menu();
+    expect(words().slice(0, 4)).toEqual(["When shown", "Every 15 min", "Every 5 sec", "Only on ↻"]);
+    expect(ticked()).toEqual(["When shown"]);
+    expect(document.body.textContent).not.toContain("Custom");
+    menu({ refresh: "interval", minutes: 15 });
+    expect(ticked()).toEqual(["Every 15 min"]);
+    menu({ refresh: "interval", minutes: 15, seconds: 30 });
+    expect(words().slice(0, 4)).toEqual(["When shown", "Every 15 min", "Every 30 sec", "Only on ↻"]);
+    expect(ticked()).toEqual(["Every 30 sec"]);
+    expect(fields(rows()[1]).count.value).toBe("30");
+    expect(fields(rows()[1]).unit.value).toBe("sec");
+    menu({ refresh: "interval", minutes: 2 });
+    expect(words().slice(0, 4)).toEqual(["When shown", "Every 2 min", "Every 5 sec", "Only on ↻"]);
+    expect(ticked()).toEqual(["Every 2 min"]);
+    expect(fields(rows()[0]).unit.value).toBe("min");
+    // A seconds value kept from before is not shown while the pin refreshes when shown.
+    menu({ refresh: "shown", minutes: 15, seconds: 30 });
+    expect(words().slice(0, 4)).toEqual(["When shown", "Every 15 min", "Every 5 sec", "Only on ↻"]);
   });
 
-  it("Custom… opens a row in the menu: a number and sec or min; Set or Return sends it", () => {
-    const custom = menu({ refresh: "interval", minutes: 15, seconds: 30 }).find((b) => b.textContent === "Custom…")!;
-    custom.click();
-    // The menu stays open, starting at the pin's own interval.
-    const row = document.querySelector(".pin-menu .refresh-custom")!;
-    const count = row.querySelector<HTMLInputElement>(".refresh-custom-count")!;
-    const unit = row.querySelector<HTMLSelectElement>(".refresh-custom-unit")!;
-    expect(count.value).toBe("30");
-    expect(unit.value).toBe("sec");
-    expect(document.activeElement).toBe(count);
-    count.value = "2";
-    unit.value = "min";
-    click(row.querySelector(".refresh-custom-set"));
-    expect(sent).toEqual([{ type: "setPinRefresh", id: "P1", refresh: "interval", minutes: 2 }]);
+  it("clicking a row's words picks it as it stands", () => {
+    menu();
+    click(fields(rows()[1]).pick);
+    expect(sent).toEqual([{ type: "setPinRefresh", id: "P1", refresh: "interval", seconds: 5 }]);
     expect(document.querySelector(".pin-menu")).toBeNull();
+    menu({ refresh: "interval", minutes: 2 });
+    click(rows()[0]);
+    expect(sent).toEqual([{ type: "setPinRefresh", id: "P1", refresh: "interval", minutes: 2 }]);
+    // Clicking into a field edits it and picks nothing.
+    menu();
+    click(fields(rows()[0]).count);
+    expect(sent).toEqual([]);
+    expect(document.querySelector(".pin-menu")).not.toBeNull();
+  });
 
-    menu().find((b) => b.textContent === "Custom…")!.click();
-    const fresh = document.querySelector<HTMLInputElement>(".refresh-custom-count")!;
-    expect(fresh.value).toBe("30");
-    expect(document.querySelector<HTMLSelectElement>(".refresh-custom-unit")!.value).toBe("sec");
-    fresh.value = "45";
-    enter(fresh);
+  it("Return in a row's number or unit sets it and closes the menu", () => {
+    menu();
+    const { count } = fields(rows()[1]);
+    type(count, "45");
+    enter(count);
     expect(sent).toEqual([{ type: "setPinRefresh", id: "P1", refresh: "interval", seconds: 45 }]);
+    expect(document.querySelector(".pin-menu")).toBeNull();
+    menu();
+    const minutes = fields(rows()[0]);
+    type(minutes.count, "90");
+    type(minutes.unit, "sec");
+    expect(minutes.pick.getAttribute("aria-label")).toBe("Every 90 sec");
+    enter(minutes.unit);
+    expect(sent).toEqual([{ type: "setPinRefresh", id: "P1", refresh: "interval", seconds: 90 }]);
+  });
+
+  it("leaving a row after an edit applies it and checks the row; the menu stays open", () => {
+    menu();
+    const { count } = fields(rows()[0]);
+    count.focus();
+    type(count, "2");
+    count.blur();
+    expect(sent).toEqual([{ type: "setPinRefresh", id: "P1", refresh: "interval", minutes: 2 }]);
+    expect(document.querySelector(".pin-menu")).not.toBeNull();
+    expect(ticked()).toEqual(["Every 2 min"]);
+    // Leaving it again without an edit sends nothing more.
+    count.focus();
+    count.blur();
+    expect(sent).toHaveLength(1);
+  });
+
+  it("an edit is dropped by Escape or by choosing another entry", () => {
+    menu();
+    const { count } = fields(rows()[0]);
+    count.focus();
+    type(count, "3");
+    count.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    expect(document.querySelector(".pin-menu")).toBeNull();
+    expect(sent).toEqual([]);
+    menu();
+    const again = fields(rows()[0]).count;
+    again.focus();
+    type(again, "3");
+    const manual = [...document.querySelectorAll<HTMLButtonElement>(".pin-menu > button")].find((b) => b.textContent === "Only on ↻")!;
+    manual.focus();
+    manual.click();
+    expect(sent).toEqual([{ type: "setPinRefresh", id: "P1", refresh: "manual", minutes: 15 }]);
   });
 
   it("rejects what is not an interval inline, and keeps the menu open", () => {
-    menu().find((b) => b.textContent === "Custom…")!.click();
-    const count = document.querySelector<HTMLInputElement>(".refresh-custom-count")!;
-    const error = document.querySelector<HTMLElement>(".refresh-custom-error")!;
+    menu();
+    const { count, unit, error } = fields(rows()[1]);
     expect(error.hidden).toBe(true);
-    for (const [value, unit, says] of [["1", "sec", "At least 2 sec"], ["1441", "min", "At most 24 h (1440 min)"], ["abc", "sec", "Type a whole number"]]) {
-      count.value = value;
-      document.querySelector<HTMLSelectElement>(".refresh-custom-unit")!.value = unit;
+    for (const [value, inUnit, says] of [["1", "sec", "At least 2 sec"], ["1441", "min", "At most 24 h (1440 min)"], ["abc", "sec", "Type a whole number"]]) {
+      type(count, value);
+      type(unit, inUnit);
       enter(count);
       expect(error.hidden).toBe(false);
       expect(error.textContent).toBe(says);
       expect(count.getAttribute("aria-invalid")).toBe("true");
     }
+    // Leaving the field with it wrong says so too.
+    count.focus();
+    count.blur();
     expect(sent).toEqual([]);
     expect(document.querySelector(".pin-menu")).not.toBeNull();
+    expect(ticked()).toEqual(["When shown"]);
     // Fixing it clears the line as you type.
-    count.value = "10";
-    count.dispatchEvent(new Event("input"));
+    type(count, "10");
     expect(error.hidden).toBe(true);
   });
 
   it("an input method's Return (picking a candidate) never sets it", () => {
-    menu().find((b) => b.textContent === "Custom…")!.click();
-    const count = document.querySelector<HTMLInputElement>(".refresh-custom-count")!;
-    count.value = "20";
+    menu();
+    const { count } = fields(rows()[1]);
+    type(count, "20");
     count.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true, cancelable: true }));
     expect(sent).toEqual([]);
   });
@@ -917,8 +980,8 @@ describe("a pin's refresh interval", () => {
     count.value = "1";
     click(dialog.querySelector(".primary"));
     expect(sent).toEqual([]);
-    expect(dialog.querySelector<HTMLElement>(".refresh-custom-error")?.hidden).toBe(false);
-    expect(dialog.querySelector(".refresh-custom-error")?.textContent).toBe("At least 2 sec");
+    expect(dialog.querySelector<HTMLElement>(".refresh-interval-error")?.hidden).toBe(false);
+    expect(dialog.querySelector(".refresh-interval-error")?.textContent).toBe("At least 2 sec");
     count.value = "30";
     enter(count);
     expect(sent[0]).toMatchObject({ type: "pin", refresh: "interval", minutes: 15, seconds: 30 });

@@ -8,11 +8,12 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
-- **Pick any refresh interval for a pin.** A pin's refresh menu keeps its quick choices (When
-  shown, Every 15 min, Every 5 sec, Only on ↻) and adds "Custom…": it opens "Every [n] [sec / min]"
-  right in the menu; Set or Return keeps it, from 2 seconds to 24 hours. The pin then says its
-  own interval ("Every 30 sec", "Every 2 min"), shown checked in the menu, and refreshes on it
-  after a restart too. A number out of range or not a whole number is said under the box and
+- **Pick any refresh interval for a pin.** A pin's refresh menu keeps its four choices (When
+  shown, Every [15] [min], Every [5] [sec], Only on ↻), and in the two "Every" rows the number
+  and the unit are typed right in place, from 2 seconds to 24 hours: Return or leaving the field
+  keeps it and checks that row, and clicking the row's words picks it as it shows. The row in the
+  pin's unit shows its own interval ("Every [30] [sec]", "Every [2] [min]"), and the pin refreshes
+  on it after a restart too. A number out of range or not a whole number is said under the row and
   nothing changes. The Pin dialog takes the same intervals.
 - **All the background work is on the latest message, with subagents on their own.** Instead of
   icons under each reply that started something, the chat's latest message (yours or the bot's)
