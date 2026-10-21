@@ -1122,16 +1122,27 @@ struct DetailPanel: View {
         Group {
             if let id = openReview {
                 CodexReportView(workspace: workspace, reviewID: id) { openReview = nil }
+                    .padding(20)
+                    .padding(.top, 16)
             } else if let key = openPanel {
                 panelPage(key)
+                    .padding(20)
+                    .padding(.top, 16)
             } else if showingSettings {
                 SettingsPage(bot: bot) { showingSettings = false }
+                    .padding(20)
+                    .padding(.top, 16)
             } else {
-                overview
+                // It scrolls: the main bot's "Waiting on you" gathers every bot's questions, and
+                // a long list must not make the panel taller than the window.
+                ScrollView {
+                    overview
+                        .padding(20)
+                        .padding(.top, 16)
+                }
+                .scrollIndicators(.never)
             }
         }
-        .padding(20)
-        .padding(.top, 16)
         .frame(maxHeight: .infinity, alignment: .top)
         .background(Theme.side)
     }

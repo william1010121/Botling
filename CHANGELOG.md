@@ -4,6 +4,20 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+### Fixed
+
+- **The window no longer slides off its edges in the main bot's chat.** The right panel's
+  overview did not scroll, so with a long "Waiting on you" list (the main bot gathers every
+  bot's questions) it grew taller than the window. The row of columns grew with it and was
+  centred, which pushed the rail's and the chat's tops off the window, hid the input box below
+  its bottom and left the rail's search bar floating with a gray box above it. The overview now
+  scrolls, and each of the three columns is exactly as tall as the window and drawn from its
+  top, so no column's content can move the others. `CCB_WINDOW_SNAPSHOT` draws the whole window
+  with `CCB_WINDOW_WAITING` things waiting and fails when a column leaves the window; a test
+  runs it with 1, 14 and 40.
+
 ## 1.14.1
 
 ### Added
