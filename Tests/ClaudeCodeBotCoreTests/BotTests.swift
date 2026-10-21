@@ -35,6 +35,16 @@ final class FakeAgent: AgentProcess, @unchecked Sendable {
         }
     }
 
+    /// The ids messages were sent under (like claude, which then reports their progress; the
+    /// test emits `.commandQueued` / `.commandStarted` itself).
+    private var _commands: [UUID] = []
+    var commands: [UUID] { lock.withLock { _commands } }
+
+    func send(_ text: String, images: [ClaudeCodeBotCore.Attachment], id: UUID) {
+        lock.withLock { _commands.append(id) }
+        send(text, images: images)
+    }
+
     func reply(_ text: String) {
         continuation.yield(.reply(text, isError: false))
     }

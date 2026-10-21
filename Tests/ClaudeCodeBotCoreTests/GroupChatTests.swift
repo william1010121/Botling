@@ -409,3 +409,105 @@ struct GroupChatTests {
         #expect(FileManager.default.fileExists(atPath: kept.url.path))
     }
 }
+
+/// A bot that is idle but for work it left running in the background (a subagent, a command)
+/// answers a group turn or a call-in at once; what that work reports stays in its own chat.
+@MainActor
+struct GroupTurnWithBackgroundWorkTests {
+    /// A bot that answered "hi" and left a subagent running in the background.
+    func idleWithASubagent(_ fake: FakeLauncher) async -> (Bot, FakeAgent) {
+        fake.respond = { text in isAppOnly(text) ? "OK" : nil }
+        let bot = makeBot(fake)
+        bot.send("hi")
+        await eventually { fake.agents.count == 1 }
+        let agent = fake.agents[0]
+        agent.emit(.trace(.toolUse(id: "a1", tool: "Agent", title: "Delegate release", detail: "Release 1.14", parent: nil)))
+        agent.emit(.trace(.subagentStarted(id: "a1", description: "Release 1.14", type: nil, prompt: "Release 1.14", background: true)))
+        agent.emit(.trace(.toolResult(id: "a1", output: "Async agent launched", failed: false, parent: nil)))
+        agent.reply("Started the release in the background.")
+        await eventually { !bot.isWorking && bot.trace.subagents.contains { $0.isRunning } }
+        return (bot, agent)
+    }
+
+    /// claude's turn of its own for the subagent's report: the notification, then its words.
+    func report(_ agent: FakeAgent, _ text: String) {
+        agent.emit(.trace(.subagentEnded(id: "a1", status: "completed", summary: "Released")))
+        agent.emit(.trace(.text(text, parent: nil)))
+        agent.reply(text)
+    }
+
+    @Test func aBotWithOnlyABackgroundSubagentAnswersAtOnce() async throws {
+        let fake = FakeLauncher()
+        let (bot, agent) = await idleWithASubagent(fake)
+        let answer = Task { await bot.groupTurn("Which promo points?", waitFor: 1) }
+        // Sent right away, not after the subagent ends.
+        await eventually({ agent.sent.contains("Which promo points?") }, timeout: 5)
+        let id = try #require(agent.commands.last)
+        agent.emit(.commandQueued(id))
+        agent.emit(.commandStarted(id))
+        agent.emit(.trace(.text("Points: speed, privacy.", parent: nil)))
+        agent.reply("Points: speed, privacy.")
+        guard case let .reply(text, _) = await answer.value else {
+            Issue.record("no reply")
+            return
+        }
+        #expect(text == "Points: speed, privacy.")
+        #expect(bot.trace.subagents.contains { $0.isRunning })
+        #expect(!bot.messages.contains { $0.text == "Points: speed, privacy." })
+
+        // The report that comes later is its own chat's, not a group reply.
+        report(agent, "The release is out.")
+        await eventually { bot.messages.last?.text == "The release is out." }
+        #expect(!bot.isWorking)
+    }
+
+    @Test func aReportTurnThatComesFirstIsNotTakenForTheGroupReply() async throws {
+        let fake = FakeLauncher()
+        let (bot, agent) = await idleWithASubagent(fake)
+        let answer = Task { await bot.groupTurn("Which promo points?", waitFor: 1) }
+        await eventually({ agent.sent.contains("Which promo points?") }, timeout: 5)
+        let id = try #require(agent.commands.last)
+        // claude was already starting the report's turn: the message waits in its queue.
+        agent.emit(.commandQueued(id))
+        report(agent, "The release is out.")
+        await eventually { bot.messages.last?.text == "The release is out." }
+        agent.emit(.commandStarted(id))
+        agent.reply("Points: speed, privacy.")
+        guard case let .reply(text, _) = await answer.value else {
+            Issue.record("no reply")
+            return
+        }
+        #expect(text == "Points: speed, privacy.")
+        #expect(!bot.messages.contains { $0.text == "Points: speed, privacy." })
+        #expect(!bot.isWorking)
+    }
+
+    @Test func aReportBeforeALateGroupReplyIsKeptAndTheLateReplyDropped() async throws {
+        let fake = FakeLauncher()
+        let (bot, agent) = await idleWithASubagent(fake)
+        let answer = await {
+            let task = Task { await bot.groupTurn("Which promo points?", waitFor: 1, answerWithin: 0.3) }
+            await eventually({ agent.sent.contains("Which promo points?") }, timeout: 5)
+            if let id = agent.commands.last { agent.emit(.commandQueued(id)) }
+            return await task.value
+        }()
+        #expect(answer == .failed(L("No answer in time.")))
+        let id = try #require(agent.commands.last)
+        // The report's turn, then the group turn nobody waits for any more.
+        report(agent, "The release is out.")
+        await eventually { bot.messages.last?.text == "The release is out." }
+        agent.emit(.commandStarted(id))
+        agent.reply("Points: speed, privacy.")
+        await eventually { !bot.isWorking }
+        #expect(!bot.messages.contains { $0.text == "Points: speed, privacy." })
+        // And it takes the next group turn.
+        let next = Task { await bot.groupTurn("Anything else?", waitFor: 5) }
+        await eventually { agent.sent.contains("Anything else?") }
+        agent.reply("No.")
+        guard case let .reply(text, _) = await next.value else {
+            Issue.record("no reply")
+            return
+        }
+        #expect(text == "No.")
+    }
+}

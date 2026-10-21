@@ -7,6 +7,9 @@ public protocol AgentProcess: AnyObject, Sendable {
     func send(_ text: String)
     /// Sends a user message with images Claude looks at directly.
     func send(_ text: String, images: [Attachment])
+    /// Sends a user message under `id`, so a process that can (claude) says when that message is
+    /// queued and when its turn starts (`.commandQueued`, `.commandStarted`).
+    func send(_ text: String, images: [Attachment], id: UUID)
     /// Closes stdin: Claude finishes what it is doing, then exits.
     func finish()
     /// Ends the process now.
@@ -24,6 +27,10 @@ public protocol AgentProcess: AnyObject, Sendable {
 extension AgentProcess {
     public func send(_ text: String, images: [Attachment]) {
         send(text)
+    }
+
+    public func send(_ text: String, images: [Attachment], id: UUID) {
+        send(text, images: images)
     }
 
     public func answer(_ request: PermissionRequest, allow: Bool, message: String?) {}
@@ -97,6 +104,12 @@ public enum AgentEvent: Equatable, Sendable {
     case connectionLost(parent: String?)
     /// The subscription's 5-hour and weekly limits as the API last reported them (`rate_limit_event`).
     case rateLimits(RateLimits)
+    /// A message sent with an id is in claude's queue (`command_lifecycle` "queued"): turns
+    /// already under way or waiting end before its turn.
+    case commandQueued(UUID)
+    /// The turn that takes in that message begins (`command_lifecycle` "started"): the next
+    /// result line is its reply.
+    case commandStarted(UUID)
     case exited(status: Int32, stderr: String)
 }
 
@@ -304,9 +317,17 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         send(text, images: [])
     }
 
+    public func send(_ text: String, images: [Attachment]) {
+        write(text, images: images, id: nil)
+    }
+
+    public func send(_ text: String, images: [Attachment], id: UUID) {
+        write(text, images: images, id: id)
+    }
+
     /// Images go in as base64 blocks, so the model sees them; bigger than Claude takes, they are
     /// left to the file paths the text already names.
-    public func send(_ text: String, images: [Attachment]) {
+    private func write(_ text: String, images: [Attachment], id: UUID?) {
         var content: [[String: Any]] = [["type": "text", "text": text]]
         for image in images {
             guard let mediaType = image.mediaType,
@@ -317,10 +338,12 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
                 "source": ["type": "base64", "media_type": mediaType, "data": data.base64EncodedString()]
             ])
         }
-        let message: [String: Any] = [
+        var message: [String: Any] = [
             "type": "user",
             "message": ["role": "user", "content": content.count == 1 ? text as Any : content as Any]
         ]
+        // claude reports the message's progress under this id (`command_lifecycle`).
+        if let id { message["uuid"] = id.uuidString.lowercased() }
         guard var data = try? JSONSerialization.data(withJSONObject: message) else { return }
         data.append(0x0A)
         lock.withLock {
