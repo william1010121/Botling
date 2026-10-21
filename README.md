@@ -41,6 +41,8 @@ you already have.
   ClaudeCodeBot's own source.
 - **Nothing leaves your Mac but Claude.** It drives the `claude` CLI you already have; chats and
   memory are plain markdown files.
+- **In your language.** The app speaks English, 繁體中文, 简体中文, 日本語 and 한국어, and bots
+  reply in the language you pick.
 
 ## Features
 
@@ -54,6 +56,10 @@ Real work (building, fixing, researching) is handed to subagents that run in the
 in parallel, so the bot stays free to talk to you. Subagents that change code work in a git
 worktree of their own and merge when their tests pass. The right panel shows each one running,
 then settled, and a dropped network does not lose them: they carry on where they stopped.
+
+The chat's latest message carries one row for **all background work**: subagents, background
+commands, Monitors that watch for events, and scheduled wake-ups or cron jobs (with when they
+fire). Press an icon to see the list and each task's last lines of output.
 
 </td>
 <td width="50%" valign="top">
@@ -73,9 +79,13 @@ then settled, and a dropped network does not lose them: they carry on where they
 ### 2. Components, pins and a Board in the chat
 
 Bots draw small HTML components (charts, cards, test summaries) inside their replies, fed by
-their own data or a CLI command (`<show name="…" command="git diff --stat">`). Pin one above
-the input box as a status chip with its icon and a short status, or lay pins out as tiles on a
-per-bot **Board**, a widget grid.
+their own data or a CLI command (`<show name="…" command="git diff --stat">`). Cards can be
+**live** (`Refresh: every 2s`), updated in place by id, and keep their own state
+(`ccb.save(data)`, so a todo list's ticks survive a restart).
+
+Pin one above the input box as a status chip, **float** it in a corner over every chat to watch
+a build, or lay pins out on a per-bot **Board**: a widget grid where each tile keeps its own
+cell, and a drop swaps or pushes tiles down instead of reshuffling everything.
 
 </td>
 </tr>
@@ -85,8 +95,10 @@ per-bot **Board**, a widget grid.
 ### 3. One click turns a reply into a component
 
 Press **Make into component** on any reply (or the suggestion chip a bot adds when it sees
-something you will ask for again) and the Maintainer builds the first version from that reply,
-asking nothing. It reuses a component from the library when one already does the job.
+something you will ask for again). The bot that wrote the reply writes a brief, and the
+Maintainer builds the first version from it, reusing a library component when one already does
+the job. The spec panel beside the chat shows the fields, a test run, and each change as it
+happens.
 
 </td>
 <td valign="top">
@@ -159,8 +171,18 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
   asks (Allow once / Always / Don't allow) in the chat, with Claude Code's auto mode on by default.
 - **Code review by Codex** (optional): review uncommitted changes or a commit from the right
   panel, or have Codex check subagents' work in a loop until it is clean.
-- **A rich chat**: Markdown, LaTeX, tables, images, videos, attachments, replies, group chats with
-  `@name`, result pages as preview cards, and an input box that works with CJK input methods.
+- **Results as claude.ai Artifacts.** Reports, comparisons and previews are published as a
+  private claude.ai Artifact and linked in the reply as a card; anything sensitive stays a local
+  HTML page. Settings → Permissions → Reports and results picks the rule.
+- **A rich chat**: Markdown, LaTeX, tables, images, videos, attachments, replies, group chats,
+  result pages as preview cards, and an input box that works with CJK input methods.
+- **Call in any bot with `@name`.** It answers in your chat and keeps the work, with its steps,
+  in its own chat too.
+- **Drafts that stay.** What you typed but did not send stays in each bot's input box across
+  switches and restarts.
+- **Five languages.** Settings → General → Language: English, 繁體中文, 简体中文, 日本語 or 한국어
+  (or follow the Mac), switched at once without a restart. Bots reply in it too; what bots write
+  and your own data are never translated.
 - **Routines**: a crontab-style `routines.cron` per bot, which bots edit when you ask.
 - **Usage at a glance**: today's tokens per bot, rings for the 5-hour and weekly limits, a daily
   budget, per-bot model and effort, and **Doctor** to check your Claude Code and Codex installs.
@@ -307,8 +329,7 @@ CCB_SNAPSHOT=/tmp/chat.png swift run ClaudeCodeBot   # render a sample chat to a
 
 The screenshots in this README are drawn by the app's own snapshot mode (`CCB_SNAPSHOT`,
 `CCB_RAIL_SNAPSHOT`, `CCB_RIGHT_SNAPSHOT`, `CCB_CODEX_SNAPSHOT`, `CCB_SPEC_SNAPSHOT`,
-`CCB_SETTINGS_SNAPSHOT`) with
-sample data.
+`CCB_SETTINGS_SNAPSHOT`) with sample data.
 
 ## Versioning & releases
 
