@@ -521,3 +521,84 @@ extension LiveClaudeTests {
         bot.stop()
     }
 }
+
+extension LiveClaudeTests {
+    /// Claude Code runs the Stop hook a bot's `--settings` carries, in the app's `-p` stream-json
+    /// mode, with the fields StopGuard reads.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func theStopHookFiresInPrintMode() async throws {
+        let executable = try #require(ClaudeExecutableLocator().locate())
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let record = home.appending(path: "stop.jsonl")
+        let launcher: AgentLauncher = { launch in
+            var launch = launch
+            launch.stopHookCommand = "(cat; echo) >> \(StopGuard.shellQuoted(record.path))"
+            return try ClaudeAgentProcess(launch, executable: executable)
+        }
+        let profile = BotProfile(name: "Probe", role: .manager, avatar: "square", workingDirectory: home, memoryPath: ".bot/memory.md", tools: ["Read"])
+        let bot = Bot(profile: profile, defaultModel: .haiku, launcher: launcher)
+        bot.send("Reply with only the word PONG.")
+        await eventually({ bot.messages.last?.role == .bot && !bot.isWorking }, timeout: 120)
+        let lines = try String(contentsOf: record, encoding: .utf8).split(whereSeparator: \.isNewline)
+        let first = try #require(lines.first.flatMap { try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] })
+        print("Stop hook input:", first)
+        #expect(first["hook_event_name"] as? String == "Stop")
+        #expect(first["stop_hook_active"] as? Bool == false)
+        #expect((first["last_assistant_message"] as? String)?.contains("PONG") == true)
+        #expect(first["background_tasks"] is [Any])
+        bot.stop()
+    }
+
+    /// The Haiku check: what it says about promises and plain replies, and how long it takes.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func theHaikuCheckTellsPromisesApartAndHowLongItTakes() async throws {
+        let executable = try #require(ClaudeExecutableLocator().locate())
+        let classify = StopGuard.claudeClassifier(executable: executable)
+        let cases: [(String, Bool)] = [
+            ("好的，接下來我會確認一下測試結果，再回報給你。", true),
+            ("Got it. I'll look into the failing build and report back.", true),
+            ("測試全部通過，已 commit 在 bot/x。要我 push 嗎？", false),
+            ("I started the tests in the background; their result will wake me and I'll report then.", false)
+        ]
+        var times: [Double] = []
+        for (message, promises) in cases {
+            let start = Date()
+            let verdict = try await classify(message)
+            let seconds = Date().timeIntervalSince(start)
+            times.append(seconds)
+            print(String(format: "%.2fs", seconds), verdict ? "PROMISE" : "OK", "-", message)
+            #expect(verdict == promises, "\(message)")
+        }
+        print(String(format: "Haiku check: mean %.2fs, max %.2fs", times.reduce(0, +) / Double(times.count), times.max() ?? 0))
+        #expect(times.allSatisfy { $0 < StopGuard.classifierTimeout })
+    }
+
+    /// The whole guard, with the app built (`swift build`): a bot told to only promise is sent
+    /// back to do the work in the same turn.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func aBotThatOnlyPromisesIsSentBackToDoIt() async throws {
+        let executable = try #require(ClaudeExecutableLocator().locate())
+        let app = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appending(path: ".build/debug/ClaudeCodeBot")
+        try #require(FileManager.default.isExecutableFile(atPath: app.path), "swift build first")
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try "The secret word is KUMQUAT.\n".write(to: home.appending(path: "a.txt"), atomically: true, encoding: .utf8)
+        let launcher: AgentLauncher = { launch in
+            var launch = launch
+            launch.stopHookCommand = StopGuard.command(app: app.path, claude: executable.path)
+            return try ClaudeAgentProcess(launch, executable: executable)
+        }
+        let profile = BotProfile(name: "Probe", role: .manager, avatar: "square", workingDirectory: home, memoryPath: ".bot/memory.md", tools: ["Read"])
+        let bot = Bot(profile: profile, defaultModel: .haiku, launcher: launcher)
+        let start = Date()
+        bot.send("Do not use any tool in this reply. Reply with exactly this sentence and nothing else: 好的，接下來我會讀 a.txt 確認內容，再回報給你。")
+        await eventually({ bot.messages.last?.role == .bot && !bot.isWorking }, timeout: 180)
+        print(String(format: "turn took %.1fs", Date().timeIntervalSince(start)))
+        for message in bot.messages { print("[\(message.role)] \(message.text.prefix(300))") }
+        #expect(bot.messages.last?.text.contains("KUMQUAT") == true)
+        bot.stop()
+    }
+}
