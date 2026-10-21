@@ -98,7 +98,7 @@ struct ComponentCommandTests {
         return false
     }
 
-    @Test func stoppingACommandStopsWhatItStarted() async throws {
+    @Test(.wallClock) func stoppingACommandStopsWhatItStarted() async throws {
         let folder = root.appending(path: "project")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // Children that shrug off a polite stop outlive the shell unless their whole group is killed.
