@@ -169,10 +169,17 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
     }
 
     public static let defaultMinutes = 15
-    /// A pin refreshed every so often runs at most this often.
+    /// A pin refreshed every so often runs at most this often, and at least once a day.
     public static let minimumMinutes = 1
-    /// A pin refreshed every few seconds runs at most once a second.
-    public static let minimumSeconds = 1
+    public static let maximumMinutes = 24 * 60
+    /// A pin refreshed every few seconds runs at most every 2 seconds, and at least once a day
+    /// (its refresh menu's custom interval; Web/src/refresh.ts keeps the same bounds).
+    public static let minimumSeconds = 2
+    public static let maximumSeconds = 24 * 60 * 60
+
+    /// Minutes and seconds kept within those bounds.
+    public static func clampMinutes(_ minutes: Int) -> Int { min(max(minimumMinutes, minutes), maximumMinutes) }
+    public static func clampSeconds(_ seconds: Int) -> Int { min(max(minimumSeconds, seconds), maximumSeconds) }
 
     /// How long, in seconds, between runs of a pin refreshed every so often.
     public var interval: TimeInterval { TimeInterval(seconds ?? minutes * 60) }
@@ -190,12 +197,12 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         self.data = data
         self.ranAt = ranAt
         self.refresh = command == nil ? .manual : refresh
-        self.minutes = max(Self.minimumMinutes, minutes)
+        self.minutes = Self.clampMinutes(minutes)
         self.size = size
         self.status = status
         self.panelHeight = Self.clampedPanelHeight(panelHeight)
         self.savedAt = savedAt
-        self.seconds = seconds.map { max(Self.minimumSeconds, $0) }
+        self.seconds = seconds.map(Self.clampSeconds)
     }
 
     private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size, status, panelHeight, savedAt, seconds, makingLive, float }
@@ -213,7 +220,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         let refresh: String? = try? c.decodeIfPresent(String.self, forKey: .refresh)
         self.refresh = refresh.flatMap(Refresh.init(rawValue:)) ?? .shown
         let minutes: Int? = try? c.decodeIfPresent(Int.self, forKey: .minutes)
-        self.minutes = max(Self.minimumMinutes, minutes ?? Self.defaultMinutes)
+        self.minutes = Self.clampMinutes(minutes ?? Self.defaultMinutes)
         let size: String? = try? c.decodeIfPresent(String.self, forKey: .size)
         self.size = size.flatMap(Size.init(spelled:)) ?? .large
         status = try? c.decodeIfPresent(PinStatus.self, forKey: .status)
@@ -221,7 +228,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         panelHeight = Self.clampedPanelHeight(height)
         savedAt = try? c.decodeIfPresent(Date.self, forKey: .savedAt)
         let seconds: Int? = try? c.decodeIfPresent(Int.self, forKey: .seconds)
-        self.seconds = seconds.map { max(Self.minimumSeconds, $0) }
+        self.seconds = seconds.map(Self.clampSeconds)
         makingLive = (try? c.decodeIfPresent(Bool.self, forKey: .makingLive)) ?? false
         float = try? c.decodeIfPresent(Floating.self, forKey: .float)
     }

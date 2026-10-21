@@ -1,4 +1,6 @@
 import { post } from "./bridge";
+import { isComposingEnter } from "./ime";
+import { intervalEditor, isPreset, parseInterval, presetMinutes, presetSeconds, refreshWords, type Interval, type IntervalUnit } from "./refresh";
 import { commandCard, componentElement, hasLiveFrame, keepFrames, componentSizes, detailTarget, markPinFrames, maxColumns, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
 import type { ChatState, ChipStatus, ComponentInfo, DisplayView, FloatMenu, PinChoiceView, PinRefresh, PinSize, PinView, SpecChipView } from "./types";
 
@@ -44,13 +46,6 @@ export function button(className: string, label: string, html: string, onClick: 
   return element;
 }
 
-function refreshWords(refresh: PinRefresh, minutes: number, seconds?: number | null): string {
-  if (refresh === "interval" && seconds) return `Every ${seconds} sec`;
-  return refresh === "shown" ? "When shown" : refresh === "interval" ? `Every ${minutes} min` : "Only on ↻";
-}
-
-/** A live pin's interval the menu offers when it has none of its own yet. */
-const liveSeconds = 5;
 
 // MARK: In the chat
 
@@ -161,12 +156,19 @@ function openPinDialog(anchor: HTMLElement, options: { name: string; command: st
       label.append(input);
       if (value === "interval") {
         const minutes = document.createElement("input");
-        minutes.type = "number";
-        minutes.min = "1";
-        minutes.value = "15";
+        minutes.type = "text";
+        minutes.inputMode = "numeric";
+        minutes.value = String(presetMinutes);
         minutes.className = "pin-minutes";
         minutes.setAttribute("aria-label", "Minutes");
         minutes.addEventListener("focus", () => { input.checked = true; });
+        // Return pins it (never an input method's Return committing a candidate).
+        minutes.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" && !isComposingEnter(event)) {
+            event.preventDefault();
+            dialog.querySelector<HTMLButtonElement>(".pin-dialog-actions .primary")?.click();
+          }
+        });
         // Minutes, or seconds for a live pin (a CPU meter, tests running).
         const unit = document.createElement("select");
         unit.className = "pin-unit";
@@ -179,10 +181,14 @@ function openPinDialog(anchor: HTMLElement, options: { name: string; command: st
       }
       dialog.append(label);
     }
+    const wrong = document.createElement("div");
+    wrong.className = "refresh-custom-error";
+    wrong.setAttribute("role", "alert");
+    wrong.hidden = true;
     const hint = document.createElement("div");
     hint.className = "pin-dialog-note";
     hint.textContent = "It runs only once you have allowed this command for the bot's folder.";
-    dialog.append(hint);
+    dialog.append(wrong, hint);
   } else {
     note.textContent = `Keeps ${options.name} on this bot as it is drawn now (it has no command to redraw it).`;
   }
@@ -198,9 +204,21 @@ function openPinDialog(anchor: HTMLElement, options: { name: string; command: st
   confirm.addEventListener("click", () => {
     const picked = dialog.querySelector<HTMLInputElement>("input[type=radio]:checked");
     const refresh = options.command ? ((picked?.value as PinRefresh | undefined) ?? "shown") : "manual";
-    const count = Math.max(1, Math.round(Number(dialog.querySelector<HTMLInputElement>(".pin-minutes")?.value ?? "15")) || 15);
-    const inSeconds = refresh === "interval" && dialog.querySelector<HTMLSelectElement>(".pin-unit")?.value === "sec";
-    const action = inSeconds ? options.pin(refresh, 15, count) : options.pin(refresh, count);
+    let action = options.pin(refresh, presetMinutes);
+    if (refresh === "interval") {
+      // From 2 sec to 24 h; anything else is said under the choices and nothing is pinned.
+      const count = dialog.querySelector<HTMLInputElement>(".pin-minutes");
+      const unit = (dialog.querySelector<HTMLSelectElement>(".pin-unit")?.value ?? "min") as IntervalUnit;
+      const parsed = parseInterval(count?.value ?? "", unit);
+      const wrong = dialog.querySelector<HTMLElement>(".refresh-custom-error");
+      if ("error" in parsed) {
+        if (wrong) { wrong.textContent = parsed.error; wrong.hidden = false; }
+        count?.setAttribute("aria-invalid", "true");
+        count?.focus();
+        return;
+      }
+      action = parsed.interval.seconds ? options.pin(refresh, presetMinutes, parsed.interval.seconds) : options.pin(refresh, parsed.interval.minutes ?? presetMinutes);
+    }
     post(action);
     dialog.remove();
     showToast(`Pinned ${options.name} to ${current.botName}`, () => post({ type: "unpin", id: action.id }));
@@ -232,7 +250,10 @@ function showToast(text: string, undo: () => void): void {
 // MARK: Menus and popups
 
 /** A menu's entry; a heading or note is a line of text, not a button. */
-export interface MenuItem { label: string; run: () => void; checked?: boolean; disabled?: boolean; heading?: boolean; note?: boolean; code?: boolean; sizes?: SizeGrid }
+export interface MenuItem { label: string; run: () => void; checked?: boolean; disabled?: boolean; heading?: boolean; note?: boolean; code?: boolean; sizes?: SizeGrid; custom?: CustomInterval }
+
+/** A menu's "Custom…" entry: it opens "Every [n] [sec|min]" in place, starting at `start`. */
+interface CustomInterval { start: { count: number; unit: IntervalUnit }; set: (interval: Interval) => void }
 
 /** A menu's size picker: every size as a 4×4 grid of cells, the current one and the component's hints marked. */
 interface SizeGrid { current: PinSize; hints: PinSize[]; pick: (size: PinSize) => void }
@@ -311,8 +332,21 @@ export function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[]): void {
     entry.textContent = item.label;
     if (item.checked) entry.classList.add("checked");
     entry.disabled = !!item.disabled;
+    const custom = item.custom;
     entry.addEventListener("click", (event) => {
       event.stopPropagation();
+      if (custom) {
+        // The menu stays open: the entry becomes the row the interval is typed in.
+        const editor = intervalEditor(custom.start, (interval) => {
+          menu.remove();
+          custom.set(interval);
+        });
+        entry.replaceWith(editor);
+        const count = editor.querySelector<HTMLInputElement>("input");
+        count?.focus();
+        count?.select();
+        return;
+      }
       menu.remove();
       item.run();
     });
@@ -400,16 +434,26 @@ function pinMenu(anchor: HTMLElement, pin: PinView, options: { sizes?: boolean; 
   openMenu(anchor, items);
 }
 
-/** How a pin with a command refreshes, as its menu offers it: when shown, every N min, every N sec, only on ↻. */
+/**
+ * How a pin with a command refreshes, as its menu offers it: when shown, every 15 min, every
+ * 5 sec, its own interval when it is neither (checked), Custom… (typed: 2 sec to 24 h), only on ↻.
+ */
 export function refreshItems(pin: PinView): MenuItem[] {
-  const live = pin.refresh === "interval" && !!pin.seconds;
-  const seconds = pin.seconds || liveSeconds;
-  return [
+  const interval = pin.refresh === "interval";
+  const seconds = pin.seconds || null;
+  const set = (value: Interval) => post({ type: "setPinRefresh", id: pin.id, refresh: "interval", ...value });
+  const items: MenuItem[] = [
     { label: refreshWords("shown", pin.minutes), checked: pin.refresh === "shown", run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "shown", minutes: pin.minutes }) },
-    { label: refreshWords("interval", pin.minutes), checked: pin.refresh === "interval" && !live, run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "interval", minutes: pin.minutes }) },
-    { label: refreshWords("interval", pin.minutes, seconds), checked: live, run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "interval", seconds }) },
-    { label: refreshWords("manual", pin.minutes), checked: pin.refresh === "manual", run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "manual", minutes: pin.minutes }) },
+    { label: refreshWords("interval", presetMinutes), checked: interval && !seconds && pin.minutes === presetMinutes, run: () => set({ minutes: presetMinutes }) },
+    { label: refreshWords("interval", presetMinutes, presetSeconds), checked: interval && seconds === presetSeconds, run: () => set({ seconds: presetSeconds }) },
   ];
+  if (interval && !isPreset(pin.minutes, seconds)) {
+    items.push({ label: refreshWords("interval", pin.minutes, seconds), checked: true, run: () => set(seconds ? { seconds } : { minutes: pin.minutes }) });
+  }
+  const start = interval ? (seconds ? { count: seconds, unit: "sec" as const } : { count: pin.minutes, unit: "min" as const }) : { count: 30, unit: "sec" as const };
+  items.push({ label: "Custom…", run: () => {}, custom: { start, set } });
+  items.push({ label: refreshWords("manual", pin.minutes), checked: pin.refresh === "manual", run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "manual", minutes: pin.minutes }) });
+  return items;
 }
 
 /** The float entry's words, as Swift's `Pins.FloatMenu` says them. */

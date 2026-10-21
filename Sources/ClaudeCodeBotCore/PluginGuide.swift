@@ -137,7 +137,7 @@ enum PluginGuide {
           Refreshing by itself: about.md's `Refresh: every 2s` line (or a bot's `<show name="x" refresh="2s">`, which wins) makes a card
           whose data comes from a command run it again every 2 seconds (at least 1s, at most 1h; "5s", "1.5s", "1m" and "500ms" read too),
           but only while the card is on screen: it pauses while scrolled away or while the window is hidden, and waits for each run to end.
-          A pin can also be set to refresh every few seconds (its refresh menu), which runs whether or not it is on screen.
+          A pin can also be set to refresh every few seconds or minutes (its refresh menu: presets or a custom 2s to 24h), which runs whether or not it is on screen.
           Live data: each run normally draws the frame anew; `ccb.onData((data) => redraw(data))` instead keeps the frame (its scroll,
           what is open, a chart's animation) and calls you with each new data, also set as `ccb.data` (returns a function that stops it).
           Use it for anything that refreshes: a "test progress + CPU" card is a Command printing JSON such as

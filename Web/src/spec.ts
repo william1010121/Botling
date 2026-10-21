@@ -1,6 +1,7 @@
 import { post } from "./bridge";
 import { componentElement, keepFrames } from "./components";
 import { isComposingEnter, isSendEnter } from "./ime";
+import { refreshWords } from "./refresh";
 import type { ComponentInfo, PinRefresh, SpecChange, SpecOrigin, SpecState } from "./types";
 
 /**
@@ -85,9 +86,6 @@ export function elapsed(from: number, now = Date.now()): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-function refreshWords(refresh: PinRefresh, minutes: number): string {
-  return refresh === "shown" ? "When shown" : refresh === "interval" ? `Every ${minutes} min` : "Only on ↻";
-}
 
 export class SpecPanel {
   private state: SpecState | null = null;
