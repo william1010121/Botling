@@ -42,7 +42,79 @@ extension Workspace {
         let pin = PinnedComponent(id: id, name: instance.name, command: command, data: data, ranAt: ranAt, refresh: refresh, minutes: minutes, size: .preferred(among: components.sizes(of: instance.name)), seconds: seconds)
         var added = false
         bot.editPins { added = Pins.add(pin, to: &$0) }
-        return added ? pin : nil
+        guard added else { return nil }
+        makeLive(pin.id, in: bot)
+        return pin
+    }
+
+    /// Pins a component made from a reply (`ComponentSpec`), as drawn under that reply: the data
+    /// the bot that wrote it filled in, or its command's last output. A bot-filled one whose
+    /// about.md suggests a `Board command:` is then made live (`makeLive`).
+    @discardableResult
+    public func pin(spec specID: UUID, in bot: Bot, id: UUID = UUID(), refresh: PinnedComponent.Refresh = .shown, minutes: Int = PinnedComponent.defaultMinutes, seconds: Int? = nil) -> PinnedComponent? {
+        guard let (_, spec) = specLocation(specID), let name = spec.built, components.names.contains(name),
+              let shown = ChatPayload.specDisplay(spec, library: components, runs: componentCommands) else { return nil }
+        let command = ChatPayload.specCommand(spec, component: name, library: components)
+        var data = shown.data
+        var ranAt: Date?
+        if let command {
+            let state = componentCommands.state(for: spec.card, command: command, in: URL(filePath: spec.folder))
+            if let output = state.data {
+                data = output
+                ranAt = state.ranAt
+            }
+        }
+        guard command != nil || data != "null" else { return nil }
+        let pin = PinnedComponent(id: id, name: name, command: command, data: data, ranAt: ranAt, refresh: refresh, minutes: minutes, size: .preferred(among: components.sizes(of: name)), seconds: seconds)
+        var added = false
+        bot.editPins { added = Pins.add(pin, to: &$0) }
+        guard added else { return nil }
+        makeLive(pin.id, in: bot)
+        return pin
+    }
+
+    // MARK: Live on the Board
+
+    /// A pin a bot filled (no command) of a component whose about.md suggests a `Board command:`:
+    /// the same component gets a Command, so it refreshes on the Board. One that already has a
+    /// Command takes it now; otherwise Maintainer is asked (once per component) to add it, and
+    /// the pin shows the bot's data with "making it live…" until it lands
+    /// (`finishBoardCommands`). The Command still runs only once the user allows it on the pin.
+    func makeLive(_ id: UUID, in bot: Bot) {
+        guard let pin = bot.pins.first(where: { $0.id == id }), pin.command == nil,
+              let suggested = components.boardCommand(of: pin.name) else { return }
+        if let command = components.command(of: pin.name) {
+            goLive(pin.name, command: command, in: bot)
+            return
+        }
+        bot.editPins { pins in
+            if let at = pins.firstIndex(where: { $0.id == id }) { pins[at].makingLive = true }
+        }
+        guard boardCommandAsks.insert(pin.name).inserted else { return }
+        let brief = chatsWithPins.lazy.flatMap(\.specs).first { $0.built == pin.name && $0.brief != nil }?.brief
+        handToMaintainer(ComponentSpecs.boardCommandRequest(component: pin.name, suggested: suggested, folder: pinFolder(for: bot).path, bot: bot.name, brief: brief))
+    }
+
+    /// Pins waiting for their component's Command (`makeLive`) whose Command is in the library
+    /// now: they run it from now on (when shown, once allowed), keeping the bot's data until then.
+    func finishBoardCommands() {
+        for bot in chatsWithPins where bot.pins.contains(where: \.makingLive) {
+            for name in Set(bot.pins.filter(\.makingLive).map(\.name)) {
+                guard let command = components.command(of: name) else { continue }
+                goLive(name, command: command, in: bot)
+            }
+        }
+        boardCommandAsks = boardCommandAsks.filter { components.command(of: $0) == nil }
+    }
+
+    private func goLive(_ name: String, command: String, in bot: Bot) {
+        bot.editPins { pins in
+            for at in pins.indices where pins[at].name == name && pins[at].command == nil {
+                pins[at].command = command
+                pins[at].makingLive = false
+                pins[at].refresh = .shown
+            }
+        }
     }
 
     /// Pins a component from the picker: the last one this bot drew, or, never drawn here, one

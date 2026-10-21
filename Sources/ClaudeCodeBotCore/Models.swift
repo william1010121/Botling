@@ -99,6 +99,9 @@ public struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     /// A relay that is a "not right" report: whose reply it was about and the user's own words.
     /// Only for showing it short; `text` is the full report the bot got.
     public var feedback: FeedbackNote?
+    /// For a bot's reply: the `claude` session that wrote it, so a fork of it can say more about
+    /// that reply later ("Make into component" asks one for a brief). Nil for older replies.
+    public var session: UUID?
 
     public init(
         id: UUID = UUID(),

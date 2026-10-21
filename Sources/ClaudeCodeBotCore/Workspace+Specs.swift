@@ -60,20 +60,69 @@ extension Workspace {
     }
 
     /// The first version: Maintainer infers the spec from the reply and builds it now (or reuses a
-    /// library component), asking nothing. The panel stays shut; the chip says Building….
+    /// library component), asking nothing. The panel stays shut; the chip says Building…. When
+    /// the session that wrote the reply is still there, a fork of it first writes Maintainer a
+    /// brief (`ComponentBrief`), out of the chat and without waking the bot; without one (no
+    /// session, it failed, or took too long) the request goes as it is. Either way it carries the
+    /// user's own message that led to the reply.
     func startSpec(_ id: UUID, in chat: Bot) {
         guard var spec = chat.specs.first(where: { $0.id == id }), isUnstarted(spec) else { return }
         let message = chat.messages.first { $0.id == spec.messageID }
         let writer = spec.bots.first ?? chat.name
+        let fork = message.flatMap { briefJob(for: $0, in: chat) }
         spec.status = .building
         spec.asked = true
-        spec.conversation.append(.init(kind: .event, text: "Sent to Maintainer to build the first version"))
+        spec.conversation.append(.init(kind: .event, text: fork.map { "Asked a copy of \($0.bot)'s session for a brief for Maintainer" } ?? "Sent to Maintainer to build the first version"))
         store(spec, in: chat)
         let had = components.names.contains(spec.name)
         specBuilds[spec.name] = (chat.id, id, had ? components.versions[spec.name, default: 0] : nil)
         components.markWorking(spec.name, change: "built from a reply")
+        guard let fork, let briefWriter else {
+            sendFirstBuild(id, brief: nil, in: chat, from: writer)
+            return
+        }
+        Task { [weak self] in
+            let brief = await briefWriter(fork.job)
+            self?.takeBrief(brief, of: id, in: chat, from: writer, by: fork.bot)
+        }
+    }
+
+    /// The fork that can write the reply's brief: the bot that wrote it, the session it wrote
+    /// it in (when claude still has that transcript), its model and folder. Nil: none.
+    func briefJob(for message: ChatMessage, in chat: Bot) -> (job: BriefJob, bot: String)? {
+        guard message.role == .bot, let session = message.session else { return nil }
+        let bot = message.sourceID.flatMap(member) ?? chat
+        let folder = bot.profile.workingDirectory
+        guard bot.sessionExists(session, folder) else { return nil }
+        let asked = askedMessage(before: message, in: chat)?.text
+        let prompt = ComponentBrief.request(reply: message, asked: asked, folder: folder.path)
+        return (BriefJob(session: session, model: bot.model, effort: bot.effort, folder: folder, prompt: prompt), bot.name)
+    }
+
+    /// The user's own message that led to a reply: the last one they wrote before it.
+    func askedMessage(before message: ChatMessage, in chat: Bot) -> ChatMessage? {
+        guard let at = chat.messages.firstIndex(where: { $0.id == message.id }) else { return nil }
+        return chat.messages[..<at].last { $0.role == .user && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    /// The fork's brief (or none): kept on the spec, and Maintainer's request goes now. A spec
+    /// cancelled meanwhile sends nothing.
+    private func takeBrief(_ brief: String?, of id: UUID, in chat: Bot, from writer: String, by bot: String) {
+        guard chat.specs.contains(where: { $0.id == id && $0.status == .building }) else { return }
+        chat.editSpecs { specs in
+            guard let at = specs.firstIndex(where: { $0.id == id }) else { return }
+            specs[at].brief = brief
+            specs[at].conversation.append(.init(kind: .event, text: brief == nil ? "\(bot) gave no brief; sent to Maintainer to build the first version" : "Sent to Maintainer with \(bot)'s brief to build the first version"))
+        }
+        sendFirstBuild(id, brief: brief, in: chat, from: writer)
+    }
+
+    private func sendFirstBuild(_ id: UUID, brief: String?, in chat: Bot, from writer: String) {
+        guard let spec = chat.specs.first(where: { $0.id == id }) else { return }
+        let message = chat.messages.first { $0.id == spec.messageID }
+        let asked = message.flatMap { askedMessage(before: $0, in: chat) }?.text
         handToMaintainer(ComponentSpecs.firstBuildRequest(spec, reply: message?.text ?? "", pages: message.map { ComponentSpecs.pages(of: $0, page: spec.page) } ?? [],
-                                                          ran: message.flatMap(ComponentSpecs.lastCommand(in:)), from: writer))
+                                                          ran: message.flatMap(ComponentSpecs.lastCommand(in:)), asked: asked, brief: brief, from: writer))
     }
 
     /// A spec's chip pressed: a bot's suggestion not started yet is built (its first version);

@@ -948,3 +948,11 @@ body.spec-mode { background: #141417; }
 .spec-note { font-size: 11.5px; }
 .spec-legend { display: flex; gap: 12px; font-size: 11.5px; color: var(--faint); }
 .spec-legend > span { display: inline-flex; gap: 4px; align-items: center; }
+
+/* A bot-filled pin while Maintainer gives its component a command (making it live on the Board). */
+.pin-live-note {
+  position: absolute; left: 10px; bottom: 8px; z-index: 3; pointer-events: none;
+  font-size: 11px; line-height: 16px; color: #A0A0A8; background: rgba(27, 27, 31, 0.86);
+  padding: 2px 8px; border-radius: 8px;
+}
+.spec-built-head > .pin-tool, .spec-built-head > .pin-badge { margin-left: 2px; }

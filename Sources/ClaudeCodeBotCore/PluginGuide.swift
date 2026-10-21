@@ -123,6 +123,12 @@ enum PluginGuide {
           Data from a command: about.md's `Command: <command>` line fills the component with what it prints (run in the bot's folder after the user
           presses "Allow and run" on the card; JSON output is the data, other output one string; at most 1 MB and 60 seconds). It is optional,
           only for live data that changes: most components draw the data a bot gives them with `<show>`, and one made from a bot's reply shows that reply.
+          Fields in two groups: about.md lists the data fields under "From command" (a CLI command can get them) and "Optional (bot only)"
+          (explanations, advice, a next step: only a bot can write them, so they are there only when a bot fills it); the template draws well
+          without any optional field. A component bots fill that has From command fields gets a `Board command: <command>` line: only a
+          suggestion, not run in the chat. When the user pins it to the Board, Maintainer adds a `Command:` line from it (a command or a small
+          script in the component's folder printing the same JSON with the From command fields), so the same component refreshes there (once
+          the user allows it); until then the pin shows the bot's data with a "making it live…" note. Bots keep filling it in chats.
           Details on demand: when the data would be too big to give at once (every commit's whole diff), keep the Command's output small and add
           `Detail command: git show --patch --stat {hash}` to about.md. `await ccb.runDetail({ hash: "2aed630" })` (from a click) runs it with each
           `{name}` filled in as one quoted argument, in the same folder with the same limits, and resolves to its output (parsed if JSON, else text);

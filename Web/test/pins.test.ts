@@ -780,3 +780,29 @@ describe("the Board", () => {
     expect(document.querySelector(".pin-picker")).not.toBeNull();
   });
 });
+
+describe("a bot-filled component made live on the Board", () => {
+  it("the component made from a reply can be pinned, and says so once pinned", () => {
+    setUp().update(state());
+    const built = { id: "S1", name: "天氣卡片", status: "done" as const, suggested: false, open: false, component: "天氣卡片", display: { name: "天氣卡片", data: '{"t":21}', at: null } };
+    const row = messageElement({ ...message([]), specs: [built] }, components);
+    document.body.append(row);
+    click(row.querySelector(".spec-built [aria-label='Pin to this bot']"));
+    const dialog = document.querySelector(".pin-dialog")!;
+    click(dialog.querySelector(".primary"));
+    expect(sent[0]).toMatchObject({ type: "pin", spec: "S1", refresh: "manual" });
+    expect((sent[0] as { messageID?: string }).messageID).toBeUndefined();
+    // Pinned: a badge instead.
+    setUp().update(state({ pins: [pin({ name: "天氣卡片", display: { name: "天氣卡片", data: "{}" } })] }));
+    const again = messageElement({ ...message([]), specs: [built] }, components);
+    expect(again.querySelector(".spec-built .pin-badge")?.textContent).toContain("Pinned");
+  });
+
+  it("a pin waiting for its command says it is being made live", () => {
+    const waiting = pin({ name: "天氣卡片", refresh: "manual", makingLive: true, display: { name: "天氣卡片", data: "{}" } });
+    setUp().update(state({ board: true, pins: [waiting] }));
+    expect(document.querySelector(".board-card .pin-live-note")?.textContent).toContain("Making it live");
+    setUp().update(state({ board: true, pins: [pin({ name: "天氣卡片", display: { name: "天氣卡片", data: "{}" } })] }));
+    expect(document.querySelector(".pin-live-note")).toBeNull();
+  });
+});

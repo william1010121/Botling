@@ -1,6 +1,6 @@
 import { post } from "./bridge";
 import { commandCard, componentElement, hasLiveFrame, keepFrames, componentSizes, detailTarget, markPinFrames, maxColumns, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
-import type { ChatState, ChipStatus, ComponentInfo, DisplayView, PinChoiceView, PinRefresh, PinSize, PinView } from "./types";
+import type { ChatState, ChipStatus, ComponentInfo, DisplayView, PinChoiceView, PinRefresh, PinSize, PinView, SpecChipView } from "./types";
 
 /**
  * Components pinned to a bot. In the chat a component shows pin / ↻ / ⋯ on hover; pinning asks
@@ -94,6 +94,34 @@ export function pinBar(display: DisplayView, messageID: string, index: number): 
 }
 
 type PinAction = Extract<Parameters<typeof post>[0], { type: "pin" }>;
+
+/**
+ * The pin button of a component made from a reply (drawn under it), or a Pinned badge once this
+ * bot has it. A bot-filled one whose about.md suggests a Board command is then made live.
+ */
+export function specPinButton(spec: SpecChipView): HTMLElement {
+  const name = spec.component ?? spec.name;
+  if (current.pins.some((p) => p.name === name)) {
+    return button("pin-badge", "Pinned: show it", `${icons.pin}<span>Pinned</span>`, () => {
+      document.dispatchEvent(new CustomEvent("ccb-open-pin", { detail: name }));
+    });
+  }
+  const pin = button("pin-tool", "Pin to this bot", icons.pin, () => openPinDialog(pin, {
+    name,
+    command: spec.display?.command ?? null,
+    pin: (refresh, minutes, seconds) => ({ type: "pin", id: newID(), spec: spec.id, refresh, minutes, ...(seconds ? { seconds } : {}) }),
+  }));
+  return pin;
+}
+
+/** "Making it live…": a bot-filled pin while Maintainer gives its component a command. */
+function liveNote(): HTMLElement {
+  const note = document.createElement("div");
+  note.className = "pin-live-note";
+  note.textContent = "Making it live…";
+  note.title = "Maintainer is giving it a command so it refreshes here; it shows the bot's data until then";
+  return note;
+}
 
 /**
  * "Pin to <bot>": how it refreshes (when shown, every N minutes, only on ↻) and the command that
@@ -511,6 +539,7 @@ function refreshPin(pin: PinView): void {
 function whenWords(pin: PinView): string {
   if (pin.display.status === "running") return "Running…";
   if (pin.display.ranAt) return `Updated ${pin.display.ranAt}`;
+  if (pin.makingLive) return "Making it live…";
   return pin.display.command ? refreshWords(pin.refresh, pin.minutes, pin.seconds) : "Snapshot";
 }
 
@@ -820,6 +849,7 @@ export class PinArea {
     if (shown.parentElement !== this.sheet) this.sheet.append(shown);
     shown.before(this.sheetHandle(pin));
     shown.after(sheetTools(pin, () => this.close(), shown));
+    if (pin.makingLive) shown.after(liveNote());
   }
 
   /**
@@ -1159,6 +1189,7 @@ export class PinArea {
     for (const child of [...card.children]) if (child !== shown) child.remove();
     if (shown.parentElement !== card) card.append(shown);
     card.append(this.cardTools(card, pin), bar, this.resizeHandle(card, pin, "e"), this.resizeHandle(card, pin, "s"), this.resizeHandle(card, pin, "se"));
+    if (pin.makingLive) card.append(liveNote());
     return card;
   }
 }

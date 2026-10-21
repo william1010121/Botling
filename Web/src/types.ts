@@ -181,6 +181,8 @@ export interface PinView {
   seconds?: number | null;
   /** The component, with its command's run as for a card in the chat. */
   display: DisplayView;
+  /** Filled by a bot; Maintainer is giving its component a command so it refreshes here. */
+  makingLive?: boolean | null;
 }
 
 /** A component the pin picker offers: one this bot drew, or one with a Command. */
@@ -288,7 +290,7 @@ export type Action =
   | { type: "componentRevert"; name: string }
   | { type: "componentCommand"; messageID: string; index: number; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean; live?: boolean }
   | { type: "componentDetail"; requestID: number; name: string; folder: string; values: Record<string, string | number> }
-  | { type: "pin"; id: string; messageID?: string; index?: number; name?: string; refresh: PinRefresh; minutes: number; seconds?: number }
+  | { type: "pin"; id: string; messageID?: string; index?: number; name?: string; spec?: string; refresh: PinRefresh; minutes: number; seconds?: number }
   | { type: "unpin"; id: string }
   | { type: "pinCommand"; id: string; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean; live?: boolean }
   | { type: "pinShown"; ids: string[] | null }
