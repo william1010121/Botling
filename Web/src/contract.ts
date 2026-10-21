@@ -15,7 +15,7 @@ export interface Contract {
   componentMention: { startsAfter: string; nameCharacters: string };
 }
 
-export const shared = contract as Contract;
+export const shared = contract as unknown as Contract;
 
 /** `text` with every character a regular expression gives a meaning to escaped. */
 export function escapeRegExp(text: string): string {

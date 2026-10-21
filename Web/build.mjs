@@ -4,7 +4,7 @@
 // files its manifest names), and the Node plugin host into Resources/host/host.mjs. Output is
 // committed so `swift build` needs no npm.
 import { build } from "esbuild";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -48,7 +48,11 @@ await build({
 });
 cpSync(join(here, "src/chat.html"), join(out, "chat.html"));
 cpSync(join(here, "src/chat.css"), join(out, "chat.css"));
-cpSync(join(here, "src/viewer.html"), join(out, "viewer.html"));
+// The viewer draws LaTeX with ccb-latex's code (bundled into viewer.js), so it links the
+// stylesheets that plugin's manifest names, where the plugin is built below.
+const latex = JSON.parse(readFileSync(join(here, "plugins/ccb-latex/package.json"), "utf8"));
+const latexStyles = (latex.ccb?.styles ?? []).map((style) => `<link rel="stylesheet" href="../plugins/${latex.name}/${style}">`).join("\n");
+writeFileSync(join(out, "viewer.html"), readFileSync(join(here, "src/viewer.html"), "utf8").replace("<!-- ccb-latex styles: build.mjs links the stylesheets ccb-latex's package.json names -->", latexStyles));
 
 /** Extra files a built-in plugin needs beside its bundle. */
 const assets = {

@@ -506,9 +506,11 @@ describe("the Board", () => {
     try {
       const area = setUp();
       const grid = () => document.querySelector<HTMLElement>(".board-grid")!;
-      // Until measured: columns of at least 150px, rows 160px tall, gaps filled densely.
+      // Until measured: columns of at least 150px (the page's boardCell), rows 160px tall, gaps filled densely.
       const look = getComputedStyle(grid());
-      expect(look.gridTemplateColumns).toBe("repeat(var(--board-cols, auto-fill), minmax(min(150px, 100%), 1fr))");
+      expect(look.gridTemplateColumns).toBe("repeat(var(--board-cols, auto-fill), minmax(min(var(--board-cell-min), 100%), 1fr))");
+      expect(document.documentElement.style.getPropertyValue("--board-cell-min")).toBe("150px");
+      expect(document.documentElement.style.getPropertyValue("--board-gap")).toBe("14px");
       expect(look.gridAutoRows).toBe("var(--board-cell, 160px)");
       expect(look.gridAutoFlow).toBe("dense");
       let width = 1140;

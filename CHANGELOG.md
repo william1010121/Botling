@@ -119,6 +119,30 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **Limits and tables have one source (hardcode audit, medium: sync, limits, numbers, names).**
+  Swift now writes the limits the chat page shares with it (Board sizes and their names, floating
+  card bounds, panel heights, refresh intervals, `ccb.save`'s limit, picture extensions, the `/name`
+  grammar) into `Web/src/contract.json`; the page reads them from there and `WebContractTests`
+  fails when the file is out of date (`CCB_WRITE_WEB_CONTRACT=1 swift test --filter
+  WebContractTests` writes it). The menus' "2 floating" and "24 h" words come from those limits.
+  One list each for: a task's end state (a "done" or "cancelled" task now counts as ended
+  everywhere), the app's own plugin manifests (version and `engines.ccb` from the plugin API),
+  plugin permissions and their install words, the folders tools are looked for in (gh is found in
+  `~/.local/bin` everywhere; the login shell is the user's own, not always zsh), avatar shapes,
+  where chats and components sit on disk (snapshots copy every chat file), Maintainer's status line
+  and who can be reviewed, and file types a result window reads as text. Group chats and call-ins
+  share one reply handler and one history length. Codex reviews and /share compare with the
+  repository's default branch (`origin/HEAD`, else `init.defaultBranch`, else main/master)
+  instead of assuming main. Instructions say the real limits (command output and time, Detail
+  values, `ccb.save`, Board sizes, project search depth, esbuild now the version the app builds
+  with). Named, documented values replace bare numbers: plugin host timings, component-shot waits,
+  recent tool calls (the oldest go first instead of all at once), untracked diff lines (the rest
+  is counted), the spec panel (a change is matched by its request id, not the clock), the
+  network probe (follows `ANTHROPIC_BASE_URL`), the main window for screenshots (the registered
+  one, not any window wider than 600), the plugin host's exit (after stdout drains), the viewer's
+  KaTeX stylesheet (from ccb-latex's manifest) and test paths (`CCB_TEST_APP`). Developer mode
+  guesses the app's source by the running build's commit, not by a name in Package.swift.
+
 - **Background work no longer wakes empty bubbles.** When a subagent stops while still waiting on
   its own background work (or reports something interim), claude starts a turn of the bot's own;
   its "(still waiting…)" reply used to show as a bubble each time, with the background row jumping
