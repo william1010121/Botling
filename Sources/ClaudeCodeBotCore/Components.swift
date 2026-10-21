@@ -11,12 +11,16 @@ public struct ComponentInstance: Codable, Equatable, Sendable {
     /// A shell command whose output is the data instead (`<show name="x" command="git diff --stat">`),
     /// run in the bot's project folder once the user allows it. See `ComponentCommands`.
     public var command: String?
+    /// When the component last kept new data itself (`ccb.save`, see `ComponentState`); nil:
+    /// `data` is still what the bot gave.
+    public var savedAt: Date?
 
-    public init(name: String, data: String, at: Int? = nil, command: String? = nil) {
+    public init(name: String, data: String, at: Int? = nil, command: String? = nil, savedAt: Date? = nil) {
         self.name = name
         self.data = data
         self.at = at
         self.command = command
+        self.savedAt = savedAt
     }
 }
 

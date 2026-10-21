@@ -115,6 +115,9 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
     public var panelHeight: Int?
     /// What its chip says, as the component last set it (`ccb.setStatus`); nil: its headline.
     public var status: PinStatus?
+    /// When the component last kept new data itself (`ccb.save`, see `ComponentState`); nil:
+    /// `data` is what it was pinned or last refreshed with.
+    public var savedAt: Date?
 
     public static let defaultMinutes = 15
     /// A pin refreshed every so often runs at most this often.
@@ -126,7 +129,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         height.map { min(max($0, panelHeights.lowerBound), panelHeights.upperBound) }
     }
 
-    public init(id: UUID = UUID(), name: String, command: String? = nil, data: String, ranAt: Date? = nil, refresh: Refresh = .shown, minutes: Int = PinnedComponent.defaultMinutes, size: Size = .large, status: PinStatus? = nil, panelHeight: Int? = nil) {
+    public init(id: UUID = UUID(), name: String, command: String? = nil, data: String, ranAt: Date? = nil, refresh: Refresh = .shown, minutes: Int = PinnedComponent.defaultMinutes, size: Size = .large, status: PinStatus? = nil, panelHeight: Int? = nil, savedAt: Date? = nil) {
         self.id = id
         self.name = name
         self.command = command
@@ -137,9 +140,10 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         self.size = size
         self.status = status
         self.panelHeight = Self.clampedPanelHeight(panelHeight)
+        self.savedAt = savedAt
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size, status, panelHeight }
+    private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size, status, panelHeight, savedAt }
 
     // A value this build does not know (a newer refresh mode or size) falls back, so the rest
     // of the file still loads. The old sizes S, M and L become 1×1, 2×2 and 4×2; any WxH up
@@ -160,6 +164,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         status = try? c.decodeIfPresent(PinStatus.self, forKey: .status)
         let height: Int? = try? c.decodeIfPresent(Int.self, forKey: .panelHeight)
         panelHeight = Self.clampedPanelHeight(height)
+        savedAt = try? c.decodeIfPresent(Date.self, forKey: .savedAt)
     }
 
     /// The card key its command's runs go under (`ComponentCommands`), apart from chat cards.

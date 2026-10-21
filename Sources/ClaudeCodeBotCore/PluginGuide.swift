@@ -111,7 +111,7 @@ enum PluginGuide {
         ## Components (components/<name>/)
 
         - template.html: a piece of HTML (may include style and script), drawn on the dark background #1B1B1F. The data is in `window.ccb.data`;
-          the user's answer calls `ccb.answer(number or text)`. Do not load outside resources. Check `event.isComposing` before sending on Enter.
+          the user's answer calls `ccb.answer(number or text)` (once: it locks the card; for state that changes, see `ccb.save` below). Do not load outside resources. Check `event.isComposing` before sending on Enter.
           Pictures back: `ccb.answer({ text, images })`, where images come from `await ccb.pickImage({ multiple: true })` (from a click; `[]` if cancelled),
           `await ccb.readImage(file)` for a pasted or dropped File, or data: URLs; each picture has `dataURL` for a thumbnail. The bot receives the text
           and the pictures as files saved in the chat's attachments folder, listed like a message's attachments.
@@ -157,6 +157,16 @@ enum PluginGuide {
           `ccb.setStatus({ text: "3 new", tone: "good" })` sets the status: a short value (about 14 characters show) and a tone, "good", "warning",
           "bad" or "neutral" (a coloured dot on the icon unless neutral); text alone is fine, `ccb.setStatus(null)` clears it. Without it the chip
           shows the start of a summary of the data. Only a pinned copy (opened from its chip, or its Board tile) sets the chip, which keeps the last status.
+          State of its own: `await ccb.save(data)` keeps `data` (anything JSON can hold but null, at most 256 KB as JSON) as this
+          component's data from now on, so a todo list's ticks and new items stay. It is kept where the component is drawn from: in
+          the chat message (the bot's folder's chat.json, that message's `displays[i].data`) or on its pin (pins.json, the pin's
+          `data`; a pin starts as a copy of the message's data and keeps its own from then on), so it draws with it again, also
+          after a restart. `ccb.data` becomes the saved data and the frame is not reloaded for it (keep your own DOM up to date,
+          then save). Saving does not answer: the card is not locked, the bot is not woken, and nothing shows in the chat; the bot
+          gets every component's latest saved data with the user's next message, and can read it from chat.json/pins.json.
+          It rejects with an Error when the data cannot be kept, or where nothing is kept: a card whose data comes from a command
+          (its `Command:` line, or a `<show command=…>`) shows what the command prints, so it does not save; nor do previews.
+          Save after each change (a tick, an added item); a `<show>` of the component in a new reply starts from the data the bot gives it.
         - about.md: usage notes for the bots. The first line says in one sentence what it is, followed by the data format (with an example JSON) and what the bot receives when the user answers.
 
         ## Check and release

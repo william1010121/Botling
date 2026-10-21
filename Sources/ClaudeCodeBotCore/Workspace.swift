@@ -1919,7 +1919,8 @@ public final class Workspace: ObservableObject {
             // Bots you named with @ are called in: they answer here too, after reading the chat.
             let called = calledIn(text, into: bot)
             // Components you named with / (picked from the input box's list) are explained to it.
-            let notes = [heardSinceLastTurn(in: bot), callInNote(called), components.mentionNote(for: text)].compactMap { $0 }
+            // Components that kept new data since your last message (ccb.save): what they hold now.
+            let notes = [heardSinceLastTurn(in: bot), callInNote(called), components.mentionNote(for: text), componentStateNote(in: bot)].compactMap { $0 }
             bot.send(text, files: files, replyingTo: replyID, appNote: notes.isEmpty ? nil : notes.joined(separator: "\n"))
             if !called.isEmpty, let newest = bot.messages.last(where: { $0.role == .user }) {
                 startCallIn(in: bot, to: called, newest: newest.id, ask: nil)

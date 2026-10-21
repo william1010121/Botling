@@ -278,6 +278,8 @@ export type Action =
   | { type: "setPinHeight"; id: string; height: number | null }
   | { type: "setPinRefresh"; id: string; refresh: PinRefresh; minutes: number }
   | { type: "pinStatus"; id: string; text: string | null; tone: string | null }
+  | { type: "componentSave"; messageID: string; index: number; data: string }
+  | { type: "pinSave"; id: string; data: string }
   | { type: "makeComponent"; messageID: string; preview?: number; purpose?: string }
   | { type: "openSpec"; id: string }
   | { type: "pressSpec"; id: string }

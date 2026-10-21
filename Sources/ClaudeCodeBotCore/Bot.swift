@@ -477,6 +477,26 @@ public final class Bot: ObservableObject, Identifiable {
         store?.save(messages: messages)
     }
 
+    /// A component in one of its messages kept new data itself (`ccb.save`): saved into the
+    /// message (chat.json), so it draws with it again, also after a restart. Nothing is sent and
+    /// nothing is answered: the card stays as it was, and the bot hears it with the next message
+    /// (`Workspace.componentStateNote`). False when the message or that component is not there.
+    @discardableResult
+    public func saveComponentData(_ data: String, at index: Int, in messageID: UUID, now: Date = Date()) -> Bool {
+        guard let position = messages.firstIndex(where: { $0.id == messageID }) else { return false }
+        var shown = messages[position].shown
+        guard shown.indices.contains(index) else { return false }
+        shown[index].data = data
+        shown[index].savedAt = now
+        messages[position].displays = shown
+        messages[position].display = nil
+        store?.save(messages: messages)
+        return true
+    }
+
+    /// The folder its chat.json and pins.json are kept in (none for a bot that keeps nothing).
+    public var storeDirectory: URL? { store?.directory }
+
     /// Shows a pick on a message without sending anything (the notice mirroring a manager's question).
     public func markChosen(_ index: Int, in messageID: UUID) {
         guard let position = messages.firstIndex(where: { $0.id == messageID }) else { return }

@@ -6,6 +6,16 @@ app and publishes it on GitHub Releases.
 
 ## Unreleased
 
+### Added
+
+- **Components keep their own state.** A component can call `ccb.save(data)` to keep new data
+  for itself, so a todo list's ticks and new items stay: in the chat message (chat.json) or on
+  its pin (pins.json; a pin keeps its own copy), also after a restart. Saving does not answer the
+  card, lock it or wake the bot, and the frame is not reloaded; the bot gets each component's
+  latest saved data with your next message. A card whose data comes from a command does not
+  save (it shows what the command prints). Documented in PLUGINS.md; a sample todo component is
+  in `Examples/components/todo`.
+
 ### Fixed
 
 - **A new component reaches the bots with its usage.** Maintainer's editor writes a component's

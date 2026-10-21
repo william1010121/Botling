@@ -460,8 +460,16 @@ function openPicker(): void {
  */
 function pinBody(pin: PinView, size?: PinSize, fill = !!size): HTMLElement {
   const key = size ? `board-${pin.id}` : `pin-${pin.id}`;
+  const shown = pin.display.data;
+  const saveKey = `${size ? "board" : "sheet"}:${pin.id}`;
+  if (pinSaves.get(saveKey)?.to !== shown) pinSaves.delete(saveKey);
+  // ccb.save(data) keeps new data on the pin; a pinned command's card shows the command's output.
+  const save = pin.display.command ? null : (data: string) => {
+    pinSaves.set(saveKey, { from: pinSaves.get(saveKey)?.from ?? shown, to: data });
+    post({ type: "pinSave", id: pin.id, data });
+  };
   const draw = () => {
-    const drawn = componentElement(pin.name, current.components[pin.name], pin.display.data, null, key, pin.display.images, detailTarget(pin.display), size, size ? "board" : "pinned", fill);
+    const drawn = componentElement(pin.name, current.components[pin.name], pin.display.data, null, key, pin.display.images, detailTarget(pin.display), size, size ? "board" : "pinned", fill, save);
     // Its ccb.setStatus sets this pin's chip.
     markPinFrames(drawn, pin.id);
     return drawn;
@@ -543,9 +551,23 @@ function chipIcon(info: ComponentInfo | undefined, status: ChipStatus): HTMLElem
 }
 
 /** A pin as its sheet or tile draws it: what only its chip shows is left out, so a new chip status does not reload the frame. */
-function drawnPart(pin: PinView): PinView {
-  return { ...pin, headline: "", chip: undefined };
+function drawnPart(pin: PinView, surface?: PinSurface): PinView {
+  // Data its own frame there saved (ccb.save) is what that frame shows already: not a change to draw.
+  const saved = surface ? pinSaves.get(`${surface}:${pin.id}`) : undefined;
+  const display = saved && saved.to === pin.display.data ? { ...pin.display, data: saved.from } : pin.display;
+  return { ...pin, headline: "", chip: undefined, display };
 }
+
+/** Where a pin is drawn: its Board tile, or opened above the input box. */
+type PinSurface = "board" | "sheet";
+
+/**
+ * Pins whose frame saved new data (`ccb.save`), by surface and id ("board:P1"): the data that
+ * frame was drawn with and what it saved since, so the pin coming back from Swift with that data
+ * keeps the frame (which would otherwise load again, losing what you were typing). Only that
+ * surface's: the other one, drawn with the old data, still draws again.
+ */
+const pinSaves = new Map<string, { from: string; to: string }>();
 
 /** The Board's smallest cell and the gap between cells, in px (chat.css has the same gap). */
 const boardCell = 150;
@@ -727,7 +749,7 @@ export class PinArea {
     const sized = typeof pin.panelHeight === "number" && pin.panelHeight > 0;
     if (!this.sheetDrag) this.sheet.style.height = sized ? `${panelHeight(pin.panelHeight!)}px` : "";
     this.sheet.classList.toggle("sized", sized || !!this.sheetDrag);
-    const key = JSON.stringify([{ ...drawnPart(pin), panelHeight: null }, sized, current.components[pin.name] ?? null]);
+    const key = JSON.stringify([{ ...drawnPart(pin, "sheet"), panelHeight: null }, sized, current.components[pin.name] ?? null]);
     if (key === this.sheetKey) return;
     this.sheetKey = key;
     this.sheet.innerHTML = "";
@@ -819,7 +841,7 @@ export class PinArea {
     let previous: Element | null = null;
     pins.forEach((pin, index) => {
       // Its size is not part of it: a resized card keeps its frame and tells the component.
-      const key = JSON.stringify([{ ...drawnPart(pin), size: null }, current.components[pin.name] ?? null, index, pins.length]);
+      const key = JSON.stringify([{ ...drawnPart(pin, "board"), size: null }, current.components[pin.name] ?? null, index, pins.length]);
       let entry = this.cards.get(pin.id);
       if (!entry || entry.key !== key) {
         const element = this.card(pin, index);

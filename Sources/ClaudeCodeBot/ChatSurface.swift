@@ -305,6 +305,17 @@ struct ChatSurface: NSViewRepresentable {
                 if let pinID = id("id") {
                     workspace.setPinStatus(pinID, text: body["text"] as? String, tone: body["tone"] as? String, in: bot)
                 }
+            case "componentSave":
+                // A component's ccb.save(data) in a chat message: kept in the message; nothing
+                // is sent, the card is not answered (see `ComponentState`).
+                if let messageID = id("messageID"), let index = body["index"] as? Int, let data = body["data"] as? String {
+                    workspace.saveComponentData(data, messageID: messageID, index: index, in: bot)
+                }
+            case "pinSave":
+                // A pinned component's ccb.save(data): kept on the pin.
+                if let pinID = id("id"), let data = body["data"] as? String {
+                    workspace.savePinData(data, pin: pinID, in: bot)
+                }
             case "setPinRefresh":
                 if let pinID = id("id"), let refresh = (body["refresh"] as? String).flatMap(PinnedComponent.Refresh.init(rawValue:)) {
                     workspace.setPinRefresh(pinID, to: refresh, minutes: body["minutes"] as? Int, in: bot)
