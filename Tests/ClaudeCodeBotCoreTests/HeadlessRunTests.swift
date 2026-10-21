@@ -24,6 +24,7 @@ struct HeadlessRunTests {
     @Test func flagsMakeAHeadlessRunAndTheAppIsNormalOtherwise() {
         #expect(HeadlessRun.isRequested(environment: [:], arguments: ["ClaudeCodeBot", "--snapshot", "Main bot", "/tmp/x.png"]))
         #expect(HeadlessRun.isRequested(environment: [:], arguments: ["ClaudeCodeBot", "--check-plugin", "/tmp/p"]))
+        #expect(HeadlessRun.isRequested(environment: [:], arguments: ["ClaudeCodeBot", "--component-shot", "/tmp/c"]))
         #expect(!HeadlessRun.isRequested(environment: ["CCB_SNAPSHOT_JS": "x", "HOME": "/"], arguments: ["ClaudeCodeBot"]))
     }
 

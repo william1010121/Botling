@@ -197,6 +197,7 @@ public final class Workspace: ObservableObject {
         locateNode: @escaping () -> URL? = { ClaudeExecutableLocator(command: "node").locate() },
         validateClaudePart: ((URL) async -> String?)? = nil,
         checkCommand: String? = nil,
+        shotCommand: String? = nil,
         gitForPlugins: PluginLibraryGit? = nil,
         secrets: SecretStore = KeychainSecretStore(),
         launcher: @escaping AgentLauncher = { _ in throw CocoaError(.featureUnsupported) },
@@ -233,6 +234,7 @@ public final class Workspace: ObservableObject {
         componentUsage = ComponentUsage(url: root.appending(path: "component-usage.json"))
         components.git = git.isAvailable ? git : nil
         self.checkCommand = checkCommand
+        self.shotCommand = shotCommand
         let mainHome = root.appending(path: "main")
         try? FileManager.default.createDirectory(at: mainHome, withIntermediateDirectories: true)
         mainBot = makeBot(.main(home: mainHome), BotStore(directory: mainHome))
@@ -313,6 +315,9 @@ public final class Workspace: ObservableObject {
 
     /// How Maintainer runs `ccb plugin check` (the ClaudeCodeBot binary with --check-plugin).
     private let checkCommand: String?
+    /// How Maintainer and the component editor draw a component as the app does and list what
+    /// is wrong (the ClaudeCodeBot binary with --component-shot, see `ComponentShot`).
+    private let shotCommand: String?
 
     // MARK: Installing plugins from outside
 
@@ -1294,6 +1299,11 @@ public final class Workspace: ObservableObject {
     func maintainerInstructions() -> String {
         let library = root.appending(path: "plugins").path
         let check = checkCommand.map { "\($0) <plugin folder>" } ?? "(no check command this time; at least make sure package.json is valid JSON and every declared file exists)"
+        let shot = shotCommand.map { command in
+            """
+              Component shot: \(command) <component folder> --out <new folder> draws a component in the app's real chat page (in a reply, as Board tiles of several sizes, opened above the input box, floating), saves a picture of each and a contact sheet, and lists problems (script errors, failed ccb calls, outside resources, content cut off on the right, blank frames; Board tiles too short are only warnings). It exits 1 when there are problems. Data: --data <file.json>, else its Command run in --folder <project folder>, else about.md's example (a ```json block or a Data: line). Give every component editor this exact command in its job, so it checks its own work. When an editor returns, run it yourself before committing: a problem goes back to that editor (SendMessage) to fix, at most 3 rounds. Read the contact sheet to see it, and put it in your report to the user as a Markdown picture (![name](contact sheet path)), also in the words with a <component-spec> answer, so the user sees what was built.
+            """
+        } ?? "  (No component-shot command this time: review the template by reading it.)"
         return """
         - You are "Maintainer": you look after the plugin library of the ClaudeCodeBot app. Your working folder \(library) is the plugin library, a git repo.
         - Read \(library)/PLUGINS.md first: the plugin format, the APIs of the three parts (web, program, Claude), and the check and release steps are all there.
@@ -1310,6 +1320,7 @@ public final class Workspace: ObservableObject {
           Never edit ccb-core/claude/agents/component-editor.md (the editor's own instructions): ClaudeCodeBot writes it. Its model is picked in ClaudeCodeBot's Settings (Plugins › Component editor); a change to its prompt is a request for the ClaudeCodeBot project: tell the user so in one sentence.
           Two editors never work on the same component folder at once: if another request comes for a component already being edited, send it to that running editor with SendMessage, or keep it until that editor returns.
           While editors run, stay free for new requests. When an editor returns, review its change, then do the rest yourself, one component at a time: bump the ccb-components version, run the check, then git add, commit and tag as above.
+        \(shot)
         - The component library (your shelf) is shared and has no cap; each bot has its own list of components, at most \(ComponentLibrary.limit) per bot. A bot's briefing has the whole usage of the components on its list and one line for each of the others. A bot's request names the bot that asked and how many it has ("garden has N / \(ComponentLibrary.limit) components").
           Check the library first: if a component there already does what the bot needs (the one-line list in your components note, and its about.md), build nothing: reply with <give-component bot="bot name">component name</give-component> and the app puts it on that bot's list. A request for a component already in the library by its own name is put on the bot's list by the app before it reaches you; change it only if the request asks for a change.
           Otherwise build the new one (as above); once it is in the library the app adds it to the asking bot's list.
@@ -1338,17 +1349,20 @@ public final class Workspace: ObservableObject {
         name: component-editor
         description: Edits one component in the ClaudeCodeBot chat (template.html and about.md). Give it the component folder's path and what to change.
         model: \(model.rawValue)
-        tools: Read, Write, Edit
+        tools: Read, Write, Edit, Bash
         ---
         \(ComponentPrompts.system)
 
         """
     }
 
-    /// What 1.10.0 and earlier wrote (on Haiku, without the "Make it look good" line): the app's
-    /// own text, not an edit, so it is replaced without asking.
+    /// What 1.10.0 and earlier wrote (on Haiku, without the "Make it look good" line, the
+    /// component-shot line or Bash): the app's own text, not an edit, so it is replaced without asking.
     static var legacyComponentEditorAgent: String {
-        componentEditorAgent(model: .haiku).replacingOccurrences(of: ComponentPrompts.lookGood + "\n", with: "")
+        componentEditorAgent(model: .haiku)
+            .replacingOccurrences(of: ComponentPrompts.lookGood + "\n", with: "")
+            .replacingOccurrences(of: ComponentPrompts.shotCheck + "\n", with: "")
+            .replacingOccurrences(of: "tools: Read, Write, Edit, Bash\n", with: "tools: Read, Write, Edit\n")
     }
 
     /// The editor's file in `library`.

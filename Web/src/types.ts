@@ -132,7 +132,8 @@ export interface SpecState {
   reuse: boolean;
   samples: { label: string; data: string }[];
   questions: { id: string; text: string; options: { label: string }[]; suggested: number | null }[];
-  conversation: { kind: "user" | "maintainer" | "event"; text: string }[];
+  /** `images`: pictures in Maintainer's words (a component shot's contact sheet), as file URLs. */
+  conversation: { kind: "user" | "maintainer" | "event"; text: string; images?: string[] }[];
   /** Who last set each value: blue for the user, purple for Maintainer. */
   origins: Record<string, SpecOrigin>;
   /** The library component whose template draws the preview; null: a plain drawing of the data. */

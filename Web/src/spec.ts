@@ -1,5 +1,7 @@
 import { post } from "./bridge";
 import { componentElement, keepFrames } from "./components";
+import { handleMediaClicks } from "./lightbox";
+import { mediaHTML } from "./markdown";
 import { isComposingEnter, isSendEnter } from "./ime";
 import { refreshWords } from "./refresh";
 import type { ComponentInfo, PinRefresh, SpecChange, SpecOrigin, SpecState } from "./types";
@@ -96,7 +98,10 @@ export class SpecPanel {
   private sending: { id: string; version: number; at: number } | null = null;
   private ticker: ReturnType<typeof setInterval> | null = null;
 
-  constructor(private readonly root: HTMLElement) {}
+  constructor(private readonly root: HTMLElement) {
+    // Pictures in Maintainer's words open in the lightbox, as in the chat.
+    handleMediaClicks(document);
+  }
 
   update(state: SpecState): void {
     this.state = state;
@@ -458,7 +463,12 @@ export class SpecPanel {
         mark.innerHTML = "<i></i>";
         row.append(mark);
       }
-      row.append(el("div", "spec-words", line.text));
+      const words = el("div", "spec-words", line.text);
+      // Pictures Maintainer showed (a component shot's contact sheet): click for the lightbox.
+      for (const url of line.images ?? []) {
+        words.insertAdjacentHTML("beforeend", mediaHTML(url, "Component shot"));
+      }
+      row.append(words);
       block.append(row);
     }
     if (state.status !== "building" && this.changeOf(state)?.state !== "working") {

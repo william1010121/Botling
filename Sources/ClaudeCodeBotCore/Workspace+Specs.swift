@@ -726,6 +726,35 @@ public struct SpecPayload: Encodable, Equatable {
     public struct LineView: Encodable, Equatable {
         var kind: String
         var text: String
+        /// Pictures Maintainer put in its words (`![](/path/contact-sheet.png)`, such as a
+        /// component shot's contact sheet), as file URLs, drawn under them; nil: none.
+        var images: [String]?
+
+        init(kind: String, text: String) {
+            let (words, pictures) = Self.pictures(in: text)
+            self.kind = kind
+            self.text = words
+            self.images = pictures.isEmpty ? nil : pictures
+        }
+
+        /// The text without its Markdown pictures of local files, and those files as file URLs.
+        static func pictures(in text: String) -> (String, [String]) {
+            guard text.contains("![") else { return (text, []) }
+            let pattern = #"!\[[^\]\n]*\]\(<?((?:file://)?/[^)\s>]+\.(?:png|jpe?g|gif|webp))>?\)"#
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return (text, []) }
+            let range = NSRange(text.startIndex..., in: text)
+            var images: [String] = []
+            for match in regex.matches(in: text, range: range) {
+                guard let found = Range(match.range(at: 1), in: text) else { continue }
+                let path = String(text[found])
+                let url = path.hasPrefix("file://") ? path : URL(filePath: path).absoluteString
+                if !images.contains(url) { images.append(url) }
+            }
+            let words = regex.stringByReplacingMatches(in: text, range: range, withTemplate: "")
+                .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return (words, images)
+        }
     }
 
     /// Its command's test run, as a command card shows one (see `ComponentCommands.Status`).
