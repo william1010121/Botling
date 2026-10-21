@@ -1,5 +1,5 @@
 import { post } from "./bridge";
-import { commandCard, componentElement, componentSizes, detailTarget, markPinFrames, maxColumns, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
+import { commandCard, componentElement, hasLiveFrame, keepFrames, componentSizes, detailTarget, markPinFrames, maxColumns, pinSize, pinSizes, reportComponent, resizeFrame, sizeInfo } from "./components";
 import type { ChatState, ChipStatus, ComponentInfo, DisplayView, PinChoiceView, PinRefresh, PinSize, PinView } from "./types";
 
 /**
@@ -44,9 +44,13 @@ function button(className: string, label: string, html: string, onClick: (event:
   return element;
 }
 
-function refreshWords(refresh: PinRefresh, minutes: number): string {
+function refreshWords(refresh: PinRefresh, minutes: number, seconds?: number | null): string {
+  if (refresh === "interval" && seconds) return `Every ${seconds} sec`;
   return refresh === "shown" ? "When shown" : refresh === "interval" ? `Every ${minutes} min` : "Only on ↻";
 }
+
+/** A live pin's interval the menu offers when it has none of its own yet. */
+const liveSeconds = 5;
 
 // MARK: In the chat
 
@@ -60,7 +64,7 @@ export function pinBar(display: DisplayView, messageID: string, index: number): 
   const pinIt = (anchor: HTMLElement) => openPinDialog(anchor, {
     name: display.name,
     command: display.command ?? null,
-    pin: (refresh, minutes) => ({ type: "pin", id: newID(), messageID, index, refresh, minutes }),
+    pin: (refresh, minutes, seconds) => ({ type: "pin", id: newID(), messageID, index, refresh, minutes, ...(seconds ? { seconds } : {}) }),
   });
   if (display.pinned) {
     const badge = button("pin-badge", "Pinned: show it", `${icons.pin}<span>Pinned</span>`, () => {
@@ -95,7 +99,7 @@ type PinAction = Extract<Parameters<typeof post>[0], { type: "pin" }>;
  * "Pin to <bot>": how it refreshes (when shown, every N minutes, only on ↻) and the command that
  * redraws it. One without a command keeps the data it is drawn with now. Pin, then Undo.
  */
-function openPinDialog(anchor: HTMLElement, options: { name: string; command: string | null; pin: (refresh: PinRefresh, minutes: number) => PinAction }): void {
+function openPinDialog(anchor: HTMLElement, options: { name: string; command: string | null; pin: (refresh: PinRefresh, minutes: number, seconds?: number) => PinAction }): void {
   closePopups();
   const dialog = document.createElement("div");
   dialog.className = "pin-dialog pin-popup";
@@ -135,7 +139,13 @@ function openPinDialog(anchor: HTMLElement, options: { name: string; command: st
         minutes.className = "pin-minutes";
         minutes.setAttribute("aria-label", "Minutes");
         minutes.addEventListener("focus", () => { input.checked = true; });
-        label.append(document.createTextNode("Every "), minutes, document.createTextNode(" min"));
+        // Minutes, or seconds for a live pin (a CPU meter, tests running).
+        const unit = document.createElement("select");
+        unit.className = "pin-unit";
+        unit.setAttribute("aria-label", "Unit");
+        unit.innerHTML = `<option value="min">min</option><option value="sec">sec</option>`;
+        unit.addEventListener("focus", () => { input.checked = true; });
+        label.append(document.createTextNode("Every "), minutes, document.createTextNode(" "), unit);
       } else {
         label.append(document.createTextNode(value === "shown" ? "When shown" : "Only when I press ↻"));
       }
@@ -160,8 +170,9 @@ function openPinDialog(anchor: HTMLElement, options: { name: string; command: st
   confirm.addEventListener("click", () => {
     const picked = dialog.querySelector<HTMLInputElement>("input[type=radio]:checked");
     const refresh = options.command ? ((picked?.value as PinRefresh | undefined) ?? "shown") : "manual";
-    const minutes = Math.max(1, Math.round(Number(dialog.querySelector<HTMLInputElement>(".pin-minutes")?.value ?? "15")) || 15);
-    const action = options.pin(refresh, minutes);
+    const count = Math.max(1, Math.round(Number(dialog.querySelector<HTMLInputElement>(".pin-minutes")?.value ?? "15")) || 15);
+    const inSeconds = refresh === "interval" && dialog.querySelector<HTMLSelectElement>(".pin-unit")?.value === "sec";
+    const action = inSeconds ? options.pin(refresh, 15, count) : options.pin(refresh, count);
     post(action);
     dialog.remove();
     showToast(`Pinned ${options.name} to ${current.botName}`, () => post({ type: "unpin", id: action.id }));
@@ -335,9 +346,12 @@ function pinMenu(anchor: HTMLElement, pin: PinView, options: { sizes?: boolean; 
     items.push("-");
   }
   if (pin.display.command) {
-    for (const [refresh, minutes] of [["shown", pin.minutes], ["interval", pin.minutes], ["manual", pin.minutes]] as [PinRefresh, number][]) {
-      items.push({ label: refreshWords(refresh, minutes), checked: pin.refresh === refresh, run: () => post({ type: "setPinRefresh", id: pin.id, refresh, minutes }) });
-    }
+    const live = pin.refresh === "interval" && !!pin.seconds;
+    items.push({ label: refreshWords("shown", pin.minutes), checked: pin.refresh === "shown", run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "shown", minutes: pin.minutes }) });
+    items.push({ label: refreshWords("interval", pin.minutes), checked: pin.refresh === "interval" && !live, run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "interval", minutes: pin.minutes }) });
+    const seconds = pin.seconds || liveSeconds;
+    items.push({ label: refreshWords("interval", pin.minutes, seconds), checked: live, run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "interval", seconds }) });
+    items.push({ label: refreshWords("manual", pin.minutes), checked: pin.refresh === "manual", run: () => post({ type: "setPinRefresh", id: pin.id, refresh: "manual", minutes: pin.minutes }) });
     items.push("-");
   }
   if (options.sizes) {
@@ -422,7 +436,7 @@ function openPicker(): void {
     if (choice.command) row.title = choice.command;
     row.addEventListener("click", () => {
       backdrop.remove();
-      const pin = (refresh: PinRefresh, minutes: number): PinAction => ({ type: "pin", id: newID(), name: choice.name, refresh, minutes });
+      const pin = (refresh: PinRefresh, minutes: number, seconds?: number): PinAction => ({ type: "pin", id: newID(), name: choice.name, refresh, minutes, ...(seconds ? { seconds } : {}) });
       if (choice.command) {
         openPinDialog(document.querySelector<HTMLElement>(".pin-chip.add, .board-add") ?? document.body, { name: choice.name, command: choice.command, pin });
       } else {
@@ -497,7 +511,7 @@ function refreshPin(pin: PinView): void {
 function whenWords(pin: PinView): string {
   if (pin.display.status === "running") return "Running…";
   if (pin.display.ranAt) return `Updated ${pin.display.ranAt}`;
-  return pin.display.command ? refreshWords(pin.refresh, pin.minutes) : "Snapshot";
+  return pin.display.command ? refreshWords(pin.refresh, pin.minutes, pin.seconds) : "Snapshot";
 }
 
 /**
@@ -595,7 +609,7 @@ export class PinArea {
   private sheetKey = "";
   private dockKey = "";
   private headKey = "";
-  private readonly cards = new Map<string, { key: string; element: HTMLElement }>();
+  private readonly cards = new Map<string, { key: string; element: HTMLElement; index: number }>();
   private boardShown = false;
   private botID: string | null = null;
   private dragging: string | null = null;
@@ -752,7 +766,11 @@ export class PinArea {
     const key = JSON.stringify([{ ...drawnPart(pin, "sheet"), panelHeight: null }, sized, current.components[pin.name] ?? null]);
     if (key === this.sheetKey) return;
     this.sheetKey = key;
-    this.sheet.innerHTML = "";
+    // A component that takes live data (ccb.onData) keeps its frame and gets the new data.
+    const before = this.sheet.querySelector<HTMLElement>(":scope > .pin-sheet-body");
+    const keep = hasLiveFrame(before) ? before : null;
+    // Taken out of the page even for a moment, a frame loads again: the body that is kept stays.
+    for (const child of [...this.sheet.children]) if (child !== keep) child.remove();
     this.sheet.setAttribute("aria-label", pin.name);
     // Like a Board tile: the component fills the panel, its controls float over it on hover
     // (and stay in sight while its command runs).
@@ -761,7 +779,11 @@ export class PinArea {
     const body = document.createElement("div");
     body.className = "pin-sheet-body";
     body.append(pinBody(pin, undefined, sized));
-    this.sheet.append(this.sheetHandle(pin), body, sheetTools(pin, () => this.close(), body));
+    const shown = keep ? keepFrames(keep, body) : body;
+    if (shown !== keep) keep?.remove();
+    if (shown.parentElement !== this.sheet) this.sheet.append(shown);
+    shown.before(this.sheetHandle(pin));
+    shown.after(sheetTools(pin, () => this.close(), shown));
   }
 
   /**
@@ -844,9 +866,15 @@ export class PinArea {
       const key = JSON.stringify([{ ...drawnPart(pin, "board"), size: null }, current.components[pin.name] ?? null, index, pins.length]);
       let entry = this.cards.get(pin.id);
       if (!entry || entry.key !== key) {
-        const element = this.card(pin, index);
-        if (entry) entry.element.replaceWith(element);
-        entry = { key, element };
+        let element = this.card(pin, index);
+        if (entry) {
+          // A component that takes live data (ccb.onData) keeps its frame and gets the new data,
+          // as long as the card is where it was.
+          const kept = hasLiveFrame(entry.element) && entry.index === index ? keepFrames(entry.element, element) : element;
+          if (kept === element) entry.element.replaceWith(element);
+          element = kept;
+        }
+        entry = { key, element, index };
         this.cards.set(pin.id, entry);
       } else if (entry.element.dataset.size !== pin.size) {
         this.resize(entry.element, pin, index);

@@ -1079,7 +1079,9 @@ public final class Workspace: ObservableObject {
     /// `command` and `folder` are what the card showed: allowing needs them, and nothing runs
     /// when the card's command or folder has changed since (say, its about.md was edited), so
     /// what is allowed and run is always what the user saw.
-    public func runComponentCommand(messageID: UUID, index: Int, in bot: Bot, command shown: String? = nil, folder shownFolder: String? = nil, detail shownDetail: String? = nil, approve: Bool = false, force: Bool = false) async {
+    /// `live` is the page's own timer for a card that refreshes by itself (`Refresh: every 2s`):
+    /// it runs only a card that has such an interval, and no sooner than that after its last run.
+    public func runComponentCommand(messageID: UUID, index: Int, in bot: Bot, command shown: String? = nil, folder shownFolder: String? = nil, detail shownDetail: String? = nil, approve: Bool = false, force: Bool = false, live: Bool = false, now: Date = Date()) async {
         guard let message = bot.messages.first(where: { $0.id == messageID }),
               message.shown.indices.contains(index) else { return }
         let instance = message.shown[index]
@@ -1091,7 +1093,13 @@ public final class Workspace: ObservableObject {
         if approve {
             guard approveCard(command, detail: components.detailCommand(of: instance.name), shownDetail: shownDetail, in: folder) else { return }
         }
-        await componentCommands.run(card: "\(message.id.uuidString)/\(index)", command: command, in: folder, force: force)
+        let card = "\(message.id.uuidString)/\(index)"
+        if live {
+            guard let every = instance.refresh ?? components.refreshInterval(of: instance.name) else { return }
+            // A little early is fine: the page's timer counts from when it saw the run end.
+            if let last = componentCommands.runs[card]?.ranAt, now.timeIntervalSince(last) < every - 0.25 { return }
+        }
+        await componentCommands.run(card: card, command: command, in: folder, force: force)
     }
 
     /// The user pressed Allow on a card: its command, and its component's Detail command when it

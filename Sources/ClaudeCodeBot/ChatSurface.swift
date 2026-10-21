@@ -259,8 +259,10 @@ struct ChatSurface: NSViewRepresentable {
                 if let messageID = id("messageID"), let index = body["index"] as? Int {
                     let approve = body["approve"] as? Bool ?? false
                     let force = body["force"] as? Bool ?? false
+                    // The page's timer for a card that refreshes by itself (Refresh: every 2s).
+                    let live = body["live"] as? Bool ?? false
                     let command = body["command"] as? String, folder = body["folder"] as? String, detail = body["detail"] as? String
-                    Task { await workspace.runComponentCommand(messageID: messageID, index: index, in: bot, command: command, folder: folder, detail: detail, approve: approve, force: force) }
+                    Task { await workspace.runComponentCommand(messageID: messageID, index: index, in: bot, command: command, folder: folder, detail: detail, approve: approve, force: force, live: live) }
                 }
             case "componentDetail":
                 // A component's ccb.runDetail(values), passed on by the page with the folder its
@@ -284,10 +286,11 @@ struct ChatSurface: NSViewRepresentable {
                 guard let pinID = id("id") else { break }
                 let refresh = (body["refresh"] as? String).flatMap(PinnedComponent.Refresh.init(rawValue:)) ?? .shown
                 let minutes = body["minutes"] as? Int ?? PinnedComponent.defaultMinutes
+                let seconds = body["seconds"] as? Int
                 if let messageID = id("messageID"), let index = body["index"] as? Int {
-                    workspace.pin(messageID: messageID, index: index, in: bot, id: pinID, refresh: refresh, minutes: minutes)
+                    workspace.pin(messageID: messageID, index: index, in: bot, id: pinID, refresh: refresh, minutes: minutes, seconds: seconds)
                 } else if let name = body["name"] as? String {
-                    workspace.pin(named: name, in: bot, id: pinID, refresh: refresh, minutes: minutes)
+                    workspace.pin(named: name, in: bot, id: pinID, refresh: refresh, minutes: minutes, seconds: seconds)
                 }
             case "unpin":
                 if let pinID = id("id") { workspace.unpin(pinID, in: bot) }
@@ -318,7 +321,7 @@ struct ChatSurface: NSViewRepresentable {
                 }
             case "setPinRefresh":
                 if let pinID = id("id"), let refresh = (body["refresh"] as? String).flatMap(PinnedComponent.Refresh.init(rawValue:)) {
-                    workspace.setPinRefresh(pinID, to: refresh, minutes: body["minutes"] as? Int, in: bot)
+                    workspace.setPinRefresh(pinID, to: refresh, minutes: body["minutes"] as? Int, seconds: body["seconds"] as? Int, in: bot)
                 }
             case "pinCommand":
                 // A pinned card: Allow (with the command and folder it showed) or ↻. Only what

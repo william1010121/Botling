@@ -125,6 +125,10 @@ public struct ChatPayload: Encodable, Equatable {
         /// In a chat that can pin: whether this component is pinned to the bot (its hover bar
         /// says so). Nil where nothing can be pinned.
         var pinned: Bool? = nil
+        /// A card with a command: run it again every this many seconds while it is on screen
+        /// (its `<show refresh>` or about.md's `Refresh:` line). Nil: only by hand (or as a pin's
+        /// own refresh says).
+        var every: Double? = nil
     }
 
     /// What drawing a chat's pins needs: their command runs, the folder they run in, and
@@ -159,6 +163,8 @@ public struct ChatPayload: Encodable, Equatable {
         var panelHeight: Int?
         var refresh: String
         var minutes: Int
+        /// Every this many seconds instead of `minutes` (a pin refreshed every few seconds).
+        var seconds: Int? = nil
         /// The component as drawn, with its command's run as for a card in the chat.
         var display: Display
     }
@@ -487,6 +493,8 @@ public struct ChatPayload: Encodable, Equatable {
             if status == .idle, pin.data != "null", pin.refresh != .shown { status = .done }
             shown.command = command
             shown.folder = context.folder.path
+            // Its about.md's `Refresh: every 2s`: the page reruns it while it is on screen.
+            shown.every = context.library?.refreshInterval(of: pin.name)
             shown.status = status.rawValue
             shown.error = state.error
             shown.ranAt = ranAt(state.ranAt ?? pin.ranAt)
@@ -503,7 +511,7 @@ public struct ChatPayload: Encodable, Equatable {
         default: Pins.headline(shown.status == nil ? pin.data : shown.data)
         }
         let chip = Pins.chip(status: pin.status, headline: headline, command: shown.status.flatMap(ComponentCommands.Status.init(rawValue:)), hasData: pin.data != "null")
-        return Pin(id: pin.id.uuidString, name: pin.name, headline: headline, chip: chip, size: pin.size.rawValue, panelHeight: pin.panelHeight, refresh: pin.refresh.rawValue, minutes: pin.minutes, display: shown)
+        return Pin(id: pin.id.uuidString, name: pin.name, headline: headline, chip: chip, size: pin.size.rawValue, panelHeight: pin.panelHeight, refresh: pin.refresh.rawValue, minutes: pin.minutes, seconds: pin.seconds, display: shown)
     }
 
     /// The picker's list: components this bot drew (newest use first), then its own others (the
@@ -677,6 +685,7 @@ public struct ChatPayload: Encodable, Equatable {
         let folder = commands?.folder(message) ?? fallbackFolder
         shown.command = command
         shown.folder = folder.path
+        shown.every = instance.refresh ?? library?.refreshInterval(of: instance.name)
         guard let state = commands?.runs.state(for: card, command: command, detail: detail, in: folder) else {
             shown.status = ComponentCommands.Status.approve.rawValue
             return shown

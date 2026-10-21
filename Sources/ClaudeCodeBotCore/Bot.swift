@@ -711,8 +711,7 @@ public final class Bot: ObservableObject, Identifiable {
         var message = ChatMessage(role: isError ? .error : .bot, text: parsed.body, choices: parsed.choices)
         if !parsed.displays.isEmpty { message.displays = parsed.displays }
         message.steps = trace.takeSteps()
-        append(message)
-        unreadCount += 1
+        if append(message) { unreadCount += 1 }
         replyObserver?(message)
         return (message, parsed.requests)
     }
@@ -803,8 +802,7 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// A line in this chat that is not part of its own conversation (a group chat's lines).
     public func post(_ message: ChatMessage, unread: Bool = true) {
-        append(message)
-        if unread { unreadCount += 1 }
+        if append(message), unread { unreadCount += 1 }
     }
 
     /// Puts earlier lines in, in date order (notices moving over from another chat).
@@ -1285,8 +1283,7 @@ public final class Bot: ObservableObject, Identifiable {
         recordOutage(turnFailed: true)
         var message = ChatMessage(role: .error, text: NetworkResume.lostText(text))
         message.steps = trace.takeSteps()
-        append(message)
-        unreadCount += 1
+        if append(message) { unreadCount += 1 }
     }
 
     private func recordOutage(turnFailed: Bool = false, subagents: [String] = [], lostSession: UUID? = nil) {
@@ -1745,11 +1742,51 @@ public final class Bot: ObservableObject, Identifiable {
         route(Outgoing(text: text, images: waiting.flatMap(\.images)))
     }
 
-    private func append(_ message: ChatMessage) {
+    /// Puts `message` in the chat. A bot's `<show id="…">` of a card already in it updates that
+    /// card instead (`updateCards`); false when that left nothing new to add.
+    @discardableResult
+    private func append(_ message: ChatMessage) -> Bool {
+        guard let message = updateCards(from: message) else {
+            store?.save(messages: messages)
+            return false
+        }
         messages.append(message)
         store?.save(messages: messages)
         archive(message)
         onNewMessage?(message)
+        return true
+    }
+
+    /// A bot's line whose `<show name="x" id="tests">` names a card (the newest with that id) a
+    /// bot's line in this chat showed before: that card takes the new component and data where
+    /// it is, instead of a new card being drawn (a progress card the bot keeps up to date). Data
+    /// the user saved on it (`ccb.save`) gives way to the bot's. What is left of the line, or nil
+    /// when nothing is (only updates, no words, no question).
+    func updateCards(from message: ChatMessage) -> ChatMessage? {
+        guard message.role == .bot, let displays = message.displays, displays.contains(where: { $0.id != nil }) else { return message }
+        var kept: [ComponentInstance] = []
+        var updated = false
+        for instance in displays {
+            guard let id = instance.id,
+                  let position = messages.lastIndex(where: { $0.role == .bot && $0.shown.contains { $0.id == id } }) else {
+                kept.append(instance)
+                continue
+            }
+            var shown = messages[position].shown
+            guard let index = shown.lastIndex(where: { $0.id == id }) else { continue }
+            var card = instance
+            card.at = shown[index].at
+            card.savedAt = nil
+            shown[index] = card
+            messages[position].displays = shown
+            messages[position].display = nil
+            updated = true
+        }
+        guard updated else { return message }
+        var rest = message
+        rest.displays = kept.isEmpty ? nil : kept
+        let empty = rest.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && rest.choices == nil && rest.displays == nil
+        return empty ? nil : rest
     }
 
     /// Adds a line to this month's file in its archive (the bot greps it for older talk).

@@ -108,6 +108,8 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
     public var refresh: Refresh
     /// For `.interval`.
     public var minutes: Int
+    /// For `.interval` every few seconds instead of minutes (a live pin); nil: `minutes`.
+    public var seconds: Int?
     /// Its card on the Board.
     public var size: Size
     /// How tall it opens above the input box, in points, once the user has dragged that panel's
@@ -122,6 +124,11 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
     public static let defaultMinutes = 15
     /// A pin refreshed every so often runs at most this often.
     public static let minimumMinutes = 1
+    /// A pin refreshed every few seconds runs at most once a second.
+    public static let minimumSeconds = 1
+
+    /// How long, in seconds, between runs of a pin refreshed every so often.
+    public var interval: TimeInterval { TimeInterval(seconds ?? minutes * 60) }
     /// The heights an opened pin's panel may be dragged to.
     public static let panelHeights = 120...1600
 
@@ -129,7 +136,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         height.map { min(max($0, panelHeights.lowerBound), panelHeights.upperBound) }
     }
 
-    public init(id: UUID = UUID(), name: String, command: String? = nil, data: String, ranAt: Date? = nil, refresh: Refresh = .shown, minutes: Int = PinnedComponent.defaultMinutes, size: Size = .large, status: PinStatus? = nil, panelHeight: Int? = nil, savedAt: Date? = nil) {
+    public init(id: UUID = UUID(), name: String, command: String? = nil, data: String, ranAt: Date? = nil, refresh: Refresh = .shown, minutes: Int = PinnedComponent.defaultMinutes, size: Size = .large, status: PinStatus? = nil, panelHeight: Int? = nil, savedAt: Date? = nil, seconds: Int? = nil) {
         self.id = id
         self.name = name
         self.command = command
@@ -141,9 +148,10 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         self.status = status
         self.panelHeight = Self.clampedPanelHeight(panelHeight)
         self.savedAt = savedAt
+        self.seconds = seconds.map { max(Self.minimumSeconds, $0) }
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size, status, panelHeight, savedAt }
+    private enum CodingKeys: String, CodingKey { case id, name, command, data, ranAt, refresh, minutes, size, status, panelHeight, savedAt, seconds }
 
     // A value this build does not know (a newer refresh mode or size) falls back, so the rest
     // of the file still loads. The old sizes S, M and L become 1×1, 2×2 and 4×2; any WxH up
@@ -165,6 +173,8 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         let height: Int? = try? c.decodeIfPresent(Int.self, forKey: .panelHeight)
         panelHeight = Self.clampedPanelHeight(height)
         savedAt = try? c.decodeIfPresent(Date.self, forKey: .savedAt)
+        let seconds: Int? = try? c.decodeIfPresent(Int.self, forKey: .seconds)
+        self.seconds = seconds.map { max(Self.minimumSeconds, $0) }
     }
 
     /// The card key its command's runs go under (`ComponentCommands`), apart from chat cards.
@@ -174,7 +184,7 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
     public func isDue(at now: Date, lastRan: Date?) -> Bool {
         guard refresh == .interval, command != nil else { return false }
         guard let lastRan else { return true }
-        return now.timeIntervalSince(lastRan) >= TimeInterval(minutes * 60)
+        return now.timeIntervalSince(lastRan) >= interval
     }
 }
 

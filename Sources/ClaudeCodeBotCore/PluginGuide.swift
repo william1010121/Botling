@@ -128,6 +128,15 @@ enum PluginGuide {
           `{name}` filled in as one quoted argument, in the same folder with the same limits, and resolves to its output (parsed if JSON, else text);
           it rejects with an Error when not allowed yet, a value is missing, extra or not allowed (only letters, digits and `. _ / -`, at most 200,
           no leading `-`), or the command fails. The card's Allow covers both commands; editing the Detail command line asks the user again.
+          Refreshing by itself: about.md's `Refresh: every 2s` line (or a bot's `<show name="x" refresh="2s">`, which wins) makes a card
+          whose data comes from a command run it again every 2 seconds (at least 1s, at most 1h; "5s", "1.5s", "1m" and "500ms" read too),
+          but only while the card is on screen: it pauses while scrolled away or while the window is hidden, and waits for each run to end.
+          A pin can also be set to refresh every few seconds (its refresh menu), which runs whether or not it is on screen.
+          Live data: each run normally draws the frame anew; `ccb.onData((data) => redraw(data))` instead keeps the frame (its scroll,
+          what is open, a chart's animation) and calls you with each new data, also set as `ccb.data` (returns a function that stops it).
+          Use it for anything that refreshes: a "test progress + CPU" card is a Command printing JSON such as
+          `{"passed":120,"failed":2,"total":300,"cpu":37}`, a `Refresh: every 2s` line, and a template that draws once and updates in `onData`;
+          the bot can also keep a card up to date itself with `<show name="build" id="build">` (below).
           Board sizes: a pinned component is a card on the bot's Board in square cells (about 150–170px, like home-screen widgets). The user
           drags its bottom-right corner (or picks in its size menu) to any size from 1x1 to 4x4 cells, and can drag an opened pin's panel taller.
           So write ONE responsive layout that adapts to any width and height, like a responsive web page, not a layout per size: CSS grid with
@@ -167,6 +176,10 @@ enum PluginGuide {
           It rejects with an Error when the data cannot be kept, or where nothing is kept: a card whose data comes from a command
           (its `Command:` line, or a `<show command=…>`) shows what the command prints, so it does not save; nor do previews.
           Save after each change (a tick, an added item); a `<show>` of the component in a new reply starts from the data the bot gives it.
+          `await ccb.load()` resolves to the data kept last (the same as `ccb.data`, which is already the saved data when the frame starts).
+          Updating a card: a bot's `<show name="build" id="build">JSON</show>` names its card; a later `<show>` with the same id (in any later
+          reply in that chat) replaces that card's component and data where it is, instead of drawing a new card (a reply with nothing else
+          in it adds no message). The bot's new data replaces what the user saved on it.
         - about.md: usage notes for the bots. The first line says in one sentence what it is, followed by the data format (with an example JSON) and what the bot receives when the user answers.
 
         ## Check and release

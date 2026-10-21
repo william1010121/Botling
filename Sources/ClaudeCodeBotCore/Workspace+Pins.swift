@@ -22,7 +22,7 @@ extension Workspace {
     /// output, or the data it was written with). Nil if there is nothing to pin, or it is pinned
     /// already. `id` is the page's, so its Undo can take it back.
     @discardableResult
-    public func pin(messageID: UUID, index: Int, in bot: Bot, id: UUID = UUID(), refresh: PinnedComponent.Refresh = .shown, minutes: Int = PinnedComponent.defaultMinutes) -> PinnedComponent? {
+    public func pin(messageID: UUID, index: Int, in bot: Bot, id: UUID = UUID(), refresh: PinnedComponent.Refresh = .shown, minutes: Int = PinnedComponent.defaultMinutes, seconds: Int? = nil) -> PinnedComponent? {
         guard let message = bot.messages.first(where: { $0.id == messageID }),
               message.shown.indices.contains(index) else { return nil }
         let instance = message.shown[index]
@@ -39,7 +39,7 @@ extension Workspace {
         } else if data == "null" {
             return nil
         }
-        let pin = PinnedComponent(id: id, name: instance.name, command: command, data: data, ranAt: ranAt, refresh: refresh, minutes: minutes, size: .preferred(among: components.sizes(of: instance.name)))
+        let pin = PinnedComponent(id: id, name: instance.name, command: command, data: data, ranAt: ranAt, refresh: refresh, minutes: minutes, size: .preferred(among: components.sizes(of: instance.name)), seconds: seconds)
         var added = false
         bot.editPins { added = Pins.add(pin, to: &$0) }
         return added ? pin : nil
@@ -48,12 +48,12 @@ extension Workspace {
     /// Pins a component from the picker: the last one this bot drew, or, never drawn here, one
     /// whose about.md gives a Command (it has no data until that runs).
     @discardableResult
-    public func pin(named name: String, in bot: Bot, id: UUID = UUID(), refresh: PinnedComponent.Refresh = .shown, minutes: Int = PinnedComponent.defaultMinutes) -> PinnedComponent? {
+    public func pin(named name: String, in bot: Bot, id: UUID = UUID(), refresh: PinnedComponent.Refresh = .shown, minutes: Int = PinnedComponent.defaultMinutes, seconds: Int? = nil) -> PinnedComponent? {
         if let use = lastUse(of: name, in: bot) {
-            return pin(messageID: use.message, index: use.index, in: bot, id: id, refresh: refresh, minutes: minutes)
+            return pin(messageID: use.message, index: use.index, in: bot, id: id, refresh: refresh, minutes: minutes, seconds: seconds)
         }
         guard components.names.contains(name), let command = components.command(of: name) else { return nil }
-        let pin = PinnedComponent(id: id, name: name, command: command, data: "null", refresh: refresh, minutes: minutes, size: .preferred(among: components.sizes(of: name)))
+        let pin = PinnedComponent(id: id, name: name, command: command, data: "null", refresh: refresh, minutes: minutes, size: .preferred(among: components.sizes(of: name)), seconds: seconds)
         var added = false
         bot.editPins { added = Pins.add(pin, to: &$0) }
         return added ? pin : nil
@@ -98,11 +98,18 @@ extension Workspace {
         }
     }
 
-    public func setPinRefresh(_ id: UUID, to refresh: PinnedComponent.Refresh, minutes: Int? = nil, in bot: Bot) {
+    /// How a pin refreshes. With `minutes`, every that many minutes (and `seconds`, when given,
+    /// instead: nil goes back to minutes); with `seconds` alone, every that many seconds.
+    public func setPinRefresh(_ id: UUID, to refresh: PinnedComponent.Refresh, minutes: Int? = nil, seconds: Int? = nil, in bot: Bot) {
         bot.editPins { pins in
             guard let at = pins.firstIndex(where: { $0.id == id }), pins[at].command != nil else { return }
             pins[at].refresh = refresh
-            if let minutes { pins[at].minutes = max(PinnedComponent.minimumMinutes, minutes) }
+            if let minutes {
+                pins[at].minutes = max(PinnedComponent.minimumMinutes, minutes)
+                pins[at].seconds = seconds.map { max(PinnedComponent.minimumSeconds, $0) }
+            } else if let seconds {
+                pins[at].seconds = max(PinnedComponent.minimumSeconds, seconds)
+            }
         }
     }
 
@@ -174,8 +181,9 @@ extension Workspace {
         }
     }
 
-    /// Checks every `interval` seconds for pins due a refresh (the app starts it).
-    public func startPinRefresh(every interval: TimeInterval = 30) {
+    /// Checks every `interval` seconds for pins due a refresh (the app starts it); every second,
+    /// for pins refreshed every few seconds.
+    public func startPinRefresh(every interval: TimeInterval = 1) {
         Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refreshDuePins()

@@ -133,6 +133,8 @@ export interface DisplayView {
   images?: Record<string, string> | null;
   /** In a chat that can pin: whether it is pinned to the bot. Absent where nothing can be pinned. */
   pinned?: boolean | null;
+  /** A card with a command that runs again by itself every this many seconds while on screen. */
+  every?: number | null;
 }
 
 export type PinRefresh = "shown" | "interval" | "manual";
@@ -161,6 +163,8 @@ export interface PinView {
   panelHeight?: number | null;
   refresh: PinRefresh;
   minutes: number;
+  /** Refreshed every this many seconds instead of `minutes`. */
+  seconds?: number | null;
   /** The component, with its command's run as for a card in the chat. */
   display: DisplayView;
 }
@@ -267,16 +271,16 @@ export type Action =
   | { type: "addFileData"; name: string; base64: string }
   | { type: "componentReport"; name: string; text: string; images: { name: string; base64: string }[]; rect: { x: number; y: number; width: number; height: number } | null }
   | { type: "componentRevert"; name: string }
-  | { type: "componentCommand"; messageID: string; index: number; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean }
+  | { type: "componentCommand"; messageID: string; index: number; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean; live?: boolean }
   | { type: "componentDetail"; requestID: number; name: string; folder: string; values: Record<string, string | number> }
-  | { type: "pin"; id: string; messageID?: string; index?: number; name?: string; refresh: PinRefresh; minutes: number }
+  | { type: "pin"; id: string; messageID?: string; index?: number; name?: string; refresh: PinRefresh; minutes: number; seconds?: number }
   | { type: "unpin"; id: string }
-  | { type: "pinCommand"; id: string; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean }
+  | { type: "pinCommand"; id: string; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean; live?: boolean }
   | { type: "pinShown"; ids: string[] | null }
   | { type: "movePin"; id: string; to: number }
   | { type: "resizePin"; id: string; size: PinSize }
   | { type: "setPinHeight"; id: string; height: number | null }
-  | { type: "setPinRefresh"; id: string; refresh: PinRefresh; minutes: number }
+  | { type: "setPinRefresh"; id: string; refresh: PinRefresh; minutes?: number; seconds?: number }
   | { type: "pinStatus"; id: string; text: string | null; tone: string | null }
   | { type: "componentSave"; messageID: string; index: number; data: string }
   | { type: "pinSave"; id: string; data: string }
