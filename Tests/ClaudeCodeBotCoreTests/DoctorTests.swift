@@ -121,10 +121,14 @@ struct DoctorTests {
     // MARK: Running commands
 
     @Test func aCommandThatHangsIsStoppedAtTheTimeout() async {
-        let start = Date()
-        let result = await CommandRunner.run(URL(filePath: "/bin/sleep"), ["30"], timeout: 0.5)
+        let (result, elapsed) = await Task.detached {
+            let start = Date()
+            let result = CommandRunner.runBlocking(URL(filePath: "/bin/sleep"), ["30"], timeout: 0.5)
+            return (result, Date().timeIntervalSince(start))
+        }.value
         #expect(result?.timedOut == true)
-        #expect(Date().timeIntervalSince(start) < 5)
+        // Exclude a delayed main-actor continuation from the command's measured timeout.
+        #expect(elapsed < 5)
     }
 
     @Test func aCommandsOutputAndExitCodeAreKept() async {
