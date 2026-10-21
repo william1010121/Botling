@@ -21,7 +21,8 @@ struct ClaudeCodeBotApp: App {
         WindowGroup("ClaudeCodeBot") {
             // Snapshot and plugin-check runs never open the real ~/.claudecodebot.
             if AppDelegate.isHeadless {
-                Color.clear.frame(width: 1, height: 1)
+                // SwiftUI still makes its window: it is sent offscreen as soon as it exists.
+                Color.clear.frame(width: 1, height: 1).background(HiddenWindow())
             } else {
                 RootView(workspace: delegate.workspace, settings: delegate.settings)
                     .frame(minWidth: 980, minHeight: 620)
@@ -147,14 +148,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// A run that only draws a snapshot or checks a plugin, then quits.
     static var isHeadless: Bool {
-        let environment = ProcessInfo.processInfo.environment
-        return environment["CCB_SNAPSHOT"] != nil || environment["CCB_ICON"] != nil || environment["CCB_CODEX_SNAPSHOT"] != nil || environment["CCB_RAIL_SNAPSHOT"] != nil || environment["CCB_RIGHT_SNAPSHOT"] != nil || environment["CCB_SPEC_SNAPSHOT"] != nil || environment["CCB_SETTINGS_SNAPSHOT"] != nil
-            || CommandLine.arguments.contains("--check-plugin") || Snapshot.isChatRequest
+        HeadlessRun.isRequested()
+    }
+
+    /// A headless run never shows a Dock icon or takes focus from what you are doing.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        if Self.isHeadless {
+            HeadlessRun.quiet(NSApp)
+        }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if Self.isHeadless {
-            for window in NSApp.windows { window.orderOut(nil) }
+            for window in NSApp.windows { HeadlessRun.hide(window) }
         }
         if Snapshot.runIfRequested() || PluginCheck.runIfRequested() {
             return
@@ -296,4 +302,17 @@ enum AppError: LocalizedError {
         case .claudeNotFound: "The claude command was not found. Please install Claude Code first."
         }
     }
+}
+
+/// Sends the window it lands in offscreen (a headless run's SwiftUI window).
+private struct HiddenWindow: NSViewRepresentable {
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let window { HeadlessRun.hide(window) }
+        }
+    }
+
+    func makeNSView(context: Context) -> NSView { Probe() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }

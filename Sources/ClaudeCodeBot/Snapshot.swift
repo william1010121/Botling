@@ -103,8 +103,6 @@ enum Snapshot {
         return (arguments[at + 1], arguments[at + 2])
     }
 
-    static var isChatRequest: Bool { CommandLine.arguments.contains("--snapshot") }
-
     /// A real chat from `~/.claudecodebot`, copied first so nothing there is touched: the main bot
     /// ("Main bot"), Maintainer, or a project or bot by name.
     private static func drawChat(_ name: String, to path: String) {
@@ -160,7 +158,7 @@ enum Snapshot {
         }.json()
 
         let frame = NSRect(x: 0, y: 0, width: 760, height: 1300)
-        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        let window = HeadlessRun.offscreenWindow(frame)
         let configuration = WKWebViewConfiguration()
         let handler = Handler(path: path, json: json, plugins: ChatSurface.setPluginsScript(workspace.plugins))
         configuration.userContentController.add(handler, name: "ccb")
@@ -255,7 +253,7 @@ enum Snapshot {
         .background(Theme.ground)
         .preferredColorScheme(.dark)
         let frame = NSRect(x: 0, y: 0, width: 1480, height: 900)
-        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        let window = HeadlessRun.offscreenWindow(frame)
         window.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: content)
         host.frame = frame
@@ -314,7 +312,7 @@ enum Snapshot {
             .background(Color(hex: 0x0A0A0C))
             .preferredColorScheme(.dark)
         let frame = NSRect(x: 0, y: 0, width: 1140, height: 620)
-        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        let window = HeadlessRun.offscreenWindow(frame)
         window.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: content)
         host.frame = frame
@@ -384,7 +382,7 @@ enum Snapshot {
             .background(Color(hex: 0x0A0A0C))
             .preferredColorScheme(.dark)
         let frame = NSRect(x: 0, y: 0, width: 1430, height: 740)
-        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        let window = HeadlessRun.offscreenWindow(frame)
         window.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: content)
         host.frame = frame
@@ -412,7 +410,7 @@ enum Snapshot {
         Task { @MainActor in
             await workspace.doctor.run(includeLatest: true)
             let frame = NSRect(x: 0, y: 0, width: 760, height: 600)
-            let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            let window = HeadlessRun.offscreenWindow(frame)
             window.appearance = NSAppearance(named: .darkAqua)
             let host = NSHostingView(rootView: SettingsWindow(workspace: workspace, navigator: navigator).preferredColorScheme(.dark))
             host.frame = frame
@@ -460,7 +458,7 @@ enum Snapshot {
         Task { @MainActor in
             await planner.refresh()
             let frame = NSRect(x: 0, y: 0, width: 760, height: 600)
-            let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            let window = HeadlessRun.offscreenWindow(frame)
             window.appearance = NSAppearance(named: .darkAqua)
             let host = NSHostingView(rootView: SettingsWindow(workspace: workspace, navigator: navigator, releasePlanner: planner).preferredColorScheme(.dark))
             host.frame = frame
@@ -557,7 +555,7 @@ enum Snapshot {
             .background(Color(hex: 0x0A0A0C))
             .preferredColorScheme(.dark)
         let frame = NSRect(x: 0, y: 0, width: 1500, height: 920)
-        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        let window = HeadlessRun.offscreenWindow(frame)
         window.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: content)
         host.frame = frame
@@ -741,7 +739,7 @@ enum Snapshot {
             } ?? page, "document.body.style.background='#141417'; ccb.setSpec(\(specJSON))"),
         ] where index == 0 || panelOpen {
             let frame = NSRect(x: 0, y: 0, width: width, height: index == 0 ? height - barHeight : height)
-            let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            let window = HeadlessRun.offscreenWindow(frame)
             let shot = Shot(script: script) { image in
                 shots[index] = image
                 finish()
