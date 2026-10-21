@@ -613,6 +613,8 @@ body.watching #composer-slot { display: none; }
 .board-card.resizing > .board-card-tools { opacity: 1; }
 /* A tile being moved follows the pointer above the others, which slide to make room. */
 .board-card.moving { z-index: 6; cursor: grabbing; opacity: 0.92; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55); outline: 2px solid var(--blue); outline-offset: 1px; transition: none; }
+/* Where a moved tile will go: a line in the gap beside the tile it goes before or after. */
+.board-drop-line { position: fixed; z-index: 50; pointer-events: none; border-radius: 2px; background: var(--blue); box-shadow: 0 0 0 3px rgba(76, 141, 255, 0.25), 0 0 12px rgba(76, 141, 255, 0.6); }
 .pin-sheet-resize { left: 50%; top: -1px; width: 64px; height: 14px; margin-left: -32px; cursor: ns-resize; display: flex; align-items: center; justify-content: center; }
 .pin-sheet-resize::before { content: ""; width: 36px; height: 4px; border-radius: 2px; background: rgba(237, 237, 240, 0.45); }
 .pin-sheet:hover > .pin-sheet-resize, .pin-sheet.hovered > .pin-sheet-resize, .pin-sheet.resizing > .pin-sheet-resize { opacity: 1; }

@@ -650,11 +650,14 @@ describe("the Board", () => {
     window.dispatchEvent(pointer("pointermove", 175, 45));
     expect(first.classList.contains("moving")).toBe(true);
     expect(first.style.transform).toBe("translate(100px, 40px)");
-    // …and over another tile takes its place at once, the others making room.
-    window.dispatchEvent(pointer("pointermove", 475, 45));
-    expect(cards().map((c) => c.dataset.id)).toEqual(["P2", "P3", "P1"]);
+    // …the others staying put, a line showing where it will go (past P3's middle: after it)…
+    window.dispatchEvent(pointer("pointermove", 480, 45));
+    expect(cards().map((c) => c.dataset.id)).toEqual(["P1", "P2", "P3"]);
+    expect(document.querySelector(".board-drop-line")).not.toBeNull();
     expect(sent).toEqual([]);
-    window.dispatchEvent(pointer("pointerup", 475, 45));
+    // …and letting go puts it there.
+    window.dispatchEvent(pointer("pointerup", 480, 45));
+    expect(cards().map((c) => c.dataset.id)).toEqual(["P2", "P3", "P1"]);
     expect(sent).toEqual([{ type: "movePin", id: "P1", to: 2 }]);
     expect(first.classList.contains("moving")).toBe(false);
     expect(first.style.transform).toBe("");
@@ -671,6 +674,66 @@ describe("the Board", () => {
     window.dispatchEvent(pointer("pointerup", 480, 60));
     expect(sent).toEqual([]);
     expect(cards().map((c) => c.dataset.id)).toEqual(["P2", "P3", "P1"]);
+  });
+
+  it("a tile dropped on a gap or another tile's left half goes before it, shown by a line while dragging", () => {
+    const area = setUp();
+    const pins = [pin({ id: "A", size: "1x1" }), pin({ id: "B", size: "1x1" }), pin({ id: "C", size: "1x1" })];
+    area.update(state({ board: true, pins }));
+    const cards = () => [...document.querySelectorAll<HTMLElement>(".board-card")];
+    const ids = () => cards().map((c) => c.dataset.id);
+    // Three tiles in a row, 150px wide with a 14px gap (jsdom lays nothing out).
+    const place = (card: HTMLElement, left: number) => {
+      card.getBoundingClientRect = () => ({ left, top: 0, right: left + 150, bottom: 150, width: 150, height: 150, x: left, y: 0, toJSON() {} }) as DOMRect;
+    };
+    const lay = () => cards().forEach((card, i) => place(card, i * 164));
+    lay();
+    const pointer = (type: string, x: number, y: number) => new PointerEvent(type, { clientX: x, clientY: y, button: 0, bubbles: true });
+    const drag = (id: string, path: [number, number][]) => {
+      const card = cards().find((c) => c.dataset.id === id)!;
+      const r = card.getBoundingClientRect();
+      card.querySelector<HTMLElement>(".board-move")!.dispatchEvent(pointer("pointerdown", r.left + 75, 5));
+      for (const [x, y] of path) window.dispatchEvent(pointer("pointermove", x, y));
+    };
+    const line = () => document.querySelector<HTMLElement>(".board-drop-line");
+
+    // C over A, then back over B's left half (overshooting first must not matter).
+    sent.length = 0;
+    drag("C", [[300, 60], [100, 60], [30, 60], [100, 60], [180, 60]]);
+    // The others stay put while dragging; a line shows where it will go: between A and B.
+    expect(ids()).toEqual(["A", "B", "C"]);
+    expect(line()).not.toBeNull();
+    expect(line()!.style.left).toBe(`${150 + 7 - 2}px`);
+    window.dispatchEvent(pointer("pointerup", 180, 60));
+    expect(sent).toEqual([{ type: "movePin", id: "C", to: 1 }]);
+    expect(ids()).toEqual(["A", "C", "B"]);
+    expect(line()).toBeNull();
+
+    // In the gap between two tiles: between them too.
+    area.update(state({ board: true, pins }));
+    lay();
+    sent.length = 0;
+    drag("C", [[200, 60], [157, 60]]);
+    window.dispatchEvent(pointer("pointerup", 157, 60));
+    expect(sent).toEqual([{ type: "movePin", id: "C", to: 1 }]);
+
+    // A tile's right half: after it.
+    area.update(state({ board: true, pins }));
+    lay();
+    sent.length = 0;
+    drag("A", [[250, 60], [290, 60]]);
+    window.dispatchEvent(pointer("pointerup", 290, 60));
+    expect(sent).toEqual([{ type: "movePin", id: "A", to: 1 }]);
+
+    // The first tile's left half: first.
+    area.update(state({ board: true, pins }));
+    lay();
+    sent.length = 0;
+    drag("C", [[200, 60], [20, 60]]);
+    expect(line()!.style.left).toBe(`${0 - 7 - 2}px`);
+    window.dispatchEvent(pointer("pointerup", 20, 60));
+    expect(sent).toEqual([{ type: "movePin", id: "C", to: 0 }]);
+    expect(ids()).toEqual(["C", "A", "B"]);
   });
 
   it("a tile's right and bottom edges resize it too, one way each", () => {

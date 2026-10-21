@@ -8,6 +8,13 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **A Board card can be dropped between two others.** While a card was dragged, the others
+  jumped as soon as the pointer touched one, and a card it had just passed over was ignored when
+  the pointer came back, so after overshooting there was no way to land between A and B. The
+  others now stay put while you drag, a blue line in the gap shows where the card will go, and
+  letting go puts it there: over a card's left half (top half in one column) before it, over its
+  right half after it, and over a gap beside the nearest card.
+
 - **Board cards move and resize with the mouse.** A card was moved by HTML drag and drop from
   its small grip, but its component's frame covers the whole card, so the drop landed in the
   frame and the card never moved. A card is now dragged with the pointer, by its grip or a grab
