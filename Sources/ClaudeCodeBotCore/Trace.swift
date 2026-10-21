@@ -33,6 +33,9 @@ public enum TraceEvent: Equatable, Sendable {
     /// A ScheduleWakeup or CronCreate call the bot made, with what it asked for. Once its result
     /// says it was scheduled, it is waiting work.
     case scheduleCalled(id: String, call: ScheduleCall)
+    /// The structured result of a call the bot itself made (its `tool_use_result`), when it is
+    /// a scheduling one's: what was scheduled or taken back. Comes just before its `toolResult`.
+    case scheduleResult(id: String, result: ScheduleResult)
 }
 
 /// What a ScheduleWakeup or CronCreate call asked for.
@@ -237,9 +240,8 @@ public struct TraceBook: Equatable, Sendable {
             if parent == nil, let at = tasks.firstIndex(where: { $0.id == id }) {
                 tasks[at].outputFile = BackgroundTask.outputFile(in: output) ?? tasks[at].outputFile
             }
-            if parent == nil, let call = scheduleCalls.removeValue(forKey: id), !failed {
-                addSchedule(id, call: call, result: output, at: date)
-            }
+            // A call whose structured result did not come (refused, failed) schedules nothing.
+            if parent == nil { scheduleCalls[id] = nil }
             let output = Self.shorten(output)
             if let parent {
                 guard let index = subagentIndex(parent), let at = subagents[index].steps.lastIndex(where: { $0.id == id }) else { return false }
@@ -324,24 +326,28 @@ public struct TraceBook: Equatable, Sendable {
         case let .scheduleCalled(id, call):
             scheduleCalls[id] = call
             return false
+        case let .scheduleResult(id, result):
+            if let call = scheduleCalls.removeValue(forKey: id) { addSchedule(id, call: call, result: result, at: date) }
+            return false
         }
     }
 
     /// A ScheduleWakeup or CronCreate call that scheduled something: waiting work, until it fires
     /// (or, for a recurring job, until it is deleted or expires).
-    private mutating func addSchedule(_ id: String, call: ScheduleCall, result: String, at date: Date) {
+    private mutating func addSchedule(_ id: String, call: ScheduleCall, result: ScheduleResult, at date: Date) {
         guard !tasks.contains(where: { $0.id == id }) else { return }
         var task = BackgroundTask(id: id, kind: call.kind, title: call.title, startedAt: date)
         switch call.kind {
         case .wakeup:
-            guard let fire = BackgroundTask.wakeupFire(in: result, at: date) else { return }
+            guard !result.stopped, let fire = result.fireAt else { return }
             task.fireAt = fire
         case .cron:
-            guard let job = BackgroundTask.cronJob(in: result) else { return }
+            guard let job = result.jobID else { return }
             task.jobID = job
             task.schedule = call.cron
             task.recurring = call.recurring
-            task.fireAt = call.cron.flatMap(CronSchedule.init)?.nextTime(after: date)
+            // claude's own next run; older versions do not give it, so it is worked out here.
+            task.fireAt = result.fireAt ?? call.cron.flatMap(CronSchedule.init)?.nextTime(after: date)
         default:
             return
         }

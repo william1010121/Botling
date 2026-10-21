@@ -39,6 +39,9 @@ public enum BotRequest: Equatable, Sendable {
     /// make what it just showed into a component; the app only adds a quiet chip under the reply,
     /// and nothing opens, runs or is built until the user presses it.
     case suggestComponent(name: String, draft: String)
+    /// `<component-declined id="…">why</component-declined>`: Maintainer only. Its answer to a
+    /// bot's component request (the id the request carried): it will not or cannot do it.
+    case componentDeclined(id: String, reason: String)
     /// `<component-spec id="…">JSON</component-spec>`: Maintainer only. Fills in or changes a
     /// component spec the user is shaping in the right panel (see `ComponentSpecs.update`).
     case componentSpec(id: String, json: String)
@@ -95,6 +98,10 @@ public enum ReplyParser {
     )
     private static let specTag = try! NSRegularExpression(
         pattern: #"<component-spec\s+id\s*=\s*(?:"([^"]*)"|'([^']*)')\s*>\s*(.*?)\s*</component-spec>"#,
+        options: .dotMatchesLineSeparators
+    )
+    private static let declinedTag = try! NSRegularExpression(
+        pattern: #"<component-declined\s+id\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:/>|>\s*(.*?)\s*</component-declined>)"#,
         options: .dotMatchesLineSeparators
     )
     private static let screenshotTag = try! NSRegularExpression(pattern: #"<app-screenshot\s*/?>(?:\s*</app-screenshot>)?"#)
@@ -240,6 +247,12 @@ public enum ReplyParser {
             if !id.isEmpty { specs.insert(.componentSpec(id: id, json: groups[2]), at: 0) }
         }
         requests += specs
+        var declined: [BotRequest] = []
+        take(declinedTag) { groups in
+            let id = (groups[0].isEmpty ? groups[1] : groups[0]).trimmingCharacters(in: .whitespaces)
+            if !id.isEmpty { declined.insert(.componentDeclined(id: id, reason: groups[2]), at: 0) }
+        }
+        requests += declined
 
         // Several blocks (an earlier part of the turn asked, then a later one): the last one
         // is the question; every block comes out of the text.

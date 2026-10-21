@@ -80,7 +80,7 @@ extension Workspace {
         // What the user had asked the bot for, which the component is to answer.
         let userAsked = bot.messages.last { $0.role == .user || $0.role == .relay }.map { Self.shortened($0.text, to: 300) } ?? ""
         var ask = ComponentAsk(name: name, botID: bot.id, request: request, userAsked: userAsked, stamp: components.stamp(of: name), changing: exists && own.contains(name))
-        let answerBack = " If you will not or cannot do it, say so in your reply, naming \"\(name)\"; the app passes your answer on to \(bot.name)."
+        let answerBack = " If you will not or cannot do it, say why and end your reply with <component-declined id=\"\(ask.key)\">why, in one sentence for \(bot.name)</component-declined>; the app passes it on to \(bot.name)."
         let full = " (App: \(bot.name) already has \(own.count) / \(limit) components. Add or build nothing for it: with a choices block of its components, ask the user which one to remove from \(bot.name)'s list first, then <take-component bot=\"\(bot.name)\">that name</take-component>.)"
         if exists, !own.contains(name) {
             guard giveComponent(name, to: bot) else {
@@ -130,27 +130,34 @@ extension Workspace {
             : "\(maker ?? "Maintainer") added \(title) to your components.", sourceID: Self.maintainerID)
     }
 
-    /// Maintainer replied: a request it answered without giving, building or changing the
-    /// component goes back to the bot that asked, with what Maintainer said, so the bot tells the
-    /// user instead of waiting. Only once its background work is done, only for a request the
-    /// reply names, and not while it asks the user something.
+    /// Maintainer replied: a change a bot asked for that has landed in the library (its files
+    /// changed since the request) goes back to that bot. Only once its background work is done
+    /// and not while it asks the user something. Nothing else closes a request: Maintainer
+    /// declines one by its id (`declineComponentAsk`), and a new one arrives by itself.
     func settleComponentAsks(after reply: ChatMessage) {
         guard reply.role == .bot || reply.role == .error, !reply.isOpenQuestion,
               !maintainer.trace.subagents.contains(where: \.isRunning) else { return }
         // A component it just committed may not have been seen yet.
         components.rescan()
-        let said = reply.text.lowercased()
-        for ask in componentAsks where said.contains(ask.name.lowercased()) {
+        for ask in componentAsks where ask.changing && components.stamp(of: ask.name) != ask.stamp {
             componentAsks.removeAll { $0 == ask }
             guard let bot = botsWithComponents.first(where: { $0.id == ask.botID }) else { continue }
-            if ask.changing, components.stamp(of: ask.name) != ask.stamp {
-                componentArrived(ask.name, for: ask, to: bot, by: "Maintainer", changed: true)
-                continue
-            }
-            let user = ask.userAsked.isEmpty ? "" : " The user had asked you: \"\(ask.userAsked)\"."
-            bot.appMessage("(App: Maintainer did not add the component \"\(ask.name)\" you asked for\(ask.changing ? " (or change it)" : ""). Maintainer said: \"\(Self.shortened(reply.text, to: 500))\".\(user) Tell the user in one or two sentences, in their language, that it is not available and why, then answer their request as well as you can without it. Do not ask Maintainer for it again.)")
-            tell(bot, "Maintainer did not \(ask.changing ? "change" : "add") \(ask.name): \(Self.shortened(Self.firstLine(of: reply.text), to: 160))", sourceID: Self.maintainerID)
+            componentArrived(ask.name, for: ask, to: bot, by: "Maintainer", changed: true)
         }
+    }
+
+    /// Maintainer's `<component-declined id="…">why</component-declined>`: the request with that
+    /// id goes back to the bot that asked, with why, so the bot tells the user instead of waiting.
+    func declineComponentAsk(_ id: String, reason: String) {
+        let id = id.trimmingCharacters(in: .whitespaces).lowercased()
+        guard let ask = componentAsks.first(where: { $0.key == id }) else { return }
+        componentAsks.removeAll { $0 == ask }
+        guard let bot = botsWithComponents.first(where: { $0.id == ask.botID }) else { return }
+        let reason = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        let said = reason.isEmpty ? "" : " Maintainer said: \"\(Self.shortened(reason, to: 500))\"."
+        let user = ask.userAsked.isEmpty ? "" : " The user had asked you: \"\(ask.userAsked)\"."
+        bot.appMessage("(App: Maintainer did not add the component \"\(ask.name)\" you asked for\(ask.changing ? " (or change it)" : "").\(said)\(user) Tell the user in one or two sentences, in their language, that it is not available and why, then answer their request as well as you can without it. Do not ask Maintainer for it again.)")
+        tell(bot, "Maintainer did not \(ask.changing ? "change" : "add") \(ask.name)" + (reason.isEmpty ? "." : ": \(Self.shortened(Self.firstLine(of: reason), to: 160))"), sourceID: Self.maintainerID)
     }
 
     static func shortened(_ text: String, to limit: Int) -> String {
@@ -223,4 +230,7 @@ struct ComponentAsk: Equatable {
     let stamp: [Date?]
     /// A change to a component the bot already has, not one to add to its list.
     var changing: Bool
+
+    /// The id Maintainer answers it by (`<component-declined id="…">`).
+    var key: String { String(id.uuidString.prefix(8)).lowercased() }
 }

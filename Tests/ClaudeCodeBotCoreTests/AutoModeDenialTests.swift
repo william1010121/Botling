@@ -41,12 +41,73 @@ struct AutoModeDenialTests {
         }
     }
 
+    /// The tool result as claude 2.1.304 sends it on the main thread: `tool_result_meta` says why
+    /// the call did not run (`non_execution_kind`), beside the words for the model. (Shape from the
+    /// SDK schema in the claude binary and the `toolDenialKind` / `permissionDecision` of real
+    /// transcripts; the classifier's text is a real one.)
+    static func resultWithMeta(kind: String, text given: String? = nil) -> String {
+        let text = given ?? realClassifierText
+        let line: [String: Any] = ["type": "user", "parent_tool_use_id": NSNull(), "message": ["role": "user", "content": [
+            ["type": "tool_result", "tool_use_id": "toolu_1", "is_error": true, "content": text]
+        ]], "tool_use_result": "Error: " + text, "tool_result_meta": [[
+            "id": "toolu_1", "non_execution_kind": kind,
+            "permission_decision": ["decision": "reject", "source": "config", "reason_type": "classifier"]
+        ]]]
+        return String(decoding: try! JSONSerialization.data(withJSONObject: line), as: UTF8.self)
+    }
+
+    /// Real texts (claude 2.1.296–2.1.304 transcripts): a block, and the "no verdict" failures.
+    static let realClassifierText = "Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Code from External]. If you have other tasks that don't depend on this action, continue working on those. IMPORTANT: You *may* attempt to accomplish this action using other tools that might naturally be used to accomplish this goal, e.g. using head instead of cat. But you *should not* attempt to work around this denial in malicious ways, e.g. do not use your ability to run tests to execute non-test actions. You should only try to work around this restriction in reasonable ways that do not attempt to bypass the intent behind this denial. If you believe this capability is essential to complete the user's request, first try a safer method. Get as much of the rest of the task done as you can, then STOP and explain to the user what you were trying to do and why you need this permission. Let the user decide how to proceed. To allow this type of action in the future, the user can add a permission rule for Bash to their settings."
+    static let realNoVerdictTexts = [
+        "The server-side auto mode classifier gave no verdict (error), so auto mode cannot determine the safety of Bash. This is a transient failure of the check, not a judgment about the action: a later response may get a verdict.",
+        "The server-side auto mode classifier gave no verdict (the response ended before its verdict arrived), so auto mode cannot determine the safety of CronCreate. This is a transient failure of the check, not a judgment about the action: a later response may get a verdict. You may try the action again once, as-is.",
+        "The server-side auto mode classifier gave no verdict (it skipped this action), so auto mode cannot determine the safety of Edit. This is a hard failure, not a transient one: the check cannot or does not judge this request, so retrying this action will get the same answer. Don't retry it."
+    ]
+
     @Test func theClassifiersDenialIsReadFromTheStream() {
+        // The frame names the call and the reason; whether it was a block comes with the result.
         let frame = StreamEvent.events(in: Self.deniedFrame)
-        #expect(frame == [.permissionDenied(PermissionDenial(toolUseID: "toolu_1", tool: "Bash", reason: "[Irreversible Local Destruction] Deletes the build folder"))])
-        // Older claude without the frame: the tool result alone says so.
+        #expect(frame == [.permissionDenied(PermissionDenial(toolUseID: "toolu_1", tool: "Bash", reason: "[Irreversible Local Destruction] Deletes the build folder", confirmed: false))])
+        // Older claude without the frame or meta: the tool result's words say so.
         let result = StreamEvent.events(in: Self.deniedResult)
         #expect(result.contains(.permissionDenied(PermissionDenial(toolUseID: "toolu_1", tool: nil, reason: "[Irreversible Local Destruction]"))))
+        #expect(StreamEvent.events(in: Self.resultWithMeta(kind: "automode-blocked")).contains(.permissionDenied(PermissionDenial(toolUseID: "toolu_1", tool: nil, reason: "[Code from External]"))))
+    }
+
+    /// claude's structured `non_execution_kind` decides, not its words: a block in other words is
+    /// still a block, and a "no verdict" stays no card whatever the words say.
+    @Test func theResultsStructuredKindDecidesNotItsWords() {
+        func denied(_ line: String) -> Bool { StreamEvent.events(in: line).contains { if case let .permissionDenied(denial) = $0 { denial.confirmed } else { false } } }
+        #expect(denied(Self.resultWithMeta(kind: "automode-blocked", text: "Auto mode said no to this call. 理由：會刪掉資料。")))
+        #expect(!denied(Self.resultWithMeta(kind: "automode-unavailable")))
+        #expect(!denied(Self.resultWithMeta(kind: "automode-parsing-error")))
+        #expect(!denied(Self.resultWithMeta(kind: "permission-rule")))
+        // A call that ran (no kind) is not a denial whatever its output says.
+        let ran = Self.resultWithMeta(kind: "automode-blocked").replacingOccurrences(of: #""non_execution_kind":"automode-blocked","#, with: "")
+        #expect(!denied(ran))
+        // Words alone (an older claude): only a real block's.
+        for text in Self.realNoVerdictTexts {
+            #expect(!denied(Self.deniedResult.replacingOccurrences(of: Self.classifierText, with: text)))
+        }
+        #expect(denied(Self.deniedResult.replacingOccurrences(of: Self.classifierText, with: Self.realClassifierText)))
+    }
+
+    /// The frame alone shows no card: a "no verdict" sends one too.
+    @Test func aFrameWhoseCallWasNotBlockedShowsNoCard() async throws {
+        let (bot, agent) = try await awakeBot(FakeLauncher())
+        let noVerdict = Self.resultWithMeta(kind: "automode-unavailable", text: Self.realNoVerdictTexts[0])
+        for line in [Self.toolUseLine, Self.deniedFrame, noVerdict] {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(bot.messages.allSatisfy { $0.permissionTool == nil })
+        // Blocked: the card, with the frame's tool and reason.
+        for line in [Self.toolUseLine.replacingOccurrences(of: "toolu_1", with: "toolu_2"), Self.deniedFrame.replacingOccurrences(of: "toolu_1", with: "toolu_2"),
+                     Self.resultWithMeta(kind: "automode-blocked", text: "Blocked.").replacingOccurrences(of: "toolu_1", with: "toolu_2")] {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+        await eventually { bot.openQuestion?.permissionTool == "Bash" }
+        #expect(bot.openQuestion?.text.contains("Deletes the build folder") == true)
     }
 
     @Test func denialsTheUserCannotOverrideAreLeftAlone() {

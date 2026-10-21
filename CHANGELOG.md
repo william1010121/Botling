@@ -106,6 +106,22 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **The app reads what Claude Code reports, not its wording.** Four things depended on matching
+  Claude Code's English sentences, so a reworded message would silently break them; they now read
+  the structured fields Claude Code sends alongside:
+  - Scheduled wake-ups, cron jobs and their cancelling come from each call's structured result
+    (when it fires, the job id, a stopped loop), not from "Next wakeup scheduled…" or "Cancelled job…".
+  - A call auto mode blocked is recognised by the result's own kind ("automode-blocked"), so a check
+    that gave no verdict never shows a permission card, whatever the words. The words are still
+    read for the reason shown and for subagents' calls, which carry no kind.
+  - A turn or subagent lost to the network is recognised by an API error with no answer from the
+    API (no HTTP status), not by keywords such as "timeout" or "network"; "Connection lost
+    mid-response" now counts too, and a refusal by the API's safeguards no longer looks like one.
+    Keywords remain only for a process's stderr and a background subagent's report.
+  - A component request is closed only by Maintainer's explicit answer to that request's id
+    (`<component-declined id="…">`), or by the component arriving or changing. A reply that merely
+    named the component ("still looking into toast") used to close it and tell the bot Maintainer
+    would not do it.
 - **Finished background work is cleared when you write again.** Done, failed and stopped work
   (the ✓ and ✕ counts) piled up and carried over to every new message. It now stays only until
   your next message; what is still running carries over to the bot's newest reply. Replies before
