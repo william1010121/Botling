@@ -78,6 +78,41 @@ struct PinTests {
         #expect(names == ["small", "wide", "tall", "large", "xlarge", "wide", "xlarge", "tall", "large", "large", "xlarge", "xlarge"])
     }
 
+    @Test func aBoardCardsPlaceIsKeptInPinsJsonAndShown() throws {
+        // A pins.json from before free placement has no places: they load as nil (the page lays
+        // them out as the packed Board did and sends that back), and nothing else changes.
+        let old = #"[{"id":"8E1B5D2C-3C55-4C6E-9C0B-6D7B0B8E4A11","name":"x","data":"1","size":"2x2"},{"id":"9E1B5D2C-3C55-4C6E-9C0B-6D7B0B8E4A11","name":"y","data":"1","size":"1x1","place":{"col":"bad"}}]"#
+        let decoded = try JSONDecoder().decode([PinnedComponent].self, from: Data(old.utf8))
+        #expect(decoded.map(\.place) == [nil, nil])
+        #expect(decoded[0].size == .large)
+
+        let workspace = makeWorkspace()
+        try addComponent("log", command: "echo {}", to: workspace)
+        try addComponent("weather", command: "echo []", to: workspace)
+        let bot = workspace.mainBot
+        let log = try #require(workspace.pin(named: "log", in: bot))
+        let weather = try #require(workspace.pin(named: "weather", in: bot))
+        #expect(bot.pins.map(\.place) == [nil, nil])
+        var shown = try #require(try payload(workspace)["pins"] as? [[String: Any]])
+        #expect(shown.first?["place"] == nil)
+
+        // Dropped at column 3, row 2 (gaps kept), the other pushed down and resized; ids not
+        // pinned are ignored, the chips' order is unchanged.
+        workspace.arrangePins([(log.id, .init(col: 3, row: 2), nil), (weather.id, .init(col: 0, row: 4), .wide), (UUID(), .init(col: 1, row: 1), nil)], in: bot)
+        #expect(bot.pins.map(\.name) == ["log", "weather"])
+        #expect(bot.pins.map(\.place) == [.init(col: 3, row: 2), .init(col: 0, row: 4)])
+        #expect(bot.pins[1].size == .wide && bot.pins[0].size == .large)
+        // Never before the first cell.
+        #expect(PinnedComponent.Place(col: -2, row: -1) == .init(col: 0, row: 0))
+
+        // Saved and loaded again; the page is told.
+        let saved = try String(contentsOf: root.appending(path: "ccb/main/pins.json"), encoding: .utf8)
+        #expect(saved.contains(#""place":{"col":3,"row":2}"#) || saved.contains(#""place":{"row":2,"col":3}"#))
+        #expect(BotStore(directory: root.appending(path: "ccb/main")).loadPins().map(\.place) == bot.pins.map(\.place))
+        shown = try #require(try payload(workspace)["pins"] as? [[String: Any]])
+        #expect((shown.first?["place"] as? [String: Int]) == ["col": 3, "row": 2])
+    }
+
     @Test func aResizedPinIsKeptInPinsJson() throws {
         let folder = root.appending(path: "bot")
         let store = BotStore(directory: folder)

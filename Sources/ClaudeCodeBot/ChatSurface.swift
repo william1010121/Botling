@@ -346,6 +346,13 @@ struct ChatSurface: NSViewRepresentable {
                 if let pinID = id("id"), let size = (body["size"] as? String).flatMap(PinnedComponent.Size.init(spelled:)) {
                     workspace.resizePin(pinID, to: size, in: pinBot(pinID))
                 }
+            case "arrangePins":
+                // Board cards dropped, resized or pushed down: each one's top-left cell (and size).
+                let places: [(id: UUID, place: PinnedComponent.Place, size: PinnedComponent.Size?)] = (body["places"] as? [[String: Any]] ?? []).compactMap { entry in
+                    guard let pinID = (entry["id"] as? String).flatMap(UUID.init(uuidString:)), let col = entry["col"] as? Int, let row = entry["row"] as? Int else { return nil }
+                    return (pinID, PinnedComponent.Place(col: col, row: row), (entry["size"] as? String).flatMap(PinnedComponent.Size.init(spelled:)))
+                }
+                if let first = places.first { workspace.arrangePins(places, in: pinBot(first.id)) }
             case "setPinHeight":
                 // An opened pin's panel dragged taller or shorter (null: back to its content's height).
                 if let pinID = id("id") { workspace.setPinPanelHeight(pinID, to: (body["height"] as? NSNumber)?.intValue, in: pinBot(pinID)) }

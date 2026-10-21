@@ -243,6 +243,8 @@ export const zhHant: Dictionary = {
   "pins.dragToMoveLower": "拖曳以移動",
   "pins.sizeLabel": "大小：{size}",
   "pins.dragToMove": "拖曳以移動",
+  "pins.dropSwap": "互換",
+  "pins.dropPush": "往下推",
   // spec.ts: the component spec panel
   "spec.changing": "正在修改 {name} → {v}",
   "spec.building": "正在建置 {name}",

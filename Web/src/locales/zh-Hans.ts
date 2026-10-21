@@ -243,6 +243,8 @@ export const zhHans: Dictionary = {
   "pins.dragToMoveLower": "拖动以移动",
   "pins.sizeLabel": "大小：{size}",
   "pins.dragToMove": "拖动以移动",
+  "pins.dropSwap": "互换",
+  "pins.dropPush": "向下推",
   // spec.ts: the component spec panel
   "spec.changing": "正在修改 {name} → {v}",
   "spec.building": "正在构建 {name}",

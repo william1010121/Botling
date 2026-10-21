@@ -299,6 +299,11 @@ extension Workspace {
         }
     }
 
+    /// Board cards put where the page laid them out, with new sizes (see `Pins.arrange`).
+    public func arrangePins(_ places: [(id: UUID, place: PinnedComponent.Place, size: PinnedComponent.Size?)], in bot: Bot) {
+        bot.editPins { Pins.arrange(places, in: &$0) }
+    }
+
     /// How tall a pin opens above the input box, as the user dragged its panel (nil: as tall as
     /// its content again). Kept within `PinnedComponent.panelHeights`.
     public func setPinPanelHeight(_ id: UUID, to height: Int?, in bot: Bot) {

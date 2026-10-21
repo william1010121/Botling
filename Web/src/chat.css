@@ -650,10 +650,23 @@ body.watching #composer-slot { display: none; }
 .board-card:hover > .resize-handle, .board-card.hovered > .resize-handle, .board-card.resizing > .board-resize, .board-card.moving > .board-move { opacity: 1; }
 .board-card.resizing { outline: 2px solid var(--blue); outline-offset: 1px; z-index: 5; }
 .board-card.resizing > .board-card-tools { opacity: 1; }
-/* A tile being moved follows the pointer above the others, which slide to make room. */
-.board-card.moving { z-index: 6; cursor: grabbing; opacity: 0.92; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55); outline: 2px solid var(--blue); outline-offset: 1px; transition: none; }
-/* Where a moved tile will go: a line in the gap beside the tile it goes before or after. */
-.board-drop-line { position: fixed; z-index: 50; pointer-events: none; border-radius: 2px; background: var(--blue); box-shadow: 0 0 0 3px rgba(76, 141, 255, 0.25), 0 0 12px rgba(76, 141, 255, 0.6); }
+/* A tile being moved follows the pointer above the others by its transform alone, on a layer of
+   its own (no layout, no repaint of its component while it moves); the others stay put. */
+.board-card.moving { z-index: 6; cursor: grabbing; opacity: 0.92; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55); outline: 2px solid var(--blue); outline-offset: 1px; transition: none; will-change: transform; }
+/* Let go, it glides the last few px into its cells. */
+.board-card.landing { z-index: 6; transition: transform 0.14s ease-out; will-change: transform; }
+/* Where a moved tile will go: its cells, snapped to the grid. Blue on free cells; amber where it
+   would swap with a tile or push tiles down, those tiles outlined. */
+.board-ghost {
+  position: absolute; left: 0; top: 0; z-index: 4; pointer-events: none; box-sizing: border-box; border-radius: 20px;
+  border: 2px dashed var(--blue); background: rgba(76, 141, 255, 0.12); will-change: transform; transition: transform 0.08s ease-out;
+  display: flex; align-items: flex-end; justify-content: center; padding: 8px;
+}
+.board-ghost > span { font-size: 11.5px; font-weight: 600; color: #F2C27A; }
+.board-ghost > span:empty { display: none; }
+.board-ghost[data-mode="home"] { border-color: rgba(237, 237, 240, 0.25); background: transparent; }
+.board-ghost[data-mode="swap"], .board-ghost[data-mode="push"] { border-color: #E8A23A; background: rgba(232, 162, 58, 0.12); }
+.board-card.drop-hit { outline: 2px dashed #E8A23A; outline-offset: -2px; }
 .pin-sheet-resize { left: 50%; top: -1px; width: 64px; height: 14px; margin-left: -32px; cursor: ns-resize; display: flex; align-items: center; justify-content: center; }
 .pin-sheet-resize::before { content: ""; width: 36px; height: 4px; border-radius: 2px; background: rgba(237, 237, 240, 0.45); }
 .pin-sheet:hover > .pin-sheet-resize, .pin-sheet.hovered > .pin-sheet-resize, .pin-sheet.resizing > .pin-sheet-resize { opacity: 1; }
@@ -677,9 +690,11 @@ body.board .editor .cm-scroller { max-height: 72px; }
 .board-button.primary-outline { border-color: var(--blue); background: transparent; }
 /* Square cells like a home screen's widgets: pins.ts sets the columns (as many of at least 150px
    as fit) and the cell size from the Board's width; these are the defaults until it has measured.
+   Each tile is put at its own cells (grid-column/grid-row from board-layout.ts), gaps kept; only
+   the Add tile is placed by the grid, in the first free cell.
    The gap is pins.ts's boardGap. */
 .board-grid {
-  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; display: grid; gap: 14px; padding-bottom: 8px;
+  position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; display: grid; gap: 14px; padding-bottom: 8px;
   grid-template-columns: repeat(var(--board-cols, auto-fill), minmax(min(150px, 100%), 1fr));
   grid-auto-rows: var(--board-cell, 160px); grid-auto-flow: dense; align-content: start;
 }

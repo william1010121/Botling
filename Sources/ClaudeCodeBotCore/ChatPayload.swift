@@ -214,6 +214,8 @@ public struct ChatPayload: Encodable, Equatable {
         var chip: PinStatus
         /// Its Board card, "3x2": any columns × rows up to 4×4.
         var size: String
+        /// Its card's top-left cell on the Board; nil: not laid out yet (the page places it).
+        var place: PinnedComponent.Place? = nil
         /// How tall it opens above the input box, as the user dragged it; nil: its content's height.
         var panelHeight: Int?
         var refresh: String
@@ -632,7 +634,7 @@ public struct ChatPayload: Encodable, Equatable {
         default: Pins.headline(shown.status == nil ? pin.data : shown.data)
         }
         let chip = Pins.chip(status: pin.status, headline: headline, command: shown.status.flatMap(ComponentCommands.Status.init(rawValue:)), hasData: pin.data != "null")
-        return Pin(id: pin.id.uuidString, name: pin.name, headline: headline, chip: chip, size: pin.size.rawValue, panelHeight: pin.panelHeight, refresh: pin.refresh.rawValue, minutes: pin.minutes, seconds: pin.seconds, display: shown,
+        return Pin(id: pin.id.uuidString, name: pin.name, headline: headline, chip: chip, size: pin.size.rawValue, place: pin.place, panelHeight: pin.panelHeight, refresh: pin.refresh.rawValue, minutes: pin.minutes, seconds: pin.seconds, display: shown,
                    makingLive: pin.makingLive && pin.command == nil ? true : nil, float: pin.float, floatMenu: Pins.floatMenu(for: pin, floating: context.floating))
     }
 
