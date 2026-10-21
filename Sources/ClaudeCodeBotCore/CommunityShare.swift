@@ -222,7 +222,7 @@ public enum CommunityShare {
         let output = Pipe()
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
+        do { try ChildEnvironment.run(process) } catch { return nil }
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
@@ -251,7 +251,7 @@ public enum CommunityShare {
         let output = Pipe()
         process.standardOutput = output
         process.standardError = output
-        do { try process.run() } catch { return (false, error.localizedDescription) }
+        do { try ChildEnvironment.run(process) } catch { return (false, error.localizedDescription) }
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return (process.terminationStatus == 0, String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))

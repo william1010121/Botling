@@ -164,7 +164,7 @@ public enum PluginInstaller {
             let output = Pipe()
             process.standardOutput = output
             process.standardError = output
-            try process.run()
+            try ChildEnvironment.run(process)
             let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             process.waitUntilExit()
             guard process.terminationStatus == 0 else {

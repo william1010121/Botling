@@ -123,7 +123,7 @@ enum PluginCheck {
         process.arguments = arguments
         process.currentDirectoryURL = folder
         do {
-            try process.run()
+            try ChildEnvironment.run(process)
         } catch {
             return false
         }

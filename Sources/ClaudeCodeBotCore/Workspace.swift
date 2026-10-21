@@ -2025,7 +2025,8 @@ public final class Workspace: ObservableObject {
     // MARK: Plugin host
 
     /// What you type goes through plugins' beforeSend hooks first; one can change it or stop it.
-    public func send(_ text: String, files: [URL] = [], replyingTo replyID: UUID? = nil, to bot: Bot) async {
+    public func send(_ text: String, files: [URL] = [], replyingTo replyID: UUID? = nil, to bot: Bot,
+                     whenAllowed: (() -> Bool)? = nil) async {
         var text = text
         if let pluginHost, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             switch await pluginHost.beforeSend(bot: info(for: bot), text: text) {
@@ -2037,6 +2038,9 @@ public final class Workspace: ObservableObject {
                 return
             }
         }
+        // Remote channels recheck authorization/decisions after asynchronous plugin hooks.
+        // Desktop callers leave this nil and retain their existing behavior.
+        if let whenAllowed, !whenAllowed() { return }
         if let group = group(of: bot) {
             postToGroup(group.id, text, files: files, replyingTo: replyID)
         } else {

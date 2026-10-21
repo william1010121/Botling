@@ -293,7 +293,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
                 continuation.finish()
             }
         }
-        try process.run()
+        try ChildEnvironment.run(process)
         // Written down, so a later app run can end it if this one goes without doing so.
         let pid = process.processIdentifier
         ChildProcessLedger.shared?.record(pid)

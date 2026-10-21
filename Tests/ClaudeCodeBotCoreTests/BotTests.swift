@@ -150,11 +150,15 @@ struct BotTests {
         let bot = makeBot(fake, idle: 60)
         #expect(bot.sleepsAt == nil)
 
+        let requested = Date()
         bot.send("hi")
         #expect(bot.sleepsAt == nil)
         await eventually { bot.sleepsAt != nil }
-        let remaining = bot.sleepsAt!.timeIntervalSinceNow
-        #expect(remaining > 55 && remaining <= 60)
+        // The main actor may resume much later on a busy runner. Bound the deadline by
+        // when it could have been scheduled, not by time left when this test resumes.
+        let observed = Date()
+        #expect(bot.sleepsAt! >= requested.addingTimeInterval(60))
+        #expect(bot.sleepsAt! <= observed.addingTimeInterval(60))
 
         // A new message stops the clock until the reply.
         fake.respond = { _ in nil }

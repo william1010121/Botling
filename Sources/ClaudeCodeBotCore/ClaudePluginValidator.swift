@@ -19,7 +19,7 @@ public enum ClaudePluginValidator {
                 continuation.resume(returning: problem(status: ended.terminationStatus, output: text))
             }
             do {
-                try process.run()
+                try ChildEnvironment.run(process)
             } catch {
                 continuation.resume(returning: "claude could not run: \(error.localizedDescription)")
             }

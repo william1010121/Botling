@@ -1691,6 +1691,20 @@ public final class Bot: ObservableObject, Identifiable {
         await flushQueue()
     }
 
+    /// Interrupt only a foreground turn, not a tidy, handoff, group call or background agent.
+    /// Unlike stop() this does not retire the bot. The normal result event ends the turn.
+    @discardableResult
+    public func interruptForegroundTurn() -> Bool {
+        guard !removed, case .awake = phase, isWorking,
+              internalReply == nil, groupReply == nil, !waitingForPermission,
+              let process else { return false }
+        queued.removeAll()
+        pausedWork = nil
+        pausedOrigin = nil
+        process.interrupt()
+        return true
+    }
+
     /// Ends the process at once without tidying (the bot is being removed).
     public func stop() {
         removed = true

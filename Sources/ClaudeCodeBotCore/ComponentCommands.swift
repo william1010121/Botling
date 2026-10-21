@@ -334,7 +334,7 @@ public final class ComponentCommands: ObservableObject {
         }
         process.terminationHandler = { _ in finished.signal(); wake.signal() }
         do {
-            try process.run()
+            try ChildEnvironment.run(process)
         } catch {
             out.fileHandleForReading.readabilityHandler = nil
             err.fileHandleForReading.readabilityHandler = nil
