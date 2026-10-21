@@ -46,48 +46,70 @@ describe("background task chips", () => {
     expect(elapsed(3_900_000)).toBe("1 小時 5 分");
   });
 
-  it("shows only a spinner under the reply for one running task, its words in the tooltip", () => {
+  function group(element: HTMLElement, tone: string): HTMLElement | null {
+    return summary(element).querySelector<HTMLElement>(`.task-group.${tone}`);
+  }
+
+  function count(element: HTMLElement, tone: string): string | null | undefined {
+    return group(element, tone)?.querySelector(".task-count")?.textContent;
+  }
+
+  it("shows a spinner and its count under the reply for one running task, its words in the tooltip", () => {
     const row = messageElement(reply([task()]), {});
     document.body.append(row);
     const button = summary(row);
-    expect(button.classList.contains("running")).toBe(true);
-    expect(button.querySelector(".task-spin")).not.toBeNull();
-    // No title, no timer, no count under the reply.
-    expect(button.textContent?.trim()).toBe("");
+    expect(group(row, "running")!.querySelector(".task-spin")).not.toBeNull();
+    expect(count(row, "running")).toBe("1");
+    // Only the kinds there are; no title, no timer under the reply.
+    expect(group(row, "done")).toBeNull();
+    expect(group(row, "failed")).toBeNull();
+    expect(button.textContent?.trim()).toBe("1");
     expect(button.title).toContain("跑測試與建置");
     expect(button.title).toContain("3 分 12 秒");
     expect(list(row).hidden).toBe(true);
   });
 
-  it("counts the running ones and marks a failure", () => {
+  it("shows up to three icons side by side, running then done then failed, each with its count", () => {
     const row = messageElement(reply([
       task({ id: "a" }),
-      task({ id: "b" }),
-      task({ id: "c", status: "failed", ended: now }),
+      task({ id: "b", status: "completed", ended: now }),
+      task({ id: "c", status: "completed", ended: now }),
+      task({ id: "d", status: "completed", ended: now }),
+      task({ id: "e", status: "failed", ended: now }),
+      task({ id: "f", status: "killed", ended: now }),
+      task({ id: "g", status: "interrupted", ended: now }),
     ]), {});
-    const button = summary(row);
-    expect(button.classList.contains("running")).toBe(true);
-    expect(button.querySelector(".task-count")!.textContent).toBe("2");
-    expect(button.querySelector(".task-alert")).not.toBeNull();
-    expect(button.title).toContain("2 執行中");
-    expect(button.title).toContain("1 失敗");
+    const groups = [...summary(row).querySelectorAll<HTMLElement>(".task-group")];
+    expect(groups.map((g) => g.className)).toEqual(["task-group running", "task-group done", "task-group failed"]);
+    expect(count(row, "running")).toBe("1");
+    expect(count(row, "done")).toBe("3");
+    expect(group(row, "done")!.querySelector(".task-icon")!.textContent).toBe("✓");
+    // Failed counts the stopped and interrupted ones too.
+    expect(count(row, "failed")).toBe("3");
+    expect(group(row, "failed")!.querySelector(".task-icon")!.textContent).toBe("✕");
+    // No red dot any more.
+    expect(summary(row).querySelector(".task-alert")).toBeNull();
+    expect(summary(row).title).toContain("1 執行中");
+    expect(summary(row).title).toContain("3 完成");
+    expect(summary(row).title).toContain("3 失敗");
   });
 
-  it("shows ✓ when all are done and ✕ when any failed", () => {
-    const done = summary(messageElement(reply([
+  it("shows only ✓ and its count when all are done", () => {
+    const row = messageElement(reply([
       task({ id: "a", status: "completed", ended: now }),
       task({ id: "b", status: "completed", ended: now }),
-    ]), {}));
-    expect(done.classList.contains("done")).toBe(true);
-    expect(done.textContent).toContain("✓");
-    expect(done.querySelector(".task-spin")).toBeNull();
-    const failed = summary(messageElement(reply([
-      task({ id: "a", status: "completed", ended: now }),
-      task({ id: "b", status: "interrupted", ended: now }),
-    ]), {}));
-    expect(failed.classList.contains("failed")).toBe(true);
-    expect(failed.textContent).toContain("✕");
-    expect(failed.title).toContain("已中斷（App 重開）");
+    ]), {});
+    expect(group(row, "running")).toBeNull();
+    expect(group(row, "failed")).toBeNull();
+    expect(count(row, "done")).toBe("2");
+    expect(summary(row).querySelector(".task-spin")).toBeNull();
+  });
+
+  it("shows only ✕ and its count when all failed", () => {
+    const row = messageElement(reply([task({ id: "b", status: "interrupted", ended: now })]), {});
+    expect(group(row, "done")).toBeNull();
+    expect(count(row, "failed")).toBe("1");
+    expect(summary(row).title).toContain("已中斷（App 重開）");
   });
 
   it("opens a compact list of the tasks with their status and time", () => {
