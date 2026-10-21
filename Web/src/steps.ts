@@ -1,5 +1,6 @@
 import { post } from "./bridge";
 import type { StepImage, StepView } from "./types";
+import { openLightbox } from "./lightbox";
 import { renderMarkdown } from "./markdown";
 import { escapeHTML } from "./util";
 
@@ -200,7 +201,7 @@ function outputText(output: string, images: StepImage[]): string {
   return output.split("\n").filter((line) => line.trim() !== "(image)").join("\n").trim();
 }
 
-/** A picture fit to the box (at most so tall); click it to open it full size in a window. */
+/** A picture fit to the box (at most so tall); click it to see it large in the lightbox. */
 function stepImage(picture: StepImage): HTMLElement {
   const image = document.createElement("img");
   image.className = "step-image";
@@ -211,7 +212,7 @@ function stepImage(picture: StepImage): HTMLElement {
   image.decoding = "async";
   image.addEventListener("click", (event) => {
     event.stopPropagation();
-    post({ type: "openURL", url: picture.url, label: picture.name });
+    openLightbox(picture.url, picture.name);
   });
   return image;
 }
