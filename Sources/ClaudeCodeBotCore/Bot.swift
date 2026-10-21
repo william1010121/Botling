@@ -177,11 +177,16 @@ public final class Bot: ObservableObject, Identifiable {
     /// Work it was doing (handed over, a routine) when you wrote: it answers you first, then is
     /// told to carry on. Holds whether that work reports up like handed-over work.
     private var pausedWork: Bool?
-    /// The turn under way was started by claude itself only to say a subagent is still waiting
-    /// on its own background work: nothing new, so its reply does not show.
-    private var quietTurn = false
-    /// That quiet turn was paused for you: the work it carries on with after stays quiet.
-    private var pausedQuiet = false
+    /// Who started the turn under way: you, the app (handed-over work, a note), or claude itself
+    /// because background work told it something (a `task_notification`, a wake-up). Nil
+    /// between turns.
+    enum TurnOrigin: Equatable { case user, app, background }
+    private var turnOrigin: TurnOrigin?
+    /// A `task_notification` came (whatever it said, busy or not): the next turn claude starts
+    /// itself is background work's, even if nothing marked it started.
+    private var backgroundWake = false
+    /// Who started the work paused for you: what it carries on with after is theirs again.
+    private var pausedOrigin: TurnOrigin?
     static let pauseNote = "(App: I stopped what you were doing to ask you this. Answer me first; you will be told to carry on with it after.)"
     static let resumeNote = "(App: Now carry on with what you were doing before the user's message, where you left off.)"
 
@@ -591,7 +596,7 @@ public final class Bot: ObservableObject, Identifiable {
                 // subagents in the background carry on and still report back.
                 trace.dropSteps()
                 pausedWork = turnFromRelay
-                pausedQuiet = quietTurn
+                pausedOrigin = turnOrigin
                 turnFromRelay = false
                 var mine = outgoing
                 mine.text = Self.pauseNote + "\n\n" + outgoing.text
@@ -642,7 +647,7 @@ public final class Bot: ObservableObject, Identifiable {
         // A turn you started, or one you are adding to; anything else is not yours to add to.
         turnInput = outgoing.fromUser && (!isWorking || turnInput != nil) ? outgoing : nil
         // You said something: the reply is yours to see.
-        if outgoing.fromUser { quietTurn = false }
+        if outgoing.fromUser || !isWorking { turnOrigin = outgoing.fromUser ? .user : .app }
         if !isWorking { noteProgress() }
         isWorking = true
         if resumeProbe, resumeRetry == nil, groupReply == nil { resumeRetry = outgoing }
@@ -668,6 +673,7 @@ public final class Bot: ObservableObject, Identifiable {
             phase = .awake
             isWorking = true
             turnInput = outgoing.fromUser ? outgoing : nil
+            turnOrigin = outgoing.fromUser ? .user : .app
             let note = wakeNote?() ?? ""
             let recent = recentChat(leavingOut: outgoing.messageID)
             let wakeLine = profile.keepsMemory ? prompts.wake : ""
@@ -801,7 +807,8 @@ public final class Bot: ObservableObject, Identifiable {
     /// as working. Its result line (the same words, or the reply of the work the hook sent it
     /// back to) ends the turn. Not for turns whose reply goes elsewhere or is not shown.
     private func showEarly(_ text: String) {
-        guard interruptions == 0, internalReply == nil, groupReply == nil, !dropNextReply, !quietTurn,
+        guard interruptions == 0, internalReply == nil, groupReply == nil, !dropNextReply,
+              !(fromBackground && ReplyParser.saysNoReply(text)),
               replyFilter?() == nil, outage == nil else { return }
         // Your message is answered: what you write now is a new one.
         turnInput = nil
@@ -825,9 +832,10 @@ public final class Bot: ObservableObject, Identifiable {
             // It answered you; now back to what it was doing.
             pausedWork = nil
             turnFromRelay = fromRelay
-            quietTurn = pausedQuiet
-            pausedQuiet = false
+            let origin = pausedOrigin
+            pausedOrigin = nil
             deliver(Outgoing(text: Self.resumeNote))
+            if let origin { turnOrigin = origin }
             return
         }
         afterTurn()
@@ -897,7 +905,6 @@ public final class Bot: ObservableObject, Identifiable {
 
     static var noLongerNeeded: String { L("No longer needed") }
     static var askAgain: String { L("Closed when ClaudeCodeBot restarted; ask again") }
-    static let allowOnce = 0
 
     /// Claude wants a tool it may not use without asking: allowed already if you said always,
     /// otherwise a question in the chat while it waits.
@@ -911,12 +918,12 @@ public final class Bot: ObservableObject, Identifiable {
             source.answer(request, allow: false, message: "Not now: this turn only updates your memory file.")
             return
         }
-        var choices = [Choice(label: "Allow once", detail: nil, recommended: true)]
+        var choices = [Choice(label: L("Allow once"), detail: nil, recommended: true, action: .allowOnce)]
         // "Always" by tool name would mean any command or any file on the disk for these.
         if !Self.neverAlways.contains(request.tool) {
-            choices.append(Choice(label: "Always allow \(request.tool)", detail: L("For {0}, from now on", name), recommended: false))
+            choices.append(Choice(label: L("Always allow {0}", request.tool), detail: L("For {0}, from now on", name), recommended: false, action: .alwaysAllow))
         }
-        choices.append(Choice(label: "Don't allow", detail: nil, recommended: false))
+        choices.append(Choice(label: L("Don't allow"), detail: nil, recommended: false, action: .deny))
         var message = ChatMessage(role: .bot, text: Self.permissionText(request), choices: choices)
         message.permissionTool = request.tool
         append(message)
@@ -970,13 +977,11 @@ public final class Bot: ObservableObject, Identifiable {
             return false
         }
         markChosen(index, in: message.id)
-        let label = message.choices?[safe: index]?.label ?? ""
-        let always = label.hasPrefix("Always allow")
+        let (allowed, always) = Self.permissionVerdict(message.choices?[safe: index])
         if always, !alwaysAllowed.contains(ask.request.tool) {
             alwaysAllowed.append(ask.request.tool)
             store?.save(alwaysAllowed: alwaysAllowed)
         }
-        let allowed = index == Self.allowOnce || always
         ask.process.answer(ask.request, allow: allowed, message: allowed ? nil : "The user did not allow it.")
         // Other questions for the same tool from this turn are settled by "always".
         if always {
@@ -987,6 +992,16 @@ public final class Bot: ObservableObject, Identifiable {
             }
         }
         return true
+    }
+
+    /// What a pick on a tool question does, from its action (never its words): anything that is
+    /// not an allow refuses.
+    static func permissionVerdict(_ choice: Choice?) -> (allow: Bool, always: Bool) {
+        switch choice?.action {
+        case .allowOnce: (true, false)
+        case .alwaysAllow: (true, true)
+        case .deny, nil: (false, false)
+        }
     }
 
     // MARK: Calls auto mode blocked
@@ -1003,15 +1018,15 @@ public final class Bot: ObservableObject, Identifiable {
         // Allowed already (a rule from before this session reached claude late): nothing to ask.
         guard !allowRules.contains(rule) else { return }
         let always = switch tool {
-        case "Bash": "Always allow this command"
-        case "Write", "Edit", "MultiEdit", "NotebookEdit": "Always allow editing this file"
-        case "WebFetch": "Always allow this site"
-        default: "Always allow \(tool)"
+        case "Bash": L("Always allow this command")
+        case "Write", "Edit", "MultiEdit", "NotebookEdit": L("Always allow editing this file")
+        case "WebFetch": L("Always allow this site")
+        default: L("Always allow {0}", tool)
         }
         let choices = [
-            Choice(label: "Allow once", detail: nil, recommended: true),
-            Choice(label: always, detail: L("For {0}, from now on", name), recommended: false),
-            Choice(label: "Don't allow", detail: nil, recommended: false)
+            Choice(label: L("Allow once"), detail: nil, recommended: true, action: .allowOnce),
+            Choice(label: always, detail: L("For {0}, from now on", name), recommended: false, action: .alwaysAllow),
+            Choice(label: L("Don't allow"), detail: nil, recommended: false, action: .deny)
         ]
         let request = PermissionRequest(id: denial.toolUseID, tool: tool, summary: summary, input: "{}")
         let reason = denial.reason.isEmpty ? "" : "\n\n" + L("Reason: {0}", denial.reason.replacingOccurrences(of: "\n", with: " "))
@@ -1028,11 +1043,12 @@ public final class Bot: ObservableObject, Identifiable {
     private func decideDenial(_ index: Int, in message: ChatMessage) -> Bool {
         guard let denial = denialAsks.removeValue(forKey: message.id) else { return false }
         markChosen(index, in: message.id)
-        guard index <= 1 else {
+        let (allowed, always) = Self.permissionVerdict(message.choices?[safe: index])
+        guard allowed else {
             appMessage("(App: The user did not allow `\(denial.summary)` (\(denial.tool)), which auto mode blocked. Do not try it again; carry on without it, or ask the user what to do instead.)")
             return true
         }
-        if index == 1 {
+        if always {
             if !alwaysAllowed.contains(denial.rule) {
                 alwaysAllowed.append(denial.rule)
                 store?.save(alwaysAllowed: alwaysAllowed)
@@ -1133,14 +1149,10 @@ public final class Bot: ObservableObject, Identifiable {
             }
             noteSubagentEnd(step)
             switch step {
-            case .subagentWaiting:
-                // claude wakes it to say a subagent is still waiting on its own work (each
-                // time a Monitor or background command of that subagent reports): a turn with
-                // nothing new for you, unless something else comes in it.
-                if !isWorking, internalReply == nil, groupReply == nil { quietTurn = true }
-            case .subagentEnded:
-                // A real report: the turn tells you about it.
-                quietTurn = false
+            case .subagentWaiting, .subagentEnded:
+                // claude tells the bot (a turn of its own, now or once the one under way ends).
+                // Whether that turn has anything for you is the bot's to say (`<no-reply/>`).
+                backgroundWake = true
             default:
                 break
             }
@@ -1155,6 +1167,8 @@ public final class Bot: ObservableObject, Identifiable {
             if !isWorking, internalReply == nil, groupReply == nil, Self.startsATurn(step) {
                 cancelIdle()
                 isWorking = true
+                turnOrigin = .background
+                backgroundWake = false
             } else if case .subagentEnded = step, !isWorking, phase == .awake, sleepsAt != nil {
                 // Its report turn comes next: the countdown starts over, so the bot does not
                 // begin tidying in the moment between the two.
@@ -1175,7 +1189,7 @@ public final class Bot: ObservableObject, Identifiable {
             // Words already shown as this turn's reply (before its Stop hook ran): the turn just ends.
             if !isError, interruptions == 0, let shown = early.matching(text) {
                 turnInput = nil
-                quietTurn = false
+                endTurnOrigin()
                 trace.dropSteps()
                 finishTurn(reply: shown, requests: early.requests)
                 return
@@ -1191,8 +1205,8 @@ public final class Bot: ObservableObject, Identifiable {
                 interruptions = 0
             }
             turnInput = nil
-            let quiet = quietTurn
-            quietTurn = false
+            let fromBackground = self.fromBackground
+            endTurnOrigin()
             // `<choices>` and other tags written before a tool call are not in claude's result
             // (only the words after the last call are): they count as part of the reply.
             let lifted = trace.liftReplyTags()
@@ -1219,8 +1233,9 @@ public final class Bot: ObservableObject, Identifiable {
                 showNetworkLoss(text)
                 return
             }
-            if quiet, !isError {
-                // "Still running": no bubble, and nothing unread.
+            if fromBackground, !isError, ReplyParser.saysNoReply(text) {
+                // Background work woke it with nothing for you: no bubble, and nothing unread.
+                // (A turn you or the app started always shows; the tag is just taken out.)
                 trace.dropSteps()
                 isWorking = false
                 reloadRoutines()
@@ -1250,8 +1265,9 @@ public final class Bot: ObservableObject, Identifiable {
             turnInput = nil
             interruptions = 0
             if !lostToNetwork { pausedWork = nil }
-            quietTurn = false
-            pausedQuiet = false
+            turnOrigin = nil
+            backgroundWake = false
+            pausedOrigin = nil
             early = EarlyReplies()
             if trace.stopRunning() { store?.save(subagents: trace.subagents) }
             if messages.stopBackgroundTasks(as: .stopped, at: now()) { store?.save(messages: messages) }
@@ -1304,6 +1320,18 @@ public final class Bot: ObservableObject, Identifiable {
         case let .toolUse(_, _, _, _, parent), let .text(_, parent): parent == nil
         default: false
         }
+    }
+
+    /// The turn under way is one claude started itself because background work told it
+    /// something: only such a turn may go unshown (`<no-reply/>`).
+    private var fromBackground: Bool {
+        turnOrigin == .background || (turnOrigin == nil && backgroundWake)
+    }
+
+    /// The turn is over: the next one says again who started it.
+    private func endTurnOrigin() {
+        if fromBackground { backgroundWake = false }
+        turnOrigin = nil
     }
 
     private func afterTurn() {
@@ -1422,6 +1450,7 @@ public final class Bot: ObservableObject, Identifiable {
                 let process = try start(resuming: session)
                 phase = .awake
                 isWorking = true
+                turnOrigin = .app
                 process.send(note)
                 return
             } catch {

@@ -182,6 +182,20 @@ struct LocalizationTests {
         #expect(workspace.language == AppLanguage.preferred())
     }
 
+    /// Words the app once decided by (permission choices, spec samples, routine times) are only
+    /// shown now: they follow the language, and what they mean does not change with it.
+    @Test func wordsTheAppNoLongerDecidesByAreTranslated() throws {
+        defer { L10n.language = .english }
+        L10n.language = .japanese
+        let every = try #require(CronSchedule("15 8 * * *"))
+        #expect(every.description == "毎日 08:15")
+        #expect(every.everyDayTime?.hour == 8)
+        #expect(ComponentSpec.Sample(.reply, data: "{}").label == "この返信")
+        // A spec saved before samples had a kind is still known by its English label.
+        let old = try JSONDecoder().decode(ComponentSpec.Sample.self, from: Data(#"{"label":"Test run","data":"{}"}"#.utf8))
+        #expect(old.kind == .testRun)
+    }
+
     @Test func anOlderSettingsFileMeansSystemDefault() throws {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let url = root.appending(path: "settings.json")

@@ -65,6 +65,7 @@ struct AutoModeDenialTests {
         #expect(card.text.contains("rm -rf build"))
         #expect(card.text.contains("Irreversible Local Destruction"))
         #expect(card.choices?.map(\.label) == ["Allow once", "Always allow this command", "Don't allow"])
+        #expect(card.choices?.map(\.action) == [.allowOnce, .alwaysAllow, .deny])
         // The frame and the tool result are one denial: one card.
         #expect(bot.messages.filter { $0.permissionTool != nil }.count == 1)
     }

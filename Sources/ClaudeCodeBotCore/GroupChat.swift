@@ -258,8 +258,8 @@ extension Workspace {
             case .busy:
                 unheard.append(L("{0} (busy)", member.name))
             case let .failed(why):
-                unheard.append(L("{0} ({1})", member.name, Self.firstLine(of: why)))
                 failed = true
+                unheard.append(L("{0} ({1})", member.name, Self.firstLine(of: why)))
             case .reply(var text, let steps):
                 if let filter = bot.replyFilter?() { text = await filter(text) }
                 guard !Self.isPass(text) else { continue }

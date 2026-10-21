@@ -204,15 +204,23 @@ public struct Attachment: Codable, Equatable, Hashable, Sendable {
 }
 
 public struct Choice: Codable, Equatable, Sendable {
+    /// What a button on a tool question does. The label is only what it says.
+    public enum Action: String, Codable, Sendable {
+        case allowOnce, alwaysAllow, deny
+    }
+
     public var label: String
     /// What picking it costs, in a few words.
     public var detail: String?
     public var recommended: Bool
+    /// Set on a tool question's buttons; nil on a question the bot asked.
+    public var action: Action?
 
-    public init(label: String, detail: String? = nil, recommended: Bool = false) {
+    public init(label: String, detail: String? = nil, recommended: Bool = false, action: Action? = nil) {
         self.label = label
         self.detail = detail
         self.recommended = recommended
+        self.action = action
     }
 }
 

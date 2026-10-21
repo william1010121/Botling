@@ -7,6 +7,8 @@ public struct ChatPayload: Encodable, Equatable {
         var label: String
         var detail: String?
         var recommended: Bool
+        /// A tool question's button: what it does (`Choice.Action`), apart from its words.
+        var action: String?
     }
 
     public struct File: Encodable, Equatable {
@@ -428,7 +430,7 @@ public struct ChatPayload: Encodable, Equatable {
                 text: message.text,
                 stamp: stamp(for: bot.messages, at: index, now: now),
                 avatar: face,
-                choices: message.choices?.map { Choice(label: $0.label, detail: $0.detail, recommended: $0.recommended) },
+                choices: message.choices?.map { Choice(label: $0.label, detail: $0.detail, recommended: $0.recommended, action: $0.action?.rawValue) },
                 chosen: message.chosen,
                 answer: message.answer,
                 open: message.isOpenQuestion,
@@ -553,12 +555,6 @@ public struct ChatPayload: Encodable, Equatable {
         spec.reuse ? (library?.command(of: name) ?? spec.command) : spec.command
     }
 
-    /// The data made from the reply itself before it was built (a "This reply" sample: the app's
-    /// draft, or Maintainer's in specs from before the bot filled them).
-    static func replySample(of spec: ComponentSpec) -> ComponentSpec.Sample? {
-        spec.samples.first { $0.label == "This reply" } ?? spec.samples.first { $0.label == "This page" }
-    }
-
     /// A built spec's component as drawn under its reply: without a command, the reply's own
     /// content as the bot that wrote it drew it (nothing while it draws it; a sample if it did
     /// not); with one, the data it gave (only once the user allowed it; until then the card
@@ -569,8 +565,7 @@ public struct ChatPayload: Encodable, Equatable {
         let command = specCommand(spec, component: name, library: library)
         if command == nil, spec.filling { return nil }
         let kept = spec.testRun.flatMap { $0.command == command ? $0.output : nil }
-        let sample = command == nil ? (replySample(of: spec) ?? spec.samples.first)
-            : (spec.samples.first { $0.label == "Test run" } ?? replySample(of: spec) ?? spec.samples.first)
+        let sample = ComponentSpec.preferredSample(in: spec.samples, live: command != nil).map { spec.samples[$0] }
         var shown = display(ComponentInstance(name: name, data: command == nil ? (spec.filled ?? sample?.data ?? "null") : (kept ?? sample?.data ?? "null")))
         guard let command else { return shown }
         let folder = URL(filePath: spec.folder)

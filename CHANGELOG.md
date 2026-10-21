@@ -119,6 +119,15 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **Background work no longer wakes empty bubbles.** When a subagent stops while still waiting on
+  its own background work (or reports something interim), claude starts a turn of the bot's own;
+  its "(still waiting…)" reply used to show as a bubble each time, with the background row jumping
+  under it. A turn the bot starts itself (a background task's notification woke it, even one that
+  came while it was busy) may now answer just `<no-reply/>`: no bubble, nothing unread, and the
+  background row stays on the reply that started the work while its chips still update. Bots are
+  told to answer that way when a notification has nothing new for you and to report real news as
+  usual. A turn you started always shows (the tag is just taken out). A notification without its
+  tool call is no longer dropped.
 - **Finished background work is cleared when you write again.** Done, failed and stopped work
   (the ✓ and ✕ counts) piled up and carried over to every new message. It now stays only until
   your next message; what is still running carries over to the bot's newest reply. Replies before
@@ -213,6 +222,15 @@ app and publishes it on GitHub Releases.
   where the component was. Its report is now one or two plain sentences: what it made and where
   you will see it (handed back to the bot that asked, which shows it in its own chat); a doubt is
   mentioned only when you need to do something about it.
+- **What a button does no longer depends on what it says.** Whether "Always allow" on a tool
+  question or a blocked call saves a permanent allow now comes from the button's own action
+  (allow once, always allow, don't allow), carried with it to the page, instead of its wording, so
+  renaming or translating the buttons cannot change a permission. A component spec's samples
+  carry what they are (test run, this reply, this page): which one the preview shows first is
+  decided once, in the app, and a sample of Maintainer's that happens to be called "Test run" is
+  no longer overwritten by a run; specs saved before keep working. A routine's time picker shows
+  for any every-day routine by reading its schedule, not its description, and a group chat says
+  who did not answer by what went wrong, not by the "(busy)" words.
 
 ## 1.11.0
 

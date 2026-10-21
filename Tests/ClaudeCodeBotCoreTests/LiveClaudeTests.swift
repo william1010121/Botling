@@ -68,6 +68,60 @@ struct LiveClaudeTests {
         await bot.goToSleep()
     }
 
+    /// claude wakes the bot with a background task's notification (sent here straight to the
+    /// process, as claude itself injects it): with nothing new for the user it answers
+    /// `<no-reply/>` and no bubble shows; real news still shows.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func anInterimNotificationWakesNoBubble() async throws {
+        let executable = try #require(ClaudeExecutableLocator().locate())
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let real = ClaudeAgentProcess.launcher(executable: executable)
+        final class Box: @unchecked Sendable { var process: AgentProcess? }
+        let box = Box()
+        let profile = BotProfile(name: "Probe", role: .manager, avatar: "square", workingDirectory: home, memoryPath: ".bot/memory.md", tools: ["Read"])
+        let bot = Bot(profile: profile, defaultModel: .haiku, launcher: { launch in
+            let process = try real(launch)
+            box.process = process
+            return process
+        })
+
+        bot.send("A subagent called \"Transcribe the recording\" is working in the background for me. Just reply OK.")
+        await eventually({ bot.messages.last?.role == .bot && !bot.isWorking }, timeout: 120)
+        let shown = bot.messages.count
+        let process = try #require(box.process)
+
+        process.send("""
+        <task-notification>
+        <task-id>a35</task-id>
+        <status>completed</status>
+        <summary>Agent "Transcribe the recording" is waiting on its own background work</summary>
+        <result>(result may be interim) Still transcribing, about half done.</result>
+        </task-notification>
+        """)
+        await eventually({ bot.isWorking }, timeout: 60)
+        await eventually({ !bot.isWorking }, timeout: 120)
+        for message in bot.messages { print("[\(message.role)] \(message.text.prefix(200))") }
+        #expect(bot.messages.count == shown)
+
+        process.send("""
+        <task-notification>
+        <task-id>a35</task-id>
+        <status>completed</status>
+        <summary>Agent "Transcribe the recording" completed</summary>
+        <result>The recording says: the meeting moves to Friday.</result>
+        </task-notification>
+        """)
+        await eventually({ bot.messages.count == shown + 1 && !bot.isWorking }, timeout: 120)
+        print("report:", bot.messages.last?.text ?? "")
+        // It answers in the user's language: "Friday" or 星期五 / 週五.
+        let report = bot.messages.last?.text ?? ""
+        #expect(bot.messages.last?.role == .bot)
+        #expect(["Friday", "五"].contains { report.contains($0) })
+        await bot.goToSleep()
+    }
+
     /// Asked in words to add a folder, the main bot asks for it with the tag, and the app shows
     /// the card instead of adding it straight away.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))

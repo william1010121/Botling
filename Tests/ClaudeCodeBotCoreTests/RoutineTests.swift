@@ -18,6 +18,18 @@ struct CronTests {
         #expect(!routine.schedule.matches(day(8, 16)))
     }
 
+    /// Whether a routine runs every day at one time comes from its fields, not its description.
+    @Test func everyDayTimeIsReadFromTheFields() throws {
+        let daily = try #require(CronSchedule("15 8 * * *")?.everyDayTime)
+        #expect(daily.hour == 8 && daily.minute == 15)
+        #expect(CronSchedule("0 9 * * 1-5")?.everyDayTime == nil)
+        #expect(CronSchedule("0 9 1 * *")?.everyDayTime == nil)
+        #expect(CronSchedule("0 9 * 6 *")?.everyDayTime == nil)
+        #expect(CronSchedule("0,30 9 * * *")?.everyDayTime == nil)
+        // Every weekday listed is every day too.
+        #expect(CronSchedule("0 7 * * 0-6")?.everyDayTime?.hour == 7)
+    }
+
     @Test func pausedLinesAndCommentsAndFiles() throws {
         let paused = try #require(Routine.parse("#0 18 * * 5 Friday review: Sum up what got done this week"))
         #expect(!paused.enabled)

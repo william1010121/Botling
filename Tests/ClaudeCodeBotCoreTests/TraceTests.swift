@@ -430,13 +430,13 @@ struct TraceTests {
         let shown = bot.messages.count
 
         // Its Monitor wakes it again and again; each time claude tells the bot it is still
-        // waiting, and the bot has nothing new to say.
+        // waiting, and the bot has nothing new to say (it answers <no-reply/>).
         for _ in 0..<3 {
             #expect(StreamEvent.events(in: SubagentRun.waiting) == [.trace(.subagentWaiting(id: "toolu_A"))])
             for event in StreamEvent.events(in: SubagentRun.waiting) { agent.emit(event) }
-            agent.emit(.trace(.text("Still transcribing.", parent: nil)))
+            agent.emit(.trace(.text("<no-reply/>", parent: nil)))
             await eventually { bot.isWorking }
-            agent.reply("Still transcribing.")
+            agent.reply("<no-reply/>")
             await eventually { !bot.isWorking }
         }
         try? await Task.sleep(for: .milliseconds(50))
@@ -457,7 +457,9 @@ struct TraceTests {
     @Test func whatYouSayWhileItWaitsQuietlyStillGetsAnAnswer() async {
         let fake = FakeLauncher()
         let bot = makeBot(fake, idle: 5)
-        fake.respond = { text in isAppOnly(text) && !text.contains("How far") ? "OK" : nil }
+        fake.respond = { text in
+            text == Bot.resumeNote ? "<no-reply/>" : (isAppOnly(text) && !text.contains("How far") ? "OK" : nil)
+        }
         bot.send("Transcribe the recording in a subagent")
         await eventually { fake.agents.count == 1 }
         let agent = fake.agents[0]
@@ -468,7 +470,7 @@ struct TraceTests {
         await eventually { !bot.isWorking }
         let shown = bot.messages.count
         for event in StreamEvent.events(in: SubagentRun.waiting) { agent.emit(event) }
-        agent.emit(.trace(.text("Still transcribing.", parent: nil)))
+        agent.emit(.trace(.text("Checking.", parent: nil)))
         await eventually { bot.isWorking }
 
         // You ask in the middle of that turn: it is paused for you, and its answer shows; the
@@ -482,6 +484,88 @@ struct TraceTests {
         try? await Task.sleep(for: .milliseconds(50))
         #expect(bot.messages.last?.text == "About half done.")
         #expect(bot.messages.count == shown + 2)
+    }
+
+    // MARK: Turns claude starts itself (background work told it something)
+
+    @Test func aNotificationWhileItWorksStillLetsTheNextTurnSayNothing() async {
+        let fake = FakeLauncher()
+        let bot = makeBot(fake, idle: 5)
+        fake.respond = { text in isAppOnly(text) ? "OK" : nil }
+        bot.send("Build in the background and send a subagent off")
+        await eventually { fake.agents.count == 1 }
+        let agent = fake.agents[0]
+        for line in SubagentRun.lines.prefix(3) {
+            for event in StreamEvent.events(in: line) { agent.emit(event) }
+        }
+        agent.emit(.trace(.toolUse(id: "toolu_B", tool: "Bash", title: "Run swift build", detail: "swift build", parent: nil)))
+        agent.emit(.trace(.backgroundCommandStarted(id: "toolu_B", description: "swift build")))
+        // claude tells it about its subagent while the turn is still under way.
+        for event in StreamEvent.events(in: SubagentRun.waiting) { agent.emit(event) }
+        agent.reply("Sent it off.")
+        await eventually { bot.messages.last?.text == "Sent it off." }
+        await eventually { !bot.isWorking }
+        let shown = bot.messages.count
+        let sentOff = shown - 1
+        #expect(ChatPayload.backgroundRowIndex(in: bot.messages) == sentOff)
+
+        // The turn that notification starts has nothing new: no bubble, not even early.
+        agent.emit(.trace(.text("<no-reply/>", parent: nil)))
+        await eventually { bot.isWorking }
+        agent.emit(.earlyReply("<no-reply/>"))
+        agent.reply("<no-reply/>")
+        await eventually { !bot.isWorking }
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(bot.messages.count == shown)
+        #expect(bot.unreadCount == 1)
+        // The background row stays on the reply that started the work.
+        #expect(ChatPayload.backgroundRowIndex(in: bot.messages) == sentOff)
+
+        // The build finishes: its chip says so without a bubble, and the turn with real news shows.
+        let built = #"{"type":"system","subtype":"task_notification","task_id":"b1","tool_use_id":"toolu_B","status":"completed","summary":"Background command \"swift build\" completed (exit code 0)"}"#
+        for event in StreamEvent.events(in: built) { agent.emit(event) }
+        await eventually { bot.messages[sentOff].backgroundTasks?.first { $0.id == "toolu_B" }?.isRunning == false }
+        #expect(bot.messages.count == shown)
+        agent.emit(.trace(.text("The build passes.", parent: nil)))
+        await eventually { bot.isWorking }
+        agent.reply("The build passes.")
+        await eventually { bot.messages.last?.text == "The build passes." }
+        #expect(bot.messages.count == shown + 1)
+    }
+
+    @Test func aTurnYouStartedAlwaysShowsEvenWithNoReply() async {
+        let fake = FakeLauncher()
+        let bot = makeBot(fake)
+        fake.respond = { text in isAppOnly(text) ? "OK" : nil }
+        bot.send("Anything new?")
+        await eventually { fake.agents.count == 1 }
+        let agent = fake.agents[0]
+        agent.emit(.trace(.text("Nothing new yet. <no-reply/>", parent: nil)))
+        agent.emit(.earlyReply("Nothing new yet. <no-reply/>"))
+        await eventually { bot.messages.last?.role == .bot }
+        #expect(bot.messages.last?.text == "Nothing new yet.")
+        agent.reply("Nothing new yet. <no-reply/>")
+        await eventually { !bot.isWorking }
+        #expect(bot.messages.map(\.text) == ["Anything new?", "Nothing new yet."])
+
+        // Not early either (no Stop hook): the result line shows, tag taken out.
+        bot.send("And now?")
+        await eventually { bot.isWorking }
+        agent.reply("Still nothing. <no-reply/>")
+        await eventually { !bot.isWorking }
+        #expect(bot.messages.last?.text == "Still nothing.")
+    }
+
+    @Test func aNotificationWithoutItsCallIsStillRead() {
+        let line = #"{"type":"system","subtype":"task_notification","task_id":"a35","status":"completed","summary":"It says hello world."}"#
+        #expect(StreamEvent.events(in: line) == [.trace(.subagentEnded(id: "a35", status: "completed", summary: "It says hello world."))])
+    }
+
+    @Test func noReplyIsATagOutsideCodeOnly() {
+        #expect(ReplyParser.saysNoReply("<no-reply/>"))
+        #expect(ReplyParser.saysNoReply("  <no-reply />\n"))
+        #expect(!ReplyParser.saysNoReply("Write `<no-reply/>` when there is nothing new."))
+        #expect(ReplyParser.parseAll("Done. <no-reply/>").body == "Done.")
     }
 
     @Test func aRunningSubagentLeavesTheChatsTextAloneBetweenItsSteps() async {

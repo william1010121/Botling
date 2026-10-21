@@ -49,6 +49,7 @@ struct PermissionTests {
         let question = try #require(bot.openQuestion)
         #expect(question.text.contains("Artifact"))
         #expect(question.choices?.map(\.label) == ["Allow once", "Always allow Artifact", "Don't allow"])
+        #expect(question.choices?.map(\.action) == [.allowOnce, .alwaysAllow, .deny])
 
         let sentBefore = agent.sent.count
         #expect(bot.choose(0, in: question.id))
@@ -83,6 +84,38 @@ struct PermissionTests {
         await eventually { fake.agents.count == 2 }
         #expect(fake.agents[1].launch.tools.contains("Artifact"))
         #expect(fake.agents[1].launch.asksPermission)
+    }
+
+    /// What a pick does comes from its action, never its words: a renamed or translated label
+    /// changes nothing, and a label that merely reads "Always allow" saves nothing.
+    @Test func theActionDecidesNotTheLabel() {
+        let always = Bot.permissionVerdict(Choice(label: "永遠允許 Artifact", action: .alwaysAllow))
+        #expect(always.allow && always.always)
+        let once = Bot.permissionVerdict(Choice(label: "允許一次", action: .allowOnce))
+        #expect(once.allow && !once.always)
+        let refused = Bot.permissionVerdict(Choice(label: "Always allow Artifact", action: .deny))
+        #expect(!refused.allow && !refused.always)
+        // No action (not a permission option): not allowed.
+        let none = Bot.permissionVerdict(Choice(label: "Always allow Artifact"))
+        #expect(!none.allow && !none.always)
+        #expect(!Bot.permissionVerdict(nil).allow)
+    }
+
+    @Test func theActionIsSavedAndGoesToThePage() async throws {
+        let choice = Choice(label: "Always allow Artifact", detail: "For Main, from now on", action: .alwaysAllow)
+        let decoded = try JSONDecoder().decode(Choice.self, from: JSONEncoder().encode(choice))
+        #expect(decoded.action == .alwaysAllow)
+        // Saved before actions existed: still reads.
+        let old = try JSONDecoder().decode(Choice.self, from: Data(#"{"label":"Yes","recommended":false}"#.utf8))
+        #expect(old.action == nil)
+
+        let (bot, agent) = try await awakeBot(FakeLauncher())
+        agent.emit(.permission(request("r1")))
+        await eventually { bot.openQuestion != nil }
+        let json = ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil) { _ in "" }.json()
+        #expect(json.contains(#""action":"allowOnce""#))
+        #expect(json.contains(#""action":"alwaysAllow""#))
+        #expect(json.contains(#""action":"deny""#))
     }
 
     @Test func wordsInsteadOfAButtonRefuseWithTheReason() async throws {
