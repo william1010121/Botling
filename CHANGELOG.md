@@ -8,6 +8,13 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **Board cards move and resize with the mouse.** A card was moved by HTML drag and drop from
+  its small grip, but its component's frame covers the whole card, so the drop landed in the
+  frame and the card never moved. A card is now dragged with the pointer, by its grip or a grab
+  bar along its top edge: it follows the mouse, takes another card's place as you pass over it,
+  and stays there. Besides the corner, a card's right and bottom edges resize it one way, still
+  cell by cell from 1×1 to 4×4. A moved card keeps its component instead of loading it again.
+
 - **A new component reaches the bots with its usage.** Maintainer's editor writes a component's
   template.html first and its about.md seconds later; the library picked the folder up in
   between, so every bot was told "Components were updated" with an empty usage for it (and the

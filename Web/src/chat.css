@@ -538,7 +538,7 @@ body.watching #composer-slot { display: none; }
 .pin-chip:hover { background: #222227; }
 .pin-chip.on { background: #26262C; border-color: var(--blue); }
 .pin-chip.add { padding: 0 8px; color: var(--muted); }
-.pin-chip.drop-target, .board-card.drop-target, .board-grip.drop-target { outline: 2px solid var(--blue); outline-offset: 1px; }
+.pin-chip.drop-target { outline: 2px solid var(--blue); outline-offset: 1px; }
 .pin-chip-icon {
   position: relative; flex: none; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center;
   font-size: 14px; line-height: 1; color: var(--muted);
@@ -603,9 +603,16 @@ body.watching #composer-slot { display: none; }
   right: 0; bottom: 0; width: 26px; height: 26px; cursor: nwse-resize; border-bottom-right-radius: 20px;
   background: linear-gradient(135deg, transparent 55%, rgba(237, 237, 240, 0.55) 55%, rgba(237, 237, 240, 0.55) 61%, transparent 61%, transparent 70%, rgba(237, 237, 240, 0.55) 70%, rgba(237, 237, 240, 0.55) 76%, transparent 76%);
 }
-.board-card:hover > .board-resize, .board-card.hovered > .board-resize, .board-card.resizing > .board-resize { opacity: 1; }
+/* Its right and bottom edges resize it one way; a grab bar along its top edge moves it. */
+.board-resize-e { right: 0; top: 26px; bottom: 26px; width: 8px; cursor: ew-resize; }
+.board-resize-s { bottom: 0; left: 26px; right: 26px; height: 8px; cursor: ns-resize; }
+.board-move { left: 50%; top: 0; width: 72px; height: 16px; margin-left: -36px; cursor: grab; display: flex; align-items: center; justify-content: center; }
+.board-move::before { content: ""; width: 36px; height: 4px; border-radius: 2px; background: rgba(237, 237, 240, 0.45); }
+.board-card:hover > .resize-handle, .board-card.hovered > .resize-handle, .board-card.resizing > .board-resize, .board-card.moving > .board-move { opacity: 1; }
 .board-card.resizing { outline: 2px solid var(--blue); outline-offset: 1px; z-index: 5; }
 .board-card.resizing > .board-card-tools { opacity: 1; }
+/* A tile being moved follows the pointer above the others, which slide to make room. */
+.board-card.moving { z-index: 6; cursor: grabbing; opacity: 0.92; box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55); outline: 2px solid var(--blue); outline-offset: 1px; transition: none; }
 .pin-sheet-resize { left: 50%; top: -1px; width: 64px; height: 14px; margin-left: -32px; cursor: ns-resize; display: flex; align-items: center; justify-content: center; }
 .pin-sheet-resize::before { content: ""; width: 36px; height: 4px; border-radius: 2px; background: rgba(237, 237, 240, 0.45); }
 .pin-sheet:hover > .pin-sheet-resize, .pin-sheet.hovered > .pin-sheet-resize, .pin-sheet.resizing > .pin-sheet-resize { opacity: 1; }

@@ -817,17 +817,18 @@ export class PinArea {
       }
     }
     let previous: Element | null = null;
-    pins.forEach((pin, index) => {
-      // Its size is not part of it: a resized card keeps its frame and tells the component.
-      const key = JSON.stringify([{ ...drawnPart(pin), size: null }, current.components[pin.name] ?? null, index, pins.length]);
+    pins.forEach((pin) => {
+      // Its size and place are not part of it: a resized or moved card keeps its frame (a
+      // resized one tells the component).
+      const key = JSON.stringify([{ ...drawnPart(pin), size: null }, current.components[pin.name] ?? null]);
       let entry = this.cards.get(pin.id);
       if (!entry || entry.key !== key) {
-        const element = this.card(pin, index);
+        const element = this.card(pin);
         if (entry) entry.element.replaceWith(element);
         entry = { key, element };
         this.cards.set(pin.id, entry);
       } else if (entry.element.dataset.size !== pin.size) {
-        this.resize(entry.element, pin, index);
+        this.resize(entry.element, pin);
       }
       const expected: Element | null = previous ? previous.nextElementSibling : this.grid.firstElementChild;
       if (expected !== entry.element) {
@@ -873,13 +874,14 @@ export class PinArea {
   }
 
   /**
-   * The handle over a tile's bottom-right corner (on hover): dragging it resizes the tile cell by
-   * cell, from 1×1 up to 4×4 (no wider than the Board's columns). The tile and its component
-   * follow the drag (`ccb.onSize` at each new cell); letting go keeps the size.
+   * A tile's resize handles (on hover): its bottom-right corner, and its right and bottom edges
+   * for one way only. Dragging one resizes the tile cell by cell, from 1×1 up to 4×4 (no wider
+   * than the Board's columns). The tile and its component follow the drag (`ccb.onSize` at each
+   * new cell); letting go keeps the size.
    */
-  private resizeHandle(card: HTMLElement, pin: PinView): HTMLElement {
+  private resizeHandle(card: HTMLElement, pin: PinView, edge: "se" | "e" | "s"): HTMLElement {
     const handle = document.createElement("div");
-    handle.className = "board-resize resize-handle";
+    handle.className = (edge === "se" ? "board-resize" : `board-resize-${edge}`) + " resize-handle";
     handle.title = "Drag to resize";
     handle.setAttribute("aria-hidden", "true");
     handle.addEventListener("pointerdown", (event) => {
@@ -900,8 +902,8 @@ export class PinArea {
       document.body.classList.add("pin-resizing");
       handle.setPointerCapture?.(event.pointerId);
       const move = (moved: PointerEvent) => {
-        const w = Math.round((width + moved.clientX - startX + boardGap) / (cell + boardGap));
-        const h = Math.round((height + moved.clientY - startY + boardGap) / (cell + boardGap));
+        const w = edge === "s" ? startW : Math.round((width + moved.clientX - startX + boardGap) / (cell + boardGap));
+        const h = edge === "e" ? startH : Math.round((height + moved.clientY - startY + boardGap) / (cell + boardGap));
         const next = pinSize(Math.min(w, this.columns || maxColumns), h);
         if (next === size) return;
         size = next;
@@ -928,13 +930,80 @@ export class PinArea {
     return handle;
   }
 
+  /**
+   * Lets a tile be dragged by `handle` (its grip, or the grab bar along its top edge) with the
+   * pointer, not HTML drag and drop: its component's frame covers the whole tile, so a drop
+   * would land in the frame and never reach the Board. The tile follows the pointer; over
+   * another tile it takes that one's place at once and the others make room. Letting go asks
+   * Swift to keep it there; a small wobble is a click.
+   */
+  private movable(handle: HTMLElement, card: HTMLElement, pin: PinView): void {
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const tiles = () => [...this.grid.querySelectorAll<HTMLElement>(".board-card")];
+      const from = tiles().indexOf(card);
+      const startX = event.clientX;
+      const startY = event.clientY;
+      // Where the tile sits in the grid now, without the drag's offset.
+      const home = card.getBoundingClientRect();
+      let base = { left: home.left, top: home.top };
+      let moving = false;
+      let over: HTMLElement | null = null;
+      document.body.classList.add("pin-resizing");
+      handle.setPointerCapture?.(event.pointerId);
+      const follow = (x: number, y: number) => {
+        card.style.transform = `translate(${Math.round(x - startX + home.left - base.left)}px, ${Math.round(y - startY + home.top - base.top)}px)`;
+      };
+      const move = (moved: PointerEvent) => {
+        const x = moved.clientX;
+        const y = moved.clientY;
+        if (!moving) {
+          if (Math.hypot(x - startX, y - startY) < 4) return;
+          moving = true;
+          card.classList.add("moving");
+        }
+        const target = tiles().find((tile) => {
+          if (tile === card) return false;
+          const r = tile.getBoundingClientRect();
+          return x >= r.left && x < r.right && y >= r.top && y < r.bottom;
+        }) ?? null;
+        if (target && target !== over) {
+          const order = tiles();
+          if (order.indexOf(card) < order.indexOf(target)) target.after(card);
+          else target.before(card);
+          // Its new place in the grid, measured without the offset.
+          card.style.transform = "";
+          const now = card.getBoundingClientRect();
+          base = { left: now.left, top: now.top };
+        }
+        over = target ?? over;
+        follow(x, y);
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", up);
+        document.body.classList.remove("pin-resizing");
+        card.classList.remove("moving");
+        card.style.transform = "";
+        const to = tiles().indexOf(card);
+        if (moving && to !== from && to >= 0) post({ type: "movePin", id: pin.id, to });
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", up);
+    });
+  }
+
   /** Puts a card at its pin's new size, keeping the component's frame (it hears `ccb.onSize`). */
-  private resize(card: HTMLElement, pin: PinView, index: number): void {
+  private resize(card: HTMLElement, pin: PinView): void {
     card.className = this.cardClass(pin);
     card.dataset.size = pin.size;
     delete card.dataset.preview;
     this.span(card);
-    card.querySelector(".board-card-tools")?.replaceWith(this.cardTools(pin, index));
+    card.querySelector(".board-card-tools")?.replaceWith(this.cardTools(card, pin));
     for (const frame of card.querySelectorAll<HTMLIFrameElement>("iframe.component-frame")) resizeFrame(frame, pin.size);
   }
 
@@ -947,7 +1016,7 @@ export class PinArea {
    * A tile's controls, floating over its top-right corner on hover or keyboard focus: a grip to
    * drag it by, its size, ↻ and ⋯ (name, when it ran, refresh, sizes, move, unpin).
    */
-  private cardTools(pin: PinView, index: number): HTMLElement {
+  private cardTools(card: HTMLElement, pin: PinView): HTMLElement {
     const tools = document.createElement("div");
     tools.className = "board-card-tools";
     tools.setAttribute("role", "toolbar");
@@ -957,8 +1026,7 @@ export class PinArea {
     grip.title = `${pin.name} · ${whenWords(pin)} · drag to move`;
     grip.setAttribute("aria-hidden", "true");
     grip.innerHTML = icons.grip;
-    grip.draggable = true;
-    this.dragAndDrop(grip, pin.id, index);
+    this.movable(grip, card, pin);
     const size = button("board-size pin-tool", `Size: ${sizeLabel(pin.size)}`, sizeInfo(pin.size).w + "×" + sizeInfo(pin.size).h, () => openMenu(size, sizeItems(pin)));
     tools.append(grip, size);
     const status = pin.display.status;
@@ -973,7 +1041,7 @@ export class PinArea {
   }
 
   /** A tile: the component is all of it, like a home-screen widget; its controls float over it. */
-  private card(pin: PinView, index: number): HTMLElement {
+  private card(pin: PinView): HTMLElement {
     const card = document.createElement("section");
     card.className = this.cardClass(pin);
     card.dataset.id = pin.id;
@@ -981,25 +1049,16 @@ export class PinArea {
     if (pin.display.status) card.dataset.status = pin.display.status;
     card.setAttribute("aria-label", pin.name);
     this.span(card);
-    // Dropping anywhere on a tile puts the dragged one there.
-    card.addEventListener("dragover", (event) => {
-      if (!this.dragging) return;
-      event.preventDefault();
-      card.classList.add("drop-target");
-    });
-    card.addEventListener("dragleave", (event) => { if (!card.contains(event.relatedTarget as Node)) card.classList.remove("drop-target"); });
-    card.addEventListener("drop", (event) => {
-      card.classList.remove("drop-target");
-      const moving = this.dragging;
-      this.dragging = null;
-      if (!moving) return;
-      event.preventDefault();
-      if (moving !== pin.id) post({ type: "movePin", id: moving, to: index });
-    });
     const body = document.createElement("div");
     body.className = "board-card-body";
     body.append(pinBody(pin, pin.size));
-    card.append(body, this.cardTools(pin, index), this.resizeHandle(card, pin));
+    // A grab bar along its top edge (on hover), as an opened pin's panel has: drag it to move.
+    const bar = document.createElement("div");
+    bar.className = "board-move resize-handle";
+    bar.title = "Drag to move";
+    bar.setAttribute("aria-hidden", "true");
+    this.movable(bar, card, pin);
+    card.append(body, this.cardTools(card, pin), bar, this.resizeHandle(card, pin, "e"), this.resizeHandle(card, pin, "s"), this.resizeHandle(card, pin, "se"));
     return card;
   }
 }
