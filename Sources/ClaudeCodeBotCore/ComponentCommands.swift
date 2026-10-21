@@ -297,6 +297,12 @@ public final class ComponentCommands: ObservableObject {
         return String(decoding: encoded, as: UTF8.self)
     }
 
+    /// `execute` for async callers: it waits on the command with semaphores, so it runs on a GCD
+    /// thread (`blocking`), never on the cooperative pool or the caller's actor.
+    public nonisolated static func execute(_ command: String, in folder: URL, timeout: TimeInterval, limit: Int) async -> CommandOutcome {
+        await blocking { execute(command, in: folder, timeout: timeout, limit: limit) }
+    }
+
     /// Runs `command` with the user's login shell setup (zsh -lc) in `folder`, without input,
     /// stopping it after `timeout` seconds or once it prints more than `limit` bytes. Blocking.
     public nonisolated static func execute(_ command: String, in folder: URL, timeout: TimeInterval, limit: Int) -> CommandOutcome {

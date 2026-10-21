@@ -79,9 +79,7 @@ enum ComponentShotRun {
             data = text.trimmingCharacters(in: .whitespacesAndNewlines)
             source = .file(file.path)
         } else if let folder = options.folder, let command = probe.components.command(of: name) {
-            let outcome = await Task.detached {
-                ComponentCommands.execute(command, in: folder, timeout: ComponentCommands.timeout, limit: ComponentCommands.outputLimit)
-            }.value
+            let outcome = await ComponentCommands.execute(command, in: folder, timeout: ComponentCommands.timeout, limit: ComponentCommands.outputLimit)
             guard let output = outcome.data else { fail("Its Command failed in \(folder.path): \(outcome.error ?? "no output")", code: 3) }
             data = output
             source = .command(command)

@@ -70,10 +70,8 @@ struct ComponentCommandTests {
     @Test func commandsRunInTheFolderWithLimits() async throws {
         let folder = root.appending(path: "project")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        // Off the main actor: each run starts a login shell and blocks until it ends, and the
-        // other tests (which all share the main actor) would wait out every one of them.
         func run(_ command: String, timeout: TimeInterval = 10, limit: Int = 100_000) async -> CommandOutcome {
-            await Task.detached { ComponentCommands.execute(command, in: folder, timeout: timeout, limit: limit) }.value
+            await ComponentCommands.execute(command, in: folder, timeout: timeout, limit: limit)
         }
         #expect(await run(#"printf '{"ok":true}'"#).data == #"{"ok":true}"#)
         let pwd = try #require(await run("pwd -P").data)
@@ -88,7 +86,7 @@ struct ComponentCommandTests {
         let loud = await run("yes | head -c 50000", limit: 1_000)
         #expect(loud.data == nil)
         #expect(loud.error?.contains("printed more than") == true)
-        #expect(ComponentCommands.execute("true", in: folder.appending(path: "gone"), timeout: 5, limit: 100).error?.contains("not there") == true)
+        #expect(await ComponentCommands.execute("true", in: folder.appending(path: "gone"), timeout: 5, limit: 100).error?.contains("not there") == true)
     }
 
     /// Whether `pid` is gone, within a few seconds.
@@ -104,21 +102,25 @@ struct ComponentCommandTests {
         let folder = root.appending(path: "project")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // Children that shrug off a polite stop outlive the shell unless their whole group is killed.
-        // Off the main actor: stopping takes seconds, and other tests wait on it.
-        func execute(_ command: String, timeout: TimeInterval, limit: Int) async -> CommandOutcome {
-            await Task.detached { ComponentCommands.execute(command, in: folder, timeout: timeout, limit: limit) }.value
+        // Timed where it runs, not across the hop back to the main actor: the other tests share
+        // that actor and, in a busy parallel run, kept it for many seconds after the command ended.
+        func execute(_ command: String, timeout: TimeInterval, limit: Int) async -> (CommandOutcome, took: TimeInterval) {
+            await blocking {
+                let started = Date()
+                return (ComponentCommands.execute(command, in: folder, timeout: timeout, limit: limit), Date().timeIntervalSince(started))
+            }
         }
         // The limit leaves the login shell time to start on a busy machine (it took over 1 s
         // under load, before the command could even write its pid).
-        let slow = await execute("sh -c 'trap \"\" TERM; sleep 30 & echo $! > slow.pid; wait'", timeout: 5, limit: 100_000)
+        let (slow, _) = await execute("sh -c 'trap \"\" TERM; sleep 30 & echo $! > slow.pid; wait'", timeout: 5, limit: 100_000)
         #expect(slow.error?.contains("took longer") == true)
         let slowPID = try #require(pid_t(String(contentsOf: folder.appending(path: "slow.pid"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
         #expect(await gone(slowPID))
-        let started = Date()
-        let loud = await execute("sh -c 'trap \"\" TERM; sleep 30 > /dev/null & echo $! > loud.pid; sleep 0.3; yes'", timeout: 10, limit: 1_000)
+        let timeout: TimeInterval = 10
+        let (loud, took) = await execute("sh -c 'trap \"\" TERM; sleep 30 > /dev/null & echo $! > loud.pid; sleep 0.3; yes'", timeout: timeout, limit: 1_000)
         #expect(loud.error?.contains("printed more than") == true)
-        // Stopped soon after it went over, not at the time limit.
-        #expect(Date().timeIntervalSince(started) < 8)
+        // Stopped once it went over, not by the time limit.
+        #expect(took < timeout)
         let loudPID = try #require(pid_t(String(contentsOf: folder.appending(path: "loud.pid"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
         #expect(await gone(loudPID))
     }
@@ -392,7 +394,7 @@ struct ComponentCommandTests {
         #expect(failed.data == nil)
         #expect(failed.error?.contains("exit code") == true)
         // The same cap as the card's command.
-        let big = ComponentCommands.execute("head -c 3000 /dev/zero | tr '\\0' a", in: folder, timeout: 10, limit: 1000)
+        let big = await ComponentCommands.execute("head -c 3000 /dev/zero | tr '\\0' a", in: folder, timeout: 10, limit: 1000)
         #expect(big.error?.contains("more than 1 KB") == true)
     }
 
