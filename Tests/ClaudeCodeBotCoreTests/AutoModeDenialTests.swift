@@ -45,14 +45,13 @@ struct AutoModeDenialTests {
     /// the call did not run (`non_execution_kind`), beside the words for the model. (Shape from the
     /// SDK schema in the claude binary and the `toolDenialKind` / `permissionDecision` of real
     /// transcripts; the classifier's text is a real one.)
-    static func resultWithMeta(kind: String, text given: String? = nil) -> String {
+    static func resultWithMeta(kind: String?, text given: String? = nil) -> String {
         let text = given ?? realClassifierText
+        var meta: [String: Any] = ["id": "toolu_1", "permission_decision": ["decision": "reject", "source": "config", "reason_type": "classifier"]]
+        if let kind { meta["non_execution_kind"] = kind }
         let line: [String: Any] = ["type": "user", "parent_tool_use_id": NSNull(), "message": ["role": "user", "content": [
             ["type": "tool_result", "tool_use_id": "toolu_1", "is_error": true, "content": text]
-        ]], "tool_use_result": "Error: " + text, "tool_result_meta": [[
-            "id": "toolu_1", "non_execution_kind": kind,
-            "permission_decision": ["decision": "reject", "source": "config", "reason_type": "classifier"]
-        ]]]
+        ]], "tool_use_result": "Error: " + text, "tool_result_meta": [meta]]
         return String(decoding: try! JSONSerialization.data(withJSONObject: line), as: UTF8.self)
     }
 
@@ -83,7 +82,7 @@ struct AutoModeDenialTests {
         #expect(!denied(Self.resultWithMeta(kind: "automode-parsing-error")))
         #expect(!denied(Self.resultWithMeta(kind: "permission-rule")))
         // A call that ran (no kind) is not a denial whatever its output says.
-        let ran = Self.resultWithMeta(kind: "automode-blocked").replacingOccurrences(of: #""non_execution_kind":"automode-blocked","#, with: "")
+        let ran = Self.resultWithMeta(kind: nil)
         #expect(!denied(ran))
         // Words alone (an older claude): only a real block's.
         for text in Self.realNoVerdictTexts {
