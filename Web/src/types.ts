@@ -89,6 +89,15 @@ export type SpecStatus = "draft" | "building" | "done";
 export type SpecOrigin = "user" | "maintainer" | "app";
 
 /** The spec workspace in the right panel (`chat.html?spec=1`), from Swift's `SpecPayload`. */
+export interface SpecChange {
+  state: "working" | "asking" | "updated" | "failed";
+  version: number;
+  /** Milliseconds since 1970. */
+  startedAt: number;
+  endedAt?: number | null;
+  error?: string | null;
+}
+
 export interface SpecState {
   id: string;
   name: string;
@@ -122,7 +131,13 @@ export interface SpecState {
   /** Its command's test run, as a command card shows one. */
   testRun: { status: CommandStatus; command: string; folder: string; output: string | null; error: string | null; ranAt: string | null; matches: boolean | null } | null;
   /** While building and once done: what has happened. */
-  steps: { label: string; state: "done" | "doing" | "todo" }[] | null;
+  steps: { label: string; state: "done" | "doing" | "todo" | "failed" }[] | null;
+  /** The version in the library once built (1 after the first build). */
+  version?: number | null;
+  /** A change asked for once built: Maintainer making `version`, its one question, landed, or not. */
+  change?: SpecChange | null;
+  /** What was typed during a build: it goes with the next change. */
+  queued?: string[] | null;
   wide: boolean;
 }
 

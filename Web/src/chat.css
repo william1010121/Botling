@@ -921,6 +921,23 @@ body.spec-mode { background: #141417; }
 .spec-step.done .spec-dot { background: rgba(76, 195, 138, 0.18); color: var(--green); }
 .spec-step.doing .spec-dot { border: 2px solid var(--blue); border-right-color: transparent; animation: spin 0.8s linear infinite; }
 .spec-step.todo .spec-dot { border: 1.5px solid #3A3A42; }
+.spec-step.failed { color: var(--error); }
+.spec-step.failed .spec-dot { background: rgba(255, 138, 128, 0.16); color: var(--error); font-size: 10px; font-weight: 700; }
+/* A built component's change: Maintainer on it, its question, landed, or not. */
+.spec-status { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 10px; font-size: 12.5px; background: #1D1D22; border: 1px solid #2A2A31; }
+.spec-status .spinner { width: 13px; height: 13px; margin: 0; flex: none; }
+.spec-status-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.spec-status-mark { width: 16px; height: 16px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex: none; font-size: 10px; font-weight: 700; }
+.spec-elapsed { flex: none; color: var(--faint); font-variant-numeric: tabular-nums; }
+.spec-status.working { border-color: rgba(76, 141, 255, 0.45); background: rgba(76, 141, 255, 0.08); }
+.spec-status.asking { border-color: rgba(247, 194, 127, 0.4); color: var(--orange-text); }
+.spec-status.updated { border-color: rgba(76, 195, 138, 0.4); color: var(--green); }
+.spec-status.updated .spec-status-mark { background: rgba(76, 195, 138, 0.18); }
+.spec-status.failed { border-color: rgba(255, 138, 128, 0.4); color: var(--error); }
+.spec-status.failed .spec-status-mark { background: rgba(255, 138, 128, 0.16); }
+.spec-queued { font-size: 12px; color: var(--muted); padding: 2px 4px; }
+.spec-queued ul { margin: 4px 0 0; padding-left: 18px; color: var(--text); }
+.spec-say-hint { font-size: 11.5px; color: var(--faint); padding: 0 6px; margin-top: -4px; }
 .spec-progress > .spec-faint, .spec-added { padding: 6px 12px 12px; }
 .spec-added { color: var(--green); font-weight: 600; font-size: 12.5px; }
 .spec-conv { display: flex; flex-direction: column; gap: 9px; padding: 14px 14px 6px; }

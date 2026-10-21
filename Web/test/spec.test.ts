@@ -299,12 +299,12 @@ describe("the spec workspace in the right panel", () => {
     expect(done.querySelector(".spec-added")?.textContent).toContain("Added to ClaudeCodeBot, Arbor");
   });
 
-  it("Edit spec on a built one: its fields can be changed and Build it makes a new version", () => {
+  it("Edit spec on a built one: its fields can be changed and 重新建置 makes a new version", () => {
     const root = panel(spec({ status: "done", preview: "test-summary", questions: [] }));
     expect(root.querySelector("input[data-key='command']")).not.toBeNull();
     expect(root.querySelector(".spec-cancel")).toBeNull();
     const build = root.querySelector<HTMLButtonElement>(".spec-build")!;
-    expect(build.textContent).toBe("Build a new version");
+    expect(build.textContent).toBe("重新建置");
     click(build);
     expect(sent).toEqual([{ type: "specBuild", id: "S1" }]);
   });
@@ -328,6 +328,108 @@ describe("the spec workspace in the right panel", () => {
     const again = root.querySelector<HTMLTextAreaElement>(".spec-say textarea")!;
     expect(again.value).toBe("half typed");
     expect(document.activeElement).toBe(again);
+  });
+});
+
+describe("changing a built component from its panel", () => {
+  function panel(state: SpecState): HTMLElement {
+    document.body.innerHTML = `<div id="spec-root"></div>`;
+    const root = document.getElementById("spec-root")!;
+    new SpecPanel(root).update(state);
+    return root;
+  }
+
+  const built = (overrides: Partial<SpecState> = {}) => spec({ status: "done", preview: "test-summary", questions: [], version: 2, ...overrides });
+
+  it("Ask for changes sends the change at once; no Build press needed", () => {
+    const root = panel(built());
+    const box = root.querySelector<HTMLTextAreaElement>(".spec-say textarea")!;
+    expect(box.placeholder).toBe("Ask for changes…");
+    expect(root.querySelector(".spec-say-hint")?.textContent).toContain("v3");
+    // Rebuild stays only as a secondary action.
+    const rebuild = root.querySelector<HTMLButtonElement>(".spec-build")!;
+    expect(rebuild.textContent).toBe("重新建置");
+    expect(rebuild.classList.contains("primary")).toBe(false);
+    box.value = "失敗的要列名字";
+    click(root.querySelector(".spec-say button"));
+    expect(sent).toEqual([{ type: "specSay", id: "S1", text: "失敗的要列名字" }]);
+    // Right away the panel says Maintainer is on it, before Swift sends the spec back,
+    // and nothing can be built again meanwhile.
+    expect(root.querySelector(".spec-status")?.textContent).toContain("Maintainer 正在改…（v3）");
+    expect(root.querySelector(".spec-build")).toBeNull();
+  });
+
+  it("mid-change: status line with version and elapsed time, steps, and no build button", () => {
+    const root = panel(built({
+      status: "building",
+      change: { state: "working", version: 3, startedAt: Date.now() - 65_000, endedAt: null, error: null },
+      steps: [{ label: "Sent to Maintainer", state: "done" }, { label: "Maintainer makes v3", state: "doing" }, { label: "v3 in the library", state: "todo" }],
+    }));
+    const status = root.querySelector(".spec-status")!;
+    expect(status.classList.contains("working")).toBe(true);
+    expect(status.querySelector(".spinner")).not.toBeNull();
+    expect(status.textContent).toContain("Maintainer 正在改…（v3）");
+    expect(status.querySelector(".spec-elapsed")?.textContent).toBe("1:05");
+    expect([...root.querySelectorAll(".spec-step")].map((s) => s.className)).toEqual(["spec-step done", "spec-step doing", "spec-step todo"]);
+    expect(root.querySelector(".spec-build")).toBeNull();
+    expect(root.querySelector<HTMLTextAreaElement>(".spec-say textarea")!.placeholder).toContain("排入下一次修改");
+  });
+
+  it("what was typed during a change is shown as queued for the next one", () => {
+    const root = panel(built({
+      status: "building",
+      change: { state: "working", version: 3, startedAt: Date.now(), endedAt: null, error: null },
+      queued: ["加上耗時", "標題改成中文"],
+    }));
+    const queued = root.querySelector(".spec-queued")!;
+    expect(queued.textContent).toContain("v3 完成後一起送出");
+    expect([...queued.querySelectorAll("li")].map((li) => li.textContent)).toEqual(["加上耗時", "標題改成中文"]);
+  });
+
+  it("after the new version lands: 已更新成 v3", () => {
+    const root = panel(built({
+      version: 3,
+      change: { state: "updated", version: 3, startedAt: Date.now() - 90_000, endedAt: Date.now(), error: null },
+      steps: [{ label: "Sent to Maintainer", state: "done" }, { label: "Maintainer makes v3", state: "done" }, { label: "v3 in the library", state: "done" }],
+    }));
+    const status = root.querySelector(".spec-status")!;
+    expect(status.classList.contains("updated")).toBe(true);
+    expect(status.textContent).toContain("已更新成 v3");
+    expect(status.querySelector(".spinner")).toBeNull();
+    expect(root.querySelector(".spec-build")?.textContent).toBe("重新建置");
+  });
+
+  it("a change that did not land says why", () => {
+    const root = panel(built({
+      change: { state: "failed", version: 3, startedAt: Date.now() - 5000, endedAt: Date.now(), error: "Maintainer's turn ended without a new version: 我看不到那個資料夾。" },
+      steps: [{ label: "Sent to Maintainer", state: "done" }, { label: "Maintainer makes v3", state: "failed" }, { label: "v3 in the library", state: "failed" }],
+    }));
+    const status = root.querySelector(".spec-status")!;
+    expect(status.getAttribute("role")).toBe("alert");
+    expect(status.textContent).toContain("v3 沒有做出來");
+    expect(status.textContent).toContain("我看不到那個資料夾");
+    expect(root.querySelector(".spec-step.failed")).not.toBeNull();
+  });
+
+  it("Maintainer's one question shows with options, and says the answer carries on", () => {
+    const root = panel(built({
+      questions: [{ id: "q1", text: "字變小還是卡片變窄？", options: [{ label: "字變小" }, { label: "卡片變窄" }], suggested: 0 }],
+      change: { state: "asking", version: 3, startedAt: Date.now(), endedAt: null, error: null },
+    }));
+    expect(root.querySelector(".spec-status")?.textContent).toContain("Maintainer 有一個問題");
+    const answers = [...root.querySelectorAll(".spec-question button")];
+    expect(answers.map((a) => a.textContent)).toEqual(["字變小 · suggested", "卡片變窄"]);
+    click(answers[1]);
+    expect(sent).toEqual([{ type: "specAnswer", id: "S1", question: "q1", option: 1 }]);
+  });
+
+  it("a draft keeps Build it, and says nothing is built until it is pressed", () => {
+    const root = panel(spec());
+    const build = root.querySelector<HTMLButtonElement>(".spec-build")!;
+    expect(build.textContent).toBe("Build it");
+    expect(build.classList.contains("primary")).toBe(true);
+    expect(root.querySelector(".spec-say-hint")?.textContent).toContain("Build it");
+    expect(root.querySelector(".spec-status")).toBeNull();
   });
 });
 

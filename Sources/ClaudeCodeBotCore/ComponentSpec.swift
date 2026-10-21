@@ -107,6 +107,39 @@ public struct ComponentSpec: Codable, Equatable, Identifiable, Sendable {
         }
     }
 
+    /// A change to a built component, asked in its panel: the version it makes and how it goes.
+    public struct Change: Codable, Equatable, Sendable {
+        public enum State: String, Codable, Sendable {
+            /// Maintainer is making `version`.
+            case working
+            /// Maintainer asked one question first; the answer sends the change again.
+            case asking
+            /// `version` is in the library.
+            case updated
+            /// Maintainer's turn ended without it (`error` says why).
+            case failed
+        }
+
+        public var state: State
+        /// The version it makes (v2 after the first build).
+        public var version: Int
+        /// What the user asked for, in order (empty: a rebuild with the panel's edits).
+        public var said: [String]
+        public var startedAt: Date
+        public var endedAt: Date?
+        public var error: String?
+        /// Maintainer was busy when it was sent: the turn that ends first is not the answer to it.
+        public var waitTurn: Bool
+
+        public init(version: Int, said: [String], startedAt: Date = Date(), waitTurn: Bool = false) {
+            state = .working
+            self.version = version
+            self.said = said
+            self.startedAt = startedAt
+            self.waitTurn = waitTurn
+        }
+    }
+
     public var id: UUID
     /// The reply it is made from.
     public var messageID: UUID?
@@ -164,6 +197,12 @@ public struct ComponentSpec: Codable, Equatable, Identifiable, Sendable {
     /// What a fork of the bot that wrote the reply told Maintainer about it (`ComponentBrief`):
     /// its purpose, the user's message, each field and whether a command can get it.
     public var brief: String?
+    /// The version in the library: 1 once first built, one more each change that lands.
+    public var version: Int?
+    /// The last (or current) change asked for in the panel once it was built.
+    public var change: Change?
+    /// What the user typed while a build was under way: sent together as the next change.
+    public var queued: [String]?
     public var createdAt: Date
 
     public init(id: UUID = UUID(), messageID: UUID? = nil, name: String, about: String = "", folder: String, bots: [String], createdAt: Date = Date()) {
@@ -199,6 +238,9 @@ public struct ComponentSpec: Codable, Equatable, Identifiable, Sendable {
 
     /// The card key its test runs go under (`ComponentCommands`), apart from chat cards and pins.
     public var card: String { "spec/\(id.uuidString)" }
+
+    /// The version a change now makes: the next after the one in the library.
+    public var nextVersion: Int { (version ?? 1) + 1 }
 
     /// The bot that wrote the reply is drawing it now.
     public var filling: Bool { filledBy != nil && filled == nil && fillError == nil }
@@ -544,7 +586,7 @@ public enum ComponentSpecs {
     }
 
     static func tagNote(_ spec: ComponentSpec) -> String {
-        "Answer in one or two sentences, then <component-spec id=\"\(spec.id.uuidString)\">JSON</component-spec> with only what you set or change (name, about, fields [{name, type}], command, refresh: shown|interval|manual, minutes, similar, reuse, samples [{label, data}], questions [{id, key, text, options [{label, value}], suggested}]). Build nothing yet, and never run the command yourself: the user test-runs it from the panel."
+        "Answer in one or two sentences, then <component-spec id=\"\(spec.id.uuidString)\">JSON</component-spec> with only what you set or change (name, about, fields [{name, type}], command, refresh: shown|interval|manual, minutes, similar, reuse, samples [{label, data}], questions [{id, key, text, options [{label, value}], suggested}]). Build nothing yet: it is a draft, built when the user presses Build it. Never run the command yourself: the user test-runs it from the panel."
     }
 
     /// How much of a reply Maintainer is sent, and of each result page it links (as text).
@@ -703,6 +745,31 @@ public enum ComponentSpecs {
         if !spec.pendingEdits.isEmpty { said += "\nTheir edits: " + spec.pendingEdits.joined(separator: "; ") }
         said += "\nThe spec now:\n\(summary(of: spec))\n\(tagNote(spec))"
         return said
+    }
+
+    /// What the user typed in a built component's panel ("Ask for changes…"): a change request,
+    /// built as the next version right away. Maintainer neither waits for a Build press nor asks
+    /// for one; only a request that could mean two different things gets one question first.
+    static func changeRequest(_ spec: ComponentSpec, said: [String], version: Int) -> String {
+        let id = spec.id.uuidString
+        let name = spec.built ?? spec.name
+        var text = "(Component spec \(id)) Change it now: build v\(version) of the component \"\(name)\" with this change, right away."
+        let words = said.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        if words.count == 1 {
+            text += "\nThe user asks: \(words[0])"
+        } else if words.count > 1 {
+            text += "\nThe user asks (in order, all for this version):\n" + words.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n")
+        } else {
+            text += "\nThe user asks for a new version as the spec now says."
+        }
+        if !spec.pendingEdits.isEmpty { text += "\nTheir edits in the panel: " + spec.pendingEdits.joined(separator: "; ") }
+        text += "\nThe spec now:\n\(summary(of: spec))"
+        text += "\nThis is a change request, not a discussion. Do not wait for a Build press and do not ask the user to press anything: have the component editor change template.html and about.md of \(name) now (the same component and name), keeping its data format unless the change needs other fields. "
+        text += fieldGroups(live: spec.command != nil)
+        text += " Only if the request is genuinely ambiguous (two readings that would build different things), do not build; ask exactly one question in \"questions\" with 2 or 3 short answers and the one you suggest; the user's answer comes back as the next change request."
+        text += " Never run the command yourself. The app sees the new version land in the library and updates it under the reply and on " + spec.bots.joined(separator: ", ") + "; do not add it to lists yourself."
+        text += "\nAnswer in one or two sentences, then <component-spec id=\"\(id)\">JSON</component-spec> with only what you changed (name, about, fields [{name, type}], command, refresh: shown|interval|manual, minutes), or with the one question."
+        return text
     }
 
     /// Build it.

@@ -5,8 +5,9 @@ import Foundation
 /// away (or reuses a library component), asking nothing; the chip under the reply says Building…,
 /// then the component itself shows there, on the bot's list. The panel does not open by itself:
 /// the component's "Edit spec" opens the spec in the right panel, where the user and Maintainer
-/// change it (a side conversation; edits by either show in the fields) and Build it makes a new
-/// version. Test run and the component's Command go through the component command allow flow
+/// change it (a side conversation; edits by either show in the fields). A draft is built with
+/// Build it; once built, what the user types there is a change request built as its next version
+/// right away (`sendChange`), what they type meanwhile is queued for the one after. Test run and the component's Command go through the component command allow flow
 /// (`ComponentCommands`): the exact command and folder are shown and nothing runs until the user
 /// allows it; nothing runs by itself when it lands.
 ///
@@ -194,18 +195,40 @@ extension Workspace {
         }
     }
 
-    /// The user picked an answer to one of Maintainer's questions.
+    /// The user picked an answer to one of Maintainer's questions. The answer to the one question
+    /// a change asked carries that change on at once (with the words it was asked with).
     public func answerSpec(_ id: UUID, question: String, option: Int, in chat: Bot) {
         chat.editSpecs { specs in
             guard let at = specs.firstIndex(where: { $0.id == id }), specs[at].status != .building else { return }
             ComponentSpecs.answer(question, option: option, in: &specs[at])
         }
+        guard let spec = chat.specs.first(where: { $0.id == id }), spec.built != nil,
+              let change = spec.change, change.state == .asking, spec.questions.isEmpty else { return }
+        sendChange(id, said: change.said, in: chat)
     }
 
-    /// "Anything to add?": the user's words (with their edits since) go to Maintainer.
+    /// "Ask for changes…" / "Anything to add?". Once built, what the user types is a change
+    /// request: its next version is built right away (no Build press). While a build or change is
+    /// under way the words wait and go together with the next request. A draft's words are talk:
+    /// it is built when the user presses Build it.
     public func saySpec(_ id: UUID, text: String, in chat: Bot) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var spec = chat.specs.first(where: { $0.id == id }), !text.isEmpty || !spec.pendingEdits.isEmpty else { return }
+        if spec.status == .building {
+            guard !text.isEmpty else { return }
+            spec.conversation.append(.init(kind: .user, text: text))
+            spec.queued = (spec.queued ?? []) + [text]
+            let making = spec.change.map { "v\($0.version)" } ?? "the first version"
+            spec.conversation.append(.init(kind: .event, text: "Queued: goes to Maintainer with the next change, once \(making) is in"))
+            store(spec, in: chat)
+            return
+        }
+        if spec.built != nil, spec.existing == nil {
+            if !text.isEmpty { spec.conversation.append(.init(kind: .user, text: text)) }
+            store(spec, in: chat)
+            sendChange(id, said: text.isEmpty ? [] : [text], in: chat)
+            return
+        }
         if !text.isEmpty { spec.conversation.append(.init(kind: .user, text: text)) }
         let request = ComponentSpecs.sayRequest(spec, text: text)
         spec.pendingEdits = []
@@ -214,6 +237,66 @@ extension Workspace {
             if let at = specs.firstIndex(where: { $0.id == id }) { specs[at] = spec }
         }
         handToMaintainer(request)
+    }
+
+    /// A built component's change goes to Maintainer now, as its next version: the panel says
+    /// Maintainer is on it (and since when) until that version lands in the library, Maintainer
+    /// asks its one question, or its turn ends without it.
+    func sendChange(_ id: UUID, said: [String], in chat: Bot) {
+        guard var spec = chat.specs.first(where: { $0.id == id }), spec.built != nil else { return }
+        let version = spec.nextVersion
+        let request = ComponentSpecs.changeRequest(spec, said: said, version: version)
+        beginBuild(&spec, change: ComponentSpec.Change(version: version, said: said, waitTurn: maintainer.isWorking),
+                   event: "Sent to Maintainer: building v\(version) with this change", in: chat)
+        handToMaintainer(request)
+    }
+
+    /// The spec goes to building (a change tracked as its next version), and the app waits for
+    /// its component to land in the library.
+    private func beginBuild(_ spec: inout ComponentSpec, change: ComponentSpec.Change?, event: String, in chat: Bot) {
+        spec.status = .building
+        spec.asked = true
+        spec.change = change ?? spec.change
+        spec.questions = []
+        spec.pendingEdits = []
+        spec.queued = nil
+        spec.conversation.append(.init(kind: .event, text: event))
+        store(spec, in: chat)
+        let had = components.names.contains(spec.name)
+        specBuilds[spec.name] = (chat.id, spec.id, had ? components.versions[spec.name, default: 0] : nil)
+        components.markWorking(spec.name, change: change == nil ? "built from a component spec" : "changed from its spec panel")
+    }
+
+    /// Maintainer's turn ended: a change it was making that has not landed and has nothing left
+    /// running in the background did not happen; the panel says so with Maintainer's words (a
+    /// late landing still counts). A change sent while Maintainer was busy skips the turn that
+    /// was already going. Runs after the reply's own tags are acted on.
+    func settleSpecChanges(after message: ChatMessage) {
+        let running = message.backgroundTasks?.contains(where: \.isRunning) ?? false
+        for chat in chatsWithPins {
+            guard chat.specs.contains(where: { $0.change?.state == .working && $0.status == .building }) else { continue }
+            var stopped: [String] = []
+            chat.editSpecs { specs in
+                for at in specs.indices where specs[at].change?.state == .working && specs[at].status == .building {
+                    if specs[at].change?.waitTurn == true, message.role != .error {
+                        specs[at].change?.waitTurn = false
+                        continue
+                    }
+                    if running, message.role != .error { continue }
+                    let words = message.text.split(whereSeparator: \.isNewline).first.map(String.init)?.trimmingCharacters(in: .whitespaces) ?? ""
+                    let why = message.role == .error
+                        ? "Maintainer hit an error: \(ComponentSpecs.clip(words.isEmpty ? "no details" : words, 200))"
+                        : "Maintainer's turn ended without a new version" + (words.isEmpty ? "." : ": \(ComponentSpecs.clip(words, 200))")
+                    specs[at].change?.state = .failed
+                    specs[at].change?.error = why
+                    specs[at].change?.endedAt = Date()
+                    specs[at].status = .done
+                    specs[at].conversation.append(.init(kind: .event, text: "v\(specs[at].change?.version ?? 0) not made: \(why)"))
+                    stopped.append(specs[at].name)
+                }
+            }
+            for name in stopped { components.doneWorking(name) }
+        }
     }
 
     /// Maintainer's `<component-spec id>`: its values go into the spec, its words into the side
@@ -229,12 +312,24 @@ extension Workspace {
         chat.editSpecs { specs in
             guard let at = specs.firstIndex(where: { $0.id == uuid }) else { return }
             ComponentSpecs.update(&specs[at], with: json)
-            if specs[at].status == .building { ComponentSpecs.answerOpenQuestions(in: &specs[at]) }
+            if specs[at].status == .building, specs[at].change?.state == .working, specs[at].built != nil, let first = specs[at].questions.first {
+                // A change Maintainer finds ambiguous: its one question waits for the user.
+                specs[at].questions = [first]
+                specs[at].change?.state = .asking
+                specs[at].status = .done
+            } else if specs[at].status == .building {
+                ComponentSpecs.answerOpenQuestions(in: &specs[at])
+            }
             if !words.isEmpty, specs[at].conversation.last?.text != words {
                 specs[at].conversation.append(.init(kind: .maintainer, text: words))
             }
         }
         guard before.status == .building, let spec = chat.specs.first(where: { $0.id == uuid }) else { return }
+        if spec.change?.state == .asking, before.change?.state == .working {
+            for (name, build) in specBuilds where build.spec == uuid { specBuilds[name] = nil }
+            components.doneWorking(spec.name)
+            return
+        }
         if spec.reuse, let similar = spec.similar, components.names.contains(similar) {
             for (name, build) in specBuilds where build.spec == uuid { specBuilds[name] = nil }
             finish(uuid, component: similar, in: chat)
@@ -324,15 +419,15 @@ extension Workspace {
             finish(id, component: existing, in: chat)
             return
         }
-        spec.status = .building
-        spec.asked = true
-        spec.conversation.append(.init(kind: .event, text: spec.built == nil ? "Sent to Maintainer to build" : "Sent to Maintainer to build a new version"))
         let request = ComponentSpecs.buildRequest(spec)
-        spec.pendingEdits = []
-        store(spec, in: chat)
-        let had = components.names.contains(spec.name)
-        specBuilds[spec.name] = (chat.id, id, had ? components.versions[spec.name, default: 0] : nil)
-        components.markWorking(spec.name, change: "built from a component spec")
+        if spec.built != nil {
+            // Rebuild: tracked as the next version, like a change typed in the panel.
+            let version = spec.nextVersion
+            beginBuild(&spec, change: ComponentSpec.Change(version: version, said: [], waitTurn: maintainer.isWorking),
+                       event: "Sent to Maintainer to build a new version (v\(version))", in: chat)
+        } else {
+            beginBuild(&spec, change: nil, event: "Sent to Maintainer to build", in: chat)
+        }
         handToMaintainer(request)
     }
 
@@ -378,6 +473,7 @@ extension Workspace {
                 full.append(holder.name)
             }
         }
+        var queued: [String] = []
         chat.editSpecs { specs in
             guard let at = specs.firstIndex(where: { $0.id == id }) else { return }
             specs[at].status = .done
@@ -385,6 +481,18 @@ extension Workspace {
             specs[at].built = name
             specs[at].bots = had + added
             var events: [String] = []
+            if var change = specs[at].change, change.state != .updated {
+                // The change's version landed (also after its turn was said to have failed).
+                change.state = .updated
+                change.error = nil
+                change.endedAt = Date()
+                specs[at].change = change
+                specs[at].version = change.version
+                events.append("Updated to v\(change.version)")
+            } else if specs[at].version == nil {
+                specs[at].version = 1
+            }
+            queued = specs[at].queued ?? []
             if !added.isEmpty { events.append("\(name) added to \(added.joined(separator: ", "))") }
             if !had.isEmpty { events.append("\(name) already on \(had.joined(separator: ", "))'s list") }
             if events.isEmpty { events.append("\(name) is in the library") }
@@ -396,6 +504,8 @@ extension Workspace {
             tell(chat, text)
         }
         askToFill(id, component: name, in: chat)
+        // What the user typed meanwhile goes now, as the next version.
+        if !queued.isEmpty { sendChange(id, said: queued, in: chat) }
     }
 
     // MARK: Filled by the bot that wrote the reply
@@ -505,7 +615,25 @@ extension Workspace {
             )
         }
         var steps: [SpecPayload.Step]?
-        if spec.status != .draft, spec.existing == nil, !spec.reuse {
+        if let change = spec.change, spec.built != nil {
+            // A change to a built one: its version is what the steps follow.
+            let v = "v\(change.version)"
+            let made: String = switch change.state {
+            case .working: "doing"
+            case .updated: "done"
+            case .asking: "todo"
+            case .failed: "failed"
+            }
+            steps = [
+                .init(label: "Sent to Maintainer", state: "done"),
+                .init(label: change.state == .asking ? "Maintainer asks one question" : "Maintainer makes \(v)", state: change.state == .asking ? "doing" : made),
+                .init(label: "\(v) in the library", state: change.state == .updated ? "done" : change.state == .failed ? "failed" : "todo"),
+            ]
+            if change.state == .updated, let writer = spec.filledBy {
+                steps?.append(spec.fillError != nil ? .init(label: "\(writer) did not fill it", state: "todo")
+                    : .init(label: "Filled by \(writer)", state: spec.filling ? "doing" : "done"))
+            }
+        } else if spec.status != .draft, spec.existing == nil, !spec.reuse {
             let built = spec.status == .done
             steps = [
                 .init(label: "Sent to Maintainer", state: "done"),
@@ -552,6 +680,14 @@ extension Workspace {
             components: templates,
             testRun: testRun,
             steps: steps,
+            version: spec.built == nil ? nil : (spec.version ?? 1),
+            change: spec.change.map { change in
+                .init(state: change.state.rawValue, version: change.version,
+                      startedAt: Int(change.startedAt.timeIntervalSince1970 * 1000),
+                      endedAt: change.endedAt.map { Int($0.timeIntervalSince1970 * 1000) },
+                      error: change.error)
+            },
+            queued: spec.queued ?? [],
             wide: specPanelWide
         )
     }
@@ -605,8 +741,18 @@ public struct SpecPayload: Encodable, Equatable {
 
     public struct Step: Encodable, Equatable {
         var label: String
-        /// done, doing or todo.
+        /// done, doing, todo or failed.
         var state: String
+    }
+
+    /// A change to a built one: working (Maintainer making `version`), asking, updated or failed.
+    public struct ChangeView: Encodable, Equatable {
+        var state: String
+        var version: Int
+        /// Milliseconds since 1970, for the panel's elapsed time.
+        var startedAt: Int
+        var endedAt: Int?
+        var error: String?
     }
 
     var id: String
@@ -638,6 +784,11 @@ public struct SpecPayload: Encodable, Equatable {
     var components: [String: ChatPayload.Component]
     public var testRun: TestRunView?
     var steps: [Step]?
+    /// The version in the library once built.
+    var version: Int?
+    var change: ChangeView?
+    /// What the user typed during a build: it goes with the next change.
+    var queued: [String]
     var wide: Bool
 
     public func json() -> String {
