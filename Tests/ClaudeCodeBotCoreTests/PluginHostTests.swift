@@ -49,7 +49,7 @@ struct PluginHostTests {
         host.stop()
     }
 
-    @Test func comesBackWithinThreeSecondsAfterBeingKilled() async throws {
+    @Test(.wallClock) func comesBackWithinThreeSecondsAfterBeingKilled() async throws {
         try hostPlugin("shout", """
         export function activate(ccb) { ccb.hooks.beforeSend((m) => m.text + "!"); }
         """)

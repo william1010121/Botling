@@ -120,7 +120,7 @@ struct DoctorTests {
 
     // MARK: Running commands
 
-    @Test func aCommandThatHangsIsStoppedAtTheTimeout() async {
+    @Test(.wallClock) func aCommandThatHangsIsStoppedAtTheTimeout() async {
         let start = Date()
         let result = await CommandRunner.run(URL(filePath: "/bin/sleep"), ["30"], timeout: 0.5)
         #expect(result?.timedOut == true)
