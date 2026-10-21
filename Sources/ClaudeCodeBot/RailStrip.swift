@@ -212,12 +212,7 @@ struct RailStrip: View {
             || bot.phase != .asleep || bot.hasUnread || waiting(Workspace.maintainerID)
     }
 
-    private var maintainerStatus: String {
-        if let (name, change) = workspace.components.working.first { return L("Component {0}: {1}", name, change) }
-        let bot = workspace.maintainer
-        if bot.isWorking { return L("Working") }
-        return bot.hasUnread ? L("Done, click to see") : bot.statusText
-    }
+    private var maintainerStatus: String { workspace.maintainerStatus }
 }
 
 /// One bot's face in the strip.

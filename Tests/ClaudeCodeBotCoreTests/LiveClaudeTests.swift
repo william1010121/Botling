@@ -467,7 +467,7 @@ extension LiveClaudeTests {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }
         let real = ClaudeAgentProcess.launcher(executable: executable)
-        let ccb = URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../.build/debug/ClaudeCodeBot").standardizedFileURL
+        let ccb = TestPaths.app
         let workspace = Workspace(
             root: root.appending(path: "ccb"),
             builtInPlugins: URL(filePath: #filePath).deletingLastPathComponent().appending(path: "../../Sources/ClaudeCodeBot/Resources/plugins").standardizedFileURL,
@@ -659,7 +659,7 @@ extension LiveClaudeTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
     func aBotThatOnlyPromisesIsSentBackToDoIt() async throws {
         let executable = try #require(ClaudeExecutableLocator().locate())
-        let app = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appending(path: ".build/debug/ClaudeCodeBot")
+        let app = TestPaths.app
         try #require(FileManager.default.isExecutableFile(atPath: app.path), "swift build first")
         let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
@@ -687,7 +687,7 @@ extension LiveClaudeTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
     func theReplyArrivesBeforeTheStopHookIsDone() async throws {
         let executable = try #require(ClaudeExecutableLocator().locate())
-        let app = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appending(path: ".build/debug/ClaudeCodeBot")
+        let app = TestPaths.app
         try #require(FileManager.default.isExecutableFile(atPath: app.path), "swift build first")
         let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)

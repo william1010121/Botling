@@ -675,12 +675,12 @@ body.board .editor .cm-scroller { max-height: 72px; }
   display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; cursor: pointer;
 }
 .board-button.primary-outline { border-color: var(--blue); background: transparent; }
-/* Square cells like a home screen's widgets: pins.ts sets the columns (as many of at least 150px
-   as fit) and the cell size from the Board's width; these are the defaults until it has measured.
-   The gap is pins.ts's boardGap. */
+/* Square cells like a home screen's widgets: pins.ts sets the columns (as many of at least
+   --board-cell-min as fit) and the cell size from the Board's width; these are the defaults until
+   it has measured. --board-cell-min and --board-gap are pins.ts's boardCell and boardGap. */
 .board-grid {
-  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; display: grid; gap: 14px; padding-bottom: 8px;
-  grid-template-columns: repeat(var(--board-cols, auto-fill), minmax(min(150px, 100%), 1fr));
+  flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; display: grid; gap: var(--board-gap); padding-bottom: 8px;
+  grid-template-columns: repeat(var(--board-cols, auto-fill), minmax(min(var(--board-cell-min), 100%), 1fr));
   grid-auto-rows: var(--board-cell, 160px); grid-auto-flow: dense; align-content: start;
 }
 .board-grid::-webkit-scrollbar { display: none; }

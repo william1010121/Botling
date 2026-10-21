@@ -77,7 +77,7 @@ public enum ComponentShot {
                 } else {
                     var sizes: [PinnedComponent.Size] = []
                     for part in value.split(separator: ",") {
-                        guard let size = PinnedComponent.Size(spelled: String(part)) else { return .failure(.usage("Not a Board size: \(part) (1x1 to 4x4).")) }
+                        guard let size = PinnedComponent.Size(spelled: String(part)) else { return .failure(.usage("Not a Board size: \(part) (\(PinnedComponent.Size.rangeText)).")) }
                         if !sizes.contains(size) { sizes.append(size) }
                     }
                     guard !sizes.isEmpty else { return .failure(.usage("--sizes names none.")) }

@@ -84,6 +84,10 @@ export class Host {
   private nextID = 1;
   /** The plugin whose code is running, so a crash can be blamed on it. */
   private current: string | null = null;
+  /** Told to shut down: once the answer is written, `onShutdown` ends the process. */
+  private shuttingDown = false;
+  /** What ends the host after the shutdown answer is written (`main` exits once stdout is flushed). */
+  onShutdown: () => void = () => {};
 
   constructor(private readonly write: (message: Message) => void, private readonly importer: (spec: HostPluginSpec) => Promise<Activate> = importPlugin) {}
 
@@ -105,6 +109,7 @@ export class Host {
     } catch (error) {
       if (message.id !== undefined) this.write({ id: message.id, error: { message: errorText(error) } });
     }
+    if (this.shuttingDown) this.onShutdown();
   }
 
   request(method: string, params: JSONValue): Promise<JSONValue> {
@@ -147,7 +152,7 @@ export class Host {
       }
       case "shutdown":
         for (const name of [...this.plugins.keys()]) this.unload(name);
-        setTimeout(() => process.exit(0), 10);
+        this.shuttingDown = true;
         return null;
       default:
         throw new Error(`Unknown method "${method}".`);
@@ -388,6 +393,9 @@ async function importPlugin(spec: HostPluginSpec): Promise<Activate> {
   return activate;
 }
 
+/** The most the host waits for stdout to drain before it exits on shutdown, in ms. */
+const shutdownFallback = 1000;
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -402,6 +410,12 @@ export function main(): void {
   console.info = toStderr;
   console.debug = toStderr;
   const host = new Host(write);
+  // Exits once everything written has reached the pipe; a pipe that never drains (ClaudeCodeBot
+  // stopped reading) still lets it go after `shutdownFallback` ms.
+  host.onShutdown = () => {
+    setTimeout(() => process.exit(0), shutdownFallback).unref();
+    out.write("", () => process.exit(0));
+  };
   process.on("uncaughtException", (error) => host.report(null, error));
   process.on("unhandledRejection", (error) => host.report(null, error));
   const lines = createInterface({ input: process.stdin });

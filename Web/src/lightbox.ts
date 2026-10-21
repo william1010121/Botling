@@ -1,8 +1,10 @@
 import { post } from "./bridge";
+import { escapeRegExp, shared } from "./contract";
 import { t } from "./i18n";
 import { escapeHTML } from "./util";
 
-const imageExtensions = /\.(png|jpe?g|gif|webp|heic|heif|bmp|tiff?|svg|avif)$/i;
+/** Swift's `ImageFile.extensions`: the pictures it lets the lightbox hand to Preview. */
+const imageExtensions = new RegExp(`\\.(${shared.imageExtensions.map(escapeRegExp).join("|")})$`, "i");
 
 /** A picture the chat can show itself, rather than a page or file that opens in a window. */
 export function isImageURL(url: string): boolean {

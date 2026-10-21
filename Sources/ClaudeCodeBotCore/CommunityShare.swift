@@ -8,6 +8,8 @@ public enum CommunityShare {
     /// Where shared features go.
     public static let upstream = "william1010121/ClaudeCodeBot"
     public static let label = "community-feature"
+    /// The branch of `upstream` pull requests go to, and features are compared with.
+    public static let upstreamBranch = "main"
 
     /// One feature: a local branch with commits upstream does not have.
     public struct Feature: Equatable, Sendable {
@@ -56,22 +58,24 @@ public enum CommunityShare {
 
     // MARK: Reading the repository
 
-    /// What features are compared with: upstream's main when that remote is there, else your
-    /// fork's, else your own main.
+    /// What features are compared with: upstream's `upstreamBranch` when that remote is there,
+    /// else your fork's, else your own default branch.
     public static func base(in repo: URL) -> String {
-        for ref in ["upstream/main", "origin/main", "main", "master"]
+        let local = GitDiff.defaultBranch(folder: repo) ?? upstreamBranch
+        for ref in ["upstream/\(upstreamBranch)", "origin/\(upstreamBranch)", local]
         where git(repo, ["rev-parse", "--verify", "--quiet", ref + "^{commit}"]) != nil {
             return ref
         }
-        return "main"
+        return local
     }
 
-    /// The local branches ahead of `base` (main and master themselves aside), by name.
+    /// The local branches ahead of `base` (the default branch and upstream's own aside), by name.
     public static func features(in repo: URL, base: String? = nil) -> [Feature] {
         let base = base ?? self.base(in: repo)
         let branches = (git(repo, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]) ?? "")
             .split(separator: "\n").map(String.init)
-        return branches.filter { !["main", "master"].contains($0) }.sorted().compactMap { feature($0, in: repo, base: base) }
+        let mainline = Set([upstreamBranch, GitDiff.defaultBranch(folder: repo)].compactMap { $0})
+        return branches.filter { !mainline.contains($0) }.sorted().compactMap { feature($0, in: repo, base: base) }
     }
 
     /// `branch` as a feature; nil when it has nothing `base` lacks (or is not a branch).
@@ -157,7 +161,7 @@ public enum CommunityShare {
     /// `gh pr create` for `feature`, from `owner`'s fork to ClaudeCodeBot's main; `label: false`
     /// leaves the label out (someone without triage rights on ClaudeCodeBot may not add one).
     public static func pullRequest(for feature: Feature, owner: String, label: Bool) -> [String] {
-        var command = ["gh", "pr", "create", "--repo", upstream, "--base", "main",
+        var command = ["gh", "pr", "create", "--repo", upstream, "--base", upstreamBranch,
                        "--head", "\(owner):\(feature.branch)", "--title", feature.title, "--body", body(for: feature)]
         if label { command += ["--label", self.label] }
         return command
@@ -175,15 +179,20 @@ public enum CommunityShare {
 
     // MARK: The cards
 
-    /// The list card's words and choices: one per feature, then "Not now".
-    public static func listCard(_ features: [Feature], base: String) -> (text: String, choices: [Choice]) {
+    /// The most features the list card offers (it is a card of buttons, not a list to scroll).
+    public static let listedFeatures = 8
+
+    /// The list card's words and choices: one per feature offered (`offered`, the first
+    /// `listedFeatures`), then "Not now".
+    public static func listCard(_ features: [Feature], base: String) -> (text: String, choices: [Choice], offered: [Feature]) {
         let text = """
         **Which feature do you want to share?**
 
         These branches have commits \(base) does not. The one you pick is checked first (up to date, no keys or personal paths), then shared as a pull request to \(upstream).
         """
-        let choices = features.prefix(8).map { Choice(label: $0.title, detail: $0.summary) } + [Choice(label: "Not now")]
-        return (text, choices)
+        let offered = Array(features.prefix(listedFeatures))
+        let choices = offered.map { Choice(label: $0.title, detail: $0.summary) } + [Choice(label: "Not now")]
+        return (text, choices, offered)
     }
 
     /// The checklist card's words; ready when nothing failed.
@@ -225,9 +234,7 @@ public enum CommunityShare {
         guard let tool = arguments.first else { return (false, "Nothing to run.") }
         let executable: URL? = switch tool {
         case "git": gitURL
-        case "gh":
-            ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/etc/profiles/per-user/\(NSUserName())/bin/gh", "/run/current-system/sw/bin/gh"]
-                .first { FileManager.default.isExecutableFile(atPath: $0) }.map { URL(filePath: $0) }
+        case "gh": GitHubCLI.locate()
         default: nil
         }
         guard let executable else {

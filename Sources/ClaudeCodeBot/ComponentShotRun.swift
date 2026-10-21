@@ -41,9 +41,26 @@ enum ComponentShotRun {
         var key: String { "\(surface)|\(size)" }
     }
 
+    /// How long each step is given, in seconds. The page says when it is ready, but not when a
+    /// component's frames have finished drawing, so these are waits, named here with why.
+    enum Timing {
+        /// The whole run: an agent waiting on it must never hang.
+        static let giveUp: TimeInterval = 180
+        /// After the state is given, before the second script (open the sheet, float): the
+        /// first drawing has started.
+        static let beforeSecondScript: TimeInterval = 0.5
+        /// After the page is ready, before the picture: frames load their templates and draw.
+        static let settle: TimeInterval = 3.5
+        /// A page that never says it is ready is pictured anyway after this long.
+        static let pageNeverReady: TimeInterval = 20
+        /// A replayed frame: after its first report (more may follow at once), and at the most.
+        static let afterReport: TimeInterval = 0.5
+        static let replayAtMost: TimeInterval = 5
+    }
+
     private static func run(_ options: ComponentShot.Options) async {
         // Never hang an agent waiting on it.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 180) { fail("Gave up: drawing took over 3 minutes.", code: 3) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Timing.giveUp) { fail("Gave up: drawing took over \(Int(Timing.giveUp / 60)) minutes.", code: 3) }
         guard let page = ChatSurface.pageURL else { fail("The chat page is not in this build.", code: 3) }
         let name = options.component.lastPathComponent
         let files = FileManager.default
@@ -83,8 +100,8 @@ enum ComponentShotRun {
         var drawn: [Drawn] = []
         for surface in options.surfaces {
             let root = scratch.appending(path: surface.rawValue)
-            try? FileManager.default.createDirectory(at: root.appending(path: "main"), withIntermediateDirectories: true)
-            let store = BotStore(directory: root.appending(path: "main"))
+            try? FileManager.default.createDirectory(at: Workspace.Layout.mainBot(in: root), withIntermediateDirectories: true)
+            let store = BotStore(directory: Workspace.Layout.mainBot(in: root))
             switch surface {
             case .chat:
                 var message = ChatMessage(role: .bot, text: "", date: Date())
@@ -189,7 +206,7 @@ enum ComponentShotRun {
 
     /// A workspace under `root` whose library has a copy of the component.
     private static func prepare(_ root: URL, component: URL, name: String) -> Workspace {
-        let library = root.appending(path: "plugins/ccb-components/components")
+        let library = Workspace.Layout.components(in: root)
         try? FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
         try? FileManager.default.removeItem(at: library.appending(path: name))
         try? FileManager.default.copyItem(at: component, to: library.appending(path: name))
@@ -241,12 +258,12 @@ enum ComponentShotRun {
             listener.onReady = {
                 view.evaluateJavaScript(script)
                 if let after {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { view.evaluateJavaScript(after) }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Timing.beforeSecondScript) { view.evaluateJavaScript(after) }
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { finish() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + Timing.settle) { finish() }
             }
             // A page that never says it is ready is still pictured.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 20) { finish() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Timing.pageNeverReady) { finish() }
             view.loadFileURL(page, allowingReadAccessTo: URL(filePath: "/"))
         }
     }
@@ -272,8 +289,8 @@ enum ComponentShotRun {
                 continuation.resume(returning: listener.reports.values.first)
                 window.contentView = nil
             }
-            listener.onReport = { DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { finish() } }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { finish() }
+            listener.onReport = { DispatchQueue.main.asyncAfter(deadline: .now() + Timing.afterReport) { finish() } }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Timing.replayAtMost) { finish() }
             view.loadHTMLString(frame.srcdoc, baseURL: URL(string: "https://component-shot.invalid/"))
         }
     }

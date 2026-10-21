@@ -407,3 +407,11 @@ extension Workspace {
         """
     }
 }
+
+extension Workspace {
+    /// Whether "Review with Codex" is offered for `bot`: a project's manager with a folder of its
+    /// own (not Codex itself, a standalone bot or the main bot).
+    public func canRequestReview(of bot: Bot) -> Bool {
+        bot !== codexBot && bot.profile.role == .manager && !bot.profile.isStandalone
+    }
+}

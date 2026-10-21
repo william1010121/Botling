@@ -9,6 +9,10 @@ import Foundation
 /// inside a folder called `artifacts` (where bots and teams save results, so pictures beside a
 /// page load too), and a page named in a `<show>` card elsewhere (that one file only).
 public enum PagePreview {
+    /// The desktop size a page is drawn at for its card, then scaled down: its screenshot
+    /// (PageShotMaker) and the card's live frame use the same, so both show the same layout.
+    public static let viewport = (width: 1280, height: 800)
+
     public static let component = "網頁預覽卡片"
     public static let scheme = "ccb-preview"
     /// At most this many pages are previewed under one message.
@@ -242,6 +246,18 @@ public enum PagePreview {
         return previewURL(for: real, version: date)
     }
 
+    /// What a file window loads a text file as, so WebKit reads it as UTF-8: a page as a page,
+    /// plain text as text, and Markdown, JSON and logs as their source (`shownAsSource`) rather
+    /// than as a download or a viewer of WebKit's own. Nil: not a text file the window reads.
+    public static func windowTextType(forExtension ext: String) -> String? {
+        let ext = ext.lowercased()
+        if shownAsSource.contains(ext) { return "text/plain" }
+        guard let type = mimeTypes[ext], type == "text/html" || type == "text/plain" else { return nil }
+        return type
+    }
+
+    static let shownAsSource: Set<String> = ["md", "json", "log"]
+
     static let mimeTypes: [String: String] = [
         "html": "text/html", "htm": "text/html", "css": "text/css", "js": "application/javascript",
         "mjs": "application/javascript", "json": "application/json", "txt": "text/plain", "csv": "text/plain",
@@ -259,7 +275,7 @@ public enum PagePreview {
 /// through `ccb-preview:` like a result page, and the page hands the template a map from the path
 /// as written to the URL to load (`ccb.image(path)`). Only those picture files are served.
 public enum ComponentImages {
-    static let extensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "heif", "avif", "bmp", "tif", "tiff", "ico"]
+    static var extensions: Set<String> { ImageFile.extensions }
 
     private static let lock = NSLock()
     nonisolated(unsafe) private static var pictures: Set<String> = []

@@ -151,8 +151,23 @@ public enum ConnectionErrorText {
 /// Whether Claude's API can be reached again: any HTTP answer from it counts (even an error
 /// status), only no answer at all does not.
 public enum NetworkProbe {
+    /// Where bots reach the API when nothing says otherwise.
+    static let defaultEndpoint = URL(string: "https://api.anthropic.com/")!
+    /// How long one probe waits for an answer: a network that is back answers well within it.
+    static let timeout: TimeInterval = 10
+
+    /// The API bots use: `ANTHROPIC_BASE_URL` from the app's environment or Claude Code's
+    /// settings.json (a gateway or proxy), else Anthropic's.
+    static func endpoint(environment: [String: String] = ProcessInfo.processInfo.environment,
+                         config: URL = ClaudeCodeFiles.configFolder()) -> URL {
+        let configured = environment["ANTHROPIC_BASE_URL"] ?? ClaudeCodeFiles.settingsEnvironment(config: config)["ANTHROPIC_BASE_URL"]
+        guard let configured, let url = URL(string: configured.trimmingCharacters(in: .whitespaces)),
+              let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http", url.host != nil else { return defaultEndpoint }
+        return url
+    }
+
     public static let anthropic: @Sendable () async -> Bool = {
-        var request = URLRequest(url: URL(string: "https://api.anthropic.com/")!, timeoutInterval: 10)
+        var request = URLRequest(url: endpoint(), timeoutInterval: timeout)
         request.httpMethod = "HEAD"
         let session = URLSession(configuration: .ephemeral)
         defer { session.finishTasksAndInvalidate() }

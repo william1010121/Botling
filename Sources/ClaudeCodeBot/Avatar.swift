@@ -1,11 +1,11 @@
+import ClaudeCodeBotCore
 import SwiftUI
 
-/// Colored shapes with big eyes. Each bot gets one; its eyes show how it is doing.
-enum AvatarKind: String, CaseIterable {
-    case circle, star, square, triangle, diamond, clover, heart, hexagon, drop, pentagon
-    case cloud, octagon, moon, pill, ghost, burst
-    /// Codex's own: a light rounded square with dark eyes. Never handed to a project.
-    case codex
+/// Colored shapes with big eyes (Core's `AvatarShape`, drawn here). Each bot gets one; its eyes
+/// show how it is doing.
+typealias AvatarKind = AvatarShape
+
+extension AvatarShape {
 
     var color: Color {
         switch self {
@@ -32,7 +32,7 @@ enum AvatarKind: String, CaseIterable {
     /// A stable pick for a project, so the same folder keeps the same face.
     static func forName(_ name: String) -> AvatarKind {
         let sum = name.unicodeScalars.reduce(0) { ($0 &* 31 &+ Int($1.value)) & 0xFFFF }
-        let choices = allCases.filter { $0 != .circle && $0 != .codex }
+        let choices = allCases.filter { $0 != .main && $0 != .codex }
         return choices[sum % choices.count]
     }
 

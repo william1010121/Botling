@@ -149,16 +149,7 @@ public enum PluginInstaller {
     }
 
     static func describe(permission: String) -> String {
-        switch permission {
-        case "composer": L("read and change what you type in the input box")
-        case "messages": L("read the conversation")
-        case "network": L("connect to the internet")
-        case "files": L("read and write files on your computer")
-        case "exec": L("run programs on your computer")
-        case "bots": L("talk to bots on your behalf and make new ones")
-        case "claude": L("give the bots new tools")
-        default: "\"\(permission)\""
-        }
+        PluginPermission(rawValue: permission)?.allows ?? "\"\(permission)\""
     }
 
     private static func run(_ executable: String, _ arguments: [String], in folder: URL) async throws {

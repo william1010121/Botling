@@ -235,8 +235,7 @@ extension Workspace {
     private func runGroupRound(in id: UUID, to members: [Member], addressed: Bool, newest: UUID?, ask: String?) async {
         guard let chat = groupChats[id] else { return }
         // What was said up to the line this round answers; later lines belong to later rounds.
-        let upTo = newest.flatMap { id in chat.messages.firstIndex { $0.id == id } } ?? chat.messages.count - 1
-        let before = Array(chat.messages.prefix(upTo + 1).suffix(15))
+        let before = Self.transcriptBefore(newest, in: chat.messages)
         var said: [UUID] = []
         var unheard: [String] = []
         var failed = false
@@ -260,24 +259,12 @@ extension Workspace {
             case let .failed(why):
                 failed = true
                 unheard.append(L("{0} ({1})", member.name, Self.firstLine(of: why)))
-            case .reply(var text, let steps):
-                if let filter = bot.replyFilter?() { text = await filter(text) }
-                guard !Self.isPass(text) else { continue }
-                let parsed = ReplyParser.parseAll(text)
-                var line = ChatMessage(role: .bot, text: parsed.body, choices: parsed.choices, sourceID: member.id)
-                if !parsed.displays.isEmpty { line.displays = parsed.displays }
-                line.steps = steps
-                if !line.text.isEmpty || line.choices != nil || line.displays != nil {
-                    chat.post(line)
-                    said.append(line.id)
-                    bot.replyObserver?(line)
-                    if selection == id { chat.markRead() }
-                }
+            case let .reply(text, steps):
                 // Tags act only for the main bot (the front desk) and for bots you named: a bot
                 // that chimed in on its own does not get to start teams, bots or installs.
-                if !parsed.requests.isEmpty, addressed || member.id == Self.mainBotID {
-                    handle(parsed.requests, from: member.id == Self.mainBotID ? nil : project(member.id))
-                }
+                let posted = await postGuestReply(text, steps: steps, from: member, bot: bot, into: chat, seen: selection == id,
+                                                  policy: .init(passes: true, tagsAct: addressed || member.id == Self.mainBotID))
+                if let posted { said.append(posted) }
             }
             refreshWaiting()
         }
@@ -285,6 +272,49 @@ extension Workspace {
         if !unheard.isEmpty, addressed || failed {
             tell(chat, L("Did not answer this time: {0}.", unheard.joined(separator: ", ")))
         }
+    }
+
+    /// How many of a chat's lines (up to the one being answered) a bot answering in a group or
+    /// called into another chat is shown: enough to follow the talk, few enough for one turn.
+    static let guestTranscriptLines = 15
+
+    /// The lines up to `newest` (the line a round answers; later ones belong to later rounds), the
+    /// latest `guestTranscriptLines` of them.
+    static func transcriptBefore(_ newest: UUID?, in messages: [ChatMessage]) -> [ChatMessage] {
+        let upTo = newest.flatMap { id in messages.firstIndex { $0.id == id } } ?? messages.count - 1
+        return Array(messages.prefix(upTo + 1).suffix(guestTranscriptLines))
+    }
+
+    /// What differs between a group round and a call-in for a reply: whether the bot may pass
+    /// (`<pass/>`, saying nothing) and whether its tags act.
+    struct GuestReplyPolicy {
+        var passes: Bool
+        var tagsAct: Bool
+    }
+
+    /// A reply from a bot answering in `chat` (a group, or a chat it was called into): filtered
+    /// by plugins, parsed, posted as its line with its steps, its tags handled when `policy`
+    /// lets them act. The posted line's id; nil when nothing was posted.
+    func postGuestReply(_ reply: String, steps: [Step]?, from member: Member, bot: Bot, into chat: Bot, seen: Bool, policy: GuestReplyPolicy, keep: ((ChatMessage) -> Void)? = nil) async -> UUID? {
+        var text = reply
+        if let filter = bot.replyFilter?() { text = await filter(text) }
+        if policy.passes, Self.isPass(text) { return nil }
+        let parsed = ReplyParser.parseAll(text)
+        var line = ChatMessage(role: .bot, text: parsed.body, choices: parsed.choices, sourceID: member.id)
+        if !parsed.displays.isEmpty { line.displays = parsed.displays }
+        line.steps = steps
+        keep?(line)
+        var posted: UUID?
+        if !line.text.isEmpty || line.choices != nil || line.displays != nil {
+            chat.post(line)
+            posted = line.id
+            bot.replyObserver?(line)
+            if seen { chat.markRead() }
+        }
+        if !parsed.requests.isEmpty, policy.tagsAct {
+            handle(parsed.requests, from: member.id == Self.mainBotID ? nil : project(member.id))
+        }
+        return posted
     }
 
     /// What one bot is told for its turn: who is here, what was said, and when to stay quiet.

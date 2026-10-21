@@ -48,12 +48,7 @@ public struct GitHubCLI: Sendable {
 
     /// gh from the usual places.
     public static func locate() -> URL? {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        for path in ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "\(home)/.local/bin/gh", "/etc/profiles/per-user/\(NSUserName())/bin/gh", "/run/current-system/sw/bin/gh"]
-        where FileManager.default.isExecutableFile(atPath: path) {
-            return URL(filePath: path)
-        }
-        return nil
+        ClaudeExecutableLocator(command: "gh").installed().first
     }
 
     public static let notInstalled = "The GitHub CLI (gh) isn't installed. Install it (brew install gh), then sign in with gh auth login."

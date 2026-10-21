@@ -164,19 +164,31 @@ public final class ComponentCommands: ObservableObject {
 
     nonisolated(unsafe) private static let placeholder = #/\{([A-Za-z_][A-Za-z0-9_]*)\}/#
 
-    /// Why a value cannot go into a Detail command, or nil when it can: only letters, digits and
-    /// `. _ / -`, at most 200 of them, not starting with `-` (it would read as an option).
+    /// What a value filled into a Detail command may be: ASCII letters, digits and
+    /// `valuePunctuation`, at most `valueLength` of them, not starting with `-` (it would read as
+    /// an option). The check and the component editor's instructions both read these.
+    public nonisolated static let valueLength = 200
+    public nonisolated static let valuePunctuation = "._/-"
+    /// "letters, digits and . _ / -", as the check and the instructions say it.
+    nonisolated static var valueCharactersText: String {
+        "letters, digits and " + valuePunctuation.map(String.init).joined(separator: " ")
+    }
+
+    /// Why a value cannot go into a Detail command, or nil when it can (see `valueLength`).
     public nonisolated static func problem(withValue value: String, for name: String) -> String? {
         if value.isEmpty { return L("The value for {0} is empty.", "{\(name)}") }
-        if value.count > 200 { return L("The value for {0} is longer than 200 characters.", "{\(name)}") }
+        if value.count > valueLength { return L("The value for {0} is longer than {1} characters.", "{\(name)}", valueLength) }
         if value.hasPrefix("-") { return L("The value for {0} starts with \"-\".", "{\(name)}") }
         if value.unicodeScalars.contains(where: { !allowed.contains($0) }) {
-            return L("The value for {0} may only have letters, digits and . _ / -.", "{\(name)}")
+            return L("The value for {0} may only have letters, digits and {1}.", "{\(name)}", valuePunctuation.map(String.init).joined(separator: " "))
         }
         return nil
     }
 
-    private nonisolated static let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/-")
+    private nonisolated static let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" + valuePunctuation)
+
+    /// The limits a command's run has, as the instructions say them: "1 MB, 60 seconds".
+    nonisolated static var limitsText: String { "\(outputLimit / 1_000_000) MB, \(Int(timeout)) seconds" }
 
     /// The command line `template` makes with `values`: each `{name}` becomes its value as one
     /// single-quoted shell argument. Every placeholder needs a value, every value a placeholder,

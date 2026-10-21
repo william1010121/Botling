@@ -102,13 +102,19 @@ export function elapsed(from: number, now = Date.now()): string {
 }
 
 
+/**
+ * How long a change just sent shows as under way with no word from Swift, in ms: Swift may not
+ * start one (the spec moved on meanwhile), and the panel must not say "working" for good.
+ */
+const sendingGiveUp = 15_000;
+
 export class SpecPanel {
   private state: SpecState | null = null;
   /** The sample each spec previews with, by spec id (a label). */
   private readonly sample = new Map<string, string>();
   private content: HTMLElement | null = null;
-  /** A change just sent, shown as under way until Swift's spec says so (or soon gives up). */
-  private sending: { id: string; version: number; at: number } | null = null;
+  /** A change just sent, shown as under way until Swift's spec carries its request (or a later version). */
+  private sending: { id: string; version: number; at: number; request: string } | null = null;
   private ticker: ReturnType<typeof setInterval> | null = null;
 
   constructor(private readonly root: HTMLElement) {
@@ -121,9 +127,9 @@ export class SpecPanel {
     const sent = this.sending;
     const change = state.change;
     if (sent) {
-      // Swift's spec has this change (started no earlier than it was sent), or a later one.
-      const caughtUp = !!change && (change.version > sent.version || (change.version === sent.version && change.startedAt >= sent.at - 2000));
-      if (sent.id !== state.id || caughtUp || Date.now() - sent.at > 15_000) this.sending = null;
+      // Swift's spec has this change (it carries the request), or a later one.
+      const caughtUp = !!change && (change.request === sent.request || change.version > sent.version);
+      if (sent.id !== state.id || caughtUp || Date.now() - sent.at > sendingGiveUp) this.sending = null;
     }
     this.draw();
   }
@@ -554,8 +560,9 @@ export class SpecPanel {
       box.dataset.dirty = "";
       // Built and nothing under way: this is the change, shown as started now.
       if (built && !working) {
-        this.sending = { id: state.id, version: this.nextVersion(state), at: Date.now() };
-        post({ type: "specSay", id: state.id, text });
+        const request = `r${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        this.sending = { id: state.id, version: this.nextVersion(state), at: Date.now(), request };
+        post({ type: "specSay", id: state.id, text, request });
         this.draw();
         return;
       }

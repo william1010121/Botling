@@ -38,6 +38,9 @@ public struct PinnedComponent: Codable, Equatable, Identifiable, Sendable {
         public static let large = Size(columns: 2, rows: 2)
         public static let extraLarge = Size(columns: 4, rows: 2)
 
+        /// "1x1 to 4x4": the range of sizes, as messages and instructions say it.
+        public static var rangeText: String { "\(small.rawValue) to \(maxColumns)x\(maxRows)" }
+
         /// Every size a card can take, row by row: 1×1, 2×1, … 4×4.
         public static let all: [Size] = (1...maxRows).flatMap { rows in (1...maxColumns).map { Size(columns: $0, rows: rows) } }
 

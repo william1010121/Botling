@@ -218,3 +218,16 @@ extension Workspace {
         }
     }
 }
+
+extension Workspace {
+    /// The project that holds this build's source, to start developer mode with: the folder whose
+    /// git history has the commit the running build was made from (`BuildInfo.commit`, written by
+    /// scripts/make-app.sh). Nil when the build names no commit (a `swift run`) or no project has
+    /// it; the user picks then.
+    public func guessDeveloperSource() -> Project? {
+        guard let commit = runningBuild?.commit else { return nil }
+        return projects.first { project in
+            !project.isBot && GitDiff.git(["cat-file", "-e", "\(commit)^{commit}"], in: project.folder) != nil
+        }
+    }
+}

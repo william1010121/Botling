@@ -51,10 +51,7 @@ public enum StopGuard {
         guard let hook = try? JSONDecoder().decode(Input.self, from: input) else { return .allow }
         if hook.stop_hook_active == true { return .allow }
         // A task still going (shell, subagent, monitor) wakes the bot when it ends.
-        let running = (hook.background_tasks ?? []).contains { task in
-            let status = task.status?.lowercased() ?? "running"
-            return !["completed", "failed", "killed", "stopped", "done", "cancelled"].contains(status)
-        }
+        let running = (hook.background_tasks ?? []).contains { TaskEnd($0.status) == nil }
         if running || !(hook.session_crons ?? []).isEmpty { return .allow }
         let message = hook.last_assistant_message ?? hook.transcript_path.flatMap { lastAssistantText(transcript: URL(filePath: $0)) } ?? ""
         let text = message.trimmingCharacters(in: .whitespacesAndNewlines)

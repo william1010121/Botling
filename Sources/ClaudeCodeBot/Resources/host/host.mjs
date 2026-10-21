@@ -15,6 +15,11 @@ var Host = class {
   nextID = 1;
   /** The plugin whose code is running, so a crash can be blamed on it. */
   current = null;
+  /** Told to shut down: once the answer is written, `onShutdown` ends the process. */
+  shuttingDown = false;
+  /** What ends the host after the shutdown answer is written (`main` exits once stdout is flushed). */
+  onShutdown = () => {
+  };
   // MARK: Protocol
   async receive(message) {
     if (message.method === void 0) {
@@ -31,6 +36,7 @@ var Host = class {
     } catch (error) {
       if (message.id !== void 0) this.write({ id: message.id, error: { message: errorText(error) } });
     }
+    if (this.shuttingDown) this.onShutdown();
   }
   request(method, params) {
     const id = this.nextID++;
@@ -70,7 +76,7 @@ var Host = class {
       }
       case "shutdown":
         for (const name of [...this.plugins.keys()]) this.unload(name);
-        setTimeout(() => process.exit(0), 10);
+        this.shuttingDown = true;
         return null;
       default:
         throw new Error(`Unknown method "${method}".`);
@@ -304,6 +310,7 @@ async function importPlugin(spec) {
   if (typeof activate !== "function") throw new Error("The program part does not export activate(ccb).");
   return activate;
 }
+var shutdownFallback = 1e3;
 function errorText(error) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -315,6 +322,10 @@ function main() {
   console.info = toStderr;
   console.debug = toStderr;
   const host = new Host(write);
+  host.onShutdown = () => {
+    setTimeout(() => process.exit(0), shutdownFallback).unref();
+    out.write("", () => process.exit(0));
+  };
   process.on("uncaughtException", (error) => host.report(null, error));
   process.on("unhandledRejection", (error) => host.report(null, error));
   const lines = createInterface({ input: process.stdin });
