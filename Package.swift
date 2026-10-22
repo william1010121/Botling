@@ -13,7 +13,8 @@ let package = Package(
     targets: [
         .target(
             name: "ClaudeCodeBotCore",
-            path: "Sources/ClaudeCodeBotCore"
+            path: "Sources/ClaudeCodeBotCore",
+            resources: [.copy("Resources/CharacterArt")]
         ),
         .executableTarget(
             name: "ClaudeCodeBot",

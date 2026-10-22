@@ -18,20 +18,18 @@ public enum BotLook: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// The Claude and Codex characters as vector art (the Claude Design "Two-Head Mascots",
-/// component "Head"): Claude is the orange-haired girl with the orange flower and black ribbon,
-/// Codex the white and lavender dragon girl with horns, a knot ornament and elf ears. One SVG,
-/// drawn in a 64×64 box, for both the web chat and the app's own views.
+/// Claude and Codex from the supplied character pack, with the bot's face composited
+/// as a hat in an SVG wrapper shared by native views and the web chat.
 public enum Chibi {
     /// The expressions the app shows: what the head is doing now.
     public enum Mood: String, CaseIterable, Sendable {
         /// Awake, ready for the next message.
         case normal
-        /// Running a turn: eyes down at a laptop.
+        /// Running a turn.
         case work
-        /// Waiting on you (an OK to give): a "?".
+        /// Waiting on you (an OK to give).
         case think
-        /// Session stopped: eyes closed, "zz".
+        /// Session stopped.
         case sleep
     }
 
@@ -69,10 +67,12 @@ public enum Chibi {
     /// column, where the bot's own face is in front).
     public static func svg(_ head: BotEngine, mood: Mood = .normal, hat: Hat? = nil) -> String {
         var parts: [String] = []
-        parts.append(head == .claude ? claude : codex)
-        parts.append(face(head, mood: mood))
+        let art = assetData(head, mood: mood).base64EncodedString()
+        // Reserve the upper strip for the bot hat without cropping hair or horns.
+        let y = hat == nil ? 0 : 18
+        let height = hat == nil ? 64 : 46
+        parts.append("<image x='0' y='\(y)' width='64' height='\(height)' preserveAspectRatio='xMidYMax meet' href='data:image/png;base64,\(art)'/>")
         if let hat { parts.append(hatSVG(hat)) }
-        parts.append(props(head, mood: mood))
         let label = head.displayName
         return "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64' role='img' aria-label='\(label)'>" + parts.joined() + "</svg>"
     }
@@ -84,61 +84,30 @@ public enum Chibi {
         return "data:image/svg+xml;charset=utf-8," + (svg.addingPercentEncoding(withAllowedCharacters: allowed) ?? "")
     }
 
-    // MARK: - The art
-
-    /// Shown under the face: the hair, the face, the bangs and the character's own ornament.
-    private static let claude = """
-    <path d='M12 36 C10 22 20 14 32 14 C44 14 54 22 52 36 L54 58 C50 61 46 59 44 55 L20 55 C18 59 14 61 10 58 Z' fill='#E2762A'/>\
-    <ellipse cx='32' cy='39' rx='15' ry='14' fill='#FFE6D5'/>\
-    <path d='M16 37 C15 24 23 17 32 17 C41 17 49 24 48 37 C45 31 42 28 38 27 C37 31 34 32 32 30 C30 32 27 31 26 27 C22 28 19 31 16 37 Z' fill='#EA8434'/>\
-    <path d='M24 21 C27 19 30 18.5 33 18.6' stroke='#F7B072' stroke-width='1.4' fill='none' stroke-linecap='round'/>\
-    <path d='M31 16 C29.5 10.5 34 8.5 36.5 10.5' stroke='#E2762A' stroke-width='2' fill='none' stroke-linecap='round'/>\
-    <path d='M45 29.5 L40.5 33.5 L45 33.5 Z M47 29.5 L51.5 33.5 L47 33.5 Z' fill='#2A2220'/>\
-    <path d='M45.5 33 L44 40 M46.5 33 L48 40' stroke='#2A2220' stroke-width='1.2'/>\
-    <g transform='translate(46 25)'>\
-    <circle cx='0' cy='-3.8' r='2.3' fill='#F6A04A'/><circle cx='0' cy='3.8' r='2.3' fill='#F6A04A'/>\
-    <circle cx='-3.8' cy='0' r='2.3' fill='#F6A04A'/><circle cx='3.8' cy='0' r='2.3' fill='#F6A04A'/>\
-    <circle cx='-2.7' cy='-2.7' r='2.1' fill='#F08A2E'/><circle cx='2.7' cy='-2.7' r='2.1' fill='#F08A2E'/>\
-    <circle cx='-2.7' cy='2.7' r='2.1' fill='#F08A2E'/><circle cx='2.7' cy='2.7' r='2.1' fill='#F08A2E'/>\
-    <circle cx='0' cy='0' r='2.2' fill='#B04A12'/></g>
-    """
-
-    private static let codex = """
-    <path d='M21 22 C14 15 13.5 7 17.5 2.5 C18.5 8.5 22 13 27 16.5 Z' fill='#ECE8F7' stroke='#9F96CF' stroke-width='1'/>\
-    <path d='M43 22 C50 15 50.5 7 46.5 2.5 C45.5 8.5 42 13 37 16.5 Z' fill='#ECE8F7' stroke='#9F96CF' stroke-width='1'/>\
-    <path d='M17 9 L20 10 M17.5 13 L21.5 13.5 M47 9 L44 10 M46.5 13 L42.5 13.5' stroke='#B5ADDC' stroke-width='0.9'/>\
-    <path d='M12 36 C10 22 20 14 32 14 C44 14 54 22 52 36 L54 58 C50 61 46 59 44 55 L20 55 C18 59 14 61 10 58 Z' fill='#F2F0FA' stroke='#C9C1E6' stroke-width='0.9'/>\
-    <path d='M17.5 37 L7 31 L17.5 45 Z' fill='#FFE9E3' stroke='#E3B9B0' stroke-width='0.7'/>\
-    <path d='M46.5 37 L57 31 L46.5 45 Z' fill='#FFE9E3' stroke='#E3B9B0' stroke-width='0.7'/>\
-    <ellipse cx='32' cy='39' rx='15' ry='14' fill='#FFF1EC'/>\
-    <path d='M16 37 C15 24 23 17 32 17 C41 17 49 24 48 37 C45 31 42 28 38 27 C37 31 34 32 32 30 C30 32 27 31 26 27 C22 28 19 31 16 37 Z' fill='#F8F6FD' stroke='#C9C1E6' stroke-width='0.9'/>\
-    <path d='M31 16 C29.5 10.5 34 8.5 36.5 10.5' stroke='#C9C1E6' stroke-width='1.8' fill='none' stroke-linecap='round'/>\
-    <circle cx='46.5' cy='26' r='3.6' fill='#FFFFFF' stroke='#5B53A6' stroke-width='1.6'/>\
-    <circle cx='46.5' cy='26' r='1.3' fill='#5B53A6'/>\
-    <path d='M46.5 29.8 L46.5 36' stroke='#8B83C6' stroke-width='1.3'/>\
-    <rect x='45.2' y='35.5' width='2.6' height='4' rx='1' fill='#B9B2E0'/>
-    """
-
-    /// The eyes, blush and mouth for a mood.
-    private static func face(_ head: BotEngine, mood: Mood) -> String {
-        let eye = head == .claude ? "#A44E16" : "#5F55B8"
-        var out = ""
+    /// The archive calls the white-haired character `gpt`; it represents Codex here.
+    public static func assetURL(_ head: BotEngine, mood: Mood = .normal) -> URL {
+        let character = head == .claude ? "claude" : "gpt"
+        let expression: String
         switch mood {
-        case .normal, .think:
-            out += "<ellipse cx='26' cy='41' rx='2.6' ry='3.3' fill='\(eye)'/><ellipse cx='38' cy='41' rx='2.6' ry='3.3' fill='\(eye)'/>"
-            out += "<circle cx='25.1' cy='39.6' r='1' fill='#FFFFFF'/><circle cx='37.1' cy='39.6' r='1' fill='#FFFFFF'/>"
-        case .work, .sleep:
-            out += "<path d='M23.2 41.5 Q26 43.6 28.8 41.5' stroke='\(eye)' stroke-width='2' fill='none' stroke-linecap='round'/>"
-            out += "<path d='M35.2 41.5 Q38 43.6 40.8 41.5' stroke='\(eye)' stroke-width='2' fill='none' stroke-linecap='round'/>"
+        case .normal: expression = "idle"
+        case .work: expression = "working"
+        case .think: expression = "thinking"
+        case .sleep: expression = "sleepy"
         }
-        out += "<ellipse cx='21.5' cy='45.5' rx='2.4' ry='1.2' fill='#F6A28A' opacity='0.55'/><ellipse cx='42.5' cy='45.5' rx='2.4' ry='1.2' fill='#F6A28A' opacity='0.55'/>"
-        switch mood {
-        case .normal, .work:
-            out += "<path d='M30.3 47.2 Q32 48.8 33.7 47.2' stroke='#8A4A3A' stroke-width='1.1' fill='none' stroke-linecap='round'/>"
-        case .sleep, .think:
-            out += "<circle cx='32' cy='48' r='1.1' fill='#8A4A3A'/>"
-        }
-        return out
+        // These are required app resources: fail clearly if a packaged build omits them.
+        return Bundle.module.url(forResource: expression, withExtension: "png",
+                                 subdirectory: "CharacterArt/avatars-static/\(character)")!
+    }
+
+    private static let art: [BotEngine: [Mood: Data]] = Dictionary(uniqueKeysWithValues:
+        BotEngine.allCases.map { head in
+            (head, Dictionary(uniqueKeysWithValues: Mood.allCases.map { mood in
+                (mood, try! Data(contentsOf: assetURL(head, mood: mood)))
+            }))
+        })
+
+    public static func assetData(_ head: BotEngine, mood: Mood = .normal) -> Data {
+        art[head]![mood]!
     }
 
     /// The bot's face on top, with a brim.
@@ -153,21 +122,6 @@ public enum Chibi {
             out += "<circle cx='\(format(eye.x - 0.4))' cy='\(format(eye.y - 0.8))' r='0.55' fill='#FFFFFF'/>"
         }
         return out
-    }
-
-    /// What a mood holds: a laptop at work, "zz" asleep, "?" waiting.
-    private static func props(_ head: BotEngine, mood: Mood) -> String {
-        let accent = head == .claude ? "#E2762A" : "#7E74CC"
-        switch mood {
-        case .normal:
-            return ""
-        case .work:
-            return "<path d='M14 64 L18 51 L46 51 L50 64 Z' fill='#B9BCC4' stroke='#6E717A' stroke-width='0.8'/><circle cx='32' cy='57.5' r='1.6' fill='#8E9199'/>"
-        case .sleep:
-            return "<g fill='\(accent)' font-family='system-ui, -apple-system, sans-serif' font-weight='800'><text x='49' y='16' font-size='9'>z</text><text x='55' y='9' font-size='7'>z</text></g>"
-        case .think:
-            return "<text x='51' y='15' font-size='13' font-weight='800' fill='\(accent)' font-family='system-ui, -apple-system, sans-serif'>?</text>"
-        }
     }
 
     /// A number for SVG: at most two decimals, no trailing zeros.

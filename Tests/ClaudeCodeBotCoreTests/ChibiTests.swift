@@ -20,20 +20,22 @@ struct ChibiTests {
         }
     }
 
-    @Test func eachMoodHasItsProp() {
-        #expect(Chibi.svg(.claude, mood: .work).contains("#B9BCC4"))  // the laptop
-        #expect(Chibi.svg(.codex, mood: .sleep).contains(">z</text>"))
-        #expect(Chibi.svg(.claude, mood: .think).contains(">?</text>"))
-        let awake = Chibi.svg(.codex, mood: .normal)
-        #expect(!awake.contains("<text") && !awake.contains("#B9BCC4"))
-    }
-
-    @Test func theCharactersCanBeToldApart() {
-        // Claude: the orange hair and flower; Codex: the lavender horns and knot ornament.
-        #expect(Chibi.svg(.claude).contains("#E2762A"))
-        #expect(!Chibi.svg(.claude).contains("#9F96CF"))
-        #expect(Chibi.svg(.codex).contains("#9F96CF"))
-        #expect(!Chibi.svg(.codex).contains("#E2762A"))
+    @Test func everyStatusUsesDistinctBundledTransparentArt() throws {
+        for head in BotEngine.allCases {
+            var variants = Set<Data>()
+            for mood in Chibi.Mood.allCases {
+                let data = Chibi.assetData(head, mood: mood)
+                #expect(Array(data.prefix(8)) == [137, 80, 78, 71, 13, 10, 26, 10])
+                // PNG IHDR color type 6 is RGBA: transparent hair and horns are retained.
+                #expect(data[25] == 6)
+                #expect(Chibi.svg(head, mood: mood).contains(data.base64EncodedString()))
+                variants.insert(data)
+            }
+            #expect(variants.count == Chibi.Mood.allCases.count)
+        }
+        #expect(Chibi.assetData(.claude) != Chibi.assetData(.codex))
+        #expect(Chibi.assetURL(.claude).path.contains("/claude/"))
+        #expect(Chibi.assetURL(.codex).path.contains("/gpt/"))
     }
 
     @Test func theBotsFaceIsWornAsAHatOnlyWhenGiven() {

@@ -22,6 +22,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/ClaudeCodeBot" "$APP/Contents/MacOS/ClaudeCodeBot"
 # The web chat, built-in plugins and plugin host live in SwiftPM's resource bundle.
 cp -R "$BIN/ClaudeCodeBot_ClaudeCodeBot.bundle" "$APP/Contents/Resources/"
+cp -R "$BIN/ClaudeCodeBot_ClaudeCodeBotCore.bundle" "$APP/Contents/Resources/"
 if [[ -f Assets/AppIcon.icns ]]; then cp Assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"; fi
 
 cat > "$APP/Contents/Info.plist" <<PLIST

@@ -41,7 +41,7 @@ extension AvatarShape {
 }
 
 /// The Claude and Codex characters, cached: as data URLs for the web chat and as images for
-/// the app's own views. Both are vector (SVG), so they stay sharp at 14 points.
+/// the app's own views. The SVG wrapper retains each bot's hat over the supplied PNG art.
 @MainActor
 enum ChibiImages {
     private static var svgs: [String: String] = [:]

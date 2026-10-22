@@ -6,6 +6,12 @@ app and publishes it on GitHub Releases.
 
 ## Unreleased
 
+### Changed
+
+- **Updated Cute character art.** Claude and Codex use the supplied transparent portrait pack
+  throughout the app, with separate awake, working, waiting and sleepy expressions. Bot hats,
+  recipient highlights, the existing work animation and the Original look remain available.
+
 ### Added
 
 - **Claude and Codex as characters (Bot look: Cute).** With either or both engines enabled,
