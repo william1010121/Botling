@@ -3,7 +3,7 @@
   "displayName": "LaTeX",
   "version": "1.0.0",
   "description": "Typesets $…$, $$…$$, \\(…\\) and \\[…\\] in messages with KaTeX, previews formulas while you type, and copies formulas as TeX.",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "engines": { "ccb": "^2.0.0" },
   "ccb": {
     "permissions": ["composer", "messages"],
