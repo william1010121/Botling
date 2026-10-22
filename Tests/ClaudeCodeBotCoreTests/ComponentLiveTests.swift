@@ -188,18 +188,54 @@ struct ComponentLiveTests {
         // The user's own change (ccb.save), then the bot's: the latest write wins.
         #expect(bot.saveComponentData(#"{"pct":70}"#, at: 0, in: card.id))
         bot.send("finish")
-        await eventually { bot.messages.first { $0.id == card.id }?.shown[0].data == #"{"pct":100}"# }
+        await eventually { bot.messages.last { $0.role == .bot }?.text.contains("Done.") == true }
         await settled()
-        #expect(bot.messages.first { $0.id == card.id }?.shown[0].savedAt == nil)
-        // Words with the update still show, without the card drawn again.
+        // Words with the update draw the card under them; the one above gives way, its words stay.
         let words = try #require(bot.messages.last { $0.role == .bot })
-        #expect(words.id != card.id && words.text.contains("Done.") && words.shown.isEmpty)
-        #expect(bot.saveComponentData(#"{"pct":99}"#, at: 0, in: card.id))
-        #expect(bot.messages.first { $0.id == card.id }?.shown[0].data == #"{"pct":99}"#)
+        #expect(words.id != card.id && words.shown.map(\.data) == [#"{"pct":100}"#])
+        #expect(words.shown[0].savedAt == nil)
+        #expect(bot.messages.first { $0.id == card.id }.map { $0.shown.isEmpty && $0.text.contains("Running") } == true)
+        #expect(bot.saveComponentData(#"{"pct":99}"#, at: 0, in: words.id))
+        #expect(bot.messages.first { $0.id == words.id }?.shown[0].data == #"{"pct":99}"#)
 
         // Another id is a card of its own.
         bot.send("other")
         await eventually { bot.messages.last { $0.role == .bot }?.shown.first?.id == "run-2" }
+    }
+
+    /// jenytsian_progress, 2026-10-22: "那給我最新的進度卡" got "最新進度卡如下…" with a
+    /// `<show id="progress">` whose card was updated in a message far up the chat, so the user saw
+    /// no card under the words that said it was there.
+    @Test func aReplyWithWordsDrawsTheCardItUpdatesUnderThem() async throws {
+        let first = #"考試日期已加進筆記。<show name="study-progress" id="progress">{"total_done":2,"total_all":22,"percent":9,"subjects":[{"name":"資料結構","done":0,"total":5,"date":"11/6"}]}</show>"#
+        let latest = "最新進度卡如下，總進度 2/22，最近一場是系統程式設計 10/29。\n\n" + #"<show name="study-progress" id="progress">{"total_done":2,"total_all":22,"percent":9,"subjects":[{"name":"系統程式設計","done":0,"total":4,"date":"10/29"},{"name":"資料結構","done":0,"total":5,"date":"11/6"},{"name":"資訊安全","done":0,"total":6,"date":"11/9"},{"name":"複變函數","done":2,"total":6,"date":"11/10"},{"name":"線性代數","done":0,"total":1,"date":"11/16"}],"note":"最近一場：系統程式設計 10/29，還沒開始讀簡報"}</show>"#
+        let fake = FakeLauncher()
+        fake.respond = { text in
+            if isAppOnly(text) { return "OK" }
+            if text.contains("幫我加上去") { return first }
+            if text.contains("系統程式還沒有出來") { return "已記下。" }
+            return latest
+        }
+        let bot = makeBot(fake)
+        func settled() async { await eventually { !bot.isWorking } }
+        for text in ["幫我加上去然後更新組件", "系統程式還沒有出來。"] {
+            bot.send(text)
+            await eventually { bot.messages.last?.role == .bot }
+            await settled()
+        }
+        let old = try #require(bot.messages.first { $0.role == .bot && !$0.shown.isEmpty })
+
+        bot.send("那給我最新的進度卡")
+        await eventually { bot.messages.last?.text.contains("最新進度卡如下") == true }
+        await settled()
+        let reply = try #require(bot.messages.last)
+        #expect(reply.shown.count == 1)
+        #expect(reply.shown.first?.data.contains("10/29") == true)
+        #expect(reply.shown.first?.id == "progress")
+        // One card per id: the one above gives way to it, its words stay.
+        #expect(bot.messages.first { $0.id == old.id }?.shown.isEmpty == true)
+        #expect(bot.messages.first { $0.id == old.id }?.text.contains("考試日期已加進筆記") == true)
+        #expect(bot.messages.flatMap(\.shown).filter { $0.id == "progress" }.count == 1)
     }
 
     @Test func botsAreToldTheUsage() throws {
