@@ -1,0 +1,44 @@
+<!doctype html>
+<!-- A FIXTURE written for the tests, not a page saved from gemini.google.com: it mimics the turn
+     structure Gemini uses (user-query / model-response elements, message-content with a
+     .markdown answer, screen-reader labels, a thinking panel, a side list with the selected
+     conversation's title). Real pages change; the selectors live in gemini.js. -->
+<html>
+<head><title>‎Gemini</title></head>
+<body>
+  <nav>
+    <div class="conversation"><div class="conversation-title">Older chat</div></div>
+    <div class="conversation selected"><div class="conversation-title">  Embedding chat sites  </div></div>
+  </nav>
+  <main>
+    <div class="conversation-container">
+      <user-query>
+        <span class="cdk-visually-hidden">You said</span>
+        <div class="query-content">
+          <div class="query-text">
+            <p class="query-text-line">Can a Mac app show this site</p>
+            <p class="query-text-line">in an iframe?</p>
+          </div>
+        </div>
+        <button aria-label="Edit">edit</button>
+      </user-query>
+      <model-response>
+        <model-thoughts><div>Show thinking: the user asks about framing…</div></model-thoughts>
+        <message-content>
+          <div class="markdown markdown-main-panel">
+            <p><span class="cdk-visually-hidden">Gemini said</span>No. The site sends headers that <b>forbid</b> framing.</p>
+            <ul><li>Use a native WKWebView.</li><li>Keep a persistent data store.</li></ul>
+            <pre><code>let view = WKWebView()
+    view.load(request)</code></pre>
+          </div>
+        </message-content>
+        <button>Copy</button><mat-icon>thumb_up</mat-icon>
+      </model-response>
+    </div>
+    <div class="conversation-container">
+      <user-query><div class="query-text"><p class="query-text-line">Can the app read the answers?</p></div></user-query>
+      <model-response><message-content><div class="markdown"><p>It can read the page's text after each answer.</p></div></message-content></model-response>
+    </div>
+  </main>
+</body>
+</html>

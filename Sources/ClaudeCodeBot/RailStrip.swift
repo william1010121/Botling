@@ -128,6 +128,19 @@ struct RailStrip: View {
             ) {
                 workspace.select(Workspace.codexID)
             }
+            ForEach(WebSite.all) { site in
+                RailIcon(
+                    title: site.name,
+                    detail: L("Web · {0} conversations", workspace.web.conversations(of: site).count),
+                    selected: workspace.selectedWebSite == site,
+                    asleep: false, running: false, stuck: false, waiting: false, unread: false,
+                    tip: $tip
+                ) {
+                    workspace.select(site)
+                } face: {
+                    WebSiteFace(site: site, size: 28)
+                }
+            }
 
             Rectangle().fill(Theme.chip).frame(width: 28, height: 1).padding(.vertical, 4)
 
