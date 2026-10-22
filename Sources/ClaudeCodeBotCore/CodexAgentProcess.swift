@@ -132,6 +132,10 @@ struct CodexSession {
     /// thread's turn ending is not its end there, the parent's `completed` item is, and it can
     /// be messaged again after.
     private var subagentActivityThreads: Set<String> = []
+    /// Activity-backed threads stay registered between turns; only an actual turn start
+    /// resumes an ended row, whereas sending a message alone need not start work.
+    private var activeSubagentActivityThreads: Set<String> = []
+    private var endedSubagentActivityItems: Set<String> = []
 
     init(config: Config) {
         self.config = config
@@ -550,11 +554,19 @@ struct CodexSession {
             guard subagentThreads[thread] == nil else { return [] }
             subagentThreads[thread] = id
             subagentActivityThreads.insert(thread)
-            var out: [TraceEvent] = [.subagentStarted(id: id, description: Self.agentName(item["agentPath"] as? String ?? ""), type: "codex", prompt: "", background: false)]
+            activeSubagentActivityThreads.insert(thread)
+            let path = item["agentPath"] as? String ?? ""
+            var out: [TraceEvent] = [
+                .subagentStarted(id: id, description: Self.agentName(path), type: "codex", prompt: "", background: false),
+                .launchResult(id: id, result: LaunchResult(agentID: thread), parent: nil),
+            ]
+            if !path.isEmpty { out.append(.subagentNamed(id: id, name: path)) }
             if let model = item["model"] as? String, !model.isEmpty { out.append(.subagentModel(id: id, model: model)) }
             return out
         case "completed", "interrupted":
-            guard let subagent = subagentThreads[thread] else { return [] }
+            guard endedSubagentActivityItems.insert(id).inserted,
+                  let subagent = subagentThreads[thread],
+                  activeSubagentActivityThreads.remove(thread) != nil else { return [] }
             let status = item["kind"] as? String == "completed" ? "completed" : "killed"
             return [.subagentEnded(id: subagent, status: status, summary: subagentSaid.removeValue(forKey: thread))]
         default:
@@ -573,6 +585,10 @@ struct CodexSession {
     private mutating func subagentLine(_ method: String, _ params: [String: Any], thread: String) -> [CodexOutput] {
         guard let parent = subagentThreads[thread] else { return [] }
         switch method {
+        case "turn/started":
+            guard subagentActivityThreads.contains(thread),
+                  activeSubagentActivityThreads.insert(thread).inserted else { return [] }
+            return [.event(.trace(.subagentStarted(id: parent, description: "", type: "codex", prompt: "", background: false)))]
         case "item/started":
             guard let item = params["item"] as? [String: Any], let step = started(item) else { return [] }
             return [.event(.trace(Self.under(parent, step)))]

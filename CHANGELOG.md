@@ -115,8 +115,12 @@ app and publishes it on GitHub Releases.
   it spawns with `subAgentActivity` items instead of a `spawnAgent` collab call, so none of
   them appeared. Each now gets a row named after its path (`/root/avatar_coverage` →
   "avatar coverage") with its model, its own thread's steps go under it, a message to it
-  adds no new row, and it ends when Codex says it completed or was interrupted. Older Codex
-  versions still work the old way.
+  adds no new row, and it ends when Codex says it completed or was interrupted. Giving a
+  completed agent another task restores the same row when its next turn really starts;
+  merely messaging an idle agent does not make it look busy. Repeated completion events
+  are ignored. A live spawn → command/report → followup → command/report session verified
+  that child steps arrive on the parent's connection. Older Codex versions still work the
+  old way.
 
 ## 1.15.1
 

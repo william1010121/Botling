@@ -377,10 +377,16 @@ struct CodexSessionTests {
         let first = Out(codex.receive(activity("call_b04ae0dd7eaa4188ab14deae2cc56756", "started", avatar, "/root/avatar_coverage", model: "gpt-6.1-sol")))
         #expect(first.traces == [
             .subagentStarted(id: "call_b04ae0dd7eaa4188ab14deae2cc56756", description: "avatar coverage", type: "codex", prompt: "", background: false),
+            .launchResult(id: "call_b04ae0dd7eaa4188ab14deae2cc56756", result: LaunchResult(agentID: avatar), parent: nil),
+            .subagentNamed(id: "call_b04ae0dd7eaa4188ab14deae2cc56756", name: "/root/avatar_coverage"),
             .subagentModel(id: "call_b04ae0dd7eaa4188ab14deae2cc56756", model: "gpt-6.1-sol"),
         ])
         let second = Out(codex.receive(activity("call_254739fa78b349a9946e2ca4ce0a22a4", "started", answer, "/root/answer_persistence")))
-        #expect(second.traces == [.subagentStarted(id: "call_254739fa78b349a9946e2ca4ce0a22a4", description: "answer persistence", type: "codex", prompt: "", background: false)])
+        #expect(second.traces == [
+            .subagentStarted(id: "call_254739fa78b349a9946e2ca4ce0a22a4", description: "answer persistence", type: "codex", prompt: "", background: false),
+            .launchResult(id: "call_254739fa78b349a9946e2ca4ce0a22a4", result: LaunchResult(agentID: answer), parent: nil),
+            .subagentNamed(id: "call_254739fa78b349a9946e2ca4ce0a22a4", name: "/root/answer_persistence"),
+        ])
         // Its own thread's steps go under it.
         let step = Out(codex.receive(#"{"method":"item/started","params":{"threadId":"\#(avatar)","turnId":"01a1649e-b726-7851-a6f4-bfa4863745eb","startedAtMs":1,"item":{"type":"commandExecution","id":"exec-9","command":"ls Tests","commandActions":[],"cwd":"/tmp/bot","status":"inProgress"}}}"#))
         #expect(step.traces == [.toolUse(id: "exec-9", tool: "Bash", title: "Run ls Tests", detail: "ls Tests", parent: "call_b04ae0dd7eaa4188ab14deae2cc56756")])
@@ -394,6 +400,67 @@ struct CodexSessionTests {
         let stopped = Out(codex.receive(activity("call_x", "interrupted", avatar, "/root/avatar_coverage")))
         #expect(stopped.traces == [.subagentEnded(id: "call_b04ae0dd7eaa4188ab14deae2cc56756", status: "killed", summary: nil)])
         #expect(done.replies.isEmpty && stopped.replies.isEmpty)
+    }
+
+    @Test func activitySubagentsResumeOnlyWhenTheirNextTurnStarts() throws {
+        var codex = session()
+        _ = started(&codex, "hello", recording: CodexRecordings.helloAndApproval)
+        let main = "01a1640c-e2db-7742-998a-553a14d4336f"
+        func activity(_ id: String, _ kind: String) -> String {
+            #"{"method":"item/completed","params":{"threadId":"\#(main)","item":{"type":"subAgentActivity","id":"\#(id)","kind":"\#(kind)","agentThreadId":"child","agentPath":"/root/review_work"}}}"#
+        }
+        var book = TraceBook()
+        func apply(_ out: Out) { for step in out.traces { book.apply(step) } }
+        apply(Out(codex.receive(activity("spawn", "started"))))
+        #expect(try #require(book.subagent("spawn")).agentID == "child")
+        #expect(try #require(book.subagent("spawn")).name == "/root/review_work")
+        let firstEnd = Out(codex.receive(activity("done-turn-1", "completed")))
+        apply(firstEnd)
+        #expect(try #require(book.subagent("spawn")).status == .completed)
+        #expect(Out(codex.receive(activity("done-turn-1", "completed"))).traces.isEmpty)
+        #expect(Out(codex.receive(activity("another-terminal-before-restart", "interrupted"))).traces.isEmpty)
+        // A message to an idle agent does not itself start more work.
+        apply(Out(codex.receive(activity("message", "interacted"))))
+        #expect(try #require(book.subagent("spawn")).status == .completed)
+        let resumed = Out(codex.receive(#"{"method":"turn/started","params":{"threadId":"child","turn":{"id":"child-turn-2","status":"inProgress"}}}"#))
+        apply(resumed)
+        #expect(try #require(book.subagent("spawn")).isRunning)
+        #expect(try #require(book.subagent("spawn")).endedAt == nil)
+        #expect(book.subagents.count == 1)
+        #expect(Out(codex.receive(activity("done-turn-1", "completed"))).traces.isEmpty)
+        let secondEnd = Out(codex.receive(activity("done-turn-2", "completed")))
+        #expect(secondEnd.traces == [.subagentEnded(id: "spawn", status: "completed", summary: nil)])
+        apply(secondEnd)
+        #expect(try #require(book.subagent("spawn")).status == .completed)
+        #expect(secondEnd.replies.isEmpty && resumed.replies.isEmpty)
+    }
+
+    @Test func realSubagentFollowupStreamKeepsBothRunsUnderOneRow() throws {
+        var codex = session()
+        _ = started(&codex, "hello", recording: CodexRecordings.helloAndApproval)
+        var book = TraceBook()
+        var starts = 0, ends = 0
+        let spawn = "call_23510994370442fc9af5e9ca6d065525"
+        for line in CodexRecordings.subagentFollowup {
+            let out = Out(codex.receive(line))
+            #expect(out.replies.isEmpty)
+            for step in out.traces {
+                if case .subagentStarted = step { starts += 1 }
+                if case .subagentEnded = step { ends += 1 }
+                book.apply(step)
+                if case .subagentStarted = step {
+                    #expect(try #require(book.subagent(spawn)).isRunning)
+                }
+            }
+        }
+        let agent = try #require(book.subagent(spawn))
+        #expect(starts == 2 && ends == 2)
+        #expect(book.subagents.count == 1)
+        #expect(agent.agentID == "probe-child")
+        #expect(agent.status == .completed)
+        #expect(agent.steps.filter { $0.kind == .tool }.count == 2)
+        #expect(agent.steps.filter { $0.kind == .tool }.allSatisfy { $0.done })
+        #expect(agent.steps.filter { $0.kind == .text }.count == 2)
     }
 
     @Test func aPickedModelGoesToTheThread() {
