@@ -681,18 +681,20 @@ public struct ChatPayload: Encodable, Equatable {
 
     /// A subagent's conversation, the way Claude Code shows one: its task as your line, then what
     /// it said, each with the tool calls before it folded above; the ones still going show live.
+    /// A message its bot sent it later (SendMessage) is a line from the bot, where it came.
     @MainActor
     public static func make(subagent: Subagent, of bot: Bot, components library: ComponentLibrary?, avatar: String) -> ChatPayload {
         var messages: [Message] = []
-        func message(_ id: String, role: String, text: String, steps: [Step]) -> Message {
+        func message(_ id: String, role: String, text: String, steps: [Step], speaker: String? = nil) -> Message {
             Message(
                 id: "\(subagent.id)-\(id)", role: role, text: text, stamp: nil, avatar: role == "bot" ? avatar : nil,
                 choices: nil, chosen: nil, answer: nil, open: false, displays: nil, attachments: nil,
-                replyTo: nil, replyPreview: nil, openable: false, speaker: nil,
+                replyTo: nil, replyPreview: nil, openable: false, speaker: speaker,
                 steps: steps.isEmpty ? nil : steps.map { stepView($0, in: bot) }
             )
         }
-        messages.append(message("task", role: "user", text: subagent.prompt, steps: []))
+        // One known only from a message sent to it (from before the app restarted) has no task.
+        if !subagent.prompt.isEmpty { messages.append(message("task", role: "user", text: subagent.prompt, steps: [])) }
         var pending: [Step] = []
         var said = ""
         for step in subagent.steps {
@@ -700,6 +702,12 @@ public struct ChatPayload: Encodable, Equatable {
                 messages.append(message(step.id, role: "bot", text: step.title, steps: pending))
                 pending = []
                 said = step.title
+            } else if step.kind == .message {
+                // Its calls before the message stay with what came before it.
+                if !pending.isEmpty { messages.append(message(step.id + "-before", role: "bot", text: "", steps: pending)) }
+                pending = []
+                messages.append(message(step.id, role: "user", text: step.title, steps: [], speaker: bot.name))
+                said = ""
             } else {
                 pending.append(step)
             }

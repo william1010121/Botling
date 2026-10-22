@@ -259,8 +259,6 @@ public final class Bot: ObservableObject, Identifiable {
     private var subagentProgress: [String: Date] = [:]
     /// Quiet spells already reminded about ("" for the bot itself, else a subagent's id).
     private var stallReminded: Set<String> = []
-    /// Subagents' ids for SendMessage, by the id of the tool call that started them.
-    private var agentIDs: [String: String] = [:]
 
     public init(
         profile: BotProfile,
@@ -344,7 +342,15 @@ public final class Bot: ObservableObject, Identifiable {
         if let summary = task.summary, !task.isRunning || task.kind == .command || task.kind == .monitor { return summary }
         if task.kind == .agent, let subagent = trace.subagent(taskID) {
             if !subagent.isRunning, let result = subagent.result, !result.isEmpty { return result }
-            let recent = subagent.steps.suffix(4).map { $0.kind == .text ? "· \($0.title.split(whereSeparator: \.isNewline).first.map(String.init) ?? "")" : "› \($0.title)" }
+            let recent = subagent.steps.suffix(4).map { step in
+                let line = step.title.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+                switch step.kind {
+                case .text: return "· \(line)"
+                // What the bot sent it (SendMessage).
+                case .message: return "← \(step.detail ?? line)"
+                case .tool, .subagent: return "› \(step.title)"
+                }
+            }
             if !recent.isEmpty { return recent.joined(separator: "\n") }
         }
         switch task.status {
@@ -1508,7 +1514,7 @@ public final class Bot: ObservableObject, Identifiable {
         case let .toolUse(_, _, _, _, parent), let .toolResult(_, _, _, parent), let .toolImages(_, _, parent), let .text(_, parent): parent
         case let .subagentStarted(id, _, _, _, _): id
         case let .subagentWaiting(id): id
-        case let .launchResult(_, _, parent): parent
+        case let .launchResult(_, _, parent), let .messageSent(_, _, _, _, parent): parent
         case .subagentEnded, .subagentNamed, .subagentDescribed, .backgroundCommandStarted, .monitorStarted, .scheduleCalled, .scheduleResult: nil
         }
     }
@@ -1519,18 +1525,17 @@ public final class Bot: ObservableObject, Identifiable {
         let id: String
         let text: String
         switch step {
-        case let .launchResult(callID, result, _):
-            if trace.subagent(callID) != nil, let agentID = result.agentID { agentIDs[callID] = agentID }
-            return
         case let .toolResult(callID, output, _, _):
-            guard trace.subagent(callID) != nil else { return }
-            if agentIDs[callID] == nil, let agentID = LaunchText.agentID(in: output) { agentIDs[callID] = agentID }
+            // The call that started it (a SendMessage call's result is not the subagent's).
+            guard trace.subagent(callID)?.id == callID else { return }
             id = callID
             text = output
         case let .subagentEnded(callID, status, summary):
-            id = callID
+            // A resumed run's notification names the SendMessage call that resumed it.
+            guard let known = trace.subagent(callID)?.id else { return }
+            id = known
             // A notification says more than the error, so a failed one counts if any line is it.
-            guard TaskEnd(status) == .failed || cutOffByNetwork.contains(callID) || ConnectionErrorText.isConnectionError(summary ?? "") else { return }
+            guard TaskEnd(status) == .failed || cutOffByNetwork.contains(id) || ConnectionErrorText.isConnectionError(summary ?? "") else { return }
             text = (summary ?? "").split(whereSeparator: \.isNewline).first { ConnectionErrorText.isConnectionErrorLine(String($0)) }.map(String.init) ?? ""
         default:
             return
@@ -1578,7 +1583,7 @@ public final class Bot: ObservableObject, Identifiable {
         let elapsed = max(0, date.timeIntervalSince(outage.since))
         let warm = elapsed <= NetworkResume.warmWindow
         let cut = outage.subagents.compactMap { id in
-            trace.subagent(id).map { NetworkResume.CutOff(description: $0.description, type: $0.type, prompt: $0.prompt, agentID: agentIDs[id]) }
+            trace.subagent(id).map { NetworkResume.CutOff(description: $0.description, type: $0.type, prompt: $0.prompt, agentID: $0.agentID) }
         }
         let note = NetworkResume.resumeNote(elapsed: elapsed, carryOn: outage.turnFailed || outage.lostSession != nil, subagents: cut)
         let mode = NetworkResume.mode(elapsed: elapsed, subagents: cut.count)

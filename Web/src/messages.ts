@@ -338,6 +338,13 @@ function replyButton(message: MessageView): HTMLElement {
 function userBody(message: MessageView): HTMLElement {
   const body = document.createElement("div");
   body.className = "user-body";
+  // A line someone else wrote (a subagent's view: what its bot sent it), under their name.
+  if (message.speaker) {
+    const name = document.createElement("div");
+    name.className = "speaker";
+    name.textContent = message.speaker;
+    body.append(name);
+  }
   if (message.replyPreview && message.replyTo) {
     const quote = document.createElement("button");
     quote.className = "quote";

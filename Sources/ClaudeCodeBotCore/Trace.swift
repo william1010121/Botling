@@ -42,6 +42,10 @@ public enum TraceEvent: Equatable, Sendable {
     case launchResult(id: String, result: LaunchResult, parent: String?)
     /// What a subagent call said it is for (the Agent call's `description`).
     case subagentDescribed(id: String, description: String)
+    /// A SendMessage call (`id`): `message` for `to` (a subagent's agentId or name, or another
+    /// session). Whether it reached a subagent, and resumed it, the stream says after: a
+    /// `task_started` naming this call, or its result's `resumedAgentId` or recipient.
+    case messageSent(id: String, to: String, summary: String?, message: String, parent: String?)
 }
 
 /// What a ScheduleWakeup or CronCreate call asked for.
@@ -94,10 +98,13 @@ public struct ToolImage: Equatable, Sendable {
     }
 }
 
-/// One line of work: a tool call, words between calls, or a subagent sent off.
+/// One line of work: a tool call, words between calls, or a subagent sent off; in a subagent's
+/// steps, also a message the bot sent it (SendMessage).
 public struct Step: Codable, Equatable, Identifiable, Sendable {
     public enum Kind: String, Codable, Sendable {
         case tool, text, subagent
+        /// A message its bot sent it (SendMessage): `title` the message, `detail` its summary.
+        case message
     }
 
     public var id: String
@@ -161,11 +168,16 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable {
     public var unsettledAt: Date?
 
     private enum CodingKeys: String, CodingKey {
-        case id, description, type, prompt, status, background, startedAt, endedAt, steps, result, parentID, unsettledAt, name
+        case id, description, type, prompt, status, background, startedAt, endedAt, steps, result, parentID, unsettledAt, name, agentID, calls
         case settledAt = "dismissedAt"
     }
     /// The name the bot gave it, when it gave one.
     public var name: String?
+    /// claude's id for it (the Agent call's `agentId`), which SendMessage names it by.
+    public var agentID: String?
+    /// The SendMessage calls that reached it: a resumed run's `task_started` and
+    /// `task_notification` name the call that resumed it, not the one that started it.
+    public var calls: [String]?
 
     public init(id: String, description: String, type: String? = nil, prompt: String, status: Status = .running, background: Bool = false, startedAt: Date = Date(), steps: [Step] = [], parentID: String? = nil) {
         self.id = id
@@ -200,7 +212,12 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable {
     }
 
     /// Its tool calls so far.
-    public var toolCount: Int { steps.filter { $0.kind != .text }.count }
+    public var toolCount: Int { steps.filter { $0.kind == .tool || $0.kind == .subagent }.count }
+
+    /// Its bot reaches it with SendMessage by this (an agentId or a name).
+    func answers(to recipient: String) -> Bool {
+        agentID == recipient || name == recipient || id == recipient
+    }
 }
 
 /// A bot's running record: the steps of the turn under way, and its subagents (newest last).
@@ -213,6 +230,14 @@ public struct TraceBook: Equatable, Sendable {
     private var scheduleCalls: [String: ScheduleCall] = [:]
     /// Structured launch results waiting for their call's `toolResult`.
     private var launches: [String: LaunchResult] = [:]
+    /// SendMessage calls, until their results come.
+    private var sends: [String: SentMessage] = [:]
+
+    struct SentMessage: Equatable, Sendable {
+        var to: String
+        var summary: String?
+        var message: String
+    }
     /// Subagents kept once ended; running ones are always kept.
     static let keptSubagents = 40
     /// Longest detail or output kept for one step.
@@ -226,6 +251,8 @@ public struct TraceBook: Equatable, Sendable {
 
     /// The tools that start a subagent.
     static let subagentTools: Set<String> = ["Agent", "Task"]
+    /// The tool that sends a subagent (or another session) a message, resuming one that ended.
+    static let messageTool = "SendMessage"
 
     /// Takes in one event. Returns true when a subagent started or ended (worth saving).
     @discardableResult
@@ -246,6 +273,10 @@ public struct TraceBook: Equatable, Sendable {
             return true
         case let .toolResult(id, output, failed, parent):
             let launch = launches.removeValue(forKey: id)
+            sends[id] = nil
+            if let index = subagentIndex(id), subagents[index].agentID == nil {
+                subagents[index].agentID = launch?.agentID ?? LaunchText.agentID(in: output)
+            }
             if parent == nil, let at = tasks.firstIndex(where: { $0.id == id }) {
                 tasks[at].outputFile = launch?.outputFile ?? LaunchText.outputFile(in: output) ?? tasks[at].outputFile
             }
@@ -292,6 +323,10 @@ public struct TraceBook: Equatable, Sendable {
             }
             return false
         case let .subagentStarted(id, description, type, prompt, background):
+            // A run of a subagent it already knows, resumed by a SendMessage call (`id`).
+            if subagentIndex(id) == nil, sends[id] != nil || resolvedIndex(id) != nil {
+                return resume(by: id, agentID: nil, description: description, type: type, at: date)
+            }
             if background { addTask(id, kind: .agent, title: description, at: date) }
             if let index = subagentIndex(id) {
                 if !description.isEmpty { subagents[index].description = description }
@@ -309,7 +344,7 @@ public struct TraceBook: Equatable, Sendable {
             if let at = tasks.firstIndex(where: { $0.id == id && $0.isRunning }) {
                 tasks[at].end(status, summary: summary, at: date)
             }
-            guard let index = subagentIndex(id), subagents[index].isRunning else { return false }
+            guard let index = resolvedIndex(id), subagents[index].isRunning else { return false }
             let ended: Subagent.Status = switch TaskEnd(status) {
             case .completed: .completed
             case .failed: .failed
@@ -340,12 +375,85 @@ public struct TraceBook: Equatable, Sendable {
             return false
         case let .launchResult(id, result, _):
             launches[id] = result
+            var changed = false
+            if let index = subagentIndex(id), let agentID = result.agentID, subagents[index].agentID != agentID {
+                subagents[index].agentID = agentID
+                changed = true
+            }
+            // A SendMessage call's result: resumed (`resumedAgentId`), or queued for one at work.
+            if sends[id] != nil, let recipient = result.resumedAgentID ?? result.recipient {
+                changed = (result.resumedAgentID != nil
+                    ? resume(by: id, agentID: recipient, description: nil, type: nil, at: date)
+                    : queue(by: id, agentID: recipient)) || changed
+            }
+            return changed
+        case let .messageSent(id, to, summary, message, _):
+            sends[id] = SentMessage(to: to, summary: summary, message: message)
             return false
         case let .subagentDescribed(id, description):
             guard let index = subagentIndex(id), subagents[index].description.isEmpty else { return false }
             subagents[index].description = description
             return true
         }
+    }
+
+    /// The subagent a SendMessage call is for: by the agentId claude says it reached, or by the
+    /// agentId or name the call gave.
+    private func recipientIndex(_ sent: SentMessage, agentID: String?) -> Int? {
+        if let agentID, let index = subagents.lastIndex(where: { $0.agentID == agentID }) { return index }
+        return subagents.lastIndex { $0.answers(to: sent.to) }
+    }
+
+    /// The bot's message goes in the subagent's conversation, once per call. An ended one's last
+    /// report stays above it (a resumed run ends with a report of its own).
+    private mutating func deliver(_ call: String, to index: Int) -> Bool {
+        guard let sent = sends[call], subagents[index].calls?.contains(call) != true else { return false }
+        subagents[index].calls = (subagents[index].calls ?? []) + [call]
+        if !subagents[index].isRunning, let result = subagents[index].result?.trimmingCharacters(in: .whitespacesAndNewlines), !result.isEmpty,
+           subagents[index].steps.last(where: { $0.kind == .text })?.title.trimmingCharacters(in: .whitespacesAndNewlines) != result {
+            subagents[index].steps.append(Step(id: call + ":result", kind: .text, title: result, done: true))
+        }
+        let summary = sent.summary.flatMap { $0.isEmpty ? nil : $0 }
+        subagents[index].steps.append(Step(id: call + ":message", kind: .message, tool: "SendMessage", title: Self.shorten(sent.message), detail: summary, done: true))
+        return true
+    }
+
+    /// A SendMessage call (`call`) resumed a subagent: its row is at work again, with the message
+    /// in its conversation, and the turn gets a chip for the run. One the app does not know (sent
+    /// off before it restarted, or trimmed) gets a row from what is known. True if it changed.
+    private mutating func resume(by call: String, agentID: String?, description: String?, type: String?, at date: Date) -> Bool {
+        let index: Int
+        if let known = resolvedIndex(call) ?? sends[call].flatMap({ recipientIndex($0, agentID: agentID) }) {
+            index = known
+            _ = deliver(call, to: index)
+            if agentID != nil, subagents[index].agentID == nil { subagents[index].agentID = agentID }
+        } else {
+            guard let sent = sends[call] else { return false }
+            let about = description.flatMap { $0.isEmpty ? nil : $0 } ?? sent.summary.flatMap { $0.isEmpty ? nil : $0 } ?? sent.to
+            var subagent = Subagent(id: call, description: about, type: type, prompt: "", background: true, startedAt: date)
+            subagent.agentID = agentID ?? sent.to
+            if sent.to != subagent.agentID { subagent.name = sent.to }
+            subagents.append(subagent)
+            index = subagents.count - 1
+            _ = deliver(call, to: index)
+        }
+        if !subagents[index].isRunning {
+            subagents[index].status = .running
+            subagents[index].endedAt = nil
+        }
+        subagents[index].background = true
+        if let type, subagents[index].type == nil { subagents[index].type = type }
+        let title = description.flatMap { $0.isEmpty ? nil : $0 } ?? subagents[index].description
+        addTask(call, kind: .agent, title: title, at: date)
+        trim()
+        return true
+    }
+
+    /// A message queued for a subagent at work (it reads it at its next tool call): it goes in
+    /// its conversation. Should it end first, claude resumes it, naming this call.
+    private mutating func queue(by call: String, agentID: String) -> Bool {
+        guard let sent = sends[call], let index = recipientIndex(sent, agentID: agentID) else { return false }
+        return deliver(call, to: index)
     }
 
     /// A ScheduleWakeup or CronCreate call that scheduled something: waiting work, until it fires
@@ -539,12 +647,18 @@ public struct TraceBook: Equatable, Sendable {
         return true
     }
 
+    /// The subagent by the call that started it, or by a SendMessage call that reached it.
     public func subagent(_ id: String) -> Subagent? {
-        subagents.first { $0.id == id }
+        resolvedIndex(id).map { subagents[$0] }
     }
 
     private func subagentIndex(_ id: String) -> Int? {
         subagents.lastIndex { $0.id == id }
+    }
+
+    /// By the call that started it, or by a SendMessage call that reached it.
+    private func resolvedIndex(_ id: String) -> Int? {
+        subagentIndex(id) ?? subagents.lastIndex { $0.calls?.contains(id) == true }
     }
 
     private mutating func end(_ index: Int, status: Subagent.Status, result: String?, at date: Date) {

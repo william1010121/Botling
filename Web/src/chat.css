@@ -110,6 +110,7 @@ button { font: inherit; color: inherit; }
 .mention-list.slash button.library .mention-name { opacity: 0.75; }
 .composer { position: relative; }
 .user-body { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 460px; min-width: 0; }
+.user-body > .speaker { padding: 0 4px 0 0; margin-bottom: -2px; }
 .user-bubble { background: var(--user-bubble); padding: 10px 16px; }
 
 .quote {
