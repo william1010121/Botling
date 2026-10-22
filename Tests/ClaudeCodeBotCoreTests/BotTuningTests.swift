@@ -95,8 +95,8 @@ struct BotTuningTests {
     }
 
     @Test func sameAsBotSetsNoSubagentModel() {
-        let environment = ClaudeAgentProcess.launchEnvironment(for: launch(environment: ["TOKEN": "x"]))
-        #expect(environment == ["TOKEN": "x"])
+        let environment = ClaudeAgentProcess.launchEnvironment(for: launch(environment: ["TOKEN": "x"]), inherited: [:])
+        #expect(environment == ["TOKEN": "x", "CLAUDE_CODE_ARTIFACT": "1"])
     }
 
     @Test func eachSubagentModelGoesInTheEnvironment() {

@@ -736,3 +736,44 @@ extension LiveClaudeTests {
     }
 }
 
+
+extension LiveClaudeTests {
+    /// A bot launched the way the app launches it (`claude -p`, stream-json, its environment)
+    /// has Claude Code's Artifact tool. Print-mode sessions leave it out unless the environment
+    /// asks for it, and then a bot told to publish reports as Artifacts has no tool to do it with.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func aBotLaunchedByTheAppHasTheArtifactTool() async throws {
+        let executable = try #require(ClaudeExecutableLocator().locate())
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let launch = AgentLaunch(model: .haiku, sessionID: UUID(), persistSession: false, workingDirectory: home, systemPrompt: "", tools: BotProfile.toolbox)
+
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = ClaudeAgentProcess.arguments(for: launch)
+        process.currentDirectoryURL = home
+        process.environment = ClaudeAgentProcess.childEnvironment(for: launch)
+        let input = Pipe(), output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        defer { if process.isRunning { process.terminate() } }
+        let message = #"{"type":"user","message":{"role":"user","content":"Reply with only OK."}}"# + "\n"
+        input.fileHandleForWriting.write(Data(message.utf8))
+
+        // The session's tool list comes in its `system`/`init` line, before the model answers.
+        var tools: [String]?
+        for try await line in output.fileHandleForReading.bytes.lines {
+            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
+            if object["type"] as? String == "system", object["subtype"] as? String == "init" {
+                tools = object["tools"] as? [String]
+                break
+            }
+        }
+        let list = try #require(tools)
+        print("Tools:", list)
+        #expect(list.contains(ResultPublishing.tool))
+    }
+}

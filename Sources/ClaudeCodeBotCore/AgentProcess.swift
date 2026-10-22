@@ -236,13 +236,27 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         return (try? JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
     }
 
-    /// What it adds to the app's environment: plugins' secrets and the subagent model.
-    static func launchEnvironment(for launch: AgentLaunch) -> [String: String] {
+    /// What it adds to the app's environment: plugins' secrets, the subagent model, and the
+    /// Artifact tool switched on. Claude Code leaves that tool out of `-p` sessions unless
+    /// `CLAUDE_CODE_ARTIFACT` asks for it, so without it a bot has no way to publish a result
+    /// (and when results stay local, nothing to ask the user for). One set in the app's own
+    /// environment (`inherited`), say to switch it off, is left as it is.
+    static func launchEnvironment(for launch: AgentLaunch, inherited: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
         var environment = launch.environment
+        if inherited[artifactSwitch] == nil, environment[artifactSwitch] == nil {
+            environment[artifactSwitch] = "1"
+        }
         if let model = launch.subagentModel {
             environment["CLAUDE_CODE_SUBAGENT_MODEL"] = model.rawValue
         }
         return environment
+    }
+
+    static let artifactSwitch = "CLAUDE_CODE_ARTIFACT"
+
+    /// The whole environment `claude` runs with: the app's, cleaned up, plus `launchEnvironment`.
+    static func childEnvironment(for launch: AgentLaunch) -> [String: String] {
+        environment().merging(launchEnvironment(for: launch)) { _, launch in launch }
     }
 
     init(_ launch: AgentLaunch, executable: URL) throws {
@@ -251,7 +265,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         process.executableURL = executable
         process.arguments = Self.arguments(for: launch)
         process.currentDirectoryURL = launch.workingDirectory
-        process.environment = Self.environment().merging(Self.launchEnvironment(for: launch)) { _, launch in launch }
+        process.environment = Self.childEnvironment(for: launch)
 
         let input = Pipe()
         let output = Pipe()

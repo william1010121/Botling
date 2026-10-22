@@ -15,6 +15,12 @@ app and publishes it on GitHub Releases.
   page now gets the canvas a browser gives it: white for a page that declares no dark support,
   dark for one that sets `color-scheme: dark` or styles itself for dark mode. Markdown files,
   drawn by the app's own viewer, stay as they were.
+- **Bots can publish reports as claude.ai Artifacts again.** Claude Code leaves its Artifact
+  tool out of `claude -p` sessions unless `CLAUDE_CODE_ARTIFACT` is set, so a bot told to
+  publish reports as Artifacts (Permissions → Reports and results) had no such tool, even with
+  Artifact in its allowed tools: it said the tool was missing and wrote a local HTML page. Every
+  bot and team is now launched with `CLAUDE_CODE_ARTIFACT=1`, unless the app's own environment
+  sets it (say to `0`). A live test checks the tool is in the session's tool list.
 
 - **A card that refreshes no longer goes blank for a moment on each run.** A component with a
   Command whose template does not call `ccb.onData` (a `Refresh: every 2s` card, a
