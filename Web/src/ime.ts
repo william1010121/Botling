@@ -37,11 +37,25 @@ export function installImeGuard(win: Window, grace: number = compositionGrace): 
   if (w.__ccbIme) return;
   const state = { composing: false, endedAt: -Infinity };
   w.__ccbIme = state;
-  w.addEventListener("compositionstart", () => { state.composing = true; }, true);
-  w.addEventListener("compositionend", () => { state.composing = false; state.endedAt = Date.now(); }, true);
+  // The element composing: WebKit sends its compositionend (and blur) there, so one that left the
+  // page mid-composition (a card's box redrawn, a panel closed) never tells the window it ended.
+  let composer: Node | null = null;
+  w.addEventListener("compositionstart", (event) => { state.composing = true; composer = event.target as Node | null; }, true);
+  w.addEventListener("compositionend", () => { state.composing = false; composer = null; state.endedAt = Date.now(); }, true);
   // A blur ends any composition; a missed compositionend must not swallow Enter for good.
-  w.addEventListener("blur", () => { state.composing = false; }, true);
+  w.addEventListener("blur", () => { state.composing = false; composer = null; }, true);
   const stop = (event: KeyboardEvent) => {
+    // A key the input method does not own (WebKit and Chrome mark every key it takes: isComposing,
+    // keyCode 229) means none is choosing, whatever the flag says: a stale flag would cancel every
+    // key in the input box. A Return in the box still composing may be the input method's own,
+    // ahead of its compositionend: it counts as just after one.
+    if (event.type === "keydown" && state.composing && !event.isComposing && event.keyCode !== 229) {
+      const active = w.document.activeElement;
+      const here = !!composer && composer.isConnected && !!active && (composer === active || composer.contains(active));
+      state.composing = false;
+      composer = null;
+      if (here) state.endedAt = Date.now();
+    }
     const enter = event.key === "Enter" || event.keyCode === 13 || event.code === "Enter" || event.code === "NumpadEnter";
     if (!enter) return;
     const during = event.isComposing || event.keyCode === 229 || state.composing;

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sent } from "../src/bridge";
 import { Composer } from "../src/composer";
 import { componentPage } from "../src/components";
-import { compositionGrace, imeGuardScript, installImeGuard, isComposingEnter } from "../src/ime";
+import { compositionGrace, imeGuardScript, installImeGuard, isComposingEnter, isComposingKey } from "../src/ime";
 import { SpecPanel } from "../src/spec";
 import type { ChatState, SpecState } from "../src/types";
 
@@ -140,6 +140,45 @@ describe("the chat composer", () => {
     key(content, { key: "Enter", keyCode: 13 });
     expect(sent).toEqual([{ type: "send", text: "你好" }]);
     expect(composer.text).toBe("");
+  });
+});
+
+describe("a composition that never ends where the page can hear it", () => {
+  // WebKit sends compositionend (and blur) to the element that was composing. When that element
+  // left the page mid-composition (a card's reply box redrawn by a state update, a panel closed),
+  // neither reaches the window, and the guard used to think an input method was choosing for
+  // good: every key in the input box was then cancelled, so it could neither type nor send.
+  it("a box removed while composing does not leave the input box dead", () => {
+    const composer = new Composer(document.body);
+    composer.update(chatState());
+    const content = composer.view.contentDOM;
+    const card = document.body.appendChild(document.createElement("textarea"));
+    compose(card, "compositionstart");
+    card.remove();
+    compose(card, "compositionend");
+    later();
+    const typed = key(content, { key: "a", keyCode: 65 });
+    expect(typed.defaultPrevented).toBe(false);
+    composer.setText("hi");
+    key(content, { key: "Enter", keyCode: 13 });
+    expect(sent).toEqual([{ type: "send", text: "hi" }]);
+  });
+
+  it("a missed compositionend in the input box itself heals on the next key the input method does not own", () => {
+    const composer = new Composer(document.body);
+    composer.update(chatState());
+    const content = composer.view.contentDOM;
+    compose(content, "compositionstart");
+    later();
+    // Still choosing: the input method's keys are left to it.
+    expect(isComposingKey(new KeyboardEvent("keydown", { key: "a", isComposing: true }))).toBe(true);
+    // A key with no sign of composition: there is none, whatever the flag said.
+    const typed = key(content, { key: "b", keyCode: 66 });
+    expect(typed.defaultPrevented).toBe(false);
+    composer.setText("hi");
+    later();
+    key(content, { key: "Enter", keyCode: 13 });
+    expect(sent).toEqual([{ type: "send", text: "hi" }]);
   });
 });
 
