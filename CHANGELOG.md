@@ -22,6 +22,14 @@ app and publishes it on GitHub Releases.
   as a tooltip poking out of the reply's edge. The card's bar now sits left of the toolbar, by
   as many buttons as the toolbar has; Report is in the card's ⋯ menu instead of a flag over
   it; and the card's frame is named for VoiceOver without a hover tooltip.
+- **/share puts the community-feature label on the pull request, or says why it couldn't.**
+  ClaudeCodeBot had no `community-feature` label, so `gh pr create --label` was refused and the
+  pull request was opened again without it, while the checklist had shown "✓ Label" and the
+  Release planner, which lists open pull requests with that label, never showed it. Now a
+  refused label is made on ClaudeCodeBot (`gh label create`; "already exists" is fine) and the
+  pull request is opened with it; when GitHub still refuses it, the pull request goes without
+  and the reply quotes GitHub's answer. The checklist marks the label "!", not ✓, since it is
+  only known once the pull request opens.
 
 ## 1.14.2
 

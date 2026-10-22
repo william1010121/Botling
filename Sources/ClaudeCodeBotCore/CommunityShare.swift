@@ -117,7 +117,9 @@ public enum CommunityShare {
         checks.append(owner(in: repo).map { Check(state: .ok, text: "Your fork: \($0)/ClaudeCodeBot") }
             ?? Check(state: .failed, text: "No fork on GitHub: origin should be your fork of \(upstream) (your Manager can set it up)"))
         checks.append(Check(state: .ok, text: "Description drafted from its \(feature.commits) commit\(feature.commits == 1 ? "" : "s")"))
-        checks.append(Check(state: .ok, text: "Label: \(label)"))
+        // Only known once the pull request opens (the label may be missing on upstream, or not
+        // yours to add): a warning, not a ✓.
+        checks.append(Check(state: .warning, text: "Label: \(label), added when the pull request opens (made on \(upstream) if it is missing); if GitHub refuses it, you are told"))
         return checks
     }
 
@@ -165,6 +167,13 @@ public enum CommunityShare {
                        "--head", "\(owner):\(feature.branch)", "--title", feature.title, "--body", body(for: feature)]
         if label { command += ["--label", self.label] }
         return command
+    }
+
+    /// `gh label create` for the community-feature label on ClaudeCodeBot, for when it is
+    /// missing there (gh says "already exists" when it is not).
+    public static func labelCreation() -> [String] {
+        ["gh", "label", "create", label, "--repo", upstream, "--color", "0E8A16",
+         "--description", "A feature shared from developer mode with /share"]
     }
 
     static func body(for feature: Feature) -> String {

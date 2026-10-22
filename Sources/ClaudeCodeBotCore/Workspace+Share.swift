@@ -87,8 +87,9 @@ extension Workspace {
         shareQuestions[question] = .send(feature, project: project, owner: owner)
     }
 
-    /// Pushes `feature` to your fork and opens its pull request; a label you may not add is left
-    /// for the owner to add.
+    /// Pushes `feature` to your fork and opens its pull request with the label, making the label
+    /// on ClaudeCodeBot first when it is missing there; one you may not add is left for the owner
+    /// to add, and the result says why.
     private func open(_ feature: CommunityShare.Feature, owner: String, from folder: URL, in bot: Bot, project: UUID) async {
         let run = shareRunner
         let push = await Task.detached { run(["git", "push", "-u", "origin", feature.branch], folder) }.value
@@ -96,18 +97,26 @@ extension Workspace {
             tell(bot, "Couldn't push \(feature.branch) to your fork, so no pull request was opened:\n\n```\n\(push.output)\n```", sourceID: project)
             return
         }
-        var labelled = true
-        var made = await Task.detached { run(CommunityShare.pullRequest(for: feature, owner: owner, label: true), folder) }.value
-        if !made.ok, made.output.localizedCaseInsensitiveContains("label") {
-            labelled = false
-            made = await Task.detached { run(CommunityShare.pullRequest(for: feature, owner: owner, label: false), folder) }.value
-        }
+        let (made, refused) = await Task.detached { () -> ((ok: Bool, output: String), String?) in
+            let labelled = CommunityShare.pullRequest(for: feature, owner: owner, label: true)
+            var made = run(labelled, folder)
+            guard !made.ok, made.output.localizedCaseInsensitiveContains("label") else { return (made, nil) }
+            // gh refused the label: most often it is missing on ClaudeCodeBot. Make it, then try again.
+            let creation = run(CommunityShare.labelCreation(), folder)
+            let there = creation.ok || creation.output.localizedCaseInsensitiveContains("already exists")
+            if there {
+                made = run(labelled, folder)
+                guard !made.ok, made.output.localizedCaseInsensitiveContains("label") else { return (made, nil) }
+            }
+            let why = there ? made.output : creation.output
+            return (run(CommunityShare.pullRequest(for: feature, owner: owner, label: false), folder), why)
+        }.value
         guard made.ok else {
             tell(bot, "Couldn't open the pull request for \(feature.branch):\n\n```\n\(made.output)\n```", sourceID: project)
             return
         }
         let link = made.output.split(whereSeparator: \.isNewline).last { $0.hasPrefix("https://") }.map(String.init) ?? made.output
-        let label = labelled ? "" : " It went without the \(CommunityShare.label) label (only people with access to \(CommunityShare.upstream) can add one); the owner adds it."
+        let label = refused.map { " It went without the \(CommunityShare.label) label, so the Release planner does not list it until the owner adds it: GitHub refused it (`\($0.split(whereSeparator: \.isNewline).last.map(String.init) ?? $0)`)." } ?? ""
         tell(bot, "Opened a pull request for \"\(feature.title)\": \(link)\(label) Others vote on it with 👍.", sourceID: project)
         bot.queueNote("(App: The user shared \(feature.branch) with /share: \(link). Commits pushed to that branch later update the pull request.)")
     }

@@ -159,7 +159,9 @@ struct CommunityShareTests {
         #expect(check.text.contains("Share \"Add emoji reactions to pinned messages\""))
         #expect(check.text.contains("✓ Up to date with main"))
         #expect(check.text.contains("✓ Privacy check: no keys, tokens or personal paths in the diff"))
-        #expect(check.text.contains("✓ Label: community-feature"))
+        // Whether the label goes on is only known once the pull request opens: no ✓ for it yet.
+        #expect(!check.text.contains("✓ Label"))
+        #expect(check.text.contains("! Label: community-feature"))
         #expect(check.text.contains("from mei-lin/ClaudeCodeBot to william1010121/ClaudeCodeBot"))
         #expect(check.choices?.map(\.label) == ["Open pull request", "Not now"])
         // Nothing went out yet.
@@ -206,11 +208,69 @@ struct CommunityShareTests {
         #expect(runner.ran.isEmpty)
     }
 
+    @Test func aLabelMissingOnClaudeCodeBotIsCreatedAndThePullRequestCarriesIt() async throws {
+        let fake = FakeLauncher()
+        let runner = FakeRunner()
+        // ClaudeCodeBot has no community-feature label until `gh label create` makes it.
+        final class Labels: @unchecked Sendable { var made = false }
+        let labels = Labels()
+        runner.answer = { arguments in
+            guard arguments.first == "gh" else { return (true, "") }
+            if arguments.starts(with: ["gh", "label", "create"]) {
+                labels.made = true
+                return (true, "")
+            }
+            return arguments.contains("--label") && !labels.made
+                ? (false, "could not add label: 'community-feature' not found")
+                : (true, "https://github.com/william1010121/ClaudeCodeBot/pull/44\n")
+        }
+        let (workspace, _, manager) = try developerSetUp(fake, runner: runner)
+        await workspace.send("/share bot/pin-reactions", to: manager)
+        await eventually { manager.messages.last?.choices?.first?.label == "Open pull request" }
+        #expect(workspace.choose(0, in: try #require(manager.messages.last).id, of: manager))
+        await eventually { manager.messages.last?.text.contains("pull/44") == true }
+        let gh = runner.ran.filter { $0.first == "gh" }
+        let create = try #require(gh.first { $0.starts(with: ["gh", "label", "create"]) })
+        #expect(create.contains("community-feature"))
+        #expect(create.firstIndex(of: "--repo").map { create[$0 + 1] } == "william1010121/ClaudeCodeBot")
+        // The pull request that opened is the one with the label.
+        #expect(gh.last?.prefix(3) == ["gh", "pr", "create"])
+        #expect(gh.last?.contains("--label") == true)
+        #expect(manager.messages.last?.text.contains("without") == false)
+    }
+
+    @Test func aLabelThatAlreadyExistsIsNotAnError() async throws {
+        let fake = FakeLauncher()
+        let runner = FakeRunner()
+        final class Tries: @unchecked Sendable { var labelled = 0 }
+        let tries = Tries()
+        runner.answer = { arguments in
+            guard arguments.first == "gh" else { return (true, "") }
+            if arguments.starts(with: ["gh", "label", "create"]) {
+                return (false, "label with name \"community-feature\" already exists; use `--force` to update its color and description")
+            }
+            guard arguments.contains("--label") else { return (true, "https://github.com/william1010121/ClaudeCodeBot/pull/45\n") }
+            tries.labelled += 1
+            // Someone made the label a moment ago: the second try finds it.
+            return tries.labelled == 1 ? (false, "could not add label: 'community-feature' not found") : (true, "https://github.com/william1010121/ClaudeCodeBot/pull/45\n")
+        }
+        let (workspace, _, manager) = try developerSetUp(fake, runner: runner)
+        await workspace.send("/share bot/pin-reactions", to: manager)
+        await eventually { manager.messages.last?.choices?.first?.label == "Open pull request" }
+        #expect(workspace.choose(0, in: try #require(manager.messages.last).id, of: manager))
+        await eventually { manager.messages.last?.text.contains("pull/45") == true }
+        #expect(runner.ran.last?.contains("--label") == true)
+        #expect(manager.messages.last?.text.contains("without") == false)
+    }
+
     @Test func aLabelYouMayNotAddIsLeftToTheOwner() async throws {
         let fake = FakeLauncher()
         let runner = FakeRunner()
         runner.answer = { arguments in
             guard arguments.first == "gh" else { return (true, "") }
+            if arguments.starts(with: ["gh", "label", "create"]) {
+                return (false, "HTTP 403: Must have admin rights to Repository.")
+            }
             return arguments.contains("--label")
                 ? (false, "could not add label: 'community-feature' not found")
                 : (true, "https://github.com/william1010121/ClaudeCodeBot/pull/43\n")
@@ -220,8 +280,13 @@ struct CommunityShareTests {
         await eventually { manager.messages.last?.choices?.first?.label == "Open pull request" }
         #expect(workspace.choose(0, in: try #require(manager.messages.last).id, of: manager))
         await eventually { manager.messages.last?.text.contains("pull/43") == true }
-        #expect(runner.ran.filter { $0.first == "gh" }.count == 2)
-        #expect(manager.messages.last?.text.contains("without the community-feature label") == true)
+        let gh = runner.ran.filter { $0.first == "gh" }
+        #expect(gh.contains { $0.starts(with: ["gh", "label", "create"]) })
+        #expect(gh.last?.contains("--label") == false)
+        // Said honestly, with what GitHub answered.
+        let said = try #require(manager.messages.last?.text)
+        #expect(said.contains("without the community-feature label"))
+        #expect(said.contains("Must have admin rights"))
     }
 
     @Test func aFailedPushSaysWhyAndOpensNothing() async throws {

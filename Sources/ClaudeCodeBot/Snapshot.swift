@@ -210,7 +210,7 @@ enum Snapshot {
                 : .init(state: .ok, text: "Privacy check: no keys, tokens or personal paths in the diff"),
             .init(state: .ok, text: "Your fork: mei-lin/ClaudeCodeBot"),
             .init(state: .ok, text: "Description drafted from its \(feature.commits) commits"),
-            .init(state: .ok, text: "Label: community-feature"),
+            .init(state: .warning, text: "Label: community-feature, added when the pull request opens (made on william1010121/ClaudeCodeBot if it is missing); if GitHub refuses it, you are told"),
         ]
         let card = CommunityShare.checklistCard(feature, checks: checks, owner: "mei-lin")
         var picked = ChatMessage(role: .notice, text: list.text, date: now.addingTimeInterval(-20), choices: list.choices)
