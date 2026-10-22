@@ -7,8 +7,41 @@ extension Workspace {
         WebSite.site(selection: selection)
     }
 
+    /// Whether the Chat | Board switch shows above the chat column: for a bot's chat with a
+    /// Board, not for a subagent's view or a web site (which has no Board, and whose page uses
+    /// the room).
+    public var showsBoardSwitch: Bool {
+        selectedWebSite == nil && viewingSubagent == nil && selectedBot.profile.capabilities.board
+    }
+
     public func select(_ site: WebSite) {
         select(site.selectionID)
+    }
+
+    /// The site's own row (or its face in the folded column): a new question, fresh, as "New
+    /// question" does. The page you leave is not lost: a question on it still waiting goes on
+    /// behind, and its row stays. Already on a fresh page of it, nothing reloads.
+    public func openFresh(_ site: WebSite) {
+        let fresh = selectedWebSite == site && web.open[site.id] == nil && web.requested[site.id] == nil
+        // Left before the site counts as shown: an answer that came while you were elsewhere
+        // has not been seen, so its row stays.
+        if !fresh { web.startNew(on: site) }
+        select(site)
+    }
+
+    /// A link to a saved web conversation's text (a bot's reply links one): the site opens on
+    /// that conversation, where it was, instead of the file. False for any other link.
+    @discardableResult
+    public func openSavedWebConversation(_ url: URL) -> Bool {
+        guard let found = web.conversation(savedIn: url) else { return false }
+        open(found.conversation, on: found.site)
+        return true
+    }
+
+    /// A question's row (left column or "Questions"): the site, showing it.
+    public func open(_ conversation: WebConversation, on site: WebSite) {
+        web.show(conversation, of: site)
+        select(site)
     }
 
     /// What the main bot is told at each wake: where saved web AI conversations are and how to

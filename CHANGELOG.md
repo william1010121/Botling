@@ -10,9 +10,17 @@ app and publishes it on GitHub Releases.
 
 - **Gemini as a bot in the left column.** A new "Web" section lists Gemini; picking it shows
   gemini.google.com itself in the chat column (a real web view, with its own sign-in kept over
-  restarts). Each Gemini conversation is a row under it, like a bot's subagents; click one to
-  open it, or "New question" in the right panel to start one. When an answer finishes, the app
-  reads the conversation as text (it never types or clicks on the page) and saves it to
+  restarts). Clicking Gemini (its row, or its face in the folded column) opens a fresh, empty
+  question, as "New question" in the right panel does. Each question is a row under it, like a
+  bot's subagents, from the moment you send it (titled from what you asked, with a live dot
+  until the answer comes); once you have viewed one and moved on, or press its clock, it leaves
+  the left column. The right panel's "Questions" keeps every one: click one there to open it and
+  list it in the left column again. A bot's link to a saved conversation's file opens Gemini on
+  that conversation (from the app's list, else the file's `- URL:` line) instead of the file.
+  There is no Chat | Board switch over it (a web site has no Board): the page and its address
+  strip start at the top of the column.
+  When an answer finishes, the app reads the conversation as text (it never types or clicks on
+  the page) and saves it to
   `~/.claudecodebot/web/gemini/<title>.md`; the top strip says "Saved for Main bot · N messages",
   or "Couldn't read this page" when it found nothing, and then saves nothing. "Ask Main bot
   about this" hands the saved file to the main bot, which is told where these files are so it
@@ -65,6 +73,20 @@ app and publishes it on GitHub Releases.
   branch's older run; the release runs the same fast set before building the app.
 
 ### Fixed
+
+- **A Gemini question is no longer lost when you move on before it is answered.** Its row
+  used to appear only once Gemini answered, so starting a new question (or opening another
+  row) in the meantime dropped it. Now the row is made as soon as the page shows the question,
+  even before Gemini gives the conversation an address; the page you leave keeps running behind
+  the new one until the answer is read and saved into that row, whether you are on another
+  question or another bot. A question still waiting when its page closed (or the app quit) is
+  read again from its conversation's address, and one whose page closed before it had an
+  address becomes that conversation's row once a page shows the same question.
+- **Saved Gemini conversations keep math and lists readable.** Each formula was saved three
+  times over (`Ω(nlog⁡n)\Omega(n \log n)Ω(nlogn)`, KaTeX's MathML, TeX and drawn text); now
+  once, as its TeX: `$\Omega(n \log n)$` in a line, `$$…$$` on its own. A list item's
+  paragraph was saved as a lone "-", a blank line, then its text; now `- text`. Conversations
+  saved before are fixed the next time their page is read.
 
 - **A component's Command line is run before it is delivered.** The component shot (the check
   Maintainer and the component editor run before handing a component over) now runs the
