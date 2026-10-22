@@ -166,6 +166,29 @@ struct TwoHeadsTests {
         #expect(bot.partner?.phase == .asleep)
     }
 
+    /// The composer saves a default; addressing one message must not replace it.
+    @Test(arguments: AnswerTarget.allCases) func answerChoiceSurvivesAnOverrideAndRelaunch(_ target: AnswerTarget) async throws {
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-answer-choice-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let store = BotStore(directory: home.appending(path: "store"))
+        let fake = FakeLauncher()
+        let bot = Bot(profile: .main(home: home), launcher: fake.launcher, store: store)
+        await bot.setHeads([.claude, .codex])
+        bot.setAnswerWith(target)
+        #expect(store.loadHeads()?.answerWith == target)
+
+        let override: AnswerTarget = target == .claude ? .codex : .claude
+        bot.send("One addressed message", to: override)
+        await eventually { bot.messages.last?.role == .bot }
+        #expect(bot.messages.first { $0.role == .user }?.to == override)
+        #expect(bot.heads.answerWith == target)
+        #expect(store.loadHeads()?.answerWith == target)
+        bot.stop()
+
+        let relaunched = Bot(profile: .main(home: home), launcher: fake.launcher, store: store)
+        #expect(relaunched.heads.answerWith == target)
+    }
+
     @Test func headsAreKeptAndToldAboutEachOther() async {
         let home = FileManager.default.temporaryDirectory.appending(path: "ccb-bot-\(UUID().uuidString)")
         let store = BotStore(directory: home.appending(path: "store"))

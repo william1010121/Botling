@@ -407,6 +407,8 @@ export type Action =
   /** A `patchState` could not be applied: send the whole state. */
   | { type: "resync" }
   | { type: "send"; text: string; to?: string }
+  /** Saves the explicit composer choice for this bot; @mentions only affect a send. */
+  | { type: "setAnswerWith"; botID: string; to: string; requestID: number }
   /** A chat's unsent text and caret changed (empty: none), for the app to keep over a restart. */
   | { type: "draft"; botID: string; text: string; cursor: number }
   | { type: "choose"; messageID: string; index: number }

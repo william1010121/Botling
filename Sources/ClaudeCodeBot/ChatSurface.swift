@@ -243,6 +243,19 @@ struct ChatSurface: NSViewRepresentable {
                 // A bot with two heads: the head (or both) picked above the input box.
                 let target = (body["to"] as? String).flatMap(AnswerTarget.init(rawValue:))
                 Task { await workspace.send(text, files: files.map(\.url), replyingTo: reply, answerWith: target, to: bot) }
+            case "setAnswerWith":
+                // Bind the save to the chat whose chip was clicked, even if the user switched
+                // bots before WebKit delivered the action. Mentions only set `send.to` above.
+                if let chatID = id("botID"), let requestID = body["requestID"] as? Int,
+                   let target = (body["to"] as? String).flatMap(AnswerTarget.init(rawValue:)),
+                   let owner = ([workspace.mainBot] + Array(workspace.managers.values)).first(where: { $0.id == chatID }) {
+                    if owner.heads.targets.contains(target) { owner.setAnswerWith(target) }
+                    // Also acknowledge unchanged/rejected saves: no object change may fire.
+                    let ack: [String: Any] = ["botID": chatID.uuidString, "requestID": requestID, "chosen": owner.heads.answerWith.rawValue]
+                    if let data = try? JSONSerialization.data(withJSONObject: ack), let json = String(data: data, encoding: .utf8) {
+                        view?.evaluateJavaScript("ccb.answerWithSaved(\(json))")
+                    }
+                }
             case "draft":
                 if let chat = body["botID"] as? String {
                     let text = body["text"] as? String ?? ""
