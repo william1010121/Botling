@@ -1,13 +1,25 @@
 name: CI
 
+# Answers one question: does it build, and do the fast, deterministic tests pass? Tests that run
+# real processes or wait on real time are marked `.integration` / `.wallClock` and skip themselves
+# when CI is set (GitHub sets it); they run locally with `swift test`.
+
 on:
   push:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  web:
     runs-on: macos-26
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: Web
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -15,17 +27,20 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: Web/package-lock.json
-      - name: Web (chat surface, plugins, plugin host)
-        working-directory: Web
-        run: |
-          npm ci
-          npm run typecheck
-          npm test
-          npm run build
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
       - name: Built web output is committed
-        run: git diff --exit-code -- Sources/ClaudeCodeBot/Resources
-      - name: Swift build and tests
         run: |
-          swift --version
-          swift build --build-tests
-          swift test
+          npm run build
+          git diff --exit-code -- ../Sources/ClaudeCodeBot/Resources
+
+  swift:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: swift build --build-tests
+      - name: Fast tests
+        run: swift test --skip-build --no-parallel

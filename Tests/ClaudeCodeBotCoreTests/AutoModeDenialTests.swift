@@ -92,7 +92,7 @@ struct AutoModeDenialTests {
     }
 
     /// The frame alone shows no card: a "no verdict" sends one too.
-    @Test func aFrameWhoseCallWasNotBlockedShowsNoCard() async throws {
+    @Test(.wallClock) func aFrameWhoseCallWasNotBlockedShowsNoCard() async throws {
         let (bot, agent) = try await awakeBot(FakeLauncher())
         let noVerdict = Self.resultWithMeta(kind: "automode-unavailable", text: Self.realNoVerdictTexts[0])
         for line in [Self.toolUseLine, Self.deniedFrame, noVerdict] {
@@ -235,7 +235,7 @@ struct AutoModeDenialTests {
 
     /// The bot hands the allow on and has nothing to say (`<no-reply/>`): no empty
     /// "Worked · 1 step" bubble is left in the chat.
-    @Test func aRelayedAllowThatSaysNoReplyLeavesNoEmptyBubble() async throws {
+    @Test(.wallClock) func aRelayedAllowThatSaysNoReplyLeavesNoEmptyBubble() async throws {
         let fake = FakeLauncher()
         // The allow is answered below, by hand.
         fake.respond = { text in isAppOnly(text) && !text.contains("allowed") ? "OK" : nil }
@@ -326,7 +326,7 @@ struct AutoModeDenialTests {
 
     /// A call made before the rule reached claude and blocked after it (claude was already
     /// judging it): the user's allow covers its retry, no second card.
-    @Test func aCallMadeBeforeTheAllowAndBlockedAfterShowsNoSecondCard() async throws {
+    @Test(.wallClock) func aCallMadeBeforeTheAllowAndBlockedAfterShowsNoSecondCard() async throws {
         let (bot, agent) = try await awakeBot(FakeLauncher())
         emit([Self.recordedCall("toolu_a"), Self.recordedBlock("toolu_a"), Self.recordedCall("toolu_b")], to: agent)
         await eventually { bot.openQuestion != nil }

@@ -118,6 +118,7 @@ struct NetworkErrorRecognitionTests {
 }
 
 @MainActor
+@Suite(.wallClock)
 struct NetworkResumeTests {
     @Test func aTurnLostToTheNetworkSaysSoAndWaitsAwake() async {
         let fake = FakeLauncher()
@@ -286,6 +287,7 @@ struct NetworkResumeTests {
 }
 
 @MainActor
+@Suite(.wallClock)
 struct StallReminderTests {
     @Test func aQuietTurnIsRemindedOncePerQuietSpell() async {
         let fake = FakeLauncher()
@@ -361,6 +363,7 @@ struct StallReminderTests {
 }
 
 @MainActor
+@Suite(.wallClock)
 struct NetworkWatchTests {
     let root = FileManager.default.temporaryDirectory.appending(path: "ccb-net-\(UUID().uuidString)")
 

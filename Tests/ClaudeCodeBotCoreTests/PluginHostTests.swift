@@ -4,7 +4,7 @@ import Testing
 
 /// The plugin host with the real Node process and the built `host.mjs`.
 @MainActor
-@Suite(.enabled(if: ClaudeExecutableLocator(command: "node").locate() != nil, "needs Node"))
+@Suite(.enabled(if: ClaudeExecutableLocator(command: "node").locate() != nil, "needs Node"), .integration)
 struct PluginHostTests {
     let root = FileManager.default.temporaryDirectory.appending(path: "ccb-host-\(UUID().uuidString)")
     static let script = URL(filePath: #filePath).deletingLastPathComponent()

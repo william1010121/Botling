@@ -155,7 +155,7 @@ struct BotTests {
         #expect(bot.messages.map(\.role) == [.user, .bot])
     }
 
-    @Test func idleBotKnowsWhenItWillSleep() async {
+    @Test(.wallClock) func idleBotKnowsWhenItWillSleep() async {
         let fake = FakeLauncher()
         let idle: TimeInterval = 60
         let bot = makeBot(fake, idle: idle)
@@ -176,7 +176,7 @@ struct BotTests {
         #expect(bot.sleepsAt == nil)
     }
 
-    @Test func idleBotTidiesMemoryThenSleepsWithoutShowingIt() async {
+    @Test(.wallClock) func idleBotTidiesMemoryThenSleepsWithoutShowingIt() async {
         let fake = FakeLauncher()
         let bot = makeBot(fake, idle: 0.05)
 
@@ -187,7 +187,7 @@ struct BotTests {
         #expect(bot.messages.map(\.role) == [.user, .bot])
     }
 
-    @Test func nextMessageAfterSleepStartsAFreshSession() async throws {
+    @Test(.wallClock) func nextMessageAfterSleepStartsAFreshSession() async throws {
         let fake = FakeLauncher()
         let bot = makeBot(fake, idle: 0.05)
 
@@ -272,7 +272,7 @@ struct BotTests {
         #expect(bot.messages.map(\.role) == [.divider])
     }
 
-    @Test func switchRequestedMidTurnWaitsForTheReply() async {
+    @Test(.wallClock) func switchRequestedMidTurnWaitsForTheReply() async {
         let fake = FakeLauncher()
         fake.respond = { text in isAppOnly(text) ? "OK" : nil }
         let bot = makeBot(fake)

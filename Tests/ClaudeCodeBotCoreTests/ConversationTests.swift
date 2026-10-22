@@ -6,7 +6,7 @@ import Testing
 /// brings the chat's last lines along, and an answer says which question it answers.
 @MainActor
 struct ConversationTests {
-    @Test func whatYouAddBeforeItAnswersIsAnsweredTogether() async throws {
+    @Test(.wallClock) func whatYouAddBeforeItAnswersIsAnsweredTogether() async throws {
         let fake = FakeLauncher()
         fake.respond = { _ in nil }
         let bot = makeBot(fake)

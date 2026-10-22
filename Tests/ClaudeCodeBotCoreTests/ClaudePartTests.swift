@@ -72,7 +72,7 @@ struct ClaudePartTests {
         #expect(PluginRegistry.check(root.appending(path: "ccb/plugins/ccb-teams")).isEmpty)
     }
 
-    @Test func anAwakeBotRestartsWhenClaudePartsChange() async throws {
+    @Test(.wallClock) func anAwakeBotRestartsWhenClaudePartsChange() async throws {
         let fake = FakeLauncher()
         let workspace = workspace(fake)
         let bot = workspace.mainBot
@@ -95,7 +95,7 @@ struct ClaudePartTests {
 
     /// A plugin changed while the bot had a subagent at work in the background: the handoff
     /// would end that subagent. It waits until the bot is free, and two changes make one handoff.
-    @Test func aBotWithASubagentAtWorkLoadsNewPluginsOnceItIsFree() async throws {
+    @Test(.wallClock) func aBotWithASubagentAtWorkLoadsNewPluginsOnceItIsFree() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in isAppOnly(text) ? "OK" : nil }
         let workspace = workspace(fake)
@@ -145,7 +145,7 @@ struct ClaudePartTests {
 
     /// A changed Claude part is out while it is checked again: the bot hands off once, after
     /// the check, with the new files, not first without the plugin and then again with it.
-    @Test func aChangedClaudePartHandsOffOnceAfterItsCheck() async throws {
+    @Test(.wallClock) func aChangedClaudePartHandsOffOnceAfterItsCheck() async throws {
         let claude = try claudePlugin("tools")
         let fake = FakeLauncher()
         let workspace = workspace(fake) { _ in
@@ -173,7 +173,7 @@ struct ClaudePartTests {
     /// The 1.10.0 ping-pong: Maintainer edits component-editor.md, the app writes it back, again
     /// and again, and files are written again with the same bytes. An awake bot restarts at most
     /// once for all of it, before its next message, in the same session (no handoff turn).
-    @Test func anEditorFilePingPongRestartsEachBotAtMostOnce() async throws {
+    @Test(.wallClock) func anEditorFilePingPongRestartsEachBotAtMostOnce() async throws {
         let fake = FakeLauncher()
         let workspace = workspace(fake)
         let library = root.appending(path: "ccb/plugins")

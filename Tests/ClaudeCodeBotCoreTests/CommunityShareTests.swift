@@ -7,6 +7,7 @@ import Testing
 /// and opens a pull request for it to ClaudeCodeBot with the community-feature label. Pushing and
 /// `gh` never run here: a fake records what would have.
 @MainActor
+@Suite(.integration)
 struct CommunityShareTests {
     let root = FileManager.default.temporaryDirectory.appending(path: "ccb-share-\(UUID().uuidString)")
 

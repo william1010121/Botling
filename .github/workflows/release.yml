@@ -10,6 +10,7 @@ permissions:
 jobs:
   release:
     runs-on: macos-26
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,10 +20,12 @@ jobs:
         run: |
           test "${GITHUB_REF_NAME#v}" = "$(tr -d '[:space:]' < VERSION)"
           grep -q "^## ${GITHUB_REF_NAME#v}$" CHANGELOG.md
+      # Build + fast tests only: `.integration` / `.wallClock` tests skip themselves on CI.
       - name: Test
         run: |
           (cd Web && npm ci && npm test)
-          swift test
+          swift build --build-tests
+          swift test --skip-build --no-parallel
       - name: Build ClaudeCodeBot.app
         run: scripts/make-app.sh "${GITHUB_REF_NAME#v}"
       - name: Publish the release

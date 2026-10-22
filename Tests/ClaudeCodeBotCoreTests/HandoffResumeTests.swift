@@ -15,7 +15,7 @@ struct HandoffResumeTests {
         return bot
     }
 
-    @Test func newPluginsResumeTheSameSessionBeforeTheNextMessage() async throws {
+    @Test(.wallClock) func newPluginsResumeTheSameSessionBeforeTheNextMessage() async throws {
         let fake = FakeLauncher()
         let bot = await awakeBot(fake)
         await bot.reloadPlugins()

@@ -253,7 +253,7 @@ struct ScheduledTaskTests {
         #expect(note.contains("cron job (CronCreate 0 9 * * *) \"核對\""))
     }
 
-    @Test func aBotSettlesAFiredWakeUpAndDropsADeletedCronJob() async throws {
+    @Test(.wallClock) func aBotSettlesAFiredWakeUpAndDropsADeletedCronJob() async throws {
         let fake = FakeLauncher()
         let bot = makeBot(fake)
         var clock = start

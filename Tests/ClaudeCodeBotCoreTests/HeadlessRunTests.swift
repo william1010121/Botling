@@ -41,7 +41,7 @@ struct HeadlessRunTests {
         }
     }
 
-    @Test func quietMeansNoDockIconAndNoFocus() {
+    @Test(.integration) func quietMeansNoDockIconAndNoFocus() {
         HeadlessRun.quiet(NSApplication.shared)
         #expect(NSApplication.shared.activationPolicy() == .prohibited)
         #expect(!NSApplication.shared.isActive)

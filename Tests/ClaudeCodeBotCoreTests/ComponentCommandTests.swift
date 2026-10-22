@@ -67,7 +67,7 @@ struct ComponentCommandTests {
         #expect(ComponentCommands.data(fromOutput: "a/b \"c\"\nd\n") == #""a/b \"c\"\nd""#)
     }
 
-    @Test func commandsRunInTheFolderWithLimits() async throws {
+    @Test(.integration) func commandsRunInTheFolderWithLimits() async throws {
         let folder = root.appending(path: "project")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         func run(_ command: String, timeout: TimeInterval = 10, limit: Int = 100_000) async -> CommandOutcome {
@@ -98,7 +98,7 @@ struct ComponentCommandTests {
         return false
     }
 
-    @Test(.wallClock) func stoppingACommandStopsWhatItStarted() async throws {
+    @Test(.wallClock, .integration) func stoppingACommandStopsWhatItStarted() async throws {
         let folder = root.appending(path: "project")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         // Children that shrug off a polite stop outlive the shell unless their whole group is killed.
@@ -217,7 +217,7 @@ struct ComponentCommandTests {
 
     // MARK: In the chat
 
-    @Test func theCardAsksThenShowsTheOutput() async throws {
+    @Test(.integration) func theCardAsksThenShowsTheOutput() async throws {
         let home = root.appending(path: "ccb/main")
         var message = ChatMessage(role: .bot, text: "Here:")
         message.displays = [
@@ -257,7 +257,7 @@ struct ComponentCommandTests {
         #expect(workspace.componentCommands.isApproved(#"printf '{"n":7}'"#, in: bot.profile.workingDirectory))
     }
 
-    @Test func allowingRunsOnlyTheCommandTheCardShowed() async throws {
+    @Test(.integration) func allowingRunsOnlyTheCommandTheCardShowed() async throws {
         let workspace = makeWorkspace()
         let component = workspace.components.folder.appending(path: "usage")
         try FileManager.default.createDirectory(at: component, withIntermediateDirectories: true)
@@ -382,7 +382,7 @@ struct ComponentCommandTests {
         #expect(!later.isApproved(detail: template, in: folder))
     }
 
-    @Test func aDetailsOutputIsDataWithTheCommandsLimits() async throws {
+    @Test(.integration) func aDetailsOutputIsDataWithTheCommandsLimits() async throws {
         let folder = root.appending(path: "project")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try "inside".write(to: folder.appending(path: "note.txt"), atomically: true, encoding: .utf8)
@@ -400,7 +400,7 @@ struct ComponentCommandTests {
         #expect(big.error?.contains("more than 1 KB") == true)
     }
 
-    @Test func theCardAllowsItsDetailCommandWithItsCommand() async throws {
+    @Test(.integration) func theCardAllowsItsDetailCommandWithItsCommand() async throws {
         let workspace = makeWorkspace()
         let component = workspace.components.folder.appending(path: "commits")
         try FileManager.default.createDirectory(at: component, withIntermediateDirectories: true)
@@ -502,7 +502,7 @@ struct ComponentCommandTests {
         #expect(commands.runs["m/0"]?.data == #"{"free":27}"#)
     }
 
-    @Test func aRefreshedCardStillShowsItsNewDataAfterAnotherChatWasOpened() async throws {
+    @Test(.integration) func aRefreshedCardStillShowsItsNewDataAfterAnotherChatWasOpened() async throws {
         let workspace = makeWorkspace()
         let component = workspace.components.folder.appending(path: "disk")
         try FileManager.default.createDirectory(at: component, withIntermediateDirectories: true)
@@ -553,7 +553,7 @@ struct ComponentCommandTests {
         #expect(try #require(workspace.componentCommands.runs["\(message.id.uuidString)/0"]?.ranAt) > firstRan)
     }
 
-    @Test func aSavedDetailRunIsKeptOnItsPin() async throws {
+    @Test(.integration) func aSavedDetailRunIsKeptOnItsPin() async throws {
         let workspace = makeWorkspace()
         let component = workspace.components.folder.appending(path: "disk")
         try FileManager.default.createDirectory(at: component, withIntermediateDirectories: true)

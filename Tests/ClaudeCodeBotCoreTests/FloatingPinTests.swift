@@ -221,7 +221,7 @@ struct FloatingPinTests {
         #expect(workspace.settings.globalFloats == nil)
     }
 
-    @Test func aGlobalFloatRefreshesOnceNotOncePerChat() async throws {
+    @Test(.integration) func aGlobalFloatRefreshesOnceNotOncePerChat() async throws {
         let workspace = makeWorkspace()
         try addComponent("slow", command: "printf 1", to: workspace)
         try addComponent("live", command: "printf 2", to: workspace)
@@ -373,7 +373,7 @@ struct FloatingPinTests {
         #expect(settings.globalFloats == nil)
     }
 
-    @Test func aFloatingPinRefreshedInSecondsIsLeftToThePage() async throws {
+    @Test(.integration) func aFloatingPinRefreshedInSecondsIsLeftToThePage() async throws {
         // Its page reruns it only while the window is shown; the app's timer leaves it alone.
         let workspace = makeWorkspace()
         try addComponent("live", command: "printf 1", to: workspace)

@@ -51,7 +51,7 @@ struct PagePreviewTests {
         #expect(!PagePreview.isArtifactPage(URL(filePath: "/p/site/x.html")))
     }
 
-    @Test func servesOnlyArtifactsAndPagesShownInACard() throws {
+    @Test(.integration) func servesOnlyArtifactsAndPagesShownInACard() throws {
         let page = try write("p/.bot/artifacts/report.html")
         let picture = try write("p/.bot/artifacts/img/chart.svg", "<svg/>")
         let secret = try write("p/secret.txt", "key")
@@ -83,7 +83,7 @@ struct PagePreviewTests {
 
     /// WebKit plays a video or sound through `ccb-preview:` only when it is answered in byte
     /// ranges: `Range: bytes=0-1` first, then the parts it needs (206 + Content-Range).
-    @Test func videoAndAudioBesideAPageAreServedInByteRanges() throws {
+    @Test(.integration) func videoAndAudioBesideAPageAreServedInByteRanges() throws {
         let bytes = Data((0..<1000).map { UInt8($0 % 251) })
         let video = root.appending(path: "p/.bot/artifacts/demo.mp4")
         try FileManager.default.createDirectory(at: video.deletingLastPathComponent(), withIntermediateDirectories: true)

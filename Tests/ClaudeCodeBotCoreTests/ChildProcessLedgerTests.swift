@@ -4,6 +4,7 @@ import Testing
 
 /// The claude processes an app run started, written down so the next run can end the ones the
 /// last left behind (an app that crashed or was replaced by a new build).
+@Suite(.integration)
 struct ChildProcessLedgerTests {
     func ledgerFile() -> URL {
         FileManager.default.temporaryDirectory.appending(path: "ccb-children-\(UUID().uuidString).json")

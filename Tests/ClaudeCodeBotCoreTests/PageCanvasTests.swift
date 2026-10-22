@@ -7,6 +7,7 @@ import WebKit
 /// A result page opened in its own window, in the app's dark look. The window behind the page is
 /// near-black, so a page must paint its own canvas the way a browser would.
 @MainActor
+@Suite(.integration)
 struct PageCanvasTests {
     /// The page drawn in a dark window: the canvas colour at the corner, and the darkest and
     /// lightest pixel luminance (text) inside the page.
@@ -48,26 +49,26 @@ struct PageCanvasTests {
 
     private let text = "<h1>opensearch MR !32 修改報告</h1><p>Some words in the page.</p>"
 
-    @Test func aPageThatSetsNoColoursIsAWhitePageWithBlackText() async throws {
+    @Test(.integration) func aPageThatSetsNoColoursIsAWhitePageWithBlackText() async throws {
         let page = try await draw("<!doctype html><meta charset=utf-8>\(text)")
         #expect(page.corner > 0.9)
         #expect(page.darkest < 0.2)
     }
 
-    @Test func aPageThatSetsOnlyLightThemeColoursIsReadable() async throws {
+    @Test(.integration) func aPageThatSetsOnlyLightThemeColoursIsReadable() async throws {
         // The MR !32 report: dark text, light code chips, no background of its own.
         let page = try await draw("<!doctype html><meta charset=utf-8><style>body{color:#222}code{background:#f4f4f6}</style>\(text)<code>x</code>")
         #expect(page.corner > 0.9)
         #expect(page.darkest < 0.2)
     }
 
-    @Test func aPageThatSupportsDarkModeStaysDark() async throws {
+    @Test(.integration) func aPageThatSupportsDarkModeStaysDark() async throws {
         let page = try await draw("<!doctype html><meta charset=utf-8><meta name=color-scheme content='light dark'>\(text)")
         #expect(page.corner < 0.2)
         #expect(page.lightest > 0.8)
     }
 
-    @Test func aPageWithItsOwnDarkStylesKeepsThem() async throws {
+    @Test(.integration) func aPageWithItsOwnDarkStylesKeepsThem() async throws {
         let page = try await draw("<!doctype html><meta charset=utf-8><style>@media (prefers-color-scheme: dark){html{background:#111;color:#eee}}</style>\(text)")
         #expect(page.corner < 0.2)
         #expect(page.lightest > 0.8)

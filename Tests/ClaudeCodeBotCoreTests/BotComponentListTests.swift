@@ -379,7 +379,7 @@ struct BotComponentListTests {
 
     /// A reply that only names the component (still working on it, asking something) is no
     /// answer: the request stays, and the bot is not told Maintainer declined.
-    @Test func aReplyThatOnlyNamesTheComponentLeavesTheRequestOpen() async throws {
+    @Test(.wallClock) func aReplyThatOnlyNamesTheComponentLeavesTheRequestOpen() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
             if text.hasSuffix("Warn me on errors") { return "<component name=\"toast\">an error toast</component>" }

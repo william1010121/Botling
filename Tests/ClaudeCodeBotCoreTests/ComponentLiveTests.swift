@@ -44,7 +44,7 @@ struct ComponentLiveTests {
         #expect(every("Command: echo 1") == nil)
     }
 
-    @Test func aLiveCardSaysHowOftenAndRunsNoMoreOftenThanThat() async throws {
+    @Test(.wallClock) func aLiveCardSaysHowOftenAndRunsNoMoreOftenThanThat() async throws {
         let workspace = makeWorkspace()
         try addComponent("cpu", about: "CPU.\nCommand: `echo {\"n\":1}`\nRefresh: every 2s", to: workspace)
         try addComponent("log", about: "Log.\nCommand: `echo {}`", to: workspace)

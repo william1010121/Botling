@@ -291,7 +291,7 @@ struct PinTests {
         #expect(try JSONDecoder().decode([PinnedComponent].self, from: Data(json.utf8))[0].status == nil)
     }
 
-    @Test func aPinnedCommandsStateShowsOnItsChip() async throws {
+    @Test(.wallClock) func aPinnedCommandsStateShowsOnItsChip() async throws {
         let workspace = makeWorkspace()
         try addComponent("stats", command: "exit 3", to: workspace)
         let bot = workspace.mainBot
@@ -311,7 +311,7 @@ struct PinTests {
 
     // MARK: Pinning
 
-    @Test func pinningFromAChatCardKeepsWhatItShows() async throws {
+    @Test(.integration) func pinningFromAChatCardKeepsWhatItShows() async throws {
         let workspace = makeWorkspace()
         try addComponent("log", command: #"printf '[{"hash":"a1"}]'"#, to: workspace)
         try addComponent("weather", to: workspace)
@@ -415,7 +415,7 @@ struct PinTests {
 
     // MARK: Running
 
-    @Test func aPinnedCommandRunsOnlyOnceAllowed() async throws {
+    @Test(.integration) func aPinnedCommandRunsOnlyOnceAllowed() async throws {
         let workspace = makeWorkspace()
         let command = #"printf '{"title":"Fresh"}'"#
         try addComponent("stats", command: command, to: workspace)
@@ -450,7 +450,7 @@ struct PinTests {
         #expect(BotStore(directory: root.appending(path: "ccb/main")).loadPins()[0].data == #"{"title":"Fresh"}"#)
     }
 
-    @Test func theTimerRunsDuePinsThatAreAllowed() async throws {
+    @Test(.integration) func theTimerRunsDuePinsThatAreAllowed() async throws {
         let workspace = makeWorkspace()
         try addComponent("a", command: "printf 1", to: workspace)
         try addComponent("b", command: "printf 2", to: workspace)
@@ -476,7 +476,7 @@ struct PinTests {
         #expect(try #require(workspace.componentCommands.runs[due.card]?.ranAt) > ran)
     }
 
-    @Test func pinsRefreshedWhenShownRunWhenShown() async throws {
+    @Test(.integration) func pinsRefreshedWhenShownRunWhenShown() async throws {
         let workspace = makeWorkspace()
         try addComponent("a", command: "printf 1", to: workspace)
         try addComponent("b", command: "printf 2", to: workspace)

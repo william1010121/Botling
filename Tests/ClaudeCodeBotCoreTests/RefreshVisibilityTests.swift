@@ -37,7 +37,7 @@ struct RefreshVisibilityTests {
         return try #require(workspace.pin(named: "release", in: workspace.mainBot, refresh: .interval, seconds: 5))
     }
 
-    @Test func aPinNobodySeesDoesNotRun() async throws {
+    @Test(.integration) func aPinNobodySeesDoesNotRun() async throws {
         let workspace = makeWorkspace()
         let pin = try livePin(workspace)
         // The page has not said it shows the pin (another tab, scrolled away, folded panel).
@@ -47,7 +47,7 @@ struct RefreshVisibilityTests {
         #expect(workspace.componentCommands.runs[pin.card]?.data == "1")
     }
 
-    @Test func aHiddenWindowStopsEveryPinAndShownAgainRunsOnceRightAway() async throws {
+    @Test(.wallClock) func aHiddenWindowStopsEveryPinAndShownAgainRunsOnceRightAway() async throws {
         let workspace = makeWorkspace()
         let pin = try livePin(workspace)
         await workspace.pinsVisible([pin.id], in: workspace.mainBot)
@@ -67,7 +67,7 @@ struct RefreshVisibilityTests {
         #expect(try #require(workspace.componentCommands.runs[pin.card]?.ranAt) > again)
     }
 
-    @Test func shownAgainSoonerThanItsIntervalWaitsForIt() async throws {
+    @Test(.wallClock) func shownAgainSoonerThanItsIntervalWaitsForIt() async throws {
         let workspace = makeWorkspace()
         let pin = try livePin(workspace)
         await workspace.pinsVisible([pin.id], in: workspace.mainBot)
@@ -77,7 +77,7 @@ struct RefreshVisibilityTests {
         #expect(workspace.componentCommands.runs[pin.card]?.ranAt == ran)
     }
 
-    @Test func aPinOfAChatNotOnScreenDoesNotRun() async throws {
+    @Test(.integration) func aPinOfAChatNotOnScreenDoesNotRun() async throws {
         // The release-progress case: a pin refreshed every 5 s floating in a project's chat ran
         // `git status` in the background while another chat was shown.
         let workspace = makeWorkspace()

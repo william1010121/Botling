@@ -5,6 +5,7 @@ import Testing
 /// Developer mode: one project is ClaudeCodeBot's source; its manager may install builds (you
 /// confirm, a build that does not come up is rolled back), look at the app, and gets feedback.
 @MainActor
+@Suite(.integration)
 struct DeveloperModeTests {
     let root = FileManager.default.temporaryDirectory.appending(path: "ccb-dev-\(UUID().uuidString)")
 

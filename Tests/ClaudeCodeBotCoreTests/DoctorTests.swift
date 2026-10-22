@@ -120,14 +120,14 @@ struct DoctorTests {
 
     // MARK: Running commands
 
-    @Test(.wallClock) func aCommandThatHangsIsStoppedAtTheTimeout() async {
+    @Test(.wallClock, .integration) func aCommandThatHangsIsStoppedAtTheTimeout() async {
         let start = Date()
         let result = await CommandRunner.run(URL(filePath: "/bin/sleep"), ["30"], timeout: 0.5)
         #expect(result?.timedOut == true)
         #expect(Date().timeIntervalSince(start) < 5)
     }
 
-    @Test func aCommandsOutputAndExitCodeAreKept() async {
+    @Test(.integration) func aCommandsOutputAndExitCodeAreKept() async {
         let result = await CommandRunner.run(URL(filePath: "/bin/sh"), ["-c", "echo out; echo err >&2; exit 3"], timeout: 5)
         #expect(result?.exitCode == 3)
         #expect(result?.output.contains("out") == true)
