@@ -8,8 +8,10 @@ struct BoardMode: ViewModifier {
     @ObservedObject var workspace: Workspace
     @ObservedObject var inputs: ChatInputs
     let bot: Bot
+    /// Under a web site's page: no switch, no ⌃⌘B.
+    var hidden = false
 
-    private var available: Bool { workspace.viewingSubagent == nil && bot.profile.capabilities.board }
+    private var available: Bool { !hidden && workspace.viewingSubagent == nil && bot.profile.capabilities.board }
     private var on: Bool { available && inputs.boards.contains(bot.id) }
 
     func body(content: Content) -> some View {
@@ -45,19 +47,23 @@ struct BoardSwitch: View {
     static let barBottom: CGFloat = 6
 
     let board: Bool
+    /// False where there is no Board (a web site): the switch keeps its place, Board greyed out.
+    var boardAvailable = true
     let set: (Bool) -> Void
 
     var body: some View {
         HStack(spacing: 2) {
             segment(L("Chat"), icon: "bubble.left", on: !board) { set(false) }
             segment(L("Board"), icon: "square.grid.2x2", on: board) { set(true) }
+                .disabled(!boardAvailable)
+                .opacity(boardAvailable ? 1 : 0.45)
         }
         .padding(2)
         .background(RoundedRectangle(cornerRadius: 9).fill(Theme.bubble))
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.chip))
         .background(
             // ⌃⌘B flips it from anywhere in the window.
-            Button("") { set(!board) }
+            Button("") { if boardAvailable { set(!board) } }
                 .keyboardShortcut("b", modifiers: [.control, .command])
                 .opacity(0)
                 .accessibilityHidden(true)

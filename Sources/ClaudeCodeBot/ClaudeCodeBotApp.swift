@@ -52,8 +52,10 @@ struct RootView: View {
 
     var body: some View {
         let bot = workspace.selectedBot
+        // A web AI (Gemini) picked in the left column: its site shows instead of a chat.
+        let web = workspace.selectedWebSite
         let collapsed = workspace.railCollapsed
-        let spec = workspace.viewingSubagent == nil ? workspace.openSpec(in: bot) : nil
+        let spec = workspace.viewingSubagent == nil && workspace.selectedWebSite == nil ? workspace.openSpec(in: bot) : nil
         let rightCollapsed = spec == nil && workspace.rightPanelCollapsed
         GeometryReader { window in
         // The columns never add up to more than the window: a panel too wide for it (the spec
@@ -71,13 +73,27 @@ struct RootView: View {
                 .shellColumn("rail", height: window.size.height)
                 // A new language (Settings) draws the native views again in its words.
                 .id(workspace.language)
-            // One web view for every bot: switching bots redraws it instead of reloading.
-            ChatSurface(bot: bot, workspace: workspace, components: workspace.components, commands: workspace.componentCommands, plugins: workspace.plugins, inputs: inputs)
+            ZStack {
+                // One web view for every bot: switching bots redraws it instead of reloading.
+                // Kept under a web site's page, so coming back does not reload it either.
+                ChatSurface(bot: bot, workspace: workspace, components: workspace.components, commands: workspace.componentCommands, plugins: workspace.plugins, inputs: inputs)
+                    .modifier(BoardMode(workspace: workspace, inputs: inputs, bot: bot, hidden: web != nil))
+                    .opacity(web == nil ? 1 : 0)
+                    .allowsHitTesting(web == nil)
+                if let web {
+                    WebSiteColumn(shelf: workspace.web, site: web)
+                }
+            }
                 .frame(minWidth: columns.chat, maxWidth: .infinity)
-                .modifier(BoardMode(workspace: workspace, inputs: inputs, bot: bot))
                 .shellColumn("chat", height: window.size.height)
             Group {
-                if let spec {
+                if let web {
+                    if rightCollapsed {
+                        WebStrip(site: web) { setRightPanel(collapsed: false) }
+                    } else {
+                        WebPanel(workspace: workspace, site: web)
+                    }
+                } else if let spec {
                     // A component spec's chip was pressed: its workspace, until collapsed back.
                     SpecPanelView(specID: spec.id, bot: bot, workspace: workspace, components: workspace.components, commands: workspace.componentCommands)
                         .background(Theme.side)
@@ -97,7 +113,7 @@ struct RootView: View {
             }
             .frame(width: columns.right)
             .overlay(alignment: .leading) { Rectangle().fill(Theme.line).frame(width: 1).opacity(rightCollapsed || spec != nil ? 1 : 0) }
-            .id("\(bot.id)-\(workspace.language.rawValue)")
+            .id("\(web?.id ?? bot.id.uuidString)-\(workspace.language.rawValue)")
             .shellColumn("right", height: window.size.height)
         }
         }
@@ -205,6 +221,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
         workspace.prepareLibrary()
+        // Web AIs' page readers: the plugin's scripts, with the app's own copy as the fallback.
+        workspace.web.bundledExtractors = WebSiteColumn.bundledExtractors
+        WebExtractors.install(in: Workspace.Layout.plugins(in: workspace.root), bundled: WebSiteColumn.bundledExtractors)
         // Preview cards show a picture of their page; a new picture redraws the chats.
         PageShotMaker.shared.install { [workspace] in workspace.objectWillChange.send() }
         connectSelfUpdate()

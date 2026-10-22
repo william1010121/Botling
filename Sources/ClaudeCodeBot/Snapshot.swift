@@ -523,6 +523,11 @@ enum Snapshot {
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
         workspace.refreshWaiting()
+        // `CCB_WINDOW_WEB=gemini`: that web site picked, with sample saved conversations (the
+        // page itself is a placeholder: a snapshot loads and signs into nothing).
+        if let id = ProcessInfo.processInfo.environment["CCB_WINDOW_WEB"], let site = WebSite.all.first(where: { $0.id == id }) {
+            sampleWebConversations(on: site, in: workspace)
+        }
         let size = CGSize(width: 1280, height: 820)
         let content = RootView(workspace: workspace, settings: SettingsNavigator())
             .frame(minWidth: 980, minHeight: 620)
@@ -548,6 +553,25 @@ enum Snapshot {
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
             }
             exit(columns.count == 3 && off.isEmpty ? 0 : 2)
+        }
+    }
+
+    /// Three saved sample conversations on `site`, the newest open.
+    private static func sampleWebConversations(on site: WebSite, in workspace: Workspace) {
+        let samples: [(id: String, title: String, turns: Int, minutesAgo: Double)] = [
+            ("c0a9e1f27b3d", "CHANGELOG merge conflicts", 4, 60 * 26),
+            ("7d21b0c4e9aa", "Release card every 60 s?", 2, 95),
+            ("8f3a2c1d9e0b", "WKWebView or iframe?", 6, 3),
+        ]
+        for sample in samples {
+            let url = site.startURL.appending(path: sample.id)
+            let turns = (0..<sample.turns).map { WebTurn(role: $0 % 2 == 0 ? .user : .assistant, text: "Sample message \($0 + 1)") }
+            workspace.web.record(on: site, url: url, pageTitle: nil, reading: .read(title: sample.title, turns: turns), now: Date().addingTimeInterval(-sample.minutesAgo * 60))
+        }
+        workspace.select(site)
+        if let newest = workspace.web.conversations(of: site).first {
+            workspace.web.show(newest, of: site)
+            workspace.web.record(on: site, url: newest.url, pageTitle: nil, reading: .read(title: newest.title, turns: (0..<6).map { WebTurn(role: $0 % 2 == 0 ? .user : .assistant, text: "Sample message \($0 + 1)") }), now: newest.savedAt ?? Date())
         }
     }
 

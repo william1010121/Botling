@@ -229,6 +229,7 @@ struct RailView: View {
                             sectionTitle(L("Pinned")).frame(height: 28)
                             ForEach(pinned) { entryRow($0) }
                         }
+                        WebRailSection(workspace: workspace)
                         HStack {
                             sectionTitle(L("Chats"))
                             Button { editingGroup = ChatGroup(name: "", members: []) } label: {
@@ -242,7 +243,7 @@ struct RailView: View {
                             .help(L("New group: pick the bots you want in one conversation"))
                             .accessibilityLabel(L("New group"))
                         }
-                        .padding(.top, pinned.isEmpty ? 0 : 6)
+                        .padding(.top, 6)
                         ForEach(rest) { entryRow($0) }
                     }
                     .animation(.easeInOut(duration: 0.25), value: entries.map(\.id))

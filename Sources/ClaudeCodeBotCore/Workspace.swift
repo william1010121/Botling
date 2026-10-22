@@ -71,6 +71,8 @@ public final class Workspace: ObservableObject {
         public static func bot(_ id: UUID, in root: URL) -> URL { root.appending(path: "projects/\(id.uuidString)") }
         /// The list of projects and bots.
         public static func projectsFile(in root: URL) -> URL { root.appending(path: "projects.json") }
+        /// Web AIs' saved conversations, one folder per site (`web/gemini/`).
+        public static func web(in root: URL) -> URL { root.appending(path: "web") }
         /// The plugin library.
         public static func plugins(in root: URL) -> URL { root.appending(path: "plugins") }
         /// The plugin the component library is, and its components folder.
@@ -164,6 +166,8 @@ public final class Workspace: ObservableObject {
     /// Runs plugins' program parts (Node), when a script for it was given.
     public let pluginHost: PluginHostClient?
     public let root: URL
+    /// Web AIs in the left column (Gemini): their conversations and saved text.
+    public let web: WebShelf
     private let makeBot: BotFactory
     /// ClaudeCodeBot's own settings: developer mode, auto-approve, ignored items.
     @Published public internal(set) var settings: AppSettings
@@ -226,6 +230,7 @@ public final class Workspace: ObservableObject {
         makeBot: @escaping BotFactory
     ) {
         self.root = root
+        web = WebShelf(folder: Layout.web(in: root), library: Layout.plugins(in: root))
         self.makeBot = makeBot
         self.launcher = launcher
         briefWriter = ComponentBrief.writer(launcher: launcher)
@@ -262,7 +267,7 @@ public final class Workspace: ObservableObject {
         Self.retireTheOneGroup(in: root, into: mainBot)
         mainBot.wakeNote = { [weak self] in
             guard let self else { return "" }
-            return [projectBriefing(), codexBriefing(for: mainBot)].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            return [projectBriefing(), codexBriefing(for: mainBot), webBriefing()].filter { !$0.isEmpty }.joined(separator: "\n\n")
         }
         mainBot.extraDirectories = { [weak self] in self?.everyProject.map(\.notesFolder) ?? [] }
         giveClaudeParts(to: mainBot)
@@ -562,7 +567,8 @@ public final class Workspace: ObservableObject {
     public func select(_ projectID: UUID?) {
         selection = projectID
         viewingSubagent = nil
-        selectedBot.markRead()
+        // A web site (Gemini) is no chat: the main bot behind it stays unread.
+        if WebSite.site(selection: projectID) == nil { selectedBot.markRead() }
     }
 
     /// Shows what `bot`'s subagent did, like a conversation; nil goes back to the bot's chat.

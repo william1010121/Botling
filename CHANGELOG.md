@@ -6,6 +6,19 @@ app and publishes it on GitHub Releases.
 
 ## Unreleased
 
+### Added
+
+- **Gemini as a bot in the left column.** A new "Web" section lists Gemini; picking it shows
+  gemini.google.com itself in the chat column (a real web view, with its own sign-in kept over
+  restarts). Each Gemini conversation is a row under it, like a bot's subagents; click one to
+  open it, or "New question" in the right panel to start one. When an answer finishes, the app
+  reads the conversation as text (it never types or clicks on the page) and saves it to
+  `~/.claudecodebot/web/gemini/<title>.md`; the top strip says "Saved for Main bot · N messages",
+  or "Couldn't read this page" when it found nothing, and then saves nothing. "Ask Main bot
+  about this" hands the saved file to the main bot, which is told where these files are so it
+  can search them. The script that reads the page is a plugin, `ccb-web-extractors`, that
+  Maintainer can fix when Gemini changes its page.
+
 ### Fixed
 
 - **A bot's reply that says "here is the card" shows the card under it.** A bot that keeps a

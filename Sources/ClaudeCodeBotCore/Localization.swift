@@ -75,6 +75,7 @@ public enum L10n {
         ("Panels", panelStrings),
         ("Views", viewStrings),
         ("Core", coreStrings),
+        ("Web", webStrings),
     ]
 
     /// All rows, English first then `translated`; the first row of a key wins.
