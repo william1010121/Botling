@@ -50,12 +50,14 @@ export class Composer {
   private readonly filesRow: HTMLElement;
   private readonly sendButton: HTMLButtonElement;
   private hasFiles = false;
-  /** "Answer with" above the box, in a bot with two heads; its pick lasts for one message. */
+  /** "Answer with" above the box; the app saves its choice for this bot. */
   private readonly answerRow: HTMLElement;
   /** "Round 2 of 3 · Stop now" while the two heads discuss, review or hand work over. */
   private readonly roundsRow: HTMLElement;
   private answer: AnswerWithView | null = null;
-  private answerPicked: string | null = null;
+  /** Explicit choices awaiting the app's saved state, keyed so switching chats keeps them. */
+  private readonly answerPicks = new Map<string, { id: string; requestID: number; saved: boolean }>();
+  private answerRequest = 0;
   /** Plugins see key presses first; returning true means a plugin handled it. */
   onKey: (event: KeyboardEvent) => boolean = () => false;
   private popover: HTMLElement | null = null;
@@ -419,15 +421,10 @@ export class Composer {
     let text = this.text;
     if (text.trim() === "" && !this.hasFiles) return true;
     if (this.answer) {
-      // "@codex …" at the start picks that head for this message, as the chips do.
+      // "@codex …" overrides this message only; the chips keep the saved preference.
       const typed = answerPrefix(text, this.answer);
-      if (typed) {
-        this.answerPicked = typed.id;
-        text = typed.rest;
-      }
-      post({ type: "send", text, to: this.answerPicked ?? this.answer.chosen });
-      this.answerPicked = null;
-      this.drawAnswer();
+      if (typed) text = typed.rest;
+      post({ type: "send", text, to: typed?.id ?? this.answerPicks.get(this.answerChat)?.id ?? this.answer.chosen });
     } else {
       post({ type: "send", text });
     }
@@ -436,11 +433,25 @@ export class Composer {
     return true;
   }
 
-  /** The chips for this chat; a pick made for another chat does not carry over. */
+  /** A save belongs to one click: an older acknowledgement never clears a newer choice. */
+  answerWithSaved(ack: { botID: string; requestID: number; chosen: string }): void {
+    const pending = this.answerPicks.get(ack.botID);
+    if (!pending || pending.requestID !== ack.requestID) return;
+    pending.id = ack.chosen;
+    pending.saved = true;
+    if (this.answerChat === ack.botID) {
+      if (this.answer?.chosen === pending.id) this.answerPicks.delete(ack.botID);
+      this.drawAnswer();
+    }
+  }
+
+  /** Native state owns saved choices; keep a click visible until its save is acknowledged. */
   private setAnswer(answer: AnswerWithView | null, chat: string): void {
-    if (this.answerChat !== chat) this.answerPicked = null;
     this.answerChat = chat;
-    if (this.answerPicked && !answer?.options.some((option) => option.id === this.answerPicked)) this.answerPicked = null;
+    const pending = this.answerPicks.get(chat);
+    if (pending && ((pending.saved && answer?.chosen === pending.id) || !answer?.options.some((option) => option.id === pending.id))) {
+      this.answerPicks.delete(chat);
+    }
     this.answer = answer;
     this.drawAnswer();
   }
@@ -470,7 +481,7 @@ export class Composer {
     this.answerRow.hidden = !answer;
     this.answerRow.innerHTML = "";
     if (!answer) return;
-    const picked = this.answerPicked ?? answer.chosen;
+    const picked = this.answerPicks.get(this.answerChat)?.id ?? answer.chosen;
     const label = document.createElement("span");
     label.className = "answer-label";
     label.textContent = t("composer.answerWith");
@@ -492,7 +503,14 @@ export class Composer {
   }
 
   private pickAnswer(id: string): void {
-    this.answerPicked = id === this.answer?.chosen ? null : id;
+    if (!this.answer?.options.some((option) => option.id === id)) return;
+    if (id === this.answer.chosen && !this.answerPicks.has(this.answerChat)) {
+      this.view.focus();
+      return;
+    }
+    const requestID = ++this.answerRequest;
+    this.answerPicks.set(this.answerChat, { id, requestID, saved: false });
+    post({ type: "setAnswerWith", botID: this.answerChat, to: id, requestID });
     this.drawAnswer();
     this.view.focus();
   }

@@ -217,6 +217,10 @@ class Chat {
     this.composer.setDrafts(drafts);
   }
 
+  answerWithSaved(ack: { botID: string; requestID: number; chosen: string }): void {
+    this.composer.answerWithSaved(ack);
+  }
+
   /**
    * Watching a subagent: a bar on top saying whose it is, what runs it and how it is doing, with
    * the way back. There is nothing to type to a subagent, so the input box goes away meanwhile.
@@ -311,6 +315,7 @@ declare global {
       setState(state: ChatState): void;
       /** The drafts the app kept, by chat: sent once when the page loads. */
       setDrafts(drafts: Record<string, Draft>): void;
+      answerWithSaved(ack: { botID: string; requestID: number; chosen: string }): void;
       patchState(patch: StatePatch): void;
       setPlugins(specs: PluginSpec[]): Promise<void>;
       runCommand(id: string): void;
@@ -386,6 +391,7 @@ window.ccb = {
     reportVisiblePinsSoon();
   },
   setDrafts: (drafts) => chat.setDrafts(drafts),
+  answerWithSaved: (ack) => chat.answerWithSaved(ack),
   patchState: (patch) => {
     chat.patchState(patch);
     reportVisiblePinsSoon();
