@@ -15,6 +15,13 @@ app and publishes it on GitHub Releases.
   a `<show id="…">` in a reply with words draws the card there and the old one gives way (one
   card per id; the old reply's words stay); a reply that is only the update still changes the
   card where it is, adding no bubble.
+- **A reply's hover toolbar no longer covers the card in it, and the reply has one flag.**
+  Hovering a reply that shows a component (a study-progress card) put the reply's toolbar
+  (reply / make into component / flag) right on top of the card's own pin bar, a second flag
+  (the card's Report) over the card's bottom-right corner, on its content, and the card's name
+  as a tooltip poking out of the reply's edge. The card's bar now sits left of the toolbar, by
+  as many buttons as the toolbar has; Report is in the card's ⋯ menu instead of a flag over
+  it; and the card's frame is named for VoiceOver without a hover tooltip.
 
 ## 1.14.2
 

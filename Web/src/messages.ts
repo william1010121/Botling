@@ -87,6 +87,9 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
         if (body.classList.contains("wide")) row.classList.add("wide");
         row.append(avatar(message.avatar), body, actions);
       }
+      // How many buttons its hover toolbar has: a card's own bar at the top-right of a wide reply
+      // moves left of it by that much, so neither covers the other (chat.css).
+      if (row.classList.contains("wide")) row.dataset.actions = String(actions.matches(".message-actions") ? actions.children.length : 1);
       break;
     }
     case "relay": {

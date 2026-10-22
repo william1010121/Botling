@@ -389,7 +389,7 @@ describe("messages", () => {
     // The link stays a chip; the card comes under it.
     expect(row.querySelector(".chip")).not.toBeNull();
     const frame = row.querySelector<HTMLIFrameElement>(".component-frame")!;
-    expect(frame.title).toBe("網頁預覽卡片");
+    expect(frame.getAttribute("aria-label")).toBe("網頁預覽卡片");
     expect(frame.srcdoc).toContain("ccb-preview://page/p/.bot/artifacts/a.html");
     expect(frame.srcdoc).toContain("open(url, label)");
     window.dispatchEvent(new MessageEvent("message", { data: { ccb: "open", url: "file:///p/.bot/artifacts/a.html", label: "A" }, source: frame.contentWindow }));
