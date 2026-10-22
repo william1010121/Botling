@@ -301,6 +301,10 @@ button.primary:disabled { opacity: 0.4; cursor: default; }
 .user-body .seen-marks { justify-content: flex-end; }
 .seen-mark { color: var(--faint); opacity: 0.35; font-weight: 600; }
 .seen-mark.on { opacity: 1; }
+/* Bot look Cute: each mark is its head's tiny character (the image comes from setSeenHeads), grey and faded until seen */
+body.seen-heads .seen-marks { gap: 2px; }
+body.seen-heads .seen-mark { width: 14px; height: 14px; font-size: 0; color: transparent; background: center / contain no-repeat; opacity: 1; }
+body.seen-heads .seen-mark:not(.on) { opacity: 0.32; filter: grayscale(1); }
 /* "Round 2 of 3 · Stop now" while the heads discuss, review or hand work over */
 .rounds-line { display: flex; align-items: center; gap: 10px; padding: 0 4px 8px; font-size: 12px; color: var(--muted); }
 .rounds-line[hidden] { display: none; }

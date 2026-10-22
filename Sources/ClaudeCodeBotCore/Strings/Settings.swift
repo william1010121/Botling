@@ -135,6 +135,21 @@ extension L10n {
         // General → Language
         "Language": ["語言", "语言", "言語", "언어"],
         "App language": ["App 語言", "应用语言", "アプリの言語", "앱 언어"],
+        "Bot look": ["Bot 外觀", "Bot 外观", "ボットの見た目", "봇 모습"],
+        "Original": ["原始", "原始", "オリジナル", "원래대로"],
+        "Cute": ["可愛", "可爱", "かわいい", "귀엽게"],
+        "A bot with Claude and Codex shows them as two characters wearing the bot's face: on each reply, as small heads under the lines they have seen, behind the bot's face in the left column and under Now.": [
+            "同時有 Claude 和 Codex 的 Bot 會畫成兩個戴著 Bot 臉的角色：在每則回覆旁、在它們看過的訊息下方變成小頭像、在左欄 Bot 臉的後面，以及「現在」底下。",
+            "同时有 Claude 和 Codex 的 Bot 会画成两个戴着 Bot 脸的角色：在每条回复旁、在它们看过的消息下方变成小头像、在左栏 Bot 脸的后面，以及「现在」下面。",
+            "Claude と Codex の両方を持つボットは、ボットの顔をかぶった 2 人のキャラクターで表示されます。各返信の横、読んだ行の下の小さな顔、左の列のボットの顔の後ろ、「今」の下に出ます。",
+            "Claude와 Codex가 함께 있는 봇은 봇 얼굴을 쓴 두 캐릭터로 보입니다. 각 답장 옆, 읽은 줄 아래의 작은 얼굴, 왼쪽 열의 봇 얼굴 뒤, '지금' 아래에 나옵니다.",
+        ],
+        "Plain bot faces, with C and X marks for Claude and Codex.": [
+            "一般的 Bot 臉，用 C 和 X 標示 Claude 和 Codex。",
+            "普通的 Bot 脸，用 C 和 X 标示 Claude 和 Codex。",
+            "普通のボットの顔で、Claude と Codex は C と X の印で示します。",
+            "평범한 봇 얼굴에 Claude와 Codex를 C와 X 표시로 보여 줍니다.",
+        ],
         "System default ({0})": ["系統預設（{0}）", "系统默认（{0}）", "システムのデフォルト（{0}）", "시스템 기본값({0})"],
         "ClaudeCodeBot's menus, buttons and messages change at once. Bots reply in this language by default; when you write to them in another language, they answer in yours.": [
             "ClaudeCodeBot 的選單、按鈕和訊息會立即切換。Bot 預設也用這個語言回覆；你用其他語言寫給它們時，它們會用你的語言回答。",

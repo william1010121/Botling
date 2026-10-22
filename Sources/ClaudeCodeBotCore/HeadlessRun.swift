@@ -8,7 +8,7 @@ public enum HeadlessRun {
     public static let environmentKeys = [
         "CCB_SNAPSHOT", "CCB_ICON", "CCB_RAIL_SNAPSHOT", "CCB_RAIL_PINS_SNAPSHOT",
         "CCB_RIGHT_SNAPSHOT", "CCB_SETTINGS_SNAPSHOT", "CCB_BOT_SETTINGS_SNAPSHOT", "CCB_LIMITS_SNAPSHOT", "CCB_RELEASES_SNAPSHOT", "CCB_SPEC_SNAPSHOT",
-        "CCB_SHARE_SNAPSHOT", "CCB_WINDOW_SNAPSHOT",
+        "CCB_SHARE_SNAPSHOT", "CCB_WINDOW_SNAPSHOT", "CCB_CHIBI_SNAPSHOT",
     ]
 
     /// Every command-line flag that asks for a headless run.

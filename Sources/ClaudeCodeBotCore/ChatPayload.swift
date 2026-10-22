@@ -361,6 +361,24 @@ public struct ChatPayload: Encodable, Equatable {
     var answerWith: AnswerWith? = nil
     /// A loop between the heads under way: "Round 2 of 3", with its Stop now button's words.
     var rounds: Rounds? = nil
+    /// Bot look Cute, in a bot with two heads: each head's tiny character for the seen marks, as
+    /// an image URL by its mark ("C", "X"). Nil: the marks are letters.
+    var seenHeads: [String: String]? = nil
+
+    /// Bot look Cute: the faces of a bot with two heads, as image URLs. `avatar`: a head's
+    /// character wearing the bot's face, for its replies; `mark`: its tiny head for seen marks.
+    public struct HeadLook {
+        public var avatar: (BotEngine) -> String
+        public var mark: (BotEngine) -> String
+
+        public init(avatar: @escaping (BotEngine) -> String, mark: @escaping (BotEngine) -> String) {
+            self.avatar = avatar
+            self.mark = mark
+        }
+    }
+
+    /// The letter a head's seen mark has, and its key in `seenHeads`.
+    static func markLetter(_ head: BotEngine) -> String { head == .claude ? "C" : "X" }
 
     public struct Rounds: Encodable, Equatable {
         var text: String
@@ -379,7 +397,7 @@ public struct ChatPayload: Encodable, Equatable {
     static func seenMarks(_ message: ChatMessage, in bot: Bot) -> [Seen]? {
         guard bot.heads.hasTwo, message.role == .user || message.role == .bot else { return nil }
         return bot.heads.engines.map { head in
-            Seen(mark: head == .claude ? "C" : "X", name: head.displayName, seen: message.seenBy?.contains(head) == true)
+            Seen(mark: markLetter(head), name: head.displayName, seen: message.seenBy?.contains(head) == true)
         }
     }
 
@@ -468,8 +486,11 @@ public struct ChatPayload: Encodable, Equatable {
         specs: Bool = false,
         openSpec: UUID? = nil,
         floating: [FloatingPin]? = nil,
+        look: HeadLook? = nil,
         avatar: (_ projectID: UUID?) -> String
     ) -> ChatPayload {
+        // Bot look Cute: a bot with two heads draws each head as its character.
+        let look = group == nil && bot.heads.hasTwo ? look : nil
         let pinnedNames = pinning.map { _ in Set(bot.pins.map(\.name)) }
         let own = avatar(nil)
         let main = bot.profile.role == .main ? own : nil
@@ -480,7 +501,9 @@ public struct ChatPayload: Encodable, Equatable {
             let face: String? = switch message.role {
             // In a group chat each line has the face of the bot that said it.
             // So does a bot called into a bot's own chat.
-            case .bot: speaker != nil && message.sourceID != nil ? avatar(message.sourceID) : own
+            case .bot where speaker != nil && message.sourceID != nil: avatar(message.sourceID)
+            // A head's reply under its character (a subagent's keeps the bot's face).
+            case .bot: look.flatMap { look in message.subagentID == nil ? message.engine.map(look.avatar) : nil } ?? own
             case .notice: avatar(message.sourceID)
             case .relay: main ?? avatar(nil)
             default: nil
@@ -595,7 +618,8 @@ public struct ChatPayload: Encodable, Equatable {
             floating: floating,
             makeComponents: specs ? true : nil,
             answerWith: group == nil ? AnswerWith.of(bot) : nil,
-            rounds: group == nil ? bot.rounds.map { Rounds(text: $0.shown, stop: L("Stop now")) } : nil
+            rounds: group == nil ? bot.rounds.map { Rounds(text: $0.shown, stop: L("Stop now")) } : nil,
+            seenHeads: look.map { look in Dictionary(uniqueKeysWithValues: bot.heads.engines.map { (markLetter($0), look.mark($0)) }) }
         )
     }
 

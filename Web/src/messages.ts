@@ -54,7 +54,10 @@ export function messageElement(message: MessageView, components: Record<string, 
   return row;
 }
 
-/** Small letters for the heads ("C X"): lit for each head the line has reached, faint for the others. */
+/**
+ * Small letters for the heads ("C X"): lit for each head the line has reached, faint for the others.
+ * With Bot look Cute (`setSeenHeads`) each letter shows as its character's tiny head instead.
+ */
 export function seenMarks(seen: SeenView[]): HTMLElement {
   const marks = document.createElement("div");
   marks.className = "seen-marks";
@@ -67,6 +70,7 @@ export function seenMarks(seen: SeenView[]): HTMLElement {
     const mark = document.createElement("span");
     mark.className = head.seen ? "seen-mark on" : "seen-mark";
     mark.textContent = head.mark;
+    mark.dataset.mark = head.mark;
     mark.setAttribute("aria-hidden", "true");
     marks.append(mark);
   }

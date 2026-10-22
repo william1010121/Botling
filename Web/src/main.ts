@@ -16,6 +16,7 @@ import { escapeHTML } from "./util";
 import { installImeGuard } from "./ime";
 import { watchFileDrops } from "./drops";
 import { reportVisiblePinsSoon, setWindowVisible } from "./visible";
+import { setSeenHeads } from "./heads";
 
 // Before anything listens for keys: an input method's Return never reaches a page handler.
 installImeGuard(window);
@@ -110,6 +111,9 @@ class Chat {
       this.clearList();
       // The input box keeps each chat's draft itself (Composer.update).
     }
+
+    // Bot look Cute: the seen marks show the heads' tiny characters (a style rule, so lines drawn already follow).
+    setSeenHeads(state.seenHeads);
 
     // A new language (Settings) draws every message again in its words.
     if (setLanguage(state.lang)) this.clearList();

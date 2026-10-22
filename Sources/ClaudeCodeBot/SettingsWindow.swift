@@ -235,7 +235,9 @@ struct SettingsWindow: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 28) {
                         switch navigator.section {
-                        case .general: LanguageSection(workspace: workspace)
+                        case .general:
+                            LanguageSection(workspace: workspace)
+                            BotLookSection(workspace: workspace)
                         case .usage: UsageSection(workspace: workspace)
                         case .permissions: PermissionsSection(workspace: workspace, commands: workspace.componentCommands)
                         case .plugins: PluginsSection(registry: workspace.plugins, host: workspace.pluginHost, workspace: workspace)
@@ -502,6 +504,41 @@ struct LanguageSection: View {
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.faint)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// How bots with Claude and Codex look: plain faces with C/X marks, or the two characters.
+struct BotLookSection: View {
+    @ObservedObject var workspace: Workspace
+
+    var body: some View {
+        PanelSection(L("Bot look")) {
+            HStack(spacing: 12) {
+                Text(L("Bot look")).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
+                Picker("", selection: Binding(
+                    get: { workspace.settings.botLook },
+                    set: { workspace.setBotLook($0) }
+                )) {
+                    ForEach(BotLook.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .labelsHidden().pickerStyle(.segmented).fixedSize()
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 44)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+            HStack(spacing: 4) {
+                if workspace.settings.botLook == .cute {
+                    ChibiHeadView(head: .claude, hat: .square, size: 28)
+                    ChibiHeadView(head: .codex, hat: .square, size: 28)
+                }
+                Text(workspace.settings.botLook == .cute
+                    ? L("A bot with Claude and Codex shows them as two characters wearing the bot's face: on each reply, as small heads under the lines they have seen, behind the bot's face in the left column and under Now.")
+                    : L("Plain bot faces, with C and X marks for Claude and Codex."))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.faint)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }
