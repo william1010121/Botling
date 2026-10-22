@@ -38,6 +38,40 @@ struct LiveClaudeTests {
         #expect(answer.lowercased().contains("teal"))
     }
 
+    /// The same bot on Codex (`codex app-server`): a reply, a step for the command it ran,
+    /// memory.md written before it sleeps, and a fresh session that reads it.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func aBotOnCodexWakesSleepsAndRemembers() async throws {
+        let executable = try #require(CodexCLI.newestExecutable())
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-codex-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let threads = CodexThreads(folder: home.appending(path: "codex-threads"))
+        let store = BotStore(directory: home.appending(path: "store"))
+        store.save(engine: .codex)
+
+        let bot = Bot(profile: .main(home: home), idleInterval: 30, exitTimeout: 60, launcher: CodexAgentProcess.launcher(executable: executable, threads: threads), store: store)
+        #expect(bot.engine == .codex)
+
+        bot.send("Please remember: my favorite color is teal. Run the shell command `pwd` once, then reply \"OK\".")
+        await eventually({ bot.messages.count == 2 && !bot.isWorking }, timeout: 180)
+        let first = bot.messages.last
+        print("reply 1:", first?.text ?? "", "steps:", first?.steps?.map(\.title) ?? [])
+        #expect(first?.role == .bot)
+        #expect(first?.steps?.contains { $0.tool == "Bash" && $0.done } == true)
+
+        await eventually({ bot.phase == .asleep }, timeout: 240)
+        let memory = try String(contentsOf: home.appending(path: "memory.md"), encoding: .utf8)
+        print("memory.md:\n\(memory)")
+        #expect(memory.lowercased().contains("teal"))
+
+        bot.send("What is my favorite color?")
+        await eventually({ bot.messages.count == 4 && !bot.isWorking }, timeout: 180)
+        let answer = bot.messages.last?.text ?? ""
+        print("reply 2:", answer)
+        #expect(answer.lowercased().contains("teal"))
+    }
+
     /// A bot sends a subagent off: the subagent's own steps are recorded under it, it ends with a
     /// result, and the reply carries the card that opens it.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))

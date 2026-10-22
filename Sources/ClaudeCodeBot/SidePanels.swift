@@ -1243,7 +1243,7 @@ private struct SleepCountdown: View {
 
 /// One bot's settings: its model, routines and the tools it may use. ClaudeCodeBot's own are
 /// in the settings window (`SettingsWindow`).
-private struct SettingsPage: View {
+struct SettingsPage: View {
     @ObservedObject var bot: Bot
     var close: () -> Void
     @State private var adding = false
@@ -1272,11 +1272,21 @@ private struct SettingsPage: View {
             PanelSection(L("Model and thinking")) {
                 VStack(spacing: 0) {
                     DropdownRow(
+                        title: L("Engine"),
+                        choices: BotEngine.allCases,
+                        chosen: bot.engine,
+                        label: { $0.displayName },
+                        disabled: bot.isSwitching
+                    ) { engine in
+                        Task { await bot.switchEngine(to: engine) }
+                    }
+                    Rectangle().fill(Theme.line).frame(height: 1)
+                    DropdownRow(
                         title: L("Model"),
                         choices: BotModel.allCases,
                         chosen: bot.switchTarget ?? bot.model,
                         label: { $0.displayName },
-                        disabled: bot.isSwitching
+                        disabled: bot.isSwitching || bot.engine == .codex
                     ) { model in
                         Task { await bot.switchModel(to: model) }
                     }
@@ -1286,7 +1296,7 @@ private struct SettingsPage: View {
                         choices: [nil] + BotModel.allCases.map(Optional.some),
                         chosen: bot.subagentModel,
                         label: { $0?.displayName ?? L("Same as bot") },
-                        disabled: bot.isSwitching
+                        disabled: bot.isSwitching || bot.engine == .codex
                     ) { model in
                         Task { await bot.setSubagentModel(model) }
                     }
@@ -1323,6 +1333,9 @@ private struct SettingsPage: View {
                 }
 
                 SettingNote(L("Subagents use their own model and effort when their definition names one. Default effort leaves it to the model. Awake, a change restarts the bot in the same conversation just before its next message; asleep, it applies when it wakes."))
+                if bot.engine == .codex {
+                    SettingNote(L("On Codex the bot uses Codex's own model, asks before commands outside its folders, and keeps results as local pages. Both engines share its memory.md: switching hands over through it."))
+                }
             }
 
             PanelSection(L("Routines")) {

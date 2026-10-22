@@ -12,6 +12,19 @@ public enum BotModel: String, CaseIterable, Codable, Sendable {
     }
 }
 
+/// Which CLI a bot runs on: Claude Code (`claude`) or Codex (`codex app-server`). Both read and
+/// write the same .bot/memory.md; switching hands over through it like a model switch.
+public enum BotEngine: String, CaseIterable, Codable, Sendable {
+    case claude, codex
+
+    public var displayName: String {
+        switch self {
+        case .claude: "Claude"
+        case .codex: "Codex"
+        }
+    }
+}
+
 /// How hard it thinks: Claude Code's `--effort`. No choice (nil) leaves the model's own default.
 /// Its subagents think at the same level unless their definition sets one.
 public enum EffortLevel: String, CaseIterable, Codable, Sendable {

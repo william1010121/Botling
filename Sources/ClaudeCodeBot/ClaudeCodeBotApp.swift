@@ -324,7 +324,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let idle = ProcessInfo.processInfo.environment["CCB_IDLE_SECONDS"].flatMap(TimeInterval.init) ?? 50 * 60
         let locator = ClaudeExecutableLocator()
+        // A bot on Codex keeps which Codex thread its session is next to its chats.
+        CodexThreads.shared.folder = root.appending(path: "codex-threads")
         let launcher: AgentLauncher = { launch in
+            if launch.engine == .codex {
+                guard let executable = CodexCLI.locateNewest() else { throw AppError.codexNotFound }
+                return try CodexAgentProcess.launcher(executable: executable)(launch)
+            }
             guard let executable = locator.locate() else { throw AppError.claudeNotFound }
             return try ClaudeAgentProcess.launcher(executable: executable)(launch)
         }
@@ -353,10 +359,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 enum AppError: LocalizedError {
     case claudeNotFound
+    case codexNotFound
 
     var errorDescription: String? {
         switch self {
         case .claudeNotFound: L("The claude command was not found. Please install Claude Code first.")
+        case .codexNotFound: L("The codex command was not found. Please install Codex first.")
         }
     }
 }

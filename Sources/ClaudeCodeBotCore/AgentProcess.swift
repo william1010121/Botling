@@ -114,6 +114,9 @@ public enum AgentEvent: Equatable, Sendable {
 }
 
 public struct AgentLaunch: Equatable, Sendable {
+    /// The CLI to run: `claude`, or `codex app-server` (`CodexAgentProcess`). What only one of
+    /// them reads (Claude's tools and plugins, its models) the other leaves alone.
+    public var engine: BotEngine = .claude
     public var model: BotModel
     public var sessionID: UUID
     /// Go on with the session `sessionID` names (`--resume`) instead of starting it.
