@@ -137,7 +137,8 @@ struct PageView: NSViewRepresentable {
             configuration.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
         }
         let view = WKWebView(frame: .zero, configuration: configuration)
-        view.setValue(false, forKey: "drawsBackground")
+        // viewer.html is the app's own (dark) page; a result page is drawn as a browser would.
+        PageCanvas.prepare(view, appPage: markdown != nil)
         if markdown != nil, let page = Self.viewerPage {
             context.coordinator.loaded = url
             context.coordinator.target = page

@@ -8,6 +8,14 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **A result page that sets no dark colours is readable again in its window.** The window that
+  opens a local page (a bot's `.bot/artifacts/*.html` report) drew the page see-through over its
+  near-black background, so a page with default or light-theme text (black or `#222` on no
+  background of its own) showed dark text on dark, with only its light code chips visible. The
+  page now gets the canvas a browser gives it: white for a page that declares no dark support,
+  dark for one that sets `color-scheme: dark` or styles itself for dark mode. Markdown files,
+  drawn by the app's own viewer, stay as they were.
+
 - **A card that refreshes no longer goes blank for a moment on each run.** A component with a
   Command whose template does not call `ccb.onData` (a `Refresh: every 2s` card, a
   `<show … refresh="2s">`, a pin refreshing every few seconds) got a new frame with each new
