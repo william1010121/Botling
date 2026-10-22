@@ -1612,6 +1612,13 @@ public final class Workspace: ObservableObject {
         "(App: The user changed the app's language to \(language.promptName). From now on this replaces the reply-language rule you were given: \(BotPrompts.languageRule(language)))"
     }
 
+    /// How bots with two heads look. Every view that draws them follows at once.
+    public func setBotLook(_ look: BotLook) {
+        guard look != settings.botLook else { return }
+        settings.botLookChoice = look
+        settings.save(to: settingsURL)
+    }
+
     /// Where bots put results for the user. A new session starts with the rule in its system
     /// prompt; an awake one (whose `--resume` keeps the old prompt) hears it with its next message.
     public func setResultPublishing(_ choice: ResultPublishing) {

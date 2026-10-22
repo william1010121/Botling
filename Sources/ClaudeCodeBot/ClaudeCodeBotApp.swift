@@ -122,6 +122,7 @@ struct RootView: View {
         }
         .onChange(of: collapsed) { _, _ in railTip = nil }
         .onChange(of: rightCollapsed) { _, _ in rightTip = nil }
+        .environment(\.botLook, workspace.settings.botLook)
         // Chips and result rows: web links in the browser, local files in a window of their own.
         .environment(\.openURL, OpenURLAction { url in
             ResultWindows.open(Chip(label: Self.label(for: url, in: workspace), url: url))

@@ -15,6 +15,10 @@ enum Snapshot {
         if let icon = ProcessInfo.processInfo.environment["CCB_ICON"] {
             drawIcon(to: icon)
         }
+        if let path = ProcessInfo.processInfo.environment["CCB_CHIBI_SNAPSHOT"] {
+            drawChibiSheet(to: path)
+            return true
+        }
         if let path = ProcessInfo.processInfo.environment["CCB_RAIL_SNAPSHOT"] {
             if ProcessInfo.processInfo.environment["CCB_RAIL_HERO"] != nil { drawHeroRail(to: path) } else { drawRail(to: path) }
             return true
@@ -251,6 +255,11 @@ enum Snapshot {
     /// Draws the main bot's chat under `root` in an offscreen window, saves it as a PNG, quits.
     /// `pins`: with the chat's pinned components (chips; `--board` draws its Board instead).
     /// `prepare` adds to the chat once loaded (an app card saved open is closed at load).
+    /// `CCB_BOT_LOOK=original`: bots with two heads drawn in the Original look (default Cute).
+    static var look: BotLook {
+        ProcessInfo.processInfo.environment["CCB_BOT_LOOK"].flatMap(BotLook.init(rawValue:)) ?? .cute
+    }
+
     private static func draw(root: URL, to path: String, pins: Bool = false, subagent: Subagent? = nil, prepare: (Workspace) -> Void = { _ in }) {
         guard let page = ChatSurface.pageURL else { exit(1) }
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
@@ -261,7 +270,7 @@ enum Snapshot {
         let json = if let watched = subagent {
             ChatPayload.make(subagent: watched, of: workspace.mainBot, components: workspace.components, avatar: AvatarImages.dataURL(.circle, eyes: .open)).json()
         } else {
-            ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, pins: pins ? workspace.pinContext(for: workspace.mainBot, board: board) : nil, specs: pins) { projectID in
+            ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, pins: pins ? workspace.pinContext(for: workspace.mainBot, board: board) : nil, specs: pins, look: look == .cute ? ChibiImages.look(for: .circle) : nil) { projectID in
                 AvatarImages.dataURL(projectID == nil ? .circle : .triangle, eyes: .open)
             }.json()
         }
@@ -353,6 +362,66 @@ enum Snapshot {
         }
     }
 
+    /// `CCB_CHIBI_SNAPSHOT=/path/out.png`: the Claude and Codex characters (Bot look Cute) in
+    /// each mood at the sizes the app draws them, on dark and on light, marked as sample data.
+    private static func drawChibiSheet(to path: String) {
+        let moods: [(Chibi.Mood, String)] = [(.work, "working"), (.normal, "awake"), (.think, "waiting"), (.sleep, "asleep")]
+        func sheet(dark: Bool) -> some View {
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach([BotEngine.claude, .codex], id: \.self) { head in
+                    HStack(spacing: 18) {
+                        Text(head.displayName).font(.system(size: 13, weight: .semibold)).frame(width: 52, alignment: .leading)
+                        ForEach(moods, id: \.1) { mood, label in
+                            VStack(spacing: 6) {
+                                HStack(alignment: .bottom, spacing: 8) {
+                                    ChibiHeadView(head: head, mood: mood, hat: .circle, size: 64)
+                                    ChibiHeadView(head: head, mood: mood, hat: .square, size: 32)
+                                    ChibiHeadView(head: head, mood: mood, size: 14)
+                                }
+                                Text(label).font(.system(size: 11))
+                            }
+                        }
+                    }
+                }
+                HStack(spacing: 18) {
+                    Text("Seen").font(.system(size: 13, weight: .semibold)).frame(width: 52, alignment: .leading)
+                    HStack(spacing: 2) {
+                        ChibiHeadView(head: .claude, size: 14)
+                        ChibiHeadView(head: .codex, size: 14).opacity(0.32).grayscale(1)
+                    }
+                    Text("Claude seen, Codex not yet (14 pt)").font(.system(size: 11))
+                    ForEach([AvatarKind.triangle, .star, .heart, .ghost, .moon], id: \.self) { kind in
+                        ChibiHeadView(head: .claude, hat: kind, size: 32)
+                    }
+                }
+            }
+            .padding(20)
+            .foregroundStyle(dark ? Color.white : Color.black)
+            .background(dark ? Color(hex: 0x1E1E20) : Color.white)
+            .environment(\.colorScheme, dark ? .dark : .light)
+        }
+        let content = VStack(alignment: .leading, spacing: 12) {
+            Text("SAMPLE DATA").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.faint)
+            sheet(dark: true)
+            sheet(dark: false)
+        }
+        .padding(20)
+        .frame(width: 1100, height: 640, alignment: .topLeading)
+        .background(Color(hex: 0x0A0A0C))
+        let frame = NSRect(x: 0, y: 0, width: 1100, height: 640)
+        let window = HeadlessRun.offscreenWindow(frame)
+        let host = NSHostingView(rootView: content)
+        host.frame = frame
+        window.contentView = host
+        self.window = window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
+            exit(0)
+        }
+    }
+
     private static func drawRail(to path: String) {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -394,6 +463,7 @@ enum Snapshot {
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         let content = HStack(spacing: 40) { pane(false); pane(true) }
+            .environment(\.botLook, look)
             .overlay(alignment: .topLeading) {
                 if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEADS"] != nil {
                     Text("SAMPLE DATA").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.faint).offset(y: -20)
@@ -499,6 +569,7 @@ enum Snapshot {
         }
         // `CCB_LANGUAGE=ja`: drawn in that language, picked in Settings → General.
         if let language = HeadlessRun.language() { workspace.setLanguage(language) }
+        workspace.setBotLook(look)
         let navigator = SettingsNavigator()
         // CCB_SETTINGS_SECTION=plugins draws another section.
         navigator.section = ProcessInfo.processInfo.environment["CCB_SETTINGS_SECTION"].flatMap(SettingsSection.init(rawValue:)) ?? .doctor
@@ -745,6 +816,7 @@ enum Snapshot {
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         let content = HStack(spacing: 40) { pane(false); pane(true) }
+            .environment(\.botLook, look)
             .overlay(alignment: .topLeading) {
                 if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEADS"] != nil {
                     Text("SAMPLE DATA").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.faint).offset(y: -20)

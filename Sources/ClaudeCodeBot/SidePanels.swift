@@ -790,6 +790,7 @@ private struct BotRow: View {
     let action: () -> Void
 
     @State private var hovering = false
+    @Environment(\.botLook) private var look
 
     /// The pin glyph shows at the row's end while the pointer is on it.
     private var showsPin: Bool { pinned != nil && hovering }
@@ -797,13 +798,18 @@ private struct BotRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                AvatarView(kind: bot.avatarKind, size: 32, eyes: bot.eyes)
+                if look == .cute && bot.heads.hasTwo {
+                    // Cute: the bot's face in front, Claude and Codex peeking out behind it.
+                    BotWithHeadsAvatar(bot: bot, size: 32)
+                } else {
+                    AvatarView(kind: bot.avatarKind, size: 32, eyes: bot.eyes)
+                }
                 Text(bot.name)
                     .font(.system(size: 15, weight: bot.profile.role == .main ? .semibold : .regular))
                     .foregroundStyle(bot.phase == .asleep ? Theme.muted : Theme.text)
                     .lineLimit(1)
                 Spacer(minLength: 4)
-                if bot.heads.hasTwo {
+                if bot.heads.hasTwo && look == .original {
                     // Two heads: Claude and Codex.
                     Text("C + X").font(.system(size: 11)).foregroundStyle(Theme.faint)
                         .help(L("Claude and Codex"))
@@ -1502,13 +1508,7 @@ private struct HeadsNow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(bot.heads.engines, id: \.self) { head in
-                if head == bot.engine {
-                    HeadNowRow(head: head, bot: bot)
-                } else if let partner = bot.partner, partner.engine == head {
-                    HeadNowRow(head: head, bot: partner)
-                } else {
-                    HeadNowRow(head: head, bot: nil)
-                }
+                HeadNowRow(head: head, bot: bot.runner(of: head), hat: bot.avatarKind)
             }
         }
     }
@@ -1518,12 +1518,14 @@ private struct HeadNowRow: View {
     let head: BotEngine
     /// The bot running this head; nil before it first woke.
     let bot: Bot?
+    /// The bot's face, worn as a hat in the Cute look.
+    let hat: AvatarKind
 
     var body: some View {
         if let bot {
-            HeadNowState(head: head, bot: bot)
+            HeadNowState(head: head, bot: bot, hat: hat)
         } else {
-            HeadNowLine(head: head, state: L("asleep"), working: false)
+            HeadNowLine(head: head, mood: .sleep, hat: hat)
         }
     }
 }
@@ -1531,21 +1533,38 @@ private struct HeadNowRow: View {
 private struct HeadNowState: View {
     let head: BotEngine
     @ObservedObject var bot: Bot
+    let hat: AvatarKind
 
     var body: some View {
-        let working = bot.phase != .asleep && bot.isWorking
-        HeadNowLine(head: head, state: bot.phase == .asleep ? L("asleep") : working ? L("working") : L("awake"), working: working)
+        HeadNowLine(head: head, mood: chibiMood(of: bot), hat: hat)
     }
 }
 
 private struct HeadNowLine: View {
     let head: BotEngine
-    let state: String
-    let working: Bool
+    let mood: Chibi.Mood
+    let hat: AvatarKind
+    @Environment(\.botLook) private var look
+
+    private var state: String {
+        switch mood {
+        case .sleep: L("asleep")
+        case .think: L("waiting for your OK")
+        case .work: L("working")
+        case .normal: L("awake")
+        }
+    }
+
+    private var working: Bool { mood == .work }
 
     var body: some View {
         HStack(spacing: 10) {
-            Circle().fill(head == .claude ? Color(hex: 0xE3895F) : Color(hex: 0x8AB4FF)).frame(width: 7, height: 7)
+            if look == .cute {
+                // Cute: the head's character in its mood, wearing the bot's face.
+                ChibiHeadView(head: head, mood: mood, hat: hat, size: 32)
+            } else {
+                Circle().fill(head == .claude ? Color(hex: 0xE3895F) : Color(hex: 0x8AB4FF)).frame(width: 7, height: 7)
+            }
             Text(head.displayName).font(.system(size: 13))
             Spacer()
             Text(state).font(.system(size: 12)).foregroundStyle(working ? Theme.green : Theme.faint)

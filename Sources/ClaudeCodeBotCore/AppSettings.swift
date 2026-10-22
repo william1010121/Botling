@@ -51,6 +51,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     public var resultPublishing: ResultPublishing { resultPublishingChoice ?? .artifactUnlessSensitive }
 
+    /// How bots with two heads look (Settings → General → Bot look). Nil (a settings file from
+    /// before it) means Cute.
+    public var botLookChoice: BotLook?
+
+    public var botLook: BotLook { botLookChoice ?? .cute }
+
     /// The language the app's words are in and bots reply in by default. Nil (System default,
     /// or a settings file from before it) follows the Mac's preferred languages.
     public var languageChoice: AppLanguage?

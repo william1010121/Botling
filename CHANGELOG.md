@@ -8,6 +8,19 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Claude and Codex as characters (Bot look: Cute).** In a bot with both heads, Claude (the
+  orange-haired girl with the orange flower and black ribbon) and Codex (the white and lavender
+  dragon girl with horns, a knot ornament and elf ears) are drawn as small vector characters:
+  each reply shows its head's character wearing the bot's own face as a hat (any bot shape and
+  color); the "C X" seen marks under lines become two tiny heads, bright once seen and grey and
+  faded until then (the tooltip says who saw it, as before); in the left column the bot's face
+  stays in front, full size, with the two characters peeking out from behind it instead of
+  "C + X"; and under Now each head is its character in its state: working (eyes down at a
+  laptop), awake, waiting for your OK (a "?") or asleep ("zz"), with "waiting for your OK" now
+  also said in words. Settings → General → Bot look switches between Cute (the default) and
+  Original (plain faces with C/X marks) at once, without a restart. Bots with one head and
+  subagents look as before. `CCB_BOT_LOOK=original` draws the snapshots in the Original look and
+  `CCB_CHIBI_SNAPSHOT=<png>` draws every state at the app's sizes on dark and light.
 - **A bot can run on Codex.** A bot's settings have an Engine row: Claude (as before) or Codex.
   On Codex the bot runs `codex app-server` and works as on Claude: replies, its commands and file
   edits as steps, Allow cards for what Codex asks to do, a message sent while it works joins that

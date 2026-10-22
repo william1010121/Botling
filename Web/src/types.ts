@@ -392,6 +392,8 @@ export interface ChatState {
   answerWith?: AnswerWithView | null;
   /** A loop between the two heads under way: "Round 2 of 3", and the Stop now button's words. */
   rounds?: { text: string; stop: string } | null;
+  /** Bot look Cute in a bot with two heads: each head's tiny character by its mark ("C", "X"); absent: letters. */
+  seenHeads?: Record<string, string> | null;
 }
 
 /** "Answer with" above the input box: Both (the usual) and each head, and the default. */
