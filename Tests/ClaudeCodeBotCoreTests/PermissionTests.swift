@@ -254,7 +254,7 @@ struct PermissionTests {
         #expect(Self.permissionMode(manual) == "acceptEdits")
     }
 
-    @Test func botsRunInAutoModeUntilItIsTurnedOff() async throws {
+    @Test(.wallClock) func botsRunInAutoModeUntilItIsTurnedOff() async throws {
         let fake = FakeLauncher()
         let home = root.appending(path: "ccb")
         let workspace = Workspace(root: home) { profile, store in

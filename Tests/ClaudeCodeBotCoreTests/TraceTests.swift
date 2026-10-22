@@ -403,7 +403,7 @@ struct TraceTests {
         #expect(again.subagents.first?.steps.count == 2)
     }
 
-    @Test func aTurnItStartsItselfShowsAsWorkAndItWaitsForSubagentsBeforeSleeping() async {
+    @Test(.wallClock) func aTurnItStartsItselfShowsAsWorkAndItWaitsForSubagentsBeforeSleeping() async {
         let fake = FakeLauncher()
         // Long enough that a busy main actor between two stream events does not count as idle.
         let bot = makeBot(fake, idle: 1)
@@ -437,7 +437,7 @@ struct TraceTests {
         await eventually { bot.phase == .asleep }
     }
 
-    @Test func aSubagentStillWaitingOnItsOwnWorkWakesNoReply() async {
+    @Test(.wallClock) func aSubagentStillWaitingOnItsOwnWorkWakesNoReply() async {
         let fake = FakeLauncher()
         let bot = makeBot(fake, idle: 5)
         fake.respond = { text in isAppOnly(text) ? "OK" : nil }
@@ -476,7 +476,7 @@ struct TraceTests {
         #expect(bot.subagents.first?.status == .completed)
     }
 
-    @Test func whatYouSayWhileItWaitsQuietlyStillGetsAnAnswer() async {
+    @Test(.wallClock) func whatYouSayWhileItWaitsQuietlyStillGetsAnAnswer() async {
         let fake = FakeLauncher()
         let bot = makeBot(fake, idle: 5)
         fake.respond = { text in
@@ -510,7 +510,7 @@ struct TraceTests {
 
     // MARK: Turns claude starts itself (background work told it something)
 
-    @Test func aNotificationWhileItWorksStillLetsTheNextTurnSayNothing() async {
+    @Test(.wallClock) func aNotificationWhileItWorksStillLetsTheNextTurnSayNothing() async {
         let fake = FakeLauncher()
         let bot = makeBot(fake, idle: 5)
         fake.respond = { text in isAppOnly(text) ? "OK" : nil }
@@ -590,7 +590,7 @@ struct TraceTests {
         #expect(ReplyParser.parseAll("Done. <no-reply/>").body == "Done.")
     }
 
-    @Test func aRunningSubagentLeavesTheChatsTextAloneBetweenItsSteps() async {
+    @Test(.wallClock) func aRunningSubagentLeavesTheChatsTextAloneBetweenItsSteps() async {
         let fake = FakeLauncher()
         let bot = makeBot(fake)
         fake.respond = { text in isAppOnly(text) ? "OK" : nil }
@@ -656,7 +656,7 @@ struct TraceTests {
         static var lines: [String] { [asks, saves, saved, last, result] }
     }
 
-    @Test func choicesWrittenBeforeAToolCallStillEndTheReply() async {
+    @Test(.wallClock) func choicesWrittenBeforeAToolCallStillEndTheReply() async {
         let fake = FakeLauncher()
         fake.respond = { text in isAppOnly(text) ? "OK" : nil }
         let home = FileManager.default.temporaryDirectory.appending(path: "ccb-trace-\(UUID().uuidString)")

@@ -63,7 +63,7 @@ struct InstallTests {
         #expect(PluginInstaller.classify("not a source!") == nil)
     }
 
-    @Test func aGitPluginIsInstalledOnlyAfterYouSayYes() async throws {
+    @Test(.integration) func aGitPluginIsInstalledOnlyAfterYouSayYes() async throws {
         let repo = try await numberPluginRepo()
         let fake = FakeLauncher()
         let secrets = MemorySecretStore()
@@ -105,7 +105,7 @@ struct InstallTests {
         await workspace.putEveryoneToSleep()
     }
 
-    @Test func sayingNoInstallsNothingAndTagsAlwaysAsk() async throws {
+    @Test(.integration) func sayingNoInstallsNothingAndTagsAlwaysAsk() async throws {
         let repo = try await numberPluginRepo()
         let fake = FakeLauncher()
         fake.respond = { text in

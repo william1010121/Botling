@@ -420,7 +420,7 @@ struct ComponentSpecTests {
         #expect(bot.specs.first?.filledBy == "garden")
     }
 
-    @Test func theFillWaitsUntilTheBotIsFree() async throws {
+    @Test(.wallClock) func theFillWaitsUntilTheBotIsFree() async throws {
         let fake = fillingLauncher()
         let workspace = makeWorkspace(fake)
         let bot = try garden(in: workspace)
@@ -508,7 +508,7 @@ struct ComponentSpecTests {
         #expect(done.conversation.contains { $0.text.contains("already on") })
     }
 
-    @Test func theBuiltComponentRunsOnlyWhatTheUserAllowed() async throws {
+    @Test(.integration) func theBuiltComponentRunsOnlyWhatTheUserAllowed() async throws {
         let workspace = makeWorkspace()
         let bot = workspace.mainBot
         try FileManager.default.createDirectory(at: bot.profile.workingDirectory, withIntermediateDirectories: true)
@@ -730,7 +730,7 @@ struct ComponentSpecTests {
 
     // MARK: Test run: only what the user allowed
 
-    @Test func aTestRunGoesThroughTheAllowFlow() async throws {
+    @Test(.integration) func aTestRunGoesThroughTheAllowFlow() async throws {
         let workspace = makeWorkspace()
         let bot = workspace.mainBot
         try FileManager.default.createDirectory(at: bot.profile.workingDirectory, withIntermediateDirectories: true)

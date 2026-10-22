@@ -5,6 +5,7 @@ import Testing
 /// column holds. A main bot with many things waiting on you once made the right panel taller
 /// than the window: the row grew, was centred, and every column's top and the input box went
 /// off the window's edges. Runs the built app (`swift build` first) in its window snapshot.
+@Suite(.integration)
 struct WindowLayoutTests {
     @Test(.enabled(if: FileManager.default.isExecutableFile(atPath: TestPaths.app.path)), arguments: [1, 14, 40])
     func columnsStayInsideTheWindow(waiting: Int) throws {

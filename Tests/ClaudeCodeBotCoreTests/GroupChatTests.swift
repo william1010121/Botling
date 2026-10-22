@@ -248,7 +248,7 @@ struct GroupChatTests {
         #expect(!Workspace.isPass("Pass the salt, the tests are green"))
     }
 
-    @Test func aBusyBotIsSkippedAndOneThatNeverAnswersTimesOut() async throws {
+    @Test(.wallClock) func aBusyBotIsSkippedAndOneThatNeverAnswersTimesOut() async throws {
         let fake = FakeLauncher()
         fake.respond = { text in
             if text.contains(Workspace.groupTurnLead) { return text.contains("you are \"garden\"") ? nil : "PASS" }

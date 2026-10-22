@@ -176,7 +176,7 @@ struct StandaloneBotTests {
         #expect(!workspace.waiting.contains { $0.projectID == project.id })
     }
 
-    @Test func removingABotDuringAHandoffDoesNotStartItAgain() async throws {
+    @Test(.wallClock) func removingABotDuringAHandoffDoesNotStartItAgain() async throws {
         let fake = FakeLauncher()
         // The handoff turn never answers until the bot is stopped.
         fake.respond = { text in text.contains("The model is about to change") ? nil : isAppOnly(text) ? "OK" : "Done" }

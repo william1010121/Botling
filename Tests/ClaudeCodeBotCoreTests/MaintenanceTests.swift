@@ -50,7 +50,7 @@ struct MaintenanceTests {
         #expect(FileManager.default.fileExists(atPath: library.appending(path: ".bot/.gitignore").path))
     }
 
-    @Test func aBrokenNewVersionFallsBackToTheLastGoodOneAndGoesToMaintainer() async throws {
+    @Test(.integration) func aBrokenNewVersionFallsBackToTheLastGoodOneAndGoesToMaintainer() async throws {
         try webPlugin("shout", source: "export function activate() { /* v1 */ }")
         let fake = FakeLauncher()
         fake.respond = { text in isAppOnly(text) ? "OK" : nil }
@@ -94,7 +94,7 @@ struct MaintenanceTests {
         await workspace.putEveryoneToSleep()
     }
 
-    @Test func versionChangesAreAnnouncedAndCanBeRevertedWithGit() async throws {
+    @Test(.integration) func versionChangesAreAnnouncedAndCanBeRevertedWithGit() async throws {
         try webPlugin("shout", source: "export function activate() { /* v1 */ }")
         let workspace = workspace(FakeLauncher())
         await workspace.pluginLibraryReady.value

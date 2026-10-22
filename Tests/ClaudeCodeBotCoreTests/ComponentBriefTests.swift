@@ -130,7 +130,7 @@ struct ComponentBriefTests {
         #expect(agent.finished)
     }
 
-    @Test func theWriterGivesUpWhenTheForkTakesTooLongOrFails() async throws {
+    @Test(.wallClock) func theWriterGivesUpWhenTheForkTakesTooLongOrFails() async throws {
         let silent = FakeLauncher()
         silent.respond = { _ in nil }
         let job = BriefJob(session: UUID(), model: .sonnet, folder: URL(filePath: "/tmp"), prompt: "Write a brief", timeout: 0.2)
@@ -209,7 +209,7 @@ struct ComponentBriefTests {
         #expect(briefs.jobs.isEmpty)
     }
 
-    @Test func aCancelledSpecSendsNothingWhenTheBriefComes() async throws {
+    @Test(.wallClock) func aCancelledSpecSendsNothingWhenTheBriefComes() async throws {
         let workspace = makeWorkspace()
         let briefs = Briefs(answer: "Purpose: x", delay: .milliseconds(200))
         workspace.briefWriter = briefs.writer

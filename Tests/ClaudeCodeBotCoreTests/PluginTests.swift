@@ -124,7 +124,7 @@ struct PluginTests {
         #expect(again.webSpecs().first?.source.contains("activate") == true)
     }
 
-    @Test func aBrokenPluginIsOffUntilItsFilesChange() async throws {
+    @Test(.integration) func aBrokenPluginIsOffUntilItsFilesChange() async throws {
         let folder = try plugin("helper")
         let registry = PluginRegistry(library: root.appending(path: "library"), builtIns: nil)
         var notices: [String] = []

@@ -159,7 +159,7 @@ struct EarlyReplyBotTests {
         #expect(heard.replies.map(\.text) == ["All done"])
     }
 
-    @Test func whatYouWriteWhileTheTurnEndsWaitsForIt() async throws {
+    @Test(.wallClock) func whatYouWriteWhileTheTurnEndsWaitsForIt() async throws {
         let fake = FakeLauncher()
         let (bot, _) = quietBot(fake)
         bot.send("first")
@@ -184,7 +184,7 @@ struct EarlyReplyBotTests {
         #expect(bot.messages.map(\.text) == ["first", "Answer one", "second", "Answer two"])
     }
 
-    @Test func aTurnNobodySeesShowsNothingEarly() async throws {
+    @Test(.wallClock) func aTurnNobodySeesShowsNothingEarly() async throws {
         let fake = FakeLauncher()
         let (bot, _) = quietBot(fake)
         bot.send("hi")
