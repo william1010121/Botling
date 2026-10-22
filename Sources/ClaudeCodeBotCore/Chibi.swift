@@ -1,11 +1,11 @@
 import Foundation
 
 /// How bots look (Settings → General → Bot look): plain faces with C/X marks, as always, or the
-/// Claude and Codex characters on a bot with both heads.
+/// Claude and Codex characters, with either or both engines enabled.
 public enum BotLook: String, Codable, CaseIterable, Sendable {
     /// The bot's own face on every reply, "C X" letters under lines, "C + X" in the left column.
     case original
-    /// A bot with two heads draws Claude and Codex as characters ("Cute"): each reply under its
+    /// Claude and Codex drawn as characters ("Cute"): each reply under its
     /// character wearing the bot's face as a hat, two tiny heads as seen marks, the characters
     /// behind the bot's face in the left column and beside each head under Now.
     case cute

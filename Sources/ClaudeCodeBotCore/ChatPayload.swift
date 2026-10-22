@@ -361,11 +361,11 @@ public struct ChatPayload: Encodable, Equatable {
     var answerWith: AnswerWith? = nil
     /// A loop between the heads under way: "Round 2 of 3", with its Stop now button's words.
     var rounds: Rounds? = nil
-    /// Bot look Cute, in a bot with two heads: each head's tiny character for the seen marks, as
-    /// an image URL by its mark ("C", "X"). Nil: the marks are letters.
+    /// Bot look Cute: each enabled head's tiny character by its mark ("C", "X").
+    /// Also identifies the Cute look when a single-engine chat has no seen marks; nil is Original.
     var seenHeads: [String: String]? = nil
 
-    /// Bot look Cute: the faces of a bot with two heads, as image URLs. `avatar`: a head's
+    /// Bot look Cute: the engine characters as image URLs. `avatar`: a head's
     /// character wearing the bot's face, for its replies; `mark`: its tiny head for seen marks.
     public struct HeadLook {
         public var avatar: (BotEngine) -> String
@@ -385,11 +385,13 @@ public struct ChatPayload: Encodable, Equatable {
         var stop: String
     }
 
-    /// One head's mark on a line: its letter, its name, and whether the line has reached it.
+    /// A head's read receipt, plus whether this user message was directed to it.
     public struct Seen: Encodable, Equatable {
         var mark: String
         var name: String
         var seen: Bool
+        /// User messages only: distinct from reading the other head's later context.
+        var recipient: Bool? = nil
     }
 
     /// The marks for a line in a bot with two heads: your lines and the heads' replies.
@@ -397,7 +399,8 @@ public struct ChatPayload: Encodable, Equatable {
     static func seenMarks(_ message: ChatMessage, in bot: Bot) -> [Seen]? {
         guard bot.heads.hasTwo, message.role == .user || message.role == .bot else { return nil }
         return bot.heads.engines.map { head in
-            Seen(mark: markLetter(head), name: head.displayName, seen: message.seenBy?.contains(head) == true)
+            Seen(mark: markLetter(head), name: head.displayName, seen: message.seenBy?.contains(head) == true,
+                 recipient: message.role == .user ? message.to == nil || message.to == .both || message.to?.engine == head : nil)
         }
     }
 
@@ -489,14 +492,19 @@ public struct ChatPayload: Encodable, Equatable {
         look: HeadLook? = nil,
         avatar: (_ projectID: UUID?) -> String
     ) -> ChatPayload {
-        // Bot look Cute: a bot with two heads draws each head as its character.
-        let look = group == nil && bot.heads.hasTwo ? look : nil
+        // Cute is independent of which engines are enabled. Group speakers keep their faces.
+        let look = group == nil ? look : nil
         let pinnedNames = pinning.map { _ in Set(bot.pins.map(\.name)) }
         let own = avatar(nil)
         let main = bot.profile.role == .main ? own : nil
         let speaker = group?.speaker ?? callIn?.speaker
-        // Someone called in is answering while the bot itself is not.
-        let guest = bot.isWorking ? nil : callIn?.typing
+        // Someone called in is answering while neither of the bot's own engines is working.
+        let guest = bot.isWorking || bot.partner?.isWorking == true ? nil : callIn?.typing
+        // The live bubble's face and steps must describe the same process.
+        let workingBot = group.map(\.working) ?? (bot.isWorking ? bot : bot.partner?.isWorking == true ? bot.partner : guest.flatMap { _ in callIn?.working })
+        let workingAvatar = (group?.typing ?? guest).map { avatar($0) }
+            ?? look.flatMap { look in workingBot.map { look.avatar($0.engine) } }
+            ?? own
         var messages = bot.messages.enumerated().map { index, message -> Message in
             let face: String? = switch message.role {
             // In a group chat each line has the face of the bot that said it.
@@ -594,7 +602,7 @@ public struct ChatPayload: Encodable, Equatable {
             botName: bot.name,
             messages: messages,
             working: group.map { $0.typing != nil } ?? (bot.isWorking || bot.partner?.isWorking == true || guest != nil),
-            avatar: (group?.typing ?? guest).map { avatar($0) } ?? own,
+            avatar: workingAvatar,
             placeholder: group != nil ? L("Message everyone, or @name one bot…")
                 : bot.profile.role == .main ? L("Make a wish, or ask how things are going…") : L("Message {0}…", bot.name),
             replyingTo: reply,
@@ -609,7 +617,7 @@ public struct ChatPayload: Encodable, Equatable {
             slashCommands: SlashCommands.all + (share ? [SlashCommands.share] : []),
             slashComponents: slash.own,
             slashLibrary: slash.library,
-            live: liveSteps(of: group.map(\.working) ?? (bot.isWorking ? bot : bot.partner?.isWorking == true ? bot.partner : guest.flatMap { _ in callIn?.working })),
+            live: liveSteps(of: workingBot),
             subagent: nil,
             feedback: feedback,
             pins: pinning.map { context in bot.pins.map { pin(view: $0, context: context) } },

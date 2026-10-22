@@ -143,6 +143,7 @@ export const en = {
   "messages.makeComponent": "Make into component",
   "messages.makeComponentTitle": "{label}: Maintainer builds it from this reply right away",
   "messages.seenBy": "Seen by {names}",
+  "messages.toHeads": "To {names}",
   "messages.notSeenBy": "not yet by {names}",
   "messages.reply": "Reply",
   "messages.fold": "Fold",

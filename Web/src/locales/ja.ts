@@ -142,6 +142,7 @@ export const ja: Dictionary = {
   "messages.makeComponent": "コンポーネントにする",
   "messages.makeComponentTitle": "{label}：Maintainer がこの返信からすぐに作ります",
   "messages.seenBy": "{names} が既読",
+  "messages.toHeads": "{names} 宛て",
   "messages.notSeenBy": "{names} は未読",
   "messages.reply": "返信",
   "messages.fold": "折りたたむ",

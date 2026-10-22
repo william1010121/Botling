@@ -3,7 +3,7 @@ import { post } from "./bridge";
 import { buildNear, detailReply, keepFrames, releaseFrames } from "./components";
 import { startTaskTicks, taskOutput } from "./tasks";
 import { Composer, sendFile } from "./composer";
-import { extensions, feedback, makeComponents, messageElement, typingElement } from "./messages";
+import { extensions, feedback, makeComponents, messageElement, typingElement, updateTypingElement } from "./messages";
 import { SpecPanel } from "./spec";
 import { fillSubagentBar, subagentLiveElement, subagentMessageElement } from "./subagent";
 import { PinArea } from "./pins";
@@ -16,7 +16,7 @@ import { escapeHTML } from "./util";
 import { installImeGuard } from "./ime";
 import { watchFileDrops } from "./drops";
 import { reportVisiblePinsSoon, setWindowVisible } from "./visible";
-import { setSeenHeads } from "./heads";
+import { animateSeenArrivals, setSeenHeads } from "./heads";
 
 // Before anything listens for keys: an input method's Return never reaches a page handler.
 installImeGuard(window);
@@ -99,11 +99,13 @@ class Chat {
     releaseFrames(this.list);
     this.list.innerHTML = "";
     this.drawn.clear();
+    this.typing = null;
   }
 
   setState(state: ChatState, redrawing = false): void {
     this.last = state;
     const switched = state.botID !== this.botID;
+    let animateArrivals = !switched && !redrawing;
     const newestBefore = this.newestID;
     this.newestID = state.messages[state.messages.length - 1]?.id ?? null;
     if (switched) {
@@ -116,7 +118,10 @@ class Chat {
     setSeenHeads(state.seenHeads);
 
     // A new language (Settings) draws every message again in its words.
-    if (setLanguage(state.lang)) this.clearList();
+    if (setLanguage(state.lang)) {
+      this.clearList();
+      animateArrivals = false;
+    }
 
     // Turning developer mode on or off redraws every reply with or without its flag.
     const flagged = !!state.feedback && !state.subagent;
@@ -125,6 +130,7 @@ class Chat {
       feedback.enabled = flagged;
       makeComponents.enabled = making;
       this.clearList();
+      animateArrivals = false;
     }
 
     // Gone ones first, so they do not make the rest move (a moved frame reloads).
@@ -157,6 +163,7 @@ class Chat {
         entry.mark = mark;
       } else {
         let element = this.render(message, state);
+        if (animateArrivals) animateSeenArrivals(element, entry?.element);
         if (entry) {
           // Components that did not change keep their frames, so they do not load again.
           const kept = keepFrames(entry.element, element);
@@ -174,9 +181,13 @@ class Chat {
       previous = entry.element;
     }
 
-    this.typing?.remove();
-    this.typing = !state.working ? null : state.subagent ? subagentLiveElement(state.live ?? []) : typingElement(state.avatar, state.live ?? []);
-    if (this.typing) this.list.append(this.typing);
+    if (state.working && !state.subagent && this.typing?.dataset.avatar === state.avatar) {
+      updateTypingElement(this.typing, state.live ?? []);
+    } else {
+      this.typing?.remove();
+      this.typing = !state.working ? null : state.subagent ? subagentLiveElement(state.live ?? []) : typingElement(state.avatar, state.live ?? []);
+    }
+    if (this.typing && this.list.lastElementChild !== this.typing) this.list.append(this.typing);
 
     this.showSubagentHeader(state);
     this.pins.update(state);

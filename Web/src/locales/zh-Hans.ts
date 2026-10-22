@@ -142,6 +142,7 @@ export const zhHans: Dictionary = {
   "messages.makeComponent": "做成组件",
   "messages.makeComponentTitle": "{label}：Maintainer 会马上用这条回复做出来",
   "messages.seenBy": "{names} 已读",
+  "messages.toHeads": "给 {names}",
   "messages.notSeenBy": "{names} 还没读",
   "messages.reply": "回复",
   "messages.fold": "折叠",

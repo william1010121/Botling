@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import ClaudeCodeBotCore
 
-/// Bot look Cute: Claude and Codex drawn as characters in a bot with two heads.
+/// Bot look Cute: Claude and Codex drawn as characters, with either or both engines enabled.
 @MainActor
 struct ChibiTests {
     let hat = Chibi.Hat(path: "M22.5 1.5 L41.5 1.5 L41.5 20.5 Z", color: "#2F86F6", eyes: [(29.3, 10.6), (34.7, 10.6)])
@@ -118,6 +118,32 @@ struct ChibiTests {
         #expect(payload.messages[0].seen?.map(\.seen) == [true, false])
     }
 
+    @Test func userRecipientsStayIndependentOfWhoLaterReadsTheMessage() throws {
+        let targets: [AnswerTarget?] = [.claude, .codex, .both, nil]
+        let receipts: [[BotEngine]] = [[], [.claude], [.codex], [.claude, .codex]]
+        for target in targets {
+            for reached in receipts {
+                var message = ChatMessage(role: .user, text: "Take this one")
+                message.to = target
+                message.seenBy = reached
+                let bot = bot(heads: [.claude, .codex], messages: [message])
+                // A later composer selection cannot rewrite this message's recipients.
+                bot.setAnswerWith(target == .claude ? .codex : .claude)
+                let payload = ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil, look: look) { _ in "own" }
+                let json = try #require(JSONSerialization.jsonObject(with: Data(payload.json().utf8)) as? [String: Any])
+                let messages = try #require(json["messages"] as? [[String: Any]])
+                let heads = try #require(messages.first?["seen"] as? [[String: Any]])
+                #expect(heads.map { $0["recipient"] as? Bool } == [target != .codex, target != .claude])
+                #expect(heads.map { $0["seen"] as? Bool } == [reached.contains(.claude), reached.contains(.codex)])
+            }
+        }
+        let replyBot = twoHeaded()
+        let reply = try #require(replyBot.messages.first { $0.role == .bot })
+        let marks = try #require(ChatPayload.seenMarks(reply, in: replyBot))
+        let encoded = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(marks)) as? [[String: Any]])
+        #expect(encoded.allSatisfy { $0["recipient"] == nil })
+    }
+
     @Test func originalKeepsTheBotsFaceAndLetters() {
         let bot = twoHeaded()
         let payload = ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil) { _ in "own" }
@@ -125,12 +151,85 @@ struct ChibiTests {
         #expect(payload.seenHeads == nil)
     }
 
-    @Test func aBotWithOneHeadLooksAsBefore() {
-        var reply = ChatMessage(role: .bot, text: "Hi")
-        reply.engine = .claude
-        let bot = bot(heads: [.claude], messages: [reply])
+    @Test func singleEngineRepliesWearTheirOwnCharacter() {
+        for head in BotEngine.allCases {
+            var reply = ChatMessage(role: .bot, text: "Hi")
+            reply.engine = head
+            var subagent = ChatMessage(role: .bot, text: "Subagent reply")
+            subagent.engine = head
+            subagent.subagentID = "s1"
+            let bot = bot(heads: [head], messages: [reply, subagent])
+            let payload = ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil, look: look) { _ in "own" }
+            #expect(payload.messages.map(\.avatar) == ["hat-\(head.rawValue)", "own"])
+            #expect(payload.messages.allSatisfy { $0.seen == nil })
+        }
+    }
+
+    @Test func liveSingleEngineWorkUsesItsCharacter() async throws {
+        for head in BotEngine.allCases {
+            let fake = FakeLauncher()
+            fake.respond = { _ in nil }
+            let bot = makeBot(fake)
+            await bot.switchEngine(to: head)
+            bot.send("Look into it")
+            await eventually { fake.agents.count == 1 && bot.isWorking }
+            let agent = try #require(fake.agents.first)
+            agent.emit(.trace(.text("Checking the toolbar.", parent: nil)))
+            await eventually { !bot.liveSteps.isEmpty }
+            let payload = ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil, look: look) { _ in "own" }
+            #expect(payload.working)
+            #expect(payload.avatar == "hat-\(head.rawValue)")
+            #expect(payload.live.map(\.title).contains("Checking the toolbar."))
+            let original = ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil) { _ in "own" }
+            #expect(original.avatar == "own")
+            agent.reply("Done.")
+        }
+    }
+
+    @Test func livePartnerAvatarFollowsTheProcessWhoseStepsAreShown() async throws {
+        let fake = FakeLauncher()
+        fake.respond = { _ in nil }
+        let bot = makeBot(fake)
+        await bot.setHeads([.claude, .codex])
+        bot.send("Review it", to: .codex)
+        await eventually { bot.partner?.isWorking == true && fake.agents.count == 1 }
+        let agent = try #require(fake.agents.first)
+        agent.emit(.trace(.text("Codex is reviewing.", parent: nil)))
+        await eventually { bot.partner?.liveSteps.isEmpty == false }
         let payload = ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil, look: look) { _ in "own" }
-        #expect(payload.messages.map(\.avatar) == ["own"])
-        #expect(payload.seenHeads == nil)
+        #expect(!bot.isWorking)
+        #expect(payload.avatar == "hat-codex")
+        #expect(payload.live.map(\.title).contains("Codex is reviewing."))
+        // A pending call-in does not take the face away from the partner's live steps.
+        let guest = UUID()
+        let callIn = ChatPayload.GroupView(typing: guest) { _ in "Guest" }
+        let alongsideGuest = ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil, callIn: callIn, look: look) { $0 == guest ? "guest" : "own" }
+        #expect(alongsideGuest.avatar == "hat-codex")
+        #expect(alongsideGuest.live == payload.live)
+        agent.reply("Reviewed.")
+    }
+
+    @Test func groupAndCalledInSpeakersKeepTheirOwnFaces() async throws {
+        let fake = FakeLauncher()
+        fake.respond = { _ in nil }
+        let bot = makeBot(fake)
+        bot.send("Check it")
+        await eventually { fake.agents.count == 1 && bot.isWorking }
+        let guest = UUID()
+        let context = ChatPayload.GroupView(typing: guest, working: bot) { _ in "Guest" }
+        let group = ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil, group: context, look: look) { $0 == guest ? "guest" : "own" }
+        #expect(group.avatar == "guest")
+        #expect(group.seenHeads == nil)
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-look-\(UUID().uuidString)")
+        let store = BotStore(directory: home.appending(path: "store"))
+        var reply = ChatMessage(role: .bot, text: "Guest reply", sourceID: guest)
+        reply.engine = .codex
+        store.save(messages: [reply])
+        let host = Bot(profile: .main(home: home), launcher: fake.launcher, store: store)
+        let calledIn = ChatPayload.make(bot: host, components: nil, pending: [], replyingTo: nil, callIn: context, look: look) { $0 == guest ? "guest" : "own" }
+        #expect(calledIn.avatar == "guest")
+        #expect(calledIn.messages.first?.avatar == "guest")
+        #expect(calledIn.live == ChatPayload.liveSteps(of: bot))
+        fake.agents.first?.reply("Done.")
     }
 }

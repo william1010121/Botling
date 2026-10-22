@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { seenHeadsCSS, setSeenHeads } from "../src/heads";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { animateSeenArrivals, seenHeadsCSS, setSeenHeads } from "../src/heads";
 import { seenMarks } from "../src/messages";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("seen marks as the heads' tiny characters (Bot look Cute)", () => {
   it("puts each head's image on its mark", () => {
@@ -27,5 +29,29 @@ describe("seen marks as the heads' tiny characters (Bot look Cute)", () => {
     expect(document.getElementById("seen-heads-style")).toBeNull();
     // The tooltip says who has seen it, as with letters.
     expect(marks.title).toBe("Seen by Claude · not yet by Codex");
+  });
+
+  it.each(["claude", "codex", "both"])("keeps %s recipients separate from actual read receipts", (target) => {
+    for (const read of [[], ["C"], ["X"], ["C", "X"]]) {
+      const heads = [
+        { mark: "C", name: "Claude", seen: read.includes("C"), recipient: target !== "codex" },
+        { mark: "X", name: "Codex", seen: read.includes("X"), recipient: target !== "claude" },
+      ];
+      const marks = seenMarks(heads);
+      const drawn = [...marks.querySelectorAll<HTMLElement>(".seen-mark")];
+      expect(drawn.map((head) => head.classList.contains("recipient"))).toEqual(heads.map((head) => head.recipient));
+      expect(drawn.map((head) => head.classList.contains("on"))).toEqual(heads.map((head) => head.seen));
+      expect([...marks.querySelectorAll<HTMLElement>(".seen-check")].map((check) => check.dataset.mark)).toEqual(read);
+      expect(marks.title).toContain(target === "both" ? "To Claude, Codex" : `To ${target === "claude" ? "Claude" : "Codex"}`);
+    }
+  });
+
+  it("does not animate arrivals with reduced motion enabled", () => {
+    setSeenHeads({ C: "data:c", X: "data:x" });
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    const row = seenMarks([{ mark: "C", name: "Claude", seen: true, recipient: true }]);
+    animateSeenArrivals(row);
+    expect(row.querySelectorAll(".head-arrive, .receipt-arrive")).toHaveLength(0);
+    setSeenHeads(null);
   });
 });

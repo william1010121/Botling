@@ -67,11 +67,13 @@ export interface MessageView {
   seen?: SeenView[] | null;
 }
 
-/** One head's mark under a line: lit once the line is in that head's context. */
+/** A head under a line: recipient highlighting and its separate actual-read receipt. */
 export interface SeenView {
   mark: string;
   name: string;
   seen: boolean;
+  /** User messages only: addressed to this head, regardless of who later read its context. */
+  recipient?: boolean | null;
 }
 
 /** A claude.ai Artifact a reply links to. */

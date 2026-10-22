@@ -76,7 +76,7 @@ enum ChibiImages {
         return image
     }
 
-    /// What the chat page needs for Bot look Cute in `bot` (a bot with two heads).
+    /// What the chat page needs for Bot look Cute, with either or both engines enabled.
     static func look(for kind: AvatarKind) -> ChatPayload.HeadLook {
         ChatPayload.HeadLook(
             avatar: { dataURL($0, hat: kind) },
@@ -118,7 +118,7 @@ extension Bot {
     }
 }
 
-/// The left column's face for a bot with two heads (Bot look Cute): the bot's own face in front,
+/// The left column's face in Bot look Cute: the bot's own face in front,
 /// full size, with Claude and Codex peeking out from behind it, each in its mood.
 struct BotWithHeadsAvatar: View {
     @ObservedObject var bot: Bot
@@ -151,7 +151,10 @@ private struct HeadPeek: View {
     let size: CGFloat
 
     var body: some View {
-        if let runner = bot.runner(of: head), runner !== bot {
+        if !bot.heads.engines.contains(head) {
+            ChibiHeadView(head: head, mood: .sleep, size: size)
+                .opacity(0.55)
+        } else if let runner = bot.runner(of: head), runner !== bot {
             HeadPeekOf(head: head, runner: runner, size: size)
         } else {
             ChibiHeadView(head: head, mood: bot.runner(of: head) == nil ? .sleep : chibiMood(of: bot), size: size)

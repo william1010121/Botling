@@ -30,3 +30,23 @@ export function setSeenHeads(heads: Record<string, string> | null | undefined): 
   }
   style.textContent = css;
 }
+
+/** One short greeting for a new recipient or read check; unchanged marks never replay it. */
+export function animateSeenArrivals(row: HTMLElement, previous?: HTMLElement): void {
+  if (!document.body.classList.contains("seen-heads") || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+  for (const mark of row.querySelectorAll<HTMLElement>(".seen-mark")) {
+    const before = [...previous?.querySelectorAll<HTMLElement>(".seen-mark") ?? []].find((head) => head.dataset.mark === mark.dataset.mark);
+    if (!before && (mark.classList.contains("recipient") || (!mark.classList.contains("recipient-mark") && mark.classList.contains("on")))) {
+      arrive(mark, "head-arrive");
+    }
+    if (mark.classList.contains("on") && !before?.classList.contains("on")) {
+      const check = mark.parentElement?.querySelector<HTMLElement>(".seen-check");
+      if (check) arrive(check, "receipt-arrive");
+    }
+  }
+}
+
+function arrive(element: HTMLElement, name: string): void {
+  element.classList.add(name);
+  element.addEventListener("animationend", () => element.classList.remove(name), { once: true });
+}
