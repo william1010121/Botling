@@ -101,6 +101,36 @@ enum Snapshot {
             draw(root: root, to: path)
             return true
         }
+        // `CCB_SNAPSHOT_SAMPLE=rounds`: two heads discussing (Round 2 of 3 · Stop now), and the
+        // card a review shows at its limit. Sample data.
+        if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "rounds" {
+            let store = BotStore(directory: root.appending(path: "main"))
+            store.save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .both, both: .discuss))
+            var ask = ChatMessage(role: .user, text: "Should the release card read git or a JSON file?", date: now.addingTimeInterval(-600))
+            ask.to = .both
+            var claude1 = ChatMessage(role: .bot, text: "Read git, and cache the last result so a refresh costs one `git log`.", date: now.addingTimeInterval(-540))
+            claude1.engine = .claude
+            var codex1 = ChatMessage(role: .bot, text: "A JSON file written on each merge is cheaper: no git on refresh.", date: now.addingTimeInterval(-480))
+            codex1.engine = .codex
+            var claude2 = ChatMessage(role: .bot, text: "The JSON goes stale when a merge happens outside the app.", date: now.addingTimeInterval(-420))
+            claude2.engine = .claude
+            let card = ChatMessage(role: .notice, text: "2 review rounds done. 1 blocking issue(s) left.\n\nCodex: the toolbar still overlaps at phone width.", date: now.addingTimeInterval(-60), choices: [
+                Choice(label: "Keep it as is", detail: nil, recommended: true),
+                Choice(label: "Fix it, one more round", detail: nil, recommended: false),
+                Choice(label: "Let Codex fix it", detail: nil, recommended: false),
+            ])
+            store.save(messages: [
+                ChatMessage(role: .divider, text: "SAMPLE DATA", date: now.addingTimeInterval(-700)),
+                ask, claude1, codex1, claude2,
+                ChatMessage(role: .divider, text: "Codex review 2 of 2: 1 blocking", date: now.addingTimeInterval(-90)),
+            ])
+            draw(root: root, to: path) { workspace in
+                // Posted after loading: a saved app card is closed when the app starts.
+                workspace.mainBot.post(card, unread: false)
+                workspace.mainBot.showRoundsForSnapshot(RoundsProgress(kind: .discussion, round: 2, limit: 3))
+            }
+            return true
+        }
         // `CCB_SNAPSHOT_SAMPLE=subagent`: a subagent's view (read only), still at work: its task
         // and a later message from its bot, each finished run of calls folded to "N steps" (a long
         // one, with a failed command, among them), the run under way in sight, its last call spinning.

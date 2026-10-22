@@ -262,6 +262,8 @@ struct ChatSurface: NSViewRepresentable {
                 view?.evaluateJavaScript("ccb.focus()")
             case "cancelReply":
                 inputs.replies[bot.id] = nil
+            case "stopRounds":
+                bot.stopRounds()
             case "openURL":
                 if let text = body["url"] as? String, let url = URL(string: text) {
                     let label = (body["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? url.lastPathComponent

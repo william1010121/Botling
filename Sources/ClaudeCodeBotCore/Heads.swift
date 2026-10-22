@@ -29,28 +29,46 @@ public struct HeadsSettings: Codable, Equatable, Sendable {
     public var engines: [BotEngine]
     /// Where a new message goes unless the user picks another for it.
     public var answerWith: AnswerTarget
+    /// What "Both" means: two answers, one does the work and the other reviews, or a discussion.
+    public var both: BothMode = .askBoth
+    /// How many rounds the loops between the heads may take, and what happens at the limit.
+    public var limits = RoundLimits()
+    /// The heads may hand work to each other (`<handoff to="…">`).
+    public var handoffs = true
 
-    public init(engines: [BotEngine], answerWith: AnswerTarget) {
+    public init(engines: [BotEngine], answerWith: AnswerTarget, both: BothMode = .askBoth, limits: RoundLimits = RoundLimits(), handoffs: Bool = true) {
         let kept = BotEngine.allCases.filter(engines.contains)
         self.engines = kept.isEmpty ? [.claude] : kept
         self.answerWith = answerWith
+        self.both = both
+        self.limits = limits
+        self.handoffs = handoffs
         self.answerWith = fitted(answerWith)
     }
 
-    private enum CodingKeys: String, CodingKey { case engines, answerWith }
+    private enum CodingKeys: String, CodingKey { case engines, answerWith, both, limits, handoffs }
 
     /// Read as text, so a value this build does not know leaves the rest of bot.json readable.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let engines = (try? container.decode([String].self, forKey: .engines))?.compactMap(BotEngine.init(rawValue:)) ?? []
         let target = (try? container.decode(String.self, forKey: .answerWith)).flatMap(AnswerTarget.init(rawValue:))
-        self.init(engines: engines, answerWith: target ?? AnswerTarget(engines.first ?? .claude))
+        self.init(
+            engines: engines,
+            answerWith: target ?? AnswerTarget(engines.first ?? .claude),
+            both: (try? container.decode(String.self, forKey: .both)).flatMap(BothMode.init(rawValue:)) ?? .askBoth,
+            limits: (try? container.decode(RoundLimits.self, forKey: .limits)) ?? RoundLimits(),
+            handoffs: (try? container.decode(Bool.self, forKey: .handoffs)) ?? true
+        )
     }
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(engines.map(\.rawValue), forKey: .engines)
         try container.encode(answerWith.rawValue, forKey: .answerWith)
+        try container.encode(both.rawValue, forKey: .both)
+        try container.encode(limits, forKey: .limits)
+        try container.encode(handoffs, forKey: .handoffs)
     }
 
     public static func single(_ engine: BotEngine) -> HeadsSettings {
@@ -75,4 +93,72 @@ public struct HeadsSettings: Codable, Equatable, Sendable {
         let target = fitted(target)
         return target.engine.map { [$0] } ?? engines
     }
+}
+
+/// What a message to Both does (the design's "When both are asked").
+public enum BothMode: String, CaseIterable, Codable, Sendable {
+    /// Each answers; you pick one, or let them discuss.
+    case askBoth
+    /// Claude does the work, Codex reviews it (review rounds).
+    case claudeDoesCodexReviews
+    /// Codex does the work, Claude reviews it.
+    case codexDoesClaudeReviews
+    /// They discuss first (discussion rounds), then one answer.
+    case discuss
+
+    public var displayName: String {
+        switch self {
+        case .askBoth: L("Ask both, show two answers")
+        case .claudeDoesCodexReviews: L("Claude does the work, Codex reviews")
+        case .codexDoesClaudeReviews: L("Codex does the work, Claude reviews")
+        case .discuss: L("Discuss first, then one answer")
+        }
+    }
+}
+
+/// How far the loops between the heads go. The app counts the rounds, not the models. The
+/// defaults are the plan's: 3 discussion rounds, 2 review rounds (a review and its fix count as
+/// one), 6 hand-offs per message.
+public struct RoundLimits: Codable, Equatable, Sendable {
+    public enum AtLimit: String, Codable, CaseIterable, Sendable {
+        /// Stop with a card that shows both sides, for you to pick.
+        case ask
+        /// Take the doer's latest version and finish.
+        case useDoers
+    }
+
+    public var discussion = 3
+    public var review = 2
+    public var handoffs = 6
+    public var atLimit = AtLimit.ask
+
+    /// The steppers' range in settings.
+    public static let range = 1...10
+
+    public init(discussion: Int = 3, review: Int = 2, handoffs: Int = 6, atLimit: AtLimit = .ask) {
+        self.discussion = discussion
+        self.review = review
+        self.handoffs = handoffs
+        self.atLimit = atLimit
+    }
+
+    private enum CodingKeys: String, CodingKey { case discussion, review, handoffs, atLimit }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let fallback = RoundLimits()
+        func count(_ key: CodingKeys, _ value: Int) -> Int {
+            ((try? container.decode(Int.self, forKey: key)) ?? value).clamped(to: Self.range)
+        }
+        self.init(
+            discussion: count(.discussion, fallback.discussion),
+            review: count(.review, fallback.review),
+            handoffs: count(.handoffs, fallback.handoffs),
+            atLimit: (try? container.decode(String.self, forKey: .atLimit)).flatMap(AtLimit.init(rawValue:)) ?? .ask
+        )
+    }
+}
+
+extension Int {
+    func clamped(to range: ClosedRange<Int>) -> Int { Swift.min(Swift.max(self, range.lowerBound), range.upperBound) }
 }

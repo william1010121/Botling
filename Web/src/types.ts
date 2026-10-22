@@ -381,6 +381,8 @@ export interface ChatState {
   lang?: string | null;
   /** A bot with two heads (Claude and Codex): who the next message goes to. */
   answerWith?: AnswerWithView | null;
+  /** A loop between the two heads under way: "Round 2 of 3", and the Stop now button's words. */
+  rounds?: { text: string; stop: string } | null;
 }
 
 /** "Answer with" above the input box: each head and Both, the default, and a message waiting for the other head. */
@@ -401,6 +403,7 @@ export type Action =
   | { type: "answer"; messageID: string; text: string; images?: { name: string; base64: string }[] }
   | { type: "reply"; messageID: string }
   | { type: "cancelReply" }
+  | { type: "stopRounds" }
   | { type: "openURL"; url: string; label: string }
   | { type: "openExternal"; url: string }
   | { type: "revealFile"; url: string }

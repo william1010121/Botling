@@ -1296,6 +1296,10 @@ struct SettingsPage: View {
                     : L("Turn on the other engine to ask Claude and Codex in the same chat."))
             }
 
+            if bot.heads.hasTwo {
+                HeadsLoopsSettings(bot: bot)
+            }
+
             PanelSection(L("Model and thinking")) {
                 VStack(spacing: 0) {
                     DropdownRow(
@@ -1420,25 +1424,133 @@ private struct DropdownRow<Choice: Hashable>: View {
     let chosen: Choice
     let label: (Choice) -> String
     var disabled = false
+    /// The title above the menu, for choices too long to share a line with it.
+    var stacked = false
     let pick: (Choice) -> Void
 
     var body: some View {
-        HStack {
-            Text(title).foregroundStyle(Theme.text)
-            Spacer()
-            Picker(title, selection: Binding(get: { chosen }, set: { if $0 != chosen { pick($0) } })) {
-                ForEach(Array(choices.enumerated()), id: \.offset) { _, choice in
-                    Text(label(choice)).tag(choice)
+        if stacked {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).foregroundStyle(Theme.text)
+                menu
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 16)
+            .padding(.trailing, 10)
+            .padding(.vertical, 10)
+        } else {
+            HStack {
+                Text(title).foregroundStyle(Theme.text)
+                Spacer()
+                menu
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, 10)
+            .frame(height: 44)
+        }
+    }
+
+    private var menu: some View {
+        Picker(title, selection: Binding(get: { chosen }, set: { if $0 != chosen { pick($0) } })) {
+            ForEach(Array(choices.enumerated()), id: \.offset) { _, choice in
+                Text(label(choice)).tag(choice)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .fixedSize()
+        .disabled(disabled)
+    }
+}
+
+/// What two heads do together: what Both means, the round limits, hand-offs (the design's
+/// "When both are asked", "Limits" and "Talking to each other").
+private struct HeadsLoopsSettings: View {
+    @ObservedObject var bot: Bot
+
+    var body: some View {
+        PanelSection(L("When both are asked")) {
+            VStack(spacing: 0) {
+                DropdownRow(title: L("Both means"), choices: BothMode.allCases, chosen: bot.heads.both, label: { $0.displayName }, stacked: true) { mode in
+                    bot.setBothMode(mode)
+                }
+                Rectangle().fill(Theme.line).frame(height: 1)
+                SwitchRow(title: L("Let Claude and Codex hand work to each other"), isOn: bot.heads.handoffs) { on in
+                    bot.setHandoffs(on)
                 }
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .fixedSize()
-            .disabled(disabled)
+            .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            SettingNote(L("Each hand-off shows as a line in the chat; the work comes back to the one who handed it."))
         }
-        .padding(.leading, 16)
-        .padding(.trailing, 10)
-        .frame(height: 44)
+
+        PanelSection(L("Limits")) {
+            VStack(spacing: 0) {
+                CountRow(title: L("Discussion rounds"), note: L("One round = each says its piece once"), value: bot.heads.limits.discussion) { value in
+                    var limits = bot.heads.limits
+                    limits.discussion = value
+                    bot.setLimits(limits)
+                }
+                Rectangle().fill(Theme.line).frame(height: 1)
+                CountRow(title: L("Review rounds"), note: L("Review → fix counts as one"), value: bot.heads.limits.review) { value in
+                    var limits = bot.heads.limits
+                    limits.review = value
+                    bot.setLimits(limits)
+                }
+                Rectangle().fill(Theme.line).frame(height: 1)
+                CountRow(title: L("Hand-offs per message"), note: L("Stops ping-pong between the two"), value: bot.heads.limits.handoffs, set: nil)
+                Rectangle().fill(Theme.line).frame(height: 1)
+                DropdownRow(title: L("At the limit"), choices: RoundLimits.AtLimit.allCases, chosen: bot.heads.limits.atLimit, label: { choice in
+                    choice == .ask ? L("Stop and ask me, with both positions") : L("Use the doer's latest version")
+                }, stacked: true) { choice in
+                    var limits = bot.heads.limits
+                    limits.atLimit = choice
+                    bot.setLimits(limits)
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            SettingNote(L("They stop early when they agree or the reviewer finds nothing. Review stops before the limit only if it has no blocking issues left."))
+        }
+    }
+}
+
+/// A count with − and + (nil `set`: shown, not changed here).
+private struct CountRow: View {
+    let title: String
+    let note: String
+    let value: Int
+    let set: ((Int) -> Void)?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).foregroundStyle(Theme.text)
+                Text(note).font(.system(size: 12)).foregroundStyle(Theme.faint)
+            }
+            Spacer()
+            if let set {
+                Button { set(value - 1) } label: { stepIcon("minus") }
+                    .buttonStyle(.plain).disabled(value <= RoundLimits.range.lowerBound)
+                    .accessibilityLabel(L("Decrease"))
+            }
+            Text("\(value)").monospacedDigit().frame(minWidth: 22)
+            if let set {
+                Button { set(value + 1) } label: { stepIcon("plus") }
+                    .buttonStyle(.plain).disabled(value >= RoundLimits.range.upperBound)
+                    .accessibilityLabel(L("Increase"))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func stepIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 11, weight: .semibold))
+            .frame(width: 28, height: 28)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.line))
+            .contentShape(Rectangle())
     }
 }
 

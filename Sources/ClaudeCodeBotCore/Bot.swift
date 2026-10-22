@@ -18,6 +18,17 @@ public final class Bot: ObservableObject, Identifiable {
     @Published public private(set) var heads: HeadsSettings
     /// A message waits for the other head until the one running is free (its id: the head).
     @Published public private(set) var waitingHead: BotEngine?
+    /// Where a loop between the heads stands (a discussion, a review, hand-offs), for the line
+    /// over the input box; nil when none runs.
+    @Published public private(set) var rounds: RoundsProgress?
+    /// Hand-offs, Both and the round limits (see `Conductor`).
+    private var conductor: Conductor
+    /// The conductor's cards waiting for a pick, by message id: what each button does.
+    private var cards: [UUID: [CardPick]] = [:]
+    /// The turn under way answers something the conductor asked.
+    private var turnConducted = false
+    /// The head tags the latest reply carried (taken out of what it shows).
+    private var lastTags = HeadTags()
     /// Each head's session while the bot is awake, to go on in it when its turn comes again.
     private var headSessions: [BotEngine: UUID] = [:]
     /// The newest line each head had seen when it last stopped, for what it missed.
@@ -57,7 +68,7 @@ public final class Bot: ObservableObject, Identifiable {
     public let id = UUID()
     public let profile: BotProfile
     /// What it is told, with the results rule as Settings has it now (read at each start).
-    var prompts: BotPrompts { BotPrompts(profile: profile, results: resultPublishing?() ?? .artifactUnlessSensitive, language: language?() ?? .english, engine: engine) }
+    var prompts: BotPrompts { BotPrompts(profile: profile, results: resultPublishing?() ?? .artifactUnlessSensitive, language: language?() ?? .english, engine: engine, heads: heads) }
     private let launcher: AgentLauncher
     private let idleInterval: TimeInterval
     private let exitTimeout: TimeInterval
@@ -224,6 +235,8 @@ public final class Bot: ObservableObject, Identifiable {
         var messageID: UUID?
         /// The head it is for; nil: whichever runs.
         var head: BotEngine?
+        /// The conductor asked for it: its reply goes back to the conductor.
+        var conducted = false
     }
     /// What you said in the turn under way, while nothing but you started it.
     private var turnInput: Outgoing?
@@ -321,6 +334,7 @@ public final class Bot: ObservableObject, Identifiable {
         let engine = store?.loadEngine() ?? .claude
         let heads = store?.loadHeads() ?? .single(engine)
         self.heads = heads
+        conductor = Conductor(settings: heads)
         self.engine = heads.engines.contains(engine) ? engine : heads.engines[0]
         subagentModel = store?.loadSubagentModel()
         effort = store?.loadEffort()
@@ -479,18 +493,87 @@ public final class Bot: ObservableObject, Identifiable {
         // Whether paused work reported up is read before this turn becomes yours.
         let said = lines.joined(separator: "\n\n")
         let images = attachments.filter { $0.kind == .image }
-        route(Outgoing(text: said, images: images, fromUser: true, messageID: message.id, head: answering[0]))
-        // Both: the other answers after it, in its own turn (one head runs at a time).
-        for (index, head) in answering.enumerated().dropFirst() {
-            let before = answering.prefix(index).map(\.displayName).joined(separator: " and ")
-            route(Outgoing(text: Self.bothNote(answered: before) + "\n\n" + said, images: images, messageID: message.id, head: head))
+        // What went on between the heads stops for you; a message to Both starts its loop.
+        let actions = conductor.userMessage(said, to: target)
+        if actions.contains(where: { if case .ask = $0 { true } else { false } }) {
+            conduct(actions, images: images, messageID: message.id)
+        } else {
+            conduct(actions)
+            route(Outgoing(text: said, images: images, fromUser: true, messageID: message.id, head: answering[0]))
         }
         turnFromRelay = false
     }
 
     /// What the second head is told when the user asked both: the first has answered.
-    static func bothNote(answered: String) -> String {
-        "(App: The user asked both heads of this bot. \(answered) answered first (above); now give your own answer to the same message.)"
+    nonisolated static func bothNote(answered: String) -> String {
+        Conductor.bothNote(answered: answered)
+    }
+
+    // MARK: Two heads
+
+    /// Does what the conductor says: turns for the heads (one at a time, through `route`),
+    /// lines and cards in the chat, the rounds line.
+    private func conduct(_ actions: [ConductorAction], images: [Attachment] = [], messageID: UUID? = nil) {
+        for action in actions {
+            switch action {
+            case let .ask(head, text, fromUser):
+                route(Outgoing(text: text, images: fromUser ? images : [], fromUser: fromUser, messageID: fromUser ? messageID : nil, head: head, conducted: true))
+            case let .line(text):
+                append(ChatMessage(role: .divider, text: text))
+            case let .card(text, choices):
+                let message = ChatMessage(role: .notice, text: text, choices: choices.enumerated().map { index, choice in
+                    Choice(label: choice.label, detail: nil, recommended: index == 0)
+                })
+                cards[message.id] = choices.map(\.pick)
+                append(message)
+                unreadCount += 1
+                onQuestion?(message)
+            case let .progress(progress):
+                if rounds != progress { rounds = progress }
+            }
+        }
+    }
+
+    /// Shows a rounds line with no loop behind it: only for drawing the page (snapshots).
+    public func showRoundsForSnapshot(_ progress: RoundsProgress?) {
+        rounds = progress
+    }
+
+    /// "Stop now" on the rounds line: the loop between the heads ends where it is.
+    public func stopRounds() {
+        conduct(conductor.stop())
+    }
+
+    /// What "Both" means for this bot.
+    public func setBothMode(_ mode: BothMode) {
+        guard mode != heads.both else { return }
+        heads.both = mode
+        saveHeads()
+    }
+
+    /// How many rounds the loops may take and what happens at the limit.
+    public func setLimits(_ limits: RoundLimits) {
+        guard limits != heads.limits else { return }
+        heads.limits = limits
+        saveHeads()
+    }
+
+    /// Whether the heads may hand work to each other.
+    public func setHandoffs(_ on: Bool) {
+        guard on != heads.handoffs else { return }
+        heads.handoffs = on
+        saveHeads()
+        queueNote(on ? Self.asNote(prompts.headsRule) : "(App: Hand-offs between this bot's heads are turned off now: do not use <handoff>.)")
+    }
+
+    /// A rule of the system prompt ("- …") as a note from the app.
+    static func asNote(_ rule: String) -> String {
+        "(App: " + rule.trimmingCharacters(in: CharacterSet(charactersIn: "- ")) + ")"
+    }
+
+    private func saveHeads() {
+        conductor.settings = heads
+        store?.save(heads: heads)
     }
 
     /// Copies a file the user sent into the bot's own attachments folder.
@@ -555,6 +638,11 @@ public final class Bot: ObservableObject, Identifiable {
               message.isOpenQuestion,
               let choice = message.choices?[safe: index] else { return false }
         if denialAsks[messageID] != nil { return decideDenial(index, in: message) }
+        if let picks = cards.removeValue(forKey: messageID) {
+            markChosen(index, in: messageID)
+            if let pick = picks[safe: index] { conduct(conductor.picked(pick)) }
+            return true
+        }
         if message.permissionTool != nil { return decide(index, in: message) }
         markChosen(index, in: messageID)
         let wasRelay = message.role == .bot && turnFromRelay
@@ -685,6 +773,12 @@ public final class Bot: ObservableObject, Identifiable {
                 Task { [weak self] in await self?.restartWaiting() }
                 return
             }
+            if outgoing.conducted, isWorking || early.waiting {
+                // A turn the conductor asked for waits for the one under way to end: it is not
+                // merged into it, so its reply is its own.
+                queued.append(outgoing)
+                return
+            }
             if early.waiting {
                 // It already answered and only its turn's end (the Stop hook) is left: this is
                 // a new message, not one to stop that turn for. It goes once the turn ends.
@@ -756,6 +850,7 @@ public final class Bot: ObservableObject, Identifiable {
         cancelIdle()
         // A turn you started, or one you are adding to; anything else is not yours to add to.
         turnInput = outgoing.fromUser && (!isWorking || turnInput != nil) ? outgoing : nil
+        turnConducted = outgoing.conducted || (isWorking && turnConducted)
         // You said something: the reply is yours to see.
         if outgoing.fromUser || !isWorking { turnOrigin = outgoing.fromUser ? .user : .app }
         if !isWorking { noteProgress() }
@@ -786,6 +881,7 @@ public final class Bot: ObservableObject, Identifiable {
             isWorking = true
             turnInput = outgoing.fromUser ? outgoing : nil
             turnOrigin = outgoing.fromUser ? .user : .app
+            turnConducted = outgoing.conducted
             let text: String
             if earlier != nil {
                 resumeProbe = true
@@ -935,7 +1031,10 @@ public final class Bot: ObservableObject, Identifiable {
     /// The reply's bubble in the chat (counted unread, told to plugins), and the tags it carried.
     private func bubble(_ text: String, isError: Bool) -> (ChatMessage, [BotRequest]) {
         let parsed = ReplyParser.parseAll(text)
-        var message = ChatMessage(role: isError ? .error : .bot, text: parsed.body, choices: parsed.choices)
+        // Hand-offs, discussion positions and review counts are the app's, not the chat's.
+        let (body, tags) = isError ? (parsed.body, HeadTags()) : HeadTags.parse(parsed.body)
+        lastTags = tags
+        var message = ChatMessage(role: isError ? .error : .bot, text: body, choices: parsed.choices)
         if !parsed.displays.isEmpty { message.displays = parsed.displays }
         message.session = sessionID
         message.engine = engine
@@ -972,6 +1071,16 @@ public final class Bot: ObservableObject, Identifiable {
         reloadRoutines()
         onReply?(message, turnFromRelay)
         if !requests.isEmpty { onRequests?(requests) }
+        // The conductor hears every reply: a hand-off in it, or the next step of its loop.
+        let conducted = turnConducted
+        turnConducted = false
+        let tags = lastTags
+        lastTags = HeadTags()
+        if message.role == .bot {
+            conduct(conductor.replied(engine, message.text, tags: tags, conducted: conducted))
+        } else if conducted {
+            conduct(conductor.abort())
+        }
         if held, !queued.isEmpty { Task { [weak self] in await self?.flushQueue() } }
         if let fromRelay = pausedWork, process != nil {
             // It answered you; now back to what it was doing.
@@ -1978,7 +2087,7 @@ public final class Bot: ObservableObject, Identifiable {
         engine = newEngine
         store?.save(engine: newEngine)
         heads = .single(newEngine)
-        store?.save(heads: heads)
+        saveHeads()
         guard phase != .asleep else {
             append(ChatMessage(role: .divider, text: L("Switched to {0}", newEngine.displayName)))
             return
@@ -1989,10 +2098,11 @@ public final class Bot: ObservableObject, Identifiable {
     /// Which engines it has (Claude, Codex or both). The head running, when it is taken away,
     /// hands over to the one left, as a switch of engine does.
     public func setHeads(_ engines: [BotEngine]) async {
-        let new = HeadsSettings(engines: engines, answerWith: heads.answerWith)
+        let new = HeadsSettings(engines: engines, answerWith: heads.answerWith, both: heads.both, limits: heads.limits, handoffs: heads.handoffs)
         guard new != heads else { return }
         heads = new
-        store?.save(heads: new)
+        saveHeads()
+        if new.hasTwo { queueNote(Self.asNote(prompts.headsRule)) }
         guard !new.engines.contains(engine) else { return }
         let next = new.engines[0]
         engine = next
@@ -2009,7 +2119,7 @@ public final class Bot: ObservableObject, Identifiable {
         let fitted = heads.fitted(target)
         guard fitted != heads.answerWith else { return }
         heads.answerWith = fitted
-        store?.save(heads: heads)
+        saveHeads()
     }
 
     /// The head running is free and a message waits for the other: it stops without tidying
@@ -2253,8 +2363,9 @@ public final class Bot: ObservableObject, Identifiable {
     private func flushQueue() async {
         guard !queued.isEmpty else { return }
         // Messages for one head go together; those for the other wait for its turn.
+        // A turn the conductor asked for goes alone: its reply is its own.
         let head = queued[0].head
-        let count = queued.prefix { $0.head == head || $0.head == nil }.count
+        let count = queued[0].conducted ? 1 : queued.prefix { ($0.head == head || $0.head == nil) && !$0.conducted }.count
         let waiting = Array(queued.prefix(count))
         queued.removeFirst(count)
         // One message goes as it is (yours stays yours to add to).

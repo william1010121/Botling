@@ -3,6 +3,9 @@ import Foundation
 /// Everything ClaudeCodeBot says to Claude for one bot. Messages marked "App" are never shown in the chat.
 struct BotPrompts {
     private(set) var system: String
+    /// For a bot with two heads: what each is told about the other and hand-offs (also sent as
+    /// a note when the heads change while it is awake).
+    let headsRule: String
     let wake: String
     let tidy: String
     let handoff: String
@@ -50,7 +53,18 @@ struct BotPrompts {
     /// there, so results stay local and timed work goes into its Routines file.
     static let codexNote = "- You run on the Codex CLI, not Claude Code. The Claude Code tools these instructions name (the Artifact tool, ScheduleWakeup, CronCreate, the Agent tool, Skill) are not yours: put results in a local page as said above, and put timed work in your Routines file. When something needs one of them (a claude.ai Artifact or Design), say so in one sentence: it can be done on Claude."
 
-    init(profile: BotProfile, results: ResultPublishing = .artifactUnlessSensitive, language: AppLanguage = .english, engine: BotEngine = .claude) {
+    /// The rule above: who the other head is, and how to hand it work.
+    static func headsRule(engine: BotEngine, heads: HeadsSettings) -> String {
+        let other = BotEngine.allCases.first { $0 != engine } ?? engine
+        var rule = "- This bot has two heads, Claude and Codex, taking turns in this one chat and sharing your memory file; you are \(engine.displayName). Only one runs at a time; when your turn comes, the app tells you what \(other.displayName) said and did meanwhile."
+        if heads.handoffs {
+            rule += " To hand \(other.displayName) a self-contained piece of work it is better at, end your reply with <handoff to=\"\(other.rawValue)\">the task, with everything it needs</handoff>: the app shows the hand-off, \(other.displayName) does it, and its reply comes back to you. At most \(heads.limits.handoffs) hand-offs per user message; do not hand off what you can do quickly yourself."
+        }
+        return rule
+    }
+
+    init(profile: BotProfile, results: ResultPublishing = .artifactUnlessSensitive, language: AppLanguage = .english, engine: BotEngine = .claude, heads: HeadsSettings? = nil) {
+        headsRule = heads.map { Self.headsRule(engine: engine, heads: $0) } ?? ""
         // Codex has no Artifact tool: its results stay local.
         let publishing: ResultPublishing = engine == .codex ? .localOnly : results
         let memory = profile.memoryPath
@@ -131,6 +145,7 @@ struct BotPrompts {
             """
         }
         if engine == .codex { system += "\n" + Self.codexNote }
+        if heads?.hasTwo == true { system += "\n" + headsRule }
         wake = Self.wakeLead + " Read \(memory) before answering; if the file does not exist, treat this as our first meeting.)"
         tidy = Self.tidyLead + " and are about to fall asleep. Update \(memory) with whatever in this conversation is worth remembering, keeping the four-section format and under 150 lines. Reply only OK when done.)"
         handoff = "(App: The model is about to change. Write what you are working on and what comes next into the \"\(MemorySection.inProgress.heading)\" section of \(memory), keeping the four-section format. Reply only OK when done.)"

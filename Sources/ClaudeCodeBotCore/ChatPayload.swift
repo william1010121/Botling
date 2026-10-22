@@ -357,6 +357,13 @@ public struct ChatPayload: Encodable, Equatable {
     var lang: String = L10n.language.rawValue
     /// A bot with two heads: who the next message goes to ("Answer with" above the input box).
     var answerWith: AnswerWith? = nil
+    /// A loop between the heads under way: "Round 2 of 3", with its Stop now button's words.
+    var rounds: Rounds? = nil
+
+    public struct Rounds: Encodable, Equatable {
+        var text: String
+        var stop: String
+    }
 
     /// The "Answer with" chips: each head and Both, the one new messages go to, and a message
     /// waiting for the other head (the lock), said in a few words.
@@ -573,7 +580,8 @@ public struct ChatPayload: Encodable, Equatable {
             board: pinning.map(\.board),
             floating: floating,
             makeComponents: specs ? true : nil,
-            answerWith: group == nil ? AnswerWith.of(bot) : nil
+            answerWith: group == nil ? AnswerWith.of(bot) : nil,
+            rounds: group == nil ? bot.rounds.map { Rounds(text: $0.shown, stop: L("Stop now")) } : nil
         )
     }
 

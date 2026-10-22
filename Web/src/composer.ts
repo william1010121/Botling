@@ -52,6 +52,8 @@ export class Composer {
   private hasFiles = false;
   /** "Answer with" above the box, in a bot with two heads; its pick lasts for one message. */
   private readonly answerRow: HTMLElement;
+  /** "Round 2 of 3 · Stop now" while the two heads discuss, review or hand work over. */
+  private readonly roundsRow: HTMLElement;
   private answer: AnswerWithView | null = null;
   private answerPicked: string | null = null;
   /** Plugins see key presses first; returning true means a plugin handled it. */
@@ -103,7 +105,10 @@ export class Composer {
     this.answerRow = document.createElement("div");
     this.answerRow.className = "answer-with";
     this.answerRow.hidden = true;
-    parent.append(this.answerRow, this.root);
+    this.roundsRow = document.createElement("div");
+    this.roundsRow.className = "rounds-line";
+    this.roundsRow.hidden = true;
+    parent.append(this.roundsRow, this.answerRow, this.root);
 
     this.view = new EditorView({
       parent: editorHost,
@@ -377,6 +382,7 @@ export class Composer {
     }
     this.view.dispatch({ effects: this.placeholder.reconfigure(placeholderExtension(state.placeholder)) });
     this.setAnswer(state.answerWith ?? null, state.botID);
+    this.setRounds(state.rounds ?? null);
 
     if (state.replyingTo) {
       this.replyBar.hidden = false;
@@ -440,6 +446,24 @@ export class Composer {
   }
 
   private answerChat = "";
+  private roundsShown = "";
+
+  private setRounds(rounds: { text: string; stop: string } | null): void {
+    const key = rounds ? `${rounds.text}|${rounds.stop}` : "";
+    if (key === this.roundsShown) return;
+    this.roundsShown = key;
+    this.roundsRow.hidden = !rounds;
+    this.roundsRow.innerHTML = "";
+    if (!rounds) return;
+    const text = document.createElement("span");
+    text.className = "rounds-text";
+    text.textContent = rounds.text;
+    const stop = document.createElement("button");
+    stop.className = "rounds-stop";
+    stop.textContent = rounds.stop;
+    stop.addEventListener("click", () => post({ type: "stopRounds" }));
+    this.roundsRow.append(text, stop);
+  }
 
   private drawAnswer(): void {
     const answer = this.answer;
