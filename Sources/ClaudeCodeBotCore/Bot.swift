@@ -255,6 +255,8 @@ public final class Bot: ObservableObject, Identifiable {
         var about: [UUID] = []
         /// Work the other head handed over: its reply goes back.
         var conducted = false
+        /// A peer's words add context without replacing the user-owned task under way.
+        var contextOnly = false
     }
     /// What you said in the turn under way, while nothing but you started it.
     private var turnInput: Outgoing?
@@ -518,7 +520,21 @@ public final class Bot: ObservableObject, Identifiable {
         // the first has said what it takes on (then both work at once); a message named for
         // one reaches the other as a note, with its next message.
         conduct(conductor.userMessage())
+        // Parts of the same message keep the original lead and deadline. Starting the held
+        // head here would let it grab the task before it heard the lead's opening words.
+        if target == .both, var hold = claimHold {
+            let earlier = hold.outgoing
+            hold.outgoing = outgoing
+            hold.outgoing.text = Self.partsNote + Self.withoutPartsNote(earlier.text) + "\n\n" + outgoing.text
+            hold.outgoing.images = earlier.images + outgoing.images
+            hold.outgoing.about = earlier.about + [earlier.messageID].compactMap { $0 } + outgoing.about
+            claimHold = hold
+            deliver(outgoing, to: hold.lead)
+            turnFromRelay = false
+            return
+        }
         // A message held for the other head goes out before this one, so it keeps its order.
+        // Addressing one head explicitly overrides the earlier wait.
         releaseClaim()
         let answering = heads.heads(for: target)
         let lead = answering.count > 1 ? claimLead(among: answering) : nil
@@ -581,8 +597,15 @@ public final class Bot: ObservableObject, Identifiable {
     /// A head's turn ended: if it led a held message without a word (it had nothing to add, or
     /// failed), the other head gets the message now.
     fileprivate func headStopped(_ head: BotEngine) {
-        guard claimHold?.lead == head else { return }
-        releaseClaim()
+        guard let hold = claimHold, hold.lead == head else { return }
+        // A normal result sets isWorking to false before headReplied passes on its final
+        // words. Give that synchronous path the first chance to release with those words;
+        // silent results and failures still release promptly on the next actor turn.
+        Task { [weak self] in
+            guard let self, self.claimHold?.id == hold.id,
+                  self.bot(forExisting: head)?.isWorking != true else { return }
+            self.releaseClaim()
+        }
     }
 
     /// The bot that runs `head`: this one, or its partner (made when first needed).
@@ -603,7 +626,7 @@ public final class Bot: ObservableObject, Identifiable {
     private func tell(_ head: BotEngine, _ note: String, about ids: [UUID]) {
         guard let target = bot(forExisting: head), target.phase != .asleep else { return }
         if target.phase == .awake, target.isWorking, target.process != nil {
-            target.deliver(Outgoing(text: note, about: ids))
+            target.deliver(Outgoing(text: note, about: ids, contextOnly: true))
         } else {
             target.pendingNote = [target.pendingNote, note].compactMap { $0 }.joined(separator: "\n\n")
             target.pendingAbout += ids
@@ -730,7 +753,7 @@ public final class Bot: ObservableObject, Identifiable {
                 continue
             }
             guard let target = bot(forExisting: other), target.isWorking else { continue }
-            target.deliver(Outgoing(text: note))
+            target.deliver(Outgoing(text: note, contextOnly: true))
         }
     }
 
@@ -1088,7 +1111,9 @@ public final class Bot: ObservableObject, Identifiable {
         guard let process else { return }
         cancelIdle()
         // A turn you started, or one you are adding to; anything else is not yours to add to.
-        turnInput = outgoing.fromUser && (!isWorking || turnInput != nil) ? outgoing : nil
+        if !outgoing.contextOnly {
+            turnInput = outgoing.fromUser && (!isWorking || turnInput != nil) ? outgoing : nil
+        }
         turnConducted = outgoing.conducted || (isWorking && turnConducted)
         // You said something: the reply is yours to see.
         if outgoing.fromUser || !isWorking { turnOrigin = outgoing.fromUser ? .user : .app }
@@ -2342,6 +2367,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// other's conversation).
     public func switchEngine(to newEngine: BotEngine) async {
         guard newEngine != engine || heads.hasTwo else { return }
+        claimHold = nil
         await dropPartner()
         engine = newEngine
         store?.save(engine: newEngine)

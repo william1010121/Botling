@@ -10,6 +10,7 @@ final class FakeAgent: AgentProcess, @unchecked Sendable {
     private let respond: @Sendable (String) -> String?
     private let lock = NSLock()
     private var _sent: [String] = []
+    private var _sentImages: [[ClaudeCodeBotCore.Attachment]] = []
     private var _finished = false
 
     init(_ launch: AgentLaunch, respond: @escaping @Sendable (String) -> String?) {
@@ -19,6 +20,7 @@ final class FakeAgent: AgentProcess, @unchecked Sendable {
     }
 
     var sent: [String] { lock.withLock { _sent } }
+    var sentImages: [[ClaudeCodeBotCore.Attachment]] { lock.withLock { _sentImages } }
     var finished: Bool { lock.withLock { _finished } }
 
     /// What reached it, in order: "send" for a message, "interrupt" for an interrupt.
@@ -33,6 +35,11 @@ final class FakeAgent: AgentProcess, @unchecked Sendable {
         if let reply = respond(text) {
             continuation.yield(.reply(reply, isError: false))
         }
+    }
+
+    func send(_ text: String, images: [ClaudeCodeBotCore.Attachment]) {
+        lock.withLock { _sentImages.append(images) }
+        send(text)
     }
 
     /// The ids messages were sent under (like claude, which then reports their progress; the
