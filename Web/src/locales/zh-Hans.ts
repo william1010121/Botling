@@ -141,6 +141,8 @@ export const zhHans: Dictionary = {
   "messages.addToBot": "添加到其他 Bot…",
   "messages.makeComponent": "做成组件",
   "messages.makeComponentTitle": "{label}：Maintainer 会马上用这条回复做出来",
+  "messages.seenBy": "{names} 已读",
+  "messages.notSeenBy": "{names} 还没读",
   "messages.reply": "回复",
   "messages.fold": "折叠",
   "messages.answered": "已回答",

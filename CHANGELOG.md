@@ -41,25 +41,27 @@ app and publishes it on GitHub Releases.
   capture (its page with no scripts or network, and its traffic) through the reader and fails on
   a wrong answer or a page/traffic mismatch. The readers shipped with the app still read only the
   page; tested on local fixture pages that mimic each site's traffic, not yet on the real sites.
-- **Claude and Codex in one bot.** "Engines in this bot" in a bot's settings can turn both on,
-  with who new messages go to (Claude, Codex or Both). Above the input box, "Answer with" picks
-  the head for one message (⌥1 ⌥2 ⌥3, or start the message with `@codex`, `@claude` or `@both`);
-  each reply says which head wrote it ("ClaudeCodeBot · Codex") and your line who it was for.
-  Only one head runs at a time: a message for the other waits until the one running is free
-  (the input box says so), then that head starts, or goes on in its own conversation from
-  earlier, first told what the other head said and did meanwhile. Both answer one after the
-  other. Both share one `memory.md`, and only the head that ran last tidies it before the bot
-  sleeps.
-- **The two heads work together.** A head can hand the other a piece of work by ending its
-  reply with `<handoff to="codex">…</handoff>`: the chat shows "Claude → Codex: …", the other
-  head does it, and its reply goes back to the one who handed it (at most 6 hand-offs per
-  message; a switch in settings turns them off). "When both are asked" sets what Both means:
-  two answers (then a card: let them discuss, or go with one), Claude does the work and Codex
-  reviews it, Codex does it and Claude reviews, or a discussion before one answer. The app
-  counts the rounds (discussion 3, review 2, each adjustable): a line over the input box says
-  "Round 2 of 3" with Stop now, a discussion ends early when one agrees, a review when nothing
-  blocking is left, and at the limit a card shows both sides for you to pick, or the doer's
-  latest version stands (a setting). Writing a new message stops the loop.
+- **Claude and Codex in one bot, at the same time.** "Engines in this bot" in a bot's settings
+  can turn both on. Each head then runs in a process of its own, side by side: every message
+  goes to both, and they decide between them who does what (each says early what it takes on,
+  and leaves alone what the other took). A head hears the other's replies, with what it did,
+  as they come: in its turn when it is working, else with its next message; what it says
+  between steps reaches the other at once while both work. A head with nothing to add shows no
+  reply. "Answer with" above the input box can still name one head for a message (⌥1 ⌥2 ⌥3, or
+  start it with `@codex`, `@claude` or `@both`); the other hears of it with its next message.
+  Each reply says which head wrote it ("ClaudeCodeBot · Codex"). Under your lines and the
+  replies, small C and X marks show which heads have seen them (in their context), lit as it
+  happens. Both work in the same folder and are told so, to say which files they change and
+  edit only their part; they share one `memory.md`, change only the lines about their own
+  work, and it is tidied once, by one head, when the bot sleeps (both sleep together).
+- **The two heads hand work to each other.** A head can hand the other a piece of work by
+  ending its reply with `<handoff to="codex" kind="…">…</handoff>` (a task, a review, or asking
+  its view): the chat shows "Claude → Codex: …", the other head does it, and its reply goes
+  back to the one who handed it. The app counts them for each message you send, as the guard
+  against endless back-and-forth: at most 6 hand-offs, of them 2 reviews and 3 discussion
+  rounds (adjustable; a switch turns hand-offs off). A line over the input box says where they
+  are ("Review round 1 of 2") with Stop now; at the limit a card shows where each head stands
+  for you to pick, or the latest version stands (a setting).
 - **More of the bot works on Codex.** Codex's own limits (its weekly percentage) show in the
   gear's popover under "Codex", apart from Claude's. In auto mode, a call Codex's reviewer
   refuses shows the same card as auto mode's blocks on Claude, with its reason; allowing it lets
@@ -69,7 +71,7 @@ app and publishes it on GitHub Releases.
   comes back. A bot's settings have a Codex model menu, listing what the local Codex offers
   (`model/list`); changing it while awake goes on in the same Codex thread.
   A bot with both heads says "C + X" in the left column, and its panel's "Now" shows each
-  head: working, awake, waiting for the other, or idle. Codex's limits show only the windows
+  head: working, awake or asleep. Codex's limits show only the windows
   Codex reports.
 
 ## 1.15.1

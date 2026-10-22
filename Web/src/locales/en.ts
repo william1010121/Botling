@@ -142,6 +142,8 @@ export const en = {
   "messages.addToBot": "Add to another bot…",
   "messages.makeComponent": "Make into component",
   "messages.makeComponentTitle": "{label}: Maintainer builds it from this reply right away",
+  "messages.seenBy": "Seen by {names}",
+  "messages.notSeenBy": "not yet by {names}",
   "messages.reply": "Reply",
   "messages.fold": "Fold",
   "messages.answered": "Answered",

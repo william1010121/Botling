@@ -56,9 +56,9 @@ struct BotPrompts {
     /// The rule above: who the other head is, and how to hand it work.
     static func headsRule(engine: BotEngine, heads: HeadsSettings) -> String {
         let other = BotEngine.allCases.first { $0 != engine } ?? engine
-        var rule = "- This bot has two heads, Claude and Codex, taking turns in this one chat and sharing your memory file; you are \(engine.displayName). Only one runs at a time; when your turn comes, the app tells you what \(other.displayName) said and did meanwhile."
+        var rule = "- This bot has two heads, Claude and Codex, working at the same time in this one chat, in the same folder, with one memory file; you are \(engine.displayName). Each user message reaches both of you unless it names one. Decide between you who does what: early in your turn say in one line what you take on (or that \(other.displayName) has it), and leave alone what \(other.displayName) has taken on; when nothing is left for you, reply only <no-reply/>. Lines starting \"(App: \(other.displayName)\" tell you what \(other.displayName) said or did; you need not answer them. \(other.displayName) may be editing files right now: say which files you change, re-read a file just before editing it, change only your part with targeted edits, and never undo \(other.displayName)'s changes. In the memory file change only the lines about your own work; one head tidies it before the bot sleeps."
         if heads.handoffs {
-            rule += " To hand \(other.displayName) a self-contained piece of work it is better at, end your reply with <handoff to=\"\(other.rawValue)\">the task, with everything it needs</handoff>: the app shows the hand-off, \(other.displayName) does it, and its reply comes back to you. At most \(heads.limits.handoffs) hand-offs per user message; do not hand off what you can do quickly yourself."
+            rule += " To hand \(other.displayName) a piece of work, end your reply with <handoff to=\"\(other.rawValue)\" kind=\"task\">the task, with everything it needs</handoff> (kind=\"review\" to have it review your work, kind=\"discuss\" to ask its view); its reply comes back to you. Per user message at most \(heads.limits.handoffs) hand-offs, \(heads.limits.review) of them reviews and \(heads.limits.discussion) discussion rounds."
         }
         return rule
     }

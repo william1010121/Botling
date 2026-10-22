@@ -1302,7 +1302,7 @@ struct SettingsPage: View {
                 .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 SettingNote(bot.heads.hasTwo
-                    ? L("Both read and write its memory.md. Only one runs at a time; the other waits and reads what was said before it starts. You can still pick per message above the input box.")
+                    ? L("Both run at the same time, in the same folder, with one memory.md. Each message goes to both unless you name one above the input box.")
                     : L("Turn on the other engine to ask Claude and Codex in the same chat."))
             }
 
@@ -1495,65 +1495,90 @@ extension SettingsPage {
     }
 }
 
-/// Each head's state, in a bot with two: the one running, and the other idle or waiting for it
-/// (the lock).
+/// Each head's state, in a bot with two: both can work at once.
 private struct HeadsNow: View {
     @ObservedObject var bot: Bot
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(bot.heads.engines, id: \.self) { head in
-                HStack(spacing: 10) {
-                    Circle().fill(head == .claude ? Color(hex: 0xE3895F) : Color(hex: 0x8AB4FF)).frame(width: 7, height: 7)
-                    Text(head.displayName).font(.system(size: 13))
-                    Spacer()
-                    Text(state(of: head)).font(.system(size: 12)).foregroundStyle(running(head) ? Theme.green : Theme.faint)
+                if head == bot.engine {
+                    HeadNowRow(head: head, bot: bot)
+                } else if let partner = bot.partner, partner.engine == head {
+                    HeadNowRow(head: head, bot: partner)
+                } else {
+                    HeadNowRow(head: head, bot: nil)
                 }
             }
         }
     }
+}
 
-    private func running(_ head: BotEngine) -> Bool {
-        head == bot.engine && bot.phase != .asleep && bot.isWorking
-    }
+private struct HeadNowRow: View {
+    let head: BotEngine
+    /// The bot running this head; nil before it first woke.
+    let bot: Bot?
 
-    private func state(of head: BotEngine) -> String {
-        if head == bot.engine, bot.phase != .asleep { return bot.isWorking ? L("working") : L("awake") }
-        if bot.waitingHead == head { return L("waiting for {0}", bot.engine.displayName) }
-        return L("idle")
+    var body: some View {
+        if let bot {
+            HeadNowState(head: head, bot: bot)
+        } else {
+            HeadNowLine(head: head, state: L("asleep"), working: false)
+        }
     }
 }
 
-/// What two heads do together: what Both means, the round limits, hand-offs (the design's
-/// "When both are asked", "Limits" and "Talking to each other").
+private struct HeadNowState: View {
+    let head: BotEngine
+    @ObservedObject var bot: Bot
+
+    var body: some View {
+        let working = bot.phase != .asleep && bot.isWorking
+        HeadNowLine(head: head, state: bot.phase == .asleep ? L("asleep") : working ? L("working") : L("awake"), working: working)
+    }
+}
+
+private struct HeadNowLine: View {
+    let head: BotEngine
+    let state: String
+    let working: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle().fill(head == .claude ? Color(hex: 0xE3895F) : Color(hex: 0x8AB4FF)).frame(width: 7, height: 7)
+            Text(head.displayName).font(.system(size: 13))
+            Spacer()
+            Text(state).font(.system(size: 12)).foregroundStyle(working ? Theme.green : Theme.faint)
+        }
+    }
+}
+
+/// What two heads do together: hand-offs and their limits (the design's "Talking to each
+/// other" and "Limits").
 private struct HeadsLoopsSettings: View {
     @ObservedObject var bot: Bot
 
     var body: some View {
-        PanelSection(L("When both are asked")) {
+        PanelSection(L("Talking to each other")) {
             VStack(spacing: 0) {
-                DropdownRow(title: L("Both means"), choices: BothMode.allCases, chosen: bot.heads.both, label: { $0.displayName }, stacked: true) { mode in
-                    bot.setBothMode(mode)
-                }
-                Rectangle().fill(Theme.line).frame(height: 1)
                 SwitchRow(title: L("Let Claude and Codex hand work to each other"), isOn: bot.heads.handoffs) { on in
                     bot.setHandoffs(on)
                 }
             }
             .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
             .clipShape(RoundedRectangle(cornerRadius: 14))
-            SettingNote(L("Each hand-off shows as a line in the chat; the work comes back to the one who handed it."))
+            SettingNote(L("Both get each message and decide between them who does what. A hand-off shows as a line in the chat; the work comes back to the one who handed it."))
         }
 
         PanelSection(L("Limits")) {
             VStack(spacing: 0) {
-                CountRow(title: L("Discussion rounds"), note: L("One round = each says its piece once"), value: bot.heads.limits.discussion) { value in
+                CountRow(title: L("Discussion rounds"), note: L("Hand-offs asking the other's view"), value: bot.heads.limits.discussion) { value in
                     var limits = bot.heads.limits
                     limits.discussion = value
                     bot.setLimits(limits)
                 }
                 Rectangle().fill(Theme.line).frame(height: 1)
-                CountRow(title: L("Review rounds"), note: L("Review → fix counts as one"), value: bot.heads.limits.review) { value in
+                CountRow(title: L("Review rounds"), note: L("Hand-offs asking for a review"), value: bot.heads.limits.review) { value in
                     var limits = bot.heads.limits
                     limits.review = value
                     bot.setLimits(limits)
@@ -1571,7 +1596,7 @@ private struct HeadsLoopsSettings: View {
             }
             .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
             .clipShape(RoundedRectangle(cornerRadius: 14))
-            SettingNote(L("They stop early when they agree or the reviewer finds nothing. Review stops before the limit only if it has no blocking issues left."))
+            SettingNote(L("Counted for each message you send. At the limit a card shows where each head stands, or the latest version stands."))
         }
     }
 }

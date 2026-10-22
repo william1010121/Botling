@@ -60,6 +60,8 @@ public struct ChatPayload: Encodable, Equatable {
         /// A call auto mode blocked that a subagent made: which one (drawn above the card, with
         /// a way to open it).
         var fromSubagent: SubagentRef? = nil
+        /// In a bot with two heads: each head, and whether this line has reached it ("C", "X").
+        var seen: [Seen]? = nil
         /// When it was sent, in a subagent's view: its task and each message its bot sent it
         /// ("From Main · 15:58").
         var time: String? = nil
@@ -365,8 +367,23 @@ public struct ChatPayload: Encodable, Equatable {
         var stop: String
     }
 
-    /// The "Answer with" chips: each head and Both, the one new messages go to, and a message
-    /// waiting for the other head (the lock), said in a few words.
+    /// One head's mark on a line: its letter, its name, and whether the line has reached it.
+    public struct Seen: Encodable, Equatable {
+        var mark: String
+        var name: String
+        var seen: Bool
+    }
+
+    /// The marks for a line in a bot with two heads: your lines and the heads' replies.
+    @MainActor
+    static func seenMarks(_ message: ChatMessage, in bot: Bot) -> [Seen]? {
+        guard bot.heads.hasTwo, message.role == .user || message.role == .bot else { return nil }
+        return bot.heads.engines.map { head in
+            Seen(mark: head == .claude ? "C" : "X", name: head.displayName, seen: message.seenBy?.contains(head) == true)
+        }
+    }
+
+    /// The "Answer with" chips: Both (the usual) and each head, and the one new messages go to.
     public struct AnswerWith: Encodable, Equatable {
         struct Option: Encodable, Equatable {
             var id: String
@@ -374,15 +391,11 @@ public struct ChatPayload: Encodable, Equatable {
         }
         var options: [Option]
         var chosen: String
-        var waiting: String?
 
         @MainActor
         static func of(_ bot: Bot) -> AnswerWith? {
             guard bot.heads.hasTwo else { return nil }
-            let waiting = bot.waitingHead.map { head in
-                L("{0} waits for {1} to finish", head.displayName, bot.engine.displayName)
-            }
-            return AnswerWith(options: bot.heads.targets.map { Option(id: $0.rawValue, label: $0.displayName) }, chosen: bot.heads.answerWith.rawValue, waiting: waiting)
+            return AnswerWith(options: bot.heads.targets.map { Option(id: $0.rawValue, label: $0.displayName) }, chosen: bot.heads.answerWith.rawValue)
         }
     }
 
@@ -510,7 +523,8 @@ public struct ChatPayload: Encodable, Equatable {
                     let agent = bot.trace.subagent(id)
                     let title = agent.map { $0.description.isEmpty ? ($0.name ?? "") : $0.description } ?? ""
                     return SubagentRef(id: id, title: title.isEmpty ? L("Subagent") : title)
-                }
+                },
+                seen: group == nil ? seenMarks(message, in: bot) : nil
             )
         }
         // All the chat's background work goes on its latest message, as one row of counts.
@@ -556,7 +570,7 @@ public struct ChatPayload: Encodable, Equatable {
             botID: bot.id.uuidString,
             botName: bot.name,
             messages: messages,
-            working: group.map { $0.typing != nil } ?? (bot.isWorking || guest != nil),
+            working: group.map { $0.typing != nil } ?? (bot.isWorking || bot.partner?.isWorking == true || guest != nil),
             avatar: (group?.typing ?? guest).map { avatar($0) } ?? own,
             placeholder: group != nil ? L("Message everyone, or @name one bot…")
                 : bot.profile.role == .main ? L("Make a wish, or ask how things are going…") : L("Message {0}…", bot.name),
@@ -572,7 +586,7 @@ public struct ChatPayload: Encodable, Equatable {
             slashCommands: SlashCommands.all + (share ? [SlashCommands.share] : []),
             slashComponents: slash.own,
             slashLibrary: slash.library,
-            live: liveSteps(of: group.map(\.working) ?? (bot.isWorking ? bot : guest.flatMap { _ in callIn?.working })),
+            live: liveSteps(of: group.map(\.working) ?? (bot.isWorking ? bot : bot.partner?.isWorking == true ? bot.partner : guest.flatMap { _ in callIn?.working })),
             subagent: nil,
             feedback: feedback,
             pins: pinning.map { context in bot.pins.map { pin(view: $0, context: context) } },

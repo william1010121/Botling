@@ -63,6 +63,15 @@ export interface MessageView {
   time?: string | null;
   /** claude.ai Artifacts it links to, drawn as cards under it. */
   artifacts?: ArtifactCardView[] | null;
+  /** In a bot with two heads: each head's mark ("C", "X") and whether this line has reached it. */
+  seen?: SeenView[] | null;
+}
+
+/** One head's mark under a line: lit once the line is in that head's context. */
+export interface SeenView {
+  mark: string;
+  name: string;
+  seen: boolean;
 }
 
 /** A claude.ai Artifact a reply links to. */
@@ -385,11 +394,10 @@ export interface ChatState {
   rounds?: { text: string; stop: string } | null;
 }
 
-/** "Answer with" above the input box: each head and Both, the default, and a message waiting for the other head. */
+/** "Answer with" above the input box: Both (the usual) and each head, and the default. */
 export interface AnswerWithView {
   options: { id: string; label: string }[];
   chosen: string;
-  waiting?: string | null;
 }
 
 export type Action =

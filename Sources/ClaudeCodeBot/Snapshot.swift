@@ -85,22 +85,23 @@ enum Snapshot {
         // the head that wrote it, a hand-off line, and "Answer with" over the input box. Sample data.
         if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "heads" {
             let store = BotStore(directory: root.appending(path: "main"))
-            store.save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .claude))
-            var ask = ChatMessage(role: .user, text: "Fix the hover toolbar covering the card", date: now.addingTimeInterval(-600))
-            ask.to = .claude
-            var fixed = ChatMessage(role: .bot, text: "Fixed and merged in PR #5. I asked Codex to review it.", date: now.addingTimeInterval(-500))
-            fixed.engine = .claude
-            var review = ChatMessage(role: .bot, text: "No regressions found. One nit: the toolbar offset assumes three buttons.", date: now.addingTimeInterval(-300))
-            review.engine = .codex
-            var both = ChatMessage(role: .user, text: "Does the nit matter for the Board?", date: now.addingTimeInterval(-120))
-            both.to = .codex
-            var answer = ChatMessage(role: .bot, text: "Yes: Board cards have four buttons, so the offset is one button short there.", date: now.addingTimeInterval(-60))
-            answer.engine = .codex
+            store.save(heads: HeadsSettings(engines: [.claude, .codex]))
+            func line(_ role: ChatMessage.Role, _ text: String, _ ago: TimeInterval, by engine: BotEngine? = nil, to: AnswerTarget? = nil, seen: [BotEngine]) -> ChatMessage {
+                var message = ChatMessage(role: role, text: text, date: now.addingTimeInterval(-ago))
+                message.engine = engine
+                message.to = to
+                message.seenBy = seen
+                return message
+            }
             store.save(messages: [
                 ChatMessage(role: .divider, text: "SAMPLE DATA", date: now.addingTimeInterval(-700)),
-                ask, fixed,
+                line(.user, "Fix the hover toolbar covering the card, and check it on the Board too", 600, seen: [.claude, .codex]),
+                line(.bot, "I take the toolbar fix in chat.css. Fixed and merged in PR #5.", 500, by: .claude, seen: [.claude, .codex]),
+                line(.bot, "I took the Board check: Board cards have four buttons, so the offset is one button short there. Told Claude.", 450, by: .codex, seen: [.claude, .codex]),
                 ChatMessage(role: .divider, text: "Claude → Codex: review the diff of PR #5 for regressions", date: now.addingTimeInterval(-400)),
-                review, both, answer,
+                line(.bot, "No regressions found.", 300, by: .codex, seen: [.claude, .codex]),
+                line(.user, "Is the nit worth a follow-up?", 120, to: .codex, seen: [.codex]),
+                line(.bot, "Yes, a small one: I can make the offset count the buttons.", 60, by: .codex, seen: [.codex]),
             ])
             draw(root: root, to: path)
             return true
@@ -109,9 +110,8 @@ enum Snapshot {
         // card a review shows at its limit. Sample data.
         if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "rounds" {
             let store = BotStore(directory: root.appending(path: "main"))
-            store.save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .both, both: .discuss))
+            store.save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .both))
             var ask = ChatMessage(role: .user, text: "Should the release card read git or a JSON file?", date: now.addingTimeInterval(-600))
-            ask.to = .both
             var claude1 = ChatMessage(role: .bot, text: "Read git, and cache the last result so a refresh costs one `git log`.", date: now.addingTimeInterval(-540))
             claude1.engine = .claude
             var codex1 = ChatMessage(role: .bot, text: "A JSON file written on each merge is cheaper: no git on refresh.", date: now.addingTimeInterval(-480))
@@ -817,7 +817,7 @@ enum Snapshot {
         // `CCB_BOT_ENGINE=both`: Claude and Codex in one bot.
         let engineName = ProcessInfo.processInfo.environment["CCB_BOT_ENGINE"] ?? ""
         store.save(engine: BotEngine(rawValue: engineName) ?? .codex)
-        if engineName == "both" { store.save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .claude)) }
+        if engineName == "both" { store.save(heads: HeadsSettings(engines: [.claude, .codex])) }
         let bot = Bot(profile: .manager(name: "Sample project", avatar: "square", folder: folder), launcher: { _ in throw AppError.claudeNotFound }, store: store)
         let content = VStack(alignment: .leading, spacing: 0) {
             Text("SAMPLE DATA").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.faint).padding(.leading, 20).padding(.top, 10)

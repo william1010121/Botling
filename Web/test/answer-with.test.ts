@@ -15,3 +15,12 @@ describe("@codex at the start of a message in a bot with two heads", () => {
     expect(answerPrefix("@codex", answer)).toBeNull();
   });
 });
+
+describe("seen marks in a bot with two heads", () => {
+  it("light the heads a line has reached and name the rest", async () => {
+    const { seenMarks } = await import("../src/messages");
+    const marks = seenMarks([{ mark: "C", name: "Claude", seen: true }, { mark: "X", name: "Codex", seen: false }]);
+    expect([...marks.querySelectorAll(".seen-mark")].map((mark) => [mark.textContent, mark.classList.contains("on")])).toEqual([["C", true], ["X", false]]);
+    expect(marks.title).toBe("Seen by Claude · not yet by Codex");
+  });
+});

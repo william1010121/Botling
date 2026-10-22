@@ -487,8 +487,7 @@ export class Composer {
     });
     const end = document.createElement("span");
     end.className = "answer-hint";
-    end.textContent = answer.waiting ?? t("composer.answerHint", { keys: answer.options.map((_, index) => `⌥${index + 1}`).join(" ") });
-    if (answer.waiting) end.classList.add("waiting");
+    end.textContent = t("composer.answerHint", { keys: answer.options.map((_, index) => `⌥${index + 1}`).join(" ") });
     this.answerRow.append(end);
   }
 

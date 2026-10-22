@@ -141,6 +141,8 @@ export const ja: Dictionary = {
   "messages.addToBot": "別のボットに追加…",
   "messages.makeComponent": "コンポーネントにする",
   "messages.makeComponentTitle": "{label}：Maintainer がこの返信からすぐに作ります",
+  "messages.seenBy": "{names} が既読",
+  "messages.notSeenBy": "{names} は未読",
   "messages.reply": "返信",
   "messages.fold": "折りたたむ",
   "messages.answered": "回答済み",

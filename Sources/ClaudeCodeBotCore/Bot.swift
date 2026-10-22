@@ -11,30 +11,30 @@ public final class Bot: ObservableObject, Identifiable {
     @Published public private(set) var isWorking = false
     @Published public private(set) var messages: [ChatMessage]
     @Published public private(set) var model: BotModel
-    /// The CLI it runs on (Claude Code or Codex) now, or runs on next; both share its memory.md.
+    /// The CLI it runs on (Claude Code or Codex); both share its memory.md.
     @Published public private(set) var engine: BotEngine
-    /// Its heads: one engine, or Claude and Codex taking turns (one process at a time: the
-    /// lock), and who new messages go to.
+    /// Its heads: one engine, or Claude and Codex working at the same time, and who new
+    /// messages go to (both, unless one is named).
     @Published public private(set) var heads: HeadsSettings
-    /// A message waits for the other head until the one running is free (its id: the head).
-    @Published public private(set) var waitingHead: BotEngine?
-    /// Where a loop between the heads stands (a discussion, a review, hand-offs), for the line
-    /// over the input box; nil when none runs.
+    /// Where the hand-offs for your latest message stand (the line over the input box).
     @Published public private(set) var rounds: RoundsProgress?
-    /// Hand-offs, Both and the round limits (see `Conductor`).
+    /// The other head: a bot of its own (its process, its turns, running at the same time as
+    /// this one) whose lines show in this chat. There when the bot has two heads, or when Codex
+    /// handed Claude something to publish.
+    @Published public private(set) var partner: Bot?
+    /// On a partner: the bot whose chat it speaks in.
+    private weak var primary: Bot?
+    private var partnerWatch: AnyCancellable?
+    /// Hand-offs between the heads and their limits (see `Conductor`).
     private var conductor: Conductor
     /// The conductor's cards waiting for a pick, by message id: what each button does.
     private var cards: [UUID: [CardPick]] = [:]
-    /// The turn under way answers something the conductor asked.
+    /// The turn under way does work the other head handed it.
     private var turnConducted = false
-    /// The head tags the latest reply carried (taken out of what it shows).
+    /// The hand-off the latest reply carried (taken out of what it shows).
     private var lastTags = HeadTags()
-    /// Each head's session while the bot is awake, to go on in it when its turn comes again.
-    private var headSessions: [BotEngine: UUID] = [:]
-    /// The newest line each head had seen when it last stopped, for what it missed.
-    private var lastSeen: [BotEngine: UUID] = [:]
-    /// Lines from before then that it never got (they waited for the other head).
-    private var notSeen: [BotEngine: Set<UUID>] = [:]
+    /// The chat lines the notes waiting in `pendingNote` carry: seen by this head once sent.
+    private var pendingAbout: [UUID] = []
     /// The model being switched to, while a handoff runs.
     @Published public private(set) var switchTarget: BotModel?
     /// The model its subagents use; nil: the same as its own.
@@ -68,7 +68,7 @@ public final class Bot: ObservableObject, Identifiable {
     public let id = UUID()
     public let profile: BotProfile
     /// What it is told, with the results rule as Settings has it now (read at each start).
-    var prompts: BotPrompts { BotPrompts(profile: profile, results: resultPublishing?() ?? .artifactUnlessSensitive, language: language?() ?? .english, engine: engine, heads: heads) }
+    var prompts: BotPrompts { BotPrompts(profile: profile, results: resultPublishing?() ?? .artifactUnlessSensitive, language: language?() ?? .english, engine: engine, heads: sharesChat ? heads : nil) }
     private let launcher: AgentLauncher
     private let idleInterval: TimeInterval
     private let exitTimeout: TimeInterval
@@ -235,9 +235,9 @@ public final class Bot: ObservableObject, Identifiable {
         var fromUser = false
         /// Its line in this chat, left out of the recent chat a wake-up brings along.
         var messageID: UUID?
-        /// The head it is for; nil: whichever runs.
-        var head: BotEngine?
-        /// The conductor asked for it: its reply goes back to the conductor.
+        /// The other head's lines it passes on: seen by this head once sent.
+        var about: [UUID] = []
+        /// Work the other head handed over: its reply goes back.
         var conducted = false
     }
     /// What you said in the turn under way, while nothing but you started it.
@@ -455,7 +455,7 @@ public final class Bot: ObservableObject, Identifiable {
         send(text, files: files, replyingTo: replyID, appNote: nil)
     }
 
-    /// A message for one head, or both (`to`; nil: who new messages go to).
+    /// A message for both heads, or one of them by name (`to`; nil: who new messages go to).
     public func send(_ text: String, files: [URL] = [], replyingTo replyID: UUID? = nil, to target: AnswerTarget?) {
         send(text, files: files, replyingTo: replyID, appNote: nil, to: target)
     }
@@ -468,8 +468,7 @@ public final class Bot: ObservableObject, Identifiable {
         let attachments = files.compactMap(keep)
         var message = ChatMessage(role: .user, text: text)
         let target = heads.fitted(target ?? heads.answerWith)
-        let answering = heads.heads(for: target)
-        if heads.hasTwo { message.to = target }
+        if heads.hasTwo, target != .both { message.to = target }
         message.attachments = attachments.isEmpty ? nil : attachments
         let quoted = replyID.flatMap { id in messages.first { $0.id == id } }
         if let quoted {
@@ -493,33 +492,198 @@ public final class Bot: ObservableObject, Identifiable {
             lines.append(Attachment.list(attachments))
         }
         // Whether paused work reported up is read before this turn becomes yours.
-        let said = lines.joined(separator: "\n\n")
-        let images = attachments.filter { $0.kind == .image }
-        // What went on between the heads stops for you; a message to Both starts its loop.
-        let actions = conductor.userMessage(said, to: target)
-        if actions.contains(where: { if case .ask = $0 { true } else { false } }) {
-            conduct(actions, images: images, messageID: message.id)
-        } else {
-            conduct(actions)
-            route(Outgoing(text: said, images: images, fromUser: true, messageID: message.id, head: answering[0]))
+        let outgoing = Outgoing(text: lines.joined(separator: "\n\n"), images: attachments.filter { $0.kind == .image }, fromUser: true, messageID: message.id)
+        guard heads.hasTwo else {
+            route(outgoing)
+            turnFromRelay = false
+            return
+        }
+        // Both heads get it at once and decide between them who does what; a message named
+        // for one reaches the other as a note, with its next message.
+        conduct(conductor.userMessage())
+        let answering = heads.heads(for: target)
+        for head in heads.engines {
+            if answering.contains(head) {
+                deliver(outgoing, to: head)
+            } else if let named = answering.first {
+                tell(head, Self.forOtherNote(named, said: outgoing.text), about: [message.id])
+            }
         }
         turnFromRelay = false
     }
 
-    /// What the second head is told when the user asked both: the first has answered.
-    nonisolated static func bothNote(answered: String) -> String {
-        Conductor.bothNote(answered: answered)
-    }
-
     // MARK: Two heads
 
-    /// Does what the conductor says: turns for the heads (one at a time, through `route`),
-    /// lines and cards in the chat, the rounds line.
-    private func conduct(_ actions: [ConductorAction], images: [Attachment] = [], messageID: UUID? = nil) {
+    /// It shares its chat with another head (it has two, or it is one's partner).
+    var sharesChat: Bool { heads.hasTwo || primary != nil || partner != nil }
+
+    /// The bot that runs `head`: this one, or its partner (made when first needed).
+    private func bot(for head: BotEngine) -> Bot? {
+        if head == engine { return self }
+        if let partner, partner.engine == head { return partner }
+        guard primary == nil else { return primary?.bot(for: head) }
+        return makePartner(head)
+    }
+
+    /// Sends `outgoing` to `head`, at once: the heads run at the same time.
+    private func deliver(_ outgoing: Outgoing, to head: BotEngine) {
+        bot(for: head)?.route(outgoing)
+    }
+
+    /// Something for `head` about the chat (what the other head said): it joins its turn when
+    /// it works, else it goes with its next message. An asleep head reads the chat when it wakes.
+    private func tell(_ head: BotEngine, _ note: String, about ids: [UUID]) {
+        guard let target = bot(forExisting: head), target.phase != .asleep else { return }
+        if target.phase == .awake, target.isWorking, target.process != nil {
+            target.deliver(Outgoing(text: note, about: ids))
+        } else {
+            target.pendingNote = [target.pendingNote, note].compactMap { $0 }.joined(separator: "\n\n")
+            target.pendingAbout += ids
+        }
+    }
+
+    /// The other head, made when the bot first needs it: same folder, same memory.md, its own
+    /// process and turns (and its own chat file, apart, for its questions and steps).
+    private func makePartner(_ head: BotEngine) -> Bot? {
+        guard primary == nil, !removed else { return nil }
+        let partnerStore = store.map { BotStore(directory: $0.directory.appending(path: "partner-\(head.rawValue)")) }
+        let made = Bot(profile: profile, defaultModel: model, idleInterval: idleInterval, exitTimeout: exitTimeout, launcher: launcher, store: partnerStore)
+        made.primary = self
+        made.engine = head
+        made.heads = heads
+        made.conductor.settings = heads
+        made.subagentModel = subagentModel
+        made.effort = effort
+        made.alwaysAllowed = alwaysAllowed
+        made.now = now
+        made.sessionExists = sessionExists
+        made.wakeNote = wakeNote
+        made.extraDirectories = extraDirectories
+        made.pluginDirectories = pluginDirectories
+        made.pluginStamp = pluginStamp
+        made.pluginTools = pluginTools
+        made.pluginEnvironment = pluginEnvironment
+        made.autoMode = autoMode
+        made.resultPublishing = resultPublishing
+        made.language = language
+        made.onReply = { [weak self] message, relay in self?.onReply?(message, relay) }
+        made.replyFilter = { [weak self] in self?.replyFilter?() ?? nil }
+        made.replyObserver = { [weak self] message in self?.replyObserver?(message) }
+        made.promiseCheck = promiseCheck
+        made.onSpend = { [weak self] amount in self?.onSpend?(amount) }
+        made.onTokens = { [weak self] tokens in self?.onTokens?(tokens) }
+        made.onRateLimits = { [weak self] limits in self?.onRateLimits?(limits) }
+        made.onCodexRateLimits = { [weak self] limits in self?.onCodexRateLimits?(limits) }
+        made.onRequests = { [weak self] requests in self?.onRequests?(requests) }
+        made.onQuestion = { [weak self] message in self?.onQuestion?(message) }
+        made.onQuestionSettled = { [weak self] message in self?.onQuestionSettled?(message) }
+        made.permissionTimeout = permissionTimeout
+        partner = made
+        // Its lines show in this chat as they come and change (a question answered, a card).
+        // At once (the publisher sends the new lines as they are set), so a line is here
+        // before the other head is told about it.
+        partnerWatch = made.$messages.sink { [weak self] lines in
+            MainActor.assumeIsolated { self?.mirror(lines) }
+        }
+        return made
+    }
+
+    /// The partner's lines (not your own, which this chat has) in this chat: new ones added,
+    /// changed ones replaced; which heads saw a line is kept from here.
+    private func mirror(_ lines: [ChatMessage]) {
+        var changed = false
+        for line in lines.suffix(Self.mirrored) where line.role != .user {
+            if let index = messages.lastIndex(where: { $0.id == line.id }) {
+                var copy = line
+                copy.seenBy = Self.union(messages[index].seenBy, line.seenBy)
+                if messages[index] != copy {
+                    messages[index] = copy
+                    changed = true
+                }
+            } else {
+                var copy = line
+                copy.seenBy = Self.union(copy.seenBy, line.engine.map { [$0] })
+                messages.append(copy)
+                archive(copy)
+                onNewMessage?(copy)
+                if copy.role == .bot || copy.role == .notice || copy.role == .error { unreadCount += 1 }
+                changed = true
+            }
+        }
+        if changed { store?.save(messages: messages) }
+    }
+
+    /// How many of the partner's newest lines are compared on each change.
+    static let mirrored = 60
+
+    static func union(_ a: [BotEngine]?, _ b: [BotEngine]?) -> [BotEngine]? {
+        let both = Set((a ?? []) + (b ?? []))
+        return both.isEmpty ? nil : BotEngine.allCases.filter(both.contains)
+    }
+
+    /// These lines reached `head` (in its context): the chat marks them.
+    func markSeen(_ ids: [UUID], by head: BotEngine) {
+        if let primary {
+            primary.markSeen(ids, by: head)
+            return
+        }
+        guard heads.hasTwo || partner != nil, !ids.isEmpty else { return }
+        var changed = false
+        for id in Set(ids) {
+            guard let index = messages.lastIndex(where: { $0.id == id }), messages[index].seenBy?.contains(head) != true else { continue }
+            messages[index].seenBy = Self.union(messages[index].seenBy, [head])
+            changed = true
+        }
+        if changed { store?.save(messages: messages) }
+    }
+
+    /// A head showed a reply: the other head hears it, and the conductor carries any hand-off.
+    fileprivate func headReplied(_ message: ChatMessage, by head: BotEngine, tags: HeadTags, handed: Bool) {
+        guard message.role == .bot else { return }
+        for other in BotEngine.allCases where other != head {
+            tell(other, Self.saidNote(head, message), about: [message.id])
+        }
+        conduct(conductor.replied(head, message.text, tags: tags, handed: handed))
+    }
+
+    /// What it said between its tool calls, while the other head works too: passed on at once,
+    /// so a head that took something on is heard before the other starts on it.
+    fileprivate func headWords(_ words: String, by head: BotEngine) {
+        for other in BotEngine.allCases where other != head {
+            guard let target = bot(forExisting: other), target.isWorking else { continue }
+            target.deliver(Outgoing(text: "(App: \(head.displayName), working on this too, says: \(words))"))
+        }
+    }
+
+    private func bot(forExisting head: BotEngine) -> Bot? {
+        if head == engine { return self }
+        if let partner, partner.engine == head { return partner }
+        if let primary, primary.engine == head { return primary }
+        return nil
+    }
+
+    /// What a head is told the other head said, with what it did on the way.
+    static func saidNote(_ head: BotEngine, _ message: ChatMessage) -> String {
+        let did = (message.steps ?? []).filter { $0.kind == .tool }.prefix(8).map(\.title)
+        let steps = did.isEmpty ? "" : "\n(\(head.displayName) did: " + did.joined(separator: "; ") + ")"
+        return "(App: \(head.displayName), this bot's other head, replied in this chat:)\n" + message.text + steps
+    }
+
+    /// What a head is told about a message the user named the other head for.
+    static func forOtherNote(_ named: BotEngine, said: String) -> String {
+        "(App: The user wrote this to \(named.displayName) only; you need not answer it:)\n" + said
+    }
+
+    /// Does what the conductor says: work for a head, lines and cards in the chat, the rounds line.
+    private func conduct(_ actions: [ConductorAction]) {
+        if let primary {
+            primary.conduct(actions)
+            return
+        }
         for action in actions {
             switch action {
-            case let .ask(head, text, fromUser):
-                route(Outgoing(text: text, images: fromUser ? images : [], fromUser: fromUser, messageID: fromUser ? messageID : nil, head: head, conducted: true))
+            case let .ask(head, text):
+                deliver(Outgoing(text: text, conducted: true), to: head)
             case let .line(text):
                 append(ChatMessage(role: .divider, text: text))
             case let .card(text, choices):
@@ -536,24 +700,17 @@ public final class Bot: ObservableObject, Identifiable {
         }
     }
 
-    /// Shows a rounds line with no loop behind it: only for drawing the page (snapshots).
+    /// Shows a rounds line with no hand-offs behind it: only for drawing the page (snapshots).
     public func showRoundsForSnapshot(_ progress: RoundsProgress?) {
         rounds = progress
     }
 
-    /// "Stop now" on the rounds line: the loop between the heads ends where it is.
+    /// "Stop now" on the rounds line: no more hand-offs for this message.
     public func stopRounds() {
         conduct(conductor.stop())
     }
 
-    /// What "Both" means for this bot.
-    public func setBothMode(_ mode: BothMode) {
-        guard mode != heads.both else { return }
-        heads.both = mode
-        saveHeads()
-    }
-
-    /// How many rounds the loops may take and what happens at the limit.
+    /// How many hand-offs each message may take, and what happens at the limit.
     public func setLimits(_ limits: RoundLimits) {
         guard limits != heads.limits else { return }
         heads.limits = limits
@@ -567,6 +724,7 @@ public final class Bot: ObservableObject, Identifiable {
         heads.codexModel = model
         saveHeads()
         if engine == .codex { await restart(.codexModel(model)) }
+        if let partner, partner.engine == .codex { await partner.restart(.codexModel(model)) }
     }
 
     /// Whether the heads may hand work to each other.
@@ -574,7 +732,9 @@ public final class Bot: ObservableObject, Identifiable {
         guard on != heads.handoffs else { return }
         heads.handoffs = on
         saveHeads()
-        queueNote(on ? Self.asNote(prompts.headsRule) : "(App: Hand-offs between this bot's heads are turned off now: do not use <handoff>.)")
+        let note = on ? Self.asNote(prompts.headsRule) : "(App: Hand-offs between this bot's heads are turned off now: do not use <handoff>.)"
+        queueNote(note)
+        partner?.queueNote(on ? Self.asNote(partner?.prompts.headsRule ?? "") : note)
     }
 
     /// A rule of the system prompt ("- …") as a note from the app.
@@ -584,6 +744,8 @@ public final class Bot: ObservableObject, Identifiable {
 
     private func saveHeads() {
         conductor.settings = heads
+        partner?.heads = heads
+        partner?.conductor.settings = heads
         store?.save(heads: heads)
     }
 
@@ -645,6 +807,10 @@ public final class Bot: ObservableObject, Identifiable {
     /// answered once.
     @discardableResult
     public func choose(_ index: Int, in messageID: UUID) -> Bool {
+        // A question the other head asked: its own to settle.
+        if let partner, partner.messages.contains(where: { $0.id == messageID }) {
+            return partner.choose(index, in: messageID)
+        }
         guard let message = messages.first(where: { $0.id == messageID }),
               message.isOpenQuestion,
               let choice = message.choices?[safe: index] else { return false }
@@ -669,6 +835,9 @@ public final class Bot: ObservableObject, Identifiable {
     /// the component, e.g. in "Other") go along like a message's attachments.
     @discardableResult
     public func answer(_ text: String, files: [URL] = [], in messageID: UUID) -> Bool {
+        if let partner, partner.messages.contains(where: { $0.id == messageID }) {
+            return partner.answer(text, files: files, in: messageID)
+        }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !files.isEmpty,
               let message = messages.first(where: { $0.id == messageID }),
@@ -754,25 +923,6 @@ public final class Bot: ObservableObject, Identifiable {
             queued.append(outgoing)
             return
         }
-        if let head = outgoing.head, head != engine {
-            switch phase {
-            case .asleep:
-                // It wakes on that head.
-                engine = head
-            case .awake where canSwitchHead:
-                // The head running is free: it stops (no tidy: the bot is not going to sleep),
-                // and this head starts, or goes on in its session from earlier.
-                queued.insert(outgoing, at: 0)
-                phase = .switching(.stopping)
-                Task { [weak self] in await self?.switchHead(to: head) }
-                return
-            default:
-                // The lock: only one head runs at a time. This waits for the one running.
-                queued.append(outgoing)
-                if phase == .awake { waitingHead = head }
-                return
-            }
-        }
         switch phase {
         case .asleep:
             wake(with: outgoing)
@@ -782,12 +932,6 @@ public final class Bot: ObservableObject, Identifiable {
                 queued.insert(outgoing, at: 0)
                 phase = .switching(.stopping)
                 Task { [weak self] in await self?.restartWaiting() }
-                return
-            }
-            if outgoing.conducted, isWorking || early.waiting {
-                // A turn the conductor asked for waits for the one under way to end: it is not
-                // merged into it, so its reply is its own.
-                queued.append(outgoing)
                 return
             }
             if early.waiting {
@@ -868,11 +1012,15 @@ public final class Bot: ObservableObject, Identifiable {
         isWorking = true
         if resumeProbe, resumeRetry == nil, groupReply == nil { resumeRetry = outgoing }
         var text = outgoing.text
+        var seen = outgoing.about + [outgoing.messageID].compactMap { $0 }
         if let note = pendingNote {
             pendingNote = nil
             text = note + "\n\n" + text
+            seen += pendingAbout
+            pendingAbout = []
         }
         if let id { process.send(text, images: outgoing.images, id: id) } else { process.send(text, images: outgoing.images) }
+        markSeen(seen, by: engine)
     }
 
     /// Tells an awake bot something with its next message (a later note replaces an earlier one).
@@ -885,26 +1033,20 @@ public final class Bot: ObservableObject, Identifiable {
     private func wake(with outgoing: Outgoing, id: UUID? = nil) {
         pendingNote = nil
         do {
-            // This head ran earlier while the bot was awake: it goes on in that session.
-            let earlier = headSessions[engine].flatMap { sessionExists($0, profile.workingDirectory) ? $0 : nil }
-            let process = try start(resuming: earlier)
+            let process = try start()
             phase = .awake
             isWorking = true
             turnInput = outgoing.fromUser ? outgoing : nil
             turnOrigin = outgoing.fromUser ? .user : .app
             turnConducted = outgoing.conducted
-            let text: String
-            if earlier != nil {
-                resumeProbe = true
-                resumeRetry = outgoing
-                text = [catchUp(for: engine, leavingOut: outgoing.messageID), outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
-            } else {
-                let note = wakeNote?() ?? ""
-                let recent = recentChat(leavingOut: outgoing.messageID)
-                let wakeLine = profile.keepsMemory ? prompts.wake : ""
-                let cutOff = takeInterruptedNote() ?? ""
-                text = [wakeLine, note, cutOff, recent, outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
-            }
+            pendingAbout = []
+            let note = wakeNote?() ?? ""
+            let recent = recentChat(leavingOut: outgoing.messageID)
+            // It read the chat's last lines, and the message itself.
+            markSeen(recentLines(leavingOut: outgoing.messageID).map(\.id) + outgoing.about + [outgoing.messageID].compactMap { $0 }, by: engine)
+            let wakeLine = profile.keepsMemory ? prompts.wake : ""
+            let cutOff = takeInterruptedNote() ?? ""
+            let text = [wakeLine, note, cutOff, recent, outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
             if let id { process.send(text, images: outgoing.images, id: id) } else { process.send(text, images: outgoing.images) }
         } catch {
             append(ChatMessage(role: .error, text: L("Couldn't wake up: {0}", error.localizedDescription)))
@@ -946,8 +1088,16 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// The chat's last lines, so a bot that just woke up (a new session: it remembers nothing
     /// but memory.md) knows what you were just talking about. Empty in a new chat.
+    /// The chat it reads: its own, or for a partner the chat it speaks in.
+    private var chat: [ChatMessage] { primary?.messages ?? messages }
+
+    /// The lines a wake-up brings along.
+    private func recentLines(leavingOut id: UUID?) -> [ChatMessage] {
+        Array(chat.filter { $0.id != id }.suffix(Self.recentLines))
+    }
+
     func recentChat(leavingOut id: UUID? = nil) -> String {
-        let lines = messages.filter { $0.id != id }.suffix(Self.recentLines).compactMap { message -> String? in
+        let lines = recentLines(leavingOut: id).compactMap { message -> String? in
             var text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if text.count > Self.recentLineLength { text = String(text.prefix(Self.recentLineLength)) + "…" }
             if let files = message.attachments, !files.isEmpty {
@@ -959,31 +1109,10 @@ public final class Bot: ObservableObject, Identifiable {
             }
             guard !text.isEmpty else { return nil }
             let stamp = message.date.formatted(.dateTime.month(.twoDigits).day(.twoDigits).hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
-            return "[\(stamp)] \(Self.speaker(message, head: heads.hasTwo ? engine : nil)): \(text)"
+            return "[\(stamp)] \(Self.speaker(message, head: sharesChat ? engine : nil)): \(text)"
         }
         guard !lines.isEmpty else { return "" }
         return "(App: The last messages in this chat, oldest first. You were asleep since; for anything older, Grep your chat archive in \(profile.archiveURL.path):)\n" + lines.joined(separator: "\n")
-    }
-
-    /// What `head` missed while the other head had the chat: the lines since it last stopped,
-    /// with what the other head did (its steps). Empty when nothing happened.
-    func catchUp(for head: BotEngine, leavingOut id: UUID? = nil) -> String {
-        let start = lastSeen[head].flatMap { seen in messages.firstIndex { $0.id == seen } }.map { $0 + 1 } ?? messages.startIndex
-        let missed = notSeen[head] ?? []
-        let lines = messages.indices.filter { $0 >= start || missed.contains(messages[$0].id) }.map { messages[$0] }
-            .filter { $0.id != id }.suffix(Self.recentLines).compactMap { message -> String? in
-            guard message.role != .divider else { return nil }
-            var text = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if text.count > Self.recentLineLength { text = String(text.prefix(Self.recentLineLength)) + "…" }
-            let did = (message.steps ?? []).filter { $0.kind == .tool }.prefix(8).map(\.title)
-            if !did.isEmpty { text += (text.isEmpty ? "" : " ") + "(did: " + did.joined(separator: "; ") + ")" }
-            guard !text.isEmpty else { return nil }
-            let stamp = message.date.formatted(.dateTime.month(.twoDigits).day(.twoDigits).hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
-            return "[\(stamp)] \(Self.speaker(message, head: head)): \(text)"
-        }
-        guard !lines.isEmpty else { return "" }
-        let other = heads.engines.first { $0 != head }?.displayName ?? "The other head"
-        return "(App: You are back in this conversation. Meanwhile \(other) (this bot's other head, sharing your memory file) had the chat. What was said and done since your last turn, oldest first:)\n" + lines.joined(separator: "\n")
     }
 
     /// Starts a process: a new session, or (`resuming`) one that went away.
@@ -1043,13 +1172,14 @@ public final class Bot: ObservableObject, Identifiable {
     /// The reply's bubble in the chat (counted unread, told to plugins), and the tags it carried.
     private func bubble(_ text: String, isError: Bool) -> (ChatMessage, [BotRequest]) {
         let parsed = ReplyParser.parseAll(text)
-        // Hand-offs, discussion positions and review counts are the app's, not the chat's.
+        // A hand-off to the other head is the app's, not the chat's.
         let (body, tags) = isError ? (parsed.body, HeadTags()) : HeadTags.parse(parsed.body)
         lastTags = tags
         var message = ChatMessage(role: isError ? .error : .bot, text: body, choices: parsed.choices)
         if !parsed.displays.isEmpty { message.displays = parsed.displays }
         message.session = sessionID
         message.engine = engine
+        if sharesChat { message.seenBy = [engine] }
         message.steps = trace.takeSteps()
         message.backgroundTasks = trace.takeTasks()
         if append(message) { unreadCount += 1 }
@@ -1083,16 +1213,12 @@ public final class Bot: ObservableObject, Identifiable {
         reloadRoutines()
         onReply?(message, turnFromRelay)
         if !requests.isEmpty { onRequests?(requests) }
-        // The conductor hears every reply: a hand-off in it, or the next step of its loop.
-        let conducted = turnConducted
+        // The other head hears the reply; a hand-off in it goes on.
+        let handed = turnConducted
         turnConducted = false
         let tags = lastTags
         lastTags = HeadTags()
-        if message.role == .bot {
-            conduct(conductor.replied(engine, message.text, tags: tags, conducted: conducted))
-        } else if conducted {
-            conduct(conductor.abort())
-        }
+        if sharesChat || tags.handoff != nil { (primary ?? self).headReplied(message, by: engine, tags: tags, handed: handed) }
         if held, !queued.isEmpty { Task { [weak self] in await self?.flushQueue() } }
         if let fromRelay = pausedWork, process != nil {
             // It answered you; now back to what it was doing.
@@ -1490,6 +1616,9 @@ public final class Bot: ObservableObject, Identifiable {
             if spent > 0 { onSpend?(spent) }
             if tokens.total > 0 { onTokens?(tokens) }
         case let .trace(step):
+            if sharesChat, case let .text(words, nil) = step, internalReply == nil {
+                (primary ?? self).headWords(words, by: engine)
+            }
             if case let .toolUse(id, tool, _, detail, parent) = step {
                 if toolCalls[id] == nil { toolCallOrder.append(id) }
                 toolCalls[id] = (tool, detail, parent)
@@ -1611,7 +1740,8 @@ public final class Bot: ObservableObject, Identifiable {
             // a bubble with no words ("Worked · 1 step") would only look like it stopped.
             // Or it said nothing at all (no words, only tool calls): no bubble either.
             let silent = Self.saysNothing(text) && trace.tasks.isEmpty
-            if fromBackground || (!fromUser && silent), !isError, ReplyParser.saysNoReply(text) || (fromBackground && silent) {
+            // With two heads, the one with nothing to add to your message says only <no-reply/>.
+            if fromBackground || (!fromUser && silent) || (sharesChat && silent), !isError, ReplyParser.saysNoReply(text) || (fromBackground && silent) {
                 // Background work woke it with nothing for you: no bubble, and nothing unread.
                 // (A turn you started always shows, and an app's turn with words; the tag is just taken out.)
                 trace.dropSteps()
@@ -1637,7 +1767,6 @@ public final class Bot: ObservableObject, Identifiable {
             let session = sessionID
             let failedResume = resumeProbe && exitWaiter == nil && !lostToNetwork ? resumeRetry : nil
             let resumeFailed = resumeProbe && exitWaiter == nil && !lostToNetwork
-            if resumeFailed, let session { headSessions = headSessions.filter { $0.value != session } }
             resumeProbe = false
             resumeRetry = nil
             process = nil
@@ -1763,8 +1892,6 @@ public final class Bot: ObservableObject, Identifiable {
     private func afterTurn() {
         // A restart waiting is done before the next message, not now: an idle bot costs nothing.
         scheduleIdle()
-        // A message waits for the other head: its turn, now that this one is free.
-        if !queued.isEmpty, canSwitchHead { Task { [weak self] in await self?.flushQueue() } }
     }
 
     // MARK: Network and quiet runs
@@ -2009,6 +2136,11 @@ public final class Bot: ObservableObject, Identifiable {
     // MARK: Sleeping
 
     private func scheduleIdle() {
+        // The heads sleep together: the bot the chat belongs to keeps the clock.
+        if let primary {
+            primary.scheduleIdle()
+            return
+        }
         idleTask?.cancel()
         let interval = idleInterval
         sleepsAt = now().addingTimeInterval(interval)
@@ -2026,6 +2158,33 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// Writes memory.md, then ends the process. Also used when the app quits.
     public func goToSleep() async {
+        // Two heads sleep together, and memory.md is tidied once: by this head, or by the
+        // partner when only it is awake. The other ends without writing.
+        if let partner, partner.phase != .asleep {
+            guard partner.canSleep, phase == .asleep || canSleep else {
+                if !removed { scheduleIdle() }
+                return
+            }
+            if phase == .asleep {
+                await partner.sleep(tidy: true, otherWorked: false)
+                return
+            }
+            await partner.sleep(tidy: false, otherWorked: false)
+            await sleep(tidy: true, otherWorked: true)
+            return
+        }
+        await sleep(tidy: true, otherWorked: false)
+    }
+
+    /// Nothing under way that sleeping would cut off.
+    private var canSleep: Bool {
+        phase == .awake && !isWorking && groupCommand == nil && process != nil
+            && !trace.subagents.contains(where: \.isRunning) && !messages.hasBackgroundWorkRunning(now: now()) && outage == nil
+    }
+
+    /// Writes memory.md (`tidy`), then ends the process. `otherWorked`: the other head was
+    /// awake too and ends without writing, so this one keeps what it did as well.
+    private func sleep(tidy: Bool, otherWorked: Bool) async {
         guard phase == .awake, !isWorking, groupCommand == nil, process != nil else { return }
         // A subagent still at work in the background would stop with the process: wait for it.
         // Cut off by the network, it keeps its session for when the network is back.
@@ -2037,13 +2196,11 @@ public final class Bot: ObservableObject, Identifiable {
         cancelIdle()
         phase = .tidying
         // A bot with no memory has nothing to write down.
-        if profile.keepsMemory { _ = await ask(prompts.tidy) }
+        let other = BotEngine.allCases.first { $0 != engine }?.displayName ?? ""
+        let both = otherWorked ? "\n(App: \(other), this bot's other head, also worked in this chat and goes to sleep without writing: keep what it did that is worth remembering too.)" : ""
+        if tidy, profile.keepsMemory { _ = await ask(prompts.tidy + both) }
         guard !removed else { return }
         await finishProcess()
-        // A new session after sleep reads memory.md; the heads' sessions are done with.
-        headSessions.removeAll()
-        lastSeen.removeAll()
-        notSeen.removeAll()
         phase = .asleep
         await flushQueue()
     }
@@ -2051,6 +2208,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// Ends the process at once without tidying (the bot is being removed).
     public func stop() {
         removed = true
+        partner?.stop()
         cancelIdle()
         queued.removeAll()
         pendingRestart = nil
@@ -2083,6 +2241,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// subagent at work is not cut off and nothing is written down or read back.
     public func switchModel(to newModel: BotModel) async {
         guard newModel != model else { return }
+        if let partner { await partner.switchModel(to: newModel) }
         model = newModel
         store?.save(model: newModel)
         guard phase != .asleep else {
@@ -2098,6 +2257,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// other's conversation).
     public func switchEngine(to newEngine: BotEngine) async {
         guard newEngine != engine || heads.hasTwo else { return }
+        await dropPartner()
         engine = newEngine
         store?.save(engine: newEngine)
         let model = heads.codexModel
@@ -2111,15 +2271,21 @@ public final class Bot: ObservableObject, Identifiable {
         await restart(.engine(newEngine))
     }
 
-    /// Which engines it has (Claude, Codex or both). The head running, when it is taken away,
-    /// hands over to the one left, as a switch of engine does.
+    /// Which engines it has (Claude, Codex or both). With both, they work at the same time;
+    /// turning one off ends its process (the bot's own head, when that is the one, hands over
+    /// to the other through memory.md, as a switch of engine does).
     public func setHeads(_ engines: [BotEngine]) async {
-        var new = HeadsSettings(engines: engines, answerWith: heads.answerWith, both: heads.both, limits: heads.limits, handoffs: heads.handoffs)
+        var new = HeadsSettings(engines: engines, answerWith: heads.hasTwo ? heads.answerWith : .both, limits: heads.limits, handoffs: heads.handoffs)
         new.codexModel = heads.codexModel
         guard new != heads else { return }
         heads = new
         saveHeads()
-        if new.hasTwo { queueNote(Self.asNote(prompts.headsRule)) }
+        if new.hasTwo {
+            queueNote(Self.asNote(prompts.headsRule))
+            return
+        }
+        // One head again: the partner ends; if it was the one kept, this head switches to it.
+        await dropPartner()
         guard !new.engines.contains(engine) else { return }
         let next = new.engines[0]
         engine = next
@@ -2131,6 +2297,17 @@ public final class Bot: ObservableObject, Identifiable {
         await restart(.engine(next))
     }
 
+    /// The other head ends (without writing memory) and leaves the chat.
+    private func dropPartner() async {
+        guard let partner else { return }
+        if partner.phase == .awake, partner.process != nil, !partner.isWorking {
+            await partner.sleep(tidy: false, otherWorked: false)
+        }
+        if partner.phase != .asleep { partner.stop() }
+        partnerWatch = nil
+        self.partner = nil
+    }
+
     /// Who new messages go to (each message can still pick another).
     public func setAnswerWith(_ target: AnswerTarget) {
         let fitted = heads.fitted(target)
@@ -2139,26 +2316,11 @@ public final class Bot: ObservableObject, Identifiable {
         saveHeads()
     }
 
-    /// The head running is free and a message waits for the other: it stops without tidying
-    /// (its session is kept, to go on in it next time), and the other wakes for the message.
-    private func switchHead(to head: BotEngine) async {
-        cancelIdle()
-        waitingHead = nil
-        if let session = sessionID { headSessions[engine] = session }
-        // It saw the chat up to now, but not the lines waiting for the other head.
-        lastSeen[engine] = messages.last?.id
-        notSeen[engine] = Set(queued.compactMap { $0.head != engine ? $0.messageID : nil })
-        await finishProcess()
-        guard !removed else { return }
-        engine = head
-        phase = .asleep
-        await flushQueue()
-    }
-
     /// Picks the model its subagents use. Awake: restarts before its next message, like a model
     /// switch; asleep: the next wake uses it.
     public func setSubagentModel(_ newModel: BotModel?) async {
         guard newModel != subagentModel else { return }
+        if let partner { await partner.setSubagentModel(newModel) }
         subagentModel = newModel
         store?.save(subagentModel: newModel)
         await restart(.subagentModel(newModel))
@@ -2167,6 +2329,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// Picks how hard it thinks. Awake: restarts before its next message; asleep: the next wake.
     public func setEffort(_ newEffort: EffortLevel?) async {
         guard newEffort != effort else { return }
+        if let partner { await partner.setEffort(newEffort) }
         effort = newEffort
         store?.save(effort: newEffort)
         await restart(.effort(newEffort))
@@ -2219,6 +2382,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// message (see `restartsBeforeMessage`): an idle bot costs nothing, and a turn or a
     /// subagent at work is never cut off. Several restarts asked for make one.
     public func restart(_ reason: RestartReason) async {
+        if let partner, !reason.changesEngine { await partner.restart(reason) }
         guard phase != .asleep else {
             pendingRestart = nil
             pendingRestartForPluginsOnly = false
@@ -2231,12 +2395,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// A restart waits and nothing would be lost by doing it now: no turn, no subagent at work
     /// (in the background too: the restart would end it), no question waiting.
     private var restartsBeforeMessage: Bool {
-        pendingRestart != nil && canSwitchHead
-    }
-
-    /// Nothing would be lost by ending the process now (a restart, the other head's turn).
-    private var canSwitchHead: Bool {
-        phase == .awake && process != nil && !isWorking && internalReply == nil
+        pendingRestart != nil && phase == .awake && process != nil && !isWorking && internalReply == nil
             && groupReply == nil && groupCommand == nil && permissionAsks.isEmpty && outage == nil && !removed
             && !trace.subagents.contains(where: \.isRunning) && !messages.hasBackgroundWorkRunning(now: now())
     }
@@ -2379,19 +2538,15 @@ public final class Bot: ObservableObject, Identifiable {
 
     private func flushQueue() async {
         guard !queued.isEmpty else { return }
-        // Messages for one head go together; those for the other wait for its turn.
-        // A turn the conductor asked for goes alone: its reply is its own.
-        let head = queued[0].head
-        let count = queued[0].conducted ? 1 : queued.prefix { ($0.head == head || $0.head == nil) && !$0.conducted }.count
-        let waiting = Array(queued.prefix(count))
-        queued.removeFirst(count)
+        let waiting = queued
+        queued.removeAll()
         // One message goes as it is (yours stays yours to add to).
         if waiting.count == 1 {
             route(waiting[0])
             return
         }
         let text = waiting.map(\.text).joined(separator: "\n\n")
-        route(Outgoing(text: text, images: waiting.flatMap(\.images), head: head))
+        route(Outgoing(text: text, images: waiting.flatMap(\.images)))
     }
 
     /// Puts `message` in the chat. A bot's `<show id="…">` of a card already in it updates that
@@ -2459,7 +2614,7 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// Adds a line to this month's file in its archive (the bot greps it for older talk).
     private func archive(_ message: ChatMessage) {
-        guard let entry = Self.archiveEntry(message) else { return }
+        guard primary == nil, let entry = Self.archiveEntry(message) else { return }
         let folder = profile.archiveURL
         let month = message.date.formatted(.verbatim("\(year: .defaultDigits)-\(month: .twoDigits)", timeZone: .current, calendar: .current))
         let file = folder.appending(path: "\(month).md")
@@ -2500,7 +2655,7 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     /// Who said a line, as `head` (the head being told) reads it: its own words are "You", the
-    /// other head's go by its name, and the user's say which head they were for.
+    /// other head's go by its name, and the user's say when they were for one head.
     static func speaker(_ message: ChatMessage, head: BotEngine?) -> String {
         guard let head else { return speaker(message.role) }
         switch message.role {
@@ -2508,8 +2663,8 @@ public final class Bot: ObservableObject, Identifiable {
             guard let said = message.engine, said != head else { return speaker(.bot) }
             return said.displayName
         case .user:
-            guard let to = message.to else { return speaker(.user) }
-            return "User (to \(to == .both ? "both" : to.displayName))"
+            guard let to = message.to, to != .both else { return speaker(.user) }
+            return "User (to \(to.displayName) only)"
         default:
             return speaker(message.role)
         }

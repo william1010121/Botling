@@ -133,6 +133,8 @@ public struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var engine: BotEngine?
     /// For your line in a bot with two heads: who it was for.
     public var to: AnswerTarget?
+    /// In a bot with two heads: the heads this line has reached (in their context).
+    public var seenBy: [BotEngine]?
 
     public init(
         id: UUID = UUID(),

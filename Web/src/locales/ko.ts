@@ -141,6 +141,8 @@ export const ko: Dictionary = {
   "messages.addToBot": "다른 봇에 추가…",
   "messages.makeComponent": "컴포넌트로 만들기",
   "messages.makeComponentTitle": "{label}: Maintainer가 이 답장으로 바로 만듭니다",
+  "messages.seenBy": "{names} 읽음",
+  "messages.notSeenBy": "{names} 아직 안 읽음",
   "messages.reply": "답장",
   "messages.fold": "접기",
   "messages.answered": "답변함",

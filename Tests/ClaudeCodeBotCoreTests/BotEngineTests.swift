@@ -59,8 +59,8 @@ struct BotEngineTests {
     }
 }
 
-/// One bot, two heads (P2): Claude and Codex take turns on one chat and one memory.md, one
-/// process at a time.
+/// One bot, two heads: Claude and Codex get every message at the same time, each in a
+/// process of its own, hear each other, and the chat marks which head saw each line.
 @MainActor
 struct TwoHeadsTests {
     func twoHeaded(_ fake: FakeLauncher, idle: TimeInterval = 60) async -> Bot {
@@ -69,100 +69,117 @@ struct TwoHeadsTests {
         return bot
     }
 
-    @Test func aMessageGoesToTheHeadPickedForIt() async throws {
+    func agent(_ fake: FakeLauncher, _ engine: BotEngine) -> FakeAgent? {
+        fake.agents.last { $0.launch.engine == engine }
+    }
+
+    @Test func bothHeadsGetEachMessageAtOnceAndSeeIt() async throws {
+        let fake = FakeLauncher()
+        fake.respondFor = { engine, text in isAppOnly(text) ? nil : engine == .claude ? "I take the toolbar." : "I'll review it after." }
+        let bot = await twoHeaded(fake)
+        #expect(bot.heads.targets == [.both, .claude, .codex])
+        #expect(bot.heads.answerWith == .both)
+
+        bot.send("Fix the hover toolbar")
+        await eventually { bot.messages.filter { $0.role == .bot }.count == 2 }
+        #expect(Set(fake.agents.map(\.launch.engine)) == [.claude, .codex])
+        let mine = try #require(bot.messages.first)
+        #expect(mine.to == nil)
+        #expect(mine.seenBy == [.claude, .codex])
+        let replies = bot.messages.filter { $0.role == .bot }
+        #expect(Set(replies.compactMap(\.engine)) == [.claude, .codex])
+        for reply in replies { #expect(reply.seenBy?.contains(reply.engine!) == true) }
+        #expect(ChatPayload.seenMarks(mine, in: bot)?.map(\.mark) == ["C", "X"])
+    }
+
+    /// No lock: a head at work hears the other's reply in its turn; an idle one with its next
+    /// message, and the reply is marked seen by it only then.
+    @Test func eachHeadHearsTheOther() async throws {
+        let fake = FakeLauncher()
+        fake.respondFor = { engine, text in
+            if isAppOnly(text) { return nil }
+            return engine == .codex ? "No regressions." : nil
+        }
+        let bot = await twoHeaded(fake)
+        bot.send("Review PR #5")
+        await eventually { bot.messages.contains { $0.text == "No regressions." } }
+        let claude = try #require(agent(fake, .claude))
+        await eventually { claude.sent.contains { $0.contains("Codex, this bot's other head, replied in this chat:)\nNo regressions.") } }
+        let codexReply = try #require(bot.messages.first { $0.text == "No regressions." })
+        #expect(codexReply.seenBy == [.claude, .codex])
+        #expect(bot.isWorking)
+
+        claude.reply("Merged it.")
+        await eventually { bot.messages.contains { $0.text == "Merged it." } && !bot.isWorking }
+        // Codex is idle: Claude's reply waits for its next message.
+        let merged = try #require(bot.messages.first { $0.text == "Merged it." })
+        #expect(merged.seenBy == [.claude])
+        bot.send("Thanks", to: .codex)
+        let codex = try #require(agent(fake, .codex))
+        await eventually { codex.sent.last?.contains("Merged it.") == true }
+        #expect(codex.sent.last?.hasSuffix("Thanks") == true)
+        await eventually { bot.messages.first { $0.text == "Merged it." }?.seenBy == [.claude, .codex] }
+    }
+
+    @Test func aHeadsWordsReachTheOtherWhileItWorks() async throws {
+        let fake = FakeLauncher()
+        fake.respondFor = { _, text in isAppOnly(text) ? "OK" : nil }
+        let bot = await twoHeaded(fake)
+        bot.send("Fix it")
+        await eventually { fake.agents.count == 2 }
+        let codex = try #require(agent(fake, .codex))
+        let claude = try #require(agent(fake, .claude))
+        codex.emit(.trace(.text("I'll take the CSS part.", parent: nil)))
+        await eventually { claude.sent.contains("(App: Codex, working on this too, says: I'll take the CSS part.)") }
+    }
+
+    @Test func aMessageNamedForOneGoesToItAlone() async throws {
         let fake = FakeLauncher()
         let bot = await twoHeaded(fake)
-        #expect(bot.heads.targets == [.claude, .codex, .both])
-
-        bot.send("Review this", to: .codex)
+        bot.send("@codex only", to: .codex)
         await eventually { bot.messages.last?.role == .bot }
         #expect(fake.agents.map(\.launch.engine) == [.codex])
         #expect(bot.messages.first?.to == .codex)
-        #expect(bot.messages.last?.engine == .codex)
+        #expect(bot.messages.first?.seenBy == [.codex])
+        #expect(ChatPayload.headLabel(bot.messages[0], in: bot) == "to Codex")
     }
 
-    /// The lock: while one head works, a message for the other waits; it goes once the first is
-    /// free, without a tidy (the bot is not going to sleep), and that head hears what it missed.
-    @Test func theOtherHeadWaitsForTheOneRunningThenCatchesUp() async throws {
+    @Test func aHeadWithNothingToAddShowsNoBubble() async throws {
         let fake = FakeLauncher()
-        fake.respond = { text in isAppOnly(text) ? "OK" : nil }
+        fake.respondFor = { engine, text in isAppOnly(text) ? nil : engine == .claude ? "Done." : "<no-reply/>" }
         let bot = await twoHeaded(fake)
-        bot.sessionExists = { _, _ in true }
-
-        bot.send("Fix the hover toolbar", to: .claude)
-        await eventually { fake.agents.count == 1 }
-        bot.send("Review PR #5", to: .codex)
+        bot.send("Small fix")
+        await eventually { fake.agents.count == 2 && !bot.isWorking && bot.partner?.isWorking == false }
         try? await Task.sleep(for: .milliseconds(100))
-        #expect(fake.agents.count == 1)
-        #expect(bot.waitingHead == .codex)
-
-        fake.agents[0].reply("Fixed and merged in PR #5.")
-        await eventually { fake.agents.count == 2 }
-        #expect(fake.agents[0].finished)
-        #expect(!fake.agents[0].sent.contains(bot.prompts.tidy))
-        let codex = fake.agents[1]
-        #expect(codex.launch.engine == .codex)
-        #expect(!codex.launch.resume)
-        #expect(codex.sent.first?.contains("Fixed and merged in PR #5.") == true)
-        #expect(codex.sent.first?.hasSuffix("Review PR #5") == true)
-        #expect(bot.waitingHead == nil)
-
-        codex.reply("No regressions found.")
-        await eventually { bot.messages.last?.text == "No regressions found." }
-        // Back to Claude: its own session again, told what Codex said meanwhile.
-        bot.send("Thanks, ship it", to: .claude)
-        await eventually { fake.agents.count == 3 }
-        let back = fake.agents[2]
-        #expect(back.launch.engine == .claude)
-        #expect(back.launch.resume)
-        #expect(back.launch.sessionID == fake.agents[0].launch.sessionID)
-        let told = try #require(back.sent.first)
-        #expect(told.contains("Codex: No regressions found."))
-        #expect(told.contains("User (to Codex): Review PR #5"))
-        #expect(!told.contains("Fix the hover toolbar"))
-        #expect(told.hasSuffix("Thanks, ship it"))
+        #expect(bot.messages.filter { $0.role == .bot }.map(\.text) == ["Done."])
     }
 
-    @Test func bothAnswerOneAfterTheOther() async throws {
-        let fake = FakeLauncher()
-        let bot = await twoHeaded(fake)
-
-        bot.send("How should the release card get its data?", to: .both)
-        await eventually { bot.messages.filter { $0.role == .bot }.count == 2 }
-        #expect(fake.agents.map(\.launch.engine) == [.claude, .codex])
-        #expect(bot.messages.filter { $0.role == .bot }.map(\.engine) == [.claude, .codex])
-        #expect(bot.messages.first?.to == .both)
-        #expect(fake.agents[1].sent.first?.contains(Bot.bothNote(answered: "Claude")) == true)
-    }
-
-    /// Only the head that ran last tidies memory.md before sleeping.
-    @Test(.wallClock) func onlyTheLastHeadTidies() async {
+    /// The heads sleep together, and memory.md is tidied once.
+    @Test(.wallClock) func oneTidyForBoth() async {
         let fake = FakeLauncher()
         let bot = await twoHeaded(fake, idle: 0.3)
-        bot.send("one", to: .claude)
-        bot.send("two", to: .codex)
-        await eventually { bot.phase == .asleep && fake.agents.count == 2 && fake.agents[1].finished }
-        #expect(!fake.agents[0].sent.contains(bot.prompts.tidy))
-        #expect(fake.agents[1].sent.last == bot.prompts.tidy)
+        bot.send("one")
+        await eventually { bot.phase == .asleep && fake.agents.count == 2 && fake.agents.allSatisfy(\.finished) }
+        let claude = agent(fake, .claude), codex = agent(fake, .codex)
+        #expect(claude?.sent.last?.hasPrefix(bot.prompts.tidy) == true)
+        #expect(codex?.sent.contains { $0.hasPrefix(BotPrompts.tidyLead) } == false)
+        #expect(bot.partner?.phase == .asleep)
     }
 
-    @Test func headsAreKeptAndLabelled() async {
+    @Test func headsAreKeptAndToldAboutEachOther() async {
         let home = FileManager.default.temporaryDirectory.appending(path: "ccb-bot-\(UUID().uuidString)")
         let store = BotStore(directory: home.appending(path: "store"))
         let fake = FakeLauncher()
         let bot = Bot(profile: .main(home: home), launcher: fake.launcher, store: store)
         await bot.setHeads([.codex, .claude])
-        bot.setAnswerWith(.both)
+        bot.setAnswerWith(.codex)
         let again = Bot(profile: .main(home: home), launcher: fake.launcher, store: store)
-        #expect(again.heads == HeadsSettings(engines: [.claude, .codex], answerWith: .both))
-
-        bot.send("hi", to: .codex)
-        await eventually { bot.messages.last?.role == .bot }
-        #expect(ChatPayload.headLabel(bot.messages[0], in: bot) == "to Codex")
-        #expect(ChatPayload.headLabel(bot.messages[1], in: bot) == "Main bot · Codex")
-        // One head again: no labels, and Both is no longer a choice.
-        await bot.setHeads([.codex])
-        #expect(ChatPayload.headLabel(bot.messages[1], in: bot) == nil)
-        #expect(bot.heads.answerWith == .codex)
+        #expect(again.heads == HeadsSettings(engines: [.claude, .codex], answerWith: .codex))
+        #expect(bot.prompts.system.contains("working at the same time in this one chat, in the same folder"))
+        // One head again: no marks, no labels, and Both is no longer a choice.
+        await bot.setHeads([.claude])
+        #expect(bot.heads.targets == [.claude])
+        #expect(bot.partner == nil)
+        #expect(!bot.prompts.system.contains("working at the same time"))
     }
 }
