@@ -327,7 +327,8 @@ CCB_SNAPSHOT=/tmp/chat.png swift run ClaudeCodeBot   # render a sample chat to a
 
 The screenshots in this README are drawn by the app's own snapshot mode (`CCB_SNAPSHOT`,
 `CCB_RAIL_SNAPSHOT`, `CCB_RIGHT_SNAPSHOT`, `CCB_SPEC_SNAPSHOT`,
-`CCB_SETTINGS_SNAPSHOT`) with sample data.
+`CCB_SETTINGS_SNAPSHOT`) with sample data; `scripts/make-hero.swift` puts the hero picture
+together from them.
 
 ## Versioning & releases
 

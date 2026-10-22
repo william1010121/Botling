@@ -1409,9 +1409,14 @@ export class PinArea {
         // It glides the last bit from under the pointer into its cells.
         const glide = `translate3d(${Math.round(dx - (target.col - from.col) * pitchX)}px, ${Math.round(dy - (target.row - from.row) * pitchY)}px, 0)`;
         if (typeof window.requestAnimationFrame === "function" && glide !== "translate3d(0px, 0px, 0)") {
+          // At its new cells, moved back under the pointer, with no transition yet, and that
+          // style computed now: a transition starts from the last style the page computed, which
+          // is still the dragged one at its old cells, so gliding from there would draw it a
+          // whole move past its cells for the first frames (the flash on drop).
           card.style.transform = glide;
-          card.classList.add("landing");
+          void getComputedStyle(card).transform;
           window.requestAnimationFrame(() => {
+            card.classList.add("landing");
             card.style.transform = "";
             card.addEventListener("transitionend", () => card.classList.remove("landing"), { once: true });
             setTimeout(() => card.classList.remove("landing"), 300);

@@ -703,6 +703,44 @@ describe("the Board", () => {
     }
   });
 
+  it("a dropped tile glides from under the pointer, never from a whole move past its cells", () => {
+    // A transition starts from the last style the page computed. Let go, the tile is at its new
+    // cells at once; were its glide (moved back under the pointer) not computed with no
+    // transition before it glides, it would glide from the dragged transform at its new cells,
+    // drawn a whole move past them for the first frames: a flash on every drop.
+    const area = setUp();
+    area.update(state({ board: true, pins: [pin({ id: "P1", size: "1x1", place: { col: 0, row: 0 } })] }));
+    const card = document.querySelector<HTMLElement>(".board-card")!;
+    const clock = frames();
+    const computed: { transform: string; landing: boolean }[] = [];
+    const real = window.getComputedStyle;
+    window.getComputedStyle = ((element: Element, pseudo?: string | null) => {
+      if (element === card) computed.push({ transform: card.style.transform, landing: card.classList.contains("landing") });
+      return real.call(window, element, pseudo);
+    }) as typeof window.getComputedStyle;
+    try {
+      const pointer = (type: string, x: number, y: number) => new PointerEvent(type, { clientX: x, clientY: y, button: 0, bubbles: true });
+      card.querySelector<HTMLElement>(".board-move")!.dispatchEvent(pointer("pointerdown", 75, 5));
+      window.dispatchEvent(pointer("pointermove", 75 + 338, 5));
+      clock.flush();
+      computed.length = 0;
+      window.dispatchEvent(pointer("pointerup", 75 + 338, 5));
+      expect(sent.at(-1)).toEqual({ type: "arrangePins", places: [{ id: "P1", col: 2, row: 0 }] });
+      // At its new cells, back under the pointer, with no transition, and computed so.
+      expect(card.style.gridColumn).toBe("3 / span 1");
+      expect(card.style.transform).toBe("translate3d(10px, 0px, 0)");
+      expect(card.classList.contains("landing")).toBe(false);
+      expect(computed).toEqual([{ transform: "translate3d(10px, 0px, 0)", landing: false }]);
+      // Only then it glides the last bit into its cells.
+      clock.flush();
+      expect(card.classList.contains("landing")).toBe(true);
+      expect(card.style.transform).toBe("");
+    } finally {
+      window.getComputedStyle = real;
+      clock.restore();
+    }
+  });
+
   it("a tile dropped on another swaps with it when that one fits where it was, else pushes what it covers down", () => {
     const area = setUp();
     const pins = [pin({ id: "A", size: "1x1", place: { col: 0, row: 0 } }), pin({ id: "B", size: "1x1", place: { col: 1, row: 0 } }), pin({ id: "C", size: "2x1", place: { col: 0, row: 1 } })];

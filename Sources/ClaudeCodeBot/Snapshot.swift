@@ -16,7 +16,7 @@ enum Snapshot {
             drawIcon(to: icon)
         }
         if let path = ProcessInfo.processInfo.environment["CCB_RAIL_SNAPSHOT"] {
-            drawRail(to: path)
+            if ProcessInfo.processInfo.environment["CCB_RAIL_HERO"] != nil { drawHeroRail(to: path) } else { drawRail(to: path) }
             return true
         }
         if let path = ProcessInfo.processInfo.environment["CCB_RAIL_PINS_SNAPSHOT"] {
@@ -255,6 +255,42 @@ enum Snapshot {
 
     /// `CCB_RAIL_SNAPSHOT=/path/out.png`: the left column open and folded side by side, from
     /// sample projects with unread lines, with the folded one's hover tip on Maintainer.
+    /// `CCB_RAIL_SNAPSHOT=/path/out.png CCB_RAIL_HERO=1`: the open left column alone, 1060 pt tall,
+    /// with one sample project (ClaudeCodeBot) and a subagent at work under it: the README's hero
+    /// picture takes its left column from this.
+    private static func drawHeroRail(to path: String) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
+        let folder = root.appending(path: "code/ClaudeCodeBot")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let project = Workspace.Project(id: UUID(), name: "ClaudeCodeBot", folder: folder, avatar: "square")
+        try? JSONEncoder().encode([project]).write(to: Workspace.Layout.projectsFile(in: root))
+        var subagent = Subagent(id: "toolu_1", description: "Fix login loop", prompt: "Fix it", startedAt: Date())
+        subagent.name = "fix-login"
+        BotStore(directory: Workspace.Layout.bot(project.id, in: root)).save(subagents: [subagent])
+        let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
+            Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
+        }
+        let width = RailLayout.width(collapsed: false)
+        let content = RailView(workspace: workspace, settings: SettingsNavigator())
+            .frame(width: width, height: 1060)
+            .foregroundStyle(Theme.text)
+            .background(Theme.side)
+            .preferredColorScheme(.dark)
+        let frame = NSRect(x: 0, y: 0, width: width, height: 1060)
+        let window = HeadlessRun.offscreenWindow(frame)
+        window.appearance = NSAppearance(named: .darkAqua)
+        let host = NSHostingView(rootView: content)
+        host.frame = frame
+        window.contentView = host
+        self.window = window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
+            exit(0)
+        }
+    }
+
     private static func drawRail(to path: String) {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

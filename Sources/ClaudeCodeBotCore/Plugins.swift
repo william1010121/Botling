@@ -130,7 +130,7 @@ extension PluginManifest {
     static func builtIn(name: String, displayName: String, description: String, permissions: [PluginPermission],
                         claude: String? = nil, components: String? = nil) -> PluginManifest {
         let contributes = components.map { PluginManifest.Contributes(components: $0) }
-        return PluginManifest(name: name, displayName: displayName, version: firstVersion, description: description, license: "MIT",
+        return PluginManifest(name: name, displayName: displayName, version: firstVersion, description: description, license: "GPL-3.0-or-later",
                               engines: ["ccb": engineRange], scripts: nil,
                               ccb: Extension(permissions: permissions.map(\.rawValue), claude: claude, contributes: contributes))
     }

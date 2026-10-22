@@ -93,6 +93,18 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **A Board card no longer flashes when you drop it.** Let go, a card jumped for a few frames
+  (about 0.07 s) to as far past its new place as you had dragged it, then snapped back. Its
+  glide into place started from where it was being dragged, measured from its old place; now
+  the card is put at its new place under the pointer first, and glides from there.
+- **The bundled LaTeX plugin (`ccb-latex`) and the plugins the app writes itself (ccb-core,
+  ccb-teams, the component library, ccb-web-extractors) say GPL-3.0-or-later** in their
+  package.json, as the app is, not MIT. Component-library and ccb-web-extractors manifests
+  already on disk are left as they are.
+- **The README's hero picture no longer shows the removed Codex bot.** It is drawn again with
+  sample data (`CCB_RAIL_SNAPSHOT` with `CCB_RAIL_HERO=1` draws its left column, and
+  `scripts/make-hero.swift` puts it together), and so is the social preview.
+
 - **A Gemini question is no longer lost when you move on before it is answered.** Its row
   used to appear only once Gemini answered, so starting a new question (or opening another
   row) in the meantime dropped it. Now the row is made as soon as the page shows the question,
