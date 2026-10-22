@@ -3,6 +3,7 @@ import { language, t } from "./i18n";
 import { shared } from "./contract";
 import { componentSizes, keepFrames, maxColumns, maxRows, pinSize, resizeFrame, sizeInfo } from "./components";
 import { LiveSchedule, liveTick, type LiveCard } from "./refresh";
+import { onScreen, whenShownAgain, windowVisible } from "./visible";
 import { boardCell, boardGap, capture, closePopups, drawnPart, fillPinHead, openMenu, pinBody, pinHeadKey, pinTitle, refreshItems, whenWords, type MenuItem } from "./pins";
 import type { ChatState, ComponentInfo, FloatCorner, FloatView, FloatingPinView, PinSize, PinView } from "./types";
 
@@ -165,7 +166,14 @@ export class FloatLayer {
     if (composer && typeof ResizeObserver !== "undefined") new ResizeObserver(() => this.layOut()).observe(composer);
     // Shown again: those refreshed "when shown" run again (Swift skips one that just ran).
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState !== "hidden") this.shown([...this.entries.values()].map((e) => e.pin));
+      if (windowVisible()) this.shown([...this.entries.values()].map((e) => e.pin));
+    });
+    // The app's window shown again (it was minimized, hidden or covered): those "when shown" run,
+    // and those refreshed every few seconds that are overdue run at once.
+    whenShownAgain(() => {
+      if (!this.layer.isConnected) return;
+      this.shown([...this.entries.values()].map((e) => e.pin));
+      this.refreshDue();
     });
   }
 
@@ -466,12 +474,12 @@ export class FloatLayer {
   /** Pins that just came into sight: those refreshed "when shown" run (once allowed). */
   private shown(pins: PinView[]): void {
     const ids = pins.filter((p) => p.refresh === "shown" && p.display.command).map((p) => p.id);
-    if (ids.length && document.visibilityState !== "hidden") post({ type: "pinShown", ids });
+    if (ids.length && windowVisible()) post({ type: "pinShown", ids });
   }
 
   /**
    * Reruns the floating pins refreshed every few seconds (the pin's own seconds, or its about.md's
-   * `Refresh: every 2s`) whose time has come, only while the window is shown and not while a run
+   * `Refresh: every 2s`) whose time has come, only while the window is shown (visible.ts) and not while a run
    * is going. A pin also open on screen elsewhere (its Board tile, its sheet) is left to that.
    * How many ran.
    */
@@ -489,7 +497,8 @@ export class FloatLayer {
           key: id,
           every: pin.display.command ? every : 0,
           idle: status === "done" || status === "failed",
-          ready: () => document.visibilityState !== "hidden" && !this.elsewhere(id),
+          // A floating card is on screen whenever the window is (visible.ts).
+          ready: () => windowVisible() && !this.elsewhere(id),
           run: () => post({ type: "pinCommand", id, command: pin.display.command!, folder: pin.display.folder ?? "", force: true, live: true }),
         };
       }), now);
@@ -502,9 +511,7 @@ export class FloatLayer {
   /** Whether the pin's Board tile or opened sheet, rerunning itself, is on screen. */
   private elsewhere(id: string): boolean {
     for (const card of document.querySelectorAll<HTMLElement>(`.command-card[data-every][data-live-key="pin:${id}/0"]`)) {
-      if (this.layer.contains(card)) continue;
-      const box = card.getBoundingClientRect();
-      if (box.width > 0 && box.height > 0) return true;
+      if (!this.layer.contains(card) && onScreen(card)) return true;
     }
     return false;
   }

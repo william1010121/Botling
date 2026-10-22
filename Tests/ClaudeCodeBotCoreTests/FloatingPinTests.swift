@@ -237,8 +237,9 @@ struct FloatingPinTests {
             workspace.floatPin(pin.id, true, in: code)
             workspace.setPinGlobal(pin.id, true, in: code)
         }
-        // Every minutes: the app's one timer, in its owner's folder, under its one card key.
-        await workspace.refreshDuePins()
+        // Every minutes: the app's one timer, in its owner's folder, under its one card key. Both
+        // float over the chat on screen (the main bot's), so the page sees them.
+        await workspace.pinsVisible([slow.id, live.id], in: workspace.mainBot)
         #expect(workspace.componentCommands.runs[slow.card]?.data == "1")
         #expect(workspace.componentCommands.runs.keys.filter { $0.hasPrefix("pin/") }.sorted() == [slow.card])
         // Every few seconds: left to the one page, whichever chat is shown.
@@ -246,8 +247,9 @@ struct FloatingPinTests {
         #expect(workspace.componentCommands.runs[live.card] == nil)
     }
 
-    @Test func aPinFloatingOnlyInAnotherChatIsRefreshedByTheApp() async throws {
-        // Not on the page (another chat is shown), its seconds refresh is the app's, as any pin's.
+    @Test func aPinFloatingOnlyInAnotherChatDoesNotRefresh() async throws {
+        // Not on the page (another chat is shown): nobody sees it, so it waits (it used to run
+        // `git status` every 5 s in the background).
         let workspace = makeWorkspace()
         try addComponent("live", command: "printf 2", to: workspace)
         let code = try garden(workspace, "ClaudeCodeBot")
@@ -255,7 +257,7 @@ struct FloatingPinTests {
         let live = try #require(workspace.pin(named: "live", in: code, refresh: .interval, seconds: 5))
         workspace.floatPin(live.id, true, in: code)
         await workspace.refreshDuePins()
-        #expect(workspace.componentCommands.runs[live.card]?.data == "2")
+        #expect(workspace.componentCommands.runs[live.card] == nil)
     }
 
     @Test func globalFloatsCountTowardEachChatsTwo() throws {
@@ -385,7 +387,7 @@ struct FloatingPinTests {
         let slow = try #require(workspace.pin(named: "slow", in: bot, refresh: .interval, minutes: 5))
         workspace.floatPin(live.id, true, in: bot)
         workspace.floatPin(slow.id, true, in: bot)
-        await workspace.refreshDuePins()
+        await workspace.pinsVisible([live.id, slow.id], in: bot)
         #expect(workspace.componentCommands.runs[live.card] == nil)
         #expect(workspace.componentCommands.runs[slow.card]?.data == "2")
         // Not floating, the timer runs it as before.

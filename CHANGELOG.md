@@ -8,6 +8,17 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **Cards that refresh by themselves run only while you can see them.** A pin refreshed every
+  few seconds or minutes (its pin menu) was rerun by the app's timer in every chat, whether or
+  not anything showed it: a release-progress pin floating in a project's chat kept running
+  `git status` every 5 s while another chat was open or the window was minimized, keeping
+  fseventsd busy. Chat cards (`Refresh: every Ns`, `<show refresh="2s">`) and floating pins
+  trusted the page's own visibility, which a covered window does not always change. Now one
+  rule gates them all: the window is shown (not minimized, not hidden, not fully covered, from
+  its occlusion state), the card's chat or Board is the one showing, and the card, chip, opened
+  pin, Board tile or floating card is scrolled into view. A pin whose only sign on screen is its
+  chip refreshes at the pin's own pace. Seen again after longer than its interval, a card
+  refreshes once right away, then on its timer.
 - **A result page that sets no dark colours is readable again in its window.** The window that
   opens a local page (a bot's `.bot/artifacts/*.html` report) drew the page see-through over its
   near-black background, so a page with default or light-theme text (black or `#222` on no
