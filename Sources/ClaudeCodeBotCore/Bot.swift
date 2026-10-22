@@ -27,6 +27,10 @@ public final class Bot: ObservableObject, Identifiable {
     /// On a partner: the bot whose chat it speaks in.
     private weak var primary: Bot?
     private var partnerWatch: AnyCancellable?
+    private var partnerTraceWatch: AnyCancellable?
+    /// Presentation copies of partner teams, including saved teams before either head wakes.
+    /// Process liveness and trace mutations continue to belong to each head's own `trace`.
+    @Published private var partnerTeams: [BotEngine: TraceBook] = [:]
     /// A message to both heads goes to one of them (the lead) first; the other gets it once the
     /// lead has said what it takes on, with those words, so the two do not both grab the same
     /// work. Both still work at the same time after that. Nil when nothing is held.
@@ -371,6 +375,17 @@ public final class Bot: ObservableObject, Identifiable {
         routineRuns = store?.loadRoutineRuns() ?? [:]
         // Subagents that ran when the app quit went away with their process.
         // Background shell commands an earlier build took for subagents (no kind, no task) go.
+        trace = Self.restoredTrace(from: store)
+        if let store {
+            for head in BotEngine.allCases {
+                let team = Self.restoredTrace(from: BotStore(directory: store.directory.appending(path: "partner-\(head.rawValue)")))
+                if !team.subagents.isEmpty { partnerTeams[head] = team }
+            }
+        }
+    }
+
+    /// Loading saved display data never creates a partner Bot or launches its process.
+    private static func restoredTrace(from store: BotStore?) -> TraceBook {
         let saved = store?.loadSubagents() ?? []
         let real = saved.filter { $0.type != nil || !$0.prompt.isEmpty || !$0.steps.isEmpty }
         var book = TraceBook(subagents: real)
@@ -381,7 +396,7 @@ public final class Bot: ObservableObject, Identifiable {
         }
         if real.count != saved.count { store?.save(subagents: real) }
         if book.stopLeftovers() { store?.save(subagents: book.subagents) }
-        trace = book
+        return book
     }
 
     /// The steps of the turn under way.
@@ -402,7 +417,7 @@ public final class Bot: ObservableObject, Identifiable {
             return [[schedule, task.isRunning ? when : task.summary].compactMap { $0 }.joined(separator: " · "), task.detail ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n")
         }
         if let summary = task.summary, !task.isRunning || task.kind == .command || task.kind == .monitor { return summary }
-        if task.kind == .agent, let subagent = trace.subagent(taskID) {
+        if task.kind == .agent, let subagent = subagent(taskID) {
             if !subagent.isRunning, let result = subagent.result, !result.isEmpty { return result }
             let recent = subagent.steps.suffix(4).map { step in
                 let line = step.title.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
@@ -423,18 +438,61 @@ public final class Bot: ObservableObject, Identifiable {
         }
     }
 
-    /// The subagents it sent off, newest last.
-    public var subagents: [Subagent] { trace.subagents }
+    /// Both heads' teams for display only: shared ordering, cap, details and settled rows.
+    /// Never used to decide whether this head's process may sleep or finish a turn.
+    public var subagentTrace: TraceBook {
+        TraceBook(subagents: trace.subagents + BotEngine.allCases.flatMap { partnerTeams[$0]?.subagents ?? [] })
+    }
+
+    public var subagents: [Subagent] { subagentTrace.subagents }
+
+    public func subagent(_ id: String) -> Subagent? { subagentTrace.subagent(id) }
+
+    /// The head whose trace/store actually owns this row, including an asleep saved head.
+    /// Subagent names, model names and task subtypes do not decide its engine.
+    public func subagentEngine(_ id: String) -> BotEngine? {
+        if trace.subagent(id) != nil { return engine }
+        return BotEngine.allCases.first { partnerTeams[$0]?.subagent(id) != nil }
+    }
+
+    public func subagentIsWaitingForNetwork(_ id: String) -> Bool {
+        if trace.subagent(id) != nil { return outage?.subagents.contains(id) == true }
+        return partner?.outage?.subagents.contains(id) == true
+    }
 
     /// Settles a subagent: its row moves from the left column to "Settled" in the right one
     /// (saved, so it lasts). A running one is left alone: it works on and reports back.
     public func settleSubagent(_ id: String) {
-        if trace.settle(id) { store?.save(subagents: trace.subagents) }
+        if trace.subagent(id) != nil {
+            if trace.settle(id) { store?.save(subagents: trace.subagents) }
+        } else if let partner, partner.trace.subagent(id) != nil {
+            partner.settleSubagent(id)
+        } else {
+            settleSavedPartner(id, settled: true)
+        }
     }
 
     /// Brings a settled subagent back to the left column.
     public func unsettleSubagent(_ id: String) {
-        if trace.unsettle(id) { store?.save(subagents: trace.subagents) }
+        if trace.subagent(id) != nil {
+            if trace.unsettle(id) { store?.save(subagents: trace.subagents) }
+        } else if let partner, partner.trace.subagent(id) != nil {
+            partner.unsettleSubagent(id)
+        } else {
+            settleSavedPartner(id, settled: false)
+        }
+    }
+
+    private func settleSavedPartner(_ id: String, settled: Bool) {
+        for head in BotEngine.allCases {
+            guard var team = partnerTeams[head], team.subagent(id) != nil else { continue }
+            let changed = settled ? team.settle(id) : team.unsettle(id)
+            if changed {
+                partnerTeams[head] = team
+                store.map { BotStore(directory: $0.directory.appending(path: "partner-\(head.rawValue)")) }?.save(subagents: team.subagents)
+            }
+            return
+        }
     }
 
     public var name: String { profile.name }
@@ -677,6 +735,11 @@ public final class Bot: ObservableObject, Identifiable {
         // before the other head is told about it.
         partnerWatch = made.$messages.sink { [weak self] lines in
             MainActor.assumeIsolated { self?.mirror(lines) }
+        }
+        // Published supplies the NEW book before made.trace is assigned: keep a display
+        // copy so the primary publishes each tool/text/status change without stealing it.
+        partnerTraceWatch = made.$trace.sink { [weak self] book in
+            MainActor.assumeIsolated { self?.partnerTeams[head] = TraceBook(subagents: book.subagents) }
         }
         return made
     }
@@ -2435,7 +2498,11 @@ public final class Bot: ObservableObject, Identifiable {
             await partner.sleep(tidy: false, otherWorked: false)
         }
         if partner.phase != .asleep { partner.stop() }
+        var retired = partner.trace
+        if retired.stopLeftovers() { partner.store?.save(subagents: retired.subagents) }
+        partnerTeams[partner.engine] = TraceBook(subagents: retired.subagents)
         partnerWatch = nil
+        partnerTraceWatch = nil
         self.partner = nil
     }
 

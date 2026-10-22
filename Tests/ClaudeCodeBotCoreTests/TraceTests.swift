@@ -23,6 +23,25 @@ enum SubagentRun {
 
 @MainActor
 struct TraceTests {
+    @Test func anExplicitSubagentStartResumesTheSameCompletedRow() throws {
+        var book = TraceBook()
+        let first = Date(timeIntervalSince1970: 1)
+        book.apply(.subagentStarted(id: "spawn", description: "review", type: "codex", prompt: "", background: false), at: first)
+        book.apply(.launchResult(id: "spawn", result: LaunchResult(agentID: "child"), parent: nil), at: first)
+        book.apply(.subagentEnded(id: "spawn", status: "completed", summary: "First report"), at: first.addingTimeInterval(1))
+        #expect(try #require(book.subagent("spawn")).status == .completed)
+        book.apply(.subagentStarted(id: "spawn", description: "", type: "codex", prompt: "", background: false), at: first.addingTimeInterval(2))
+        let resumed = try #require(book.subagent("spawn"))
+        #expect(resumed.isRunning)
+        #expect(resumed.endedAt == nil)
+        #expect(resumed.agentID == "child")
+        #expect(resumed.description == "review")
+        #expect(resumed.result == "First report")
+        #expect(book.subagents.count == 1)
+        book.apply(.subagentEnded(id: "spawn", status: "completed", summary: "Second report"), at: first.addingTimeInterval(3))
+        #expect(try #require(book.subagent("spawn")).result == "Second report")
+    }
+
     @Test func streamLinesBecomeTraceEvents() {
         #expect(StreamEvent.events(in: SubagentRun.spawn) == [
             .trace(.toolUse(id: "toolu_A", tool: "Agent", title: "Delegate Read a.txt and report content", detail: "Read the file named a.txt and report it.", parent: nil)),

@@ -363,6 +363,12 @@ public struct TraceBook: Equatable, Sendable {
             }
             if background { addTask(id, kind: .agent, title: description, at: date) }
             if let index = subagentIndex(id) {
+                // An explicit new start can reuse an agent's stable call id (Codex names
+                // its thread once, then starts further turns on the same thread).
+                if !subagents[index].isRunning {
+                    subagents[index].status = .running
+                    subagents[index].endedAt = nil
+                }
                 if !description.isEmpty { subagents[index].description = description }
                 if !prompt.isEmpty { subagents[index].prompt = prompt }
                 subagents[index].type = type ?? subagents[index].type

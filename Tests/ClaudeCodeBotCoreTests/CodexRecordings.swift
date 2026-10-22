@@ -4,6 +4,37 @@ import Foundation
 /// `CodexSession`. Kept: responses, turn and item lifecycle, token usage, approvals; left out:
 /// the user's own MCP servers starting, account and rate-limit lines. Paths read /tmp/bot.
 enum CodexRecordings {
+    /// Live codex-cli 0.163.0 stdio: spawn, child command/report, completed, genuine
+    /// followup, second child command/report and completion on the SAME connection.
+    /// IDs and command/report content are sanitized; actual event order is preserved.
+    /// The observed wait calls had empty receiverThreadIds and agentsStates.
+    static let subagentFollowup: [String] = [
+        #"{"method":"item/started","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","item":{"type":"subAgentActivity","id":"call_23510994370442fc9af5e9ca6d065525","kind":"started","agentThreadId":"probe-child","agentPath":"/root/probe_child","model":"gpt-6.1-sol","reasoningEffort":"high"}}}"#,
+        #"{"method":"item/completed","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","item":{"type":"subAgentActivity","id":"call_23510994370442fc9af5e9ca6d065525","kind":"started","agentThreadId":"probe-child","agentPath":"/root/probe_child","model":"gpt-6.1-sol","reasoningEffort":"high"}}}"#,
+        #"{"method":"turn/started","params":{"threadId":"probe-child","turn":{"id":"01a164c0-4ba9-73e1-a07b-7e441feda424","status":"inProgress"}}}"#,
+        #"{"method":"item/started","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","item":{"type":"collabAgentToolCall","id":"call_5d1ec1136b7d45d68b0fbd1c8cc162f0","status":"inProgress","model":null,"reasoningEffort":null,"tool":"wait","senderThreadId":"01a1640c-e2db-7742-998a-553a14d4336f","receiverThreadIds":[],"agentsStates":{}}}}"#,
+        #"{"method":"item/started","params":{"threadId":"probe-child","item":{"type":"commandExecution","id":"exec-ef89ec5c-b0c9-47f2-b520-17a39dcd986d","status":"inProgress","command":"pwd","cwd":"/tmp/bot","exitCode":0,"aggregatedOutput":""}}}"#,
+        #"{"method":"item/completed","params":{"threadId":"probe-child","item":{"type":"commandExecution","id":"exec-ef89ec5c-b0c9-47f2-b520-17a39dcd986d","status":"completed","command":"pwd","cwd":"/tmp/bot","exitCode":0,"aggregatedOutput":""}}}"#,
+        #"{"method":"item/started","params":{"threadId":"probe-child","item":{"type":"agentMessage","id":"msg_0b9356677fc3bf92016ada4deb6980819188696f5362ffa517","text":"Probe completed.","phase":"final_answer"}}}"#,
+        #"{"method":"item/completed","params":{"threadId":"probe-child","item":{"type":"agentMessage","id":"msg_0b9356677fc3bf92016ada4deb6980819188696f5362ffa517","text":"Probe completed.","phase":"final_answer"}}}"#,
+        #"{"method":"item/started","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","item":{"type":"subAgentActivity","id":"subagent-completed-01a164c0-4ba9-73e1-a07b-7e441feda424","kind":"completed","agentThreadId":"probe-child","agentPath":"/root/probe_child","model":null,"reasoningEffort":null}}}"#,
+        #"{"method":"turn/completed","params":{"threadId":"probe-child","turn":{"id":"01a164c0-4ba9-73e1-a07b-7e441feda424","status":"completed"}}}"#,
+        #"{"method":"item/completed","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","item":{"type":"subAgentActivity","id":"subagent-completed-01a164c0-4ba9-73e1-a07b-7e441feda424","kind":"completed","agentThreadId":"probe-child","agentPath":"/root/probe_child","model":null,"reasoningEffort":null}}}"#,
+        #"{"method":"item/completed","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","item":{"type":"collabAgentToolCall","id":"call_5d1ec1136b7d45d68b0fbd1c8cc162f0","status":"completed","model":null,"reasoningEffort":null,"tool":"wait","senderThreadId":"01a1640c-e2db-7742-998a-553a14d4336f","receiverThreadIds":[],"agentsStates":{}}}}"#,
+        #"{"method":"item/started","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","item":{"type":"subAgentActivity","id":"call_f5dcaae5364f47159444e2f88c4ecd29","kind":"interacted","agentThreadId":"probe-child","agentPath":"/root/probe_child","model":null,"reasoningEffort":null}}}"#,
+        #"{"method":"item/completed","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","item":{"type":"subAgentActivity","id":"call_f5dcaae5364f47159444e2f88c4ecd29","kind":"interacted","agentThreadId":"probe-child","agentPath":"/root/probe_child","model":null,"reasoningEffort":null}}}"#,
+        #"{"method":"turn/started","params":{"threadId":"probe-child","turn":{"id":"01a164c0-69ea-7762-9ae9-2bfb478aea76","status":"inProgress"}}}"#,
+        #"{"method":"item/started","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","item":{"type":"collabAgentToolCall","id":"call_a9c95f504f074c268ca215c6a0c8a025","status":"inProgress","model":null,"reasoningEffort":null,"tool":"wait","senderThreadId":"01a1640c-e2db-7742-998a-553a14d4336f","receiverThreadIds":[],"agentsStates":{}}}}"#,
+        #"{"method":"item/started","params":{"threadId":"probe-child","item":{"type":"commandExecution","id":"exec-a23bda59-f21b-468d-a43d-b8804b0e20cb","status":"inProgress","command":"pwd","cwd":"/tmp/bot","exitCode":0,"aggregatedOutput":""}}}"#,
+        #"{"method":"item/completed","params":{"threadId":"probe-child","item":{"type":"commandExecution","id":"exec-a23bda59-f21b-468d-a43d-b8804b0e20cb","status":"completed","command":"pwd","cwd":"/tmp/bot","exitCode":0,"aggregatedOutput":""}}}"#,
+        #"{"method":"item/started","params":{"threadId":"probe-child","item":{"type":"agentMessage","id":"msg_0b9356677fc3bf92016ada4df1418881918750e0e7d1c05700","text":"Probe completed.","phase":"final_answer"}}}"#,
+        #"{"method":"item/completed","params":{"threadId":"probe-child","item":{"type":"agentMessage","id":"msg_0b9356677fc3bf92016ada4df1418881918750e0e7d1c05700","text":"Probe completed.","phase":"final_answer"}}}"#,
+        #"{"method":"item/started","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","item":{"type":"subAgentActivity","id":"subagent-completed-01a164c0-69ea-7762-9ae9-2bfb478aea76","kind":"completed","agentThreadId":"probe-child","agentPath":"/root/probe_child","model":null,"reasoningEffort":null}}}"#,
+        #"{"method":"turn/completed","params":{"threadId":"probe-child","turn":{"id":"01a164c0-69ea-7762-9ae9-2bfb478aea76","status":"completed"}}}"#,
+        #"{"method":"item/completed","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","item":{"type":"subAgentActivity","id":"subagent-completed-01a164c0-69ea-7762-9ae9-2bfb478aea76","kind":"completed","agentThreadId":"probe-child","agentPath":"/root/probe_child","model":null,"reasoningEffort":null}}}"#,
+        #"{"method":"item/completed","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","item":{"type":"collabAgentToolCall","id":"call_a9c95f504f074c268ca215c6a0c8a025","status":"completed","model":null,"reasoningEffort":null,"tool":"wait","senderThreadId":"01a1640c-e2db-7742-998a-553a14d4336f","receiverThreadIds":[],"agentsStates":{}}}}"#,
+    ]
+
     /// Session 1: "Reply with the single word: hello", then a command that needs approval (accepted).
     static let helloAndApproval: [String] = [
         #"{"id":1,"result":{"userAgent":"claudecodebot/0.163.0","codexHome":"/tmp/codex-home","platformFamily":"unix","platformOs":"macos"}}"#,
