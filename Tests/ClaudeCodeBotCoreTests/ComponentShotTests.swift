@@ -136,6 +136,61 @@ struct ComponentShotTests {
         #expect(ComponentShot.fileName("board 2x1") == "board-2x1")
     }
 
+    /// A component in a plugin's components/ folder, with this about.md.
+    private func pluginComponent(about: String?) throws -> URL {
+        let plugin = FileManager.default.temporaryDirectory.appending(path: "shot-plugin-\(UUID().uuidString)/ccb-components")
+        let folder = plugin.appending(path: "components/board")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try "<div>hi</div>".write(to: folder.appending(path: "template.html"), atomically: true, encoding: .utf8)
+        if let about { try about.write(to: folder.appending(path: "about.md"), atomically: true, encoding: .utf8) }
+        return folder
+    }
+
+    @Test func aCommandWithBracketNotationFailsTheCheckWithTheShellsWords() async throws {
+        let component = try pluginComponent(about: "Contribution board.\nCommand: echo '{}' [repo_dir]\n")
+        let check = try #require(await ComponentShot.checkCommand(component: component, folder: nil))
+        #expect(check.command == "echo '{}' [repo_dir]")
+        // Without --folder it runs in the plugin folder that holds the component.
+        #expect(check.folder.standardizedFileURL.path == component.deletingLastPathComponent().deletingLastPathComponent().standardizedFileURL.path)
+        let problem = try #require(check.findings.first { $0.level == .problem })
+        #expect(problem.place == "command")
+        #expect(problem.text.contains("no matches found: [repo_dir]"))
+        #expect(problem.text.contains("verbatim"))
+        #expect(check.outcome.data == nil)
+        let text = ComponentShot.summary(component: "board", data: .example, findings: check.findings, shots: [], sheet: nil)
+        #expect(text.contains("✗ command:"))
+        #expect(text.contains("no matches found: [repo_dir]"))
+    }
+
+    @Test func aRunnableCommandPassesTheCheckAndGivesItsOutput() async throws {
+        let component = try pluginComponent(about: "Board.\nCommand: `echo '{\"days\": 3}'`\n")
+        let project = FileManager.default.temporaryDirectory.appending(path: "shot-project-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let check = try #require(await ComponentShot.checkCommand(component: component, folder: project))
+        #expect(check.findings.isEmpty)
+        #expect(check.folder == project)
+        #expect(check.outcome.data == #"{"days": 3}"#)
+    }
+
+    @Test func aComponentWithoutACommandIsNotRun() async throws {
+        #expect(await ComponentShot.checkCommand(component: try pluginComponent(about: "Todo list.\nData: {\"a\": 1}\n"), folder: nil) == nil)
+        #expect(await ComponentShot.checkCommand(component: try pluginComponent(about: nil), folder: nil) == nil)
+    }
+
+    @Test func aCommandTooSlowForTheCheckIsOnlyAWarning() async throws {
+        let component = try pluginComponent(about: "Slow.\nCommand: sleep 5\n")
+        let check = try #require(await ComponentShot.checkCommand(component: component, folder: nil, timeout: 0.5))
+        #expect(check.findings.count == 1)
+        #expect(check.findings.first?.level == .warning)
+        #expect(check.outcome.timedOut)
+    }
+
+    @Test func theEditorIsToldTheCommandLineRunsVerbatim() {
+        #expect(ComponentPrompts.system.contains(ComponentPrompts.commandVerbatim))
+        #expect(ComponentPrompts.commandVerbatim.contains("verbatim"))
+        #expect(PluginGuide.text(builtIns: "/x").contains("verbatim"))
+    }
+
     @MainActor @Test func maintainerIsToldTheShotCommand() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "shot-ws-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

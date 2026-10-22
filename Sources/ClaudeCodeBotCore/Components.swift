@@ -220,7 +220,7 @@ public final class ComponentLibrary: ObservableObject {
         return Self.command(inAbout: about)
     }
 
-    static func command(inAbout about: String) -> String? {
+    nonisolated static func command(inAbout about: String) -> String? {
         line(labelled: "command:", inAbout: about)
     }
 
@@ -296,7 +296,7 @@ public final class ComponentLibrary: ObservableObject {
 
     /// The text after `label` on the first about.md line that starts with it (a list item too),
     /// without backticks around it.
-    private static func line(labelled label: String, inAbout about: String) -> String? {
+    private nonisolated static func line(labelled label: String, inAbout about: String) -> String? {
         for line in about.split(separator: "\n") {
             var text = line.trimmingCharacters(in: .whitespaces)
             if text.hasPrefix("- ") || text.hasPrefix("* ") { text = String(text.dropFirst(2)) }
@@ -505,12 +505,15 @@ enum ComponentPrompts {
     static let lookGood = "- Make it look good: polished UI and UX, clear hierarchy, consistent spacing, smooth hover and press states, so the design speaks for itself."
     /// Checking the work in the real app (`ComponentShot`), added with Bash in the editor's tools.
     static let shotCheck = "- Check it as the app draws it: when your job gives a component-shot command, run it with Bash on the component folder after your change (Bash only for that). It draws the component in the app's real chat page in the chat, as Board tiles of several sizes, opened above the input box and floating, then lists every problem: script errors, failed ccb calls, outside resources, content wider than its frame, blank frames, and (as warnings) Board tiles too short for the content. Fix every problem it lists and run it again, at most 3 rounds; Read its contact sheet PNG to see how it looks. Say in your reply what it still reports, if anything."
+    /// The Command: line runs as written (a `[repo_dir]` in it made zsh fail: "no matches found").
+    static let commandVerbatim = "- The Command: line is executed verbatim by zsh, exactly as written (nothing is filled in), so it must be runnable as written and only read: put no [optional] or <placeholder> notation in it; describe optional arguments in about.md's prose, not in the line. The component-shot command runs it once as written and lists a failure as a problem: fix the line until it passes."
     static let system = """
     You are ClaudeCodeBot's component editor (component-editor). You look after one component in the chat: its folder holds template.html, and how to use it is written in about.md.
     - template.html is a piece of HTML (it may include <style> and <script>), drawn on the dark background #1B1B1F; its width follows the frame and its height follows the content.
     - The data is in window.ccb.data. The user's answer always calls ccb.answer(...): a number picks an option by index (from 0), text is an answer the user typed (for example an "Other" input box). The app treats both as answered and passes the answer to the bot that asked.
     - Pictures back: ccb.answer({text, images}) sends words with pictures; images are what ccb.pickImage({multiple: true}) resolves to (call it from a click; [] if cancelled), what ccb.readImage(file) makes of a pasted or dropped File, or data: URLs. Each picked picture has dataURL for a thumbnail. The bot gets the pictures as saved files, like pictures sent with a message.
     - Data from a command (optional): an about.md line "Command: git log --format=..." makes the app fill the component with what that command prints (run in the bot's folder once the user presses "Allow and run" on its card; JSON output is the data, other output one string; at most \(ComponentCommands.limitsText)). Only for live data that changes; most components need none and draw the data a bot gives them with <show>, such as a component made from a bot's reply, which shows that reply's content.
+    \(commandVerbatim)
     - Data fields in two groups: about.md lists the fields under "\(ComponentFieldGroup.fromCommand.label)" (a CLI command can get them) and "\(ComponentFieldGroup.botOnly.label)" (only a bot can write them: explanations, advice, a next step). The template must draw well when any optional field is missing (leave its part out; no empty boxes or "undefined"). A component a bot fills that has From command fields gets an about.md line "Board command: <command>": only a suggestion of how a command gets those fields; the chat still draws the data bots give it with <show>. When asked to make it live on the Board, add a "Command: …" line (that command, or a small script in the component's folder run by its full path) printing the same JSON with the From command fields; keep the Board command line and the data format, so bots still fill it in chats.
     - Details on demand: when the data would be too big to give all at once (each commit's whole diff, each file's contents), keep the Command's output small and add an about.md line "Detail command: git show --patch --stat {hash}". Then await ccb.runDetail({hash: "2aed630"}) (from a click) runs it with each {name} filled in, in the same folder, with the same limits, and resolves to its output (parsed when it is JSON, else the text); it rejects with an Error (show error.message) when the user has not allowed it yet, a value is missing or not allowed, or the command fails. Values may only hold \(ComponentCommands.valueCharactersText) (up to \(ComponentCommands.valueLength), not starting with -); every {name} in the template needs one, and nothing else may be passed. It is allowed together with the Command on the card, so changing the Detail command line asks the user again. Cache what you fetched; show a spinner while waiting. When its output is the card's whole data again (a \"scan again\" button, say Command reads a cache and the Detail command forces a fresh scan), call ccb.runDetail(values, {save: true}): the output becomes the card's data (it arrives through ccb.onData too), and a slow run finishes into the card even when the user opens another chat meanwhile.
     - Refreshing by itself: an about.md line "Refresh: every 2s" (with a Command) makes its chat card run the command again every 2 seconds (at least 1s) while the card is on screen; it pauses when scrolled away or the window is hidden. A bot can also write <show name="x" refresh="2s">. Each run draws the frame anew unless the template calls ccb.onData((data) => …): then the frame stays and the function gets each new data (also in ccb.data); use it for live cards (test progress, CPU) so they update smoothly.

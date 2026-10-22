@@ -71,6 +71,13 @@ enum ComponentShotRun {
         defer { try? files.removeItem(at: scratch) }
         let probe = prepare(scratch.appending(path: "probe"), component: options.component, name: name)
         var notes: [String] = []
+        // Its Command runs once as written, as a chat card runs it, whatever the data is from:
+        // a line the shell cannot run is a problem here, not a "The command failed" card later.
+        let commandCheck = await ComponentShot.checkCommand(component: options.component, folder: options.folder)
+        var findings: [ComponentShot.Finding] = commandCheck?.findings ?? []
+        if let commandCheck, commandCheck.outcome.error == nil {
+            notes.append("Its Command ran as written in \(commandCheck.folder.path).")
+        }
         let source: ComponentShot.DataSource
         var data = "null"
         if let file = options.data {
@@ -78,16 +85,14 @@ enum ComponentShotRun {
             guard ComponentShot.isJSON(text.trimmingCharacters(in: .whitespacesAndNewlines)) else { fail("\(file.path) is not JSON.", code: 2) }
             data = text.trimmingCharacters(in: .whitespacesAndNewlines)
             source = .file(file.path)
-        } else if let folder = options.folder, let command = probe.components.command(of: name) {
-            let outcome = await ComponentCommands.execute(command, in: folder, timeout: ComponentCommands.timeout, limit: ComponentCommands.outputLimit)
-            guard let output = outcome.data else { fail("Its Command failed in \(folder.path): \(outcome.error ?? "no output")", code: 3) }
+        } else if options.folder != nil, let commandCheck, let output = commandCheck.outcome.data {
             data = output
-            source = .command(command)
+            source = .command(commandCheck.command)
         } else if let about = try? String(contentsOf: options.component.appending(path: "about.md"), encoding: .utf8),
                   let sample = ComponentShot.sampleData(fromAbout: about) {
             data = sample
             source = .example
-            if probe.components.command(of: name) != nil {
+            if commandCheck != nil, options.folder == nil {
                 notes.append("It has a Command; pass --folder <project> to draw what the command prints.")
             }
         } else {
@@ -136,7 +141,6 @@ enum ComponentShotRun {
 
         // Judge each frame; a sandboxed frame hides an uncaught error's words, so such a frame is
         // drawn again on its own to read them.
-        var findings: [ComponentShot.Finding] = []
         var shots: [ComponentShot.Shot] = []
         var tiles: [(String, CGImage)] = []
         for result in drawn {
