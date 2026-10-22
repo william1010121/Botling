@@ -245,9 +245,7 @@ public final class Workspace: ObservableObject {
         Self.retireTheOneGroup(in: root, into: mainBot)
         mainBot.wakeNote = { [weak self] in
             guard let self else { return "" }
-            return [projectBriefing(), webBriefing()].filter { !$0.isEmpty }.joined(separator: "
-
-")
+            return [projectBriefing(), webBriefing()].filter { !$0.isEmpty }.joined(separator: "\n\n")
         }
         mainBot.extraDirectories = { [weak self] in self?.everyProject.map(\.notesFolder) ?? [] }
         giveClaudeParts(to: mainBot)
