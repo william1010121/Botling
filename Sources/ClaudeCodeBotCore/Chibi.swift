@@ -95,7 +95,7 @@ public enum Chibi {
         case .sleep: expression = "sleepy"
         }
         // These are required app resources: fail clearly if a packaged build omits them.
-        return Bundle.module.url(forResource: expression, withExtension: "png",
+        return CoreResources.bundle.url(forResource: expression, withExtension: "png",
                                  subdirectory: "CharacterArt/avatars-static/\(character)")!
     }
 
