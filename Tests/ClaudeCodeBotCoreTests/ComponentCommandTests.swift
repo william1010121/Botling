@@ -236,8 +236,10 @@ struct ComponentCommandTests {
         #expect(shown[0]["status"] as? String == "approve")
         #expect(shown[0]["command"] as? String == #"printf '{"n":7}'"#)
         #expect(shown[0]["folder"] as? String == bot.profile.workingDirectory.path)
-        // No data and no command: a clear error instead of an empty component.
-        #expect(shown[1]["status"] as? String == "failed")
+        // No data and no command: nothing is drawn (no error card in the user's chat; the bot
+        // is told with the next message, see EmptyShowTests).
+        #expect(shown[1]["status"] as? String == "empty")
+        #expect(shown[1]["error"] == nil)
         #expect(shown[1]["command"] == nil)
 
         // Not allowed: asking for a run does nothing.

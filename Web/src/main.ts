@@ -14,6 +14,7 @@ import type { ChatState, Draft, MessageView, SpecState, StatePatch } from "./typ
 import { applyPatch } from "./patch";
 import { escapeHTML } from "./util";
 import { installImeGuard } from "./ime";
+import { watchFileDrops } from "./drops";
 import { reportVisiblePinsSoon, setWindowVisible } from "./visible";
 
 // Before anything listens for keys: an input method's Return never reaches a page handler.
@@ -276,22 +277,7 @@ class Chat {
 
   /** Files dropped anywhere on the chat are attached. */
   private handleDrops(): void {
-    const body = document.body;
-    body.addEventListener("dragover", (event) => {
-      if (event.dataTransfer?.types.includes("Files")) {
-        event.preventDefault();
-        body.classList.add("dropping");
-      }
-    });
-    body.addEventListener("dragleave", (event) => {
-      if (event.target === body || !body.contains(event.relatedTarget as Node)) body.classList.remove("dropping");
-    });
-    body.addEventListener("drop", (event) => {
-      body.classList.remove("dropping");
-      if (!event.dataTransfer?.files.length) return;
-      event.preventDefault();
-      for (const file of event.dataTransfer.files) sendFile(file);
-    });
+    watchFileDrops(document.body, sendFile);
   }
 }
 

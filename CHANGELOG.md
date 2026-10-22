@@ -8,6 +8,19 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **A component a bot shows with no data no longer puts an error in your chat.** A bot that
+  wrote `<show name="git-diff"></show>` for a component it is meant to fill (no `Command:` line
+  in its usage, only a `Board command:`, which the chat never runs) left a red "Nothing to show
+  / This component was shown without data…" card in the middle of its reply. Now nothing is
+  drawn there, the bot is told with your next message that the tag was empty and needs its
+  JSON, and its component briefing says so up front.
+- **The blue dashed drop outline around the chat always goes away.** Dragging a file over the
+  chat outlines the window; when the drop landed on a part of the page that takes it itself
+  (the report box's pictures), or the drag left the window or was cancelled without the page
+  hearing a `dragleave`, the outline stayed for good. It now also clears on any drop or
+  `dragend` (heard on the window before any part can stop it), on leaving the window, when the
+  window loses focus, when the mouse moves with no button held, and after a moment with no
+  drag over the page.
 - **Cards that refresh by themselves run only while you can see them.** A pin refreshed every
   few seconds or minutes (its pin menu) was rerun by the app's timer in every chat, whether or
   not anything showed it: a release-progress pin floating in a project's chat kept running

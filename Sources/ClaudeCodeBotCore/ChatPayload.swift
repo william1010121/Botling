@@ -840,6 +840,16 @@ public struct ChatPayload: Encodable, Equatable {
         return Display(name: instance.name, data: data, at: instance.at, images: images.isEmpty ? nil : images)
     }
 
+    /// A card's status when a bot showed it with no data and nothing can fill it: not drawn.
+    static let emptyStatus = "empty"
+
+    /// The bot's components shown with no data and no command to get it from (drawn as nothing).
+    @MainActor
+    static func isEmptyShow(_ instance: ComponentInstance, in message: ChatMessage, library: ComponentLibrary?) -> Bool {
+        message.role == .bot && instance.data == "null" && !ComponentLibrary.isBuiltIn(instance.name)
+            && command(of: instance, in: message, library: library) == nil
+    }
+
     /// The command a component in a message takes its data from: its own, or, when it was
     /// written with no data, the one its about.md declares. Only a bot's lines run commands.
     @MainActor
@@ -862,10 +872,9 @@ public struct ChatPayload: Encodable, Equatable {
             shown.folder = (commands?.folder(message) ?? fallbackFolder).path
         }
         guard let command = command(of: instance, in: message, library: library) else {
-            if instance.data == "null" {
-                shown.status = ComponentCommands.Status.failed.rawValue
-                shown.error = L("This component was shown without data, and it has no command to get data from.")
-            }
+            // Nothing to draw: the page leaves it out rather than put an error card in the
+            // user's chat; the bot hears why with the next message (`Workspace.emptyShowNote`).
+            if instance.data == "null" { shown.status = emptyStatus }
             return shown
         }
         let folder = commands?.folder(message) ?? fallbackFolder

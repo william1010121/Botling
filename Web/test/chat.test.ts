@@ -439,6 +439,18 @@ describe("messages", () => {
     expect(failed.querySelector<HTMLButtonElement>(".command-refresh")!.disabled).toBe(false);
   });
 
+  it("draw nothing for a bot's component shown with no data and no command (the bot is told instead)", () => {
+    const components = { "git-diff": { template: "<p></p>", version: 0, working: false, updated: false, hasPrevious: false } };
+    const row = messageElement(message({
+      id: "e1", text: "Fixed.\n\n\n\nPush it?",
+      displays: [{ name: "git-diff", data: "null", at: 8, status: "empty" }],
+    }), components);
+    expect(row.querySelector(".command-card")).toBeNull();
+    expect(row.querySelector("[role=alert]")).toBeNull();
+    expect(row.querySelector(".component-frame")).toBeNull();
+    expect(row.textContent).toContain("Push it?");
+  });
+
   it("draw a component without a command as before", () => {
     const components = { table: { template: "<p></p>", version: 0, working: false, updated: false, hasPrevious: false } };
     const row = messageElement(message({ displays: [{ name: "table", data: "[1]", at: null }] }), components);
