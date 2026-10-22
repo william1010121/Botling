@@ -883,6 +883,16 @@ body.viewer { display: block; overflow-y: auto; height: auto; min-height: 100%; 
 .wide-part.command-card, .wide-part > .command-card { border: 0; border-radius: 0; padding: 0; }
 .wide-part.command-card > :not(.component), .wide-part > .command-card > :not(.component) { padding-left: 0; padding-right: 0; }
 .pin-holder.wide-part > .pin-bar { right: 8px; }
+/* The reply's toolbar floats over the row's top-right corner, where a card at the top of the reply
+   has its own bar (pin / ↻ / ⋯, or Make): that bar moves left of the toolbar, by as many buttons
+   as it has (data-actions; a toolbar is 30px a button + 4px, 6px from the edge, the bar 16px in),
+   so the two sit side by side instead of one covering the other. */
+.row.wide[data-actions="1"] .pin-holder.wide-part > .pin-bar, .row.wide[data-actions="1"] .preview-holder.wide-part > .preview-bar { right: 32px; }
+.row.wide[data-actions="2"] .pin-holder.wide-part > .pin-bar, .row.wide[data-actions="2"] .preview-holder.wide-part > .preview-bar { right: 62px; }
+.row.wide[data-actions="3"] .pin-holder.wide-part > .pin-bar, .row.wide[data-actions="3"] .preview-holder.wide-part > .preview-bar { right: 92px; }
+/* A card that can be pinned has Report in its ⋯ menu: no flag of its own over its bottom-right
+   corner (it covered the content, and was a second flag beside the reply's own). */
+.pin-holder.wide-part .component-side > .flag { display: none; }
 .spec-built > .component, .spec-built > .command-card { background: var(--bubble); border: 0; border-radius: 18px; padding: 12px 16px; }
 .wide-part .component, .spec-built .component { position: relative; }
 .wide-part .component-frame, .spec-built .component-frame { min-width: 0; border-radius: 12px; }

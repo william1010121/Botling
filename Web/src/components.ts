@@ -698,7 +698,8 @@ export function componentElement(
   const frame = document.createElement("iframe") as ComponentFrame;
   frame.className = "component-frame";
   frame.setAttribute("sandbox", "allow-scripts");
-  frame.title = name;
+  // Named for VoiceOver, not with a title: that is a hover tooltip poking out of the reply.
+  frame.setAttribute("aria-label", name);
   frame.ccbAnswer = onAnswer;
   frame.ccbSave = onSave;
   frame.ccbDetail = detail ?? null;

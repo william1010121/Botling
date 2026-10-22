@@ -85,11 +85,27 @@ export function pinBar(display: DisplayView, messageID: string, index: number): 
       pinned
         ? { label: t("pins.unpin"), run: () => post({ type: "unpin", id: pinned.id }) }
         : { label: t("pins.pinToBotMenu", { bot: current.botName }), run: () => pinIt(more) },
-      { label: t("pins.report"), run: () => more.closest(".pin-holder")?.querySelector<HTMLButtonElement>(".flag")?.click() },
+      reportItem(more, display.name),
     ]);
   });
   bar.append(more);
   return bar;
+}
+
+/**
+ * Report, in a chat component's ⋯ menu: its flag is not drawn over it (a second flag in the reply,
+ * over its content), so this is where you say what to change.
+ */
+function reportItem(anchor: HTMLElement, name: string): MenuItem {
+  const info = current.components[name];
+  if (info?.working) return { label: t("pins.beingUpdated"), disabled: true, run: () => {} };
+  return {
+    label: t("pins.report"),
+    disabled: !info,
+    run: () => {
+      if (info) reportComponent(anchor, name, info, anchor.closest(".pin-holder")?.querySelector<HTMLElement>(".component-frame") ?? null);
+    },
+  };
 }
 
 type PinAction = Extract<Parameters<typeof post>[0], { type: "pin" }>;

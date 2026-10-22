@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { sent } from "../src/bridge";
-import { messageElement } from "../src/messages";
+import { feedback, makeComponents, messageElement } from "../src/messages";
 import { PinArea } from "../src/pins";
 import { parseInterval, refreshWords } from "../src/refresh";
 import { chatSize, componentElement } from "../src/components";
@@ -994,5 +994,69 @@ describe("a pin's refresh interval", () => {
     enter(count);
     expect(sent[0]).toMatchObject({ type: "pin", refresh: "interval", minutes: 15, seconds: 30 });
     expect(document.querySelector(".pin-dialog")).toBeNull();
+  });
+});
+
+describe("a reply that shows a pinnable component, on hover", () => {
+  const px = (value: string) => parseFloat(value) || 0;
+  // Hidden by the stylesheet (it or a box around it has display: none).
+  const shown = (element: Element) => {
+    for (let at: Element | null = element; at; at = at.parentElement) {
+      if (getComputedStyle(at).display === "none") return false;
+    }
+    return true;
+  };
+
+  it("has one flag, and the reply's toolbar sits beside the card's bar, not over it", () => {
+    const style = document.createElement("style");
+    style.textContent = readFileSync(resolve(__dirname, "../src/chat.css"), "utf8");
+    document.head.append(style);
+    try {
+      setUp().update(state());
+      for (const [developer, making] of [[false, false], [true, false], [false, true], [true, true]]) {
+        feedback.enabled = developer;
+        makeComponents.enabled = making;
+        const row = messageElement({ ...message([{ name: "天氣卡片", data: "{}", pinned: false }]), text: "" }, components);
+        document.getElementById("scroller")!.append(row);
+        expect(row.classList.contains("wide")).toBe(true);
+
+        // One flag for the reply: the card's own report is in its ⋯ menu, not a second flag over it.
+        const flags = [...row.querySelectorAll(".flag, .feedback-button")].filter(shown);
+        expect(flags).toHaveLength(developer ? 1 : 0);
+
+        // The reply's toolbar floats over the row's top-right corner; the card's bar (pin / ⋯) over
+        // the card's top-right corner, inside the bubble's padding. Measured from the row's right
+        // edge, the card's bar must start left of where the toolbar ends.
+        const actions = row.querySelector<HTMLElement>(":scope > .message-actions, :scope > .reply-button")!;
+        const a = getComputedStyle(actions);
+        const buttons = actions.matches(".message-actions") ? [...actions.querySelectorAll<HTMLElement>(".reply-button")] : [actions];
+        const toolbarWidth = buttons.reduce((sum, b) => sum + px(getComputedStyle(b).width), 0)
+          + (buttons.length - 1) * px(a.columnGap || a.gap)
+          + px(a.paddingLeft) + px(a.paddingRight) + px(a.borderLeftWidth) + px(a.borderRightWidth);
+        const toolbarLeft = px(a.right) + toolbarWidth;
+        const bubble = row.querySelector<HTMLElement>(".bot-bubble")!;
+        const bar = row.querySelector<HTMLElement>(".pin-bar")!;
+        const barRight = px(getComputedStyle(bubble).paddingRight) + px(getComputedStyle(bar).right);
+        expect(barRight).toBeGreaterThanOrEqual(toolbarLeft + 4);
+        row.remove();
+      }
+
+      // Report is still there, in the card's ⋯ menu, and opens the report box.
+      feedback.enabled = true;
+      const row = messageElement(message([{ name: "天氣卡片", data: "{}", pinned: false }]), components);
+      document.getElementById("scroller")!.append(row);
+      click(row.querySelector(".pin-bar [aria-label='More']"));
+      const report = [...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")].find((b) => b.textContent === "Report this component…");
+      click(report);
+      expect(document.querySelector(".report")).not.toBeNull();
+      // The card's frame says its name to VoiceOver without a hover tooltip poking out of the reply.
+      const frame = row.querySelector<HTMLIFrameElement>(".component-frame")!;
+      expect(frame.getAttribute("title")).toBeNull();
+      expect(frame.getAttribute("aria-label")).toBe("天氣卡片");
+    } finally {
+      feedback.enabled = false;
+      makeComponents.enabled = false;
+      style.remove();
+    }
   });
 });
