@@ -740,6 +740,7 @@ private struct NewBotForm: View {
 private struct MaintainerRow: View {
     @ObservedObject var bot: Bot
     @ObservedObject var library: ComponentLibrary
+    @Environment(\.botLook) private var look
     let selected: Bool
     let waiting: Bool
     let open: () -> Void
@@ -750,7 +751,11 @@ private struct MaintainerRow: View {
         if selected || busy || bot.phase != .asleep || bot.hasUnread || waiting {
             Button(action: open) {
                 HStack(spacing: 12) {
-                    AvatarView(kind: .diamond, size: 32, eyes: bot.eyes)
+                    if look == .cute {
+                        BotWithHeadsAvatar(bot: bot, size: 32)
+                    } else {
+                        AvatarView(kind: .diamond, size: 32, eyes: bot.eyes)
+                    }
                     VStack(alignment: .leading, spacing: 1) {
                         Text(bot.name).font(.system(size: 15))
                         Text(status)
@@ -798,7 +803,7 @@ private struct BotRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                if look == .cute && bot.heads.hasTwo {
+                if look == .cute {
                     // Cute: the bot's face in front, Claude and Codex peeking out behind it.
                     BotWithHeadsAvatar(bot: bot, size: 32)
                 } else {
@@ -1052,6 +1057,7 @@ struct DetailPanel: View {
     @State private var showingSettings: Bool
     /// A plugin's panel ("plugin/id") shown instead of the overview.
     @State private var openPanel: String?
+    @Environment(\.botLook) private var look
 
     init(workspace: Workspace, bot: Bot, showingSettings: Bool = false) {
         self.workspace = workspace
@@ -1165,7 +1171,7 @@ struct DetailPanel: View {
                         }
                     }
                     .frame(minHeight: 24)
-                    if bot.heads.hasTwo {
+                    if look == .cute || bot.heads.hasTwo {
                         HeadsNow(bot: bot)
                     }
                     // A manager: the first thing under "In progress" in its memory.md.
@@ -1501,14 +1507,17 @@ extension SettingsPage {
     }
 }
 
-/// Each head's state, in a bot with two: both can work at once.
+/// Each head's state; Cute also shows disabled engines asleep.
 private struct HeadsNow: View {
     @ObservedObject var bot: Bot
+    @Environment(\.botLook) private var look
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(bot.heads.engines, id: \.self) { head in
-                HeadNowRow(head: head, bot: bot.runner(of: head), hat: bot.avatarKind)
+            ForEach(look == .cute ? BotEngine.allCases : bot.heads.engines, id: \.self) { head in
+                let enabled = bot.heads.engines.contains(head)
+                HeadNowRow(head: head, bot: enabled ? bot.runner(of: head) : nil, hat: bot.avatarKind)
+                    .opacity(enabled ? 1 : 0.55)
             }
         }
     }

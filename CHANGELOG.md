@@ -8,19 +8,24 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
-- **Claude and Codex as characters (Bot look: Cute).** In a bot with both heads, Claude (the
-  orange-haired girl with the orange flower and black ribbon) and Codex (the white and lavender
-  dragon girl with horns, a knot ornament and elf ears) are drawn as small vector characters:
-  each reply shows its head's character wearing the bot's own face as a hat (any bot shape and
-  color); the "C X" seen marks under lines become two tiny heads, bright once seen and grey and
-  faded until then (the tooltip says who saw it, as before); in the left column the bot's face
-  stays in front, full size, with the two characters peeking out from behind it instead of
-  "C + X"; and under Now each head is its character in its state: working (eyes down at a
-  laptop), awake, waiting for your OK (a "?") or asleep ("zz"), with "waiting for your OK" now
-  also said in words. Settings → General → Bot look switches between Cute (the default) and
-  Original (plain faces with C/X marks) at once, without a restart. Bots with one head and
-  subagents look as before. `CCB_BOT_LOOK=original` draws the snapshots in the Original look and
-  `CCB_CHIBI_SNAPSHOT=<png>` draws every state at the app's sizes on dark and light.
+- **Claude and Codex as characters (Bot look: Cute).** With either or both engines enabled,
+  Claude (orange hair, orange flower and black ribbon) and Codex (white and lavender hair,
+  horns, a knot ornament and elf ears) are drawn as small vector characters. Replies and the
+  live work bubble show the engine's character wearing the bot's face as a hat; the live face
+  follows the same process as its steps. The expanded and folded left column show the bot's
+  face in front with both characters behind it; disabled heads stay asleep and dim. Under Now,
+  each head shows whether it is working, awake, waiting for your OK or asleep. In a bot with
+  both engines, the tiny heads under your messages highlight that message's recipients; a
+  separate small check and tooltip show who has actually read it. Newly delivered heads and
+  read checks bounce once, the active work avatar moves gently without restarting on streamed
+  updates, and motion stops when work finishes or Reduce Motion is enabled. Settings → General
+  → Bot look switches between Cute (the default) and Original at once, without a restart.
+  Subagents keep their own look. `CCB_BOT_LOOK=original` draws snapshots in the Original look;
+  `CCB_CHIBI_SNAPSHOT=<png>` draws each state at the app's sizes on dark and light.
+- **Answer with stays selected.** Clicking Claude, Codex or Both above the input box (or using
+  its keyboard shortcut) saves that bot's preference immediately, across sends, chat switches
+  and app restarts. Rapid changes keep the latest selection while earlier saves arrive.
+  A message starting with `@claude`, `@codex` or `@both` overrides only that message.
 - **A bot can run on Codex.** A bot's settings have an Engine row: Claude (as before) or Codex.
   On Codex the bot runs `codex app-server` and works as on Claude: replies, its commands and file
   edits as steps, Allow cards for what Codex asks to do, a message sent while it works joins that

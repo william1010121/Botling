@@ -301,10 +301,22 @@ button.primary:disabled { opacity: 0.4; cursor: default; }
 .user-body .seen-marks { justify-content: flex-end; }
 .seen-mark { color: var(--faint); opacity: 0.35; font-weight: 600; }
 .seen-mark.on { opacity: 1; }
-/* Bot look Cute: each mark is its head's tiny character (the image comes from setSeenHeads), grey and faded until seen */
+.head-receipt { position: relative; display: inline-flex; }
+.seen-check { display: none; }
+/* Cute user heads show recipients; actual read status has its own tiny check. */
 body.seen-heads .seen-marks { gap: 2px; }
 body.seen-heads .seen-mark { width: 14px; height: 14px; font-size: 0; color: transparent; background: center / contain no-repeat; opacity: 1; }
 body.seen-heads .seen-mark:not(.on) { opacity: 0.32; filter: grayscale(1); }
+body.seen-heads .seen-mark.recipient-mark { opacity: 0.32; filter: grayscale(1); }
+body.seen-heads .seen-mark.recipient { opacity: 1; filter: none; }
+body.seen-heads .seen-check { display: block; position: absolute; right: -1px; bottom: -2px; color: var(--green); background: var(--ground); border-radius: 50%; padding: 1px; font-size: 7px; line-height: 1; }
+@keyframes head-arrival { 0% { transform: translateY(2px) scale(.88); } 55% { transform: translateY(-2px) scale(1.07); } 100% { transform: none; } }
+@keyframes head-working { 0%, 100% { transform: translateY(0) rotate(-1deg); } 50% { transform: translateY(-1.5px) rotate(1deg); } }
+body.seen-heads .head-arrive, body.seen-heads .receipt-arrive { animation: head-arrival 340ms ease-out both; }
+body.seen-heads .typing > .avatar { animation: head-working 1.8s ease-in-out infinite; transform-origin: 50% 85%; }
+@media (prefers-reduced-motion: reduce) {
+  body.seen-heads .head-arrive, body.seen-heads .receipt-arrive, body.seen-heads .typing > .avatar { animation: none; transform: none; }
+}
 /* "Round 2 of 3 · Stop now" while the heads discuss, review or hand work over */
 .rounds-line { display: flex; align-items: center; gap: 10px; padding: 0 4px 8px; font-size: 12px; color: var(--muted); }
 .rounds-line[hidden] { display: none; }

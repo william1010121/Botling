@@ -142,6 +142,7 @@ export const ko: Dictionary = {
   "messages.makeComponent": "컴포넌트로 만들기",
   "messages.makeComponentTitle": "{label}: Maintainer가 이 답장으로 바로 만듭니다",
   "messages.seenBy": "{names} 읽음",
+  "messages.toHeads": "{names}에게",
   "messages.notSeenBy": "{names} 아직 안 읽음",
   "messages.reply": "답장",
   "messages.fold": "접기",

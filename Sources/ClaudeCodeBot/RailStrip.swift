@@ -229,9 +229,10 @@ private struct BotIcon: View {
     var status: String?
     @Binding var tip: RailTip?
     let action: () -> Void
+    @Environment(\.botLook) private var look
 
     var body: some View {
-        let working = busy || bot.isWorking
+        let working = busy || bot.isWorking || bot.partner?.isWorking == true
         RailIcon(
             title: bot.name,
             detail: RailLayout.tipDetail(status: status ?? bot.statusText, unread: selected ? 0 : bot.unreadCount, waiting: waiting),
@@ -244,7 +245,12 @@ private struct BotIcon: View {
             tip: $tip,
             action: action
         ) {
-            AvatarView(kind: kind ?? bot.avatarKind, size: 28, eyes: working ? .open : bot.eyes)
+            if look == .cute {
+                // Both characters fit inside the 40-point cell, including with only one enabled.
+                BotWithHeadsAvatar(bot: bot, size: 18)
+            } else {
+                AvatarView(kind: kind ?? bot.avatarKind, size: 28, eyes: working ? .open : bot.eyes)
+            }
         }
     }
 }

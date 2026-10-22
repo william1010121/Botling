@@ -55,24 +55,39 @@ export function messageElement(message: MessageView, components: Record<string, 
 }
 
 /**
- * Small letters for the heads ("C X"): lit for each head the line has reached, faint for the others.
- * With Bot look Cute (`setSeenHeads`) each letter shows as its character's tiny head instead.
+ * Original letters show read status; Cute user-message heads highlight recipients separately
+ * from the small actual-read checks. Replies still highlight who has read them.
  */
 export function seenMarks(seen: SeenView[]): HTMLElement {
   const marks = document.createElement("div");
   marks.className = "seen-marks";
   const reached = seen.filter((head) => head.seen).map((head) => head.name);
   const waiting = seen.filter((head) => !head.seen).map((head) => head.name);
-  const label = [reached.length ? t("messages.seenBy", { names: reached.join(", ") }) : "", waiting.length ? t("messages.notSeenBy", { names: waiting.join(", ") }) : ""].filter(Boolean).join(" · ");
+  const recipients = seen.filter((head) => head.recipient).map((head) => head.name);
+  const label = [recipients.length ? t("messages.toHeads", { names: recipients.join(", ") }) : "", reached.length ? t("messages.seenBy", { names: reached.join(", ") }) : "", waiting.length ? t("messages.notSeenBy", { names: waiting.join(", ") }) : ""].filter(Boolean).join(" · ");
   marks.title = label;
   marks.setAttribute("aria-label", label);
   for (const head of seen) {
+    const receipt = document.createElement("span");
+    receipt.className = "head-receipt";
+    receipt.title = [head.recipient ? t("messages.toHeads", { names: head.name }) : "", t(head.seen ? "messages.seenBy" : "messages.notSeenBy", { names: head.name })].filter(Boolean).join(" · ");
     const mark = document.createElement("span");
     mark.className = head.seen ? "seen-mark on" : "seen-mark";
+    if (head.recipient != null) mark.classList.add("recipient-mark");
+    if (head.recipient) mark.classList.add("recipient");
     mark.textContent = head.mark;
     mark.dataset.mark = head.mark;
     mark.setAttribute("aria-hidden", "true");
-    marks.append(mark);
+    receipt.append(mark);
+    if (head.seen) {
+      const check = document.createElement("span");
+      check.className = "seen-check";
+      check.dataset.mark = head.mark;
+      check.textContent = "✓";
+      check.setAttribute("aria-hidden", "true");
+      receipt.append(check);
+    }
+    marks.append(receipt);
   }
   return marks;
 }
@@ -620,7 +635,18 @@ export function jumpTo(id: string): void {
 export function typingElement(avatarSrc: string, live: StepView[] = []): HTMLElement {
   const row = document.createElement("div");
   row.className = "row bot typing";
+  row.dataset.avatar = avatarSrc;
   row.append(avatar(avatarSrc));
+  updateTypingElement(row, live);
+  return row;
+}
+
+/** Updates the live content while keeping the active avatar's animation and DOM node. */
+export function updateTypingElement(row: HTMLElement, live: StepView[] = []): void {
+  const key = JSON.stringify(live);
+  if (row.dataset.live === key) return;
+  row.dataset.live = key;
+  while (row.children.length > 1) row.lastElementChild!.remove();
   const dots = document.createElement("div");
   dots.className = "dots";
   dots.setAttribute("aria-label", t("messages.working"));
@@ -628,11 +654,10 @@ export function typingElement(avatarSrc: string, live: StepView[] = []): HTMLEle
   if (!live.length) {
     dots.classList.add("bubble", "bot-bubble");
     row.append(dots);
-    return row;
+    return;
   }
   const bubble = document.createElement("div");
   bubble.className = "bubble bot-bubble working";
   bubble.append(liveElement(live), dots);
   row.append(bubble);
-  return row;
 }

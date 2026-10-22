@@ -67,11 +67,13 @@ export interface MessageView {
   seen?: SeenView[] | null;
 }
 
-/** One head's mark under a line: lit once the line is in that head's context. */
+/** A head under a line: recipient highlighting and its separate actual-read receipt. */
 export interface SeenView {
   mark: string;
   name: string;
   seen: boolean;
+  /** User messages only: addressed to this head, regardless of who later read its context. */
+  recipient?: boolean | null;
 }
 
 /** A claude.ai Artifact a reply links to. */
@@ -407,6 +409,8 @@ export type Action =
   /** A `patchState` could not be applied: send the whole state. */
   | { type: "resync" }
   | { type: "send"; text: string; to?: string }
+  /** Saves the explicit composer choice for this bot; @mentions only affect a send. */
+  | { type: "setAnswerWith"; botID: string; to: string; requestID: number }
   /** A chat's unsent text and caret changed (empty: none), for the app to keep over a restart. */
   | { type: "draft"; botID: string; text: string; cursor: number }
   | { type: "choose"; messageID: string; index: number }
