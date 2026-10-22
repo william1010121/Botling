@@ -12,7 +12,7 @@ import WebKit
 @MainActor
 final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     /// The page reader's own world: the page's scripts cannot see it, nor it theirs.
-    private static let world = WKContentWorld.world(name: "ccb-web-reader")
+    static let world = WKContentWorld.world(name: "ccb-web-reader")
     private static let messageName = "ccbWebPage"
     /// Sign-in pages refuse web views that do not look like a browser.
     private static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
@@ -32,6 +32,10 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
     private var reading = false
     /// Asked to read while a read was under way: read again once it ends (settled if any was).
     private var readAgain: Bool?
+    /// The page's traffic of the last minutes (`net-tap.js`), in memory only.
+    private(set) var network = WebNetBuffer()
+    /// What each page reader (by hash) declares: whether it reads the traffic, and which requests.
+    private static var declarations: [String: (network: Bool, urls: [String])] = [:]
 
     init(id: UUID = UUID(), site: WebSite, shelf: WebShelf) {
         self.id = id
@@ -57,10 +61,17 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
         })();
         """
         configuration.userContentController.addUserScript(WKUserScript(source: observer, injectionTime: .atDocumentEnd, forMainFrameOnly: true, in: Self.world))
+        // The network tap, in the page's own world before its scripts (it wraps their fetch).
+        if let tap = WebCaptureScripts.netTap {
+            configuration.userContentController.addUserScript(WKUserScript(source: tap, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .page))
+        }
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.customUserAgent = Self.userAgent
         super.init()
         configuration.userContentController.add(self, contentWorld: Self.world, name: Self.messageName)
+        if WebCaptureScripts.netTap != nil {
+            configuration.userContentController.add(self, contentWorld: .page, name: WebCaptureScripts.messageName)
+        }
         // LaTeX snippets and live preview in the site's input box (web-laas, in the app's resources).
         WebLaas.shared(resources: AppResources.bundle.url(forResource: "web-laas", withExtension: nil))?.install(in: webView)
         webView.navigationDelegate = self
@@ -96,6 +107,10 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
     /// the row this page follows already waits for its answer.
     nonisolated func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         MainActor.assumeIsolated {
+            if message.name == WebCaptureScripts.messageName {
+                if let event = WebNetEvent(message: message.body) { network.append(event, now: Date().timeIntervalSince1970 * 1000) }
+                return
+            }
             let settled = (message.body as? String) != "changed"
             if settled { changedAt = Date() }
             if !settled, shelf.row(of: id, on: site)?.isAwaiting == true { return }
@@ -117,22 +132,96 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
             return
         }
         reading = true
-        webView.callAsyncJavaScript(WebExtractors.call(source), arguments: [:], in: nil, in: Self.world) { [weak self] result in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.reading = false
-                let reading: WebReading = switch result {
-                case .success(let value): WebReading.decode(value as? String)
-                case .failure(let error): .nothing(error.localizedDescription)
+        let hash = WebExtractors.fingerprint(source)
+        Task { [weak self] in
+            guard let self else { return }
+            // While the page still changes only its text is read (a question just sent); once
+            // it settles, the traffic too, when the reader reads it.
+            let both = await self.readBoth(source, url: url, events: settled ? self.network.events : nil)
+            self.reading = false
+            let merged = WebReaderMerge.merge(page: both.page, network: both.network)
+            // The page may have moved on while it was read.
+            if self.webView.url == url {
+                if settled {
+                    self.shelf.noteReader(merged.check, reading: merged.reading, on: self.site, page: self.id, url: url, readerHash: hash)
                 }
-                // The page may have moved on while it was read.
-                if self.webView.url == url {
-                    self.shelf.record(on: self.site, page: self.id, url: url, pageTitle: self.webView.title, reading: reading, settled: settled)
+                self.shelf.record(on: self.site, page: self.id, url: url, pageTitle: self.webView.title, reading: merged.reading, settled: settled)
+            }
+            if let again = self.readAgain {
+                self.readAgain = nil
+                self.read(settled: again)
+            }
+        }
+    }
+
+    /// The page reader `source` on this page: its reading of the page, and of `events` (the
+    /// requests it declares it reads) when it reads the traffic and there are any. `json` is
+    /// its raw answer, as a capture saves it.
+    func readBoth(_ source: String, url: URL, events: [WebNetEvent]?) async -> (page: WebReading, network: WebReading?, json: String?) {
+        await Self.readBoth(in: webView, site: site, source: source, url: url, events: events)
+    }
+
+    /// The same in any web view (a capture's page replayed by `--test-extractor`).
+    static func readBoth(in webView: WKWebView, site: WebSite, source: String, url: URL, events: [WebNetEvent]?) async -> (page: WebReading, network: WebReading?, json: String?) {
+        var net: Any = NSNull()
+        if let events, !events.isEmpty {
+            let declared = await declaration(of: source, in: webView)
+            if declared.network {
+                let exchanges = WebNetExchange.matching(WebNetExchange.assemble(events), patterns: declared.urls)
+                if !exchanges.isEmpty { net = WebNetExchange.json(exchanges) }
+            }
+        }
+        let context = WebExtractors.context(site: site, url: url)
+        do {
+            let value = try await webView.callAsyncJavaScript(WebExtractors.callBoth(source), arguments: ["net": net, "context": context], in: nil, contentWorld: world)
+            let json = value as? String
+            let both = WebExtractors.decodeBoth(json)
+            return (both.page, both.network, json)
+        } catch {
+            return (.nothing(error.localizedDescription), nil, nil)
+        }
+    }
+
+    private static func declaration(of source: String, in webView: WKWebView) async -> (network: Bool, urls: [String]) {
+        let hash = WebExtractors.fingerprint(source)
+        if let known = declarations[hash] { return known }
+        guard WebExtractors.readsNetwork(source) else { return (false, []) }
+        let value = try? await webView.callAsyncJavaScript(WebExtractors.declaration(source), arguments: [:], in: nil, contentWorld: world)
+        let declared = WebExtractors.decodeDeclaration(value as? String)
+        declarations[hash] = declared
+        return declared
+    }
+
+    // MARK: Capture
+
+    func startRecording(at date: Date) {
+        network.startRecording(at: date.timeIntervalSince1970 * 1000)
+    }
+
+    /// Ends the recording: its events, with the minutes before it.
+    func stopRecording(at date: Date) -> [WebNetEvent] {
+        network.stopRecording(at: date.timeIntervalSince1970 * 1000)
+    }
+
+    /// The page's HTML and its outline (`outline.js`), read in the reader's world.
+    func pageParts() async -> (html: String?, outline: String?) {
+        let html = try? await webView.callAsyncJavaScript("return document.documentElement ? document.documentElement.outerHTML : null;", arguments: [:], in: nil, contentWorld: Self.world) as? String
+        var outline: String?
+        if let script = WebCaptureScripts.outline {
+            outline = try? await webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: Self.world) as? String
+        }
+        return (html, outline)
+    }
+
+    /// The page as it looks, as PNG.
+    func screenshot() async -> Data? {
+        await withCheckedContinuation { continuation in
+            webView.takeSnapshot(with: nil) { image, _ in
+                guard let image, let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else {
+                    continuation.resume(returning: nil)
+                    return
                 }
-                if let again = self.readAgain {
-                    self.readAgain = nil
-                    self.read(settled: again)
-                }
+                continuation.resume(returning: rep.representation(using: .png, properties: [:]))
             }
         }
     }
@@ -338,6 +427,8 @@ struct WebSiteFace: View {
 struct WebSiteColumn: View {
     @ObservedObject var shelf: WebShelf
     let site: WebSite
+    /// For "Send to Maintainer" on a capture.
+    var workspace: Workspace?
 
     /// The page readers shipped in the app (the plugin's fallback).
     static var bundledExtractors: URL? {
@@ -349,6 +440,9 @@ struct WebSiteColumn: View {
             VStack(spacing: 0) {
                 strip
                 Rectangle().fill(Theme.line).frame(height: 1)
+                if let workspace {
+                    WebCaptureCard(capture: WebCapture.of(site), workspace: workspace)
+                }
                 if HeadlessRun.isRequested() {
                     placeholder
                 } else {
@@ -382,6 +476,11 @@ struct WebSiteColumn: View {
                 .lineLimit(1)
             Spacer(minLength: 8)
             WebStatusLine(status: shelf.status[site.id] ?? .reading, site: site)
+                .lineLimit(1)
+                .layoutPriority(1)
+            WebCaptureControls(capture: WebCapture.of(site), shelf: shelf, site: site, start: HeadlessRun.isRequested() ? nil : {
+                WebCapture.of(site).start(on: WebSession.session(for: site, shelf: shelf).front, shelf: shelf)
+            })
         }
         .padding(.horizontal, 14)
         .frame(height: 36)
@@ -636,6 +735,8 @@ struct WebPanel: View {
                         .help(L("Opens {0} fresh; a question you send there is a row at once", site.startURL.absoluteString))
                     }
                 }
+
+                WebCapturesSection(shelf: shelf, site: site)
             }
             .padding(20)
             .padding(.top, 16)

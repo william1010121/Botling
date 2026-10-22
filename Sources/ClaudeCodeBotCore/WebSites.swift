@@ -473,6 +473,16 @@ public final class WebShelf: ObservableObject {
     private var addresses: [UUID: URL] = [:]
     /// Conversations (`site/id`) whose answer you have seen: leaving one settles its row.
     private var seen: Set<String> = []
+    /// Whether the page reader's two readings (the page, its traffic) agreed on the front page's
+    /// last settled read, by site id.
+    @Published public private(set) var readerCheck: [String: WebReaderCheck] = [:]
+    /// When a changed page reader first read a page the one before it could not: "updated", by site id.
+    @Published public private(set) var readerFixedAt: [String: Date] = [:]
+    /// The page reader (its hash) that last could not read the front page, by site id.
+    private var failingReader: [String: String] = [:]
+
+    /// Captures (`~/.claudecodebot/captures`), next to `web`.
+    public var capturesFolder: URL { WebCapturePack.root(besides: folder) }
 
     /// The page a site shows before any other was put in front.
     nonisolated public static let firstPage = UUID(uuidString: "3E3B0000-0000-4000-8000-0000000000F1")!
@@ -770,6 +780,25 @@ public final class WebShelf: ObservableObject {
         written[key] = turns
         shownStatus(.saved(messages: turns.count, at: now))
         return target
+    }
+
+    /// The front page's settled read went through the page reader `readerHash`: whether its page
+    /// and traffic readings agreed. A reader that could not read the page (or whose readings
+    /// differed) and is then changed so that it reads it is "updated" (`readerFixedAt`).
+    public func noteReader(_ check: WebReaderCheck, reading: WebReading, on site: WebSite, page: UUID = firstPage, url: URL, readerHash: String?, now: Date = Date()) {
+        guard page == frontPage(of: site) else { return }
+        readerCheck[site.id] = check
+        let failed: Bool = {
+            if check.isMismatch { return true }
+            if case .nothing = reading { return site.conversationID(in: url) != nil }
+            return false
+        }()
+        if failed {
+            if let readerHash { failingReader[site.id] = readerHash }
+            readerFixedAt[site.id] = nil
+        } else if case .read = reading, let before = failingReader.removeValue(forKey: site.id), let readerHash, before != readerHash {
+            readerFixedAt[site.id] = now
+        }
     }
 
     /// A question on a page with no id in its address yet: a row of its own at once, titled

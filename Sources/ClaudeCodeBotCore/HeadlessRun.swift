@@ -12,7 +12,7 @@ public enum HeadlessRun {
     ]
 
     /// Every command-line flag that asks for a headless run.
-    public static let flags = ["--snapshot", "--check-plugin", ComponentShot.flag]
+    public static let flags = ["--snapshot", "--check-plugin", ComponentShot.flag, "--test-extractor", "--capture-test"]
 
     public static func isRequested(
         environment: [String: String] = ProcessInfo.processInfo.environment,

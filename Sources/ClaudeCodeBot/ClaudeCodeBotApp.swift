@@ -76,7 +76,7 @@ struct RootView: View {
                     .opacity(web == nil ? 1 : 0)
                     .allowsHitTesting(web == nil)
                 if let web {
-                    WebSiteColumn(shelf: workspace.web, site: web)
+                    WebSiteColumn(shelf: workspace.web, site: web, workspace: workspace)
                 }
             }
                 .frame(minWidth: columns.chat, maxWidth: .infinity)
@@ -209,7 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // `--language ja` (or CCB_LANGUAGE=ja): a snapshot in that language.
             if let language = HeadlessRun.language() { L10n.language = language }
         }
-        if Snapshot.runIfRequested() || PluginCheck.runIfRequested() || ComponentShotRun.runIfRequested() {
+        if Snapshot.runIfRequested() || PluginCheck.runIfRequested() || ComponentShotRun.runIfRequested() || WebCaptureRun.runIfRequested() {
             return
         }
         // Started with `swift run`, the app has no bundle; make it a normal foreground app.
@@ -219,6 +219,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Web AIs' page readers: the plugin's scripts, with the app's own copy as the fallback.
         workspace.web.bundledExtractors = WebSiteColumn.bundledExtractors
         WebExtractors.install(in: Workspace.Layout.plugins(in: workspace.root), bundled: WebSiteColumn.bundledExtractors)
+        // Web captures: the newest few per site, none older than 30 days.
+        let captures = workspace.web.capturesFolder
+        Task.detached(priority: .utility) { WebCapturePack.prune(in: captures) }
         // A bot's link to a saved web conversation opens it in its site, where it was.
         ResultWindows.opensInApp = { [workspace] url in workspace.openSavedWebConversation(url) }
         // A question that was still waiting for its answer when the app quit: its page is read again.

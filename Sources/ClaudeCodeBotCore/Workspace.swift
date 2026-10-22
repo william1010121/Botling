@@ -516,6 +516,24 @@ public final class Workspace: ObservableObject {
         }
     }
 
+    /// A folder the app itself lets Maintainer read for a job it hands over (web captures): kept
+    /// like one you allowed. A session that could not open it yet restarts before `then`.
+    func allowMaintainerToRead(_ folder: URL, then: @escaping @MainActor () -> Void) {
+        let folder = folder.standardizedFileURL
+        guard !approvedFolders.contains(where: { folder.path == $0.path || folder.path.hasPrefix($0.path + "/") }) else {
+            then()
+            return
+        }
+        approvedFolders.append(folder)
+        let data = try? JSONEncoder().encode(approvedFolders.map(\.path))
+        try? data?.write(to: foldersURL, options: .atomic)
+        let maintainer = maintainer
+        Task {
+            await maintainer.restart(.mayRead(folder.lastPathComponent))
+            then()
+        }
+    }
+
     /// Maintainer's bot.
     public var maintainer: Bot {
         managers[Self.maintainerID]!
