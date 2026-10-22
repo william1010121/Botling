@@ -106,6 +106,8 @@ export const zhHans: Dictionary = {
   "composer.cancelReply": "取消回复",
   "composer.removeFile": "移除 {name}",
   // composer.ts, more
+  "composer.answerWith": "回答者",
+  "composer.answerHint": "{keys} · 或输入 @codex",
   "composer.library": "组件库",
   // float.ts: pins floating in a corner
   "float.ownerTitle": "{bot} 的固定项，显示在所有 Bot · 在 {bot} 的文件夹中运行",

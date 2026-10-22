@@ -379,13 +379,22 @@ export interface ChatState {
   makeComponents?: boolean | null;
   /** The language of the page's own words (Settings → General → Language); absent means English. */
   lang?: string | null;
+  /** A bot with two heads (Claude and Codex): who the next message goes to. */
+  answerWith?: AnswerWithView | null;
+}
+
+/** "Answer with" above the input box: each head and Both, the default, and a message waiting for the other head. */
+export interface AnswerWithView {
+  options: { id: string; label: string }[];
+  chosen: string;
+  waiting?: string | null;
 }
 
 export type Action =
   | { type: "ready" }
   /** A `patchState` could not be applied: send the whole state. */
   | { type: "resync" }
-  | { type: "send"; text: string }
+  | { type: "send"; text: string; to?: string }
   /** A chat's unsent text and caret changed (empty: none), for the app to keep over a restart. */
   | { type: "draft"; botID: string; text: string; cursor: number }
   | { type: "choose"; messageID: string; index: number }

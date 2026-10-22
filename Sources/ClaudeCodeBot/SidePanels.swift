@@ -1269,24 +1269,41 @@ struct SettingsPage: View {
                 Text(L("Settings")).font(.system(size: 15, weight: .semibold))
             }
 
+            PanelSection(L("Engines in this bot")) {
+                VStack(spacing: 0) {
+                    ForEach(BotEngine.allCases, id: \.self) { engine in
+                        let on = bot.heads.engines.contains(engine)
+                        SwitchRow(title: engine.displayName, isOn: on, disabled: bot.isSwitching || (on && !bot.heads.hasTwo)) { wanted in
+                            let engines = wanted ? bot.heads.engines + [engine] : bot.heads.engines.filter { $0 != engine }
+                            Task { await bot.setHeads(engines) }
+                        }
+                        Rectangle().fill(Theme.line).frame(height: 1)
+                    }
+                    DropdownRow(
+                        title: L("New messages go to"),
+                        choices: bot.heads.targets,
+                        chosen: bot.heads.answerWith,
+                        label: { $0.displayName },
+                        disabled: !bot.heads.hasTwo
+                    ) { target in
+                        bot.setAnswerWith(target)
+                    }
+                }
+                .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                SettingNote(bot.heads.hasTwo
+                    ? L("Both read and write its memory.md. Only one runs at a time; the other waits and reads what was said before it starts. You can still pick per message above the input box.")
+                    : L("Turn on the other engine to ask Claude and Codex in the same chat."))
+            }
+
             PanelSection(L("Model and thinking")) {
                 VStack(spacing: 0) {
-                    DropdownRow(
-                        title: L("Engine"),
-                        choices: BotEngine.allCases,
-                        chosen: bot.engine,
-                        label: { $0.displayName },
-                        disabled: bot.isSwitching
-                    ) { engine in
-                        Task { await bot.switchEngine(to: engine) }
-                    }
-                    Rectangle().fill(Theme.line).frame(height: 1)
                     DropdownRow(
                         title: L("Model"),
                         choices: BotModel.allCases,
                         chosen: bot.switchTarget ?? bot.model,
                         label: { $0.displayName },
-                        disabled: bot.isSwitching || bot.engine == .codex
+                        disabled: bot.isSwitching || !bot.heads.engines.contains(.claude)
                     ) { model in
                         Task { await bot.switchModel(to: model) }
                     }
@@ -1296,7 +1313,7 @@ struct SettingsPage: View {
                         choices: [nil] + BotModel.allCases.map(Optional.some),
                         chosen: bot.subagentModel,
                         label: { $0?.displayName ?? L("Same as bot") },
-                        disabled: bot.isSwitching || bot.engine == .codex
+                        disabled: bot.isSwitching || !bot.heads.engines.contains(.claude)
                     ) { model in
                         Task { await bot.setSubagentModel(model) }
                     }
@@ -1333,7 +1350,7 @@ struct SettingsPage: View {
                 }
 
                 SettingNote(L("Subagents use their own model and effort when their definition names one. Default effort leaves it to the model. Awake, a change restarts the bot in the same conversation just before its next message; asleep, it applies when it wakes."))
-                if bot.engine == .codex {
+                if bot.heads.engines.contains(.codex) {
                     SettingNote(L("On Codex the bot uses Codex's own model, asks before commands outside its folders, and keeps results as local pages. Both engines share its memory.md: switching hands over through it."))
                 }
             }
@@ -1421,6 +1438,29 @@ private struct DropdownRow<Choice: Hashable>: View {
         }
         .padding(.leading, 16)
         .padding(.trailing, 10)
+        .frame(height: 44)
+    }
+}
+
+/// A setting that is on or off, with a switch.
+private struct SwitchRow: View {
+    let title: String
+    let isOn: Bool
+    var disabled = false
+    let set: (Bool) -> Void
+
+    var body: some View {
+        HStack {
+            Text(title).foregroundStyle(Theme.text)
+            Spacer()
+            Toggle(title, isOn: Binding(get: { isOn }, set: { if $0 != isOn { set($0) } }))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .disabled(disabled)
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 12)
         .frame(height: 44)
     }
 }

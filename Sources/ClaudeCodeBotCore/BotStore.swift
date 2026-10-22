@@ -49,6 +49,8 @@ public struct BotStore: Sendable {
         var effort: String?
         /// The CLI it runs on, as text like the two above; missing: Claude.
         var engine: String?
+        /// Its heads (engines, who messages go to); missing: one, `engine`.
+        var heads: HeadsSettings?
         /// Routines from before they moved to routines.cron; read once to carry them over.
         var routines: [LegacyRoutine]?
         /// When each routines.cron job last ran, by job id.
@@ -151,6 +153,16 @@ public struct BotStore: Sendable {
     public func save(engine: BotEngine) {
         var settings = loadSettings()
         settings.engine = engine.rawValue
+        write(settings, to: settingsURL)
+    }
+
+    public func loadHeads() -> HeadsSettings? {
+        loadSettings().heads
+    }
+
+    public func save(heads: HeadsSettings) {
+        var settings = loadSettings()
+        settings.heads = heads
         write(settings, to: settingsURL)
     }
 

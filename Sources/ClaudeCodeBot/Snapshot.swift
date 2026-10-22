@@ -77,6 +77,30 @@ enum Snapshot {
             draw(root: root, to: path)
             return true
         }
+        // `CCB_SNAPSHOT_SAMPLE=heads`: a bot with two heads (Claude and Codex), each reply under
+        // the head that wrote it, a hand-off line, and "Answer with" over the input box. Sample data.
+        if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "heads" {
+            let store = BotStore(directory: root.appending(path: "main"))
+            store.save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .claude))
+            var ask = ChatMessage(role: .user, text: "Fix the hover toolbar covering the card", date: now.addingTimeInterval(-600))
+            ask.to = .claude
+            var fixed = ChatMessage(role: .bot, text: "Fixed and merged in PR #5. I asked Codex to review it.", date: now.addingTimeInterval(-500))
+            fixed.engine = .claude
+            var review = ChatMessage(role: .bot, text: "No regressions found. One nit: the toolbar offset assumes three buttons.", date: now.addingTimeInterval(-300))
+            review.engine = .codex
+            var both = ChatMessage(role: .user, text: "Does the nit matter for the Board?", date: now.addingTimeInterval(-120))
+            both.to = .codex
+            var answer = ChatMessage(role: .bot, text: "Yes: Board cards have four buttons, so the offset is one button short there.", date: now.addingTimeInterval(-60))
+            answer.engine = .codex
+            store.save(messages: [
+                ChatMessage(role: .divider, text: "SAMPLE DATA", date: now.addingTimeInterval(-700)),
+                ask, fixed,
+                ChatMessage(role: .divider, text: "Claude → Codex: review the diff of PR #5 for regressions", date: now.addingTimeInterval(-400)),
+                review, both, answer,
+            ])
+            draw(root: root, to: path)
+            return true
+        }
         // `CCB_SNAPSHOT_SAMPLE=subagent`: a subagent's view (read only), still at work: its task
         // and a later message from its bot, each finished run of calls folded to "N steps" (a long
         // one, with a failed command, among them), the run under way in sight, its last call spinning.
@@ -701,17 +725,20 @@ enum Snapshot {
         let folder = root.appending(path: "code/SampleProject")
         try? FileManager.default.createDirectory(at: folder.appending(path: ".bot"), withIntermediateDirectories: true)
         let store = BotStore(directory: root.appending(path: "bot"))
-        store.save(engine: BotEngine(rawValue: ProcessInfo.processInfo.environment["CCB_BOT_ENGINE"] ?? "") ?? .codex)
+        // `CCB_BOT_ENGINE=both`: Claude and Codex in one bot.
+        let engineName = ProcessInfo.processInfo.environment["CCB_BOT_ENGINE"] ?? ""
+        store.save(engine: BotEngine(rawValue: engineName) ?? .codex)
+        if engineName == "both" { store.save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .claude)) }
         let bot = Bot(profile: .manager(name: "Sample project", avatar: "square", folder: folder), launcher: { _ in throw AppError.claudeNotFound }, store: store)
         let content = VStack(alignment: .leading, spacing: 0) {
             Text("SAMPLE DATA").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.faint).padding(.leading, 20).padding(.top, 10)
             SettingsPage(bot: bot) {}.padding(.horizontal, 20)
         }
-        .frame(width: 380, height: 900, alignment: .top)
+        .frame(width: 380, height: 1100, alignment: .top)
         .foregroundStyle(Theme.text)
         .background(Theme.ground)
         .preferredColorScheme(.dark)
-        let frame = NSRect(x: 0, y: 0, width: 380, height: 900)
+        let frame = NSRect(x: 0, y: 0, width: 380, height: 1100)
         let window = HeadlessRun.offscreenWindow(frame)
         window.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: content)

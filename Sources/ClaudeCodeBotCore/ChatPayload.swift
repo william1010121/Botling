@@ -355,6 +355,29 @@ public struct ChatPayload: Encodable, Equatable {
     /// The language the page's own words are in (Settings → General → Language): "en", "zh-Hant",
     /// "zh-Hans", "ja" or "ko". What bots wrote and components show stay as they are.
     var lang: String = L10n.language.rawValue
+    /// A bot with two heads: who the next message goes to ("Answer with" above the input box).
+    var answerWith: AnswerWith? = nil
+
+    /// The "Answer with" chips: each head and Both, the one new messages go to, and a message
+    /// waiting for the other head (the lock), said in a few words.
+    public struct AnswerWith: Encodable, Equatable {
+        struct Option: Encodable, Equatable {
+            var id: String
+            var label: String
+        }
+        var options: [Option]
+        var chosen: String
+        var waiting: String?
+
+        @MainActor
+        static func of(_ bot: Bot) -> AnswerWith? {
+            guard bot.heads.hasTwo else { return nil }
+            let waiting = bot.waitingHead.map { head in
+                L("{0} waits for {1} to finish", head.displayName, bot.engine.displayName)
+            }
+            return AnswerWith(options: bot.heads.targets.map { Option(id: $0.rawValue, label: $0.displayName) }, chosen: bot.heads.answerWith.rawValue, waiting: waiting)
+        }
+    }
 
     /// What a group chat adds: who is typing, and names for who said each line. A bot's own chat
     /// has one too, for the bots called into it with @.
@@ -464,7 +487,7 @@ public struct ChatPayload: Encodable, Equatable {
                 replyTo: message.replyTo?.uuidString,
                 replyPreview: message.replyPreview,
                 openable: message.role == .notice && message.sourceID != nil,
-                speaker: message.role == .bot ? message.sourceID.flatMap { id in speaker.map { $0(id) ?? "A removed bot" } } : nil,
+                speaker: message.role == .bot ? message.sourceID.flatMap { id in speaker.map { $0(id) ?? "A removed bot" } } ?? headLabel(message, in: bot) : headLabel(message, in: bot),
                 steps: message.steps.map { $0.map { stepView($0, in: bot) } },
                 previews: previews(for: message, in: library),
                 feedback: message.role == .relay
@@ -549,8 +572,21 @@ public struct ChatPayload: Encodable, Equatable {
             pinChoices: pinning.map { _ in pinChoices(for: bot, library: library) },
             board: pinning.map(\.board),
             floating: floating,
-            makeComponents: specs ? true : nil
+            makeComponents: specs ? true : nil,
+            answerWith: group == nil ? AnswerWith.of(bot) : nil
         )
+    }
+
+    /// In a bot with two heads: which head said a reply ("ClaudeCodeBot · Codex"), and who your
+    /// line was for ("to Both").
+    @MainActor
+    static func headLabel(_ message: ChatMessage, in bot: Bot) -> String? {
+        guard bot.heads.hasTwo else { return nil }
+        switch message.role {
+        case .bot: return message.engine.map { "\(bot.name) · \($0.displayName)" }
+        case .user: return message.to.map { L("to {0}", $0.displayName) }
+        default: return nil
+        }
     }
 
     /// The chips of the specs made from `message`, each built one with its component.

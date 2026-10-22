@@ -2016,7 +2016,7 @@ public final class Workspace: ObservableObject {
     // MARK: Plugin host
 
     /// What you type goes through plugins' beforeSend hooks first; one can change it or stop it.
-    public func send(_ text: String, files: [URL] = [], replyingTo replyID: UUID? = nil, to bot: Bot) async {
+    public func send(_ text: String, files: [URL] = [], replyingTo replyID: UUID? = nil, answerWith target: AnswerTarget? = nil, to bot: Bot) async {
         var text = text
         if let pluginHost, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             switch await pluginHost.beforeSend(bot: info(for: bot), text: text) {
@@ -2038,7 +2038,7 @@ public final class Workspace: ObservableObject {
             // Components you named with / (picked from the input box's list) are explained to it.
             // Components that kept new data since your last message (ccb.save): what they hold now.
             let notes = [heardSinceLastTurn(in: bot), callInNote(called), components.mentionNote(for: text), componentStateNote(in: bot), emptyShowNote(in: bot)].compactMap { $0 }
-            bot.send(text, files: files, replyingTo: replyID, appNote: notes.isEmpty ? nil : notes.joined(separator: "\n"))
+            bot.send(text, files: files, replyingTo: replyID, appNote: notes.isEmpty ? nil : notes.joined(separator: "\n"), to: target)
             if !called.isEmpty, let newest = bot.messages.last(where: { $0.role == .user }) {
                 startCallIn(in: bot, to: called, newest: newest.id, ask: nil)
             }

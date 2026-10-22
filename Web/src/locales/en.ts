@@ -107,6 +107,8 @@ export const en = {
   "composer.cancelReply": "Cancel reply",
   "composer.removeFile": "Remove {name}",
   // composer.ts, more
+  "composer.answerWith": "Answer with",
+  "composer.answerHint": "{keys} · or type @codex",
   "composer.library": "library",
   // float.ts: pins floating in a corner
   "float.ownerTitle": "{bot}'s pin, shown in all bots · runs in {bot}'s folder",

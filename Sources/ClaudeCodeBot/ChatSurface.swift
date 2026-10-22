@@ -239,7 +239,9 @@ struct ChatSurface: NSViewRepresentable {
                 inputs.files[bot.id] = nil
                 inputs.replies[bot.id] = nil
                 let text = body["text"] as? String ?? ""
-                Task { await workspace.send(text, files: files.map(\.url), replyingTo: reply, to: bot) }
+                // A bot with two heads: the head (or both) picked above the input box.
+                let target = (body["to"] as? String).flatMap(AnswerTarget.init(rawValue:))
+                Task { await workspace.send(text, files: files.map(\.url), replyingTo: reply, answerWith: target, to: bot) }
             case "draft":
                 if let chat = body["botID"] as? String {
                     let text = body["text"] as? String ?? ""

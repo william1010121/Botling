@@ -7,7 +7,7 @@ import { escapeRegExp, shared } from "./contract";
 import { language, t } from "./i18n";
 import { isComposingEnter, isComposingKey, isSendEnter } from "./ime";
 import { escapeHTML } from "./util";
-import type { ChatState, Draft } from "./types";
+import type { AnswerWithView, ChatState, Draft } from "./types";
 
 /** How long after the last change a draft is saved (ms): typing does not write on every key. */
 export const draftDelay = 500;
@@ -50,6 +50,10 @@ export class Composer {
   private readonly filesRow: HTMLElement;
   private readonly sendButton: HTMLButtonElement;
   private hasFiles = false;
+  /** "Answer with" above the box, in a bot with two heads; its pick lasts for one message. */
+  private readonly answerRow: HTMLElement;
+  private answer: AnswerWithView | null = null;
+  private answerPicked: string | null = null;
   /** Plugins see key presses first; returning true means a plugin handled it. */
   onKey: (event: KeyboardEvent) => boolean = () => false;
   private popover: HTMLElement | null = null;
@@ -96,7 +100,10 @@ export class Composer {
     this.mentionList.setAttribute("role", "listbox");
     this.mentionList.hidden = true;
     this.root.append(this.mentionList, this.replyBar, this.filesRow, row);
-    parent.append(this.root);
+    this.answerRow = document.createElement("div");
+    this.answerRow.className = "answer-with";
+    this.answerRow.hidden = true;
+    parent.append(this.answerRow, this.root);
 
     this.view = new EditorView({
       parent: editorHost,
@@ -118,7 +125,7 @@ export class Composer {
           // Ahead of every keymap: a key pressed while an input method is choosing (Zhuyin, Pinyin)
           // belongs to it, so Return commits the candidate instead of sending.
           Prec.highest(EditorView.domEventHandlers({
-            keydown: (event, view) => isComposingKey(event) || isComposingEnter(event) || view.composing || this.mentionKey(event) || this.onKey(event) || this.enterKey(event),
+            keydown: (event, view) => isComposingKey(event) || isComposingEnter(event) || view.composing || this.mentionKey(event) || this.answerKey(event) || this.onKey(event) || this.enterKey(event),
           })),
           EditorView.domEventHandlers({
             paste: (event) => this.takeFiles(event.clipboardData),
@@ -369,6 +376,7 @@ export class Composer {
       this.refreshMentions();
     }
     this.view.dispatch({ effects: this.placeholder.reconfigure(placeholderExtension(state.placeholder)) });
+    this.setAnswer(state.answerWith ?? null, state.botID);
 
     if (state.replyingTo) {
       this.replyBar.hidden = false;
@@ -402,11 +410,78 @@ export class Composer {
 
   /** Sends what is typed (and any files). Returns true so Return does not also add a line. */
   submit(): boolean {
-    const text = this.text;
+    let text = this.text;
     if (text.trim() === "" && !this.hasFiles) return true;
-    post({ type: "send", text });
+    if (this.answer) {
+      // "@codex …" at the start picks that head for this message, as the chips do.
+      const typed = answerPrefix(text, this.answer);
+      if (typed) {
+        this.answerPicked = typed.id;
+        text = typed.rest;
+      }
+      post({ type: "send", text, to: this.answerPicked ?? this.answer.chosen });
+      this.answerPicked = null;
+      this.drawAnswer();
+    } else {
+      post({ type: "send", text });
+    }
     this.setText("");
     this.saveDraft();
+    return true;
+  }
+
+  /** The chips for this chat; a pick made for another chat does not carry over. */
+  private setAnswer(answer: AnswerWithView | null, chat: string): void {
+    if (this.answerChat !== chat) this.answerPicked = null;
+    this.answerChat = chat;
+    if (this.answerPicked && !answer?.options.some((option) => option.id === this.answerPicked)) this.answerPicked = null;
+    this.answer = answer;
+    this.drawAnswer();
+  }
+
+  private answerChat = "";
+
+  private drawAnswer(): void {
+    const answer = this.answer;
+    this.answerRow.hidden = !answer;
+    this.answerRow.innerHTML = "";
+    if (!answer) return;
+    const picked = this.answerPicked ?? answer.chosen;
+    const label = document.createElement("span");
+    label.className = "answer-label";
+    label.textContent = t("composer.answerWith");
+    this.answerRow.append(label);
+    answer.options.forEach((option, index) => {
+      const chip = document.createElement("button");
+      chip.className = "answer-chip" + (option.id === picked ? " picked" : "");
+      chip.textContent = option.label;
+      chip.dataset.head = option.id;
+      chip.setAttribute("aria-pressed", String(option.id === picked));
+      chip.title = `⌥${index + 1}`;
+      chip.addEventListener("click", () => this.pickAnswer(option.id));
+      this.answerRow.append(chip);
+    });
+    const end = document.createElement("span");
+    end.className = "answer-hint";
+    end.textContent = answer.waiting ?? t("composer.answerHint", { keys: answer.options.map((_, index) => `⌥${index + 1}`).join(" ") });
+    if (answer.waiting) end.classList.add("waiting");
+    this.answerRow.append(end);
+  }
+
+  private pickAnswer(id: string): void {
+    this.answerPicked = id === this.answer?.chosen ? null : id;
+    this.drawAnswer();
+    this.view.focus();
+  }
+
+  /** ⌥1, ⌥2, ⌥3 pick a chip (by key position: ⌥ changes the character typed). */
+  private answerKey(event: KeyboardEvent): boolean {
+    if (!this.answer || !event.altKey || event.metaKey || event.ctrlKey || event.shiftKey) return false;
+    const digit = /^Digit([1-9])$/.exec(event.code);
+    const option = digit ? this.answer.options[Number(digit[1]) - 1] : undefined;
+    if (!option) return false;
+    event.preventDefault();
+    this.pickAnswer(option.id);
     return true;
   }
 
@@ -421,6 +496,15 @@ export class Composer {
     for (const file of files) sendFile(file);
     return true;
   }
+}
+
+/** "@codex rest" (or a head's label, or "@both") at the very start: that option, and the words after it. */
+export function answerPrefix(text: string, answer: AnswerWithView): { id: string; rest: string } | null {
+  const match = /^\s*@(\S+)\s+/.exec(text);
+  if (!match) return null;
+  const said = match[1].toLowerCase();
+  const option = answer.options.find((option) => option.id.toLowerCase() === said || option.label.toLowerCase() === said);
+  return option ? { id: option.id, rest: text.slice(match[0].length) } : null;
 }
 
 /** How many rows the / list shows at most. */
