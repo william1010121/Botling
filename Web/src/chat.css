@@ -438,7 +438,8 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
   font-size: 14px; line-height: 1.55; overflow-wrap: anywhere;
 }
 .sub-from-body > :last-child { margin-bottom: 0; }
-.row.sub-work > .step-list { gap: 0; margin-top: 0; }
+.row.sub-work .step-list { gap: 0; margin-top: 0; }
+.row.sub-work .steps-run, .row.sub-work .steps.live { margin: 2px 0; }
 .row.sub-work .step-head { padding: 1px 6px; line-height: 1.6; }
 .row.sub-work .step.text { font-size: 13px; }
 .row.sub-work .step-icon.done { color: var(--faint); }
