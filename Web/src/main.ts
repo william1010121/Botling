@@ -14,6 +14,7 @@ import type { ChatState, Draft, MessageView, SpecState, StatePatch } from "./typ
 import { applyPatch } from "./patch";
 import { escapeHTML } from "./util";
 import { installImeGuard } from "./ime";
+import { reportVisiblePinsSoon, setWindowVisible } from "./visible";
 
 // Before anything listens for keys: an input method's Return never reaches a page handler.
 installImeGuard(window);
@@ -321,6 +322,8 @@ declare global {
       detailReply(requestID: number, ok: boolean, value: string): void;
       taskOutput(messageID: string, taskID: string, text: string): void;
       focus(): void;
+      /** Whether the app's window is shown (not minimized, hidden or fully covered). */
+      setWindowVisible(visible: boolean): void;
     };
   }
 }
@@ -380,9 +383,15 @@ function setSpec(state: SpecState): void {
   specPanel.update(state);
 }
 window.ccb = {
-  setState: (state) => chat.setState(state),
+  setState: (state) => {
+    chat.setState(state);
+    reportVisiblePinsSoon();
+  },
   setDrafts: (drafts) => chat.setDrafts(drafts),
-  patchState: (patch) => chat.patchState(patch),
+  patchState: (patch) => {
+    chat.patchState(patch);
+    reportVisiblePinsSoon();
+  },
   setPlugins: (specs) => chat.plugins.sync(specs),
   runCommand: (id) => chat.plugins.execute(id),
   hostReply: (callID, ok, value) => chat.plugins.hostReply(callID, ok, value),
@@ -391,6 +400,12 @@ window.ccb = {
   showPanel: (key) => showPanel(key),
   setSpec: (state) => setSpec(state),
   focus: () => chat.focus(),
+  setWindowVisible: (visible) => setWindowVisible(visible),
 };
+// Which pins the user can see changes as the chat or Board scrolls, the window resizes, or a pin
+// is opened or closed: Swift's timer reruns only those (visible.ts).
+for (const type of ["scroll", "resize", "click", "visibilitychange"]) {
+  (type === "resize" ? window : document).addEventListener(type, reportVisiblePinsSoon, { capture: true, passive: true });
+}
 startTaskTicks();
 post({ type: "ready" });

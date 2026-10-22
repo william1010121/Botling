@@ -463,7 +463,8 @@ struct PinTests {
         workspace.componentCommands.approve("printf 1", in: folder)
         workspace.componentCommands.approve("printf 2", in: folder)
 
-        await workspace.refreshDuePins()
+        // Their chips are on screen (RefreshVisibilityTests: only pins seen refresh).
+        await workspace.pinsVisible([due.id, manual.id, unallowed.id], in: bot)
         #expect(workspace.componentCommands.runs[due.card]?.data == "1")
         #expect(workspace.componentCommands.runs[manual.card] == nil)
         #expect(workspace.componentCommands.runs[unallowed.card] == nil)

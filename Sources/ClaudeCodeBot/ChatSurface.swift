@@ -66,6 +66,7 @@ struct ChatSurface: NSViewRepresentable {
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
         view.configuration.userContentController.removeScriptMessageHandler(forName: "ccb")
         if let observer = coordinator.focusObserver { NotificationCenter.default.removeObserver(observer) }
+        coordinator.stopWatchingWindow()
     }
 
     static var pageURL: URL? {
@@ -139,9 +140,52 @@ struct ChatSurface: NSViewRepresentable {
         private var pushLater = false
         private var pluginRevision = -1
 
+        /// Whether the window was shown when last told to the page and the workspace.
+        private var windowShown: Bool?
+        private var windowObservers: [NSObjectProtocol] = []
+
+        /// Cards that refresh by themselves run only while the window is shown: not minimized,
+        /// not hidden with the app, not fully covered by other windows (its occlusion state).
+        func watchWindow() {
+            if windowObservers.isEmpty {
+                let center = NotificationCenter.default
+                let names: [Notification.Name] = [
+                    NSWindow.didChangeOcclusionStateNotification, NSWindow.didMiniaturizeNotification,
+                    NSWindow.didDeminiaturizeNotification, NSApplication.didHideNotification, NSApplication.didUnhideNotification,
+                ]
+                windowObservers = names.map { name in
+                    center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                        MainActor.assumeIsolated { self?.windowChanged() }
+                    }
+                }
+            }
+            windowChanged()
+        }
+
+        /// Tells the page and the workspace when the window is shown or no longer is.
+        func windowChanged() {
+            guard ready, let view, let surface else { return }
+            let window = view.window
+            let shown = window.map {
+                RefreshSight.windowShows(occlusionVisible: $0.occlusionState.contains(.visible), miniaturized: $0.isMiniaturized, appHidden: NSApp.isHidden)
+            } ?? false
+            guard shown != windowShown else { return }
+            windowShown = shown
+            view.evaluateJavaScript("ccb.setWindowVisible(\(shown))")
+            let workspace = surface.workspace
+            Task { await workspace.setWindowVisible(shown) }
+        }
+
+        func stopWatchingWindow() {
+            for observer in windowObservers { NotificationCenter.default.removeObserver(observer) }
+            windowObservers = []
+        }
+
         /// Sends the latest plugins and state, when the page is ready and something changed.
         func push() {
             guard ready, let surface, let view else { return }
+            // The view may have reached its window after the page was ready.
+            windowChanged()
             if surface.plugins.revision != pluginRevision {
                 pluginRevision = surface.plugins.revision
                 view.evaluateJavaScript(ChatSurface.setPluginsScript(surface.plugins))
@@ -186,6 +230,8 @@ struct ChatSurface: NSViewRepresentable {
                 // The drafts before the first state, so the first chat shows its own.
                 view?.evaluateJavaScript(workspace.drafts.script)
                 push()
+                windowShown = nil
+                watchWindow()
                 view?.evaluateJavaScript("ccb.focus()")
             case "send":
                 let files = inputs.files[bot.id] ?? []
@@ -434,6 +480,10 @@ struct ChatSurface: NSViewRepresentable {
                         if workspace.openSpecID == specID { workspace.closeSpec() } else { workspace.openSpec(specID, in: bot) }
                     }
                 }
+            case "pinsVisible":
+                // The pins the user can see now: only those refresh by themselves.
+                let ids = (body["ids"] as? [String])?.compactMap(UUID.init(uuidString:)) ?? []
+                Task { await workspace.pinsVisible(ids, in: bot) }
             case "pinShown":
                 let ids = (body["ids"] as? [String])?.compactMap(UUID.init(uuidString:))
                 let owner = pinBot(ids?.first)

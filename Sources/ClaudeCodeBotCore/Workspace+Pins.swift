@@ -382,24 +382,43 @@ extension Workspace {
         await run(due, in: bot)
     }
 
-    /// Pins refreshed every few minutes whose time has come, in every chat. Only commands the
-    /// user allowed in that bot's folder run.
+    /// Pins refreshed every so often whose time has come and that the user can see
+    /// (`refreshSight`): the window shown, their chat on screen and the page showing them (a chip,
+    /// the opened pin, a Board tile in view, a floating card; one shown in all bots too). A pin
+    /// nobody sees waits, and runs at once when seen again if its time came meanwhile. Only
+    /// commands the user allowed in that bot's folder run.
     public func refreshDuePins(now: Date = Date()) async {
+        let shown = ObjectIdentifier(selectedBot)
         await withTaskGroup(of: Void.self) { group in
             for bot in chatsWithPins {
                 let folder = pinFolder(for: bot)
                 let due = bot.pins.filter { pin in
-                    guard let command = pin.command, componentCommands.isApproved(command, in: folder) else { return false }
+                    guard let command = pin.command, refreshSight.sees(pin.id, shown: shown),
+                          componentCommands.isApproved(command, in: folder) else { return false }
                     // A floating pin refreshed every few seconds is rerun by the page that shows
-                    // it, only while the window is shown: one shown in all bots, or one of the
-                    // chat on screen. One floating only in another chat runs here as any pin.
-                    if pin.float != nil, pin.refresh == .interval, pin.seconds != nil,
-                       bot === selectedBot || isGlobalFloat(pin.id) { return false }
+                    // it, by the same rule (Web/src/visible.ts).
+                    if pin.float != nil, pin.refresh == .interval, pin.seconds != nil { return false }
                     return pin.isDue(at: now, lastRan: lastRan(pin))
                 }
                 if !due.isEmpty { group.addTask { await self.run(due, in: bot) } }
             }
         }
+    }
+
+    /// The page showing `chat` says which pins the user can see now; one seen again whose time
+    /// came while it was not runs right away.
+    public func pinsVisible(_ ids: [UUID], in chat: Bot, now: Date = Date()) async {
+        refreshSight.chat = ObjectIdentifier(chat)
+        refreshSight.pins = Set(ids)
+        await refreshDuePins(now: now)
+    }
+
+    /// The app's window was shown or hidden (minimized, the app hidden, fully covered). Shown
+    /// again, pins whose time came meanwhile run right away.
+    public func setWindowVisible(_ visible: Bool, now: Date = Date()) async {
+        guard visible != refreshSight.windowVisible else { return }
+        refreshSight.windowVisible = visible
+        if visible { await refreshDuePins(now: now) }
     }
 
     private func run(_ pins: [PinnedComponent], in bot: Bot) async {
@@ -411,7 +430,7 @@ extension Workspace {
     }
 
     /// Checks every `interval` seconds for pins due a refresh (the app starts it); every second,
-    /// for pins refreshed every few seconds.
+    /// for pins refreshed every few seconds. Only pins the user can see run.
     public func startPinRefresh(every interval: TimeInterval = 1) {
         Task { [weak self] in
             while !Task.isCancelled {

@@ -913,6 +913,10 @@ public final class Workspace: ObservableObject {
 
     private var routineTask: Task<Void, Never>?
 
+    /// Whether the window is shown and which pins its page shows: pins refresh by themselves only
+    /// then (`refreshDuePins`). Not published: it redraws nothing.
+    public internal(set) var refreshSight = RefreshSight()
+
     /// Checks every `interval` seconds for routines whose time has come. Checking a wall-clock
     /// time (rather than sleeping until it) survives the Mac sleeping, and a time missed while
     /// ClaudeCodeBot was closed still runs once later that day.

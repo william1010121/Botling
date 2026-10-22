@@ -398,6 +398,7 @@ export type Action =
   | { type: "unpin"; id: string }
   | { type: "pinCommand"; id: string; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean; live?: boolean }
   | { type: "pinShown"; ids: string[] | null }
+  | { type: "pinsVisible"; ids: string[] }
   | { type: "movePin"; id: string; to: number }
   | { type: "resizePin"; id: string; size: PinSize }
   | { type: "arrangePins"; places: { id: string; col: number; row: number; size?: PinSize }[] }

@@ -5,6 +5,7 @@ import { imeGuardScript } from "./ime";
 import { openMedia } from "./lightbox";
 import { acceptPictures } from "./pictures";
 import { LiveSchedule, liveTick, type LiveCard } from "./refresh";
+import { onScreen, whenShownAgain } from "./visible";
 import { escapeHTML } from "./util";
 import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./types";
 
@@ -911,20 +912,15 @@ export function hasFrame(element: Element | null): boolean {
  * Cards that refresh by themselves (`Refresh: every 2s`): what runs each one again, by its card,
  * the newest drawing's (a redraw may keep the old element, so the element holds only the key),
  * and when each is due. A card is due `every` seconds after it was first seen done (or failed);
- * it then runs once it is on screen and the window is shown, and counts again once it is drawn
+ * it then runs once the user can see it (`onScreen`, visible.ts), and counts again once it is drawn
  * done again, so a run is never asked for while one is going.
  */
 const liveRuns = new Map<string, () => void>();
 const liveSchedule = new LiveSchedule();
 let liveTimer: ReturnType<typeof setInterval> | null = null;
 
-/** On screen: the window is shown and some of the card is inside it. */
-function onScreen(element: Element): boolean {
-  if (document.visibilityState === "hidden") return false;
-  const box = element.getBoundingClientRect();
-  if (box.width <= 0 || box.height <= 0) return false;
-  return box.bottom > 0 && box.top < (window.innerHeight || document.documentElement.clientHeight);
-}
+// Shown again (the window was minimized, hidden or covered): those overdue run at once.
+whenShownAgain(() => refreshDueCards());
 
 /** Runs the cards whose time has come and that are on screen; how many ran. */
 export function refreshDueCards(now = Date.now()): number {
@@ -935,7 +931,8 @@ export function refreshDueCards(now = Date.now()): number {
       key,
       every: Number(card.dataset.every),
       idle: card.dataset.status === "done" || card.dataset.status === "failed",
-      // Not on screen, or its frame not built yet (it is built once near): it waits.
+      // Not seen (visible.ts: the window shown, its tab showing, scrolled into view), or its
+      // frame not built yet (it is built once near): it waits.
       ready: () => onScreen(card) && builtFrames(card),
       run: () => liveRuns.get(key)?.(),
     };
