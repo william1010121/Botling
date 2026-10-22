@@ -465,6 +465,13 @@ describe("messages", () => {
     expect(messageElement(message({ text: "x" }), {}).querySelector(".speaker")).toBeNull();
   });
 
+  it("name the bot above a message it sent its subagent", () => {
+    const row = messageElement(message({ role: "user", text: "Now run echo two", speaker: "Main" }), {});
+    expect(row.querySelector(".user-body > .speaker")?.textContent).toBe("Main");
+    expect(row.querySelector(".user-bubble")?.textContent).toBe("Now run echo two");
+    expect(messageElement(message({ role: "user", text: "x" }), {}).querySelector(".speaker")).toBeNull();
+  });
+
   it("keep open choices unfolded", () => {
     const row = messageElement(message({ open: true, choices: [{ label: "A", detail: null, recommended: false }] }), {});
     expect(row.querySelector(".folded-choice")).toBeNull();

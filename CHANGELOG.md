@@ -21,6 +21,16 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **A subagent its bot sends more work with SendMessage shows at work again, with the message.**
+  When a bot resumed a finished subagent (or queued a message for one still running), the
+  resumed run's `task_started` and `task_notification` name the SendMessage call, not the Agent
+  call that started it, so the app either made a second, empty row for it or nothing at all; its
+  own row stayed "done", and opening it did not show what the bot had sent. Now the SendMessage
+  call is matched to the subagent by the agentId or name it was sent to (or the agentId in the
+  result): that row is at work again until the resumed run's notification, the turn gets a
+  background-work icon for it, and its conversation shows the bot's message, under the bot's
+  name, where it came, with what the subagent did after it below. One the app does not know
+  (sent off before it restarted) gets a row from what the message says.
 - **A bot's reply that says "here is the card" shows the card under it.** A bot that keeps a
   card up to date (`<show name="study-progress" id="progress">…</show>`) and was asked for the
   latest one answered "最新進度卡如下…", but the app put the new data into the card with that id

@@ -340,7 +340,9 @@ public struct ScheduleResult: Equatable, Sendable {
 /// The structured result (`tool_use_result`) claude gives a call that started background work:
 /// an Agent call `{status: "async_launched", agentId, outputFile, …}` (a subagent that finished at
 /// once: `{status: "completed", agentId, …}`), a Bash call sent to the background
-/// `{backgroundTaskId, …}`. Read instead of the words for the model, which change between versions.
+/// `{backgroundTaskId, …}`; a SendMessage call to a subagent `{resumedAgentId, pin: {id}, …}`
+/// (resumed), or `{pin: {id}, …}` (queued for one at work). Read instead of the words for the
+/// model, which change between versions.
 public struct LaunchResult: Equatable, Sendable {
     /// The id SendMessage continues the subagent with.
     public var agentID: String?
@@ -348,11 +350,17 @@ public struct LaunchResult: Equatable, Sendable {
     public var outputFile: String?
     /// It went on in the background: the call's return is not its result.
     public var background = false
+    /// The subagent a SendMessage call resumed (it had ended), by its agentId.
+    public var resumedAgentID: String?
+    /// The subagent a SendMessage call reached (`pin`), by its agentId.
+    public var recipient: String?
 
-    public init(agentID: String? = nil, outputFile: String? = nil, background: Bool = false) {
+    public init(agentID: String? = nil, outputFile: String? = nil, background: Bool = false, resumedAgentID: String? = nil, recipient: String? = nil) {
         self.agentID = agentID
         self.outputFile = outputFile
         self.background = background
+        self.resumedAgentID = resumedAgentID
+        self.recipient = recipient
     }
 
     /// Nil when it has none of these fields (another tool's result, or an error).
@@ -362,7 +370,9 @@ public struct LaunchResult: Equatable, Sendable {
         agentID = text("agentId")
         outputFile = text("outputFile") ?? text("output_file") ?? text("outputPath")
         background = object["status"] as? String == "async_launched" || object["isAsync"] as? Bool == true || text("backgroundTaskId") != nil
-        guard agentID != nil || outputFile != nil || background else { return nil }
+        resumedAgentID = text("resumedAgentId")
+        recipient = ((object["pin"] as? [String: Any])?["id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        guard agentID != nil || outputFile != nil || background || resumedAgentID != nil || recipient != nil else { return nil }
     }
 }
 

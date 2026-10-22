@@ -33,6 +33,11 @@ enum StreamEvent {
                     if TraceBook.subagentTools.contains(name), let agent = input["name"] as? String, !agent.isEmpty {
                         events.append(.trace(.subagentNamed(id: id, name: agent)))
                     }
+                    // A message for a subagent (or another session): which, the stream says after.
+                    if name == TraceBook.messageTool, let to = input["to"] as? String, !to.isEmpty {
+                        let message = input["message"] as? String ?? input["content"] as? String ?? ""
+                        events.append(.trace(.messageSent(id: id, to: to, summary: input["summary"] as? String, message: message, parent: parent)))
+                    }
                     // What it is for, from the call itself rather than its activity line.
                     if TraceBook.subagentTools.contains(name) {
                         let about = (input["description"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
