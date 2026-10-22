@@ -4,6 +4,18 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+### Fixed
+
+- **A bot's reply that says "here is the card" shows the card under it.** A bot that keeps a
+  card up to date (`<show name="study-progress" id="progress">…</show>`) and was asked for the
+  latest one answered "最新進度卡如下…", but the app put the new data into the card with that id
+  in a message from the day before, far up the chat, and nothing was drawn under the words. Now
+  a `<show id="…">` in a reply with words draws the card there and the old one gives way (one
+  card per id; the old reply's words stay); a reply that is only the update still changes the
+  card where it is, adding no bubble.
+
 ## 1.14.2
 
 ### Fixed

@@ -2045,14 +2045,19 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     /// A bot's line whose `<show name="x" id="tests">` names a card (the newest with that id) a
-    /// bot's line in this chat showed before: that card takes the new component and data where
-    /// it is, instead of a new card being drawn (a progress card the bot keeps up to date). Data
-    /// the user saved on it (`ccb.save`) gives way to the bot's. What is left of the line, or nil
-    /// when nothing is (only updates, no words, no question).
+    /// bot's line in this chat showed before. A line with nothing else (no words, no question)
+    /// updates that card where it is, adding no bubble (a progress card the bot keeps up to
+    /// date). A line with words draws the card under them instead, and the card above gives way
+    /// (one card per id; a line left with nothing at all goes): the words talk about the card,
+    /// and the one they named may be far up the chat, out of sight. Data the user saved on it
+    /// (`ccb.save`) gives way to the bot's. What is left of the line, or nil when nothing is.
     func updateCards(from message: ChatMessage) -> ChatMessage? {
         guard message.role == .bot, let displays = message.displays, displays.contains(where: { $0.id != nil }) else { return message }
+        var words = message
+        words.displays = nil
+        words.display = nil
+        let quiet = Self.isBlank(words)
         var kept: [ComponentInstance] = []
-        var updated = false
         for instance in displays {
             guard let id = instance.id,
                   let position = messages.lastIndex(where: { $0.role == .bot && $0.shown.contains { $0.id == id } }) else {
@@ -2061,21 +2066,30 @@ public final class Bot: ObservableObject, Identifiable {
             }
             var shown = messages[position].shown
             guard let index = shown.lastIndex(where: { $0.id == id }) else { continue }
-            var card = instance
-            card.at = shown[index].at
-            card.savedAt = nil
-            shown[index] = card
-            messages[position].displays = shown
+            if quiet {
+                var card = instance
+                card.at = shown[index].at
+                card.savedAt = nil
+                shown[index] = card
+            } else {
+                shown.remove(at: index)
+                kept.append(instance)
+            }
+            messages[position].displays = shown.isEmpty ? nil : shown
             messages[position].display = nil
-            updated = true
+            if Self.isBlank(messages[position]) && (messages[position].steps ?? []).isEmpty && (messages[position].attachments ?? []).isEmpty {
+                messages.remove(at: position)
+            }
         }
-        guard updated else { return message }
         var rest = message
         rest.displays = kept.isEmpty ? nil : kept
-        // Background tasks it started still need their chips under a line of their own.
-        let empty = rest.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && rest.choices == nil && rest.displays == nil
-            && (rest.backgroundTasks ?? []).isEmpty
-        return empty ? nil : rest
+        return Self.isBlank(rest) ? nil : rest
+    }
+
+    /// A line with no words, question, card, or background task chips to show.
+    private static func isBlank(_ message: ChatMessage) -> Bool {
+        message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && message.choices == nil
+            && message.shown.isEmpty && (message.backgroundTasks ?? []).isEmpty
     }
 
     /// Adds a line to this month's file in its archive (the bot greps it for older talk).
