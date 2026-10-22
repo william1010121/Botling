@@ -38,4 +38,5 @@ app's window, and gets every reply you mark "Not right".
 5. For a visible change, attach a screenshot. The snapshot mode draws one with sample data, for
    example `CCB_SNAPSHOT=/tmp/chat.png swift run ClaudeCodeBot`.
 
-By contributing you agree that your work is released under the [MIT License](LICENSE).
+By contributing you agree that your work is released under the
+[GNU General Public License v3.0 or later](LICENSE).

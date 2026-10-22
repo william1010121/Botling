@@ -26,6 +26,15 @@ app and publishes it on GitHub Releases.
   about this" hands the saved file to the main bot, which is told where these files are so it
   can search them. The script that reads the page is a plugin, `ccb-web-extractors`, that
   Maintainer can fix when Gemini changes its page.
+- **LaTeX snippets and live math preview in the web bots.** Typing in Gemini's input box (and
+  the next web bots' boxes) works as with the web-laas browser extension, now built into the
+  app: `$;a` becomes `$\alpha`, `mk` opens inline math, Tab jumps to the next field, and a card
+  above the caret shows the formula as it will look. Formulas in the box and in your sent
+  messages are shown typeset when the caret is elsewhere. ⌥⇧L pauses or resumes it (the app
+  remembers). MathJax for the preview loads into a page only the first time you type math there,
+  and the preview keeps its look on pages whose security policy refuses inline styles. The
+  cheat sheet (⌥⇧K) is not included. Rebuilt from a web-laas checkout with
+  `scripts/build-web-laas.sh`.
 
 ### Removed
 
@@ -38,6 +47,9 @@ app and publishes it on GitHub Releases.
   settings in each bot.json stay on disk, unread.
 ### Changed
 
+- **ClaudeCodeBot is now licensed GPL-3.0-or-later** (was MIT), as it bundles web-laas
+  (GPL-3.0-or-later). Releases up to 1.14.2 stay MIT. Third-party notices for web-laas, MathJax
+  and mhchemParser (Apache-2.0) ship in the app's resources.
 - **"Said it, didn't do it" is checked by the app, not a Stop hook.** Bots no longer get a Claude
   Code Stop hook in the `--settings` the app passes them (`ClaudeCodeBot --stop-guard` is gone,
   and so is `--include-partial-messages`); the bot's permissions and tools are otherwise the
