@@ -92,6 +92,15 @@ app and publishes it on GitHub Releases.
   head: working, awake or asleep. Codex's limits show only the windows
   Codex reports.
 
+### Fixed
+
+- **Two heads no longer grab the same work.** Both heads used to get a message to Both at the
+  same instant, so neither saw the other's "I'll take X" before starting, and they did the
+  same task or one took over everything. Now one head (the one not busy, taking turns when both
+  are free) reads the message first; the other gets it together with the first head's opening
+  words (or its reply, or after 20 seconds of silence), then both keep working at the same
+  time and hear each other mid-turn. The two-heads rule in the prompt says so.
+
 ## 1.15.1
 
 ### Fixed

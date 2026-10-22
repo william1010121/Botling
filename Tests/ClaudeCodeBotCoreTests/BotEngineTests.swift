@@ -63,8 +63,11 @@ struct BotEngineTests {
 /// process of its own, hear each other, and the chat marks which head saw each line.
 @MainActor
 struct TwoHeadsTests {
-    func twoHeaded(_ fake: FakeLauncher, idle: TimeInterval = 60) async -> Bot {
+    /// `claimWait`: how long the second head waits for the first one's opening words (short
+    /// here, so tests where the first head stays silent do not wait long).
+    func twoHeaded(_ fake: FakeLauncher, idle: TimeInterval = 60, claimWait: TimeInterval = 0.3) async -> Bot {
         let bot = makeBot(fake, idle: idle)
+        bot.claimWait = claimWait
         await bot.setHeads([.claude, .codex])
         return bot
     }
@@ -131,6 +134,53 @@ struct TwoHeadsTests {
         let claude = try #require(agent(fake, .claude))
         codex.emit(.trace(.text("I'll take the CSS part.", parent: nil)))
         await eventually { claude.sent.contains("(App: Codex, working on this too, says: I'll take the CSS part.)") }
+    }
+
+    /// The race: both heads used to get a message at the same instant, so neither saw the
+    /// other's "I take X" before it started, and both did the same work. Now the second head
+    /// gets the message with the first one's opening words, then both work at once.
+    @Test func theSecondHeadGetsTheMessageWithTheFirstOnesClaim() async throws {
+        let fake = FakeLauncher()
+        // Nothing answers by itself: each head speaks only when the test says so.
+        fake.respondFor = { _, _ in nil }
+        let bot = await twoHeaded(fake, claimWait: 600)
+        bot.send("Fix the page")
+        await eventually { agent(fake, .claude)?.sent.contains { $0.contains("Fix the page") } == true }
+        let claude = try #require(agent(fake, .claude))
+        // Claude takes a moment before it says what it takes on; Codex must not start blind.
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(agent(fake, .codex)?.sent.contains { $0.contains("Fix the page") } != true)
+        claude.emit(.trace(.text("I'll take the CSS part.", parent: nil)))
+        await eventually { agent(fake, .codex)?.sent.contains { $0.contains("Fix the page") } == true }
+        let codex = try #require(agent(fake, .codex))
+        let first = try #require(codex.sent.first { $0.contains("Fix the page") })
+        let claim = "(App: Claude, working on this too, says: I'll take the CSS part.)"
+        #expect(first.contains(claim + "\n\nFix the page"))
+        #expect(codex.sent.filter { $0.contains(claim) }.count == 1)
+        #expect(bot.isWorking && bot.partner?.isWorking == true)
+        // From here on both work at once and hear each other mid-turn.
+        codex.emit(.trace(.text("Then I'll take the API.", parent: nil)))
+        await eventually { claude.sent.contains("(App: Codex, working on this too, says: Then I'll take the API.)") }
+        // The next message to both is led by the other head.
+        claude.reply("CSS done.")
+        codex.reply("API done.")
+        await eventually { !bot.isWorking && bot.partner?.isWorking == false }
+        bot.send("Now the footer")
+        await eventually { codex.sent.contains { $0.contains("Now the footer") } }
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(!claude.sent.contains { $0.contains("Now the footer") })
+    }
+
+    /// A first head that says nothing does not keep the other waiting long.
+    @Test func theSecondHeadIsNotHeldPastTheWait() async throws {
+        let fake = FakeLauncher()
+        fake.respondFor = { _, text in isAppOnly(text) ? "OK" : nil }
+        let bot = await twoHeaded(fake, claimWait: 0.2)
+        bot.send("Fix it")
+        await eventually { fake.agents.count == 2 }
+        let codex = try #require(agent(fake, .codex))
+        #expect(codex.sent.contains { $0.hasSuffix("Fix it") && !$0.contains("working on this too") })
+        #expect(bot.isWorking && bot.partner?.isWorking == true)
     }
 
     @Test func aMessageNamedForOneGoesToItAlone() async throws {

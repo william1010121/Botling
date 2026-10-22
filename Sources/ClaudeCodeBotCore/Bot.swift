@@ -8,7 +8,9 @@ import Foundation
 public final class Bot: ObservableObject, Identifiable {
     @Published public private(set) var phase: BotPhase = .asleep
     /// A turn the user is waiting for is running.
-    @Published public private(set) var isWorking = false
+    @Published public private(set) var isWorking = false {
+        didSet { if oldValue, !isWorking, sharesChat { (primary ?? self).headStopped(engine) } }
+    }
     @Published public private(set) var messages: [ChatMessage]
     @Published public private(set) var model: BotModel
     /// The CLI it runs on (Claude Code or Codex); both share its memory.md.
@@ -25,6 +27,20 @@ public final class Bot: ObservableObject, Identifiable {
     /// On a partner: the bot whose chat it speaks in.
     private weak var primary: Bot?
     private var partnerWatch: AnyCancellable?
+    /// A message to both heads goes to one of them (the lead) first; the other gets it once the
+    /// lead has said what it takes on, with those words, so the two do not both grab the same
+    /// work. Both still work at the same time after that. Nil when nothing is held.
+    private var claimHold: ClaimHold?
+    private struct ClaimHold {
+        let id = UUID()
+        var lead: BotEngine
+        var held: BotEngine
+        var outgoing: Outgoing
+    }
+    /// The head that led the last message to both: the next one is led by the other.
+    private var lastLead: BotEngine?
+    /// How long the other head waits for the lead's first words before it gets the message anyway.
+    var claimWait: TimeInterval = 20
     /// Hand-offs between the heads and their limits (see `Conductor`).
     private var conductor: Conductor
     /// The conductor's cards waiting for a pick, by message id: what each button does.
@@ -498,17 +514,25 @@ public final class Bot: ObservableObject, Identifiable {
             turnFromRelay = false
             return
         }
-        // Both heads get it at once and decide between them who does what; a message named
-        // for one reaches the other as a note, with its next message.
+        // Both heads get it and decide between them who does what: one first, the other once
+        // the first has said what it takes on (then both work at once); a message named for
+        // one reaches the other as a note, with its next message.
         conduct(conductor.userMessage())
+        // A message held for the other head goes out before this one, so it keeps its order.
+        releaseClaim()
         let answering = heads.heads(for: target)
-        for head in heads.engines {
+        let lead = answering.count > 1 ? claimLead(among: answering) : nil
+        let held = lead.flatMap { lead in answering.first { $0 != lead } }
+        if let lead, let held { holdForClaim(outgoing, for: held, lead: lead) }
+        for head in heads.engines where head != held {
             if answering.contains(head) {
                 deliver(outgoing, to: head)
             } else if let named = answering.first {
                 tell(head, Self.forOtherNote(named, said: outgoing.text), about: [message.id])
             }
         }
+        // The lead could not start: nothing will come from it to wait for.
+        if let lead, bot(forExisting: lead)?.isWorking != true { releaseClaim() }
         turnFromRelay = false
     }
 
@@ -516,6 +540,50 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// It shares its chat with another head (it has two, or it is one's partner).
     var sharesChat: Bool { heads.hasTwo || primary != nil || partner != nil }
+
+    // MARK: Claiming work
+
+    /// Who reads a message to both first: a head that is not at work (the other may be busy
+    /// with something else), taking turns when both are free. Nil when both are at work: they
+    /// hear each other's words mid-turn already, so nothing is held.
+    private func claimLead(among heads: [BotEngine]) -> BotEngine? {
+        let free = heads.filter { bot(forExisting: $0)?.isWorking != true }
+        guard free.count > 1 else { return free.first }
+        let lead = free.first { $0 != lastLead } ?? free[0]
+        return lead
+    }
+
+    /// Keeps `outgoing` from `head` until the lead says what it takes on (or ends its turn, or
+    /// `claimWait` passes).
+    private func holdForClaim(_ outgoing: Outgoing, for head: BotEngine, lead: BotEngine) {
+        let hold = ClaimHold(lead: lead, held: head, outgoing: outgoing)
+        claimHold = hold
+        lastLead = lead
+        let wait = claimWait
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard let self, self.claimHold?.id == hold.id else { return }
+            self.releaseClaim()
+        }
+    }
+
+    /// Sends the held message on, with what the lead said about it (nil: it said nothing yet).
+    private func releaseClaim(saying words: String? = nil, about ids: [UUID] = []) {
+        guard var hold = claimHold else { return }
+        claimHold = nil
+        if let words {
+            hold.outgoing.text = words + "\n\n" + hold.outgoing.text
+            hold.outgoing.about += ids
+        }
+        deliver(hold.outgoing, to: hold.held)
+    }
+
+    /// A head's turn ended: if it led a held message without a word (it had nothing to add, or
+    /// failed), the other head gets the message now.
+    fileprivate func headStopped(_ head: BotEngine) {
+        guard claimHold?.lead == head else { return }
+        releaseClaim()
+    }
 
     /// The bot that runs `head`: this one, or its partner (made when first needed).
     private func bot(for head: BotEngine) -> Bot? {
@@ -641,7 +709,12 @@ public final class Bot: ObservableObject, Identifiable {
     fileprivate func headReplied(_ message: ChatMessage, by head: BotEngine, tags: HeadTags, handed: Bool) {
         guard message.role == .bot else { return }
         for other in BotEngine.allCases where other != head {
-            tell(other, Self.saidNote(head, message), about: [message.id])
+            if let hold = claimHold, hold.lead == head, hold.held == other {
+                // It answered before saying anything else: the reply goes with the message.
+                releaseClaim(saying: Self.saidNote(head, message), about: [message.id])
+            } else {
+                tell(other, Self.saidNote(head, message), about: [message.id])
+            }
         }
         conduct(conductor.replied(head, message.text, tags: tags, handed: handed))
     }
@@ -650,8 +723,14 @@ public final class Bot: ObservableObject, Identifiable {
     /// so a head that took something on is heard before the other starts on it.
     fileprivate func headWords(_ words: String, by head: BotEngine) {
         for other in BotEngine.allCases where other != head {
+            let note = Self.wordsNote(head, words)
+            if let hold = claimHold, hold.lead == head, hold.held == other {
+                // The lead's first words say what it takes on: the other head starts with them.
+                releaseClaim(saying: note)
+                continue
+            }
             guard let target = bot(forExisting: other), target.isWorking else { continue }
-            target.deliver(Outgoing(text: "(App: \(head.displayName), working on this too, says: \(words))"))
+            target.deliver(Outgoing(text: note))
         }
     }
 
@@ -660,6 +739,11 @@ public final class Bot: ObservableObject, Identifiable {
         if let partner, partner.engine == head { return partner }
         if let primary, primary.engine == head { return primary }
         return nil
+    }
+
+    /// What a head is told the other head says mid-turn.
+    static func wordsNote(_ head: BotEngine, _ words: String) -> String {
+        "(App: \(head.displayName), working on this too, says: \(words))"
     }
 
     /// What a head is told the other head said, with what it did on the way.
@@ -2208,6 +2292,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// Ends the process at once without tidying (the bot is being removed).
     public func stop() {
         removed = true
+        claimHold = nil
         partner?.stop()
         cancelIdle()
         queued.removeAll()
@@ -2285,6 +2370,7 @@ public final class Bot: ObservableObject, Identifiable {
             return
         }
         // One head again: the partner ends; if it was the one kept, this head switches to it.
+        claimHold = nil
         await dropPartner()
         guard !new.engines.contains(engine) else { return }
         let next = new.engines[0]
