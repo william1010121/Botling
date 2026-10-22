@@ -92,6 +92,18 @@ app and publishes it on GitHub Releases.
   head: working, awake or asleep. Codex's limits show only the windows
   Codex reports.
 
+### Fixed
+
+- **Two heads hear a claim before starting together.** Both heads used to get a message to Both at the
+  same instant, so neither saw the other's "I'll take X" before starting, and they did the
+  same task or one took over everything. Now one head (the one not busy, taking turns when both
+  are free) reads the message first; the other gets it together with the first head's opening
+  words (or its reply, or after 20 seconds of silence), then both keep working at the same
+  time and hear each other mid-turn. Split messages keep the same lead, deadline, attachments
+  and read markers. A final reply can supply the claim too; switching back to one engine
+  cancels its pending start. Hearing the other head adds context without pausing the user's
+  task or breaking later follow-ups. The two-heads rule in the prompt describes this split.
+
 ## 1.15.1
 
 ### Fixed
