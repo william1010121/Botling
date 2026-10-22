@@ -4,6 +4,23 @@ ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bump
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased
+
+### Added
+
+- **A bot can run on Codex.** A bot's settings have an Engine row: Claude (as before) or Codex.
+  On Codex the bot runs `codex app-server` and works as on Claude: replies, its commands and file
+  edits as steps, Allow cards for what Codex asks to do, a message sent while it works joins that
+  turn (or stops it, as on Claude), and after a restart it goes on in the same Codex thread.
+  Each conversation starts with the app's own approval and sandbox settings (asks before
+  stepping outside its folders; in auto mode Codex's own reviewer answers), not those in
+  `~/.codex/config.toml`. Both engines read and write the same `memory.md`: switching engine
+  while the bot is awake writes a handoff into it before the next message, and the new session
+  reads it. On Codex, results stay as local pages (Codex has no Artifact tool), the model is
+  Codex's own, and its tokens are counted with the rest (no cost in dollars). The first part of
+  the Codex engine plan; one bot with both heads at once, hand-offs between them and round
+  limits come later.
+
 ## 1.15.1
 
 ### Fixed
@@ -58,19 +75,6 @@ app and publishes it on GitHub Releases.
   and the preview keeps its look on pages whose security policy refuses inline styles. The
   cheat sheet (⌥⇧K) is not included. Rebuilt from a web-laas checkout with
   `scripts/build-web-laas.sh`.
-- **A bot can run on Codex.** A bot's settings have an Engine row: Claude (as before) or Codex.
-  On Codex the bot runs `codex app-server` and works as on Claude: replies, its commands and file
-  edits as steps, Allow cards for what Codex asks to do, a message sent while it works joins that
-  turn (or stops it, as on Claude), and after a restart it goes on in the same Codex thread.
-  Each conversation starts with the app's own approval and sandbox settings (asks before
-  stepping outside its folders; in auto mode Codex's own reviewer answers), not those in
-  `~/.codex/config.toml`. Both engines read and write the same `memory.md`: switching engine
-  while the bot is awake writes a handoff into it before the next message, and the new session
-  reads it. On Codex, results stay as local pages (Codex has no Artifact tool), the model is
-  Codex's own, and its tokens are counted with the rest (no cost in dollars). The first part of
-  the Codex engine plan; one bot with both heads at once, hand-offs between them and round
-  limits come later.
-
 ### Removed
 
 - **The built-in Codex reviewer.** The left column's Codex bot ("Read-only reviewer") and `@Codex`
