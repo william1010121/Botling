@@ -106,6 +106,8 @@ export const ko: Dictionary = {
   "composer.cancelReply": "답장 취소",
   "composer.removeFile": "{name} 제거",
   // composer.ts, more
+  "composer.answerWith": "답할 쪽",
+  "composer.answerHint": "{keys} · 또는 @codex 입력",
   "composer.library": "라이브러리",
   // float.ts: pins floating in a corner
   "float.ownerTitle": "{bot}의 고정 항목, 모든 봇에 표시 · {bot}의 폴더에서 실행",
@@ -139,6 +141,8 @@ export const ko: Dictionary = {
   "messages.addToBot": "다른 봇에 추가…",
   "messages.makeComponent": "컴포넌트로 만들기",
   "messages.makeComponentTitle": "{label}: Maintainer가 이 답장으로 바로 만듭니다",
+  "messages.seenBy": "{names} 읽음",
+  "messages.notSeenBy": "{names} 아직 안 읽음",
   "messages.reply": "답장",
   "messages.fold": "접기",
   "messages.answered": "답변함",

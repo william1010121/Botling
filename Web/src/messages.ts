@@ -9,7 +9,7 @@ import { acceptPictures } from "./pictures";
 import type { ComponentRender } from "./plugins";
 import { liveElement, stepsElement } from "./steps";
 import { taskChips } from "./tasks";
-import type { ComponentInfo, DisplayView, FileView, MessageView, SpecChipView, StepView } from "./types";
+import type { ComponentInfo, DisplayView, FileView, MessageView, SeenView, SpecChipView, StepView } from "./types";
 import { escapeHTML } from "./util";
 
 /** What plugins add to how messages are drawn. */
@@ -43,10 +43,34 @@ export function messageElement(message: MessageView, components: Record<string, 
   row.dataset.id = message.id;
 
   drawRole(row, message, components);
+  if (message.seen?.length) {
+    // Which heads this line has reached: under your bubble, or under the reply.
+    const holder = row.querySelector<HTMLElement>(".user-body, .speaker-column, .bot-column") ?? row.querySelector<HTMLElement>(".bot-body") ?? row;
+    holder.append(seenMarks(message.seen));
+  }
   for (const { plugin, handler } of extensions.afterRender) {
     extensions.guard(plugin, () => handler(row, { id: message.id, role: message.role, text: message.text }));
   }
   return row;
+}
+
+/** Small letters for the heads ("C X"): lit for each head the line has reached, faint for the others. */
+export function seenMarks(seen: SeenView[]): HTMLElement {
+  const marks = document.createElement("div");
+  marks.className = "seen-marks";
+  const reached = seen.filter((head) => head.seen).map((head) => head.name);
+  const waiting = seen.filter((head) => !head.seen).map((head) => head.name);
+  const label = [reached.length ? t("messages.seenBy", { names: reached.join(", ") }) : "", waiting.length ? t("messages.notSeenBy", { names: waiting.join(", ") }) : ""].filter(Boolean).join(" · ");
+  marks.title = label;
+  marks.setAttribute("aria-label", label);
+  for (const head of seen) {
+    const mark = document.createElement("span");
+    mark.className = head.seen ? "seen-mark on" : "seen-mark";
+    mark.textContent = head.mark;
+    mark.setAttribute("aria-hidden", "true");
+    marks.append(mark);
+  }
+  return marks;
 }
 
 function drawRole(row: HTMLElement, message: MessageView, components: Record<string, ComponentInfo>): void {

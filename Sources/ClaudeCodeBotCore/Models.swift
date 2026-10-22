@@ -129,6 +129,12 @@ public struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     /// For a bot's reply: the `claude` session that wrote it, so a fork of it can say more about
     /// that reply later ("Make into component" asks one for a brief). Nil for older replies.
     public var session: UUID?
+    /// For a bot's reply: the head that wrote it (Claude or Codex). Nil for older replies.
+    public var engine: BotEngine?
+    /// For your line in a bot with two heads: who it was for.
+    public var to: AnswerTarget?
+    /// In a bot with two heads: the heads this line has reached (in their context).
+    public var seenBy: [BotEngine]?
 
     public init(
         id: UUID = UUID(),

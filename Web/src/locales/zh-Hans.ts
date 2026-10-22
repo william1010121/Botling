@@ -106,6 +106,8 @@ export const zhHans: Dictionary = {
   "composer.cancelReply": "取消回复",
   "composer.removeFile": "移除 {name}",
   // composer.ts, more
+  "composer.answerWith": "回答者",
+  "composer.answerHint": "{keys} · 或输入 @codex",
   "composer.library": "组件库",
   // float.ts: pins floating in a corner
   "float.ownerTitle": "{bot} 的固定项，显示在所有 Bot · 在 {bot} 的文件夹中运行",
@@ -139,6 +141,8 @@ export const zhHans: Dictionary = {
   "messages.addToBot": "添加到其他 Bot…",
   "messages.makeComponent": "做成组件",
   "messages.makeComponentTitle": "{label}：Maintainer 会马上用这条回复做出来",
+  "messages.seenBy": "{names} 已读",
+  "messages.notSeenBy": "{names} 还没读",
   "messages.reply": "回复",
   "messages.fold": "折叠",
   "messages.answered": "已回答",

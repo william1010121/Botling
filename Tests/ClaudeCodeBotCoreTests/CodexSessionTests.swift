@@ -267,15 +267,15 @@ struct CodexSessionTests {
         var codex = session()
         _ = started(&codex, "hello", recording: CodexRecordings.helloAndApproval)
         _ = codex.receive(#"{"id":3,"result":{"turn":{"id":"t1","items":[],"status":"inProgress"}}}"#)
-        let retry = Out(codex.receive(#"{"method":"error","params":{"threadId":"x","turnId":"t1","willRetry":true,"error":{"message":"stream disconnected","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":null}}}}}"#))
+        let retry = Out(codex.receive(#"{"method":"error","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","turnId":"t1","willRetry":true,"error":{"message":"stream disconnected","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":null}}}}}"#))
         #expect(retry.events == [.connectionTrouble(attempt: 1, maxRetries: 0)])
-        let failed = Out(codex.receive(#"{"method":"turn/completed","params":{"threadId":"x","turn":{"id":"t1","items":[],"status":"failed","error":{"message":"stream disconnected","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":null}}}}}}"#))
+        let failed = Out(codex.receive(#"{"method":"turn/completed","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","turn":{"id":"t1","items":[],"status":"failed","error":{"message":"stream disconnected","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":null}}}}}}"#))
         #expect(failed.events == [.connectionLost(parent: nil), .reply("stream disconnected", isError: true)])
     }
 
     @Test func requestsTheAppCannotAnswerGetAnErrorSoNothingWaits() {
         var codex = session()
-        let out = Out(codex.receive(#"{"method":"item/tool/requestUserInput","id":9,"params":{"threadId":"x","turnId":"t","itemId":"i","isBlocking":true,"questions":[]}}"#))
+        let out = Out(codex.receive(#"{"method":"item/tool/requestUserInput","id":9,"params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","turnId":"t","itemId":"i","isBlocking":true,"questions":[]}}"#))
         #expect(out.writes.first?["id"] as? Int == 9)
         #expect(out.writes.first?["error"] != nil)
         #expect(out.events.isEmpty)
@@ -291,5 +291,86 @@ struct CodexSessionTests {
         #expect(try CodexAgentProcess.config(for: launch, threads: threads).resumeThread == "01a1640e-307d-76b3-ac16-5e7333057ab0")
         launch.resume = false
         #expect(try CodexAgentProcess.config(for: launch, threads: threads).resumeThread == nil)
+    }
+
+    // MARK: P4: limits, the reviewer, refusals, subagents, models
+
+    @Test func codexsLimitsAreItsOwn() {
+        var codex = session()
+        _ = started(&codex, "hello", recording: CodexRecordings.helloAndApproval)
+        let out = Out(codex.receive(#"{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":5,"windowDurationMins":10080,"resetsAt":1793085764},"secondary":{"usedPercent":40,"windowDurationMins":300,"resetsAt":1793000000}}}}"#))
+        guard case let .codexRateLimits(limits)? = out.events.first else {
+            Issue.record("no limits: \(out.events)")
+            return
+        }
+        #expect(limits.week?.used == 0.05)
+        #expect(limits.fiveHour?.used == 0.4)
+        #expect(limits.week?.resetsAt == Date(timeIntervalSince1970: 1793085764))
+    }
+
+    @Test func aCallTheReviewerRefusedIsACardAndAllowingItLetsItThroughOnce() throws {
+        var codex = session { $0.autoMode = true }
+        let recording = CodexRecordings.helloAndApproval
+        _ = started(&codex, "first", recording: recording)
+        _ = codex.receive(#"{"id":3,"result":{"turn":{"id":"t1","items":[],"status":"inProgress"}}}"#)
+        let denied = Out(codex.receive(#"{"method":"item/autoApprovalReview/completed","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","turnId":"t1","reviewId":"r1","targetItemId":"exec-1","startedAtMs":1,"completedAtMs":2,"decisionSource":"agent","action":{"type":"command","command":"rm -rf build","cwd":"/tmp/bot","source":"shell"},"review":{"status":"denied","riskLevel":"high","rationale":"Deletes files."}}}"#))
+        #expect(denied.traces == [.toolUse(id: "exec-1", tool: "Bash", title: "Run rm -rf build", detail: "rm -rf build", parent: nil)])
+        #expect(denied.events.last == .permissionDenied(PermissionDenial(toolUseID: "exec-1", tool: "Bash", reason: "[high risk] Deletes files.", confirmed: true)))
+
+        _ = codex.allow(rules: ["Bash(rm -rf build)"])
+        _ = codex.receive(#"{"method":"turn/completed","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","turn":{"id":"t1","items":[],"status":"completed"}}}"#)
+        let next = Out(codex.send(.init(text: "(App: The user allowed it. Run it again.)")))
+        #expect(next.params("turn/start")?["approvalsReviewer"] as? String == "user")
+        _ = codex.receive(#"{"id":4,"result":{"turn":{"id":"t2","items":[],"status":"inProgress"}}}"#)
+        let asked = Out(codex.receive(#"{"method":"item/commandExecution/requestApproval","id":7,"params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","turnId":"t2","itemId":"exec-2","startedAtMs":1,"command":"/bin/zsh -lc 'rm -rf build'","commandActions":[{"type":"unknown","command":"rm -rf build"}]}}"#))
+        #expect(asked.events.isEmpty)
+        #expect((asked.writes.first?["result"] as? [String: Any])?["decision"] as? String == "accept")
+        _ = codex.receive(#"{"method":"turn/completed","params":{"threadId":"01a1640c-e2db-7742-998a-553a14d4336f","turn":{"id":"t2","items":[],"status":"completed"}}}"#)
+        // The turn after goes back to Codex's reviewer.
+        #expect(Out(codex.send(.init(text: "next"))).params("turn/start")?["approvalsReviewer"] as? String == "auto_review")
+    }
+
+    @Test func whyTheUserSaidNoReachesTheTurn() {
+        var codex = session()
+        let recording = CodexRecordings.helloAndApproval
+        _ = started(&codex, "first", recording: recording)
+        _ = replay(lines(recording, from: #"{"id":3,"#, through: #"{"method":"turn/completed""#), into: &codex)
+        _ = Out(codex.send(.init(text: "second")))
+        _ = replay(lines(recording, from: #"{"id":4,"#, through: #"{"method":"item/commandExecution/requestApproval""#), into: &codex)
+        let out = Out(codex.answer("0", allow: false, message: "The user did not allow it and said: use a temp folder"))
+        #expect((out.writes.first?["result"] as? [String: Any])?["decision"] as? String == "decline")
+        #expect(out.methods == ["turn/steer"])
+        let input = (out.params("turn/steer")?["input"] as? [[String: Any]])?.first?["text"] as? String
+        #expect(input == "(App: The user did not allow it and said: use a temp folder)")
+    }
+
+    @Test func codexsOwnSubagentsAreSubagentRows() {
+        var codex = session()
+        _ = started(&codex, "hello", recording: CodexRecordings.helloAndApproval)
+        _ = codex.receive(#"{"id":3,"result":{"turn":{"id":"t1","items":[],"status":"inProgress"}}}"#)
+        let main = "01a1640c-e2db-7742-998a-553a14d4336f"
+        let spawn = Out(codex.receive(#"{"method":"item/started","params":{"threadId":"\#(main)","turnId":"t1","startedAtMs":1,"item":{"type":"collabAgentToolCall","id":"call-1","tool":"spawnAgent","prompt":"Read a.txt and report","receiverThreadIds":[],"senderThreadId":"\#(main)","agentsStates":{},"status":"inProgress"}}}"#))
+        #expect(spawn.traces == [.toolUse(id: "call-1", tool: "Agent", title: "Delegate Read a.txt and report", detail: "Read a.txt and report", parent: nil)])
+        let spawned = Out(codex.receive(#"{"method":"item/completed","params":{"threadId":"\#(main)","turnId":"t1","item":{"type":"collabAgentToolCall","id":"call-1","tool":"spawnAgent","prompt":"Read a.txt and report","receiverThreadIds":["sub-1"],"senderThreadId":"\#(main)","agentsStates":{"sub-1":{"status":"running"}},"status":"completed"}}}"#))
+        #expect(spawned.traces == [.subagentStarted(id: "call-1", description: "Read a.txt and report", type: "codex", prompt: "Read a.txt and report", background: false)])
+        let step = Out(codex.receive(#"{"method":"item/started","params":{"threadId":"sub-1","turnId":"s1","startedAtMs":1,"item":{"type":"commandExecution","id":"exec-9","command":"cat a.txt","commandActions":[],"cwd":"/tmp/bot","status":"inProgress"}}}"#))
+        #expect(step.traces == [.toolUse(id: "exec-9", tool: "Bash", title: "Run cat a.txt", detail: "cat a.txt", parent: "call-1")])
+        _ = codex.receive(#"{"method":"item/completed","params":{"threadId":"sub-1","turnId":"s1","item":{"type":"agentMessage","id":"m1","text":"It says hello.","phase":"final_answer"}}}"#)
+        let ended = Out(codex.receive(#"{"method":"turn/completed","params":{"threadId":"sub-1","turn":{"id":"s1","items":[],"status":"completed"}}}"#))
+        #expect(ended.traces == [.subagentEnded(id: "call-1", status: "completed", summary: "It says hello.")])
+        // The subagent's turn is not the bot's: its turn goes on.
+        #expect(ended.replies.isEmpty)
+    }
+
+    @Test func aPickedModelGoesToTheThread() {
+        var codex = session { $0.model = "gpt-5.5-codex" }
+        let out = started(&codex, "hi", recording: CodexRecordings.helloAndApproval)
+        #expect(out.params("thread/start")?["model"] as? String == "gpt-5.5-codex")
+    }
+
+    @Test func theModelListIsRead() {
+        let line = #"{"id":2,"result":{"data":[{"id":"a","displayName":"Model A","isDefault":true,"hidden":false},{"id":"b","displayName":"Hidden","isDefault":false,"hidden":true},{"id":"c","displayName":"Model C","isDefault":false,"hidden":false}],"nextCursor":null}}"#
+        #expect(CodexModels.parse(line) == [CodexModel(id: "a", name: "Model A", isDefault: true), CodexModel(id: "c", name: "Model C", isDefault: false)])
+        #expect(CodexModels.parse(#"{"id":1,"result":{}}"#) == nil)
     }
 }

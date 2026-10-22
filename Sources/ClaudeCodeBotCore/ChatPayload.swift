@@ -60,6 +60,8 @@ public struct ChatPayload: Encodable, Equatable {
         /// A call auto mode blocked that a subagent made: which one (drawn above the card, with
         /// a way to open it).
         var fromSubagent: SubagentRef? = nil
+        /// In a bot with two heads: each head, and whether this line has reached it ("C", "X").
+        var seen: [Seen]? = nil
         /// When it was sent, in a subagent's view: its task and each message its bot sent it
         /// ("From Main · 15:58").
         var time: String? = nil
@@ -355,6 +357,47 @@ public struct ChatPayload: Encodable, Equatable {
     /// The language the page's own words are in (Settings → General → Language): "en", "zh-Hant",
     /// "zh-Hans", "ja" or "ko". What bots wrote and components show stay as they are.
     var lang: String = L10n.language.rawValue
+    /// A bot with two heads: who the next message goes to ("Answer with" above the input box).
+    var answerWith: AnswerWith? = nil
+    /// A loop between the heads under way: "Round 2 of 3", with its Stop now button's words.
+    var rounds: Rounds? = nil
+
+    public struct Rounds: Encodable, Equatable {
+        var text: String
+        var stop: String
+    }
+
+    /// One head's mark on a line: its letter, its name, and whether the line has reached it.
+    public struct Seen: Encodable, Equatable {
+        var mark: String
+        var name: String
+        var seen: Bool
+    }
+
+    /// The marks for a line in a bot with two heads: your lines and the heads' replies.
+    @MainActor
+    static func seenMarks(_ message: ChatMessage, in bot: Bot) -> [Seen]? {
+        guard bot.heads.hasTwo, message.role == .user || message.role == .bot else { return nil }
+        return bot.heads.engines.map { head in
+            Seen(mark: head == .claude ? "C" : "X", name: head.displayName, seen: message.seenBy?.contains(head) == true)
+        }
+    }
+
+    /// The "Answer with" chips: Both (the usual) and each head, and the one new messages go to.
+    public struct AnswerWith: Encodable, Equatable {
+        struct Option: Encodable, Equatable {
+            var id: String
+            var label: String
+        }
+        var options: [Option]
+        var chosen: String
+
+        @MainActor
+        static func of(_ bot: Bot) -> AnswerWith? {
+            guard bot.heads.hasTwo else { return nil }
+            return AnswerWith(options: bot.heads.targets.map { Option(id: $0.rawValue, label: $0.displayName) }, chosen: bot.heads.answerWith.rawValue)
+        }
+    }
 
     /// What a group chat adds: who is typing, and names for who said each line. A bot's own chat
     /// has one too, for the bots called into it with @.
@@ -464,7 +507,7 @@ public struct ChatPayload: Encodable, Equatable {
                 replyTo: message.replyTo?.uuidString,
                 replyPreview: message.replyPreview,
                 openable: message.role == .notice && message.sourceID != nil,
-                speaker: message.role == .bot ? message.sourceID.flatMap { id in speaker.map { $0(id) ?? "A removed bot" } } : nil,
+                speaker: message.role == .bot ? message.sourceID.flatMap { id in speaker.map { $0(id) ?? "A removed bot" } } ?? headLabel(message, in: bot) : headLabel(message, in: bot),
                 steps: message.steps.map { $0.map { stepView($0, in: bot) } },
                 previews: previews(for: message, in: library),
                 feedback: message.role == .relay
@@ -480,7 +523,8 @@ public struct ChatPayload: Encodable, Equatable {
                     let agent = bot.trace.subagent(id)
                     let title = agent.map { $0.description.isEmpty ? ($0.name ?? "") : $0.description } ?? ""
                     return SubagentRef(id: id, title: title.isEmpty ? L("Subagent") : title)
-                }
+                },
+                seen: group == nil ? seenMarks(message, in: bot) : nil
             )
         }
         // All the chat's background work goes on its latest message, as one row of counts.
@@ -526,7 +570,7 @@ public struct ChatPayload: Encodable, Equatable {
             botID: bot.id.uuidString,
             botName: bot.name,
             messages: messages,
-            working: group.map { $0.typing != nil } ?? (bot.isWorking || guest != nil),
+            working: group.map { $0.typing != nil } ?? (bot.isWorking || bot.partner?.isWorking == true || guest != nil),
             avatar: (group?.typing ?? guest).map { avatar($0) } ?? own,
             placeholder: group != nil ? L("Message everyone, or @name one bot…")
                 : bot.profile.role == .main ? L("Make a wish, or ask how things are going…") : L("Message {0}…", bot.name),
@@ -542,15 +586,31 @@ public struct ChatPayload: Encodable, Equatable {
             slashCommands: SlashCommands.all + (share ? [SlashCommands.share] : []),
             slashComponents: slash.own,
             slashLibrary: slash.library,
-            live: liveSteps(of: group.map(\.working) ?? (bot.isWorking ? bot : guest.flatMap { _ in callIn?.working })),
+            live: liveSteps(of: group.map(\.working) ?? (bot.isWorking ? bot : bot.partner?.isWorking == true ? bot.partner : guest.flatMap { _ in callIn?.working })),
             subagent: nil,
             feedback: feedback,
             pins: pinning.map { context in bot.pins.map { pin(view: $0, context: context) } },
             pinChoices: pinning.map { _ in pinChoices(for: bot, library: library) },
             board: pinning.map(\.board),
             floating: floating,
-            makeComponents: specs ? true : nil
+            makeComponents: specs ? true : nil,
+            answerWith: group == nil ? AnswerWith.of(bot) : nil,
+            rounds: group == nil ? bot.rounds.map { Rounds(text: $0.shown, stop: L("Stop now")) } : nil
         )
+    }
+
+    /// In a bot with two heads: which head said a reply ("ClaudeCodeBot · Codex"), and who your
+    /// line was for ("to Both").
+    @MainActor
+    static func headLabel(_ message: ChatMessage, in bot: Bot) -> String? {
+        // Two heads, or a reply by a head this bot does not have (Claude publishing for Codex).
+        let outside = message.engine.map { !bot.heads.engines.contains($0) } ?? false
+        guard bot.heads.hasTwo || outside else { return nil }
+        switch message.role {
+        case .bot: return message.engine.map { "\(bot.name) · \($0.displayName)" }
+        case .user: return message.to.map { L("to {0}", $0.displayName) }
+        default: return nil
+        }
     }
 
     /// The chips of the specs made from `message`, each built one with its component.

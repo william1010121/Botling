@@ -106,6 +106,8 @@ export const ja: Dictionary = {
   "composer.cancelReply": "返信をやめる",
   "composer.removeFile": "{name} を削除",
   // composer.ts, more
+  "composer.answerWith": "回答者",
+  "composer.answerHint": "{keys} · または @codex と入力",
   "composer.library": "ライブラリ",
   // float.ts: pins floating in a corner
   "float.ownerTitle": "{bot} のピン留め。すべてのボットに表示 · {bot} のフォルダで実行",
@@ -139,6 +141,8 @@ export const ja: Dictionary = {
   "messages.addToBot": "別のボットに追加…",
   "messages.makeComponent": "コンポーネントにする",
   "messages.makeComponentTitle": "{label}：Maintainer がこの返信からすぐに作ります",
+  "messages.seenBy": "{names} が既読",
+  "messages.notSeenBy": "{names} は未読",
   "messages.reply": "返信",
   "messages.fold": "折りたたむ",
   "messages.answered": "回答済み",

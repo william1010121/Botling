@@ -107,6 +107,8 @@ export const en = {
   "composer.cancelReply": "Cancel reply",
   "composer.removeFile": "Remove {name}",
   // composer.ts, more
+  "composer.answerWith": "Answer with",
+  "composer.answerHint": "{keys} · or type @codex",
   "composer.library": "library",
   // float.ts: pins floating in a corner
   "float.ownerTitle": "{bot}'s pin, shown in all bots · runs in {bot}'s folder",
@@ -140,6 +142,8 @@ export const en = {
   "messages.addToBot": "Add to another bot…",
   "messages.makeComponent": "Make into component",
   "messages.makeComponentTitle": "{label}: Maintainer builds it from this reply right away",
+  "messages.seenBy": "Seen by {names}",
+  "messages.notSeenBy": "not yet by {names}",
   "messages.reply": "Reply",
   "messages.fold": "Fold",
   "messages.answered": "Answered",

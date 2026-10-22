@@ -41,6 +41,38 @@ app and publishes it on GitHub Releases.
   capture (its page with no scripts or network, and its traffic) through the reader and fails on
   a wrong answer or a page/traffic mismatch. The readers shipped with the app still read only the
   page; tested on local fixture pages that mimic each site's traffic, not yet on the real sites.
+- **Claude and Codex in one bot, at the same time.** "Engines in this bot" in a bot's settings
+  can turn both on. Each head then runs in a process of its own, side by side: every message
+  goes to both, and they decide between them who does what (each says early what it takes on,
+  and leaves alone what the other took). A head hears the other's replies, with what it did,
+  as they come: in its turn when it is working, else with its next message; what it says
+  between steps reaches the other at once while both work. A head with nothing to add shows no
+  reply. "Answer with" above the input box can still name one head for a message (⌥1 ⌥2 ⌥3, or
+  start it with `@codex`, `@claude` or `@both`); the other hears of it with its next message.
+  Each reply says which head wrote it ("ClaudeCodeBot · Codex"). Under your lines and the
+  replies, small C and X marks show which heads have seen them (in their context), lit as it
+  happens. Both work in the same folder and are told so, to say which files they change and
+  edit only their part; they share one `memory.md`, change only the lines about their own
+  work, and it is tidied once, by one head, when the bot sleeps (both sleep together).
+- **The two heads hand work to each other.** A head can hand the other a piece of work by
+  ending its reply with `<handoff to="codex" kind="…">…</handoff>` (a task, a review, or asking
+  its view): the chat shows "Claude → Codex: …", the other head does it, and its reply goes
+  back to the one who handed it. The app counts them for each message you send, as the guard
+  against endless back-and-forth: at most 6 hand-offs, of them 2 reviews and 3 discussion
+  rounds (adjustable; a switch turns hand-offs off). A line over the input box says where they
+  are ("Review round 1 of 2") with Stop now; at the limit a card shows where each head stands
+  for you to pick, or the latest version stands (a setting).
+- **More of the bot works on Codex.** Codex's own limits (its weekly percentage) show in the
+  gear's popover under "Codex", apart from Claude's. In auto mode, a call Codex's reviewer
+  refuses shows the same card as auto mode's blocks on Claude, with its reason; allowing it lets
+  that command through when Codex runs it again. Words you give instead of allowing reach
+  Codex. Codex's own subagents show as subagent rows with their steps. A bot on Codex hands
+  publishing to Claude (`<handoff to="claude">`): Claude publishes the Artifact and the link
+  comes back. A bot's settings have a Codex model menu, listing what the local Codex offers
+  (`model/list`); changing it while awake goes on in the same Codex thread.
+  A bot with both heads says "C + X" in the left column, and its panel's "Now" shows each
+  head: working, awake or asleep. Codex's limits show only the windows
+  Codex reports.
 
 ## 1.15.1
 

@@ -239,7 +239,9 @@ struct ChatSurface: NSViewRepresentable {
                 inputs.files[bot.id] = nil
                 inputs.replies[bot.id] = nil
                 let text = body["text"] as? String ?? ""
-                Task { await workspace.send(text, files: files.map(\.url), replyingTo: reply, to: bot) }
+                // A bot with two heads: the head (or both) picked above the input box.
+                let target = (body["to"] as? String).flatMap(AnswerTarget.init(rawValue:))
+                Task { await workspace.send(text, files: files.map(\.url), replyingTo: reply, answerWith: target, to: bot) }
             case "draft":
                 if let chat = body["botID"] as? String {
                     let text = body["text"] as? String ?? ""
@@ -260,6 +262,8 @@ struct ChatSurface: NSViewRepresentable {
                 view?.evaluateJavaScript("ccb.focus()")
             case "cancelReply":
                 inputs.replies[bot.id] = nil
+            case "stopRounds":
+                bot.stopRounds()
             case "openURL":
                 if let text = body["url"] as? String, let url = URL(string: text) {
                     let label = (body["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? url.lastPathComponent

@@ -98,12 +98,21 @@ final class FakeLauncher: @unchecked Sendable {
     var respond: @Sendable (String) -> String? = { text in
         isAppOnly(text) ? "OK" : "Got it"
     }
+    /// For a bot with two heads: answers by engine (nil: `respond`).
+    var respondFor: (@Sendable (BotEngine, String) -> String?)?
 
     var agents: [FakeAgent] { lock.withLock { _agents } }
 
     var launcher: AgentLauncher {
         { [self] launch in
-            let agent = FakeAgent(launch, respond: respond)
+            let answer: @Sendable (String) -> String?
+            if let byEngine = respondFor {
+                let engine = launch.engine
+                answer = { text in byEngine(engine, text) }
+            } else {
+                answer = respond
+            }
+            let agent = FakeAgent(launch, respond: answer)
             lock.withLock { _agents.append(agent) }
             return agent
         }

@@ -72,6 +72,80 @@ struct LiveClaudeTests {
         #expect(answer.lowercased().contains("teal"))
     }
 
+    /// One bot, both heads, the real CLIs, both processes alive at once: Codex answers a
+    /// message named for it, then Claude, woken for its own, knows what Codex said, and the
+    /// chat marks Codex's line as seen by both.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func twoHeadsWorkSideBySideAndSeeEachOther() async throws {
+        let claude = try #require(ClaudeExecutableLocator().locate())
+        let codex = try #require(CodexCLI.newestExecutable())
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-heads-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let threads = CodexThreads(folder: home.appending(path: "codex-threads"))
+        let launch: AgentLauncher = { launch in
+            launch.engine == .codex ? try CodexAgentProcess.launcher(executable: codex, threads: threads)(launch) : try ClaudeAgentProcess.launcher(executable: claude)(launch)
+        }
+        let bot = Bot(profile: .main(home: home), defaultModel: .haiku, exitTimeout: 60, launcher: launch, store: BotStore(directory: home.appending(path: "store")))
+        bot.sessionExists = { session, folder in Bot.claudeSessionExists(session, in: folder) || threads.thread(for: session) != nil }
+        await bot.setHeads([.claude, .codex])
+
+        bot.send("Pick one colour name at random from red, green, purple and reply with only that word.", to: .codex)
+        await eventually({ bot.messages.contains { $0.role == .bot && $0.engine == .codex } && bot.partner?.isWorking == false }, timeout: 180)
+        let picked = try #require(bot.messages.last { $0.role == .bot && $0.engine == .codex })
+        print("codex:", picked.text)
+
+        bot.send("Which colour did Codex just pick? Reply with only that word.", to: .claude)
+        await eventually({ bot.messages.contains { $0.role == .bot && $0.engine == .claude } && !bot.isWorking }, timeout: 180)
+        let answer = try #require(bot.messages.last { $0.role == .bot && $0.engine == .claude })
+        print("claude:", answer.text)
+        #expect(answer.text.lowercased().contains(picked.text.lowercased().trimmingCharacters(in: .punctuationCharacters.union(.whitespacesAndNewlines))))
+        // No lock: both processes are up.
+        #expect(bot.phase == .awake && bot.partner?.phase == .awake)
+        #expect(bot.messages.first { $0.id == picked.id }?.seenBy == [.claude, .codex])
+        await bot.goToSleep()
+        #expect(bot.partner?.phase == .asleep)
+    }
+
+    /// A message to both: the heads run at once and split the work between them (their own
+    /// judgment, from what they tell each other); every line is marked seen by both.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func bothHeadsSplitOneMessage() async throws {
+        let claude = try #require(ClaudeExecutableLocator().locate())
+        let codex = try #require(CodexCLI.newestExecutable())
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-both-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let threads = CodexThreads(folder: home.appending(path: "codex-threads"))
+        let launch: AgentLauncher = { launch in
+            launch.engine == .codex ? try CodexAgentProcess.launcher(executable: codex, threads: threads)(launch) : try ClaudeAgentProcess.launcher(executable: claude)(launch)
+        }
+        let profile = BotProfile(name: "Probe", role: .manager, avatar: "square", workingDirectory: home, memoryPath: ".bot/memory.md", tools: ["Read", "Write", "Edit"])
+        let bot = Bot(profile: profile, defaultModel: .haiku, exitTimeout: 60, launcher: launch, store: BotStore(directory: home.appending(path: "store")))
+        bot.sessionExists = { session, folder in Bot.claudeSessionExists(session, in: folder) || threads.thread(for: session) != nil }
+        await bot.setHeads([.claude, .codex])
+
+        bot.send("Two small jobs: create a.txt containing the word one, and b.txt containing the word two, in your working folder. Split them between you: each of you does exactly one file.")
+        await eventually({ (bot.isWorking || bot.partner?.isWorking == true) }, timeout: 60)
+        await eventually({ !bot.isWorking && bot.partner?.isWorking == false }, timeout: 300)
+        try? await Task.sleep(for: .seconds(2))
+        for message in bot.messages { print("[\(message.role)] \(message.engine?.displayName ?? "-") seen=\(message.seenBy?.map(\.displayName) ?? []): \(message.text.prefix(160))") }
+        let a = try? String(contentsOf: home.appending(path: "a.txt"), encoding: .utf8)
+        let b = try? String(contentsOf: home.appending(path: "b.txt"), encoding: .utf8)
+        #expect(a?.contains("one") == true)
+        #expect(b?.contains("two") == true)
+        #expect(bot.messages.first?.seenBy == [.claude, .codex])
+        await bot.goToSleep()
+    }
+
+    /// The Codex model menu lists what the local Codex offers (`model/list`).
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func codexListsItsModels() async throws {
+        let models = await CodexModels.load()
+        print("codex models:", models.map(\.id))
+        #expect(!models.isEmpty)
+    }
+
     /// A bot sends a subagent off: the subagent's own steps are recorded under it, it ends with a
     /// result, and the reply carries the card that opens it.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))

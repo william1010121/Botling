@@ -3,6 +3,9 @@ import Foundation
 /// Everything ClaudeCodeBot says to Claude for one bot. Messages marked "App" are never shown in the chat.
 struct BotPrompts {
     private(set) var system: String
+    /// For a bot with two heads: what each is told about the other and hand-offs (also sent as
+    /// a note when the heads change while it is awake).
+    let headsRule: String
     let wake: String
     let tidy: String
     let handoff: String
@@ -48,9 +51,20 @@ struct BotPrompts {
 
     /// What a bot on Codex is told on top: the Claude Code tools these instructions name are not
     /// there, so results stay local and timed work goes into its Routines file.
-    static let codexNote = "- You run on the Codex CLI, not Claude Code. The Claude Code tools these instructions name (the Artifact tool, ScheduleWakeup, CronCreate, the Agent tool, Skill) are not yours: put results in a local page as said above, and put timed work in your Routines file. When something needs one of them (a claude.ai Artifact or Design), say so in one sentence: it can be done on Claude."
+    static let codexNote = "- You run on the Codex CLI, not Claude Code. The Claude Code tools these instructions name (the Artifact tool, ScheduleWakeup, CronCreate, the Agent tool, Skill) are not yours: put results in a local page as said above, and put timed work in your Routines file. When the user wants a result published as a claude.ai Artifact or Design, hand it to Claude: end your reply with <handoff to=\"claude\">what to publish, with the full path of the local file</handoff>; Claude publishes it and its link comes back to you."
 
-    init(profile: BotProfile, results: ResultPublishing = .artifactUnlessSensitive, language: AppLanguage = .english, engine: BotEngine = .claude) {
+    /// The rule above: who the other head is, and how to hand it work.
+    static func headsRule(engine: BotEngine, heads: HeadsSettings) -> String {
+        let other = BotEngine.allCases.first { $0 != engine } ?? engine
+        var rule = "- This bot has two heads, Claude and Codex, working at the same time in this one chat, in the same folder, with one memory file; you are \(engine.displayName). Each user message reaches both of you unless it names one. Decide between you who does what: early in your turn say in one line what you take on (or that \(other.displayName) has it), and leave alone what \(other.displayName) has taken on; when nothing is left for you, reply only <no-reply/>. Lines starting \"(App: \(other.displayName)\" tell you what \(other.displayName) said or did; you need not answer them. \(other.displayName) may be editing files right now: say which files you change, re-read a file just before editing it, change only your part with targeted edits, and never undo \(other.displayName)'s changes. In the memory file change only the lines about your own work; one head tidies it before the bot sleeps."
+        if heads.handoffs {
+            rule += " To hand \(other.displayName) a piece of work, end your reply with <handoff to=\"\(other.rawValue)\" kind=\"task\">the task, with everything it needs</handoff> (kind=\"review\" to have it review your work, kind=\"discuss\" to ask its view); its reply comes back to you. Per user message at most \(heads.limits.handoffs) hand-offs, \(heads.limits.review) of them reviews and \(heads.limits.discussion) discussion rounds."
+        }
+        return rule
+    }
+
+    init(profile: BotProfile, results: ResultPublishing = .artifactUnlessSensitive, language: AppLanguage = .english, engine: BotEngine = .claude, heads: HeadsSettings? = nil) {
+        headsRule = heads.map { Self.headsRule(engine: engine, heads: $0) } ?? ""
         // Codex has no Artifact tool: its results stay local.
         let publishing: ResultPublishing = engine == .codex ? .localOnly : results
         let memory = profile.memoryPath
@@ -131,6 +145,7 @@ struct BotPrompts {
             """
         }
         if engine == .codex { system += "\n" + Self.codexNote }
+        if heads?.hasTwo == true { system += "\n" + headsRule }
         wake = Self.wakeLead + " Read \(memory) before answering; if the file does not exist, treat this as our first meeting.)"
         tidy = Self.tidyLead + " and are about to fall asleep. Update \(memory) with whatever in this conversation is worth remembering, keeping the four-section format and under 150 lines. Reply only OK when done.)"
         handoff = "(App: The model is about to change. Write what you are working on and what comes next into the \"\(MemorySection.inProgress.heading)\" section of \(memory), keeping the four-section format. Reply only OK when done.)"

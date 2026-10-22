@@ -803,6 +803,11 @@ private struct BotRow: View {
                     .foregroundStyle(bot.phase == .asleep ? Theme.muted : Theme.text)
                     .lineLimit(1)
                 Spacer(minLength: 4)
+                if bot.heads.hasTwo {
+                    // Two heads: Claude and Codex.
+                    Text("C + X").font(.system(size: 11)).foregroundStyle(Theme.faint)
+                        .help(L("Claude and Codex"))
+                }
                 if waiting {
                     Circle().fill(Theme.orange).frame(width: 9, height: 9)
                 } else if bot.hasUnread && !selected {
@@ -1154,6 +1159,9 @@ struct DetailPanel: View {
                         }
                     }
                     .frame(minHeight: 24)
+                    if bot.heads.hasTwo {
+                        HeadsNow(bot: bot)
+                    }
                     // A manager: the first thing under "In progress" in its memory.md.
                     if bot.profile.role == .manager,
                        let doing = MemoryFile.items(at: bot.profile.memoryURL, section: .inProgress).first {
@@ -1247,6 +1255,8 @@ struct SettingsPage: View {
     @ObservedObject var bot: Bot
     var close: () -> Void
     @State private var adding = false
+    /// What the local Codex offers (`model/list`), for the Codex model menu.
+    @State private var codexModels: [CodexModel] = []
 
     var body: some View {
         ScrollView {
@@ -1269,24 +1279,45 @@ struct SettingsPage: View {
                 Text(L("Settings")).font(.system(size: 15, weight: .semibold))
             }
 
+            PanelSection(L("Engines in this bot")) {
+                VStack(spacing: 0) {
+                    ForEach(BotEngine.allCases, id: \.self) { engine in
+                        let on = bot.heads.engines.contains(engine)
+                        SwitchRow(title: engine.displayName, isOn: on, disabled: bot.isSwitching || (on && !bot.heads.hasTwo)) { wanted in
+                            let engines = wanted ? bot.heads.engines + [engine] : bot.heads.engines.filter { $0 != engine }
+                            Task { await bot.setHeads(engines) }
+                        }
+                        Rectangle().fill(Theme.line).frame(height: 1)
+                    }
+                    DropdownRow(
+                        title: L("New messages go to"),
+                        choices: bot.heads.targets,
+                        chosen: bot.heads.answerWith,
+                        label: { $0.displayName },
+                        disabled: !bot.heads.hasTwo
+                    ) { target in
+                        bot.setAnswerWith(target)
+                    }
+                }
+                .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                SettingNote(bot.heads.hasTwo
+                    ? L("Both run at the same time, in the same folder, with one memory.md. Each message goes to both unless you name one above the input box.")
+                    : L("Turn on the other engine to ask Claude and Codex in the same chat."))
+            }
+
+            if bot.heads.hasTwo {
+                HeadsLoopsSettings(bot: bot)
+            }
+
             PanelSection(L("Model and thinking")) {
                 VStack(spacing: 0) {
-                    DropdownRow(
-                        title: L("Engine"),
-                        choices: BotEngine.allCases,
-                        chosen: bot.engine,
-                        label: { $0.displayName },
-                        disabled: bot.isSwitching
-                    ) { engine in
-                        Task { await bot.switchEngine(to: engine) }
-                    }
-                    Rectangle().fill(Theme.line).frame(height: 1)
                     DropdownRow(
                         title: L("Model"),
                         choices: BotModel.allCases,
                         chosen: bot.switchTarget ?? bot.model,
                         label: { $0.displayName },
-                        disabled: bot.isSwitching || bot.engine == .codex
+                        disabled: bot.isSwitching || !bot.heads.engines.contains(.claude)
                     ) { model in
                         Task { await bot.switchModel(to: model) }
                     }
@@ -1296,7 +1327,7 @@ struct SettingsPage: View {
                         choices: [nil] + BotModel.allCases.map(Optional.some),
                         chosen: bot.subagentModel,
                         label: { $0?.displayName ?? L("Same as bot") },
-                        disabled: bot.isSwitching || bot.engine == .codex
+                        disabled: bot.isSwitching || !bot.heads.engines.contains(.claude)
                     ) { model in
                         Task { await bot.setSubagentModel(model) }
                     }
@@ -1309,6 +1340,19 @@ struct SettingsPage: View {
                         disabled: bot.isSwitching
                     ) { level in
                         Task { await bot.setEffort(level) }
+                    }
+                    if bot.heads.engines.contains(.codex) {
+                        Rectangle().fill(Theme.line).frame(height: 1)
+                        DropdownRow(
+                            title: L("Codex model"),
+                            choices: [nil] + Self.choices(codexModels, keeping: bot.heads.codexModel),
+                            chosen: bot.heads.codexModel,
+                            label: { id in id.map { id in codexModels.first { $0.id == id }?.name ?? id } ?? L("Codex's default model") },
+                            disabled: bot.isSwitching
+                        ) { model in
+                            Task { await bot.setCodexModel(model) }
+                        }
+                        .task { codexModels = await CodexModels.load() }
                     }
                 }
                 .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
@@ -1333,8 +1377,8 @@ struct SettingsPage: View {
                 }
 
                 SettingNote(L("Subagents use their own model and effort when their definition names one. Default effort leaves it to the model. Awake, a change restarts the bot in the same conversation just before its next message; asleep, it applies when it wakes."))
-                if bot.engine == .codex {
-                    SettingNote(L("On Codex the bot uses Codex's own model, asks before commands outside its folders, and keeps results as local pages. Both engines share its memory.md: switching hands over through it."))
+                if bot.heads.engines.contains(.codex) {
+                    SettingNote(L("On Codex the bot asks before commands outside its folders and keeps results as local pages; Claude publishes them when asked. Model, Subagent model are Claude's; Thinking effort is both's."))
                 }
             }
 
@@ -1403,24 +1447,218 @@ private struct DropdownRow<Choice: Hashable>: View {
     let chosen: Choice
     let label: (Choice) -> String
     var disabled = false
+    /// The title above the menu, for choices too long to share a line with it.
+    var stacked = false
     let pick: (Choice) -> Void
+
+    var body: some View {
+        if stacked {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).foregroundStyle(Theme.text)
+                menu
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 16)
+            .padding(.trailing, 10)
+            .padding(.vertical, 10)
+        } else {
+            HStack {
+                Text(title).foregroundStyle(Theme.text)
+                Spacer()
+                menu
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, 10)
+            .frame(height: 44)
+        }
+    }
+
+    private var menu: some View {
+        Picker(title, selection: Binding(get: { chosen }, set: { if $0 != chosen { pick($0) } })) {
+            ForEach(Array(choices.enumerated()), id: \.offset) { _, choice in
+                Text(label(choice)).tag(choice)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .fixedSize()
+        .disabled(disabled)
+    }
+}
+
+extension SettingsPage {
+    /// The model ids for the menu, with the one picked kept even when Codex no longer lists it.
+    static func choices(_ models: [CodexModel], keeping picked: String?) -> [String?] {
+        var ids = models.map(\.id)
+        if let picked, !ids.contains(picked) { ids.append(picked) }
+        return ids.map(Optional.some)
+    }
+}
+
+/// Each head's state, in a bot with two: both can work at once.
+private struct HeadsNow: View {
+    @ObservedObject var bot: Bot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(bot.heads.engines, id: \.self) { head in
+                if head == bot.engine {
+                    HeadNowRow(head: head, bot: bot)
+                } else if let partner = bot.partner, partner.engine == head {
+                    HeadNowRow(head: head, bot: partner)
+                } else {
+                    HeadNowRow(head: head, bot: nil)
+                }
+            }
+        }
+    }
+}
+
+private struct HeadNowRow: View {
+    let head: BotEngine
+    /// The bot running this head; nil before it first woke.
+    let bot: Bot?
+
+    var body: some View {
+        if let bot {
+            HeadNowState(head: head, bot: bot)
+        } else {
+            HeadNowLine(head: head, state: L("asleep"), working: false)
+        }
+    }
+}
+
+private struct HeadNowState: View {
+    let head: BotEngine
+    @ObservedObject var bot: Bot
+
+    var body: some View {
+        let working = bot.phase != .asleep && bot.isWorking
+        HeadNowLine(head: head, state: bot.phase == .asleep ? L("asleep") : working ? L("working") : L("awake"), working: working)
+    }
+}
+
+private struct HeadNowLine: View {
+    let head: BotEngine
+    let state: String
+    let working: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle().fill(head == .claude ? Color(hex: 0xE3895F) : Color(hex: 0x8AB4FF)).frame(width: 7, height: 7)
+            Text(head.displayName).font(.system(size: 13))
+            Spacer()
+            Text(state).font(.system(size: 12)).foregroundStyle(working ? Theme.green : Theme.faint)
+        }
+    }
+}
+
+/// What two heads do together: hand-offs and their limits (the design's "Talking to each
+/// other" and "Limits").
+private struct HeadsLoopsSettings: View {
+    @ObservedObject var bot: Bot
+
+    var body: some View {
+        PanelSection(L("Talking to each other")) {
+            VStack(spacing: 0) {
+                SwitchRow(title: L("Let Claude and Codex hand work to each other"), isOn: bot.heads.handoffs) { on in
+                    bot.setHandoffs(on)
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            SettingNote(L("Both get each message and decide between them who does what. A hand-off shows as a line in the chat; the work comes back to the one who handed it."))
+        }
+
+        PanelSection(L("Limits")) {
+            VStack(spacing: 0) {
+                CountRow(title: L("Discussion rounds"), note: L("Hand-offs asking the other's view"), value: bot.heads.limits.discussion) { value in
+                    var limits = bot.heads.limits
+                    limits.discussion = value
+                    bot.setLimits(limits)
+                }
+                Rectangle().fill(Theme.line).frame(height: 1)
+                CountRow(title: L("Review rounds"), note: L("Hand-offs asking for a review"), value: bot.heads.limits.review) { value in
+                    var limits = bot.heads.limits
+                    limits.review = value
+                    bot.setLimits(limits)
+                }
+                Rectangle().fill(Theme.line).frame(height: 1)
+                CountRow(title: L("Hand-offs per message"), note: L("Stops ping-pong between the two"), value: bot.heads.limits.handoffs, set: nil)
+                Rectangle().fill(Theme.line).frame(height: 1)
+                DropdownRow(title: L("At the limit"), choices: RoundLimits.AtLimit.allCases, chosen: bot.heads.limits.atLimit, label: { choice in
+                    choice == .ask ? L("Stop and ask me, with both positions") : L("Use the doer's latest version")
+                }, stacked: true) { choice in
+                    var limits = bot.heads.limits
+                    limits.atLimit = choice
+                    bot.setLimits(limits)
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            SettingNote(L("Counted for each message you send. At the limit a card shows where each head stands, or the latest version stands."))
+        }
+    }
+}
+
+/// A count with − and + (nil `set`: shown, not changed here).
+private struct CountRow: View {
+    let title: String
+    let note: String
+    let value: Int
+    let set: ((Int) -> Void)?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).foregroundStyle(Theme.text)
+                Text(note).font(.system(size: 12)).foregroundStyle(Theme.faint)
+            }
+            Spacer()
+            if let set {
+                Button { set(value - 1) } label: { stepIcon("minus") }
+                    .buttonStyle(.plain).disabled(value <= RoundLimits.range.lowerBound)
+                    .accessibilityLabel(L("Decrease"))
+            }
+            Text("\(value)").monospacedDigit().frame(minWidth: 22)
+            if let set {
+                Button { set(value + 1) } label: { stepIcon("plus") }
+                    .buttonStyle(.plain).disabled(value >= RoundLimits.range.upperBound)
+                    .accessibilityLabel(L("Increase"))
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func stepIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.system(size: 11, weight: .semibold))
+            .frame(width: 28, height: 28)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.line))
+            .contentShape(Rectangle())
+    }
+}
+
+/// A setting that is on or off, with a switch.
+private struct SwitchRow: View {
+    let title: String
+    let isOn: Bool
+    var disabled = false
+    let set: (Bool) -> Void
 
     var body: some View {
         HStack {
             Text(title).foregroundStyle(Theme.text)
             Spacer()
-            Picker(title, selection: Binding(get: { chosen }, set: { if $0 != chosen { pick($0) } })) {
-                ForEach(Array(choices.enumerated()), id: \.offset) { _, choice in
-                    Text(label(choice)).tag(choice)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .fixedSize()
-            .disabled(disabled)
+            Toggle(title, isOn: Binding(get: { isOn }, set: { if $0 != isOn { set($0) } }))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .disabled(disabled)
         }
         .padding(.leading, 16)
-        .padding(.trailing, 10)
+        .padding(.trailing, 12)
         .frame(height: 44)
     }
 }

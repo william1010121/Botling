@@ -35,6 +35,10 @@ enum Snapshot {
             drawSettings(to: path)
             return true
         }
+        if let path = ProcessInfo.processInfo.environment["CCB_LIMITS_SNAPSHOT"] {
+            drawLimits(to: path)
+            return true
+        }
         if let path = ProcessInfo.processInfo.environment["CCB_BOT_SETTINGS_SNAPSHOT"] {
             drawBotSettings(to: path)
             return true
@@ -75,6 +79,60 @@ enum Snapshot {
                 ChatMessage(role: .bot, text: "Got it: B with A's working ring. I've handed it to Maintainer to build; it will say here when the new strip is in.", date: now.addingTimeInterval(-50)),
             ])
             draw(root: root, to: path)
+            return true
+        }
+        // `CCB_SNAPSHOT_SAMPLE=heads`: a bot with two heads (Claude and Codex), each reply under
+        // the head that wrote it, a hand-off line, and "Answer with" over the input box. Sample data.
+        if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "heads" {
+            let store = BotStore(directory: root.appending(path: "main"))
+            store.save(heads: HeadsSettings(engines: [.claude, .codex]))
+            func line(_ role: ChatMessage.Role, _ text: String, _ ago: TimeInterval, by engine: BotEngine? = nil, to: AnswerTarget? = nil, seen: [BotEngine]) -> ChatMessage {
+                var message = ChatMessage(role: role, text: text, date: now.addingTimeInterval(-ago))
+                message.engine = engine
+                message.to = to
+                message.seenBy = seen
+                return message
+            }
+            store.save(messages: [
+                ChatMessage(role: .divider, text: "SAMPLE DATA", date: now.addingTimeInterval(-700)),
+                line(.user, "Fix the hover toolbar covering the card, and check it on the Board too", 600, seen: [.claude, .codex]),
+                line(.bot, "I take the toolbar fix in chat.css. Fixed and merged in PR #5.", 500, by: .claude, seen: [.claude, .codex]),
+                line(.bot, "I took the Board check: Board cards have four buttons, so the offset is one button short there. Told Claude.", 450, by: .codex, seen: [.claude, .codex]),
+                ChatMessage(role: .divider, text: "Claude → Codex: review the diff of PR #5 for regressions", date: now.addingTimeInterval(-400)),
+                line(.bot, "No regressions found.", 300, by: .codex, seen: [.claude, .codex]),
+                line(.user, "Is the nit worth a follow-up?", 120, to: .codex, seen: [.codex]),
+                line(.bot, "Yes, a small one: I can make the offset count the buttons.", 60, by: .codex, seen: [.codex]),
+            ])
+            draw(root: root, to: path)
+            return true
+        }
+        // `CCB_SNAPSHOT_SAMPLE=rounds`: two heads discussing (Round 2 of 3 · Stop now), and the
+        // card a review shows at its limit. Sample data.
+        if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "rounds" {
+            let store = BotStore(directory: root.appending(path: "main"))
+            store.save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .both))
+            var ask = ChatMessage(role: .user, text: "Should the release card read git or a JSON file?", date: now.addingTimeInterval(-600))
+            var claude1 = ChatMessage(role: .bot, text: "Read git, and cache the last result so a refresh costs one `git log`.", date: now.addingTimeInterval(-540))
+            claude1.engine = .claude
+            var codex1 = ChatMessage(role: .bot, text: "A JSON file written on each merge is cheaper: no git on refresh.", date: now.addingTimeInterval(-480))
+            codex1.engine = .codex
+            var claude2 = ChatMessage(role: .bot, text: "The JSON goes stale when a merge happens outside the app.", date: now.addingTimeInterval(-420))
+            claude2.engine = .claude
+            let card = ChatMessage(role: .notice, text: "2 review rounds done. 1 blocking issue(s) left.\n\nCodex: the toolbar still overlaps at phone width.", date: now.addingTimeInterval(-60), choices: [
+                Choice(label: "Keep it as is", detail: nil, recommended: true),
+                Choice(label: "Fix it, one more round", detail: nil, recommended: false),
+                Choice(label: "Let Codex fix it", detail: nil, recommended: false),
+            ])
+            store.save(messages: [
+                ChatMessage(role: .divider, text: "SAMPLE DATA", date: now.addingTimeInterval(-700)),
+                ask, claude1, codex1, claude2,
+                ChatMessage(role: .divider, text: "Codex review 2 of 2: 1 blocking", date: now.addingTimeInterval(-90)),
+            ])
+            draw(root: root, to: path) { workspace in
+                // Posted after loading: a saved app card is closed when the app starts.
+                workspace.mainBot.post(card, unread: false)
+                workspace.mainBot.showRoundsForSnapshot(RoundsProgress(kind: .discussion, round: 2, limit: 3))
+            }
             return true
         }
         // `CCB_SNAPSHOT_SAMPLE=subagent`: a subagent's view (read only), still at work: its task
@@ -307,6 +365,10 @@ enum Snapshot {
             BotStore(directory: Workspace.Layout.bot(project.id, in: root)).save(unread: sample.2)
         }
         BotStore(directory: Workspace.Layout.bot(Workspace.maintainerID, in: root)).save(unread: 2)
+        // `CCB_SNAPSHOT_HEADS=1`: the first project has Claude and Codex ("C + X").
+        if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEADS"] != nil {
+            BotStore(directory: Workspace.Layout.bot(projects[0].id, in: root)).save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .claude))
+        }
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
@@ -332,6 +394,11 @@ enum Snapshot {
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         let content = HStack(spacing: 40) { pane(false); pane(true) }
+            .overlay(alignment: .topLeading) {
+                if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEADS"] != nil {
+                    Text("SAMPLE DATA").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.faint).offset(y: -20)
+                }
+            }
             .padding(30)
             .frame(width: 1140, height: 620)
             .foregroundStyle(Theme.text)
@@ -609,6 +676,10 @@ enum Snapshot {
         let project = Workspace.Project(id: UUID(), name: "ClaudeCodeBot", folder: code, avatar: "square")
         try? JSONEncoder().encode([project]).write(to: Workspace.Layout.projectsFile(in: root))
         let store = BotStore(directory: Workspace.Layout.bot(project.id, in: root))
+        // `CCB_SNAPSHOT_HEADS=1`: the bot has Claude and Codex (each head's state under Now).
+        if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEADS"] != nil {
+            store.save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .claude))
+        }
         store.save(messages: [
             ChatMessage(role: .bot, text: "Done: [Sidebar option A](file:///tmp/a.html), [Sidebar collapse](file:///tmp/b.html), [ClaudeCodeBot v1.7.1](file:///tmp/c.html)", date: Date())
         ])
@@ -674,12 +745,54 @@ enum Snapshot {
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         let content = HStack(spacing: 40) { pane(false); pane(true) }
+            .overlay(alignment: .topLeading) {
+                if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEADS"] != nil {
+                    Text("SAMPLE DATA").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.faint).offset(y: -20)
+                }
+            }
             .padding(30)
             .frame(width: 1500, height: 920)
             .foregroundStyle(Theme.text)
             .background(Color(hex: 0x0A0A0C))
             .preferredColorScheme(.dark)
         let frame = NSRect(x: 0, y: 0, width: 1500, height: 920)
+        let window = HeadlessRun.offscreenWindow(frame)
+        window.appearance = NSAppearance(named: .darkAqua)
+        let host = NSHostingView(rootView: content)
+        host.frame = frame
+        window.contentView = host
+        self.window = window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
+            exit(0)
+        }
+    }
+
+    /// `CCB_LIMITS_SNAPSHOT=/path/out.png`: the gear's popover with Claude's limits and
+    /// Codex's, each under its name. Sample data.
+    private static func drawLimits(to path: String) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let now = Date()
+        let claude = RateLimits(fiveHour: RateLimitWindow(used: 0.47, resetsAt: now.addingTimeInterval(2 * 3600), seen: now), week: RateLimitWindow(used: 0.22, resetsAt: now.addingTimeInterval(4 * 86400), seen: now))
+        let codex = RateLimits(fiveHour: nil, week: RateLimitWindow(used: 0.05, resetsAt: now.addingTimeInterval(5 * 86400), seen: now))
+        try? JSONEncoder().encode(claude).write(to: root.appending(path: "rate-limits.json"))
+        try? JSONEncoder().encode(codex).write(to: root.appending(path: "codex-rate-limits.json"))
+        let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
+            Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
+        }
+        let content = VStack(alignment: .leading, spacing: 6) {
+            Text("SAMPLE DATA").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.faint)
+            SettingsPopover(workspace: workspace, registry: workspace.plugins, open: { _ in })
+        }
+        .padding(16)
+        .frame(width: 360, height: 620, alignment: .top)
+        .foregroundStyle(Theme.text)
+        .background(Theme.ground)
+        .preferredColorScheme(.dark)
+        let frame = NSRect(x: 0, y: 0, width: 360, height: 620)
         let window = HeadlessRun.offscreenWindow(frame)
         window.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: content)
@@ -701,17 +814,20 @@ enum Snapshot {
         let folder = root.appending(path: "code/SampleProject")
         try? FileManager.default.createDirectory(at: folder.appending(path: ".bot"), withIntermediateDirectories: true)
         let store = BotStore(directory: root.appending(path: "bot"))
-        store.save(engine: BotEngine(rawValue: ProcessInfo.processInfo.environment["CCB_BOT_ENGINE"] ?? "") ?? .codex)
+        // `CCB_BOT_ENGINE=both`: Claude and Codex in one bot.
+        let engineName = ProcessInfo.processInfo.environment["CCB_BOT_ENGINE"] ?? ""
+        store.save(engine: BotEngine(rawValue: engineName) ?? .codex)
+        if engineName == "both" { store.save(heads: HeadsSettings(engines: [.claude, .codex])) }
         let bot = Bot(profile: .manager(name: "Sample project", avatar: "square", folder: folder), launcher: { _ in throw AppError.claudeNotFound }, store: store)
         let content = VStack(alignment: .leading, spacing: 0) {
             Text("SAMPLE DATA").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.faint).padding(.leading, 20).padding(.top, 10)
             SettingsPage(bot: bot) {}.padding(.horizontal, 20)
         }
-        .frame(width: 380, height: 900, alignment: .top)
+        .frame(width: 380, height: 1100, alignment: .top)
         .foregroundStyle(Theme.text)
         .background(Theme.ground)
         .preferredColorScheme(.dark)
-        let frame = NSRect(x: 0, y: 0, width: 380, height: 900)
+        let frame = NSRect(x: 0, y: 0, width: 380, height: 1100)
         let window = HeadlessRun.offscreenWindow(frame)
         window.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: content)

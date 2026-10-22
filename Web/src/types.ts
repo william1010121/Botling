@@ -63,6 +63,15 @@ export interface MessageView {
   time?: string | null;
   /** claude.ai Artifacts it links to, drawn as cards under it. */
   artifacts?: ArtifactCardView[] | null;
+  /** In a bot with two heads: each head's mark ("C", "X") and whether this line has reached it. */
+  seen?: SeenView[] | null;
+}
+
+/** One head's mark under a line: lit once the line is in that head's context. */
+export interface SeenView {
+  mark: string;
+  name: string;
+  seen: boolean;
 }
 
 /** A claude.ai Artifact a reply links to. */
@@ -379,19 +388,30 @@ export interface ChatState {
   makeComponents?: boolean | null;
   /** The language of the page's own words (Settings → General → Language); absent means English. */
   lang?: string | null;
+  /** A bot with two heads (Claude and Codex): who the next message goes to. */
+  answerWith?: AnswerWithView | null;
+  /** A loop between the two heads under way: "Round 2 of 3", and the Stop now button's words. */
+  rounds?: { text: string; stop: string } | null;
+}
+
+/** "Answer with" above the input box: Both (the usual) and each head, and the default. */
+export interface AnswerWithView {
+  options: { id: string; label: string }[];
+  chosen: string;
 }
 
 export type Action =
   | { type: "ready" }
   /** A `patchState` could not be applied: send the whole state. */
   | { type: "resync" }
-  | { type: "send"; text: string }
+  | { type: "send"; text: string; to?: string }
   /** A chat's unsent text and caret changed (empty: none), for the app to keep over a restart. */
   | { type: "draft"; botID: string; text: string; cursor: number }
   | { type: "choose"; messageID: string; index: number }
   | { type: "answer"; messageID: string; text: string; images?: { name: string; base64: string }[] }
   | { type: "reply"; messageID: string }
   | { type: "cancelReply" }
+  | { type: "stopRounds" }
   | { type: "openURL"; url: string; label: string }
   | { type: "openExternal"; url: string }
   | { type: "revealFile"; url: string }

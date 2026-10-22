@@ -76,6 +76,8 @@ struct CodexSession {
         var effort: EffortLevel?
         /// Go on in this thread (`thread/resume`) instead of starting one.
         var resumeThread: String?
+        /// The Codex model (`model/list`'s id); nil: Codex's own default.
+        var model: String?
     }
 
     private enum Call {
@@ -116,6 +118,16 @@ struct CodexSession {
     private var tokensTotal = TokenUsage()
     private var tokensAtTurnStart = TokenUsage()
     private var finishing = false
+    /// Commands the user allowed after Codex's reviewer refused them (`allow(rules:)`): asked
+    /// about again, they are let through.
+    private var allowedCommands: Set<String> = []
+    /// The next turn asks the app (not Codex's reviewer), so an allowed command goes through;
+    /// the one after goes back to the reviewer.
+    private var reviewerNext: String?
+    /// Codex's own subagents: each thread it spawned, and the call that spawned it.
+    private var subagentThreads: [String: String] = [:]
+    /// What each subagent thread said last, for its report.
+    private var subagentSaid: [String: String] = [:]
 
     init(config: Config) {
         self.config = config
@@ -160,13 +172,32 @@ struct CodexSession {
         return out
     }
 
-    mutating func answer(_ requestID: String, allow: Bool) -> [CodexOutput] {
+    mutating func answer(_ requestID: String, allow: Bool, message: String? = nil) -> [CodexOutput] {
         guard let approval = approvals.removeValue(forKey: requestID) else { return [] }
         let result: [String: Any] = switch approval.kind {
         case .command, .fileChange: ["decision": allow ? "accept" : "decline"]
         case let .permissions(asked): allow ? ["permissions": asked, "scope": "turn"] : ["permissions": [String: Any]()]
         }
-        return [.write(["jsonrpc": "2.0", "id": approval.rpcID, "result": result])]
+        var out: [CodexOutput] = [.write(["jsonrpc": "2.0", "id": approval.rpcID, "result": result])]
+        // A refusal carries no words in Codex's protocol: why goes to the turn as a message.
+        if !allow, let message, !message.isEmpty, let turn, let id = turn.id {
+            out.append(steer(Input(text: "(App: \(message))"), turnID: id))
+        }
+        return out
+    }
+
+    /// The user allowed calls Codex's reviewer refused ("Bash(rm -rf build)"): asked again,
+    /// they go through. The next turn asks the app instead of the reviewer, once.
+    mutating func allow(rules: [String]) -> [CodexOutput] {
+        let commands = rules.compactMap { rule -> String? in
+            guard rule.hasPrefix("Bash("), rule.hasSuffix(")") else { return nil }
+            return String(rule.dropFirst(5).dropLast())
+        }
+        let new = Set(commands).subtracting(allowedCommands)
+        guard !new.isEmpty else { return [] }
+        allowedCommands.formUnion(new)
+        if config.autoMode { reviewerNext = "user" }
+        return []
     }
 
     /// Stdin closes once the turn under way (and any waiting) is done.
@@ -230,7 +261,17 @@ struct CodexSession {
     }
 
     private mutating func notification(_ method: String, _ params: [String: Any]) -> [CodexOutput] {
+        // A line from one of Codex's own subagents: a step under it, not the bot's turn.
+        if let thread = params["threadId"] as? String, let main = threadID, thread != main {
+            return subagentLine(method, params, thread: thread)
+        }
         switch method {
+        case "account/rateLimits/updated":
+            guard let snapshot = params["rateLimits"] as? [String: Any] else { return [] }
+            let limits = Self.rateLimits(snapshot, seen: Date())
+            return limits.isEmpty ? [] : [.event(.codexRateLimits(limits))]
+        case "item/autoApprovalReview/completed":
+            return reviewed(params)
         case "turn/started":
             guard let id = (params["turn"] as? [String: Any])?["id"] as? String else { return [] }
             var out = learnTurn(id)
@@ -271,6 +312,10 @@ struct CodexSession {
         let key = Self.key(rpcID)
         switch method {
         case "item/commandExecution/requestApproval":
+            let asked = [params["command"] as? String, Self.command(params)].compactMap { $0 }
+            if asked.contains(where: allowedCommands.contains) {
+                return [.write(["jsonrpc": "2.0", "id": rpcID, "result": ["decision": "accept"]])]
+            }
             approvals[key] = (rpcID, .command)
             var summary = params["command"] as? String ?? ""
             if let reason = params["reason"] as? String, !reason.isEmpty { summary += (summary.isEmpty ? "" : "\n\n") + reason }
@@ -307,6 +352,7 @@ struct CodexSession {
             "sandbox": "workspace-write",
             "developerInstructions": config.instructions
         ]
+        if let model = config.model { params["model"] = model }
         if !config.writableRoots.isEmpty {
             params["config"] = ["sandbox_workspace_write": ["writable_roots": config.writableRoots.map(\.path)]]
         }
@@ -328,6 +374,10 @@ struct CodexSession {
         startingID = input.id
         var params: [String: Any] = ["threadId": thread, "input": Self.items(input)]
         if let effort = config.effort { params["effort"] = Self.effort(effort) }
+        if let reviewer = reviewerNext {
+            params["approvalsReviewer"] = reviewer
+            reviewerNext = reviewer == "user" ? "auto_review" : nil
+        }
         return [request("turn/start", params, as: .turn)]
     }
 
@@ -416,6 +466,10 @@ struct CodexSession {
         case "webSearch":
             let query = item["query"] as? String ?? ""
             return .toolUse(id: id, tool: "WebSearch", title: StreamEvent.activity(tool: "WebSearch", input: ["query": query]), detail: query, parent: nil)
+        case "collabAgentToolCall" where item["tool"] as? String == "spawnAgent":
+            // One of Codex's own subagents: a subagent row, like Claude's Agent calls.
+            let prompt = item["prompt"] as? String ?? ""
+            return .toolUse(id: id, tool: "Agent", title: "Delegate " + Self.firstLine(prompt), detail: prompt, parent: nil)
         default:
             return nil
         }
@@ -446,9 +500,112 @@ struct CodexSession {
             return [.toolResult(id: id, output: output, failed: status == "failed", parent: nil)]
         case "webSearch":
             return [.toolResult(id: id, output: Self.json(item["results"]), failed: false, parent: nil)]
+        case "collabAgentToolCall":
+            return collab(item, id: id)
         default:
             return []
         }
+    }
+
+    // MARK: Codex's subagents
+
+    /// A spawn names its threads: their lines go under it from now on. A wait or a close says
+    /// how each ended, with its last message.
+    private mutating func collab(_ item: [String: Any], id: String) -> [TraceEvent] {
+        let threads = item["receiverThreadIds"] as? [String] ?? []
+        let states = item["agentsStates"] as? [String: [String: Any]] ?? [:]
+        if item["tool"] as? String == "spawnAgent" {
+            let prompt = item["prompt"] as? String ?? ""
+            for thread in threads { subagentThreads[thread] = id }
+            return [.subagentStarted(id: id, description: Self.firstLine(prompt), type: "codex", prompt: prompt, background: false)]
+        }
+        return states.compactMap { thread, state -> TraceEvent? in
+            guard let subagent = subagentThreads[thread], let status = state["status"] as? String else { return nil }
+            let ended: String? = switch status {
+            case "completed", "shutdown": "completed"
+            case "errored", "notFound": "failed"
+            case "interrupted": "killed"
+            default: nil
+            }
+            guard let ended else { return nil }
+            subagentThreads[thread] = nil
+            let said = (state["message"] as? String) ?? subagentSaid.removeValue(forKey: thread)
+            return .subagentEnded(id: subagent, status: ended, summary: said)
+        }
+    }
+
+    private mutating func subagentLine(_ method: String, _ params: [String: Any], thread: String) -> [CodexOutput] {
+        guard let parent = subagentThreads[thread] else { return [] }
+        switch method {
+        case "item/started":
+            guard let item = params["item"] as? [String: Any], let step = started(item) else { return [] }
+            return [.event(.trace(Self.under(parent, step)))]
+        case "item/completed":
+            guard let item = params["item"] as? [String: Any], let id = item["id"] as? String else { return [] }
+            if item["type"] as? String == "agentMessage" {
+                let words = (item["text"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !words.isEmpty else { return [] }
+                subagentSaid[thread] = words
+                return [.event(.trace(.text(words, parent: parent)))]
+            }
+            _ = id
+            return completed(item).map { .event(.trace(Self.under(parent, $0))) }
+        case "turn/completed":
+            // Its turn ended: it is done unless it is given more (a wait reports that too).
+            let status = (params["turn"] as? [String: Any])?["status"] as? String
+            subagentThreads[thread] = nil
+            let ended = status == "completed" ? "completed" : status == "interrupted" ? "killed" : "failed"
+            return [.event(.trace(.subagentEnded(id: parent, status: ended, summary: subagentSaid.removeValue(forKey: thread))))]
+        default:
+            return []
+        }
+    }
+
+    /// The same step, made by a subagent.
+    static func under(_ parent: String, _ step: TraceEvent) -> TraceEvent {
+        switch step {
+        case let .toolUse(id, tool, title, detail, _): .toolUse(id: id, tool: tool, title: title, detail: detail, parent: parent)
+        case let .toolResult(id, output, failed, _): .toolResult(id: id, output: output, failed: failed, parent: parent)
+        case let .text(text, _): .text(text, parent: parent)
+        default: step
+        }
+    }
+
+    // MARK: Codex's reviewer (auto mode)
+
+    /// Codex's reviewer refused a call: the same card as auto mode's blocks on Claude, with
+    /// its reason. The call is shown as a step first, so the card says what it was.
+    private func reviewed(_ params: [String: Any]) -> [CodexOutput] {
+        guard let review = params["review"] as? [String: Any], review["status"] as? String == "denied" else { return [] }
+        let action = params["action"] as? [String: Any] ?? [:]
+        let id = params["targetItemId"] as? String ?? params["reviewId"] as? String ?? UUID().uuidString
+        let command = action["command"] as? String ?? (action["argv"] as? [String])?.joined(separator: " ") ?? ""
+        var out: [CodexOutput] = []
+        if !command.isEmpty {
+            out.append(.event(.trace(.toolUse(id: id, tool: "Bash", title: StreamEvent.activity(tool: "Bash", input: ["command": command]), detail: command, parent: nil))))
+        }
+        let risk = (review["riskLevel"] as? String).map { "[\($0) risk] " } ?? ""
+        out.append(.event(.permissionDenied(PermissionDenial(toolUseID: id, tool: command.isEmpty ? nil : "Bash", reason: risk + (review["rationale"] as? String ?? ""), confirmed: true))))
+        return out
+    }
+
+    /// Codex's limits as the app keeps Claude's: the shorter window as the 5-hour one, the
+    /// longer as the week (Codex says how long each is).
+    static func rateLimits(_ snapshot: [String: Any], seen: Date) -> RateLimits {
+        var limits = RateLimits()
+        for key in ["primary", "secondary"] {
+            guard let window = snapshot[key] as? [String: Any], let used = (window["usedPercent"] as? NSNumber)?.doubleValue else { continue }
+            let resets = (window["resetsAt"] as? NSNumber).map { Date(timeIntervalSince1970: $0.doubleValue) }
+            let reading = RateLimitWindow(used: min(max(used / 100, 0), 1), resetsAt: resets, seen: seen)
+            let minutes = (window["windowDurationMins"] as? NSNumber)?.intValue ?? 0
+            if minutes > 24 * 60 { limits.week = reading } else { limits.fiveHour = reading }
+        }
+        return limits
+    }
+
+    static func firstLine(_ text: String) -> String {
+        let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text
+        return line.count > 60 ? String(line.prefix(60)) + "…" : line
     }
 
     // MARK: Reading
@@ -546,7 +703,8 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
             autoMode: launch.autoMode,
             writableRoots: launch.extraDirectories,
             effort: launch.effort,
-            resumeThread: resume
+            resumeThread: resume,
+            model: launch.codexModel
         )
     }
 
@@ -660,7 +818,11 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
     }
 
     public func answer(_ request: PermissionRequest, allow: Bool, message: String?) {
-        run { $0.answer(request.id, allow: allow) }
+        run { $0.answer(request.id, allow: allow, message: message) }
+    }
+
+    public func allow(rules: [String]) {
+        run { $0.allow(rules: rules) }
     }
 
     public func interrupt() {
@@ -707,5 +869,89 @@ private final class CodexTail: @unchecked Sendable {
 
     var text: String {
         lock.withLock { String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+}
+
+/// A model Codex offers (`model/list`), for the Codex model menu.
+public struct CodexModel: Equatable, Hashable, Sendable {
+    public let id: String
+    public let name: String
+    public let isDefault: Bool
+
+    public init(id: String, name: String, isDefault: Bool) {
+        self.id = id
+        self.name = name
+        self.isDefault = isDefault
+    }
+}
+
+/// The models the local Codex offers, asked of `codex app-server` (`model/list`) once per app
+/// run, so the menu lists what this Codex and this account have, not a list kept in the app.
+public enum CodexModels {
+    private static let cache = Cache()
+
+    public static func load() async -> [CodexModel] {
+        if let known = cache.models { return known }
+        let found = await Task.detached(priority: .utility) { () -> [CodexModel] in
+            guard let executable = CodexCLI.locateNewest() else { return [] }
+            return ask(executable)
+        }.value
+        if !found.isEmpty { cache.models = found }
+        return found
+    }
+
+    /// The models in a `model/list` response line; nil for any other line.
+    static func parse(_ line: String) -> [CodexModel]? {
+        guard let data = line.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              (object["id"] as? NSNumber)?.intValue == 2,
+              let list = (object["result"] as? [String: Any])?["data"] as? [[String: Any]] else { return nil }
+        return list.compactMap { model in
+            guard model["hidden"] as? Bool != true, let id = model["id"] as? String else { return nil }
+            return CodexModel(id: id, name: model["displayName"] as? String ?? id, isDefault: model["isDefault"] as? Bool ?? false)
+        }
+    }
+
+    private static func ask(_ executable: URL) -> [CodexModel] {
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = ["app-server"]
+        process.environment = CodexCLI.environment()
+        let input = Pipe(), output = Pipe()
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        BrokenPipes.ignore()
+        guard (try? process.run()) != nil else { return [] }
+        let box = ProcessBox(process)
+        DispatchQueue.global().asyncAfter(deadline: .now() + 20) { box.stop() }
+        let lines = [
+            #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"claudecodebot","version":"1"}}}"#,
+            #"{"jsonrpc":"2.0","method":"initialized"}"#,
+            #"{"jsonrpc":"2.0","id":2,"method":"model/list","params":{}}"#,
+        ]
+        try? input.fileHandleForWriting.write(contentsOf: Data((lines.joined(separator: "\n") + "\n").utf8))
+        let buffer = LineBuffer()
+        var found: [CodexModel] = []
+        while true {
+            let data = output.fileHandleForReading.availableData
+            if data.isEmpty { break }
+            if let models = buffer.append(data).lazy.compactMap(parse).first {
+                found = models
+                break
+            }
+        }
+        try? input.fileHandleForWriting.close()
+        box.stop()
+        return found
+    }
+
+    private final class Cache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: [CodexModel]?
+        var models: [CodexModel]? {
+            get { lock.withLock { value } }
+            set { lock.withLock { value = newValue } }
+        }
     }
 }
