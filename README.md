@@ -13,7 +13,7 @@ you already have.
 [![Latest release](https://img.shields.io/github/v/release/william1010121/ClaudeCodeBot?label=release&color=4c8bf5)](https://github.com/william1010121/ClaudeCodeBot/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/william1010121/ClaudeCodeBot/total?color=4c8bf5)](https://github.com/william1010121/ClaudeCodeBot/releases)
 [![CI](https://img.shields.io/github/actions/workflow/status/william1010121/ClaudeCodeBot/ci.yml?branch=main&label=CI)](https://github.com/william1010121/ClaudeCodeBot/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/github/license/william1010121/ClaudeCodeBot?color=blue)](LICENSE)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 <br>
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black?logo=apple&logoColor=white)](#requirements)
 [![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white)](Package.swift)
@@ -338,6 +338,15 @@ app and publishes it on [GitHub Releases](https://github.com/william1010121/Clau
 
 ## License
 
-[MIT](LICENSE) © william1010121. The built-in plugins bundle KaTeX, markdown-it and CodeMirror (all MIT).
+[GPL-3.0-or-later](LICENSE) © william1010121: you may redistribute and modify ClaudeCodeBot under
+the GNU General Public License, version 3 or (at your option) any later version. Releases up to
+and including 1.14.2 were MIT-licensed.
+
+The built-in plugins bundle KaTeX, markdown-it and CodeMirror (all MIT). The web bots' LaTeX
+snippets and live preview are [web-laas](https://github.com/william1010121/web-laas)
+(GPL-3.0-or-later), which bundles MathJax and mhchemParser (Apache-2.0); their notices ship in
+the app as
+[`web-laas/THIRD_PARTY_NOTICES.txt`](Sources/ClaudeCodeBot/Resources/web-laas/THIRD_PARTY_NOTICES.txt),
+rebuilt by `scripts/build-web-laas.sh`.
 
 ClaudeCodeBot is an independent project and is not affiliated with Anthropic or OpenAI.

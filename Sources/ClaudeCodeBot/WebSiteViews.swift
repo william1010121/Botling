@@ -61,6 +61,8 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
         webView.customUserAgent = Self.userAgent
         super.init()
         configuration.userContentController.add(self, contentWorld: Self.world, name: Self.messageName)
+        // LaTeX snippets and live preview in the site's input box (web-laas, in the app's resources).
+        WebLaas.shared(resources: AppResources.bundle.url(forResource: "web-laas", withExtension: nil))?.install(in: webView)
         webView.navigationDelegate = self
         webView.uiDelegate = self
         // A new question gets its id by the page changing its address, without a new load.
