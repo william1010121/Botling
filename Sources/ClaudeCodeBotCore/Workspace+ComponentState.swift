@@ -83,4 +83,20 @@ extension Workspace {
             + lines.joined(separator: "\n")
             + "\nTheir current data is always in \(folder)/chat.json (the message's displays[].data) and \(folder)/pins.json (a pin's data); drawing a component again with <show> starts from the data you give it.)"
     }
+
+    /// What `bot` showed since the user's last message with no data and no command to get it
+    /// from (`<show name="x"></show>` of a component the bot fills): the chat drew nothing there,
+    /// so the bot is told, once, with the user's next message.
+    func emptyShowNote(in bot: Bot) -> String? {
+        let since = bot.messages.last { $0.role == .user }?.date ?? .distantPast
+        var names: [String] = []
+        for message in bot.messages where message.role == .bot && message.date > since {
+            for instance in message.shown where ChatPayload.isEmptyShow(instance, in: message, library: components) && !names.contains(instance.name) {
+                names.append(instance.name)
+            }
+        }
+        guard !names.isEmpty else { return nil }
+        let tags = names.map { "<show name=\"\($0)\"></show>" }.joined(separator: ", ")
+        return "(App: Your last reply had \(tags) with no JSON inside, and \(names.count == 1 ? "that component's" : "those components'") usage has no \"Command:\" line, so nothing was drawn in the chat (the user saw no card there). A \"Board command:\" is not run in the chat. Put the data as JSON inside the tag, <show name=\"\(names[0])\">{…}</show>, in the shape its usage gives, or use command=\"…\" on the tag.)"
+    }
 }

@@ -277,7 +277,8 @@ export interface PinChoiceView {
   pinned: boolean;
 }
 
-export type CommandStatus = "approve" | "idle" | "running" | "done" | "failed";
+/** "empty": a bot showed it with no data and nothing can fill it, so the chat draws nothing. */
+export type CommandStatus = "approve" | "idle" | "running" | "done" | "failed" | "empty";
 
 /** One line of work: a tool call, words between calls, or a subagent. */
 export interface StepView {

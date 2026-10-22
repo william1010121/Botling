@@ -453,6 +453,9 @@ function fromSubagent(agent: { id: string; title: string }): HTMLElement {
  * first keeps the message's id as its key (its height survives a redraw), the rest add their place.
  */
 function componentView(message: MessageView, display: DisplayView, index: number, components: Record<string, ComponentInfo>): HTMLElement | null {
+  // Shown with no data and nothing to get it from: nothing to draw, and no error card in the
+  // user's chat (the app tells the bot with the user's next message).
+  if (display.status === "empty" && !display.command) return null;
   // Data from a command: the card around it asks to allow it, runs it, or says why it failed.
   const element = display.command || display.status
     ? commandCard(display, message.id, index, () => drawComponent(message, display, index, components), { lazy: true })
