@@ -60,6 +60,9 @@ public struct ChatPayload: Encodable, Equatable {
         /// A call auto mode blocked that a subagent made: which one (drawn above the card, with
         /// a way to open it).
         var fromSubagent: SubagentRef? = nil
+        /// When it was sent, in a subagent's view: its task and each message its bot sent it
+        /// ("From Main · 15:58").
+        var time: String? = nil
     }
 
     public struct SubagentRef: Encodable, Equatable {
@@ -159,6 +162,11 @@ public struct ChatPayload: Encodable, Equatable {
         var owner: String
         var status: String
         var type: String?
+        /// What runs it: "claude" (a "codex" one later), for its badge.
+        var engine: String = "claude"
+        /// Its model when known ("Sonnet"): what its Agent call asked for, else its bot's
+        /// subagent model.
+        var model: String? = nil
     }
 
     public struct Display: Encodable, Equatable {
@@ -679,22 +687,29 @@ public struct ChatPayload: Encodable, Equatable {
         return used + others
     }
 
-    /// A subagent's conversation, the way Claude Code shows one: its task as your line, then what
-    /// it said, each with the tool calls before it folded above; the ones still going show live.
-    /// A message its bot sent it later (SendMessage) is a line from the bot, where it came.
+    /// A subagent's conversation, read only: its task and each message its bot sent it later
+    /// (SendMessage) as lines from the bot with when they were sent, in order; what it said, each
+    /// with the tool calls before it (the page draws them one line each); the ones still going show live.
     @MainActor
     public static func make(subagent: Subagent, of bot: Bot, components library: ComponentLibrary?, avatar: String) -> ChatPayload {
         var messages: [Message] = []
-        func message(_ id: String, role: String, text: String, steps: [Step], speaker: String? = nil) -> Message {
-            Message(
+        func message(_ id: String, role: String, text: String, steps: [Step], speaker: String? = nil, at date: Date? = nil) -> Message {
+            var line = Message(
                 id: "\(subagent.id)-\(id)", role: role, text: text, stamp: nil, avatar: role == "bot" ? avatar : nil,
                 choices: nil, chosen: nil, answer: nil, open: false, displays: nil, attachments: nil,
                 replyTo: nil, replyPreview: nil, openable: false, speaker: speaker,
-                steps: steps.isEmpty ? nil : steps.map { stepView($0, in: bot) }
+                steps: steps.isEmpty ? nil : steps.map { step in
+                    var view = stepView(step, in: bot)
+                    // Ended, a call whose result never came is over too: no spinner on it.
+                    if !subagent.isRunning, step.kind == .tool { view.done = true }
+                    return view
+                }
             )
+            line.time = date?.formatted(date: .omitted, time: .shortened)
+            return line
         }
         // One known only from a message sent to it (from before the app restarted) has no task.
-        if !subagent.prompt.isEmpty { messages.append(message("task", role: "user", text: subagent.prompt, steps: [])) }
+        if !subagent.prompt.isEmpty { messages.append(message("task", role: "user", text: subagent.prompt, steps: [], speaker: bot.name, at: subagent.startedAt)) }
         var pending: [Step] = []
         var said = ""
         for step in subagent.steps {
@@ -706,7 +721,7 @@ public struct ChatPayload: Encodable, Equatable {
                 // Its calls before the message stay with what came before it.
                 if !pending.isEmpty { messages.append(message(step.id + "-before", role: "bot", text: "", steps: pending)) }
                 pending = []
-                messages.append(message(step.id, role: "user", text: step.title, steps: [], speaker: bot.name))
+                messages.append(message(step.id, role: "user", text: step.title, steps: [], speaker: bot.name, at: step.at))
                 said = ""
             } else {
                 pending.append(step)
@@ -739,7 +754,8 @@ public struct ChatPayload: Encodable, Equatable {
                 title: subagent.description.isEmpty ? L("Subagent") : subagent.description,
                 owner: bot.name,
                 status: subagent.status.rawValue,
-                type: subagent.type
+                type: subagent.type,
+                model: subagent.model.map { BotModel(rawValue: $0.lowercased())?.displayName ?? $0 } ?? bot.subagentModel?.displayName
             )
         )
     }

@@ -73,6 +73,25 @@ enum Snapshot {
             draw(root: root, to: path)
             return true
         }
+        // `CCB_SNAPSHOT_SAMPLE=subagent`: a subagent's view (read only), still at work: its task
+        // and a later message from its bot, its calls one line each (one command unfolded), the
+        // one under way spinning.
+        if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "subagent" {
+            var subagent = Subagent(id: "toolu_review", description: "Review PR #7", type: "general-purpose",
+                                    prompt: "Review the diff of PR #7 for regressions. Report blocking issues only.", startedAt: now.addingTimeInterval(-600))
+            subagent.model = "sonnet"
+            subagent.steps = [
+                Step(id: "s1", kind: .tool, tool: "Bash", title: "Run git diff main...bot/web-gemini --stat", detail: "git diff main...bot/web-gemini --stat",
+                     output: " Sources/ClaudeCodeBot/WebBot/WebBotView.swift | 84 +++++++---\n Sources/ClaudeCodeBotCore/WebBot.swift        | 31 ++++\n 2 files changed, 96 insertions(+), 19 deletions(-)", done: true),
+                Step(id: "s2", kind: .tool, tool: "Read", title: "Read WebBotView.swift", detail: "/repo/Sources/ClaudeCodeBot/WebBot/WebBotView.swift", output: "import SwiftUI\nimport WebKit\n…", done: true),
+                Step(id: "s3", kind: .text, title: "The view keeps one `WKWebsiteDataStore` for every site; checking whether that is meant.", done: true),
+                Step(id: "s4", kind: .tool, tool: "Grep", title: "Search WKWebsiteDataStore", detail: "WKWebsiteDataStore", output: "WebBotView.swift:41", done: true),
+                Step(id: "m1", kind: .message, tool: "SendMessage", title: "Also check the sign-in data store is per site.", done: true, at: now.addingTimeInterval(-240)),
+                Step(id: "s5", kind: .tool, tool: "Bash", title: "Run swift test --filter WebBot", detail: "swift test --filter WebBot"),
+            ]
+            draw(root: root, to: path, subagent: subagent)
+            return true
+        }
         let picture = URL(filePath: #filePath).deletingLastPathComponent()
             .appending(path: "../../docs/flowcharts/flow-4-lifecycle.png").standardizedFileURL
         // A result page, so the sample shows it as a 「網頁預覽卡片」 card.
@@ -161,16 +180,20 @@ enum Snapshot {
     /// Draws the main bot's chat under `root` in an offscreen window, saves it as a PNG, quits.
     /// `pins`: with the chat's pinned components (chips; `--board` draws its Board instead).
     /// `prepare` adds to the chat once loaded (an app card saved open is closed at load).
-    private static func draw(root: URL, to path: String, pins: Bool = false, prepare: (Workspace) -> Void = { _ in }) {
+    private static func draw(root: URL, to path: String, pins: Bool = false, subagent: Subagent? = nil, prepare: (Workspace) -> Void = { _ in }) {
         guard let page = ChatSurface.pageURL else { exit(1) }
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
         prepare(workspace)
         let board = CommandLine.arguments.contains("--board")
-        let json = ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, pins: pins ? workspace.pinContext(for: workspace.mainBot, board: board) : nil, specs: pins) { projectID in
-            AvatarImages.dataURL(projectID == nil ? .circle : .triangle, eyes: .open)
-        }.json()
+        let json = if let watched = subagent {
+            ChatPayload.make(subagent: watched, of: workspace.mainBot, components: workspace.components, avatar: AvatarImages.dataURL(.circle, eyes: .open)).json()
+        } else {
+            ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, pins: pins ? workspace.pinContext(for: workspace.mainBot, board: board) : nil, specs: pins) { projectID in
+                AvatarImages.dataURL(projectID == nil ? .circle : .triangle, eyes: .open)
+            }.json()
+        }
 
         // `CCB_SNAPSHOT_HEIGHT=900`: a shorter (or taller) window than 1300 points.
         let height = ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEIGHT"].flatMap(Double.init) ?? 1300

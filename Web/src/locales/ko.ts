@@ -125,6 +125,9 @@ export const ko: Dictionary = {
   "subagent.back": "{bot}의 채팅으로 돌아가기",
   "subagent.of": "{bot}의 서브에이전트",
   "subagent.watchOnly": "보기 전용",
+  "subagent.from": "{bot}에게서",
+  "subagent.engine.claude": "Claude 서브에이전트",
+  "subagent.engine.codex": "Codex 서브에이전트",
   "panel.notReady": "이 패널은 아직 준비되지 않았습니다.",
   // markdown.ts
   "markdown.video": "동영상",
