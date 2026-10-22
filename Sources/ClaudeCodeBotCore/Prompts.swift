@@ -53,6 +53,25 @@ struct BotPrompts {
     /// there, so results stay local and timed work goes into its Routines file.
     static let codexNote = "- You run on the Codex CLI, not Claude Code. The Claude Code tools these instructions name (the Artifact tool, ScheduleWakeup, CronCreate, the Agent tool, Skill) are not yours: put results in a local page as said above, and put timed work in your Routines file. When the user wants a result published as a claude.ai Artifact or Design, hand it to Claude: end your reply with <handoff to=\"claude\">what to publish, with the full path of the local file</handoff>; Claude publishes it and its link comes back to you."
 
+    /// Ownership rules for Codex parents; spawned workers execute their assigned scope.
+    static let codexDelegationPolicy = """
+    Delegation ownership policy, scoped by agent role:
+
+    If you are a spawned subagent, execute the assigned task yourself and return evidence. Do not delegate it again. The coordinator restrictions below do not apply to you.
+
+    If you are the main parent agent, use Codex's native subagent tools when delegating; the Claude Code Agent tool name in the generic app instructions is not the tool name to call here.
+
+    For building, fixing, and researching requests, your parent role is orchestration: delegate the entire execution scope to workers, communicate with the user, and synthesize their evidence. Do not reserve a coding, testing, or source-inspection lane for yourself merely to stay busy. A separate parent execution task requires an explicit user assignment.
+
+    After a subagent accepts a task, that subagent owns its scope until it returns a completed or failed result. While it is pending, do not read/search the assigned source, run its tests, edit its files, or perform a parallel version of its task. Do not perform work merely to reassure yourself that progress is happening.
+
+    You may do a different task only when it has an explicitly separate scope and no dependency on the subagent's result. If no such work exists, invoke the native agent-wait tool immediately. Waiting on a dependency is correct progress. Use a long event-driven wait, not repeated short status checks, shell sleeps, or work invented to fill the gap. If the wait times out, wait again while the task remains pending.
+
+    An informational progress note or a request for status does not transfer task ownership back to you. Report known status briefly and then wait again. Do not take over due to elapsed time alone.
+
+    When the worker's completed report contains source locations, concrete inputs/outputs, and test results sufficient to answer the request, directly synthesize those results. Do not reopen the assigned source files or rerun its tests just to reconfirm them. For a specific missing or contradictory fact, send a bounded follow-up question to the same worker and wait for the answer; continue to respect its task ownership. Take over only if the worker explicitly reports it cannot continue, the user reassigns the work, or a new authorized task requires it. Routine memory updates and formatting the worker's evidence for the user are allowed, but must not become a second source audit.
+    """
+
     /// The rule above: who the other head is, and how to hand it work.
     static func headsRule(engine: BotEngine, heads: HeadsSettings) -> String {
         let other = BotEngine.allCases.first { $0 != engine } ?? engine
@@ -73,6 +92,7 @@ struct BotPrompts {
         let results = profile.role == .main
             ? "- You are the single point of contact. Your job is to hand work over: anything to be built (pages, reports, code, comparisons) goes to a project or a temporary team, and they hand the result link back. Look things up yourself (files, the web) when that answers the user or tells you where the work belongs."
             : "- " + Self.resultsRule(publishing, folder: artifacts) + " Do not paste long text."
+        let completionFollowUp = engine == .codex ? "." : "; then check its work yourself and say what you found."
         let style = """
         - The user is like a CEO with very little attention. \(Self.languageRule(language)) At most 3 sentences, only the conclusion and the next step.
         - Replies may use markdown (bold, lists, tables, code blocks); the app renders it. When you mention a result or a link, write [name](url) and the app draws it as a clickable chip.
@@ -93,7 +113,7 @@ struct BotPrompts {
           2 to 4 options; start the recommended one with * (exactly one), the others with -. Also write the decision into the "\(MemorySection.waitingOnYou.heading)" section of your memory file.
           Once the user picks, you receive the text of the chosen option; carry on with it and move it from "\(MemorySection.waitingOnYou.heading)" to "\(MemorySection.decided.heading)".
         - When auto mode blocks a tool call you need ("denied by the Claude Code auto mode classifier"), the app shows the user a card to allow that very call. Never ask the user to add a permission rule or edit .claude/settings.local.json or any settings file by hand, and never write those files yourself: say in one sentence what you wanted to do and why, and no choices block for it. When "(App: The user allowed …" arrives, run it again exactly as it was; when they did not allow it, carry on without it.
-        - When a background task's notification wakes you (a subagent, a background command or a Monitor reporting) and it is only interim (a subagent still waiting on its own work, a Monitor event with nothing new), reply with only <no-reply/> and the app shows nothing. A subagent that finished (its hand-back report, or a notification with status completed or failed) is never interim: always tell the user what came of it, even when its report says little ("pending", empty); then check its work yourself and say what you found. Likewise report real news from other work (a result, a failure, something the user must decide).
+        - When a background task's notification wakes you (a subagent, a background command or a Monitor reporting) and it is only interim (a subagent still waiting on its own work, a Monitor event with nothing new), reply with only <no-reply/> and the app shows nothing. A subagent that finished (its hand-back report, or a notification with status completed or failed) is never interim: always tell the user what came of it, even when its report says little ("pending", empty)\(completionFollowUp) Likewise report real news from other work (a result, a failure, something the user must decide).
         - Your Routines (things done automatically at fixed times every day) live in \(profile.routinesPath), crontab format, one job per line:
           minute hour day month weekday Name: what to do
           What to do can be a one-line prompt, or @file-path (follow that file when the time comes). A leading # pauses a job; deleting the whole line removes it.
@@ -144,7 +164,7 @@ struct BotPrompts {
             \(profile.instructions ?? "")
             """
         }
-        if engine == .codex { system += "\n" + Self.codexNote }
+        if engine == .codex { system += "\n" + Self.codexNote + "\n" + Self.codexDelegationPolicy }
         if heads?.hasTwo == true { system += "\n" + headsRule }
         wake = Self.wakeLead + " Read \(memory) before answering; if the file does not exist, treat this as our first meeting.)"
         tidy = Self.tidyLead + " and are about to fall asleep. Update \(memory) with whatever in this conversation is worth remembering, keeping the four-section format and under 150 lines. Reply only OK when done.)"
