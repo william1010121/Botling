@@ -88,22 +88,52 @@ describe("a subagent's view", () => {
     expect(document.querySelector("#messages .avatar")).toBeNull();
   });
 
-  it("draws its work one line per step, not folded away", () => {
+  it("folds each finished run of steps to one \"N steps\" line, and the one under way stays in sight", () => {
     const running = watching();
     window.ccb.setState({ ...running, working: true, subagent: { ...running.subagent!, status: "running" }, live: [step("s4", "Run swift build", { done: false })] });
-    expect(document.querySelector("#messages .steps-toggle")).toBeNull();
-    const titles = lines().map((line) => line.querySelector(".step-title")!.textContent);
-    expect(titles).toEqual(["Run git diff main...HEAD --stat", "Read WebBotView.swift", "Run swift test --filter WebBot", "Run swift build"]);
-    for (const line of lines()) expect(line.querySelectorAll(".step-head").length).toBe(1);
-    expect(lines().every((line) => !line.closest("[hidden]"))).toBe(true);
-    // The one under way has a spinner, and no typing bubble with a face.
-    expect(lines()[3].querySelector(".step-icon.spinner")).not.toBeNull();
-    expect(lines()[0].querySelector(".step-icon.spinner")).toBeNull();
+    // One fold per finished run, between what it was sent and what it said, as in the main chat.
+    const runs = [...document.querySelectorAll<HTMLElement>("#messages .sub-work:not(.live) .steps-run")];
+    expect(runs.map((run) => run.querySelector(".steps-toggle")!.textContent)).toEqual(["2 steps", "1 step"]);
+    for (const run of runs) {
+      expect(run.querySelector(".steps-toggle")!.getAttribute("aria-expanded")).toBe("false");
+      expect(run.querySelector<HTMLElement>(".step-list")!.hidden).toBe(true);
+    }
+    // The run under way is not folded: its step shows, spinning, with no typing bubble or face.
+    const live = document.querySelector<HTMLElement>("#messages .sub-work.live")!;
+    expect(live.querySelector(".steps-toggle")).toBeNull();
+    const current = live.querySelector<HTMLElement>(".step.tool")!;
+    expect(current.querySelector(".step-title")!.textContent).toBe("Run swift build");
+    expect(current.closest("[hidden]")).toBeNull();
+    expect(current.querySelector(".step-icon.spinner")).not.toBeNull();
     expect(document.querySelector("#messages .bubble.working")).toBeNull();
+  });
+
+  it("unfolds a run to its lines on a click, folds it again, and keeps it open over a redraw", () => {
+    window.ccb.setState(watching());
+    const first = () => document.querySelector<HTMLElement>("#messages .steps-run")!;
+    first().querySelector<HTMLButtonElement>(".steps-toggle")!.click();
+    expect(first().querySelector<HTMLElement>(".step-list")!.hidden).toBe(false);
+    expect([...first().querySelectorAll(".step-title")].map((title) => title.textContent)).toEqual(["Run git diff main...HEAD --stat", "Read WebBotView.swift"]);
+    window.ccb.setState(watching());
+    expect(first().querySelector<HTMLElement>(".step-list")!.hidden).toBe(false);
+    first().querySelector<HTMLButtonElement>(".steps-toggle")!.click();
+    expect(first().querySelector<HTMLElement>(".step-list")!.hidden).toBe(true);
+  });
+
+  it("keeps a long run under way to its latest steps, with how many came before", () => {
+    const running = watching();
+    const many = Array.from({ length: 24 }, (_, index) => step(`l${index}`, `Read File${index}.swift`, { tool: "Read", done: index < 23 }));
+    window.ccb.setState({ ...running, working: true, subagent: { ...running.subagent!, status: "running" }, live: many });
+    const live = document.querySelector<HTMLElement>("#messages .sub-work.live")!;
+    const shown = [...live.querySelectorAll(".step-title")].map((title) => title.textContent);
+    expect(shown.length).toBeLessThan(many.length);
+    expect(shown.at(-1)).toBe("Read File23.swift");
+    expect(live.querySelector(".steps-earlier")!.textContent).toContain("24 steps");
   });
 
   it("keeps a command's output folded until its line is clicked, and folds it again", () => {
     window.ccb.setState(watching());
+    for (const run of document.querySelectorAll<HTMLElement>("#messages .steps-run:not(.open)")) run.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
     const line = lines()[0];
     const body = line.querySelector<HTMLElement>(".step-body")!;
     expect(body.hidden).toBe(true);

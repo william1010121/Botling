@@ -1,15 +1,16 @@
 import { post } from "./bridge";
 import { t, type Key } from "./i18n";
 import { renderMarkdown } from "./markdown";
-import { stepList, statusWord } from "./steps";
+import { foldedRun, liveElement, statusWord } from "./steps";
 import type { MessageView, StepView, SubagentHeaderView } from "./types";
 
 /**
  * A subagent's view, read only (there is nothing to type to it): a header with its bot › its
  * title and what runs it; what its bot sent it (its task, later SendMessage messages) as compact
- * boxes "From Main · 15:58", in order; its work one line per step, dense and monospace, a
- * command's output folded until its line is clicked; what it said, and its report at the end,
- * as prose.
+ * boxes "From Main · 15:58", in order; its work one line per step, dense and monospace, each run
+ * of steps between what it said folded to one "N steps" line as in the main chat (the run under
+ * way stays in sight), a command's output folded until its line is clicked; what it said, and
+ * its report at the end, as prose.
  */
 
 /** One line of the subagent's conversation. */
@@ -33,26 +34,16 @@ export function subagentMessageElement(message: MessageView): HTMLElement {
     return row;
   }
   row.className = `row sub-work${message.role === "error" ? " error" : ""}`;
-  if (message.steps?.length) row.append(stepList(message.steps));
+  if (message.steps?.length) row.append(foldedRun(`subagent:${message.id}`, message.steps, false));
   if (message.text.trim()) row.append(prose(message.text, message.role === "error"));
   return row;
 }
 
-/** What it is doing right now: every step so far, one line each, the one under way spinning. */
+/** What it is doing right now, the way the main chat shows a turn under way: its latest steps, the one under way spinning. */
 export function subagentLiveElement(steps: StepView[]): HTMLElement {
   const row = document.createElement("div");
   row.className = "row sub-work live";
-  const parts: StepView[] = [];
-  const flush = () => {
-    if (parts.length) row.append(stepList(parts.splice(0)));
-  };
-  for (const step of steps) {
-    if (step.kind === "text") {
-      flush();
-      row.append(prose(step.title, false));
-    } else parts.push(step);
-  }
-  flush();
+  if (steps.length) row.append(liveElement(steps));
   if (!steps.some((step) => !step.done)) {
     const dots = document.createElement("div");
     dots.className = "dots sub-dots";

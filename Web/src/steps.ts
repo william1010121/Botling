@@ -116,9 +116,10 @@ function liveRun(steps: StepView[]): HTMLElement[] {
 /**
  * A run of tool calls folded to one line ("Worked · 5 steps", or "5 steps" between words). In a
  * reply before your latest line (`earlier`), finished subagents leave the folded view: only
- * running ones stay in sight, and unfolding still lists them all.
+ * running ones stay in sight, and unfolding still lists them all. A subagent's view folds each
+ * run between its words with it too.
  */
-function foldedRun(listID: string, steps: StepView[], worked: boolean, earlier = false): HTMLElement {
+export function foldedRun(listID: string, steps: StepView[], worked: boolean, earlier = false): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "steps-run";
   const tools = steps.filter((step) => step.kind !== "text").length;

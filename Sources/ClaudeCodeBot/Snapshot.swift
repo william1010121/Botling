@@ -74,8 +74,8 @@ enum Snapshot {
             return true
         }
         // `CCB_SNAPSHOT_SAMPLE=subagent`: a subagent's view (read only), still at work: its task
-        // and a later message from its bot, its calls one line each (one command unfolded), the
-        // one under way spinning.
+        // and a later message from its bot, each finished run of calls folded to "N steps" (a long
+        // one, with a failed command, among them), the run under way in sight, its last call spinning.
         if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "subagent" {
             var subagent = Subagent(id: "toolu_review", description: "Review PR #7", type: "general-purpose",
                                     prompt: "Review the diff of PR #7 for regressions. Report blocking issues only.", startedAt: now.addingTimeInterval(-600))
@@ -84,9 +84,18 @@ enum Snapshot {
                 Step(id: "s1", kind: .tool, tool: "Bash", title: "Run git diff main...bot/web-gemini --stat", detail: "git diff main...bot/web-gemini --stat",
                      output: " Sources/ClaudeCodeBot/WebBot/WebBotView.swift | 84 +++++++---\n Sources/ClaudeCodeBotCore/WebBot.swift        | 31 ++++\n 2 files changed, 96 insertions(+), 19 deletions(-)", done: true),
                 Step(id: "s2", kind: .tool, tool: "Read", title: "Read WebBotView.swift", detail: "/repo/Sources/ClaudeCodeBot/WebBot/WebBotView.swift", output: "import SwiftUI\nimport WebKit\n…", done: true),
+            ] + ["WebBot.swift", "WebSites.swift", "Workspace+Web.swift", "WebTurn.swift", "WebBotStore.swift", "ChatSurface.swift"].enumerated().flatMap { index, file in
+                [Step(id: "r\(index)", kind: .tool, tool: "Read", title: "Read \(file)", detail: "/repo/Sources/ClaudeCodeBotCore/\(file)", output: "import Foundation\n…", done: true),
+                 Step(id: "g\(index)", kind: .tool, tool: "Grep", title: "Search \(file.split(separator: ".")[0]) in Tests", detail: "\(file.split(separator: ".")[0])  in /repo/Tests", output: "", done: true)]
+            } + [
+                Step(id: "f1", kind: .tool, tool: "Bash", title: "Run swift build --target ClaudeCodeBotCore", detail: "swift build --target ClaudeCodeBotCore",
+                     output: "error: no such module 'WebKit'", failed: true, done: true),
                 Step(id: "s3", kind: .text, title: "The view keeps one `WKWebsiteDataStore` for every site; checking whether that is meant.", done: true),
                 Step(id: "s4", kind: .tool, tool: "Grep", title: "Search WKWebsiteDataStore", detail: "WKWebsiteDataStore", output: "WebBotView.swift:41", done: true),
                 Step(id: "m1", kind: .message, tool: "SendMessage", title: "Also check the sign-in data store is per site.", done: true, at: now.addingTimeInterval(-240)),
+            ] + ["WebBotView.swift", "WebBotStore.swift", "WebSites.swift", "Workspace+Web.swift", "WebBotTests.swift", "WebSitesTests.swift", "SettingsView.swift"].enumerated().map { index, file in
+                Step(id: "p\(index)", kind: .tool, tool: "Read", title: "Read \(file)", detail: "/repo/\(file)", output: "…", done: true)
+            } + [
                 Step(id: "s5", kind: .tool, tool: "Bash", title: "Run swift test --filter WebBot", detail: "swift test --filter WebBot"),
             ]
             draw(root: root, to: path, subagent: subagent)

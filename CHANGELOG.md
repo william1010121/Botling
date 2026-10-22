@@ -51,7 +51,13 @@ app and publishes it on GitHub Releases.
   later SendMessage message) as a compact box "From Main · 15:58", in order; its work one
   monospace line per step ("• Run git diff main...HEAD --stat", a spinner on the one under
   way), a command's output (or a long read or edit) folded until you click its line; and what it
-  said, its report at the end, in prose. No input box.- **CI checks only that it builds and the fast tests pass.** Tests that run real programs (sh,
+  said, its report at the end, in prose. No input box.
+- **In a subagent's view, each run of steps folds to one "N steps" line.** A long stretch of
+  work between two things the subagent said (or a message from its bot) no longer fills the
+  screen with 20 lines: it folds to "› 15 steps", the same line and fold as the main chat's
+  process, and a click opens it to the lines as before (it stays open over updates). The run
+  under way stays in sight the way the main chat shows a turn at work: its latest steps, the
+  current one spinning, with "N steps so far · M earlier hidden" above them.
 - **CI checks only that it builds and the fast tests pass.** Tests that run real programs (sh,
   git, node and the plugin host, the app) or WebKit are marked `.integration`, and ones that wait
   on real time `.wallClock`; both skip themselves when `CI` is set and still run locally with
