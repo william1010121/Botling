@@ -1,0 +1,75 @@
+<!doctype html>
+<!-- A FIXTURE for the tests, not a page saved from claude.ai. It mimics how Claude draws a
+     conversation: your message in [data-testid="user-message"] (its paragraphs .whitespace-pre-wrap,
+     your initials beside it), its answer in a [data-is-streaming] block holding .font-claude-response
+     and the answer's .standard-markdown, a folded "Thought process" before it, an artifact card (a
+     role="button" tile), and the conversation's name on the header's [data-testid="chat-menu-trigger"].
+     The math is real KaTeX markup (katex.renderToString). A code block has its language in a div
+     before the <pre>, a "Copy" button, and the code in <code class="language-…">. -->
+<html>
+<head><title>Hashing basics - Claude</title></head>
+<body>
+<div class="root">
+  <nav class="h-screen flex flex-col"><a href="/new" aria-label="New chat">New chat</a><a href="/recents">Chats</a>
+    <ul><li><a href="/chat/4b9e2f10-6c3d-4a8e-9f21-0d7c5b3a1e88" class="group">Hashing basics</a></li><li><a href="/chat/0000">Release notes</a></li></ul>
+  </nav>
+  <header class="sticky top-0"><div class="flex"><button class="inline-flex" data-testid="chat-menu-trigger" type="button" aria-haspopup="menu"><div class="min-w-0 flex-1"><div class="truncate font-base-bold">Hashing basics</div></div><svg width="12" height="12"></svg></button></div></header>
+  <main>
+    <div class="flex-1 flex flex-col gap-3 px-4 max-w-3xl mx-auto w-full pt-1">
+      <div data-test-render-count="1">
+        <div class="mb-1 mt-1">
+          <div class="group relative inline-flex gap-2 bg-bg-300 rounded-xl pl-2.5 py-2.5 break-words text-text-100 transition-all max-w-[75ch] flex-col !px-4">
+            <div class="flex flex-row gap-2 relative">
+              <div class="shrink-0"><div class="flex shrink-0 items-center justify-center rounded-full font-bold select-none h-7 w-7 text-[12px] bg-text-200 text-bg-100">GW</div></div>
+              <div class="flex-1 flex flex-col gap-2">
+                <div data-testid="user-message" class="font-large !font-user-message grid grid-cols-1 gap-2 py-0.5 text-[0.9375rem] leading-6"><p class="whitespace-pre-wrap break-words">Explain hashing.
+Keep it short.</p><p class="whitespace-pre-wrap break-words">Use math where it helps.</p></div>
+              </div>
+            </div>
+          </div>
+          <div class="absolute bottom-0 right-2 pointer-events-none"><button class="pointer-events-auto" type="button">Edit</button></div>
+        </div>
+      </div>
+      <div data-test-render-count="1">
+        <div style="height: auto; opacity: 1; transform: none;">
+          <div data-is-streaming="false" class="group relative pb-3" style="opacity: 1; transform: none;">
+            <div class="font-claude-response relative leading-[1.65rem] [&amp;_pre&gt;div]:bg-bg-000/50 [&amp;_.ignore-pre-bg&gt;div]:bg-transparent">
+              <div class="transition-all duration-400 ease-out rounded-lg border-0.5 border-border-300 min-h-[2.625rem] mx-0.5 overflow-hidden">
+                <button class="group/row flex flex-row items-center justify-between gap-4 transition-colors w-full text-left px-3 py-2" type="button" aria-expanded="false"><div class="text-text-300 text-sm">Thought process</div><svg></svg></button>
+                <div style="height: 0px; opacity: 0;" class="overflow-hidden" aria-hidden="true"><div class="p-3 pt-0"><div class="grid-cols-1 grid gap-2.5 [&amp;_&gt;_*]:min-w-0 standard-markdown font-claude-response-small"><p class="whitespace-normal break-words">The user wants a short explanation with formulas.</p></div></div></div>
+              </div>
+              <div>
+                <div class="grid-cols-1 grid gap-2.5 [&amp;_&gt;_*]:min-w-0 standard-markdown">
+                  <h2 class="text-xl font-bold text-text-100 mt-1 -mb-0.5">The idea</h2>
+                  <p class="whitespace-normal break-words">A hash function maps a key to one of <span class="math math-inline"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>m</mi></mrow><annotation encoding="application/x-tex">m</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">m</span></span></span></span></span> slots, so with <span class="math math-inline"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>n</mi></mrow><annotation encoding="application/x-tex">n</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">n</span></span></span></span></span> keys the load factor is</p>
+                  <div class="math math-display"><span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>α</mi><mo>=</mo><mfrac><mi>n</mi><mi>m</mi></mfrac></mrow><annotation encoding="application/x-tex">\alpha = \frac{n}{m}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.0037em;">α</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.7936em;vertical-align:-0.686em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.1076em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord mathnormal">m</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord mathnormal">n</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.686em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span></div>
+                  <ol start="3" class="[&amp;:not(:last-child)_ul]:pb-1 list-decimal space-y-1.5 pl-7">
+                    <li class="whitespace-normal break-words"><strong>Hash</strong> the key with <code class="bg-text-200/5 border border-0.5 border-border-300 text-danger-000 whitespace-pre-wrap rounded-[0.4rem] px-1 py-px text-[0.9rem]">h(k)</code>.</li>
+                    <li class="whitespace-normal break-words">Look in slot <span class="math math-inline"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>h</mi><mo stretchy="false">(</mo><mi>k</mi><mo stretchy="false">)</mo><mtext> </mtext><mo lspace="0.22em" rspace="0.22em"><mrow><mi mathvariant="normal">m</mi><mi mathvariant="normal">o</mi><mi mathvariant="normal">d</mi></mrow></mo><mtext> </mtext><mi>m</mi></mrow><annotation encoding="application/x-tex">h(k) \bmod m</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">h</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0315em;">k</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.0556em;"></span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin"><span class="mord"><span class="mord mathrm">mod</span></span></span><span class="mspace" style="margin-right:0.0556em;"></span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal">m</span></span></span></span></span>:
+                      <ul class="list-disc space-y-1.5 pl-7"><li class="whitespace-normal break-words">found, or</li><li class="whitespace-normal break-words">probe the next one.</li></ul>
+                    </li>
+                  </ol>
+                  <div class="relative flex flex-col rounded-lg">
+                    <div class="text-text-300 absolute pl-3 pt-2.5 text-xs">python</div>
+                    <div class="pointer-events-none sticky my-0.5 ml-0.5 flex items-center justify-end px-1.5 py-1 top-0"><div class="pointer-events-auto rounded-md p-0.5"><button class="flex flex-row items-center gap-1 rounded-md p-1 py-0.5 text-xs" type="button"><svg></svg><span class="text-text-200 pr-0.5">Copy</span></button></div></div>
+                    <div><pre class="code-block__code !my-0 !rounded-lg !text-sm !leading-relaxed" style="background: transparent;"><code class="language-python" style="white-space: pre;"><span><span class="token" style="color: rgb(198, 120, 221);">def</span> <span class="token" style="color: rgb(97, 175, 239);">slot</span>(key, m):
+</span><span>    <span class="token" style="color: rgb(198, 120, 221);">return</span> <span>hash</span>(key) % m</span></code></pre></div>
+                  </div>
+                  <div class="py-2"><div class="artifact-block-cell group/artifact-block flex flex-1 align-start justify-start" role="button" tabindex="0" aria-label="Open artifact"><div class="font-base-bold">Hash table demo</div><div class="text-text-400 text-xs">Code · PY</div></div></div>
+                  <div class="overflow-x-auto w-full px-2 mb-6"><table class="min-w-full border-collapse text-sm leading-[1.7] whitespace-normal"><thead class="text-left"><tr><th class="py-2 pr-4 align-top font-bold" scope="col">Case</th><th class="py-2 pr-4 align-top font-bold" scope="col">Cost</th></tr></thead><tbody><tr><td class="py-2 pr-4 align-top">average</td><td class="py-2 pr-4 align-top"><span class="math math-inline"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>O</mi><mo stretchy="false">(</mo><mn>1</mn><mo>+</mo><mi>α</mi><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">O(1 + \alpha)</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">O</span><span class="mopen">(</span><span class="mord">1</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.0037em;">α</span><span class="mclose">)</span></span></span></span></span></td></tr><tr><td class="py-2 pr-4 align-top">worst | all in one</td><td class="py-2 pr-4 align-top"><span class="math math-inline"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>O</mi><mo stretchy="false">(</mo><mi>n</mi><mo stretchy="false">)</mo></mrow><annotation encoding="application/x-tex">O(n)</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal" style="margin-right:0.0278em;">O</span><span class="mopen">(</span><span class="mord mathnormal">n</span><span class="mclose">)</span></span></span></span></span></td></tr></tbody></table></div>
+                  <blockquote class="border-l-4 border-border-300/10 pl-4"><p class="whitespace-normal break-words">Keep <span class="math math-inline"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>α</mi><mo>≤</mo><mn>0.75</mn></mrow><annotation encoding="application/x-tex">\alpha \le 0.75</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.7719em;vertical-align:-0.136em;"></span><span class="mord mathnormal" style="margin-right:0.0037em;">α</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">≤</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6444em;"></span><span class="mord">0.75</span></span></span></span></span>.</p></blockquote>
+                </div>
+              </div>
+            </div>
+            <div class="absolute -bottom-0 -right-1.5"><div class="flex items-center"><button type="button" data-testid="action-bar-copy" aria-label="Copy">Copy</button><button type="button" aria-label="Retry">Retry</button></div></div>
+          </div>
+        </div>
+      </div>
+      <div data-test-render-count="1"><div class="mb-1 mt-1"><div class="group relative inline-flex"><div class="shrink-0"><div class="rounded-full">GW</div></div><div data-testid="user-message" class="font-large !font-user-message grid grid-cols-1 gap-2"><p class="whitespace-pre-wrap break-words">Thanks.</p></div></div></div></div>
+      <div data-test-render-count="1"><div data-is-streaming="false" class="group relative pb-3"><div class="font-claude-response relative"><div><div class="grid-cols-1 grid gap-2.5 standard-markdown"><p class="whitespace-normal break-words">You're welcome.</p></div></div></div></div></div>
+    </div>
+    <fieldset class="flex w-full"><div contenteditable="true" class="ProseMirror" aria-label="Write your prompt to Claude"><p>draft not sent</p></div><button aria-label="Send message">Send</button></fieldset>
+  </main>
+</div>
+</body>
+</html>

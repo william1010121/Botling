@@ -1,6 +1,6 @@
 # Web page readers
 
-ClaudeCodeBot shows web AIs (Gemini) as bots in the left column, in a real web view. After the
+ClaudeCodeBot shows web AIs (Gemini, ChatGPT, Claude) as bots in the left column, in a real web view. After the
 page settles (an answer has finished), the app runs this plugin's script for that site to read
 the conversation as text, and saves it to `~/.claudecodebot/web/<site>/<name>.md` for the main bot
 to search. While the page still changes it also runs it about once a second, only to see a
@@ -12,7 +12,9 @@ script as a fallback and only updates a file here while nobody has edited it.
 
 ## One script per site
 
-`<site id>.js`, for example `gemini.js`. The site id is the folder name under `web/`.
+`<site id>.js`: `gemini.js`, `chatgpt.js`, `claude.js`. The site id is the folder name under `web/`.
+`chatgpt.js` and `claude.js` differ only in their `SELECTORS`; the part below `extract`
+(the page as Markdown) is the same in both, so a fix to it goes in both.
 
 ## The contract
 
@@ -27,7 +29,10 @@ function extract(doc) { ... }
 - **Output**: a plain object the app turns into JSON:
   - `{ title, turns }` where `title` is a string or `null` (the app then uses the tab's title,
     else the first question), and `turns` is the conversation in page order:
-    `[{ role: "user" | "assistant", text: "plain text" }, ...]`.
+    `[{ role: "user" | "assistant", text: "the message" }, ...]`. The text is Markdown where the
+    page has structure (lists, code blocks, tables), with a formula as its TeX (`$…$`, `$$…$$`
+    on its own line), never KaTeX's drawn text.
+  - An answer still being written is left out, so the question before it still waits.
   - `{ error: "why" }` when the page cannot be read.
   - No turns (or only empty ones) counts as nothing read: the app shows "Couldn't read this page"
     and writes no file.

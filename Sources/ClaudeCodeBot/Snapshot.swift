@@ -488,9 +488,13 @@ enum Snapshot {
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
         workspace.refreshWaiting()
-        // `CCB_WINDOW_WEB=gemini`: that web site picked, with sample saved conversations (the
-        // page itself is a placeholder: a snapshot loads and signs into nothing).
+        // `CCB_WINDOW_WEB=gemini` (or `chatgpt`, `claude`): that web site picked, with sample
+        // saved conversations, and one on each other site (the page itself is a placeholder: a
+        // snapshot loads and signs into nothing).
         if let id = ProcessInfo.processInfo.environment["CCB_WINDOW_WEB"], let site = WebSite.all.first(where: { $0.id == id }) {
+            for (index, other) in WebSite.all.enumerated() where other != site {
+                sampleWebConversation(on: other, index: index, in: workspace)
+            }
             sampleWebConversations(on: site, in: workspace)
         }
         let size = CGSize(width: 1280, height: 820)
@@ -530,7 +534,7 @@ enum Snapshot {
             ("8f3a2c1d9e0b", "WKWebView or iframe?", 6, 3),
         ]
         for sample in samples {
-            let url = site.startURL.appending(path: sample.id)
+            let url = site.conversationURL(sample.id)
             let turns = (0..<sample.turns).map { WebTurn(role: $0 % 2 == 0 ? .user : .assistant, text: "Sample message \($0 + 1)") }
             workspace.web.record(on: site, url: url, pageTitle: nil, reading: .read(title: sample.title, turns: turns), now: Date().addingTimeInterval(-sample.minutesAgo * 60))
         }
@@ -545,6 +549,14 @@ enum Snapshot {
         workspace.web.record(on: site, page: UUID(), url: site.startURL, pageTitle: nil, reading: .read(title: nil, turns: [
             WebTurn(role: .user, text: "Does a hidden WKWebView keep running?"),
         ]), settled: false)
+    }
+
+    /// One saved sample conversation on another site, so the column shows every site with a row.
+    private static func sampleWebConversation(on site: WebSite, index: Int, in workspace: Workspace) {
+        let titles = ["Changelog wording", "Load factor bounds", "Release checklist"]
+        let turns = (0..<2).map { WebTurn(role: $0 % 2 == 0 ? .user : .assistant, text: "Sample message \($0 + 1)") }
+        workspace.web.record(on: site, url: site.conversationURL("5a1e\(index)c0ffee"), pageTitle: nil,
+                             reading: .read(title: titles[index % titles.count], turns: turns), now: Date().addingTimeInterval(-Double(40 + index * 30) * 60))
     }
 
     private static func drawRightPanel(to path: String) {

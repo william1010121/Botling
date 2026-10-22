@@ -315,7 +315,7 @@ private struct WebPage: NSViewRepresentable {
     }
 }
 
-/// A site's face: a rounded tile in its colour with a sparkle (no company logo).
+/// A site's face: a rounded tile in its colour with its symbol (no company logo).
 struct WebSiteFace: View {
     let site: WebSite
     var size: CGFloat = 32
@@ -325,7 +325,7 @@ struct WebSiteFace: View {
             .fill(Color(hex: site.accent))
             .frame(width: size, height: size)
             .overlay {
-                Image(systemName: "sparkle")
+                Image(systemName: site.symbol)
                     .font(.system(size: size * 0.5, weight: .semibold))
                     .foregroundStyle(.white)
             }

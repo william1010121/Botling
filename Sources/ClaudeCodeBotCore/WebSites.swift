@@ -14,24 +14,28 @@ public struct WebSite: Identifiable, Equatable, Sendable {
     public let host: String
     /// The path part right before a conversation's id (`/app/<id>`).
     public let conversationMarker: String
-    /// Sign-in and pop-up pages under this domain open inside the view; others in the browser.
-    public let domain: String
+    /// Sign-in and pop-up pages on these hosts (or under them) open inside the view: the site's
+    /// own and the sign-in providers it offers. Others open in the browser.
+    public let insideDomains: [String]
     /// Its face's colour.
     public let accent: UInt32
+    /// Its face's SF Symbol (no company logo).
+    public let symbol: String
     /// Stands for it where a bot's id would go (the column's selection).
     public let selectionID: UUID
     /// Its own cookies and sign-in, kept over restarts (`WKWebsiteDataStore(forIdentifier:)`).
     public let dataStoreID: UUID
 
-    public init(id: String, name: String, startURL: URL, host: String, conversationMarker: String, domain: String,
-                accent: UInt32, selectionID: UUID, dataStoreID: UUID) {
+    public init(id: String, name: String, startURL: URL, host: String, conversationMarker: String, insideDomains: [String],
+                accent: UInt32, symbol: String, selectionID: UUID, dataStoreID: UUID) {
         self.id = id
         self.name = name
         self.startURL = startURL
         self.host = host
         self.conversationMarker = conversationMarker
-        self.domain = domain
+        self.insideDomains = insideDomains
         self.accent = accent
+        self.symbol = symbol
         self.selectionID = selectionID
         self.dataStoreID = dataStoreID
     }
@@ -45,14 +49,46 @@ public struct WebSite: Identifiable, Equatable, Sendable {
         startURL: URL(string: "https://gemini.google.com/app")!,
         host: "gemini.google.com",
         conversationMarker: "app",
-        domain: "google.com",
+        insideDomains: ["google.com"],
         accent: 0x4C7DF0,
+        symbol: "sparkle",
         selectionID: UUID(uuidString: "3E3B0000-0000-4000-8000-0000000000E1")!,
         dataStoreID: UUID(uuidString: "3E3B0000-0000-4000-8000-0000000000D1")!
     )
 
-    /// Every site the column lists. More (ChatGPT, Claude, Grok) are added here as data.
-    public static let all: [WebSite] = [.gemini]
+    /// `chatgpt.com/c/<id>` (also inside a GPT or project, `/g/<gpt>/c/<id>`); signs in at
+    /// auth.openai.com, or with Google, Apple or Microsoft.
+    public static let chatgpt = WebSite(
+        id: "chatgpt",
+        name: "ChatGPT",
+        startURL: URL(string: "https://chatgpt.com/")!,
+        host: "chatgpt.com",
+        conversationMarker: "c",
+        insideDomains: ["chatgpt.com", "openai.com", "accounts.google.com", "appleid.apple.com", "login.microsoftonline.com", "login.live.com"],
+        accent: 0x10A37F,
+        symbol: "hexagon",
+        selectionID: UUID(uuidString: "3E3B0000-0000-4000-8000-0000000000E2")!,
+        dataStoreID: UUID(uuidString: "3E3B0000-0000-4000-8000-0000000000D2")!
+    )
+
+    /// `claude.ai/chat/<id>`; a new question at `/new`. Signs in on claude.ai (an emailed
+    /// code), or with Google or Apple.
+    public static let claude = WebSite(
+        id: "claude",
+        name: "Claude",
+        startURL: URL(string: "https://claude.ai/new")!,
+        host: "claude.ai",
+        conversationMarker: "chat",
+        insideDomains: ["claude.ai", "accounts.google.com", "appleid.apple.com"],
+        accent: 0xD97757,
+        symbol: "asterisk",
+        selectionID: UUID(uuidString: "3E3B0000-0000-4000-8000-0000000000E3")!,
+        dataStoreID: UUID(uuidString: "3E3B0000-0000-4000-8000-0000000000D3")!
+    )
+
+    /// Every site the column lists, in its order. More are added here as data, each with its
+    /// page reader (`<id>.js`) in the plugin.
+    public static let all: [WebSite] = [.gemini, .chatgpt, .claude]
 
     /// The site a column selection stands for.
     public static func site(selection: UUID?) -> WebSite? {
@@ -71,10 +107,15 @@ public struct WebSite: Identifiable, Equatable, Sendable {
         return id
     }
 
+    /// A conversation's own page, from its id (`https://<host>/<marker>/<id>`).
+    public func conversationURL(_ id: String) -> URL {
+        URL(string: "https://\(host)")!.appending(path: conversationMarker).appending(path: id)
+    }
+
     /// Whether a page opened from the site (sign-in, a pop-up) stays inside the view.
     public func keepsInside(_ url: URL) -> Bool {
         guard let host = url.host()?.lowercased() else { return false }
-        return host == domain || host.hasSuffix("." + domain)
+        return insideDomains.contains { host == $0 || host.hasSuffix("." + $0) }
     }
 }
 
@@ -331,7 +372,7 @@ public enum WebExtractors {
         if !files.fileExists(atPath: manifest.path) {
             let text = PluginManifest.builtIn(
                 name: plugin, displayName: "Web page readers",
-                description: "Reads the conversation on a web AI's page (Gemini) into text for the main bot. One script per site; README.md has the contract.",
+                description: "Reads the conversation on a web AI's page (\(WebSite.all.map(\.name).joined(separator: ", "))) into text for the main bot. One script per site; README.md has the contract.",
                 permissions: []
             ).fileText
             try? Data(text.utf8).write(to: manifest)
