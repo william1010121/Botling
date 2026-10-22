@@ -52,6 +52,7 @@ app and publishes it on GitHub Releases.
   monospace line per step ("• Run git diff main...HEAD --stat", a spinner on the one under
   way), a command's output (or a long read or edit) folded until you click its line; and what it
   said, its report at the end, in prose. No input box.- **CI checks only that it builds and the fast tests pass.** Tests that run real programs (sh,
+- **CI checks only that it builds and the fast tests pass.** Tests that run real programs (sh,
   git, node and the plugin host, the app) or WebKit are marked `.integration`, and ones that wait
   on real time `.wallClock`; both skip themselves when `CI` is set and still run locally with
   `swift test`. CI is two jobs (Web, Swift) with timeouts, runs tests serially, and cancels a
