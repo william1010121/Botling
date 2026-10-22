@@ -792,7 +792,7 @@ struct DeveloperSection: View {
     }
 }
 
-/// Settings → Doctor: Claude Code and Codex, each found the way bots find it, with its version,
+/// Settings → Doctor: Claude Code and (optional) Codex, each found the way bots find it, with its version,
 /// sign-in, and a command to copy when something is wrong.
 struct DoctorSection: View {
     @ObservedObject var model: DoctorModel
@@ -825,7 +825,7 @@ struct DoctorSection: View {
                         .foregroundStyle(Theme.faint)
                 }
             }
-            Text(L("Bots run Claude Code; Codex reviews run Codex. Each check has a {0}-second limit and spends no tokens.", Int(Doctor.timeout)))
+            Text(L("Bots run Claude Code; Codex is optional. Each check has a {0}-second limit and spends no tokens.", Int(Doctor.timeout)))
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.faint)
         }

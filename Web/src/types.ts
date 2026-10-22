@@ -382,7 +382,6 @@ export type Action =
   | { type: "openURL"; url: string; label: string }
   | { type: "openExternal"; url: string }
   | { type: "revealFile"; url: string }
-  | { type: "codexReview"; scope: string | null; commit: string | null; spec: string | null }
   | { type: "openSource"; messageID: string }
   | { type: "openSubagent"; id: string }
   | { type: "taskOutput"; messageID: string; taskID: string }

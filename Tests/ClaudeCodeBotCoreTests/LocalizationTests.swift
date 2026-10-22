@@ -142,7 +142,6 @@ struct LocalizationTests {
         #expect(BotPrompts(profile: profile).system.contains("Reply in English by default"))
         let team = TeamPrompts.system(TeamSpec.defaults[0], folder: URL(filePath: "/r/run"), language: .korean)
         #expect(team.contains("Reply in Korean by default"))
-        #expect(CodexPrompts.chat("hi", folder: URL(filePath: "/p"), language: .simplifiedChinese).contains("Reply in Simplified Chinese by default"))
     }
 
     @Test func theLanguageReachesThePageAndTheBriefingAndAwakeBotsHearOfIt() async throws {
@@ -219,7 +218,6 @@ struct LocalizationTests {
         #expect(Bot.shownDivider(.plugins, resumed: false) != "Handoff → loading new plugins")
         // What the bot is told stays English whatever the app's language.
         #expect(RestartReason.effort(.high).told == "High effort")
-        #expect(CodexSeverity.high.displayName == "高")
         #expect(EffortLevel.xhigh.englishName == "Extra high")
         #expect(ResultPublishing.localOnly.displayName == "常にローカルの HTML ページ")
         #expect(SlashCommands.all.first?.about == "Claude Design を作って claude.ai のリンクを受け取る")

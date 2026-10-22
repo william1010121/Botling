@@ -27,7 +27,7 @@ you already have.
 
 <br>
 
-<img src="docs/images/hero.png" alt="ClaudeCodeBot: the left column with the main bot, Codex and a project; the main bot's chat with math, a table, a result page preview and a decision; the project's right panel" width="900">
+<img src="docs/images/hero.png" alt="ClaudeCodeBot: the left column with the main bot and a project; the main bot's chat with math, a table, a result page preview and a decision; the project's right panel" width="900">
 
 </div>
 
@@ -169,8 +169,6 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
   writing down what matters first, and wakes when you or a routine need it.
 - **Decisions as buttons**, with a recommended option and what each one costs; tool permission
   asks (Allow once / Always / Don't allow) in the chat, with Claude Code's auto mode on by default.
-- **Code review by Codex** (optional): review uncommitted changes or a commit from the right
-  panel, or have Codex check subagents' work in a loop until it is clean.
 - **Results as claude.ai Artifacts.** Reports, comparisons and previews are published as a
   private claude.ai Artifact and linked in the reply as a card; anything sensitive stays a local
   HTML page. Settings → Permissions → Reports and results picks the rule.
@@ -203,7 +201,7 @@ The build is universal (Apple silicon and Intel).
 |---|---|---|
 | macOS | 14 Sonoma or later | required |
 | [Claude Code](https://docs.claude.com/en/docs/claude-code) CLI | **2.1.111** or later, signed in | required: every bot is a `claude` process |
-| [Codex](https://github.com/openai/codex) CLI | **0.99.0** or later, signed in | optional: only for Codex reviews |
+| [Codex](https://github.com/openai/codex) CLI | **0.99.0** or later, signed in | optional: for bots that call `codex` |
 | Node.js | any current LTS | recommended: plugins with a program part |
 | git | | recommended: the plugin library's history |
 
@@ -328,7 +326,7 @@ CCB_SNAPSHOT=/tmp/chat.png swift run ClaudeCodeBot   # render a sample chat to a
 | `docs/` | Product docs, flowcharts and README images |
 
 The screenshots in this README are drawn by the app's own snapshot mode (`CCB_SNAPSHOT`,
-`CCB_RAIL_SNAPSHOT`, `CCB_RIGHT_SNAPSHOT`, `CCB_CODEX_SNAPSHOT`, `CCB_SPEC_SNAPSHOT`,
+`CCB_RAIL_SNAPSHOT`, `CCB_RIGHT_SNAPSHOT`, `CCB_SPEC_SNAPSHOT`,
 `CCB_SETTINGS_SNAPSHOT`) with sample data.
 
 ## Versioning & releases

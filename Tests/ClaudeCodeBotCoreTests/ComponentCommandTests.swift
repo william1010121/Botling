@@ -523,7 +523,7 @@ struct ComponentCommandTests {
             ChatPayload.make(bot: chat, components: workspace.components, pending: [], replyingTo: nil, commands: workspace.commandContext(for: chat)) { _ in "" }
         }
         func cardAfterSwitchingBack() throws -> [String: Any] {
-            _ = patcher.script(for: page(workspace.codexBot))
+            _ = patcher.script(for: page(workspace.maintainer))
             let sent = patcher.script(for: page(bot))
             let script = try #require(sent)
             let json = script.dropFirst("ccb.patchState(".count).dropLast()

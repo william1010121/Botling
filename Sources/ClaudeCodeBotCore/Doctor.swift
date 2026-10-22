@@ -64,7 +64,7 @@ public struct DoctorCheck: Identifiable, Sendable {
     public var isRequired: Bool { tool.isRequired }
 }
 
-/// The two CLIs the app runs: Claude Code for every bot, Codex for reviews.
+/// The CLIs Doctor checks: Claude Code, which every bot runs, and Codex, which bots may call.
 public enum DoctorTool: String, CaseIterable, Sendable {
     case claude, codex
 
@@ -102,7 +102,7 @@ public enum DoctorTool: String, CaseIterable, Sendable {
         }
     }
 
-    /// Bots cannot start without Claude Code; without Codex only reviews stop.
+    /// Bots cannot start without Claude Code; Codex is optional.
     public var isRequired: Bool { self == .claude }
 
     /// Asks for the sign-in without spending tokens.
@@ -175,7 +175,7 @@ public enum DoctorTool: String, CaseIterable, Sendable {
         var check = DoctorCheck(tool: self, status: .ok, path: path?.path, latest: latest?.description, summary: "")
         guard let path else {
             check.status = isRequired ? .failing : .warning
-            check.summary = isRequired ? L("Not found. Bots can't start without it.") : L("Not found. Codex reviews won't run.")
+            check.summary = isRequired ? L("Not found. Bots can't start without it.") : L("Not found. It is optional.")
             check.fix = installFix
             return check
         }

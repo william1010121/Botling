@@ -97,7 +97,7 @@ extension Workspace {
     /// `Pins.maxFloating` cards already. Nil: it can (or already is).
     public func globalFloatBlocked(_ id: UUID, in bot: Bot) -> String? {
         guard !isGlobalFloat(id) else { return nil }
-        for chat in chatsWithPins + [codexBot] where chat !== bot {
+        for chat in chatsWithPins where chat !== bot {
             let (global, own) = wantedFloats(in: chat)
             let ownIDs = Set(own.map(\.id))
             let count = own.count + global.filter { !ownIDs.contains($0.pin.id) }.count

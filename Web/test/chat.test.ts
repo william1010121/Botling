@@ -193,26 +193,20 @@ describe("messages", () => {
     expect(typeof frame.ccb.readImage).toBe("function");
   });
 
-  it("pass a component's ccb.reviewWithCodex on to Swift as text or null", async () => {
-    const { componentPage, codexReviewAction } = await import("../src/components");
+  it("give a component no ccb.reviewWithCodex, and send nothing for an old one's message", async () => {
+    const { componentPage } = await import("../src/components");
     const page = componentPage("<p>hi</p>", "{}");
+    expect(page).not.toContain("reviewWithCodex");
     const script = page.slice(page.indexOf("<script>") + 8, page.indexOf("</script>"));
-    const posted: unknown[] = [];
-    const frame = { addEventListener() {} } as unknown as { ccb: Record<string, (...args: unknown[]) => unknown> };
-    new Function("window", "parent", script)(frame, { postMessage: (data: unknown) => posted.push(data) });
-    await frame.ccb.reviewWithCodex({ commit: "ee988b9", spec: "/p/plan.md" });
-    await frame.ccb.reviewWithCodex();
-    expect(posted).toEqual([
-      { ccb: "reviewWithCodex", scope: null, commit: "ee988b9", spec: "/p/plan.md" },
-      { ccb: "reviewWithCodex", scope: null, commit: null, spec: null },
-    ]);
-    expect(codexReviewAction({ scope: "lastCommit", commit: 7, spec: "  " })).toEqual({ type: "codexReview", scope: "lastCommit", commit: null, spec: null });
-    // From a component's frame, it reaches Swift.
+    const frame = { addEventListener() {} } as unknown as { ccb: Record<string, unknown> };
+    new Function("window", "parent", script)(frame, { postMessage() {} });
+    // A component that checks `typeof ccb.reviewWithCodex === "function"` turns its button off.
+    expect(typeof frame.ccb.reviewWithCodex).toBe("undefined");
     const row = messageElement(message({ id: "m30", displays: [{ name: "log", data: "{}", at: null }] }), { log: { template: "<p></p>", version: 0, working: false, updated: false, hasPrevious: false } });
     document.body.append(row);
     const shown = row.querySelector<HTMLIFrameElement>(".component-frame")!;
     window.dispatchEvent(new MessageEvent("message", { data: { ccb: "reviewWithCodex", scope: "uncommitted", commit: null, spec: null }, source: shown.contentWindow }));
-    expect(sent).toEqual([{ type: "codexReview", scope: "uncommitted", commit: null, spec: null }]);
+    expect(sent).toEqual([]);
   });
 
   it("tell a component its size: ccb.size, <html data-size> and ccb.onSize", async () => {

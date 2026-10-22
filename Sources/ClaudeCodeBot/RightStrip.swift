@@ -98,9 +98,6 @@ struct RightStrip: View {
 
     @State private var open: RightPanelLayout.Section?
 
-    private var isCodex: Bool { bot.profile.capabilities.reviewer }
-    private var canReview: Bool { workspace.canRequestReview(of: bot) }
-
     private var waiting: [Workspace.Waiting] {
         if let group { return workspace.waiting.filter { $0.groupID == group.id } }
         return bot.profile.role == .main ? workspace.waiting : []
@@ -110,7 +107,6 @@ struct RightStrip: View {
         RightPanelLayout.items(
             waiting: waiting.count,
             members: group.map { workspace.members(of: $0).count },
-            showsCodex: group == nil && (isCodex || canReview || !workspace.codexReviews(for: bot).isEmpty),
             results: bot.results.count,
             settled: group == nil ? bot.trace.settled.count : 0
         )
@@ -156,7 +152,7 @@ struct RightStrip: View {
                     .frame(width: 28, height: 28)
                     .background(Circle().fill(Theme.chip))
             } else {
-                AvatarView(kind: isCodex ? .codex : bot.avatarKind, size: 26, eyes: bot.isWorking ? .open : bot.eyes)
+                AvatarView(kind: bot.avatarKind, size: 26, eyes: bot.isWorking ? .open : bot.eyes)
             }
         }
     }
@@ -217,7 +213,6 @@ struct RightStrip: View {
         switch section {
         case .waiting: "exclamationmark.bubble"
         case .members: "person.2"
-        case .codex: "magnifyingglass"
         case .results: "arrow.up.right"
         case .settled: "checkmark.circle"
         }
@@ -228,7 +223,6 @@ struct RightStrip: View {
         switch section {
         case .waiting: L("Waiting on you")
         case .members: L("In the group")
-        case .codex: isCodex ? L("Reviews") : L("Codex review")
         case .results: bot.profile.role == .main || group != nil ? L("Just done") : L("Results")
         case .settled: L("Settled")
         }
@@ -251,26 +245,6 @@ struct RightStrip: View {
                             workspace.select(member.id == Workspace.mainBotID ? nil : member.id)
                         }
                     }
-                }
-            }
-        case .codex:
-            VStack(spacing: 6) {
-                let reviews = workspace.codexReviews(for: bot)
-                ForEach(reviews.prefix(isCodex ? 12 : 3)) { review in
-                    CodexReviewCard(review: review, showsOwner: isCodex ? workspace.speakerName(for: review.ownerID) : nil) {
-                        open = nil
-                        CodexReportWindows.open(review.id, title: review.title, workspace: workspace)
-                    }
-                }
-                if canReview {
-                    let running = reviews.contains { $0.kind == .single && $0.state == .reviewing }
-                    CodexReviewButton(workspace: workspace, bot: bot, running: running) { id in
-                        open = nil
-                        CodexReportWindows.open(id, title: L("Codex review"), workspace: workspace)
-                    }
-                }
-                if reviews.isEmpty, !canReview {
-                    Text(L("Nothing reviewed yet.")).font(.system(size: 13)).foregroundStyle(Theme.faint)
                 }
             }
         case .results:

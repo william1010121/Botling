@@ -121,11 +121,11 @@ extension L10n {
         "Checking…": ["檢查中…", "检查中…", "確認中…", "확인 중…"],
         "Run again": ["再檢查一次", "再检查一次", "もう一度実行", "다시 실행"],
         "Checked {0}": ["{0} 檢查", "{0} 检查", "{0} に確認", "{0}에 확인함"],
-        "Bots run Claude Code; Codex reviews run Codex. Each check has a {0}-second limit and spends no tokens.": [
-            "Bot 執行 Claude Code；Codex 審查執行 Codex。每項檢查限時 {0} 秒，不會消耗 tokens。",
-            "Bot 运行 Claude Code；Codex 审查运行 Codex。每项检查限时 {0} 秒，不会消耗 tokens。",
-            "ボットは Claude Code を、Codex レビューは Codex を実行します。各チェックの制限時間は {0} 秒で、トークンは消費しません。",
-            "봇은 Claude Code를, Codex 리뷰는 Codex를 실행합니다. 각 확인은 {0}초 제한이 있으며 토큰을 쓰지 않습니다.",
+        "Bots run Claude Code; Codex is optional. Each check has a {0}-second limit and spends no tokens.": [
+            "Bot 執行 Claude Code；Codex 是選用的。每項檢查限時 {0} 秒，不會消耗 tokens。",
+            "Bot 运行 Claude Code；Codex 是可选的。每项检查限时 {0} 秒，不会消耗 tokens。",
+            "ボットは Claude Code を実行します。Codex は任意です。各チェックの制限時間は {0} 秒で、トークンは消費しません。",
+            "봇은 Claude Code를 실행합니다. Codex는 선택 사항입니다. 각 확인은 {0}초 제한이 있으며 토큰을 쓰지 않습니다.",
         ],
         "Warning": ["警告", "警告", "警告", "경고"],
         "Failing": ["異常", "异常", "異常", "실패"],

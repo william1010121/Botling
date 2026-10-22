@@ -6,7 +6,7 @@ import Foundation
 /// of the rest, so it knows they exist and can ask Maintainer for one.
 extension Workspace {
     /// The bots that keep a list: the main bot, the projects' managers, the bots of their own and
-    /// Maintainer (not Codex, not group chats).
+    /// Maintainer (not group chats).
     var botsWithComponents: [Bot] { [mainBot] + Array(managers.values) }
 
     /// `bot`'s components that are in the library, in the library's order.

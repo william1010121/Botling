@@ -87,19 +87,20 @@ struct RightPanelTests {
 
     /// The strip shows an icon for each section the open panel would show, in the same order.
     @Test func theStripHasAnIconPerSectionThePanelShows() {
-        let all = RightPanelLayout.items(waiting: 2, members: nil, showsCodex: true, results: 3, settled: 6)
+        let all = RightPanelLayout.items(waiting: 2, members: nil, results: 3, settled: 6)
         #expect(all == [
             .init(section: .waiting, badge: "2"),
-            .init(section: .codex, badge: nil),
             .init(section: .results, badge: "3"),
             .init(section: .settled, badge: "6"),
         ])
+        // The built-in Codex review is gone: no section, so no icon for it either.
+        #expect(RightPanelLayout.Section.allCases.map(\.rawValue) == ["waiting", "members", "results", "settled"])
 
         // A fresh bot: nothing to open, so no icons (the face and the settings stay).
-        #expect(RightPanelLayout.items(waiting: 0, members: nil, showsCodex: false, results: 0, settled: 0).isEmpty)
+        #expect(RightPanelLayout.items(waiting: 0, members: nil, results: 0, settled: 0).isEmpty)
 
         // A group chat: its waiting questions, its members and what was just done.
-        #expect(RightPanelLayout.items(waiting: 0, members: 3, showsCodex: false, results: 1, settled: 0) == [
+        #expect(RightPanelLayout.items(waiting: 0, members: 3, results: 1, settled: 0) == [
             .init(section: .members, badge: "3"),
             .init(section: .results, badge: "1"),
         ])

@@ -116,10 +116,6 @@ enum PluginGuide {
           `await ccb.readImage(file)` for a pasted or dropped File, or data: URLs; each picture has `dataURL` for a thumbnail. The bot receives the text
           and the pictures as files saved in the chat's attachments folder, listed like a message's attachments.
           Pictures shown: data may name local pictures by file path; load them with `img.src = ccb.image(path)` (file: URLs do not load in the frame).
-          Codex review: `ccb.reviewWithCodex({ scope, commit, spec })` (from a click) has Codex review the chat bot's repository once, read-only.
-          scope: "uncommitted", "lastCommit", "branch" (against the repository's default branch, such as main, only when on another branch) or "commit"; a `commit` hash implies "commit"
-          and must be in the repository. `spec` (optional): a .md/.txt/.html file in the bot's folder or home that Codex checks the change against point by point.
-          The report shows in the right column and a line in the chat; a call that does not check out is ignored.
           Data from a command: about.md's `Command: <command>` line fills the component with what it prints (run in the bot's folder after the user
           presses "Allow and run" on the card; JSON output is the data, other output one string; at most \#(ComponentCommands.limitsText)). It is optional,
           only for live data that changes: most components draw the data a bot gives them with `<show>`, and one made from a bot's reply shows that reply.

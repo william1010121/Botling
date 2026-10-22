@@ -17,15 +17,11 @@ public final class Bot: ObservableObject, Identifiable {
     @Published public private(set) var subagentModel: BotModel?
     /// How hard it (and its subagents) think; nil: the model's default.
     @Published public private(set) var effort: EffortLevel?
-    /// Whether Codex reviews its subagents' work, how many fix rounds, what goes back.
-    @Published public private(set) var codexSettings: CodexSettings
     /// Components pinned to it: the chips above its input box and its Board (`pins.json`).
     @Published public private(set) var pins: [PinnedComponent] = []
     /// Components being made from its replies: a chip under each, a workspace in the right
     /// panel once pressed (`specs.json`).
     @Published public private(set) var specs: [ComponentSpec] = []
-    /// Called when you change `codexSettings`, so an awake bot hears the new rules.
-    public var onCodexSettings: ((CodexSettings) -> Void)?
     /// The components it has from the shared library (at most `ComponentLibrary.limit`); its
     /// briefing has their whole usage. Nil until first given, and for chats without one (groups).
     @Published public private(set) var componentList: [String]?
@@ -160,8 +156,8 @@ public final class Bot: ObservableObject, Identifiable {
     /// begins: claude says when that line is `queued` behind them and when its turn `started`.
     struct GroupCommand: Equatable {
         enum Stage: Equatable {
-            /// Sent; nothing heard of it yet. A process that does not report its messages (Codex)
-            /// stays here, and its next reply is the group's.
+            /// Sent; nothing heard of it yet. A process that does not report its messages stays
+            /// here, and its next reply is the group's.
             case sent
             /// Waiting behind a turn under way or about to start: that turn's reply is not the group's.
             case queued
@@ -297,7 +293,6 @@ public final class Bot: ObservableObject, Identifiable {
         model = store?.loadModel() ?? defaultModel
         subagentModel = store?.loadSubagentModel()
         effort = store?.loadEffort()
-        codexSettings = store?.loadCodexSettings() ?? CodexSettings()
         componentList = store?.loadComponentList()
         pins = store?.loadPins() ?? []
         specs = store?.loadSpecs() ?? []
@@ -494,7 +489,7 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     /// Something only the app says (no line in the chat): wakes it like a message. A report it
-    /// was waiting for (Codex's review of its subagent's work) arrives this way.
+    /// was waiting for arrives this way.
     public func appMessage(_ text: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -1743,7 +1738,7 @@ public final class Bot: ObservableObject, Identifiable {
         }
         cancelIdle()
         phase = .tidying
-        // A bot with no memory (Codex) has nothing to write down.
+        // A bot with no memory has nothing to write down.
         if profile.keepsMemory { _ = await ask(prompts.tidy) }
         guard !removed else { return }
         await finishProcess()
@@ -1810,15 +1805,6 @@ public final class Bot: ObservableObject, Identifiable {
         effort = newEffort
         store?.save(effort: newEffort)
         await restart(.effort(newEffort))
-    }
-
-    /// Codex review of its subagents' work. Takes effect at once: an awake bot is told with its
-    /// next message, an asleep one reads it when it wakes.
-    public func setCodexSettings(_ settings: CodexSettings) {
-        guard settings != codexSettings else { return }
-        codexSettings = settings
-        store?.save(codexSettings: settings)
-        onCodexSettings?(settings)
     }
 
     /// Its own components (kept in bot.json).
