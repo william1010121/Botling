@@ -865,8 +865,9 @@ struct SubagentRows: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            let more = bot.trace.beyondCap(at: context.date)
-            ForEach(bot.trace.listed(at: context.date, limit: showsAll && more > 0 ? nil : TraceBook.listedAtMost)) { subagent in
+            let team = bot.subagentTrace
+            let more = team.beyondCap(at: context.date)
+            ForEach(team.listed(at: context.date, limit: showsAll && more > 0 ? nil : TraceBook.listedAtMost)) { subagent in
                 SubagentRow(subagent: subagent, bot: bot, workspace: workspace)
             }
             if more > 0 {
@@ -925,7 +926,7 @@ struct SubagentRow: View {
                         .foregroundStyle(subagent.isRunning ? Theme.text : Theme.muted)
                         .lineLimit(1)
                     Spacer(minLength: 4)
-                    if bot.outage?.subagents.contains(subagent.id) == true {
+                    if bot.subagentIsWaitingForNetwork(subagent.id) {
                         Text(NetworkResume.label).font(.system(size: 11)).foregroundStyle(Theme.orange)
                     }
                 }
@@ -989,7 +990,7 @@ struct SettledList: View {
     static let shownAtMost = 5
 
     var body: some View {
-        let settled = bot.trace.settled
+        let settled = bot.subagentTrace.settled
         let more = max(0, settled.count - Self.shownAtMost)
         VStack(spacing: 4) {
             ForEach(showsAll ? settled : Array(settled.prefix(Self.shownAtMost))) { subagent in
@@ -1233,7 +1234,7 @@ struct DetailPanel: View {
                 }
             }
 
-            if !bot.trace.settled.isEmpty {
+            if !bot.subagentTrace.settled.isEmpty {
                 PanelSection(L("Settled")) {
                     SettledList(bot: bot, workspace: workspace)
                 }

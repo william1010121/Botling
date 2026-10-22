@@ -662,10 +662,31 @@ enum Snapshot {
         }
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try? JSONEncoder().encode(projects).write(to: Workspace.Layout.projectsFile(in: root))
+        // `CCB_WINDOW_TEAM=1`: saved teams from BOTH heads, a Codex child open, and a
+        // settled Codex child in the native right panel; sample data, no engine launch.
+        let teamSample = ProcessInfo.processInfo.environment["CCB_WINDOW_TEAM"] == "1"
+        if teamSample {
+            let store = BotStore(directory: Workspace.Layout.mainBot(in: root))
+            store.save(heads: HeadsSettings(engines: [.claude, .codex]))
+            let now = Date()
+            var claude = Subagent(id: "sample-claude", description: "Claude: Review routing", type: "claude", prompt: "Review message routing (sample data)", status: .completed, startedAt: now)
+            claude.endedAt = now
+            store.save(subagents: [claude])
+            var codex = Subagent(id: "sample-codex", description: "Codex: Check protocol", type: "codex", prompt: "Check subagent events (sample data)", status: .completed, startedAt: now)
+            codex.endedAt = now
+            codex.model = "gpt-6.1-sol"
+            codex.steps = [Step(id: "sample-read", kind: .tool, tool: "Bash", title: "Read protocol schema", detail: "pwd", output: "/tmp/sample", done: true), Step(id: "sample-report", kind: .text, title: "Verified both child runs on the parent's stream (sample data).", done: true)]
+            codex.result = codex.steps.last?.title
+            var settled = Subagent(id: "sample-settled", description: "Codex: Check persistence", type: "codex", prompt: "Check saved team (sample data)", status: .completed, startedAt: now)
+            settled.endedAt = now
+            settled.settledAt = now
+            BotStore(directory: store.directory.appending(path: "partner-codex")).save(subagents: [codex, settled])
+        }
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
         workspace.refreshWaiting()
+        if teamSample { workspace.view(subagent: "sample-codex", of: workspace.mainBot) }
         // `CCB_WINDOW_WEB=gemini` (or `chatgpt`, `claude`): that web site picked, with sample
         // saved conversations, and one on each other site (the page itself is a placeholder: a
         // snapshot loads and signs into nothing).
@@ -680,6 +701,12 @@ enum Snapshot {
         let size = CGSize(width: 1280, height: 820)
         let content = RootView(workspace: workspace, settings: SettingsNavigator())
             .frame(minWidth: 980, minHeight: 620)
+            .overlay(alignment: .bottomLeading) {
+                if teamSample {
+                    Text("SAMPLE DATA · two-head team").font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Theme.faint).padding(8).background(Theme.ground)
+                }
+            }
             .preferredColorScheme(.dark)
         var columns: [String: CGRect] = [:]
         RootView.columnProbe = { name, frame in columns[name] = frame }

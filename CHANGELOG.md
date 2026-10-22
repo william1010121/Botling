@@ -120,7 +120,12 @@ app and publishes it on GitHub Releases.
   merely messaging an idle agent does not make it look busy. Repeated completion events
   are ignored. A live spawn → command/report → followup → command/report session verified
   that child steps arrive on the parent's connection. Older Codex versions still work the
-  old way.
+  old way. In a two-headed bot, both heads' teams now share the native list, detail view,
+  and Settled section, including its compact count. Partner steps and status changes update
+  the shared chat immediately; the detail badge names its actual owning engine, and settling
+  saves to the head that owns the agent. Saved teams
+  appear after restart without waking either engine, while each process keeps its own
+  liveness and trace state.
 
 ## 1.15.1
 

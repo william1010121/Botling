@@ -164,7 +164,7 @@ public struct ChatPayload: Encodable, Equatable {
         var owner: String
         var status: String
         var type: String?
-        /// What runs it: "claude" (a "codex" one later), for its badge.
+        /// The head whose trace/store owns it: "claude" or "codex", for its badge.
         var engine: String = "claude"
         /// Its model when known ("Sonnet"): what its Agent call asked for, else its bot's
         /// subagent model.
@@ -551,7 +551,7 @@ public struct ChatPayload: Encodable, Equatable {
                 tasks: nil,
                 artifacts: artifactCards(for: message),
                 fromSubagent: message.subagentID.map { id in
-                    let agent = bot.trace.subagent(id)
+                    let agent = bot.subagent(id)
                     let title = agent.map { $0.description.isEmpty ? ($0.name ?? "") : $0.description } ?? ""
                     return SubagentRef(id: id, title: title.isEmpty ? L("Subagent") : title)
                 },
@@ -847,6 +847,7 @@ public struct ChatPayload: Encodable, Equatable {
                 owner: bot.name,
                 status: subagent.status.rawValue,
                 type: subagent.type,
+                engine: (bot.subagentEngine(subagent.id) ?? bot.engine).rawValue,
                 model: subagent.model.map { BotModel(rawValue: $0.lowercased())?.displayName ?? $0 } ?? bot.subagentModel?.displayName
             )
         )
@@ -861,7 +862,7 @@ public struct ChatPayload: Encodable, Equatable {
 
     @MainActor
     static func stepView(_ step: Step, in bot: Bot) -> StepView {
-        let subagent = step.kind == .subagent ? bot.trace.subagent(step.id) : nil
+        let subagent = step.kind == .subagent ? bot.subagent(step.id) : nil
         return StepView(
             id: step.id,
             kind: step.kind.rawValue,

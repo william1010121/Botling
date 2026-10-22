@@ -575,7 +575,7 @@ public final class Workspace: ObservableObject {
         if selectedBot !== bot {
             select(bot === mainBot ? nil : managers.first { $0.value === bot }?.key)
         }
-        viewingSubagent = id.flatMap { bot.trace.subagent($0) == nil ? nil : $0 }
+        viewingSubagent = id.flatMap { bot.subagent($0) == nil ? nil : $0 }
     }
 
     /// Makes `folder` a project with its own manager, or selects it if it already is one.

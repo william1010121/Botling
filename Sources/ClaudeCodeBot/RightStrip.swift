@@ -108,7 +108,7 @@ struct RightStrip: View {
             waiting: waiting.count,
             members: group.map { workspace.members(of: $0).count },
             results: bot.results.count,
-            settled: group == nil ? bot.trace.settled.count : 0
+            settled: group == nil ? bot.subagentTrace.settled.count : 0
         )
     }
 

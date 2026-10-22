@@ -90,7 +90,7 @@ struct ChatSurface: NSViewRepresentable {
     }
 
     var payload: ChatPayload {
-        if let id = workspace.viewingSubagent, let subagent = bot.trace.subagent(id) {
+        if let id = workspace.viewingSubagent, let subagent = bot.subagent(id) {
             return ChatPayload.make(subagent: subagent, of: bot, components: components, avatar: AvatarImages.dataURL(bot.avatarKind, eyes: .open))
         }
         return ChatPayload.make(
