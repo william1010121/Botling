@@ -117,17 +117,6 @@ struct RailStrip: View {
                     workspace.select(Workspace.maintainerID)
                 }
             }
-            BotIcon(
-                bot: workspace.codexBot,
-                kind: .codex,
-                selected: workspace.selection == Workspace.codexID,
-                waiting: false,
-                busy: workspace.codexIsReviewing,
-                status: workspace.codexIsReviewing ? L("Reviewing") : L("Read-only reviewer"),
-                tip: $tip
-            ) {
-                workspace.select(Workspace.codexID)
-            }
             ForEach(WebSite.all) { site in
                 RailIcon(
                     title: site.name,

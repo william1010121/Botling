@@ -59,16 +59,11 @@ extension L10n {
         // Name, e.g. … (a new bot)
         "Name, e.g. Morning news": ["名稱，例如：晨間新聞", "名称，例如：早间新闻", "名前（例：朝のニュース）", "이름(예: 아침 뉴스)"],
         "Its job, e.g. every day at 08:00, the top 5 tech stories": ["它的工作，例如：每天 08:00 整理 5 則科技頭條", "它的工作，例如：每天 08:00 整理 5 条科技头条", "仕事（例：毎日 08:00 にテックニュース上位 5 本）", "할 일(예: 매일 08:00 기술 뉴스 상위 5개)"],
-        // Maintainer and Codex rows
+        // Maintainer row
         "Maintainer, {0}": ["Maintainer，{0}", "Maintainer，{0}", "Maintainer、{0}", "Maintainer, {0}"],
         "Component {0}: {1}": ["元件 {0}：{1}", "组件 {0}：{1}", "コンポーネント {0}：{1}", "컴포넌트 {0}: {1}"],
         "Working": ["工作中", "工作中", "作業中", "작업 중"],
         "Done, click to see": ["完成，點一下查看", "完成，点击查看", "完了、クリックして表示", "완료, 클릭해서 보기"],
-        "Codex reviews changes read-only, with no memory. Call it into a chat with @Codex.": ["Codex 以唯讀方式審查變更，不保留記憶。在聊天中用 @Codex 呼叫它。", "Codex 以只读方式审查更改，不保留记忆。在聊天中用 @Codex 调用它。", "Codex は変更を読み取り専用でレビューし、メモリを持ちません。チャットで @Codex と呼び出せます。", "Codex는 변경 사항을 읽기 전용으로 리뷰하며 메모리가 없습니다. 채팅에서 @Codex로 부르세요."],
-        "Codex, {0}": ["Codex，{0}", "Codex，{0}", "Codex、{0}", "Codex, {0}"],
-        "Reviewing {0}": ["正在審查 {0}", "正在审查 {0}", "{0} をレビュー中", "{0} 리뷰 중"],
-        "Reading": ["閱讀中", "阅读中", "読み込み中", "읽는 중"],
-        "Read-only reviewer": ["唯讀審查者", "只读审查者", "読み取り専用レビュアー", "읽기 전용 리뷰어"],
         // Subagents
         "Show less": ["顯示較少", "显示更少", "表示を減らす", "간단히 보기"],
         "Show {0} more": ["再顯示 {0} 個", "再显示 {0} 个", "さらに {0} 件表示", "{0}개 더 보기"],
@@ -85,10 +80,6 @@ extension L10n {
         "Back to the left column": ["移回左欄", "移回左栏", "左列に戻す", "왼쪽 열로 되돌리기"],
         "Back to the Left Column": ["移回左欄", "移回左栏", "左列に戻す", "왼쪽 열로 되돌리기"],
         "Bring {0} back to the left column": ["把 {0} 移回左欄", "把 {0} 移回左栏", "{0} を左列に戻す", "{0}을(를) 왼쪽 열로 되돌리기"],
-        // Codex reviews
-        "Reviews": ["審查", "审查", "レビュー", "리뷰"],
-        "Codex review": ["Codex 審查", "Codex 审查", "Codex レビュー", "Codex 리뷰"],
-        "Nothing reviewed yet. Turn on Codex review in a bot's Settings, press Review with Codex in a project, or call @Codex in a chat.": ["還沒有審查紀錄。可在 Bot 的設定開啟 Codex 審查、在專案按「用 Codex 審查」，或在聊天中呼叫 @Codex。", "还没有审查记录。可在 Bot 的设置中开启 Codex 审查、在项目中点“用 Codex 审查”，或在聊天中调用 @Codex。", "まだレビューはありません。ボットの設定で Codex レビューをオンにするか、プロジェクトで「Codex でレビュー」を押すか、チャットで @Codex を呼んでください。", "아직 리뷰가 없습니다. 봇 설정에서 Codex 리뷰를 켜거나, 프로젝트에서 'Codex로 리뷰'를 누르거나, 채팅에서 @Codex를 부르세요."],
         // A bot's settings
         "Model and thinking": ["模型與思考", "模型与思考", "モデルと思考", "모델과 사고"],
         "Subagent model": ["子代理模型", "子代理模型", "サブエージェントのモデル", "서브에이전트 모델"],
@@ -96,10 +87,6 @@ extension L10n {
         "Thinking effort": ["思考程度", "思考强度", "思考の深さ", "사고 수준"],
         "Default": ["預設", "默认", "デフォルト", "기본값"],
         "Subagents use their own model and effort when their definition names one. Default effort leaves it to the model. Awake, a change restarts the bot in the same conversation just before its next message; asleep, it applies when it wakes.": ["子代理的定義有指定模型和思考程度時，會用自己的設定。預設思考程度交給模型決定。Bot 醒著時，變更會在下一則訊息前於同一段對話中重新啟動它；休眠時，則在醒來時套用。", "子代理的定义指定了模型和思考强度时，会用自己的设置。默认思考强度交给模型决定。Bot 醒着时，更改会在下一条消息前于同一段对话中重启它；休眠时，则在醒来时生效。", "サブエージェントは、定義でモデルや思考の深さが指定されていればそれを使います。デフォルトの深さはモデル任せです。起きているボットは、変更すると次のメッセージの直前に同じ会話のまま再起動し、スリープ中なら起きたときに反映されます。", "서브에이전트는 정의에 모델과 사고 수준이 있으면 그것을 씁니다. 기본 사고 수준은 모델에 맡깁니다. 깨어 있는 봇은 다음 메시지 직전에 같은 대화로 다시 시작되며, 잠든 봇은 깨어날 때 적용됩니다."],
-        "Codex review for subagents": ["子代理的 Codex 審查", "子代理的 Codex 审查", "サブエージェントの Codex レビュー", "서브에이전트 Codex 리뷰"],
-        "Max fix rounds": ["最多修正輪數", "最多修复轮数", "修正の最大ラウンド数", "최대 수정 횟수"],
-        "Send back to fix": ["退回修正", "退回修复", "修正に戻す対象", "수정 요청 기준"],
-        "When a subagent finishes a code change, Codex reviews its diff read-only. Findings go back to the same subagent to fix, then Codex looks again, until clean or the round limit. Codex keeps no memory: every round is a fresh review.": ["子代理完成程式碼變更後，Codex 會以唯讀方式審查它的 diff。發現的問題會退回同一個子代理修正，再由 Codex 重看，直到沒有問題或達到輪數上限。Codex 不保留記憶：每一輪都是全新的審查。", "子代理完成代码更改后，Codex 会以只读方式审查它的 diff。发现的问题会退回同一个子代理修复，再由 Codex 重看，直到没有问题或达到轮数上限。Codex 不保留记忆：每一轮都是全新的审查。", "サブエージェントがコード変更を終えると、Codex がその diff を読み取り専用でレビューします。指摘は同じサブエージェントに戻して修正させ、問題がなくなるか上限に達するまで Codex が再確認します。Codex はメモリを持たず、毎回新しいレビューです。", "서브에이전트가 코드 변경을 마치면 Codex가 diff를 읽기 전용으로 리뷰합니다. 지적 사항은 같은 서브에이전트에게 돌려보내 고치게 하고, 깨끗해지거나 횟수 제한에 이를 때까지 Codex가 다시 봅니다. Codex는 메모리가 없어 매번 새로 리뷰합니다."],
         "Routines": ["例行工作", "例行任务", "ルーティン", "루틴"],
         "Add one": ["新增一項", "添加一项", "追加する", "추가하기"],
         "Always allowed": ["一律允許", "始终允许", "常に許可", "항상 허용"],

@@ -22,9 +22,6 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./
  * - `readImage(file)`: a pasted or dropped File as such a picture.
  * - `image(path)`: the URL to load a picture the data names by file path (`<img src>`).
  * - `open(url, label)`: show a page or file full-size, as a link chip does.
- * - `reviewWithCodex({scope, commit, spec})`: Codex reviews the chat bot's repository once
- *   ("uncommitted", "lastCommit", "branch" or "commit"; a commit hash implies "commit"), checked
- *   against a spec file if given. The app checks the call; the report shows in the right column.
  * - `runDetail(values)`: runs the component's `Detail command:` (about.md) with its `{name}`
  *   placeholders filled from `values` (`{hash: "2aed630"}`), in the folder its card's command
  *   runs in, once the user has allowed it there. Resolves to the output (parsed when it is JSON,
@@ -237,12 +234,6 @@ ${imeGuardScript}
       return /^(data:|blob:|ccb-preview:)/.test(text) ? text : '';
     },
     open(url, label) { parent.postMessage({ccb: 'open', url: String(url), label: label == null ? '' : String(label)}, '*'); },
-    reviewWithCodex(options) {
-      const given = options && typeof options === 'object' ? options : {};
-      const text = (value) => value == null ? null : String(value);
-      parent.postMessage({ccb: 'reviewWithCodex', scope: text(given.scope), commit: text(given.commit), spec: text(given.spec)}, '*');
-      return Promise.resolve();
-    },
     setStatus(status) {
       if (status == null) parent.postMessage({ccb: 'status', clear: true}, '*');
       else if (typeof status === 'object') parent.postMessage({ccb: 'status', text: status.text == null ? '' : String(status.text), tone: status.tone == null ? null : String(status.tone)}, '*');
@@ -624,9 +615,6 @@ window.addEventListener("message", (event) => {
   } else if (message.ccb === "open" && typeof message.url === "string" && message.url !== "") {
     // Opened full-size the way a link chip is: a picture in the lightbox, a page in a window of its own.
     openMedia(message.url, typeof message.label === "string" ? message.label : "");
-  } else if (message.ccb === "reviewWithCodex") {
-    // Passed on as strings or null; Swift checks them against the bot's repository.
-    post(codexReviewAction(message));
   } else if (message.ccb === "status") {
     // Only a pinned copy has a chip to set.
     if (frame.ccbPin) post(pinStatusAction(frame.ccbPin, message as { clear?: unknown; text?: unknown; tone?: unknown }));
@@ -644,12 +632,6 @@ window.addEventListener("message", (event) => {
     runDetail(frame, event.source, message.id, message.values, (message as { save?: unknown }).save === true);
   }
 });
-
-/** A component's `ccb.reviewWithCodex(...)` as the action Swift gets: anything but text is null. */
-export function codexReviewAction(message: { scope?: unknown; commit?: unknown; spec?: unknown }): Action {
-  const text = (value: unknown) => (typeof value === "string" && value.trim() !== "" ? value.trim() : null);
-  return { type: "codexReview", scope: text(message.scope), commit: text(message.commit), spec: text(message.spec) };
-}
 
 /** The pictures in a component's answer that are well formed; anything else is dropped. */
 export function answerImages(value: unknown): AnswerImage[] {

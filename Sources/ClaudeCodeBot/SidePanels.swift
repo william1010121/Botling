@@ -65,13 +65,11 @@ struct RailView: View {
     /// One row the search kept, in the order the column shows them.
     private enum Hit: Identifiable {
         case main
-        case codex
         case entry(Entry)
 
         var id: UUID {
             switch self {
             case .main: Workspace.mainBotID
-            case .codex: Workspace.codexID
             case .entry(let entry): entry.id
             }
         }
@@ -79,12 +77,11 @@ struct RailView: View {
 
     private var isSearching: Bool { !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
-    /// The main bot, Codex, then the pinned rows and the rest, kept when the name (or the
+    /// The main bot, then the pinned rows and the rest, kept when the name (or the
     /// project's folder name) has what the search field holds.
     private var hits: [Hit] {
         var hits: [Hit] = []
         if RailLayout.matches(query, name: workspace.mainBot.name, folder: nil) { hits.append(.main) }
-        if RailLayout.matches(query, name: workspace.codexBot.name, folder: nil) { hits.append(.codex) }
         let (pinned, rest) = arranged
         for entry in pinned + rest {
             switch entry.kind {
@@ -102,7 +99,6 @@ struct RailView: View {
     private func open(_ hit: Hit) {
         switch hit {
         case .main: workspace.select(nil)
-        case .codex: workspace.select(Workspace.codexID)
         case .entry(let entry): workspace.select(entry.id)
         }
         endSearch()
@@ -217,9 +213,6 @@ struct RailView: View {
                     waiting: workspace.waiting.contains { $0.projectID == Workspace.maintainerID }
                 ) {
                     workspace.select(Workspace.maintainerID)
-                }
-                CodexRow(bot: workspace.codexBot, workspace: workspace, selected: workspace.selection == Workspace.codexID) {
-                    workspace.select(Workspace.codexID)
                 }
 
                 ScrollView {
@@ -373,10 +366,6 @@ struct RailView: View {
                         switch hit {
                         case .main:
                             BotRow(bot: workspace.mainBot, selected: workspace.selection == nil && workspace.viewingSubagent == nil, waiting: workspace.waiting.contains { $0.projectID == Workspace.mainBotID }) {
-                                open(hit)
-                            }
-                        case .codex:
-                            CodexRow(bot: workspace.codexBot, workspace: workspace, selected: workspace.selection == Workspace.codexID) {
                                 open(hit)
                             }
                         case .entry(let entry):
@@ -791,53 +780,6 @@ private struct MaintainerRow: View {
     private var status: String { Workspace.maintainerStatus(bot, library: library) }
 }
 
-/// Codex, the read-only reviewer: always listed under Maintainer. Its line says what it is
-/// reviewing, if anything.
-private struct CodexRow: View {
-    @ObservedObject var bot: Bot
-    @ObservedObject var workspace: Workspace
-    let selected: Bool
-    let open: () -> Void
-
-    var body: some View {
-        Button(action: open) {
-            HStack(spacing: 12) {
-                AvatarView(kind: .codex, size: 32, eyes: busy ? .open : bot.eyes)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(bot.name).font(.system(size: 15))
-                    Text(status)
-                        .font(.system(size: 12))
-                        .foregroundStyle(busy ? Color(hex: 0x8DB5FF) : Theme.faint)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                if bot.hasUnread && !selected {
-                    UnreadBadge(count: bot.unreadCount)
-                }
-            }
-            .padding(.horizontal, 10)
-            .frame(height: 52)
-            .background(RoundedRectangle(cornerRadius: 12).fill(selected ? Theme.selected : .clear))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.blue, style: StrokeStyle(lineWidth: 1, dash: [4, 3])).opacity(busy ? 1 : 0))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.bottom, 4)
-        .help(L("Codex reviews changes read-only, with no memory. Call it into a chat with @Codex."))
-        .accessibilityLabel(L("Codex, {0}", status))
-    }
-
-    private var busy: Bool { bot.isWorking || workspace.codexIsReviewing }
-
-    private var status: String {
-        if let review = workspace.codexReviews.last(where: { $0.state == .reviewing }) {
-            return L("Reviewing {0}", review.agent ?? URL(filePath: review.folder).lastPathComponent)
-        }
-        if bot.isWorking { return L("Reading") }
-        return L("Read-only reviewer")
-    }
-}
-
 private struct BotRow: View {
     @ObservedObject var bot: Bot
     let selected: Bool
@@ -954,7 +896,6 @@ private struct SubagentRow: View {
 
     private var selected: Bool { workspace.selectedBot === bot && workspace.viewingSubagent == subagent.id }
     private var showsSettle: Bool { hovering || !subagent.isRunning }
-    private var loop: CodexReview? { workspace.codexReview(forSubagent: subagent, of: bot) }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -963,19 +904,10 @@ private struct SubagentRow: View {
                     Image(systemName: "arrow.turn.down.right")
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.faint)
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(subagent.description.isEmpty ? L("Subagent") : subagent.description)
-                            .font(.system(size: 13))
-                            .foregroundStyle(subagent.isRunning || loop?.isActive == true ? Theme.text : Theme.muted)
-                            .lineLimit(1)
-                        // Its Codex review loop: which round, and what is going on.
-                        if let loop {
-                            Text(loop.stateLine)
-                                .font(.system(size: 11))
-                                .foregroundStyle(loop.state.color)
-                                .lineLimit(1)
-                        }
-                    }
+                    Text(subagent.description.isEmpty ? L("Subagent") : subagent.description)
+                        .font(.system(size: 13))
+                        .foregroundStyle(subagent.isRunning ? Theme.text : Theme.muted)
+                        .lineLimit(1)
                     Spacer(minLength: 4)
                     if bot.outage?.subagents.contains(subagent.id) == true {
                         Text(NetworkResume.label).font(.system(size: 11)).foregroundStyle(Theme.orange)
@@ -1109,8 +1041,6 @@ struct DetailPanel: View {
     @State private var showingSettings: Bool
     /// A plugin's panel ("plugin/id") shown instead of the overview.
     @State private var openPanel: String?
-    /// A Codex review's report shown instead of the overview.
-    @State private var openReview: UUID?
 
     init(workspace: Workspace, bot: Bot, showingSettings: Bool = false) {
         self.workspace = workspace
@@ -1121,11 +1051,7 @@ struct DetailPanel: View {
 
     var body: some View {
         Group {
-            if let id = openReview {
-                CodexReportView(workspace: workspace, reviewID: id) { openReview = nil }
-                    .padding(20)
-                    .padding(.top, 16)
-            } else if let key = openPanel {
+            if let key = openPanel {
                 panelPage(key)
                     .padding(20)
                     .padding(.top, 16)
@@ -1265,8 +1191,6 @@ struct DetailPanel: View {
                 }
             }
 
-            codexSection
-
             let results = Array(bot.results.prefix(3))
             if !results.isEmpty {
                 PanelSection(bot.profile.role == .main ? L("Just done") : L("Results")) {
@@ -1293,38 +1217,6 @@ struct DetailPanel: View {
                 PanelSection(L("Settled")) {
                     SettledList(bot: bot, workspace: workspace)
                 }
-            }
-        }
-    }
-}
-
-extension DetailPanel {
-    /// Codex reviews of this bot's work (every bot's, in Codex's own panel), and, for a project,
-    /// the button that has Codex review it now.
-    @ViewBuilder var codexSection: some View {
-        let isCodex = bot.profile.capabilities.reviewer
-        let reviews = workspace.codexReviews(for: bot)
-        let canReview = workspace.canRequestReview(of: bot)
-        if canReview || !reviews.isEmpty {
-            PanelSection(isCodex ? L("Reviews") : L("Codex review")) {
-                VStack(spacing: 6) {
-                    ForEach(reviews.prefix(isCodex ? 12 : 3)) { review in
-                        CodexReviewCard(review: review, showsOwner: isCodex ? workspace.speakerName(for: review.ownerID) : nil) {
-                            openReview = review.id
-                        }
-                    }
-                    if canReview {
-                        let running = reviews.contains { $0.kind == .single && $0.state == .reviewing }
-                        CodexReviewButton(workspace: workspace, bot: bot, running: running) { openReview = $0 }
-                    }
-                }
-            }
-        } else if isCodex {
-            PanelSection(L("Reviews")) {
-                Text(L("Nothing reviewed yet. Turn on Codex review in a bot's Settings, press Review with Codex in a project, or call @Codex in a chat."))
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.faint)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -1431,56 +1323,6 @@ private struct SettingsPage: View {
                 }
 
                 SettingNote(L("Subagents use their own model and effort when their definition names one. Default effort leaves it to the model. Awake, a change restarts the bot in the same conversation just before its next message; asleep, it applies when it wakes."))
-            }
-
-            PanelSection(L("Codex review for subagents")) {
-                VStack(spacing: 0) {
-                    DropdownRow(
-                        title: L("Codex review"),
-                        choices: CodexReviewMode.allCases,
-                        chosen: bot.codexSettings.mode,
-                        label: { $0.displayName }
-                    ) { mode in
-                        var settings = bot.codexSettings
-                        settings.mode = mode
-                        bot.setCodexSettings(settings)
-                    }
-                    if bot.codexSettings.mode != .off {
-                        Rectangle().fill(Theme.line).frame(height: 1)
-                        HStack {
-                            Text(L("Max fix rounds")).foregroundStyle(Theme.text)
-                            Spacer()
-                            Stepper(value: Binding(
-                                get: { bot.codexSettings.maxRounds },
-                                set: { rounds in
-                                    var settings = bot.codexSettings
-                                    settings.maxRounds = rounds
-                                    bot.setCodexSettings(settings)
-                                }
-                            ), in: CodexSettings.roundLimits) {
-                                Text("\(bot.codexSettings.maxRounds)").monospacedDigit()
-                            }
-                            .fixedSize()
-                        }
-                        .padding(.leading, 16)
-                        .padding(.trailing, 10)
-                        .frame(height: 44)
-                        Rectangle().fill(Theme.line).frame(height: 1)
-                        DropdownRow(
-                            title: L("Send back to fix"),
-                            choices: CodexSendBack.allCases,
-                            chosen: bot.codexSettings.sendBack,
-                            label: { $0.displayName }
-                        ) { level in
-                            var settings = bot.codexSettings
-                            settings.sendBack = level
-                            bot.setCodexSettings(settings)
-                        }
-                    }
-                }
-                .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
-                .clipShape(RoundedRectangle(cornerRadius: 14))
-                SettingNote(L("When a subagent finishes a code change, Codex reviews its diff read-only. Findings go back to the same subagent to fix, then Codex looks again, until clean or the round limit. Codex keeps no memory: every round is a fresh review."))
             }
 
             PanelSection(L("Routines")) {

@@ -238,14 +238,12 @@ public struct Choice: Codable, Equatable, Sendable {
 public enum AvatarShape: String, CaseIterable, Codable, Sendable {
     case circle, star, square, triangle, diamond, clover, heart, hexagon, drop, pentagon
     case cloud, octagon, moon, pill, ghost, burst
-    /// Codex's own: a light rounded square with dark eyes. Never handed to a project.
-    case codex
 
     /// The main bot's.
     public static let main = AvatarShape.circle
     /// Maintainer's.
     public static let maintainer = AvatarShape.diamond
-    /// Shapes handed out to new projects, in order: all but the main bot's and Codex's.
+    /// Shapes handed out to new projects, in order: all but the main bot's.
     public static let handedOut: [AvatarShape] = [.square, .triangle, .hexagon, .star, .diamond, .clover, .heart, .drop,
                                                   .pentagon, .cloud, .octagon, .moon, .pill, .ghost, .burst]
 }
@@ -273,8 +271,8 @@ public struct BotProfile: Equatable, Sendable {
     public var job: String?
     /// Tools it does not get at all, not even by asking.
     public var disallowedTools: [String] = []
-    /// It reads and writes memory.md (wakes reading it, tidies it before sleeping). Codex keeps
-    /// none: every turn starts fresh.
+    /// It reads and writes memory.md (wakes reading it, tidies it before sleeping). Without it
+    /// every turn starts fresh.
     public var keepsMemory = true
     /// What its chat offers besides messages; the views ask this rather than which bot it is.
     public var capabilities = Capabilities()
@@ -285,21 +283,15 @@ public struct BotProfile: Equatable, Sendable {
         public var board = true
         /// Making a component out of one of its replies.
         public var specs = true
-        /// A settings panel of its own (model, effort, Codex review, …).
+        /// A settings panel of its own (model, effort, …).
         public var settings = true
-        /// It reviews others' work: its panel lists every bot's reviews.
-        public var reviewer = false
 
-        public init(board: Bool = true, specs: Bool = true, settings: Bool = true, reviewer: Bool = false) {
+        public init(board: Bool = true, specs: Bool = true, settings: Bool = true) {
             self.board = board
             self.specs = specs
             self.settings = settings
-            self.reviewer = reviewer
         }
     }
-
-    /// A reviewer can review its work: a project's manager (not a bot of its own, not a reviewer).
-    public var canBeReviewed: Bool { !capabilities.reviewer && role == .manager && !isStandalone }
 
     public init(name: String, role: Role, avatar: String, workingDirectory: URL, memoryPath: String, tools: [String], instructions: String? = nil, job: String? = nil) {
         self.name = name
@@ -372,22 +364,6 @@ public struct BotProfile: Equatable, Sendable {
             tools: toolbox,
             job: job
         )
-    }
-
-    /// Codex: OpenAI's Codex CLI as a read-only reviewer. No memory, no tools of Claude's: each
-    /// message is one fresh `codex exec` in a read-only sandbox.
-    public static func codex(folder: URL) -> BotProfile {
-        var profile = BotProfile(
-            name: "Codex",
-            role: .manager,
-            avatar: AvatarShape.codex.rawValue,
-            workingDirectory: folder,
-            memoryPath: ".bot/memory.md",
-            tools: []
-        )
-        profile.keepsMemory = false
-        profile.capabilities = Capabilities(board: false, specs: false, settings: false, reviewer: true)
-        return profile
     }
 
     /// Maintainer: the manager of the plugin library.

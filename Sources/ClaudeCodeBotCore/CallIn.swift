@@ -13,14 +13,13 @@ extension Workspace {
     /// chat, where @ names the group's members.
     public func callable(into chat: Bot) -> [Member] {
         guard group(of: chat) == nil, everyMember.contains(where: { $0.bot === chat }) else { return [] }
-        // Codex too: it reads the chat's folder and answers, read-only.
-        return everyMember.filter { $0.bot !== chat } + [(Self.codexID, codexBot.name, codexBot)]
+        return everyMember.filter { $0.bot !== chat }
     }
 
-    /// The bots the @ menu offers in `chat`: only the global ones (Main bot, Maintainer, Codex),
+    /// The bots the @ menu offers in `chat`: only the global ones (Main bot, Maintainer),
     /// not every project's bot. A project bot typed by hand can still be called in.
     public func offeredAfterAt(in chat: Bot) -> [Member] {
-        callable(into: chat).filter { [Self.mainBotID, Self.maintainerID, Self.codexID].contains($0.id) }
+        callable(into: chat).filter { [Self.mainBotID, Self.maintainerID].contains($0.id) }
     }
 
     /// What the chat page needs to show called-in bots: who is answering, their names, the names
@@ -102,12 +101,7 @@ extension Workspace {
             let timing = groupTiming
             let askedAt = Date()
             let asked = ask ?? newest.flatMap { id in chat.messages.first { $0.id == id }?.text } ?? ""
-            // Codex reads the folder of the chat it was called into.
-            if member.id == Self.codexID { codexDesk.folder = chat.profile.workingDirectory }
-            // A Codex review takes longer than a reply.
-            let answerWithin = member.id == Self.codexID ? max(timing.answerNamed, CodexCLI.defaultTimeout) : timing.answerNamed
-            let answer = await bot.groupTurn(prompt, waitFor: timing.busyNamed, answerWithin: answerWithin)
-            if member.id == Self.codexID { codexDesk.folder = Self.codexHomeFolder }
+            let answer = await bot.groupTurn(prompt, waitFor: timing.busyNamed, answerWithin: timing.answerNamed)
             callInSpeakers[host] = nil
             if member.id == Self.mainBotID { deliverInboxes() }
             switch answer {

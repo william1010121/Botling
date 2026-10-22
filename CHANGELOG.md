@@ -19,6 +19,16 @@ app and publishes it on GitHub Releases.
   can search them. The script that reads the page is a plugin, `ccb-web-extractors`, that
   Maintainer can fix when Gemini changes its page.
 
+### Removed
+
+- **The built-in Codex reviewer.** The left column's Codex bot ("Read-only reviewer") and `@Codex`
+  in a chat, the right panel's Codex review section and "Review with Codex" button with its
+  report windows, a bot's "Codex review for subagents" settings and the `<codex-review>` tag,
+  and the `ccb.reviewWithCodex` call for components (a component that checks for it turns its
+  button off). Bots that want Codex can still run the `codex` CLI themselves, and Settings →
+  Doctor still checks it. What the reviewer left in `~/.claudecodebot/codex` and the old
+  settings in each bot.json stay on disk, unread.
+
 ### Fixed
 
 - **A subagent its bot sends more work with SendMessage shows at work again, with the message.**

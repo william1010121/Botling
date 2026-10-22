@@ -41,7 +41,7 @@ public enum RightPanelLayout {
 
     /// A section of the open panel that the strip has an icon for, in the panel's order.
     public enum Section: String, CaseIterable, Sendable {
-        case waiting, members, codex, results, settled
+        case waiting, members, results, settled
     }
 
     public struct Item: Equatable, Sendable {
@@ -62,11 +62,10 @@ public enum RightPanelLayout {
     /// The strip's icons between the face and the settings button. `members` is a group
     /// chat's member count (nil for a bot); a section with nothing in it has no icon, as the
     /// open panel leaves it out.
-    public static func items(waiting: Int, members: Int?, showsCodex: Bool, results: Int, settled: Int) -> [Item] {
+    public static func items(waiting: Int, members: Int?, results: Int, settled: Int) -> [Item] {
         var items: [Item] = []
         if waiting > 0 { items.append(Item(section: .waiting, badge: badge(waiting))) }
         if let members { items.append(Item(section: .members, badge: badge(members))) }
-        if showsCodex { items.append(Item(section: .codex, badge: nil)) }
         if results > 0 { items.append(Item(section: .results, badge: badge(results))) }
         if settled > 0 { items.append(Item(section: .settled, badge: badge(settled))) }
         return items

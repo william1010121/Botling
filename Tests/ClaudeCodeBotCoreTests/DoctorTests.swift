@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import ClaudeCodeBotCore
 
-/// Settings → Doctor: is Claude Code (and Codex) installed, new enough and signed in.
+/// Settings → Doctor: is Claude Code (and the optional Codex) installed, new enough and signed in.
 struct DoctorTests {
     // MARK: Versions
 

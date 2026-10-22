@@ -26,11 +26,31 @@ struct CallInTests {
         let workspace = makeWorkspace(FakeLauncher())
         let garden = workspace.addProject(folder: try folder("garden"))
         let chat = try #require(workspace.bot(for: garden))
-        #expect(workspace.callable(into: chat).map(\.name) == ["Main bot", "Maintainer", "Codex"])
-        #expect(workspace.callable(into: workspace.mainBot).map(\.name) == ["garden", "Maintainer", "Codex"])
+        #expect(workspace.callable(into: chat).map(\.name) == ["Main bot", "Maintainer"])
+        #expect(workspace.callable(into: workspace.mainBot).map(\.name) == ["garden", "Maintainer"])
         // A group lists its own members, as before.
         let group = try #require(workspace.createGroup(name: "Team", members: [garden.id]))
         #expect(workspace.callable(into: try #require(workspace.groupChats[group.id])).isEmpty)
+    }
+
+    /// The built-in Codex reviewer is gone: no rail row to pick, nobody to call in, and what it
+    /// left on disk (its chat, reviews.json) stays as it was.
+    @Test func thereIsNoBuiltInCodexBotAnyMore() throws {
+        let old = root.appending(path: "ccb/codex")
+        try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
+        try Data("[]".utf8).write(to: old.appending(path: "reviews.json"))
+        let workspace = makeWorkspace(FakeLauncher())
+        let garden = workspace.addProject(folder: try folder("garden"))
+        let chat = try #require(workspace.bot(for: garden))
+        #expect(!workspace.everyMember.map(\.name).contains("Codex"))
+        #expect(!workspace.callable(into: chat).map(\.name).contains("Codex"))
+        // Its old fixed id picks nothing: the main bot's chat shows.
+        let codexID = try #require(UUID(uuidString: "C0DE0000-0000-4000-8000-00000000C0DE"))
+        #expect(workspace.project(codexID) == nil)
+        #expect(workspace.member(codexID) == nil)
+        workspace.select(codexID)
+        #expect(workspace.selectedBot === workspace.mainBot)
+        #expect(FileManager.default.fileExists(atPath: old.appending(path: "reviews.json").path))
     }
 
     @Test func theAtMenuInABotsOwnChatListsOnlyTheGlobalBots() throws {
@@ -39,9 +59,9 @@ struct CallInTests {
         let orchard = workspace.addProject(folder: try folder("orchard"))
         let gardenChat = try #require(workspace.bot(for: garden))
         // Other projects' bots are not offered after @, only the global bots.
-        #expect(workspace.callInView(for: gardenChat)?.names == ["Main bot", "Maintainer", "Codex"])
-        #expect(workspace.callInView(for: workspace.mainBot)?.names == ["Maintainer", "Codex"])
-        #expect(workspace.callInView(for: workspace.maintainer)?.names == ["Main bot", "Codex"])
+        #expect(workspace.callInView(for: gardenChat)?.names == ["Main bot", "Maintainer"])
+        #expect(workspace.callInView(for: workspace.mainBot)?.names == ["Maintainer"])
+        #expect(workspace.callInView(for: workspace.maintainer)?.names == ["Main bot"])
         // A group's menu is its members only.
         let group = try #require(workspace.createGroup(name: "Team", members: [garden.id, orchard.id]))
         let groupChat = try #require(workspace.groupChats[group.id])
@@ -55,13 +75,13 @@ struct CallInTests {
         let orchard = workspace.addProject(folder: try folder("orchard"))
         let gardenChat = try #require(workspace.bot(for: garden))
         // Every bot that can be called in, the short list first.
-        #expect(workspace.callInView(for: gardenChat)?.allNames == ["Main bot", "Maintainer", "Codex", "orchard"])
-        #expect(workspace.callInView(for: workspace.mainBot)?.allNames == ["Maintainer", "Codex", "garden", "orchard"])
+        #expect(workspace.callInView(for: gardenChat)?.allNames == ["Main bot", "Maintainer", "orchard"])
+        #expect(workspace.callInView(for: workspace.mainBot)?.allNames == ["Maintainer", "garden", "orchard"])
         let payload = ChatPayload.make(bot: gardenChat, components: workspace.components, pending: [], replyingTo: nil,
                                        callIn: workspace.callInView(for: gardenChat)) { _ in "" }
         let json = try #require(JSONSerialization.jsonObject(with: payload.json().data(using: .utf8)!) as? [String: Any])
-        #expect(json["mentions"] as? [String] == ["Main bot", "Maintainer", "Codex"])
-        #expect(json["allMentions"] as? [String] == ["Main bot", "Maintainer", "Codex", "orchard"])
+        #expect(json["mentions"] as? [String] == ["Main bot", "Maintainer"])
+        #expect(json["allMentions"] as? [String] == ["Main bot", "Maintainer", "orchard"])
         // A group can't call in bots that aren't in it: every list is its members.
         let group = try #require(workspace.createGroup(name: "Team", members: [garden.id]))
         let groupChat = try #require(workspace.groupChats[group.id])
@@ -107,7 +127,7 @@ struct CallInTests {
         let payload = ChatPayload.make(bot: chat, components: workspace.components, pending: [], replyingTo: nil,
                                        callIn: workspace.callInView(for: chat)) { _ in "" }
         let json = try #require(JSONSerialization.jsonObject(with: payload.json().data(using: .utf8)!) as? [String: Any])
-        #expect(json["mentions"] as? [String] == ["Main bot", "Maintainer", "Codex"])
+        #expect(json["mentions"] as? [String] == ["Main bot", "Maintainer"])
         let messages = try #require(json["messages"] as? [[String: Any]])
         #expect(messages.first { $0["text"] as? String == "I'll fix the flag." }?["speaker"] as? String == "Maintainer")
         #expect(messages.first { $0["text"] as? String == "Got it" }?["speaker"] == nil)

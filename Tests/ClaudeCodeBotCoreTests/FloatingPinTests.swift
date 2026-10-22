@@ -171,12 +171,11 @@ struct FloatingPinTests {
         let own = try #require(seen["pins"] as? [[String: Any]])
         #expect(own[0]["floatMenu"] as? String == "stop")
 
-        // Switching to the main bot's chat: it is gone; and to Maintainer's, Codex's.
+        // Switching to the main bot's chat: it is gone; and to Maintainer's.
         workspace.select(nil)
         #expect(workspace.selectedBot === main)
         #expect((try payload(workspace, bot: workspace.selectedBot)["floating"] as? [[String: Any]])?.isEmpty == true)
         #expect(workspace.floatingPinViews(in: workspace.maintainer).isEmpty)
-        #expect(workspace.floatingPinViews(in: workspace.codexBot).isEmpty)
         // Back in its own chat it shows again.
         workspace.select(project.id)
         #expect((try payload(workspace, bot: workspace.selectedBot)["floating"] as? [[String: Any]])?.count == 1)
@@ -200,7 +199,7 @@ struct FloatingPinTests {
         #expect(workspace.setPinGlobal(pin.id, true, in: code))
         #expect(workspace.isGlobalFloat(pin.id))
 
-        for chat in [main, other, workspace.maintainer, workspace.codexBot, code] {
+        for chat in [main, other, workspace.maintainer, code] {
             let views = try #require(try payload(workspace, bot: chat)["floating"] as? [[String: Any]])
             #expect(views.count == 1)
             #expect(views[0]["global"] as? Bool == true)

@@ -271,12 +271,6 @@ struct ChatSurface: NSViewRepresentable {
                     if type == "revealFile" { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                     else { NSWorkspace.shared.open(url) }
                 }
-            case "codexReview":
-                // A component's ccb.reviewWithCodex: checked against the bot's repository (a
-                // commit that is not in it, a spec outside its folder or home); a bad call is dropped.
-                if let call = CodexComponentCall(body, folder: bot.profile.workingDirectory) {
-                    workspace.reviewWithCodex(bot, scope: call.scope, spec: call.spec)
-                }
             case "taskOutput":
                 // A background chip opened: its last lines of output (or what the subagent is
                 // doing), sent back to the page.
