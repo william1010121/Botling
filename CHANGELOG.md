@@ -111,6 +111,13 @@ app and publishes it on GitHub Releases.
   cancels its pending start. Hearing the other head adds context without pausing the user's
   task or breaking later follow-ups. The two-heads rule in the prompt describes this split.
 
+- **Codex's subagents show in the side panel again.** codex-cli 0.163 reports the subagents
+  it spawns with `subAgentActivity` items instead of a `spawnAgent` collab call, so none of
+  them appeared. Each now gets a row named after its path (`/root/avatar_coverage` →
+  "avatar coverage") with its model, its own thread's steps go under it, a message to it
+  adds no new row, and it ends when Codex says it completed or was interrupted. Older Codex
+  versions still work the old way.
+
 ## 1.15.1
 
 ### Fixed

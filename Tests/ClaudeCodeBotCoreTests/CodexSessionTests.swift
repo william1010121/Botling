@@ -362,6 +362,40 @@ struct CodexSessionTests {
         #expect(ended.replies.isEmpty)
     }
 
+    /// codex-cli 0.163 says a subagent started, was messaged and finished with `subAgentActivity`
+    /// items (from a real session's rollout), not a `spawnAgent` collab call.
+    @Test func codexsSubAgentActivityMakesSubagentRows() {
+        var codex = session()
+        _ = started(&codex, "hello", recording: CodexRecordings.helloAndApproval)
+        _ = codex.receive(#"{"id":3,"result":{"turn":{"id":"t1","items":[],"status":"inProgress"}}}"#)
+        let main = "01a1640c-e2db-7742-998a-553a14d4336f"
+        let avatar = "01a1649e-b6d9-74e1-af02-f607f7798771", answer = "01a1649e-d729-70a2-9a12-9c82a5b60d43"
+        func activity(_ id: String, _ kind: String, _ thread: String, _ path: String, model: String? = nil) -> String {
+            let model = model.map { #""\#($0)""# } ?? "null"
+            return #"{"method":"item/completed","params":{"threadId":"\#(main)","turnId":"t1","completedAtMs":1,"item":{"type":"subAgentActivity","id":"\#(id)","kind":"\#(kind)","agentThreadId":"\#(thread)","agentPath":"\#(path)","model":\#(model),"reasoningEffort":null}}}"#
+        }
+        let first = Out(codex.receive(activity("call_b04ae0dd7eaa4188ab14deae2cc56756", "started", avatar, "/root/avatar_coverage", model: "gpt-6.1-sol")))
+        #expect(first.traces == [
+            .subagentStarted(id: "call_b04ae0dd7eaa4188ab14deae2cc56756", description: "avatar coverage", type: "codex", prompt: "", background: false),
+            .subagentModel(id: "call_b04ae0dd7eaa4188ab14deae2cc56756", model: "gpt-6.1-sol"),
+        ])
+        let second = Out(codex.receive(activity("call_254739fa78b349a9946e2ca4ce0a22a4", "started", answer, "/root/answer_persistence")))
+        #expect(second.traces == [.subagentStarted(id: "call_254739fa78b349a9946e2ca4ce0a22a4", description: "answer persistence", type: "codex", prompt: "", background: false)])
+        // Its own thread's steps go under it.
+        let step = Out(codex.receive(#"{"method":"item/started","params":{"threadId":"\#(avatar)","turnId":"01a1649e-b726-7851-a6f4-bfa4863745eb","startedAtMs":1,"item":{"type":"commandExecution","id":"exec-9","command":"ls Tests","commandActions":[],"cwd":"/tmp/bot","status":"inProgress"}}}"#))
+        #expect(step.traces == [.toolUse(id: "exec-9", tool: "Bash", title: "Run ls Tests", detail: "ls Tests", parent: "call_b04ae0dd7eaa4188ab14deae2cc56756")])
+        // Messaging it again is not a new row.
+        #expect(Out(codex.receive(activity("call_7654dc23d56746a29d6e1c38811fae41", "interacted", avatar, "/root/avatar_coverage"))).traces.isEmpty)
+        _ = codex.receive(#"{"method":"item/completed","params":{"threadId":"\#(answer)","turnId":"01a1649e-d76c-75d3-9590-a40ab468165f","completedAtMs":1,"item":{"type":"agentMessage","id":"m1","text":"Answer choices persist.","phase":"final_answer"}}}"#)
+        // Its turn ending is not the end: the parent's activity item says when it is done.
+        #expect(Out(codex.receive(#"{"method":"turn/completed","params":{"threadId":"\#(answer)","turn":{"id":"01a1649e-d76c-75d3-9590-a40ab468165f","items":[],"status":"completed"}}}"#)).traces.isEmpty)
+        let done = Out(codex.receive(activity("subagent-completed-01a1649e-d76c-75d3-9590-a40ab468165f", "completed", answer, "/root/answer_persistence")))
+        #expect(done.traces == [.subagentEnded(id: "call_254739fa78b349a9946e2ca4ce0a22a4", status: "completed", summary: "Answer choices persist.")])
+        let stopped = Out(codex.receive(activity("call_x", "interrupted", avatar, "/root/avatar_coverage")))
+        #expect(stopped.traces == [.subagentEnded(id: "call_b04ae0dd7eaa4188ab14deae2cc56756", status: "killed", summary: nil)])
+        #expect(done.replies.isEmpty && stopped.replies.isEmpty)
+    }
+
     @Test func aPickedModelGoesToTheThread() {
         var codex = session { $0.model = "gpt-5.5-codex" }
         let out = started(&codex, "hi", recording: CodexRecordings.helloAndApproval)
