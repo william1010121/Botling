@@ -803,6 +803,11 @@ private struct BotRow: View {
                     .foregroundStyle(bot.phase == .asleep ? Theme.muted : Theme.text)
                     .lineLimit(1)
                 Spacer(minLength: 4)
+                if bot.heads.hasTwo {
+                    // Two heads: Claude and Codex.
+                    Text("C + X").font(.system(size: 11)).foregroundStyle(Theme.faint)
+                        .help(L("Claude and Codex"))
+                }
                 if waiting {
                     Circle().fill(Theme.orange).frame(width: 9, height: 9)
                 } else if bot.hasUnread && !selected {
@@ -1154,6 +1159,9 @@ struct DetailPanel: View {
                         }
                     }
                     .frame(minHeight: 24)
+                    if bot.heads.hasTwo {
+                        HeadsNow(bot: bot)
+                    }
                     // A manager: the first thing under "In progress" in its memory.md.
                     if bot.profile.role == .manager,
                        let doing = MemoryFile.items(at: bot.profile.memoryURL, section: .inProgress).first {
@@ -1484,6 +1492,35 @@ extension SettingsPage {
         var ids = models.map(\.id)
         if let picked, !ids.contains(picked) { ids.append(picked) }
         return ids.map(Optional.some)
+    }
+}
+
+/// Each head's state, in a bot with two: the one running, and the other idle or waiting for it
+/// (the lock).
+private struct HeadsNow: View {
+    @ObservedObject var bot: Bot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(bot.heads.engines, id: \.self) { head in
+                HStack(spacing: 10) {
+                    Circle().fill(head == .claude ? Color(hex: 0xE3895F) : Color(hex: 0x8AB4FF)).frame(width: 7, height: 7)
+                    Text(head.displayName).font(.system(size: 13))
+                    Spacer()
+                    Text(state(of: head)).font(.system(size: 12)).foregroundStyle(running(head) ? Theme.green : Theme.faint)
+                }
+            }
+        }
+    }
+
+    private func running(_ head: BotEngine) -> Bool {
+        head == bot.engine && bot.phase != .asleep && bot.isWorking
+    }
+
+    private func state(of head: BotEngine) -> String {
+        if head == bot.engine, bot.phase != .asleep { return bot.isWorking ? L("working") : L("awake") }
+        if bot.waitingHead == head { return L("waiting for {0}", bot.engine.displayName) }
+        return L("idle")
     }
 }
 

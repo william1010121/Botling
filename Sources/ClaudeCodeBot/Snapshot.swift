@@ -365,6 +365,10 @@ enum Snapshot {
             BotStore(directory: Workspace.Layout.bot(project.id, in: root)).save(unread: sample.2)
         }
         BotStore(directory: Workspace.Layout.bot(Workspace.maintainerID, in: root)).save(unread: 2)
+        // `CCB_SNAPSHOT_HEADS=1`: the first project has Claude and Codex ("C + X").
+        if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEADS"] != nil {
+            BotStore(directory: Workspace.Layout.bot(projects[0].id, in: root)).save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .claude))
+        }
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
@@ -390,6 +394,11 @@ enum Snapshot {
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         let content = HStack(spacing: 40) { pane(false); pane(true) }
+            .overlay(alignment: .topLeading) {
+                if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEADS"] != nil {
+                    Text("SAMPLE DATA").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.faint).offset(y: -20)
+                }
+            }
             .padding(30)
             .frame(width: 1140, height: 620)
             .foregroundStyle(Theme.text)
@@ -667,6 +676,10 @@ enum Snapshot {
         let project = Workspace.Project(id: UUID(), name: "ClaudeCodeBot", folder: code, avatar: "square")
         try? JSONEncoder().encode([project]).write(to: Workspace.Layout.projectsFile(in: root))
         let store = BotStore(directory: Workspace.Layout.bot(project.id, in: root))
+        // `CCB_SNAPSHOT_HEADS=1`: the bot has Claude and Codex (each head's state under Now).
+        if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEADS"] != nil {
+            store.save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .claude))
+        }
         store.save(messages: [
             ChatMessage(role: .bot, text: "Done: [Sidebar option A](file:///tmp/a.html), [Sidebar collapse](file:///tmp/b.html), [ClaudeCodeBot v1.7.1](file:///tmp/c.html)", date: Date())
         ])
@@ -732,6 +745,11 @@ enum Snapshot {
             .clipShape(RoundedRectangle(cornerRadius: 12))
         }
         let content = HStack(spacing: 40) { pane(false); pane(true) }
+            .overlay(alignment: .topLeading) {
+                if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEADS"] != nil {
+                    Text("SAMPLE DATA").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.faint).offset(y: -20)
+                }
+            }
             .padding(30)
             .frame(width: 1500, height: 920)
             .foregroundStyle(Theme.text)

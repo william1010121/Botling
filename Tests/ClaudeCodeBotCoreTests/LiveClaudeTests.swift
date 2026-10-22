@@ -72,6 +72,38 @@ struct LiveClaudeTests {
         #expect(answer.lowercased().contains("teal"))
     }
 
+    /// One bot, both heads, the real CLIs: Codex answers, then Claude takes its turn (the lock:
+    /// one process at a time) and knows what Codex said from the app's catch-up note.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func twoHeadsTakeTurnsAndKnowWhatTheOtherSaid() async throws {
+        let claude = try #require(ClaudeExecutableLocator().locate())
+        let codex = try #require(CodexCLI.newestExecutable())
+        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-heads-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let threads = CodexThreads(folder: home.appending(path: "codex-threads"))
+        let launch: AgentLauncher = { launch in
+            launch.engine == .codex ? try CodexAgentProcess.launcher(executable: codex, threads: threads)(launch) : try ClaudeAgentProcess.launcher(executable: claude)(launch)
+        }
+        let bot = Bot(profile: .main(home: home), defaultModel: .haiku, exitTimeout: 60, launcher: launch, store: BotStore(directory: home.appending(path: "store")))
+        bot.sessionExists = { session, folder in Bot.claudeSessionExists(session, in: folder) || threads.thread(for: session) != nil }
+        await bot.setHeads([.claude, .codex])
+
+        bot.send("Pick one colour name at random from red, green, purple and reply with only that word.", to: .codex)
+        await eventually({ bot.messages.filter { $0.role == .bot }.count == 1 && !bot.isWorking }, timeout: 180)
+        let picked = try #require(bot.messages.last { $0.role == .bot })
+        print("codex:", picked.text, picked.engine as Any)
+        #expect(picked.engine == .codex)
+
+        bot.send("Which colour did Codex just pick? Reply with only that word.", to: .claude)
+        await eventually({ bot.messages.filter { $0.role == .bot }.count == 2 && !bot.isWorking }, timeout: 180)
+        let answer = try #require(bot.messages.last { $0.role == .bot })
+        print("claude:", answer.text, answer.engine as Any)
+        #expect(answer.engine == .claude)
+        #expect(answer.text.lowercased().contains(picked.text.lowercased().trimmingCharacters(in: .punctuationCharacters.union(.whitespacesAndNewlines))))
+        await bot.goToSleep()
+    }
+
     /// The Codex model menu lists what the local Codex offers (`model/list`).
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
     func codexListsItsModels() async throws {

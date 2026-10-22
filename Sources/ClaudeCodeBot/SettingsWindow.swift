@@ -35,7 +35,7 @@ struct SettingsPopover: View {
             }
             if !workspace.codexRateLimits.isEmpty {
                 Text("Codex").font(.system(size: 12)).foregroundStyle(Theme.faint)
-                RateLimitCards(limits: workspace.codexRateLimits)
+                RateLimitCards(limits: workspace.codexRateLimits, hidesMissing: true)
             }
             divider
             SettingSwitch(L("Auto-approve safe actions"), isOn: Binding(
@@ -83,14 +83,20 @@ struct SettingsPopover: View {
 /// over, with an "as of" note when the last reading is old (it comes with bots' turns only).
 struct RateLimitCards: View {
     let limits: RateLimits
+    /// Leave out a window never reported (Codex may report only its week).
+    var hidesMissing = false
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             let now = context.date
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
-                    card(L("5 hours"), limits.fiveHour, now: now) { RateLimitText.countdown($0, now: now) }
-                    card(L("Week"), limits.week, now: now) { RateLimitText.resetDay($0, now: now) }
+                    if !hidesMissing || limits.fiveHour != nil {
+                        card(L("5 hours"), limits.fiveHour, now: now) { RateLimitText.countdown($0, now: now) }
+                    }
+                    if !hidesMissing || limits.week != nil {
+                        card(L("Week"), limits.week, now: now) { RateLimitText.resetDay($0, now: now) }
+                    }
                 }
                 if let since = limits.staleSince(now: now) {
                     Text(RateLimitText.asOf(since, now: now))
