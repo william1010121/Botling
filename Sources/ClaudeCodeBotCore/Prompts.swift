@@ -2,7 +2,7 @@ import Foundation
 
 /// Everything ClaudeCodeBot says to Claude for one bot. Messages marked "App" are never shown in the chat.
 struct BotPrompts {
-    let system: String
+    private(set) var system: String
     let wake: String
     let tidy: String
     let handoff: String
@@ -46,13 +46,19 @@ struct BotPrompts {
         "Reply in \(language.promptName) by default: it is the language the user chose for the app. When the user writes to you in another language, reply in theirs (match the language of their latest message)."
     }
 
-    init(profile: BotProfile, results: ResultPublishing = .artifactUnlessSensitive, language: AppLanguage = .english) {
+    /// What a bot on Codex is told on top: the Claude Code tools these instructions name are not
+    /// there, so results stay local and timed work goes into its Routines file.
+    static let codexNote = "- You run on the Codex CLI, not Claude Code. The Claude Code tools these instructions name (the Artifact tool, ScheduleWakeup, CronCreate, the Agent tool, Skill) are not yours: put results in a local page as said above, and put timed work in your Routines file. When something needs one of them (a claude.ai Artifact or Design), say so in one sentence: it can be done on Claude."
+
+    init(profile: BotProfile, results: ResultPublishing = .artifactUnlessSensitive, language: AppLanguage = .english, engine: BotEngine = .claude) {
+        // Codex has no Artifact tool: its results stay local.
+        let publishing: ResultPublishing = engine == .codex ? .localOnly : results
         let memory = profile.memoryPath
         let artifacts = profile.artifactsURL.path
         let archive = profile.archiveURL.path
         let results = profile.role == .main
             ? "- You are the single point of contact. Your job is to hand work over: anything to be built (pages, reports, code, comparisons) goes to a project or a temporary team, and they hand the result link back. Look things up yourself (files, the web) when that answers the user or tells you where the work belongs."
-            : "- " + Self.resultsRule(results, folder: artifacts) + " Do not paste long text."
+            : "- " + Self.resultsRule(publishing, folder: artifacts) + " Do not paste long text."
         let style = """
         - The user is like a CEO with very little attention. \(Self.languageRule(language)) At most 3 sentences, only the conclusion and the next step.
         - Replies may use markdown (bold, lists, tables, code blocks); the app renders it. When you mention a result or a link, write [name](url) and the app draws it as a clickable chip.
@@ -124,6 +130,7 @@ struct BotPrompts {
             \(profile.instructions ?? "")
             """
         }
+        if engine == .codex { system += "\n" + Self.codexNote }
         wake = Self.wakeLead + " Read \(memory) before answering; if the file does not exist, treat this as our first meeting.)"
         tidy = Self.tidyLead + " and are about to fall asleep. Update \(memory) with whatever in this conversation is worth remembering, keeping the four-section format and under 150 lines. Reply only OK when done.)"
         handoff = "(App: The model is about to change. Write what you are working on and what comes next into the \"\(MemorySection.inProgress.heading)\" section of \(memory), keeping the four-section format. Reply only OK when done.)"

@@ -47,6 +47,8 @@ public struct BotStore: Sendable {
         /// build does not know leaves the rest of the file readable. Missing: the defaults.
         var subagentModel: String?
         var effort: String?
+        /// The CLI it runs on, as text like the two above; missing: Claude.
+        var engine: String?
         /// Routines from before they moved to routines.cron; read once to carry them over.
         var routines: [LegacyRoutine]?
         /// When each routines.cron job last ran, by job id.
@@ -138,6 +140,17 @@ public struct BotStore: Sendable {
     public func save(effort: EffortLevel?) {
         var settings = loadSettings()
         settings.effort = effort?.rawValue
+        write(settings, to: settingsURL)
+    }
+
+    /// The CLI it runs on; nil: never chosen (Claude).
+    public func loadEngine() -> BotEngine? {
+        loadSettings().engine.flatMap(BotEngine.init(rawValue:))
+    }
+
+    public func save(engine: BotEngine) {
+        var settings = loadSettings()
+        settings.engine = engine.rawValue
         write(settings, to: settingsURL)
     }
 

@@ -11,6 +11,8 @@ public final class Bot: ObservableObject, Identifiable {
     @Published public private(set) var isWorking = false
     @Published public private(set) var messages: [ChatMessage]
     @Published public private(set) var model: BotModel
+    /// The CLI it runs on (Claude Code or Codex); both share its memory.md.
+    @Published public private(set) var engine: BotEngine
     /// The model being switched to, while a handoff runs.
     @Published public private(set) var switchTarget: BotModel?
     /// The model its subagents use; nil: the same as its own.
@@ -44,7 +46,7 @@ public final class Bot: ObservableObject, Identifiable {
     public let id = UUID()
     public let profile: BotProfile
     /// What it is told, with the results rule as Settings has it now (read at each start).
-    var prompts: BotPrompts { BotPrompts(profile: profile, results: resultPublishing?() ?? .artifactUnlessSensitive, language: language?() ?? .english) }
+    var prompts: BotPrompts { BotPrompts(profile: profile, results: resultPublishing?() ?? .artifactUnlessSensitive, language: language?() ?? .english, engine: engine) }
     private let launcher: AgentLauncher
     private let idleInterval: TimeInterval
     private let exitTimeout: TimeInterval
@@ -247,7 +249,7 @@ public final class Bot: ObservableObject, Identifiable {
     private var pendingRestartForPluginsOnly = false
     /// Whether the session `sessionID` names can be `--resume`d (claude kept its transcript).
     /// Tests stand in for it; without a transcript a restart writes a handoff instead.
-    public var sessionExists: (UUID, URL) -> Bool = { Bot.claudeSessionExists($0, in: $1) }
+    public var sessionExists: (UUID, URL) -> Bool = { Bot.claudeSessionExists($0, in: $1) || CodexThreads.shared.thread(for: $0) != nil }
     /// A session just went on with `--resume`: until it shows it is alive (a step or a reply),
     /// an exit means the resume failed, and the first message it got goes to a fresh session.
     private var resumeProbe = false
@@ -303,6 +305,7 @@ public final class Bot: ObservableObject, Identifiable {
         alwaysAllowed = store?.loadAlwaysAllowed() ?? []
         unreadCount = store?.loadUnread() ?? 0
         model = store?.loadModel() ?? defaultModel
+        engine = store?.loadEngine() ?? .claude
         subagentModel = store?.loadSubagentModel()
         effort = store?.loadEffort()
         componentList = store?.loadComponentList()
@@ -801,6 +804,7 @@ public final class Bot: ObservableObject, Identifiable {
         pendingRestartForPluginsOnly = false
         loadedPluginStamp = pluginStamp?()
         let process = try launcher(AgentLaunch(
+            engine: engine,
             model: model,
             sessionID: session,
             resume: resuming != nil,
@@ -1872,6 +1876,21 @@ public final class Bot: ObservableObject, Identifiable {
         await restart(.model(newModel))
     }
 
+    /// Picks the CLI it runs on. Asleep: the next wake starts on it. Awake: a handoff just before
+    /// its next message, as when `--resume` cannot be used: it writes what it is doing into
+    /// memory.md, and a new session on the other engine reads it (one CLI cannot resume the
+    /// other's conversation).
+    public func switchEngine(to newEngine: BotEngine) async {
+        guard newEngine != engine else { return }
+        engine = newEngine
+        store?.save(engine: newEngine)
+        guard phase != .asleep else {
+            append(ChatMessage(role: .divider, text: L("Switched to {0}", newEngine.displayName)))
+            return
+        }
+        await restart(.engine(newEngine))
+    }
+
     /// Picks the model its subagents use. Awake: restarts before its next message, like a model
     /// switch; asleep: the next wake uses it.
     public func setSubagentModel(_ newModel: BotModel?) async {
@@ -1971,7 +1990,7 @@ public final class Bot: ObservableObject, Identifiable {
             await flushQueue()
             return
         }
-        if let session = sessionID, sessionExists(session, profile.workingDirectory) {
+        if !reason.changesEngine, let session = sessionID, sessionExists(session, profile.workingDirectory) {
             await resume(session, reason: reason)
         } else {
             await handOver(reason: reason)
@@ -2263,6 +2282,14 @@ public enum RestartReason: Equatable, Sendable {
     case mayRead(String)
     /// Auto mode turned on (true) or off.
     case autoApprove(Bool)
+    /// It runs on another CLI now: always a handoff through memory.md.
+    case engine(BotEngine)
+
+    /// The new session runs on another CLI, which cannot resume this one's conversation.
+    var changesEngine: Bool {
+        if case .engine = self { return true }
+        return false
+    }
 
     /// What the bot is told, in English.
     var told: String {
@@ -2273,6 +2300,7 @@ public enum RestartReason: Equatable, Sendable {
         case .plugins: "loading new plugins"
         case let .mayRead(folder): "may read \(folder)"
         case let .autoApprove(on): on ? "auto-approving safe actions" : "asking before tools"
+        case let .engine(engine): "running on \(engine.displayName)"
         }
     }
 
@@ -2285,6 +2313,7 @@ public enum RestartReason: Equatable, Sendable {
         case .plugins: L("loading new plugins")
         case let .mayRead(folder): L("may read {0}", folder)
         case let .autoApprove(on): on ? L("auto-approving safe actions") : L("asking before tools")
+        case let .engine(engine): engine.displayName
         }
     }
 }

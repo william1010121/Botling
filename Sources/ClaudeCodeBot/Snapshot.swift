@@ -35,6 +35,10 @@ enum Snapshot {
             drawSettings(to: path)
             return true
         }
+        if let path = ProcessInfo.processInfo.environment["CCB_BOT_SETTINGS_SNAPSHOT"] {
+            drawBotSettings(to: path)
+            return true
+        }
         if let path = ProcessInfo.processInfo.environment["CCB_RELEASES_SNAPSHOT"] {
             drawReleases(to: path)
             return true
@@ -674,6 +678,38 @@ enum Snapshot {
             .background(Color(hex: 0x0A0A0C))
             .preferredColorScheme(.dark)
         let frame = NSRect(x: 0, y: 0, width: 1500, height: 920)
+        let window = HeadlessRun.offscreenWindow(frame)
+        window.appearance = NSAppearance(named: .darkAqua)
+        let host = NSHostingView(rootView: content)
+        host.frame = frame
+        window.contentView = host
+        self.window = window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
+            exit(0)
+        }
+    }
+
+    /// `CCB_BOT_SETTINGS_SNAPSHOT=/path/out.png`: a sample bot's own settings, running on Codex
+    /// (`CCB_BOT_ENGINE=claude` for Claude), marked as sample data.
+    private static func drawBotSettings(to path: String) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
+        let folder = root.appending(path: "code/SampleProject")
+        try? FileManager.default.createDirectory(at: folder.appending(path: ".bot"), withIntermediateDirectories: true)
+        let store = BotStore(directory: root.appending(path: "bot"))
+        store.save(engine: BotEngine(rawValue: ProcessInfo.processInfo.environment["CCB_BOT_ENGINE"] ?? "") ?? .codex)
+        let bot = Bot(profile: .manager(name: "Sample project", avatar: "square", folder: folder), launcher: { _ in throw AppError.claudeNotFound }, store: store)
+        let content = VStack(alignment: .leading, spacing: 0) {
+            Text("SAMPLE DATA").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.faint).padding(.leading, 20).padding(.top, 10)
+            SettingsPage(bot: bot) {}.padding(.horizontal, 20)
+        }
+        .frame(width: 380, height: 900, alignment: .top)
+        .foregroundStyle(Theme.text)
+        .background(Theme.ground)
+        .preferredColorScheme(.dark)
+        let frame = NSRect(x: 0, y: 0, width: 380, height: 900)
         let window = HeadlessRun.offscreenWindow(frame)
         window.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: content)
