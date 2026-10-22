@@ -119,6 +119,9 @@ enum PluginGuide {
           Data from a command: about.md's `Command: <command>` line fills the component with what it prints (run in the bot's folder after the user
           presses "Allow and run" on the card; JSON output is the data, other output one string; at most \#(ComponentCommands.limitsText)). It is optional,
           only for live data that changes: most components draw the data a bot gives them with `<show>`, and one made from a bot's reply shows that reply.
+          The `Command:` line is executed verbatim by zsh (no placeholders, nothing filled in), so it must run exactly as written and only read:
+          no `[optional]` or `<arg>` notation in it; describe optional arguments in about.md's prose instead. The component shot runs it once
+          as written (in its --folder, else the plugin folder) and reports a failure as a problem.
           Fields in two groups: about.md lists the data fields under "\#(ComponentFieldGroup.fromCommand.label)" (a CLI command can get them) and "\#(ComponentFieldGroup.botOnly.label)"
           (explanations, advice, a next step: only a bot can write them, so they are there only when a bot fills it); the template draws well
           without any optional field. A component bots fill that has From command fields gets a `Board command: <command>` line: only a

@@ -60,6 +60,15 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **A component's Command line is run before it is delivered.** The component shot (the check
+  Maintainer and the component editor run before handing a component over) now runs the
+  about.md `Command:` line once, exactly as the chat does (the user's zsh, in `--folder` or else
+  the plugin folder, a 30-second limit), and lists a failure as a problem with the shell's own
+  words. A line such as `Command: python3 script.py [repo_dir]` used to pass and then show "The
+  command failed" on the card (`zsh: no matches found: [repo_dir]`). The editor's and
+  Maintainer's instructions and PLUGINS.md now say the line is executed verbatim: optional
+  arguments are described in about.md's prose, not in the line.
+
 - **A subagent its bot sends more work with SendMessage shows at work again, with the message.**
   When a bot resumed a finished subagent (or queued a message for one still running), the
   resumed run's `task_started` and `task_notification` name the SendMessage call, not the Agent

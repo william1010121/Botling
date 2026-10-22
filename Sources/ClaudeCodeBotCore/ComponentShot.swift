@@ -39,6 +39,7 @@ public enum ComponentShot {
     Draws the component in this build's real chat page on each surface, saves a picture of each
     and a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.
     Data: --data, else its Command run in --folder, else about.md's example (```json block or Data: line), else null.
+    A Command: line in about.md is always run once as written (in --folder, else the plugin folder); a failure is a problem.
     """
 
     /// Reads the command line. `cwd` resolves relative paths.
@@ -170,6 +171,50 @@ public enum ComponentShot {
             case .none: "null (no --data, no Command run, no example in about.md)"
             }
         }
+    }
+
+    // MARK: Its Command
+
+    /// How long the check gives a component's Command (the chat gives it `ComponentCommands.timeout`).
+    public static let commandCheckTimeout: TimeInterval = 30
+
+    /// Its about.md Command, run once as written.
+    public struct CommandCheck: Equatable, Sendable {
+        public var command: String
+        public var folder: URL
+        public var outcome: CommandOutcome
+        /// A problem when it fails as the chat would show "The command failed"; a warning when it
+        /// only took longer than the check waits.
+        public var findings: [Finding]
+    }
+
+    /// Where its Command runs when no project folder is given: the plugin folder holding it
+    /// (`<plugin>/components/<name>`), else the component's own folder.
+    public static func commandFolder(for component: URL) -> URL {
+        let parent = component.deletingLastPathComponent()
+        return parent.lastPathComponent == "components" ? parent.deletingLastPathComponent() : component
+    }
+
+    /// Runs the component's about.md `Command:` line once, verbatim, the way a chat card does
+    /// (`ComponentCommands.execute`: the user's zsh, no input, the same output cap) in `folder`
+    /// (else `commandFolder`), with a shorter time limit. nil when it has no Command.
+    public static func checkCommand(component: URL, folder: URL?, timeout: TimeInterval = commandCheckTimeout) async -> CommandCheck? {
+        guard let about = try? String(contentsOf: component.appending(path: "about.md"), encoding: .utf8),
+              let command = ComponentLibrary.command(inAbout: about) else { return nil }
+        let place = folder ?? commandFolder(for: component)
+        let outcome = await ComponentCommands.execute(command, in: place, timeout: timeout, limit: ComponentCommands.outputLimit)
+        var findings: [Finding] = []
+        if let error = outcome.error {
+            let said = error.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.joined(separator: " · ")
+            if outcome.timedOut {
+                findings.append(Finding(level: .warning, place: "command", text: "Its Command (\(command)) did not finish within \(Int(timeout))s in \(place.path); the chat gives it \(Int(ComponentCommands.timeout))s: \(said)"))
+            } else {
+                var text = "Its Command failed when run as written (\(command), in \(place.path)): \(said). The app runs the Command: line verbatim with zsh, so it must work exactly as written; describe optional arguments in about.md's prose, not in the line."
+                if folder == nil { text += " If it only works in a project, run the shot again with --folder <project folder>." }
+                findings.append(Finding(level: .problem, place: "command", text: text))
+            }
+        }
+        return CommandCheck(command: command, folder: place, outcome: outcome, findings: findings)
     }
 
     // MARK: Measuring

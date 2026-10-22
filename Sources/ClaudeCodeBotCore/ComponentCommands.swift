@@ -8,11 +8,14 @@ public struct CommandOutcome: Equatable, Sendable {
     /// Why it did not, in a sentence, with the end of what it printed.
     public var error: String?
     public var ranAt: Date
+    /// It was stopped for taking longer than its time limit.
+    public var timedOut: Bool
 
-    public init(data: String? = nil, error: String? = nil, ranAt: Date = Date()) {
+    public init(data: String? = nil, error: String? = nil, ranAt: Date = Date(), timedOut: Bool = false) {
         self.data = data
         self.error = error
         self.ranAt = ranAt
+        self.timedOut = timedOut
     }
 }
 
@@ -375,7 +378,7 @@ public final class ComponentCommands: ObservableObject {
             return CommandOutcome(error: L("The command printed more than {0} KB, so it was stopped.", limit / 1000))
         }
         if timedOut {
-            return CommandOutcome(error: L("The command took longer than {0} seconds, so it was stopped.", Int(timeout)) + tail(stderr))
+            return CommandOutcome(error: L("The command took longer than {0} seconds, so it was stopped.", Int(timeout)) + tail(stderr), timedOut: true)
         }
         let text = String(decoding: stdout, as: UTF8.self)
         if process.terminationReason == .uncaughtSignal || process.terminationStatus != 0 {
