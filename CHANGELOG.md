@@ -26,8 +26,15 @@ app and publishes it on GitHub Releases.
   about this" hands the saved file to the main bot, which is told where these files are so it
   can search them. The script that reads the page is a plugin, `ccb-web-extractors`, that
   Maintainer can fix when Gemini changes its page.
-- **LaTeX snippets and live math preview in the web bots.** Typing in Gemini's input box (and
-  the next web bots' boxes) works as with the web-laas browser extension, now built into the
+  ChatGPT (chatgpt.com) and Claude (claude.ai) are listed under it and work the same way, each
+  with its own sign-in (kept inside the view: auth.openai.com, Google, Apple or Microsoft for
+  ChatGPT; claude.ai, Google or Apple for Claude), its own folder (`web/chatgpt/`,
+  `web/claude/`) and its own page reader (`chatgpt.js`, `claude.js`). They save an answer as
+  Markdown: headings, numbered and nested lists, code blocks with their language, tables,
+  quotes and links, and math as its `$TeX$`; an answer still being written is not saved as one,
+  so its question keeps waiting.
+- **LaTeX snippets and live math preview in the web bots.** Typing in Gemini's, ChatGPT's and
+  Claude's input boxes works as with the web-laas browser extension, now built into the
   app: `$;a` becomes `$\alpha`, `mk` opens inline math, Tab jumps to the next field, and a card
   above the caret shows the formula as it will look. Formulas in the box and in your sent
   messages are shown typeset when the caret is elsewhere. ⌥⇧L pauses or resumes it (the app

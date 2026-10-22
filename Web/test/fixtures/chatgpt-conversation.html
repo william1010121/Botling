@@ -1,0 +1,102 @@
+<!doctype html>
+<!-- A FIXTURE for the tests, not a page saved from chatgpt.com. It mimics how ChatGPT draws a
+     conversation: each turn an <article data-turn> with a screen-reader heading ("You said:"),
+     the message in a [data-message-author-role] element (yours in a .whitespace-pre-wrap div, its
+     answer in a .markdown div), and buttons under it. The math is real KaTeX markup
+     (katex.renderToString): the MathML with its TeX in an annotation, then the drawn HTML. A code
+     block has its language and "Copy code" inside the <pre>, the code in <code class="language-…">.
+     The side list marks the open conversation with aria-current. -->
+<html>
+<head><title>Load factor and hashing</title></head>
+<body>
+<div class="flex h-svh w-screen flex-col">
+  <nav aria-label="Chat history" class="flex h-full w-full flex-col">
+    <a class="group __menu-item hoverable" href="/"><div class="truncate">New chat</div></a>
+    <div id="history">
+      <h2 class="__menu-label">Chats</h2>
+      <a class="group __menu-item hoverable" href="/c/68f1c2a4-93b0-8001-a7e2-5c0d1e9f4b21" data-active="" aria-current="page"><div class="flex min-w-0 grow items-center gap-2.5"><div class="truncate"><span dir="auto">Load factor and hashing</span></div></div><div class="trailing"><button aria-label="Open conversation options" data-testid="history-item-0-options"><svg width="20" height="20"></svg></button></div></a>
+      <a class="group __menu-item hoverable" href="/c/68f0aa11-1111-8001-a7e2-000000000000"><div class="truncate"><span dir="auto">Release notes</span></div></a>
+    </div>
+  </nav>
+  <main id="main" class="transition-width relative h-full w-full flex-1 overflow-auto">
+    <div id="thread" class="group/thread flex h-full flex-col">
+      <div class="flex flex-col text-sm">
+        <article class="text-token-text-primary w-full focus:outline-none" tabindex="-1" dir="auto" data-turn-id="aaa1" data-testid="conversation-turn-1" data-scroll-anchor="false" data-turn="user">
+          <h5 class="sr-only">You said:</h5>
+          <div class="text-base my-auto mx-auto pt-12 [--thread-content-margin:--spacing(4)]">
+            <div class="[--thread-content-max-width:40rem] mx-auto max-w-(--thread-content-max-width) flex-1 group/turn-messages focus-visible:outline-hidden relative flex w-full min-w-0 flex-col">
+              <div class="flex max-w-full flex-col grow">
+                <div data-message-author-role="user" data-message-id="aaa1-msg" dir="auto" class="min-h-8 text-message relative flex w-full flex-col items-end gap-2 text-start break-words whitespace-normal">
+                  <div class="flex w-full flex-col gap-1 empty:hidden items-end rtl:items-start">
+                    <div class="user-message-bubble-color relative max-w-[var(--user-chat-width,70%)] rounded-[18px] px-4 py-1.5">
+                      <div class="whitespace-pre-wrap">Why is a hash table O(1) on average?
+And what is   the load factor?</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="flex justify-end"><button class="text-token-text-secondary" aria-label="Copy" data-testid="copy-turn-action-button"><svg></svg></button><button aria-label="Edit message"><svg></svg>Edit</button></div>
+            </div>
+          </div>
+        </article>
+        <article class="text-token-text-primary w-full" tabindex="-1" dir="auto" data-turn-id="bbb1" data-testid="conversation-turn-2" data-scroll-anchor="false" data-turn="assistant">
+          <h6 class="sr-only">ChatGPT said:</h6>
+          <div class="text-base my-auto mx-auto [--thread-content-margin:--spacing(4)]">
+            <div class="mx-auto flex-1 group/turn-messages relative flex w-full min-w-0 flex-col agent-turn">
+              <div class="flex max-w-full flex-col grow">
+                <div data-message-author-role="assistant" data-message-id="bbb1-msg" dir="auto" class="min-h-8 text-message relative flex w-full flex-col items-end gap-2 text-start break-words whitespace-normal" data-message-model-slug="gpt-5">
+                  <div class="flex w-full flex-col gap-1 empty:hidden first:pt-[1px]">
+                    <div class="markdown prose dark:prose-invert w-full break-words dark markdown-new-styling">
+                      <h3 data-start="0" data-end="14">Short answer</h3>
+                      <p data-start="16" data-end="80">Each slot holds about <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>α</mi></mrow><annotation encoding="application/x-tex">\alpha</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.0037em;">α</span></span></span></span> keys on average, where</p>
+                      <span class="katex-display"><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><semantics><mrow><mi>α</mi><mo>=</mo><mfrac><mi>n</mi><mi>m</mi></mfrac></mrow><annotation encoding="application/x-tex">\alpha = \frac{n}{m}</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.4306em;"></span><span class="mord mathnormal" style="margin-right:0.0037em;">α</span><span class="mspace" style="margin-right:0.2778em;"></span><span class="mrel">=</span><span class="mspace" style="margin-right:0.2778em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:1.7936em;vertical-align:-0.686em;"></span><span class="mord"><span class="mopen nulldelimiter"></span><span class="mfrac"><span class="vlist-t vlist-t2"><span class="vlist-r"><span class="vlist" style="height:1.1076em;"><span style="top:-2.314em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord mathnormal">m</span></span></span><span style="top:-3.23em;"><span class="pstrut" style="height:3em;"></span><span class="frac-line" style="border-bottom-width:0.04em;"></span></span><span style="top:-3.677em;"><span class="pstrut" style="height:3em;"></span><span class="mord"><span class="mord mathnormal">n</span></span></span></span><span class="vlist-s">​</span></span><span class="vlist-r"><span class="vlist" style="height:0.686em;"><span></span></span></span></span></span><span class="mclose nulldelimiter"></span></span></span></span></span></span>
+                      <p>Lookups:</p>
+                      <ol>
+                        <li><p><strong>Hash</strong> the key.</p></li>
+                        <li><p>Probe with <code>h(k) + i</code> until a match or an empty slot.</p></li>
+                      </ol>
+                      <ul>
+                        <li>Chaining</li>
+                        <li>Open addressing
+                          <ul><li>linear probing</li><li><em>double</em> hashing</li></ul>
+                        </li>
+                      </ul>
+                      <pre class="overflow-visible!"><div class="contain-inline-size rounded-2xl relative bg-token-sidebar-surface-primary"><div class="flex items-center text-token-text-secondary px-4 py-2 text-xs font-sans justify-between h-9 bg-token-sidebar-surface-primary select-none rounded-t-2xl">python</div><div class="sticky top-9"><div class="absolute end-0 bottom-0 flex h-9 items-center pe-2"><div class="bg-token-bg-elevated-secondary text-token-text-secondary flex items-center gap-4 rounded-sm px-2 font-sans text-xs"><button class="flex gap-1 items-center select-none py-1" aria-label="Copy"><svg></svg>Copy code</button></div></div></div><div class="overflow-y-auto p-4" dir="ltr"><code class="whitespace-pre! language-python"><span class="hljs-keyword">def</span> <span class="hljs-title function_">slot</span>(<span class="hljs-params">k, m</span>):
+    <span class="hljs-keyword">return</span> <span class="hljs-built_in">hash</span>(k) % m
+
+<span class="hljs-built_in">print</span>(slot(<span class="hljs-string">"a"</span>, <span class="hljs-number">8</span>))
+</code></div></div></pre>
+                      <blockquote><p>Average case, not worst case: one bad hash puts every key in one slot.</p></blockquote>
+                      <div class="_tableContainer_1rjym_1"><div tabindex="-1" class="group _tableWrapper_1rjym_13 flex w-fit flex-col-reverse"><table class="w-fit min-w-(--thread-content-width)"><thead><tr><th>Scheme</th><th>Probe <span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>i</mi></mrow><annotation encoding="application/x-tex">i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:0.6595em;"></span><span class="mord mathnormal">i</span></span></span></span></th></tr></thead><tbody><tr><td>Linear</td><td><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>h</mi><mo stretchy="false">(</mo><mi>k</mi><mo stretchy="false">)</mo><mo>+</mo><mi>i</mi></mrow><annotation encoding="application/x-tex">h(k)+i</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">h</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0315em;">k</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.6595em;"></span><span class="mord mathnormal">i</span></span></span></span></td></tr><tr><td>Quadratic</td><td><span class="katex"><span class="katex-mathml"><math xmlns="http://www.w3.org/1998/Math/MathML"><semantics><mrow><mi>h</mi><mo stretchy="false">(</mo><mi>k</mi><mo stretchy="false">)</mo><mo>+</mo><msup><mi>i</mi><mn>2</mn></msup></mrow><annotation encoding="application/x-tex">h(k)+i^2</annotation></semantics></math></span><span class="katex-html" aria-hidden="true"><span class="katex-base"><span class="katex-strut" style="height:1em;vertical-align:-0.25em;"></span><span class="mord mathnormal">h</span><span class="mopen">(</span><span class="mord mathnormal" style="margin-right:0.0315em;">k</span><span class="mclose">)</span><span class="mspace" style="margin-right:0.2222em;"></span><span class="mbin">+</span><span class="mspace" style="margin-right:0.2222em;"></span></span><span class="katex-base"><span class="katex-strut" style="height:0.8141em;"></span><span class="mord"><span class="mord mathnormal">i</span><span class="msupsub"><span class="vlist-t"><span class="vlist-r"><span class="vlist" style="height:0.8141em;"><span style="top:-3.063em;margin-right:0.05em;"><span class="pstrut" style="height:2.7em;"></span><span class="katex-sizing reset-size6 size3 mtight"><span class="mord mtight">2</span></span></span></span></span></span></span></span></span></span></span></td></tr></tbody></table><div class="sticky end-(--thread-content-margin) h-0 self-end select-none"><div class="absolute end-0 flex items-end"><button aria-label="Copy table"><svg></svg></button></div></div></div></div>
+                      <p>See <a href="https://en.wikipedia.org/wiki/Hash_table" target="_blank" rel="noopener" class="decorated-link">Hash table<span aria-hidden="true" class="ms-0.5 inline-block align-middle leading-none"><svg></svg></span></a> for more.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="flex min-h-[46px] justify-start"><div class="touch:-me-2 touch:-ms-3.5 -ms-2.5 -me-1 flex flex-wrap items-center gap-y-4 p-1 select-none"><button aria-label="Copy" data-testid="copy-turn-action-button"><svg></svg></button><button aria-label="Good response" data-testid="good-response-turn-action-button"><svg></svg></button><button aria-label="Bad response"><svg></svg></button></div></div>
+            </div>
+          </div>
+        </article>
+        <article class="text-token-text-primary w-full" dir="auto" data-testid="conversation-turn-3" data-turn="user">
+          <h5 class="sr-only">You said:</h5>
+          <div data-message-author-role="user" data-message-id="ccc1-msg"><div class="user-message-bubble-color"><div class="whitespace-pre-wrap">Thanks! Any source?</div></div></div>
+        </article>
+        <article class="text-token-text-primary w-full" dir="auto" data-testid="conversation-turn-4" data-turn="assistant">
+          <h6 class="sr-only">ChatGPT said:</h6>
+          <div class="flex max-w-full flex-col grow">
+            <div class="mb-2"><button class="text-token-text-secondary"><span>Thought for 4s</span></button></div>
+            <div data-message-author-role="assistant" data-message-id="ddd1-msg" data-message-model-slug="gpt-5">
+              <div class="markdown prose dark:prose-invert w-full break-words dark"><p>Knuth's <em>The Art of Computer Programming</em>, volume 3.</p></div>
+            </div>
+            <div data-message-author-role="assistant" data-message-id="ddd2-msg" data-message-model-slug="gpt-5">
+              <div class="markdown prose dark:prose-invert w-full break-words dark"><p>Also CLRS, chapter 11.</p></div>
+            </div>
+          </div>
+        </article>
+      </div>
+    </div>
+    <div id="thread-bottom-container"><form><div id="prompt-textarea" contenteditable="true" class="ProseMirror"><p>draft not sent</p></div><button data-testid="send-button" aria-label="Send prompt">Send</button></form></div>
+  </main>
+</div>
+</body>
+</html>
