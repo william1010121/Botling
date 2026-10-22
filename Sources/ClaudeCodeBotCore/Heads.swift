@@ -35,6 +35,8 @@ public struct HeadsSettings: Codable, Equatable, Sendable {
     public var limits = RoundLimits()
     /// The heads may hand work to each other (`<handoff to="…">`).
     public var handoffs = true
+    /// The Codex model (`model/list`'s id); nil: Codex's own default.
+    public var codexModel: String?
 
     public init(engines: [BotEngine], answerWith: AnswerTarget, both: BothMode = .askBoth, limits: RoundLimits = RoundLimits(), handoffs: Bool = true) {
         let kept = BotEngine.allCases.filter(engines.contains)
@@ -46,7 +48,7 @@ public struct HeadsSettings: Codable, Equatable, Sendable {
         self.answerWith = fitted(answerWith)
     }
 
-    private enum CodingKeys: String, CodingKey { case engines, answerWith, both, limits, handoffs }
+    private enum CodingKeys: String, CodingKey { case engines, answerWith, both, limits, handoffs, codexModel }
 
     /// Read as text, so a value this build does not know leaves the rest of bot.json readable.
     public init(from decoder: Decoder) throws {
@@ -60,6 +62,7 @@ public struct HeadsSettings: Codable, Equatable, Sendable {
             limits: (try? container.decode(RoundLimits.self, forKey: .limits)) ?? RoundLimits(),
             handoffs: (try? container.decode(Bool.self, forKey: .handoffs)) ?? true
         )
+        codexModel = try? container.decode(String.self, forKey: .codexModel)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -69,6 +72,7 @@ public struct HeadsSettings: Codable, Equatable, Sendable {
         try container.encode(both.rawValue, forKey: .both)
         try container.encode(limits, forKey: .limits)
         try container.encode(handoffs, forKey: .handoffs)
+        try container.encodeIfPresent(codexModel, forKey: .codexModel)
     }
 
     public static func single(_ engine: BotEngine) -> HeadsSettings {

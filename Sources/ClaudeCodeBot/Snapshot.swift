@@ -35,6 +35,10 @@ enum Snapshot {
             drawSettings(to: path)
             return true
         }
+        if let path = ProcessInfo.processInfo.environment["CCB_LIMITS_SNAPSHOT"] {
+            drawLimits(to: path)
+            return true
+        }
         if let path = ProcessInfo.processInfo.environment["CCB_BOT_SETTINGS_SNAPSHOT"] {
             drawBotSettings(to: path)
             return true
@@ -734,6 +738,43 @@ enum Snapshot {
             .background(Color(hex: 0x0A0A0C))
             .preferredColorScheme(.dark)
         let frame = NSRect(x: 0, y: 0, width: 1500, height: 920)
+        let window = HeadlessRun.offscreenWindow(frame)
+        window.appearance = NSAppearance(named: .darkAqua)
+        let host = NSHostingView(rootView: content)
+        host.frame = frame
+        window.contentView = host
+        self.window = window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
+            exit(0)
+        }
+    }
+
+    /// `CCB_LIMITS_SNAPSHOT=/path/out.png`: the gear's popover with Claude's limits and
+    /// Codex's, each under its name. Sample data.
+    private static func drawLimits(to path: String) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let now = Date()
+        let claude = RateLimits(fiveHour: RateLimitWindow(used: 0.47, resetsAt: now.addingTimeInterval(2 * 3600), seen: now), week: RateLimitWindow(used: 0.22, resetsAt: now.addingTimeInterval(4 * 86400), seen: now))
+        let codex = RateLimits(fiveHour: nil, week: RateLimitWindow(used: 0.05, resetsAt: now.addingTimeInterval(5 * 86400), seen: now))
+        try? JSONEncoder().encode(claude).write(to: root.appending(path: "rate-limits.json"))
+        try? JSONEncoder().encode(codex).write(to: root.appending(path: "codex-rate-limits.json"))
+        let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
+            Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
+        }
+        let content = VStack(alignment: .leading, spacing: 6) {
+            Text("SAMPLE DATA").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.faint)
+            SettingsPopover(workspace: workspace, registry: workspace.plugins, open: { _ in })
+        }
+        .padding(16)
+        .frame(width: 360, height: 620, alignment: .top)
+        .foregroundStyle(Theme.text)
+        .background(Theme.ground)
+        .preferredColorScheme(.dark)
+        let frame = NSRect(x: 0, y: 0, width: 360, height: 620)
         let window = HeadlessRun.offscreenWindow(frame)
         window.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: content)

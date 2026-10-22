@@ -179,6 +179,9 @@ public final class Workspace: ObservableObject {
     /// The subscription's 5-hour and weekly limits, as a bot's `claude` last reported them.
     @Published public internal(set) var rateLimits: RateLimits
     var rateLimitsURL: URL { root.appending(path: "rate-limits.json") }
+    /// Codex's limits as it last reported them, apart from Claude's (`codex-rate-limits.json`).
+    @Published public internal(set) var codexRateLimits: RateLimits
+    var codexRateLimitsURL: URL { root.appending(path: "codex-rate-limits.json") }
     /// Unsent text in each chat's input box, kept over switching bots and restarts.
     public private(set) lazy var drafts = ComposerDrafts(url: root.appending(path: "drafts.json"))
     /// The ClaudeCodeBot build running now; nil when not run from an app bundle (`swift run`).
@@ -222,6 +225,7 @@ public final class Workspace: ObservableObject {
         settings = loadedSettings
         spending = Spending.load(from: root.appending(path: "spending.json"))
         rateLimits = RateLimits.load(from: root.appending(path: "rate-limits.json"))
+        codexRateLimits = RateLimits.load(from: root.appending(path: "codex-rate-limits.json"))
         let library = Layout.plugins(in: root)
         Self.migrateFromDeck(library: library, root: root)
         let componentFolder = Self.prepareComponentPlugin(in: library, movingFrom: root.appending(path: "components"))
@@ -260,6 +264,7 @@ public final class Workspace: ObservableObject {
         mainBot.onSpend = { [weak self] amount in self?.record(amount, by: "Main bot") }
         mainBot.onTokens = { [weak self] tokens in self?.record(0, tokens: tokens, by: "Main bot") }
         mainBot.onRateLimits = { [weak self] limits in self?.note(limits) }
+        mainBot.onCodexRateLimits = { [weak self] limits in self?.note(codex: limits) }
         // Asked during a group turn, the main bot's question shows in that group too.
         mainBot.onQuestion = { [weak self] message in
             guard let self else { return }
@@ -1330,7 +1335,7 @@ public final class Workspace: ObservableObject {
                     self?.record(total, tokens: tokens, by: spec.title)
                 case let .rateLimits(limits):
                     self?.note(limits)
-                case .trace, .earlyReply, .permission, .permissionCancelled, .permissionDenied, .connectionTrouble, .connectionLost, .commandQueued, .commandStarted:
+                case .trace, .earlyReply, .permission, .permissionCancelled, .permissionDenied, .connectionTrouble, .connectionLost, .commandQueued, .commandStarted, .codexRateLimits:
                     // Teams are started without asking (asksPermission is off), so nothing waits.
                     break
                 case let .reply(text, _):
@@ -2172,6 +2177,7 @@ public final class Workspace: ObservableObject {
         bot.onSpend = { [weak self] amount in self?.record(amount, by: project.name) }
         bot.onTokens = { [weak self] tokens in self?.record(0, tokens: tokens, by: project.name) }
         bot.onRateLimits = { [weak self] limits in self?.note(limits) }
+        bot.onCodexRateLimits = { [weak self] limits in self?.note(codex: limits) }
         bot.wakeNote = { [weak self, weak bot] in
             guard let self else { return "" }
             return [componentBriefing(for: bot), developerBriefing(for: project)].filter { !$0.isEmpty }.joined(separator: "\n\n")

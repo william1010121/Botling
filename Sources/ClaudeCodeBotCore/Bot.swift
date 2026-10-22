@@ -112,6 +112,8 @@ public final class Bot: ObservableObject, Identifiable {
     public var onTokens: ((TokenUsage) -> Void)?
     /// The API reported the subscription's limits.
     public var onRateLimits: ((RateLimits) -> Void)?
+    /// Codex reported its limits (kept apart from Claude's).
+    public var onCodexRateLimits: ((RateLimits) -> Void)?
     /// What the running session has cost so far (claude reports a running total).
     private var sessionCost = 0.0
     /// Called with the tags a reply carried (pull up a team, ask the component team).
@@ -558,6 +560,15 @@ public final class Bot: ObservableObject, Identifiable {
         saveHeads()
     }
 
+    /// Its Codex model (nil: Codex's default). Awake on Codex: it goes on in the same thread on
+    /// the new model just before its next message.
+    public func setCodexModel(_ model: String?) async {
+        guard model != heads.codexModel else { return }
+        heads.codexModel = model
+        saveHeads()
+        if engine == .codex { await restart(.codexModel(model)) }
+    }
+
     /// Whether the heads may hand work to each other.
     public func setHandoffs(_ on: Bool) {
         guard on != heads.handoffs else { return }
@@ -1002,6 +1013,7 @@ public final class Bot: ObservableObject, Identifiable {
             autoMode: autoMode?() ?? false,
             allowRules: allowRules,
             effort: effort,
+            codexModel: heads.codexModel,
             subagentModel: subagentModel
         ))
         self.process = process
@@ -1457,6 +1469,8 @@ public final class Bot: ObservableObject, Identifiable {
         switch event {
         case let .rateLimits(limits):
             onRateLimits?(limits)
+        case let .codexRateLimits(limits):
+            onCodexRateLimits?(limits)
         case let .commandQueued(id):
             if groupCommand?.id == id, groupCommand?.stage == .sent { groupCommand?.stage = .queued }
         case let .commandStarted(id):
@@ -1763,7 +1777,7 @@ public final class Bot: ObservableObject, Identifiable {
 
     private func noteProgress(of event: AgentEvent) {
         switch event {
-        case .connectionTrouble, .connectionLost, .rateLimits, .exited:
+        case .connectionTrouble, .connectionLost, .rateLimits, .codexRateLimits, .exited:
             return
         case let .trace(step):
             if let id = Self.subagentID(of: step) {
@@ -2086,7 +2100,9 @@ public final class Bot: ObservableObject, Identifiable {
         guard newEngine != engine || heads.hasTwo else { return }
         engine = newEngine
         store?.save(engine: newEngine)
+        let model = heads.codexModel
         heads = .single(newEngine)
+        heads.codexModel = model
         saveHeads()
         guard phase != .asleep else {
             append(ChatMessage(role: .divider, text: L("Switched to {0}", newEngine.displayName)))
@@ -2098,7 +2114,8 @@ public final class Bot: ObservableObject, Identifiable {
     /// Which engines it has (Claude, Codex or both). The head running, when it is taken away,
     /// hands over to the one left, as a switch of engine does.
     public func setHeads(_ engines: [BotEngine]) async {
-        let new = HeadsSettings(engines: engines, answerWith: heads.answerWith, both: heads.both, limits: heads.limits, handoffs: heads.handoffs)
+        var new = HeadsSettings(engines: engines, answerWith: heads.answerWith, both: heads.both, limits: heads.limits, handoffs: heads.handoffs)
+        new.codexModel = heads.codexModel
         guard new != heads else { return }
         heads = new
         saveHeads()
@@ -2556,6 +2573,8 @@ public enum RestartReason: Equatable, Sendable {
     case autoApprove(Bool)
     /// It runs on another CLI now: always a handoff through memory.md.
     case engine(BotEngine)
+    /// Another Codex model (nil: Codex's default).
+    case codexModel(String?)
 
     /// The new session runs on another CLI, which cannot resume this one's conversation.
     var changesEngine: Bool {
@@ -2573,6 +2592,7 @@ public enum RestartReason: Equatable, Sendable {
         case let .mayRead(folder): "may read \(folder)"
         case let .autoApprove(on): on ? "auto-approving safe actions" : "asking before tools"
         case let .engine(engine): "running on \(engine.displayName)"
+        case let .codexModel(model): "Codex model \(model ?? "default")"
         }
     }
 
@@ -2586,6 +2606,7 @@ public enum RestartReason: Equatable, Sendable {
         case let .mayRead(folder): L("may read {0}", folder)
         case let .autoApprove(on): on ? L("auto-approving safe actions") : L("asking before tools")
         case let .engine(engine): engine.displayName
+        case let .codexModel(model): model ?? L("Codex's default model")
         }
     }
 }

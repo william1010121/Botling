@@ -51,7 +51,7 @@ struct BotPrompts {
 
     /// What a bot on Codex is told on top: the Claude Code tools these instructions name are not
     /// there, so results stay local and timed work goes into its Routines file.
-    static let codexNote = "- You run on the Codex CLI, not Claude Code. The Claude Code tools these instructions name (the Artifact tool, ScheduleWakeup, CronCreate, the Agent tool, Skill) are not yours: put results in a local page as said above, and put timed work in your Routines file. When something needs one of them (a claude.ai Artifact or Design), say so in one sentence: it can be done on Claude."
+    static let codexNote = "- You run on the Codex CLI, not Claude Code. The Claude Code tools these instructions name (the Artifact tool, ScheduleWakeup, CronCreate, the Agent tool, Skill) are not yours: put results in a local page as said above, and put timed work in your Routines file. When the user wants a result published as a claude.ai Artifact or Design, hand it to Claude: end your reply with <handoff to=\"claude\">what to publish, with the full path of the local file</handoff>; Claude publishes it and its link comes back to you."
 
     /// The rule above: who the other head is, and how to hand it work.
     static func headsRule(engine: BotEngine, heads: HeadsSettings) -> String {

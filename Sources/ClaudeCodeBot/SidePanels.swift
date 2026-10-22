@@ -1247,6 +1247,8 @@ struct SettingsPage: View {
     @ObservedObject var bot: Bot
     var close: () -> Void
     @State private var adding = false
+    /// What the local Codex offers (`model/list`), for the Codex model menu.
+    @State private var codexModels: [CodexModel] = []
 
     var body: some View {
         ScrollView {
@@ -1331,6 +1333,19 @@ struct SettingsPage: View {
                     ) { level in
                         Task { await bot.setEffort(level) }
                     }
+                    if bot.heads.engines.contains(.codex) {
+                        Rectangle().fill(Theme.line).frame(height: 1)
+                        DropdownRow(
+                            title: L("Codex model"),
+                            choices: [nil] + Self.choices(codexModels, keeping: bot.heads.codexModel),
+                            chosen: bot.heads.codexModel,
+                            label: { id in id.map { id in codexModels.first { $0.id == id }?.name ?? id } ?? L("Codex's default model") },
+                            disabled: bot.isSwitching
+                        ) { model in
+                            Task { await bot.setCodexModel(model) }
+                        }
+                        .task { codexModels = await CodexModels.load() }
+                    }
                 }
                 .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
                 .clipShape(RoundedRectangle(cornerRadius: 14))
@@ -1355,7 +1370,7 @@ struct SettingsPage: View {
 
                 SettingNote(L("Subagents use their own model and effort when their definition names one. Default effort leaves it to the model. Awake, a change restarts the bot in the same conversation just before its next message; asleep, it applies when it wakes."))
                 if bot.heads.engines.contains(.codex) {
-                    SettingNote(L("On Codex the bot uses Codex's own model, asks before commands outside its folders, and keeps results as local pages. Both engines share its memory.md: switching hands over through it."))
+                    SettingNote(L("On Codex the bot asks before commands outside its folders and keeps results as local pages; Claude publishes them when asked. Model, Subagent model are Claude's; Thinking effort is both's."))
                 }
             }
 
@@ -1460,6 +1475,15 @@ private struct DropdownRow<Choice: Hashable>: View {
         .pickerStyle(.menu)
         .fixedSize()
         .disabled(disabled)
+    }
+}
+
+extension SettingsPage {
+    /// The model ids for the menu, with the one picked kept even when Codex no longer lists it.
+    static func choices(_ models: [CodexModel], keeping picked: String?) -> [String?] {
+        var ids = models.map(\.id)
+        if let picked, !ids.contains(picked) { ids.append(picked) }
+        return ids.map(Optional.some)
     }
 }
 

@@ -589,7 +589,9 @@ public struct ChatPayload: Encodable, Equatable {
     /// line was for ("to Both").
     @MainActor
     static func headLabel(_ message: ChatMessage, in bot: Bot) -> String? {
-        guard bot.heads.hasTwo else { return nil }
+        // Two heads, or a reply by a head this bot does not have (Claude publishing for Codex).
+        let outside = message.engine.map { !bot.heads.engines.contains($0) } ?? false
+        guard bot.heads.hasTwo || outside else { return nil }
         switch message.role {
         case .bot: return message.engine.map { "\(bot.name) · \($0.displayName)" }
         case .user: return message.to.map { L("to {0}", $0.displayName) }

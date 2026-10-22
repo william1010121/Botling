@@ -27,7 +27,15 @@ struct SettingsPopover: View {
                 }
             }
             if !workspace.rateLimits.isEmpty {
+                // Codex's limits are its own: each set under its name once both are there.
+                if !workspace.codexRateLimits.isEmpty {
+                    Text("Claude").font(.system(size: 12)).foregroundStyle(Theme.faint)
+                }
                 RateLimitCards(limits: workspace.rateLimits)
+            }
+            if !workspace.codexRateLimits.isEmpty {
+                Text("Codex").font(.system(size: 12)).foregroundStyle(Theme.faint)
+                RateLimitCards(limits: workspace.codexRateLimits)
             }
             divider
             SettingSwitch(L("Auto-approve safe actions"), isOn: Binding(

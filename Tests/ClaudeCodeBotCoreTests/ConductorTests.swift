@@ -240,4 +240,25 @@ struct ConductedBotTests {
         #expect(bot.choose(1, in: card.id))
         await eventually { bot.messages.contains { $0.text == "You went with Claude's" } && !bot.isWorking }
     }
+
+    /// Codex has no Artifact tool: a bot on Codex alone hands publishing to Claude, which runs
+    /// for that and hands the link back.
+    @Test func codexHandsPublishingToClaude() async throws {
+        let fake = FakeLauncher()
+        fake.respond = { text in
+            if text.contains("hands you this") { return "Published: [Report](https://claude.ai/artifact/x)" }
+            if text.contains("finished what you handed over") { return "Here it is: [Report](https://claude.ai/artifact/x)" }
+            return isAppOnly(text) ? "OK" : #"Saved the report. <handoff to="claude">Publish /tmp/report.html as an Artifact</handoff>"#
+        }
+        let bot = makeBot(fake)
+        await bot.switchEngine(to: .codex)
+        #expect(bot.prompts.system.contains("<handoff to=\"claude\">"))
+        bot.send("Make the weekly report and share it")
+        await eventually { bot.messages.last?.text.hasPrefix("Here it is") == true && !bot.isWorking }
+        #expect(fake.agents.map(\.launch.engine) == [.codex, .claude, .codex])
+        let published = try #require(bot.messages.first { $0.text.hasPrefix("Published") })
+        #expect(published.engine == .claude)
+        #expect(ChatPayload.headLabel(published, in: bot) == "Main bot · Claude")
+        #expect(bot.heads.engines == [.codex])
+    }
 }

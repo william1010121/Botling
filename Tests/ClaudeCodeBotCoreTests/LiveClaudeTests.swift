@@ -72,6 +72,14 @@ struct LiveClaudeTests {
         #expect(answer.lowercased().contains("teal"))
     }
 
+    /// The Codex model menu lists what the local Codex offers (`model/list`).
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func codexListsItsModels() async throws {
+        let models = await CodexModels.load()
+        print("codex models:", models.map(\.id))
+        #expect(!models.isEmpty)
+    }
+
     /// A bot sends a subagent off: the subagent's own steps are recorded under it, it ends with a
     /// result, and the reply carries the card that opens it.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))

@@ -9,6 +9,15 @@ extension Workspace {
     }
 
     /// Keeps the latest reading of each subscription limit.
+    /// Codex's limits, kept as Claude's are, in a file of their own.
+    func note(codex limits: RateLimits) {
+        var next = codexRateLimits
+        next.merge(limits)
+        guard next != codexRateLimits else { return }
+        codexRateLimits = next
+        codexRateLimits.save(to: codexRateLimitsURL)
+    }
+
     func note(_ limits: RateLimits) {
         var next = rateLimits
         next.merge(limits)

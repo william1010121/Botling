@@ -104,6 +104,8 @@ public enum AgentEvent: Equatable, Sendable {
     case connectionLost(parent: String?)
     /// The subscription's 5-hour and weekly limits as the API last reported them (`rate_limit_event`).
     case rateLimits(RateLimits)
+    /// Codex's own limits (`account/rateLimits/updated`), kept apart from Claude's.
+    case codexRateLimits(RateLimits)
     /// A message sent with an id is in claude's queue (`command_lifecycle` "queued"): turns
     /// already under way or waiting end before its turn.
     case commandQueued(UUID)
@@ -152,6 +154,8 @@ public struct AgentLaunch: Equatable, Sendable {
     public var allowRules: [String] = []
     /// How hard it thinks (`--effort`); nil leaves the model's default.
     public var effort: EffortLevel? = nil
+    /// On Codex: its model (`model/list`'s id); nil: Codex's default.
+    public var codexModel: String? = nil
     /// The model its subagents use (`CLAUDE_CODE_SUBAGENT_MODEL`); nil: the same as its own.
     /// An agent whose definition names a model keeps that one.
     public var subagentModel: BotModel? = nil
