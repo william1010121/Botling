@@ -19,7 +19,7 @@ let package = Package(
             name: "ClaudeCodeBot",
             dependencies: ["ClaudeCodeBotCore"],
             path: "Sources/ClaudeCodeBot",
-            resources: [.copy("Resources/web"), .copy("Resources/plugins"), .copy("Resources/host"), .copy("Resources/web-extractors"), .copy("Resources/web-laas")],
+            resources: [.copy("Resources/web"), .copy("Resources/plugins"), .copy("Resources/host"), .copy("Resources/web-extractors"), .copy("Resources/web-laas"), .copy("Resources/web-capture")],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("WebKit"),

@@ -536,6 +536,8 @@ enum Snapshot {
                 sampleWebConversation(on: other, index: index, in: workspace)
             }
             sampleWebConversations(on: site, in: workspace)
+            // `CCB_WINDOW_CAPTURE=recording` (or `saved`): its capture card, with sample captures.
+            if let mode = ProcessInfo.processInfo.environment["CCB_WINDOW_CAPTURE"] { WebCaptureRun.sample(mode, on: site, in: workspace) }
         }
         let size = CGSize(width: 1280, height: 820)
         let content = RootView(workspace: workspace, settings: SettingsNavigator())

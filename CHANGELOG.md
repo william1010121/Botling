@@ -20,6 +20,27 @@ app and publishes it on GitHub Releases.
   Codex's own, and its tokens are counted with the rest (no cost in dollars). The first part of
   the Codex engine plan; one bot with both heads at once, hand-offs between them and round
   limits come later.
+- **Web capture: the web bots' traffic, for fixing their page readers.** A Capture button over
+  Gemini's, ChatGPT's and Claude's page records the page and the traffic the page itself
+  fetched (fetch, XHR, EventSource and WebSocket, watched from inside the page: no certificate,
+  no request of the app's own) for up to 3 minutes or 100 MB, with the 5 minutes before it, which
+  the app keeps in memory only. A card shows the time, requests, streams and size while it
+  records, then what the page reader read and Send to Maintainer, Reveal in Finder and Delete.
+  The capture is a private folder, `~/.claudecodebot/captures/<site>/<time>/` (events.jsonl,
+  network.har, dom.html, outline.json, screenshot.png, the reader and its output), with
+  cookies, sign-in tokens, CSRF values, e-mail addresses and account ids masked before it is
+  written and inline scripts removed from the HTML (the screenshot is not masked); the newest
+  5 per site are kept, none older than 30 days. A page reader may now also read the traffic
+  (`extractNetwork`, with `NETWORK.urls` naming the requests): when both readings agree the
+  traffic's Markdown is saved, and when they differ the page's text is saved and the strip shows
+  a warning with Re-capture (as it does when the reader finds nothing); once Maintainer's fix
+  reads the page, the strip says "Page reader updated · page and traffic agree". Send to
+  Maintainer lets Maintainer read the captures folder and hands it the capture with steps: fix
+  the reader, write `expected.json`, which you confirm on a card in the right panel's new
+  "Captures", and run `ClaudeCodeBot --test-extractor <capture or folder>`, which replays every
+  capture (its page with no scripts or network, and its traffic) through the reader and fails on
+  a wrong answer or a page/traffic mismatch. The readers shipped with the app still read only the
+  page; tested on local fixture pages that mimic each site's traffic, not yet on the real sites.
 
 ## 1.15.1
 
