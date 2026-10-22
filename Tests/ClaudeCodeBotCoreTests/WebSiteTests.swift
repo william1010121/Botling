@@ -175,6 +175,179 @@ struct WebSiteTests {
         #expect(shelf.status["gemini"] == .reading)
     }
 
+    @Test func aQuestionIsARowFromTheMomentItIsSentAndKeepsItsAnswerAfterYouLeave() throws {
+        let shelf = WebShelf(folder: root.appending(path: "web"), library: root)
+        let asking = UUID()
+        let question = "Can a Mac app show gemini.google.com in an iframe?"
+        shelf.startNew(on: gemini)
+        shelf.bringToFront(asking, on: gemini)
+        // Sent: the page shows the question, with no answer and no id in its address yet (read
+        // while the page still changes).
+        shelf.record(on: gemini, page: asking, url: gemini.startURL, pageTitle: "Gemini",
+                     reading: .read(title: nil, turns: [WebTurn(role: .user, text: question)]), settled: false, now: now)
+        let pending = try #require(shelf.conversations(of: gemini).first, "no row until Gemini answers")
+        #expect(pending.title == question)
+        #expect(pending.isAwaiting)
+        #expect(shelf.listed(of: gemini).map(\.id) == [pending.id])
+        #expect(shelf.openConversation(of: gemini)?.id == pending.id)
+        #expect(shelf.status["gemini"] == .waiting)
+
+        // You start a new question before the answer comes: a fresh page is in front, and the
+        // row stays, still waiting.
+        shelf.startNew(on: gemini)
+        let fresh = UUID()
+        shelf.bringToFront(fresh, on: gemini)
+        shelf.pageChanged(on: gemini, page: fresh, url: gemini.startURL, pageTitle: "Gemini")
+        #expect(shelf.open["gemini"] == nil)
+        #expect(shelf.listed(of: gemini).map(\.id) == [pending.id])
+        #expect(shelf.row(of: asking, on: gemini)?.id == pending.id)
+
+        // Behind it, the first page gets its id and then its answer: saved into that same row,
+        // and the page in front is left alone.
+        let url = URL(string: "https://gemini.google.com/app/feed1234")!
+        shelf.pageChanged(on: gemini, page: asking, url: url, pageTitle: "Gemini", now: now.addingTimeInterval(20))
+        #expect(shelf.conversations(of: gemini).map(\.id) == ["feed1234"])
+        let file = try #require(shelf.record(on: gemini, page: asking, url: url, pageTitle: "Gemini", reading: .read(title: nil, turns: [
+            WebTurn(role: .user, text: question), WebTurn(role: .assistant, text: "No: it refuses to be framed."),
+        ]), now: now.addingTimeInterval(40)))
+        let answered = try #require(shelf.conversations(of: gemini).first)
+        #expect(shelf.conversations(of: gemini).count == 1)
+        #expect(answered.url == url)
+        #expect(answered.title == question)
+        #expect(!answered.isAwaiting)
+        #expect(try String(contentsOf: file, encoding: .utf8).contains("No: it refuses to be framed."))
+        #expect(shelf.open["gemini"] == nil)
+        #expect(shelf.status["gemini"] == .newQuestion)
+        // Its answer is not seen yet: it stays in the left column.
+        #expect(shelf.listed(of: gemini).map(\.id) == ["feed1234"])
+        // And it lasts over a restart.
+        #expect(WebShelf(folder: root.appending(path: "web"), library: root).conversations(of: gemini).first?.file == file.lastPathComponent)
+    }
+
+    @Test func aQuestionWhosePageClosedBeforeItHadAnIDIsFoundByItsText() {
+        let shelf = WebShelf(folder: root.appending(path: "web"), library: root)
+        let question = "Which WebKit policy keeps a hidden page running?"
+        shelf.record(on: gemini, url: gemini.startURL, pageTitle: "Gemini", reading: .read(title: nil, turns: [WebTurn(role: .user, text: question)]), now: now)
+        shelf.closed(WebShelf.firstPage)
+        // A question on the same page later that is another one is a row of its own.
+        let other = UUID()
+        shelf.bringToFront(other, on: gemini)
+        shelf.record(on: gemini, page: other, url: gemini.startURL, pageTitle: "Gemini", reading: .read(title: nil, turns: [WebTurn(role: .user, text: "Something else")]), now: now)
+        #expect(shelf.conversations(of: gemini).count == 2)
+        // You open that conversation in Gemini later: the row becomes it.
+        let url = URL(string: "https://gemini.google.com/app/abcd9876")!
+        let later = UUID()
+        shelf.bringToFront(later, on: gemini)
+        shelf.record(on: gemini, page: later, url: url, pageTitle: nil, reading: .read(title: nil, turns: [
+            WebTurn(role: .user, text: question), WebTurn(role: .assistant, text: "inactiveSchedulingPolicy"),
+        ]), now: now.addingTimeInterval(60))
+        #expect(shelf.conversations(of: gemini).count == 2)
+        #expect(shelf.conversations(of: gemini).first { $0.title == question }?.id == "abcd9876")
+        #expect(shelf.conversations(of: gemini).first { $0.title == question }?.isAwaiting == false)
+    }
+
+    @Test func aRowStillWaitingWithItsOwnPageIsReadAgain() {
+        let shelf = WebShelf(folder: root.appending(path: "web"), library: root)
+        let url = URL(string: "https://gemini.google.com/app/0123abcd")!
+        shelf.record(on: gemini, url: url, pageTitle: nil, reading: .read(title: nil, turns: [WebTurn(role: .user, text: "q")]), now: now)
+        #expect(shelf.toReadAgain(on: gemini).isEmpty)
+        shelf.closed(WebShelf.firstPage)
+        #expect(shelf.toReadAgain(on: gemini).map(\.id) == ["0123abcd"])
+        // After a restart too.
+        #expect(WebShelf(folder: root.appending(path: "web"), library: root).toReadAgain(on: gemini).map(\.id) == ["0123abcd"])
+    }
+
+    // MARK: Rows leave the left column as subagents do
+
+    @Test func aRowYouViewedLeavesTheLeftColumnAndQuestionsBringsItBack() throws {
+        let workspace = workspace()
+        let shelf = workspace.web
+        for (index, id) in ["aaaa1111", "bbbb2222"].enumerated() {
+            shelf.record(on: gemini, url: URL(string: "https://gemini.google.com/app/\(id)")!, pageTitle: nil, reading: .read(title: "Q\(index)", turns: [
+                WebTurn(role: .user, text: "q\(index)"), WebTurn(role: .assistant, text: "a\(index)"),
+            ]), now: now.addingTimeInterval(Double(index)))
+        }
+        shelf.closed(WebShelf.firstPage)
+        // The site's own row opens a fresh question; nothing seen is settled.
+        workspace.openFresh(gemini)
+        #expect(workspace.selectedWebSite == gemini)
+        #expect(shelf.requested["gemini"] == gemini.startURL)
+        #expect(shelf.listed(of: gemini).count == 2)
+        shelf.handled(gemini)
+        // Clicking it again on a fresh page reloads nothing.
+        workspace.openFresh(gemini)
+        #expect(shelf.requested["gemini"] == nil)
+
+        let first = try #require(shelf.conversation("aaaa1111", of: gemini))
+        workspace.open(first, on: gemini)
+        #expect(shelf.open["gemini"] == "aaaa1111")
+        #expect(shelf.listed(of: gemini).map(\.id).contains("aaaa1111"))
+        // Viewed, then left: it leaves the left column, and stays under "Questions".
+        workspace.open(try #require(shelf.conversation("bbbb2222", of: gemini)), on: gemini)
+        #expect(shelf.listed(of: gemini).map(\.id) == ["bbbb2222"])
+        #expect(shelf.conversations(of: gemini).count == 2)
+        workspace.openFresh(gemini)
+        #expect(shelf.listed(of: gemini).isEmpty)
+        // Opened again from "Questions": back in the left column.
+        workspace.open(try #require(shelf.conversation("aaaa1111", of: gemini)), on: gemini)
+        #expect(shelf.listed(of: gemini).map(\.id) == ["aaaa1111"])
+        // Its clock settles it at once; settling is saved.
+        shelf.settle(try #require(shelf.conversation("aaaa1111", of: gemini)), of: gemini)
+        #expect(shelf.listed(of: gemini).isEmpty)
+        #expect(WebShelf(folder: root.appending(path: "web"), library: root).listed(of: gemini).isEmpty)
+    }
+
+    @Test func settlingIsTheSameForSubagentsAndQuestions() {
+        var subagent = Subagent(id: "s", description: "d", prompt: "p")
+        var question = WebConversation(id: "q", url: gemini.startURL, title: "t", updatedAt: now)
+        #expect(subagent.settle(at: now) && question.settle(at: now))
+        #expect(!subagent.settle(at: now) && !question.settle(at: now))
+        #expect(subagent.isSettled && question.isSettled)
+        #expect(subagent.unsettle(at: now) && question.unsettle(at: now))
+        #expect(question.unsettledAt == now && !question.isSettled)
+    }
+
+    @Test func aWebSiteHasNoChatBoardSwitch() {
+        let workspace = workspace()
+        #expect(workspace.showsBoardSwitch)
+        workspace.openFresh(gemini)
+        #expect(!workspace.showsBoardSwitch)
+        workspace.select(nil)
+        #expect(workspace.showsBoardSwitch)
+    }
+
+    // MARK: A link to a saved conversation
+
+    @Test func aLinkToASavedConversationOpensItWhereItWas() throws {
+        let workspace = workspace()
+        let url = URL(string: "https://gemini.google.com/u/1/app/8c0586d461e02cce")!
+        let file = try #require(workspace.web.record(on: gemini, url: url, pageTitle: nil, reading: .read(title: "Hashing", turns: [
+            WebTurn(role: .user, text: "q"), WebTurn(role: .assistant, text: "a"),
+        ]), now: now))
+        workspace.web.closed(WebShelf.firstPage)
+        workspace.select(nil)
+        // As a bot links it: file://, the path spelled its own way.
+        #expect(workspace.openSavedWebConversation(URL(string: "file://" + file.path.replacingOccurrences(of: "/gemini/", with: "/gemini/./"))!))
+        #expect(workspace.selectedWebSite == gemini)
+        #expect(workspace.web.open["gemini"] == "8c0586d461e02cce")
+        #expect(workspace.web.requested["gemini"] == url)
+
+        // A saved file the list no longer knows: its own "- URL:" line says where it was.
+        let loose = root.appending(path: "web/gemini/older.md")
+        try Data(WebTranscript.markdown(title: "Older one", url: URL(string: "https://gemini.google.com/app/0ld0ld0ld")!, site: gemini,
+                                        turns: [WebTurn(role: .user, text: "q")], savedAt: now).utf8).write(to: loose)
+        #expect(workspace.openSavedWebConversation(loose))
+        #expect(workspace.web.open["gemini"] == "0ld0ld0ld")
+        #expect(workspace.web.conversation("0ld0ld0ld", of: gemini)?.title == "Older one")
+        #expect(workspace.web.conversation("0ld0ld0ld", of: gemini)?.file == "older.md")
+
+        // Any other file opens as before.
+        let other = root.appending(path: "notes.md")
+        try Data("# Notes\n- URL: https://gemini.google.com/app/abcdabcd\n".utf8).write(to: other)
+        #expect(!workspace.openSavedWebConversation(other))
+        #expect(!workspace.openSavedWebConversation(URL(string: "https://gemini.google.com/app/abcdabcd")!))
+    }
+
     // MARK: The page reader is a plugin piece
 
     @Test func thePageReaderComesFromThePluginElseTheAppsCopy() throws {

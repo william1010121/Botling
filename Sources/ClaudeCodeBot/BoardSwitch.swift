@@ -8,10 +8,9 @@ struct BoardMode: ViewModifier {
     @ObservedObject var workspace: Workspace
     @ObservedObject var inputs: ChatInputs
     let bot: Bot
-    /// Under a web site's page: no switch, no ⌃⌘B.
-    var hidden = false
 
-    private var available: Bool { !hidden && workspace.viewingSubagent == nil && bot.profile.capabilities.board }
+    /// Not for a subagent's view or a web site's page (no switch, no ⌃⌘B).
+    private var available: Bool { workspace.showsBoardSwitch }
     private var on: Bool { available && inputs.boards.contains(bot.id) }
 
     func body(content: Content) -> some View {

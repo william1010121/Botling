@@ -542,6 +542,7 @@ public final class Workspace: ObservableObject {
     public func select(_ projectID: UUID?) {
         selection = projectID
         viewingSubagent = nil
+        web.showing(WebSite.site(selection: projectID))
         // A web site (Gemini) is no chat: the main bot behind it stays unread.
         if WebSite.site(selection: projectID) == nil { selectedBot.markRead() }
     }

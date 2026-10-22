@@ -841,7 +841,7 @@ private struct BotRow: View {
 /// Under a bot: the subagents it sent off that are running or ended a few minutes ago, the
 /// way Claude Code lists a session's subagents. Click one to watch its conversation; the
 /// clock on the right settles it into the right column's "Settled" (it does not stop it).
-private struct SubagentRows: View {
+struct SubagentRows: View {
     @ObservedObject var bot: Bot
     @ObservedObject var workspace: Workspace
     /// "Show more" lists every row; per bot, forgotten on restart.
@@ -888,7 +888,7 @@ private struct SubagentRows: View {
 /// One subagent's row. It has one icon on the right: a blue dot while the subagent works,
 /// and once it has ended (or while the pointer is on a running one) the settle button, a
 /// clock badged with how it ended. Settling moves the row to "Settled" in the right column.
-private struct SubagentRow: View {
+struct SubagentRow: View {
     let subagent: Subagent
     @ObservedObject var bot: Bot
     @ObservedObject var workspace: Workspace

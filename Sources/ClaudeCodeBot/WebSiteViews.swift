@@ -7,43 +7,52 @@ import WebKit
 // left column, and its text saved for the main bot. The page is only read, never typed into or
 // clicked; what reads it is the plugin's script (`WebExtractors`).
 
-/// One site's web view and its own sign-in (a persistent data store per site), kept for the
-/// whole run: switching bots and back does not reload it.
+/// One page of a site: a web view that reads its conversation as it changes and saves it once it
+/// settles. It reports by its id, so what it reads goes to the row it follows, in front or not.
 @MainActor
-final class WebSession: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
-    private static var sessions: [String: WebSession] = [:]
-
-    static func session(for site: WebSite, shelf: WebShelf) -> WebSession {
-        if let session = sessions[site.id] { return session }
-        let session = WebSession(site: site, shelf: shelf)
-        sessions[site.id] = session
-        return session
-    }
-
+final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     /// The page reader's own world: the page's scripts cannot see it, nor it theirs.
     private static let world = WKContentWorld.world(name: "ccb-web-reader")
-    private static let messageName = "ccbWebSettled"
+    private static let messageName = "ccbWebPage"
     /// Sign-in pages refuse web views that do not look like a browser.
     private static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15"
     /// Quiet this long after the page last changed counts as settled (an answer finished).
     private static let settleMilliseconds = 1500
+    /// While it changes, it says so at most this often (a question just sent shows at once).
+    private static let changedMilliseconds = 1000
 
+    let id: UUID
     let site: WebSite
     let shelf: WebShelf
     let webView: WKWebView
+    let openedAt = Date()
+    /// When the page last changed (its settled reads), for closing one left behind.
+    private(set) var changedAt = Date()
     private var observations: [NSKeyValueObservation] = []
     private var reading = false
+    /// Asked to read while a read was under way: read again once it ends (settled if any was).
+    private var readAgain: Bool?
 
-    private init(site: WebSite, shelf: WebShelf) {
+    init(id: UUID = UUID(), site: WebSite, shelf: WebShelf) {
+        self.id = id
         self.site = site
         self.shelf = shelf
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: site.dataStoreID)
+        // A page out of sight (behind the one in front, or while a bot is picked) keeps running,
+        // so an answer still comes and is read.
+        configuration.preferences.inactiveSchedulingPolicy = .none
         let observer = """
         (() => {
-          let timer = null;
-          const settled = () => { clearTimeout(timer); timer = setTimeout(() => window.webkit.messageHandlers.\(Self.messageName).postMessage(location.href), \(Self.settleMilliseconds)); };
-          const start = () => { new MutationObserver(settled).observe(document.documentElement, { childList: true, subtree: true, characterData: true }); settled(); };
+          let timer = null, last = 0;
+          const post = (kind) => window.webkit.messageHandlers.\(Self.messageName).postMessage(kind);
+          const changed = () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => post("settled"), \(Self.settleMilliseconds));
+            const now = Date.now();
+            if (now - last > \(Self.changedMilliseconds)) { last = now; post("changed"); }
+          };
+          const start = () => { new MutationObserver(changed).observe(document.documentElement, { childList: true, subtree: true, characterData: true }); changed(); };
           if (document.documentElement) start(); else document.addEventListener("DOMContentLoaded", start);
         })();
         """
@@ -55,7 +64,7 @@ final class WebSession: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMe
         webView.navigationDelegate = self
         webView.uiDelegate = self
         // A new question gets its id by the page changing its address, without a new load.
-        observations.append(webView.observe(\.url, options: [.new]) { [weak self] view, _ in
+        observations.append(webView.observe(\.url, options: [.new]) { [weak self] _, _ in
             MainActor.assumeIsolated { self?.addressChanged() }
         })
         observations.append(webView.observe(\.title, options: [.new]) { [weak self] _, _ in
@@ -63,33 +72,46 @@ final class WebSession: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMe
         })
     }
 
-    /// Loads what was asked for (a row, "New question"); on first show, the open conversation.
-    func loadIfNeeded() {
-        if let url = shelf.requested[site.id] {
-            shelf.handled(site)
-            webView.load(URLRequest(url: url))
-        } else if webView.url == nil {
-            webView.load(URLRequest(url: shelf.openConversation(of: site)?.url ?? site.startURL))
-        }
+    func load(_ url: URL) {
+        webView.load(URLRequest(url: url))
+    }
+
+    func close() {
+        observations = []
+        webView.stopLoading()
+        webView.configuration.userContentController.removeAllScriptMessageHandlers()
+        webView.removeFromSuperview()
+        shelf.closed(id)
     }
 
     private func addressChanged() {
         guard let url = webView.url else { return }
-        shelf.pageChanged(on: site, url: url, pageTitle: webView.title)
+        shelf.pageChanged(on: site, page: id, url: url, pageTitle: webView.title)
     }
 
-    /// The page settled: read it with the plugin's script and save what it found.
+    /// The page settled ("settled"), or changes still ("changed"): read it with the plugin's
+    /// script. A read while it changes is only for a question just sent, so it is skipped while
+    /// the row this page follows already waits for its answer.
     nonisolated func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        MainActor.assumeIsolated { read() }
+        MainActor.assumeIsolated {
+            let settled = (message.body as? String) != "changed"
+            if settled { changedAt = Date() }
+            if !settled, shelf.row(of: id, on: site)?.isAwaiting == true { return }
+            read(settled: settled)
+        }
     }
 
-    private func read() {
-        guard !reading, let url = webView.url, site.conversationID(in: url) != nil else {
-            if let url = webView.url { shelf.pageChanged(on: site, url: url, pageTitle: webView.title) }
+    private func read(settled: Bool) {
+        guard let url = webView.url, url.host()?.lowercased() == site.host else {
+            if let url = webView.url { shelf.pageChanged(on: site, page: id, url: url, pageTitle: webView.title) }
+            return
+        }
+        guard !reading else {
+            readAgain = (readAgain ?? false) || settled
             return
         }
         guard let source = shelf.extractor(for: site) else {
-            shelf.record(on: site, url: url, pageTitle: webView.title, reading: .nothing(L("No page reader for {0} was found.", site.name)))
+            if settled { shelf.record(on: site, page: id, url: url, pageTitle: webView.title, reading: .nothing(L("No page reader for {0} was found.", site.name))) }
             return
         }
         reading = true
@@ -102,8 +124,13 @@ final class WebSession: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMe
                 case .failure(let error): .nothing(error.localizedDescription)
                 }
                 // The page may have moved on while it was read.
-                guard self.webView.url == url else { return }
-                self.shelf.record(on: self.site, url: url, pageTitle: self.webView.title, reading: reading)
+                if self.webView.url == url {
+                    self.shelf.record(on: self.site, page: self.id, url: url, pageTitle: self.webView.title, reading: reading, settled: settled)
+                }
+                if let again = self.readAgain {
+                    self.readAgain = nil
+                    self.read(settled: again)
+                }
             }
         }
     }
@@ -127,9 +154,133 @@ final class WebSession: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMe
     }
 }
 
-/// The site's web view in the chat column.
+/// One site's pages and their sign-in (a persistent data store per site), kept for the whole
+/// run: switching bots and back does not reload them. The page in front is in the chat column;
+/// one you leave while its question still waits for an answer goes on behind it until the answer
+/// is read and saved, so a new question or another bot never loses it.
+@MainActor
+final class WebSession {
+    private static var sessions: [String: WebSession] = [:]
+    /// A page left behind is looked at this often; it closes once quiet with nothing waiting.
+    private static let checkSeconds: Double = 15
+    /// Quiet this long after its answer was read, a page left behind closes.
+    private static let quietSeconds: TimeInterval = 20
+    /// A page left behind never stays longer than this; its row, if still waiting, is read
+    /// again from its address later.
+    private static let longestBehind: TimeInterval = 15 * 60
+    /// Pages opened at once only to read a waiting row again.
+    private static let readingAgainAtMost = 2
+
+    static func session(for site: WebSite, shelf: WebShelf) -> WebSession {
+        if let session = sessions[site.id] { return session }
+        let session = WebSession(site: site, shelf: shelf)
+        sessions[site.id] = session
+        return session
+    }
+
+    /// Opens pages behind to read rows still waiting for an answer (after a restart), only
+    /// when there are any.
+    static func readAgain(_ site: WebSite, shelf: WebShelf) {
+        guard !HeadlessRun.isRequested(), !shelf.toReadAgain(on: site).isEmpty else { return }
+        session(for: site, shelf: shelf).readAgain()
+    }
+
+    let site: WebSite
+    let shelf: WebShelf
+    private(set) var front: WebTab
+    private(set) var behind: [WebTab] = []
+    /// Rows read again this run, so one whose answer never comes is not opened over and over.
+    private var readAgainRows: Set<String> = []
+
+    private init(site: WebSite, shelf: WebShelf) {
+        self.site = site
+        self.shelf = shelf
+        front = WebTab(id: WebShelf.firstPage, site: site, shelf: shelf)
+    }
+
+    /// Loads what was asked for (a row, "New question"); on first show, the open conversation.
+    func loadIfNeeded() {
+        if let url = shelf.requested[site.id] {
+            let row = shelf.requestedRow[site.id]
+            shelf.handled(site)
+            if let row, shelf.row(of: front.id, on: site)?.id == row {
+                // Already in front.
+            } else if let row, let index = behind.firstIndex(where: { shelf.row(of: $0.id, on: site)?.id == row }) {
+                let tab = behind.remove(at: index)
+                leaveFront()
+                put(tab)
+            } else if front.webView.url == nil {
+                front.load(url)
+            } else {
+                leaveFront()
+                let tab = WebTab(site: site, shelf: shelf)
+                put(tab)
+                tab.load(url)
+            }
+        } else if front.webView.url == nil {
+            front.load(shelf.openConversation(of: site).flatMap { shelf.hasAddress($0, on: site) ? $0.url : nil } ?? site.startURL)
+        }
+        readAgain()
+    }
+
+    private func put(_ tab: WebTab) {
+        front = tab
+        shelf.bringToFront(tab.id, on: site)
+    }
+
+    /// The page in front goes behind: a question on it may have just been sent, so it is kept
+    /// until it is quiet with nothing waiting.
+    private func leaveFront() {
+        behind.append(front)
+        scheduleCheck()
+    }
+
+    /// Reads rows still waiting for an answer from their own address, on pages behind.
+    func readAgain() {
+        let reading = behind.filter { tab in readAgainRows.contains { shelf.row(of: tab.id, on: site)?.id == $0 } }.count
+        for row in shelf.toReadAgain(on: site).prefix(max(0, Self.readingAgainAtMost - reading)) where !readAgainRows.contains(row.id) {
+            readAgainRows.insert(row.id)
+            let tab = WebTab(site: site, shelf: shelf)
+            behind.append(tab)
+            tab.load(row.url)
+        }
+        if !behind.isEmpty { scheduleCheck() }
+    }
+
+    private var checking = false
+
+    private func scheduleCheck() {
+        guard !checking else { return }
+        checking = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.checkSeconds) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.checking = false
+                self.closeFinished()
+                if !self.behind.isEmpty { self.scheduleCheck() }
+            }
+        }
+    }
+
+    /// Closes pages behind whose question was answered and saved (and that went quiet), and any
+    /// kept too long.
+    private func closeFinished() {
+        let now = Date()
+        behind.removeAll { tab in
+            let waiting = shelf.row(of: tab.id, on: site)?.isAwaiting == true
+            let done = (!waiting && now.timeIntervalSince(tab.changedAt) >= Self.quietSeconds) || now.timeIntervalSince(tab.openedAt) >= Self.longestBehind
+            if done { tab.close() }
+            return done
+        }
+    }
+}
+
+/// The site's web view in the chat column: the page in front, with the ones behind it under it
+/// (in the window, so they keep drawing).
 private struct WebPage: NSViewRepresentable {
     let session: WebSession
+    /// The page in front, so a new one is put in place.
+    let front: UUID
 
     func makeNSView(context: Context) -> NSView {
         let container = NSView()
@@ -138,15 +289,27 @@ private struct WebPage: NSViewRepresentable {
     }
 
     func updateNSView(_ container: NSView, context: Context) {
-        if session.webView.superview !== container { place(in: container) }
+        place(in: container)
     }
 
     private func place(in container: NSView) {
-        let view = session.webView
-        view.removeFromSuperview()
-        view.frame = container.bounds
-        view.autoresizingMask = [.width, .height]
-        container.addSubview(view)
+        let views = session.behind.map(\.webView) + [session.front.webView]
+        for view in container.subviews where !views.contains(where: { $0 === view }) { view.removeFromSuperview() }
+        for view in views {
+            if view.superview !== container {
+                view.removeFromSuperview()
+                view.frame = container.bounds
+                view.autoresizingMask = [.width, .height]
+                container.addSubview(view)
+            }
+        }
+        // The front page on top; only it takes clicks and keys.
+        let front = session.front.webView
+        if container.subviews.last !== front { container.addSubview(front, positioned: .above, relativeTo: nil) }
+        if let window = container.window, let responder = window.firstResponder as? NSView,
+           session.behind.contains(where: { responder.isDescendant(of: $0.webView) }) {
+            window.makeFirstResponder(front)
+        }
     }
 }
 
@@ -168,8 +331,8 @@ struct WebSiteFace: View {
     }
 }
 
-/// The chat column for a web site: the Chat | Board bar (Board is for bots), a strip that says
-/// whether the page was saved for the main bot, and the real site.
+/// The chat column for a web site: a strip that says whether the page was saved for the main
+/// bot, and the real site, from the top (no Chat | Board switch: a web site has no Board).
 struct WebSiteColumn: View {
     @ObservedObject var shelf: WebShelf
     let site: WebSite
@@ -181,10 +344,6 @@ struct WebSiteColumn: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            BoardSwitch(board: false, boardAvailable: false) { _ in }
-                .padding(.top, BoardSwitch.barTop)
-                .padding(.bottom, BoardSwitch.barBottom)
-                .frame(maxWidth: .infinity)
             VStack(spacing: 0) {
                 strip
                 Rectangle().fill(Theme.line).frame(height: 1)
@@ -192,7 +351,7 @@ struct WebSiteColumn: View {
                     placeholder
                 } else {
                     let session = WebSession.session(for: site, shelf: shelf)
-                    WebPage(session: session)
+                    WebPage(session: session, front: shelf.frontPage(of: site))
                         .onAppear { session.loadIfNeeded() }
                         .onChange(of: shelf.requested[site.id]) { _, _ in session.loadIfNeeded() }
                 }
@@ -201,7 +360,7 @@ struct WebSiteColumn: View {
             .clipShape(RoundedRectangle(cornerRadius: 14))
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.line))
             .padding(.horizontal, 20)
-            .padding(.bottom, 20)
+            .padding(.vertical, 20)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.ground)
@@ -258,6 +417,11 @@ struct WebStatusLine: View {
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.orange)
                 .help(L("Nothing was saved. {0} The page reader is in the plugin ccb-web-extractors; ask Maintainer to fix it.", reason))
+        case .waiting:
+            Label(L("Waiting for {0}'s answer…", site.name), systemImage: "hourglass")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.faint)
+                .help(L("Listed already; its answer is saved when it comes, even if you open something else"))
         case .newQuestion:
             Text(L("A new question is saved once it has an answer"))
                 .font(.system(size: 12))
@@ -290,7 +454,7 @@ struct WebRailSection: View {
             .padding(.top, 6)
         ForEach(WebSite.all) { site in
             WebSiteRow(site: site, count: shelf.conversations(of: site).count, selected: workspace.selectedWebSite == site && shelf.open[site.id] == nil) {
-                workspace.select(site)
+                workspace.openFresh(site)
             }
             WebConversationRows(workspace: workspace, shelf: shelf, site: site)
         }
@@ -322,24 +486,26 @@ private struct WebSiteRow: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .help(L("{0} in the app: its conversations are saved as text the main bot can search", site.name))
+        .help(L("{0} in the app: a new question; conversations are saved as text the main bot can search", site.name))
         .accessibilityLabel(L("{0}, web, {1} conversations", site.name, count))
     }
 }
 
-/// Under a site: its conversations, newest first, drawn like a bot's subagents.
+/// Under a site: its questions that you have not settled, drawn and settled like a bot's
+/// subagents. One still waiting for its answer comes first, with a live dot; once you have
+/// viewed one and moved on (or press its clock) it leaves for the right panel's "Questions".
 private struct WebConversationRows: View {
     @ObservedObject var workspace: Workspace
     @ObservedObject var shelf: WebShelf
     let site: WebSite
     @State private var showsAll = false
-    static let listedAtMost = 5
+    static let listedAtMost = TraceBook.listedAtMost
 
     var body: some View {
-        let all = shelf.conversations(of: site)
+        let all = shelf.listed(of: site)
         let more = max(0, all.count - Self.listedAtMost)
         ForEach(showsAll ? all : Array(all.prefix(Self.listedAtMost))) { conversation in
-            row(conversation)
+            WebConversationRow(conversation: conversation, workspace: workspace, shelf: shelf, site: site)
         }
         if more > 0 {
             Button { showsAll.toggle() } label: {
@@ -354,45 +520,73 @@ private struct WebConversationRows: View {
             .buttonStyle(.plain)
         }
     }
+}
 
-    private func row(_ conversation: WebConversation) -> some View {
-        let open = workspace.selectedWebSite == site && shelf.open[site.id] == conversation.id
-        let unreadable = if open, case .unreadable = shelf.status[site.id] { true } else { false }
-        return Button {
-            workspace.select(site)
-            shelf.show(conversation, of: site)
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.turn.down.right")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.faint)
-                Text(conversation.title.isEmpty ? site.name : conversation.title)
-                    .font(.system(size: 13))
-                    .foregroundStyle(open ? Theme.text : Theme.muted)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
+/// One question's row, like a subagent's: a live dot while it waits for its answer, and once
+/// answered (or while the pointer is on it) the clock that settles it.
+private struct WebConversationRow: View {
+    let conversation: WebConversation
+    @ObservedObject var workspace: Workspace
+    @ObservedObject var shelf: WebShelf
+    let site: WebSite
+    @State private var hovering = false
+
+    private var open: Bool { workspace.selectedWebSite == site && shelf.open[site.id] == conversation.id }
+
+    /// How it is marked: like a subagent at work while it waits, else done (or failed when its
+    /// page could not be read).
+    private var mark: Subagent.Mark {
+        if conversation.isAwaiting { return .live }
+        if open, case .unreadable = shelf.status[site.id] { return .failed }
+        return .done
+    }
+
+    var body: some View {
+        let showsSettle = hovering || !conversation.isAwaiting
+        HStack(spacing: 0) {
+            Button { workspace.open(conversation, on: site) } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.turn.down.right")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.faint)
+                    Text(conversation.title.isEmpty ? site.name : conversation.title)
+                        .font(.system(size: 13))
+                        .foregroundStyle(open || conversation.isAwaiting ? Theme.text : Theme.muted)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                }
+                .padding(.leading, 26)
+                .padding(.trailing, 4)
+                .frame(minHeight: 30)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(conversation.question ?? conversation.url.absoluteString)
+            .accessibilityLabel(L("{0} conversation: {1}", site.name, conversation.title))
+            Button { shelf.settle(conversation, of: site) } label: {
                 Group {
-                    if unreadable {
-                        Image(systemName: "exclamationmark").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.orange)
-                    } else if conversation.file != nil {
-                        Image(systemName: "checkmark").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.faint)
+                    if showsSettle {
+                        SubagentRow.settleIcon(mark)
+                    } else {
+                        SubagentRows.mark(mark)
                     }
                 }
-                .frame(width: 24)
+                .frame(width: 24, height: 30)
+                .contentShape(Rectangle())
             }
-            .padding(.leading, 26)
+            .buttonStyle(.plain)
+            .allowsHitTesting(showsSettle)
+            .help(conversation.isAwaiting ? L("Settle: move to Questions in the right panel (its answer is still saved)") : L("Settle: move to Questions in the right panel"))
+            .accessibilityLabel(L("Settle {0}", conversation.title))
             .padding(.trailing, 6)
-            .frame(minHeight: 30)
-            .background(RoundedRectangle(cornerRadius: 10).fill(open ? Theme.selected : .clear))
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .help(conversation.url.absoluteString)
-        .accessibilityLabel(L("{0} conversation: {1}", site.name, conversation.title))
+        .background(RoundedRectangle(cornerRadius: 10).fill(open ? Theme.selected : .clear))
+        .onHover { hovering = $0 }
         .contextMenu {
             if conversation.file != nil {
                 Button(L("Ask Main bot about this")) { workspace.askMainBot(about: conversation, on: site) }
             }
+            Button(L("Settle")) { shelf.settle(conversation, of: site) }
         }
     }
 }
@@ -437,7 +631,7 @@ struct WebPanel: View {
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .help(L("Opens {0} fresh; once it has an id it becomes a row", site.startURL.absoluteString))
+                        .help(L("Opens {0} fresh; a question you send there is a row at once", site.startURL.absoluteString))
                     }
                 }
             }
@@ -491,7 +685,7 @@ struct WebPanel: View {
             .disabled(conversation.file == nil)
             .help(L("Sends the main bot a message naming the saved file, so it can read it"))
         } else {
-            Text(L("Ask {0} something; the conversation is listed and saved once it has an answer.", site.name))
+            Text(L("Ask {0} something: it is listed as soon as you send it, and saved once it has an answer.", site.name))
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.faint)
                 .fixedSize(horizontal: false, vertical: true)
@@ -502,18 +696,22 @@ struct WebPanel: View {
         let all = shelf.conversations(of: site)
         if !all.isEmpty {
             VStack(spacing: 0) {
-                ForEach(all.prefix(12)) { conversation in
+                ForEach(all) { conversation in
                     let open = shelf.open[site.id] == conversation.id
-                    Button { shelf.show(conversation, of: site) } label: {
+                    Button { workspace.open(conversation, on: site) } label: {
                         HStack {
                             Text(conversation.title.isEmpty ? site.name : conversation.title)
                                 .font(.system(size: 13))
                                 .foregroundStyle(open ? Theme.text : Theme.muted)
                                 .lineLimit(1)
                             Spacer(minLength: 8)
-                            Text(Self.when(conversation.updatedAt))
-                                .font(.system(size: 12))
-                                .foregroundStyle(Theme.faint)
+                            if conversation.isAwaiting {
+                                SubagentRows.mark(.live)
+                            } else {
+                                Text(Self.when(conversation.updatedAt))
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(Theme.faint)
+                            }
                         }
                         .padding(.horizontal, 14)
                         .frame(height: 36)
@@ -521,6 +719,7 @@ struct WebPanel: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .help(conversation.isSettled ? L("Opens it, and lists it in the left column again") : L("Opens it"))
                 }
             }
             .padding(.vertical, 4)

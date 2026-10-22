@@ -78,10 +78,13 @@ public struct WebSite: Identifiable, Equatable, Sendable {
     }
 }
 
-/// One conversation with a web AI, as listed under it in the left column.
-public struct WebConversation: Codable, Identifiable, Equatable, Sendable {
-    /// From its URL (`WebSite.conversationID`).
+/// One conversation with a web AI, as listed under it in the left column (until you settle it,
+/// as a bot's subagents are) and always in the right panel's "Questions".
+public struct WebConversation: Codable, Identifiable, Equatable, Sendable, Settleable {
+    /// From its URL (`WebSite.conversationID`); a question sent on a page that has no id in its
+    /// address yet gets one of its own ("new-…") until the page has one.
     public var id: String
+    /// Its page; the site's start page while it has no id of its own.
     public var url: URL
     public var title: String
     /// Messages in the last saved text (yours and its).
@@ -92,6 +95,15 @@ public struct WebConversation: Codable, Identifiable, Equatable, Sendable {
     public var file: String?
     /// Last opened or changed: the list's order, newest first.
     public var updatedAt: Date
+    /// The question still waiting for its answer, from the moment the page showed it sent; nil
+    /// once an answer was read. A row with no id yet keeps its first question here.
+    public var question: String?
+    /// When that question was first seen.
+    public var askedAt: Date?
+    /// When it left the left column (you viewed it and moved on, or its clock); it stays in
+    /// the right panel's "Questions", and opening it from there brings it back.
+    public var settledAt: Date?
+    public var unsettledAt: Date?
 
     public init(id: String, url: URL, title: String, messages: Int = 0, savedAt: Date? = nil, file: String? = nil, updatedAt: Date) {
         self.id = id
@@ -102,6 +114,9 @@ public struct WebConversation: Codable, Identifiable, Equatable, Sendable {
         self.file = file
         self.updatedAt = updatedAt
     }
+
+    /// A question was sent and no answer has been read since.
+    public var isAwaiting: Bool { askedAt != nil }
 }
 
 /// A site's conversation list, in `web/<site>/conversations.json`.
@@ -145,6 +160,23 @@ public struct WebConversationStore: Sendable {
         conversations.removeAll { $0.id == id }
         conversations.insert(item, at: 0)
         return item
+    }
+
+    /// Changes the conversation in place, if it is listed.
+    public mutating func update(_ id: String, _ change: (inout WebConversation) -> Void) {
+        guard let index = conversations.firstIndex(where: { $0.id == id }) else { return }
+        change(&conversations[index])
+    }
+
+    /// A row made before its page had an id is that conversation (`id`, at `url`): it takes the
+    /// id, or, when that conversation is listed already, folds into it.
+    public mutating func adopt(_ old: String, as id: String, url: URL) {
+        guard old != id, let index = conversations.firstIndex(where: { $0.id == old }) else { return }
+        var row = conversations.remove(at: index)
+        guard conversation(id) == nil else { return }
+        row.id = id
+        row.url = url
+        conversations.insert(row, at: min(index, conversations.count))
     }
 
     /// Its text was saved to `file` with `messages` messages.
@@ -358,12 +390,19 @@ public enum WebPageStatus: Equatable, Sendable {
     case reading
     /// A new question's page: nothing to save until it has an id.
     case newQuestion
+    /// A question was sent and its answer has not come yet.
+    case waiting
     case saved(messages: Int, at: Date)
     /// The page reader found nothing: shown, and no file written.
     case unreadable(String)
 }
 
 /// Every web site's conversations, their saved text, and what the open page's status is.
+///
+/// A site may have several pages (web views) open at once: the one in the chat column (its
+/// front page) and ones put behind it while a question on them still waits for its answer.
+/// Each page follows one row, so an answer that comes on a page you left is still saved to the
+/// row its question made.
 @MainActor
 public final class WebShelf: ObservableObject {
     /// `~/.claudecodebot/web`.
@@ -377,9 +416,25 @@ public final class WebShelf: ObservableObject {
     @Published public private(set) var open: [String: String] = [:]
     /// The page each site shows asked to load (a row clicked, "New question"), by site id.
     @Published public private(set) var requested: [String: URL] = [:]
+    /// The row that request is for, when it is for one.
+    @Published public private(set) var requestedRow: [String: String] = [:]
     @Published public private(set) var status: [String: WebPageStatus] = [:]
+    /// The page each site shows in the chat column, by site id (`firstPage` until another).
+    @Published public private(set) var front: [String: UUID] = [:]
+    /// The site picked in the left column, if one is: an answer read on its front page then
+    /// counts as seen.
+    public private(set) var shown: String?
     /// The text last written per conversation (`site/id`), so an unchanged page writes nothing.
     private var written: [String: [WebTurn]] = [:]
+    /// The row each open page follows, by page.
+    private var pages: [UUID: String] = [:]
+    /// Each open page's last address, so a move inside the site is told from a title change.
+    private var addresses: [UUID: URL] = [:]
+    /// Conversations (`site/id`) whose answer you have seen: leaving one settles its row.
+    private var seen: Set<String> = []
+
+    /// The page a site shows before any other was put in front.
+    nonisolated public static let firstPage = UUID(uuidString: "3E3B0000-0000-4000-8000-0000000000F1")!
 
     public init(folder: URL, library: URL) {
         self.folder = folder
@@ -391,12 +446,29 @@ public final class WebShelf: ObservableObject {
 
     public func siteFolder(_ site: WebSite) -> URL { folder.appending(path: site.id) }
 
+    /// Every conversation of the site, newest first (the right panel's "Questions").
     public func conversations(of site: WebSite) -> [WebConversation] {
         stores[site.id]?.conversations ?? []
     }
 
+    /// The rows the left column lists under the site: the ones you did not settle, those
+    /// still waiting for an answer first, then newest first.
+    public func listed(of site: WebSite) -> [WebConversation] {
+        let rows = conversations(of: site).filter { !$0.isSettled }
+        return rows.filter(\.isAwaiting) + rows.filter { !$0.isAwaiting }
+    }
+
+    public func conversation(_ id: String, of site: WebSite) -> WebConversation? {
+        stores[site.id]?.conversation(id)
+    }
+
     public func openConversation(of site: WebSite) -> WebConversation? {
         open[site.id].flatMap { stores[site.id]?.conversation($0) }
+    }
+
+    /// Whether the conversation has its own page to load (an id in its address).
+    public func hasAddress(_ conversation: WebConversation, on site: WebSite) -> Bool {
+        site.conversationID(in: conversation.url) != nil
     }
 
     /// The saved text's file, once there is one.
@@ -409,34 +481,137 @@ public final class WebShelf: ObservableObject {
         WebExtractors.script(for: site, library: library, bundled: bundledExtractors)?.source
     }
 
-    /// A row clicked: its page loads.
-    public func show(_ conversation: WebConversation, of site: WebSite) {
-        open[site.id] = conversation.id
-        requested[site.id] = conversation.url
-        status[site.id] = .reading
+    /// The conversation a saved text file is of (a bot's link to it): by the list, else by the
+    /// file's own "- URL:" line, and then it is listed again. Nil for any other file.
+    public func conversation(savedIn file: URL, now: Date = Date()) -> (site: WebSite, conversation: WebConversation)? {
+        guard file.isFileURL else { return nil }
+        let path = file.standardizedFileURL.resolvingSymlinksInPath()
+        for site in WebSite.all where path.deletingLastPathComponent().path == siteFolder(site).standardizedFileURL.resolvingSymlinksInPath().path {
+            let name = path.lastPathComponent
+            if let known = conversations(of: site).first(where: { $0.file == name }) { return (site, known) }
+            guard let text = try? String(contentsOf: path, encoding: .utf8) else { return nil }
+            // The header: "# <title>", then "- <field>: <value>" lines, before the first message.
+            let header = text.components(separatedBy: "\n").prefix { !$0.hasPrefix("## ") }
+            let title = header.first { $0.hasPrefix("# ") }.map { String($0.dropFirst(2)).trimmingCharacters(in: .whitespaces) }
+            guard let line = header.first(where: { $0.hasPrefix("- URL: ") }),
+                  let url = URL(string: String(line.dropFirst("- URL: ".count)).trimmingCharacters(in: .whitespaces)),
+                  let id = site.conversationID(in: url), var store = stores[site.id] else { return nil }
+            store.upsert(id: id, url: url, title: title, at: now)
+            store.update(id) { row in
+                if row.file == nil { row.file = name }
+            }
+            store.save()
+            stores[site.id] = store
+            return store.conversation(id).map { (site, $0) }
+        }
+        return nil
     }
 
-    /// "New question": the site's start page, fresh.
-    public func startNew(on site: WebSite) {
-        open[site.id] = nil
+    // MARK: Pages
+
+    public func frontPage(of site: WebSite) -> UUID { front[site.id] ?? Self.firstPage }
+
+    /// The row a page follows, if it follows one.
+    public func row(of page: UUID, on site: WebSite) -> WebConversation? {
+        pages[page].flatMap { stores[site.id]?.conversation($0) }
+    }
+
+    /// A page is now the one in the chat column (a fresh one for a request, or one brought back
+    /// from behind it).
+    public func bringToFront(_ page: UUID, on site: WebSite) {
+        front[site.id] = page
+        if let id = pages[page] { open[site.id] = id }
+    }
+
+    /// A page was closed.
+    public func closed(_ page: UUID) {
+        pages[page] = nil
+        addresses[page] = nil
+    }
+
+    /// Rows still waiting for an answer that no open page follows and that have their own page:
+    /// what to read again (after a restart, or once the page that asked was closed).
+    public func toReadAgain(on site: WebSite) -> [WebConversation] {
+        let followed = Set(pages.values)
+        return conversations(of: site).filter { $0.isAwaiting && !followed.contains($0.id) && hasAddress($0, on: site) }
+    }
+
+    // MARK: What you do
+
+    /// The site picked in the left column now (nil: a bot).
+    public func showing(_ site: WebSite?) {
+        shown = site?.id
+    }
+
+    /// A row clicked (in the left column or the right panel): its page loads, and it is listed
+    /// in the left column again until you leave it.
+    public func show(_ conversation: WebConversation, of site: WebSite, now: Date = Date()) {
+        setOpen(conversation.id, on: site, now: now)
+        if !conversation.isAwaiting { seen.insert("\(site.id)/\(conversation.id)") }
+        if stores[site.id]?.conversation(conversation.id)?.isSettled == true {
+            stores[site.id]?.update(conversation.id) { $0.unsettle(at: now) }
+            stores[site.id]?.save()
+        }
+        requested[site.id] = conversation.url
+        requestedRow[site.id] = conversation.id
+        status[site.id] = conversation.isAwaiting ? .waiting : .reading
+    }
+
+    /// "New question" (or the site's own row): the site's start page, fresh.
+    public func startNew(on site: WebSite, now: Date = Date()) {
+        setOpen(nil, on: site, now: now)
         requested[site.id] = site.startURL
+        requestedRow[site.id] = nil
         status[site.id] = .newQuestion
+    }
+
+    /// The row's clock: it leaves the left column (it stays under "Questions").
+    public func settle(_ conversation: WebConversation, of site: WebSite, now: Date = Date()) {
+        stores[site.id]?.update(conversation.id) { $0.settle(at: now) }
+        stores[site.id]?.save()
     }
 
     /// The view loaded what was asked for.
     public func handled(_ site: WebSite) {
         requested[site.id] = nil
+        requestedRow[site.id] = nil
     }
 
+    /// The front page shows `id` now: the one it showed before, once you saw its answer, leaves
+    /// the left column, as a subagent you are done with does. One still waiting stays.
+    private func setOpen(_ id: String?, on site: WebSite, now: Date) {
+        let before = open[site.id]
+        guard before != id else { return }
+        open[site.id] = id
+        guard let before, seen.remove("\(site.id)/\(before)") != nil,
+              let row = stores[site.id]?.conversation(before), !row.isAwaiting else { return }
+        stores[site.id]?.update(before) { $0.settle(at: now) }
+        stores[site.id]?.save()
+    }
+
+    // MARK: What the pages show
+
     /// The page moved to `url` (a new question got its id, a link inside the site).
-    public func pageChanged(on site: WebSite, url: URL, pageTitle: String?, now: Date = Date()) {
+    public func pageChanged(on site: WebSite, page: UUID = firstPage, url: URL, pageTitle: String?, now: Date = Date()) {
+        let isFront = page == frontPage(of: site)
+        let moved = addresses[page].map { $0 != url } ?? false
+        addresses[page] = url
         guard let id = site.conversationID(in: url) else {
-            open[site.id] = nil
-            status[site.id] = .newQuestion
+            // Moved off a conversation inside the site (its own "New chat"): it no longer
+            // follows it. A question with no id yet stays followed: its page did not move.
+            if moved, let row = row(of: page, on: site), hasAddress(row, on: site) { pages[page] = nil }
+            if isFront {
+                let following = row(of: page, on: site)
+                setOpen(following?.id, on: site, now: now)
+                status[site.id] = following?.isAwaiting == true ? .waiting : .newQuestion
+            }
             return
         }
-        if open[site.id] != id { status[site.id] = .reading }
-        open[site.id] = id
+        follow(page, id: id, url: url, on: site, questions: [])
+        if isFront {
+            if open[site.id] != id { status[site.id] = .reading }
+            setOpen(id, on: site, now: now)
+        }
         let title = WebTranscript.clean(pageTitle, site: site)
         if stores[site.id]?.conversation(id) == nil || title != nil {
             stores[site.id]?.upsert(id: id, url: url, title: title ?? stores[site.id]?.conversation(id)?.title ?? site.name, at: now)
@@ -444,30 +619,99 @@ public final class WebShelf: ObservableObject {
         }
     }
 
-    /// What the page reader found once the page settled: the text saved (its file returned),
-    /// or "couldn't read this page" with no file written.
-    @discardableResult
-    public func record(on site: WebSite, url: URL, pageTitle: String?, reading: WebReading, now: Date = Date()) -> URL? {
-        guard let id = site.conversationID(in: url) else {
-            status[site.id] = .newQuestion
-            return nil
+    /// The page follows conversation `id` now. The row its question made before the page had
+    /// an id becomes that conversation; so does a row whose page was closed before it had one,
+    /// once a conversation shows the same question.
+    private func follow(_ page: UUID, id: String, url: URL, on site: WebSite, questions: Set<String>) {
+        guard var store = stores[site.id] else { return }
+        let before = store.conversations
+        if let previous = pages[page], previous != id, let row = store.conversation(previous), !hasAddress(row, on: site) {
+            store.adopt(previous, as: id, url: url)
+            if open[site.id] == previous { open[site.id] = id }
         }
-        open[site.id] = id
+        let followed = Set(pages.filter { $0.key != page }.values)
+        for row in store.conversations where row.id != id && !hasAddress(row, on: site) && !followed.contains(row.id) {
+            if let question = row.question, questions.contains(question) { store.adopt(row.id, as: id, url: url) }
+        }
+        pages[page] = id
+        if store.conversations != before {
+            store.save()
+            stores[site.id] = store
+        }
+    }
+
+    /// What the page reader found on a page. `settled` is a read once the page went quiet (an
+    /// answer finished): the text is saved (its file returned), or "couldn't read this page"
+    /// with no file written. A read while the page still changes only notes a question just
+    /// sent, so its row shows at once (titled from it), before the page has an id or an answer.
+    @discardableResult
+    public func record(on site: WebSite, page: UUID = firstPage, url: URL, pageTitle: String?, reading: WebReading, settled: Bool = true, now: Date = Date()) -> URL? {
+        let isFront = page == frontPage(of: site)
         guard case .read(let extracted, let turns) = reading else {
-            if case .nothing(let reason) = reading { status[site.id] = .unreadable(reason) }
+            guard settled else { return nil }
+            guard let id = site.conversationID(in: url) else {
+                if isFront, row(of: page, on: site) == nil { status[site.id] = .newQuestion }
+                return nil
+            }
+            follow(page, id: id, url: url, on: site, questions: [])
+            if isFront {
+                setOpen(id, on: site, now: now)
+                if case .nothing(let reason) = reading { status[site.id] = .unreadable(reason) }
+            }
             if stores[site.id]?.conversation(id) == nil {
                 stores[site.id]?.upsert(id: id, url: url, title: WebTranscript.clean(pageTitle, site: site) ?? site.name, at: now)
                 stores[site.id]?.save()
             }
             return nil
         }
-        guard var store = stores[site.id] else { return nil }
         let title = WebTranscript.title(extracted: extracted, pageTitle: pageTitle, turns: turns, site: site)
-        let key = "\(site.id)/\(id)"
+        guard let id = site.conversationID(in: url) else {
+            noteNewQuestion(on: site, page: page, turns: turns, title: title, isFront: isFront, now: now)
+            return nil
+        }
+        follow(page, id: id, url: url, on: site, questions: Set(turns.filter { $0.role == .user }.map(\.text)))
+        if isFront { setOpen(id, on: site, now: now) }
+        guard var store = stores[site.id] else { return nil }
+        // The last message yours: its answer has not come yet.
+        let asked = turns.last?.role == .user ? turns.last?.text : nil
         let known = store.conversation(id)
-        if written[key] == turns, let known, let file = known.file, let savedAt = known.savedAt,
+        if let asked {
+            store.upsert(id: id, url: url, title: title, at: now)
+            store.update(id) { row in
+                if row.askedAt == nil {
+                    row.askedAt = now
+                    row.unsettle(at: now)
+                }
+                row.question = asked
+            }
+            seen.remove("\(site.id)/\(id)")
+        } else if settled {
+            store.update(id) { row in
+                row.askedAt = nil
+                row.question = nil
+            }
+            if isFront && shown == site.id { seen.insert("\(site.id)/\(id)") }
+        }
+        guard settled else {
+            if known == nil { store.upsert(id: id, url: url, title: title, at: now) }
+            if store.conversations != stores[site.id]?.conversations {
+                store.save()
+                stores[site.id] = store
+            }
+            if isFront, asked != nil { status[site.id] = .waiting }
+            return nil
+        }
+        let shownStatus = { (saved: WebPageStatus) in
+            if isFront { self.status[site.id] = asked == nil ? saved : .waiting }
+        }
+        let key = "\(site.id)/\(id)"
+        if written[key] == turns, let known = store.conversation(id), let file = known.file, let savedAt = known.savedAt,
            FileManager.default.fileExists(atPath: siteFolder(site).appending(path: file).path) {
-            status[site.id] = .saved(messages: known.messages, at: savedAt)
+            if store.conversations != stores[site.id]?.conversations {
+                store.save()
+                stores[site.id] = store
+            }
+            shownStatus(.saved(messages: known.messages, at: savedAt))
             return siteFolder(site).appending(path: file)
         }
         let file = store.fileName(for: id, title: title)
@@ -475,7 +719,7 @@ public final class WebShelf: ObservableObject {
         try? FileManager.default.createDirectory(at: siteFolder(site), withIntermediateDirectories: true)
         let text = WebTranscript.markdown(title: title, url: url, site: site, turns: turns, savedAt: now)
         guard (try? Data(text.utf8).write(to: target, options: .atomic)) != nil else {
-            status[site.id] = .unreadable("The text could not be saved to \(target.path).")
+            if isFront { status[site.id] = .unreadable("The text could not be saved to \(target.path).") }
             return nil
         }
         store.upsert(id: id, url: url, title: title, at: now)
@@ -483,7 +727,35 @@ public final class WebShelf: ObservableObject {
         store.save()
         stores[site.id] = store
         written[key] = turns
-        status[site.id] = .saved(messages: turns.count, at: now)
+        shownStatus(.saved(messages: turns.count, at: now))
         return target
+    }
+
+    /// A question on a page with no id in its address yet: a row of its own at once, titled
+    /// from it, which becomes the conversation once the page has an id. The page's first
+    /// question tells its row from one an earlier question on the same page made.
+    private func noteNewQuestion(on site: WebSite, page: UUID, turns: [WebTurn], title: String, isFront: Bool, now: Date) {
+        guard let first = turns.first(where: { $0.role == .user })?.text, var store = stores[site.id] else {
+            if isFront, row(of: page, on: site) == nil { status[site.id] = .newQuestion }
+            return
+        }
+        let id: String
+        if let row = row(of: page, on: site), !hasAddress(row, on: site), row.question == first {
+            id = row.id
+        } else {
+            id = "new-" + UUID().uuidString.prefix(13).lowercased()
+            store.upsert(id: id, url: site.startURL, title: title, at: now)
+            store.update(id) { row in
+                row.question = first
+                row.askedAt = now
+            }
+            store.save()
+            stores[site.id] = store
+        }
+        pages[page] = id
+        if isFront {
+            setOpen(id, on: site, now: now)
+            status[site.id] = .waiting
+        }
     }
 }

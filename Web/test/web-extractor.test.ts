@@ -40,6 +40,26 @@ describe("the Gemini page reader", () => {
     });
   });
 
+  it("writes math once, as its TeX, and a list item's paragraph on its bullet's line", () => {
+    const reading = read("gemini", "gemini-math.html");
+    if ("error" in reading) throw new Error(reading.error);
+    expect(reading.turns[1]).toEqual({
+      role: "assistant",
+      text: [
+        "1. Why hashing?",
+        "",
+        "- Comparison sorts need $\\Omega(n \\log n)$ time.",
+        "- Linear probing: $h'(k, i) := (h(k) + i) \\bmod m$.",
+        "",
+        "With a load factor $\\alpha := n/m$ each slot holds about $\\alpha$ keys.",
+        "",
+        "$$h_{(a,b)}(k) := ((ak + b) \\bmod p) \\bmod m$$",
+        "",
+        "That family is universal.",
+      ].join("\n"),
+    });
+  });
+
   it("finds nothing on a page with no conversation, rather than an empty transcript", () => {
     expect(read("gemini", "gemini-signed-out.html")).toEqual({ title: null, turns: [] });
   });

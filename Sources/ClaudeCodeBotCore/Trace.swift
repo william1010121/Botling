@@ -141,8 +141,38 @@ public struct Step: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// A row under a bot in the left column that you can settle out of it (a subagent, a web AI's
+/// question): settled, it leaves the left column for a list in the right one, from which it can
+/// be brought back. Settling only moves the row; whatever it stands for goes on.
+public protocol Settleable {
+    var settledAt: Date? { get set }
+    var unsettledAt: Date? { get set }
+}
+
+extension Settleable {
+    /// You settled it: its row is in the right column's list, not in the left one.
+    public var isSettled: Bool { settledAt != nil }
+
+    /// True if it was listed until now (worth saving).
+    @discardableResult
+    public mutating func settle(at date: Date = Date()) -> Bool {
+        guard settledAt == nil else { return false }
+        settledAt = date
+        return true
+    }
+
+    /// Back in the left column from `date`. True if it was settled until now (worth saving).
+    @discardableResult
+    public mutating func unsettle(at date: Date = Date()) -> Bool {
+        guard settledAt != nil else { return false }
+        settledAt = nil
+        unsettledAt = date
+        return true
+    }
+}
+
 /// A subagent a bot sent off with the Agent (or Task) tool, and everything it did.
-public struct Subagent: Codable, Equatable, Identifiable, Sendable {
+public struct Subagent: Codable, Equatable, Identifiable, Sendable, Settleable {
     public enum Status: String, Codable, Sendable {
         case running, completed, failed, stopped
     }
@@ -199,9 +229,6 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable {
     }
 
     public var isRunning: Bool { status == .running }
-
-    /// You settled it: its row is under "Settled" in the right column, not in the left one.
-    public var isSettled: Bool { settledAt != nil }
 
     /// How the left column marks it. Only one still at work gets a live dot; a finished one
     /// gets a check, so it never looks like a bot that is awake (green).
@@ -643,19 +670,16 @@ public struct TraceBook: Equatable, Sendable {
     /// now (worth saving).
     @discardableResult
     public mutating func settle(_ id: String, at date: Date = Date()) -> Bool {
-        guard let index = subagentIndex(id), subagents[index].settledAt == nil else { return false }
-        subagents[index].settledAt = date
-        return true
+        guard let index = subagentIndex(id) else { return false }
+        return subagents[index].settle(at: date)
     }
 
     /// Brings a settled one back to the left column; one that has ended stays listed for
     /// `listedAfterEnding` from `date`. True if it was settled until now (worth saving).
     @discardableResult
     public mutating func unsettle(_ id: String, at date: Date = Date()) -> Bool {
-        guard let index = subagentIndex(id), subagents[index].settledAt != nil else { return false }
-        subagents[index].settledAt = nil
-        subagents[index].unsettledAt = date
-        return true
+        guard let index = subagentIndex(id) else { return false }
+        return subagents[index].unsettle(at: date)
     }
 
     /// The subagent by the call that started it, or by a SendMessage call that reached it.

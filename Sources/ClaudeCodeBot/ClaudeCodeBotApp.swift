@@ -72,7 +72,7 @@ struct RootView: View {
                 // One web view for every bot: switching bots redraws it instead of reloading.
                 // Kept under a web site's page, so coming back does not reload it either.
                 ChatSurface(bot: bot, workspace: workspace, components: workspace.components, commands: workspace.componentCommands, plugins: workspace.plugins, inputs: inputs)
-                    .modifier(BoardMode(workspace: workspace, inputs: inputs, bot: bot, hidden: web != nil))
+                    .modifier(BoardMode(workspace: workspace, inputs: inputs, bot: bot))
                     .opacity(web == nil ? 1 : 0)
                     .allowsHitTesting(web == nil)
                 if let web {
@@ -219,6 +219,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Web AIs' page readers: the plugin's scripts, with the app's own copy as the fallback.
         workspace.web.bundledExtractors = WebSiteColumn.bundledExtractors
         WebExtractors.install(in: Workspace.Layout.plugins(in: workspace.root), bundled: WebSiteColumn.bundledExtractors)
+        // A bot's link to a saved web conversation opens it in its site, where it was.
+        ResultWindows.opensInApp = { [workspace] url in workspace.openSavedWebConversation(url) }
+        // A question that was still waiting for its answer when the app quit: its page is read again.
+        for site in WebSite.all { WebSession.readAgain(site, shelf: workspace.web) }
         // Preview cards show a picture of their page; a new picture redraws the chats.
         PageShotMaker.shared.install { [workspace] in workspace.objectWillChange.send() }
         connectSelfUpdate()

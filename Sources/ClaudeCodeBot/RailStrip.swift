@@ -125,7 +125,7 @@ struct RailStrip: View {
                     asleep: false, running: false, stuck: false, waiting: false, unread: false,
                     tip: $tip
                 ) {
-                    workspace.select(site)
+                    workspace.openFresh(site)
                 } face: {
                     WebSiteFace(site: site, size: 28)
                 }

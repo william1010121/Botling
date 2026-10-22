@@ -8,9 +8,13 @@ import WebKit
 @MainActor
 enum ResultWindows {
     private static var windows: [URL: NSWindow] = [:]
+    /// Links the app opens in place of a window (a saved web conversation opens its site on it):
+    /// true when it did.
+    static var opensInApp: ((URL) -> Bool)?
 
     static func open(_ result: Chip) {
         let url = result.url
+        if opensInApp?(url) == true { return }
         guard url.isFileURL else {
             NSWorkspace.shared.open(url)
             return

@@ -521,7 +521,8 @@ enum Snapshot {
         }
     }
 
-    /// Three saved sample conversations on `site`, the newest open.
+    /// Three saved sample conversations on `site`, the newest open and the oldest settled (only
+    /// under "Questions"), and a question just sent on a page left behind, still waiting.
     private static func sampleWebConversations(on site: WebSite, in workspace: Workspace) {
         let samples: [(id: String, title: String, turns: Int, minutesAgo: Double)] = [
             ("c0a9e1f27b3d", "CHANGELOG merge conflicts", 4, 60 * 26),
@@ -538,6 +539,12 @@ enum Snapshot {
             workspace.web.show(newest, of: site)
             workspace.web.record(on: site, url: newest.url, pageTitle: nil, reading: .read(title: newest.title, turns: (0..<6).map { WebTurn(role: $0 % 2 == 0 ? .user : .assistant, text: "Sample message \($0 + 1)") }), now: newest.savedAt ?? Date())
         }
+        if let oldest = workspace.web.conversations(of: site).last {
+            workspace.web.settle(oldest, of: site)
+        }
+        workspace.web.record(on: site, page: UUID(), url: site.startURL, pageTitle: nil, reading: .read(title: nil, turns: [
+            WebTurn(role: .user, text: "Does a hidden WKWebView keep running?"),
+        ]), settled: false)
     }
 
     private static func drawRightPanel(to path: String) {
