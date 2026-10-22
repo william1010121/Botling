@@ -10,11 +10,6 @@ struct ClaudeCodeBotApp: App {
     init() {
         // `ClaudeCodeBot --check-plugin <folder>` checks a plugin and quits (see PluginCheck).
         PluginCheck.exitIfRequested()
-        // `ClaudeCodeBot --stop-guard <claude>` is every bot's Stop hook (see StopGuard).
-        let arguments = CommandLine.arguments
-        if let index = arguments.firstIndex(of: "--stop-guard"), index + 1 < arguments.count {
-            StopGuard.run(claude: URL(filePath: arguments[index + 1]))
-        }
     }
 
     var body: some Scene {
@@ -327,14 +322,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let locator = ClaudeExecutableLocator()
         let launcher: AgentLauncher = { launch in
             guard let executable = locator.locate() else { throw AppError.claudeNotFound }
-            var launch = launch
-            // Every bot gets the stop guard: no ending a turn on a promise nothing will keep.
-            // A fork asked for a component brief only reads and answers once.
-            if !launch.forkSession, let app = Bundle.main.executablePath {
-                launch.stopHookCommand = StopGuard.command(app: app, claude: executable.path)
-            }
             return try ClaudeAgentProcess.launcher(executable: executable)(launch)
         }
+        // Every bot's turn ends with the app's own check: no ending on a promise nothing will keep.
+        let promiseCheck = PromiseCheck.checker(classify: PromiseCheck.claudeClassifier(locate: { locator.locate() }))
         let workspace = Workspace(
             root: root,
             builtInPlugins: ChatSurface.builtInPlugins,
@@ -347,7 +338,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             shotCommand: Bundle.main.executablePath.map { "'\($0)' --component-shot" },
             launcher: launcher
         ) { profile, store in
-            Bot(profile: profile, idleInterval: idle, launcher: launcher, store: store)
+            let bot = Bot(profile: profile, idleInterval: idle, launcher: launcher, store: store)
+            bot.promiseCheck = promiseCheck
+            return bot
         }
         workspace.applyLanguage()
         return workspace

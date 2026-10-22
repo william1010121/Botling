@@ -28,6 +28,21 @@ app and publishes it on GitHub Releases.
   button off). Bots that want Codex can still run the `codex` CLI themselves, and Settings →
   Doctor still checks it. What the reviewer left in `~/.claudecodebot/codex` and the old
   settings in each bot.json stay on disk, unread.
+### Changed
+
+- **"Said it, didn't do it" is checked by the app, not a Stop hook.** Bots no longer get a Claude
+  Code Stop hook in the `--settings` the app passes them (`ClaudeCodeBot --stop-guard` is gone,
+  and so is `--include-partial-messages`); the bot's permissions and tools are otherwise the
+  same. Instead, once a turn's reply has shown, the app itself hands Haiku only that reply's
+  words and asks for one word, yes or no: no transcript, no tools. It doesn't ask at all while
+  background work the app is tracking (a command, a subagent, a wake-up or cron job) will still
+  wake the bot, or when the reply asks you to pick (`<choices>`). A yes sends the bot one
+  follow-up in the same chat ("Your last message promises work you have not done… do it now or
+  start a background task"), and the reply to that follow-up is not checked again; anything you
+  write in the meantime goes first and the follow-up is dropped. The reply shows the moment the
+  turn ends, as before, and what the bot then does comes as a second reply. The check doesn't
+  depend on the engine, so it can cover other engines' bots too, and with a one-word answer it
+  takes about 3–4 seconds instead of 6–8.
 
 ### Fixed
 

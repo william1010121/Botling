@@ -577,39 +577,11 @@ extension LiveClaudeTests {
 }
 
 extension LiveClaudeTests {
-    /// Claude Code runs the Stop hook a bot's `--settings` carries, in the app's `-p` stream-json
-    /// mode, with the fields StopGuard reads.
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
-    func theStopHookFiresInPrintMode() async throws {
-        let executable = try #require(ClaudeExecutableLocator().locate())
-        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: home) }
-        let record = home.appending(path: "stop.jsonl")
-        let launcher: AgentLauncher = { launch in
-            var launch = launch
-            launch.stopHookCommand = "(cat; echo) >> \(StopGuard.shellQuoted(record.path))"
-            return try ClaudeAgentProcess(launch, executable: executable)
-        }
-        let profile = BotProfile(name: "Probe", role: .manager, avatar: "square", workingDirectory: home, memoryPath: ".bot/memory.md", tools: ["Read"])
-        let bot = Bot(profile: profile, defaultModel: .haiku, launcher: launcher)
-        bot.send("Reply with only the word PONG.")
-        await eventually({ bot.messages.last?.role == .bot && !bot.isWorking }, timeout: 120)
-        let lines = try String(contentsOf: record, encoding: .utf8).split(whereSeparator: \.isNewline)
-        let first = try #require(lines.first.flatMap { try JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] })
-        print("Stop hook input:", first)
-        #expect(first["hook_event_name"] as? String == "Stop")
-        #expect(first["stop_hook_active"] as? Bool == false)
-        #expect((first["last_assistant_message"] as? String)?.contains("PONG") == true)
-        #expect(first["background_tasks"] is [Any])
-        bot.stop()
-    }
-
     /// The Haiku check: what it says about promises and plain replies, and how long it takes.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
     func theHaikuCheckTellsPromisesApartAndHowLongItTakes() async throws {
         let executable = try #require(ClaudeExecutableLocator().locate())
-        let classify = StopGuard.claudeClassifier(executable: executable)
+        let classify = PromiseCheck.claudeClassifier(executable: executable)
         let cases: [(String, Bool)] = [
             ("好的，接下來我會確認一下測試結果，再回報給你。", true),
             ("Got it. I'll look into the failing build and report back.", true),
@@ -622,20 +594,20 @@ extension LiveClaudeTests {
             let verdict = try await classify(message)
             let seconds = Date().timeIntervalSince(start)
             times.append(seconds)
-            print(String(format: "%.2fs", seconds), verdict ? "PROMISE" : "OK", "-", message)
+            print(String(format: "%.2fs", seconds), verdict ? "YES" : "NO", "-", message)
             #expect(verdict == promises, "\(message)")
         }
         print(String(format: "Haiku check: mean %.2fs, max %.2fs", times.reduce(0, +) / Double(times.count), times.max() ?? 0))
-        #expect(times.allSatisfy { $0 < StopGuard.classifierTimeout })
+        #expect(times.allSatisfy { $0 < PromiseCheck.classifierTimeout })
     }
 
-    /// The Haiku check on its own wording alone: a next step the bot states it is starting blocks;
-    /// finished work, a question, choices, a background task that reports back, or a suggestion to
-    /// the user don't.
+    /// The Haiku check on its own wording alone: a next step the bot states it is starting is a
+    /// promise; finished work, a question, choices, a background task that reports back, or a
+    /// suggestion to the user isn't.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
     func theHaikuCheckCatchesAStatedNextStepButNotASuggestion() async throws {
         let executable = try #require(ClaudeExecutableLocator().locate())
-        let classify = StopGuard.claudeClassifier(executable: executable)
+        let classify = PromiseCheck.claudeClassifier(executable: executable)
         let cases: [(String, Bool)] = [
             ("1.13.0-dev（389d00d）已經換上，截圖看起來正常：網頁預覽卡片改成顯示截圖，背景工作的 subagent 狀態也只出現在最後一則。下一步照先前說好的，開始做 1.14.0 的多國語言。", true),
             ("好，我接著把測試補上。", true),
@@ -649,89 +621,32 @@ extension LiveClaudeTests {
         ]
         for (message, promises) in cases {
             let verdict = try await classify(message)
-            print(verdict ? "PROMISE" : "OK", "-", message)
+            print(verdict ? "YES" : "NO", "-", message)
             #expect(verdict == promises, "\(message)")
         }
     }
 
-    /// The whole guard, with the app built (`swift build`): a bot told to only promise is sent
-    /// back to do the work in the same turn.
+    /// The whole check, the app's way: a bot told to only promise shows that reply, then is sent
+    /// the follow-up and does the work.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
     func aBotThatOnlyPromisesIsSentBackToDoIt() async throws {
         let executable = try #require(ClaudeExecutableLocator().locate())
-        let app = TestPaths.app
-        try #require(FileManager.default.isExecutableFile(atPath: app.path), "swift build first")
         let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: home) }
         try "The secret word is KUMQUAT.\n".write(to: home.appending(path: "a.txt"), atomically: true, encoding: .utf8)
-        let launcher: AgentLauncher = { launch in
-            var launch = launch
-            launch.stopHookCommand = StopGuard.command(app: app.path, claude: executable.path)
-            return try ClaudeAgentProcess(launch, executable: executable)
-        }
         let profile = BotProfile(name: "Probe", role: .manager, avatar: "square", workingDirectory: home, memoryPath: ".bot/memory.md", tools: ["Read"])
-        let bot = Bot(profile: profile, defaultModel: .haiku, launcher: launcher)
+        let bot = Bot(profile: profile, defaultModel: .haiku, launcher: ClaudeAgentProcess.launcher(executable: executable))
+        bot.promiseCheck = PromiseCheck.checker(classify: PromiseCheck.claudeClassifier(executable: executable))
         let start = Date()
         bot.send("Do not use any tool in this reply. Reply with exactly this sentence and nothing else: 好的，接下來我會讀 a.txt 確認內容，再回報給你。")
-        await eventually({ bot.messages.last?.role == .bot && !bot.isWorking }, timeout: 180)
-        print(String(format: "turn took %.1fs", Date().timeIntervalSince(start)))
+        await eventually({ bot.messages.contains { $0.role == .bot && $0.text.contains("KUMQUAT") } && !bot.isWorking }, timeout: 180)
+        print(String(format: "took %.1fs", Date().timeIntervalSince(start)))
         for message in bot.messages { print("[\(message.role)] \(message.text.prefix(300))") }
-        #expect(bot.messages.last?.text.contains("KUMQUAT") == true)
-        bot.stop()
-    }
-
-    /// With the real stop guard (`swift build` first), the reply arrives as `.earlyReply` when its
-    /// message ends, seconds before the result line the Stop hook holds back; the bot shows it
-    /// then, still working, and the result adds no second bubble.
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
-    func theReplyArrivesBeforeTheStopHookIsDone() async throws {
-        let executable = try #require(ClaudeExecutableLocator().locate())
-        let app = TestPaths.app
-        try #require(FileManager.default.isExecutableFile(atPath: app.path), "swift build first")
-        let home = FileManager.default.temporaryDirectory.appending(path: "ccb-live-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: home) }
-        var launch = AgentLaunch(model: .haiku, sessionID: UUID(), workingDirectory: home, systemPrompt: "", tools: ["Read"])
-        launch.stopHookCommand = StopGuard.command(app: app.path, claude: executable.path)
-
-        // The process's own events: when each came.
-        let process = try ClaudeAgentProcess(launch, executable: executable)
-        process.send("Reply with only the word PONG.")
-        var early: (String, Date)?
-        var result: (String, Date)?
-        for await event in process.events {
-            switch event {
-            case let .earlyReply(text): early = (text, Date())
-            case let .reply(text, _): result = (text, Date())
-            default: break
-            }
-            if result != nil { break }
-        }
-        process.finish()
-        let said = try #require(early)
-        let ended = try #require(result)
-        let gap = ended.1.timeIntervalSince(said.1)
-        print(String(format: "early reply %@ → result %@: %.2fs earlier", said.0, ended.0, gap))
-        #expect(said.0.contains("PONG"))
-        #expect(said.0 == ended.0.trimmingCharacters(in: .whitespacesAndNewlines))
-        #expect(gap > 1)
-
-        // In a bot: shown while it still works, and once.
-        let launcher: AgentLauncher = { launch in
-            var launch = launch
-            launch.stopHookCommand = StopGuard.command(app: app.path, claude: executable.path)
-            return try ClaudeAgentProcess(launch, executable: executable)
-        }
-        let profile = BotProfile(name: "Probe", role: .manager, avatar: "square", workingDirectory: home, memoryPath: ".bot/memory.md", tools: ["Read"])
-        let bot = Bot(profile: profile, defaultModel: .haiku, launcher: launcher)
-        bot.send("Reply with only the word PING.")
-        await eventually({ bot.messages.last?.role == .bot }, timeout: 120)
-        let shown = Date()
-        #expect(bot.isWorking)
-        await eventually({ !bot.isWorking }, timeout: 60)
-        print(String(format: "bot: bubble %.2fs before the turn ended", Date().timeIntervalSince(shown)))
-        #expect(bot.messages.filter { $0.role == .bot }.count == 1)
+        let replies = bot.messages.filter { $0.role == .bot }
+        #expect(replies.count == 2)
+        #expect(replies.first?.text.contains("a.txt") == true)
+        #expect(replies.last?.text.contains("KUMQUAT") == true)
         bot.stop()
     }
 }

@@ -66,13 +66,6 @@ struct FinalMessageWatchTests {
         #expect(StreamEvent.events(in: Self.assistant("m", #"{"type":"text","text":"Hi"}"#)) == [.trace(.text("Hi", parent: nil))])
     }
 
-    @Test func onlyABotWithTheStopHookAsksForChunks() {
-        var launch = AgentLaunch(model: .sonnet, sessionID: UUID(), workingDirectory: URL(filePath: "/tmp"), systemPrompt: "")
-        #expect(!ClaudeAgentProcess.arguments(for: launch).contains("--include-partial-messages"))
-        launch.stopHookCommand = "true"
-        #expect(ClaudeAgentProcess.arguments(for: launch).contains("--include-partial-messages"))
-    }
-
     @Test func aResultMatchesTheReplyShownWhenItIsItsEnd() {
         var early = EarlyReplies()
         #expect(early.matching("Hi") == nil)

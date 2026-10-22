@@ -79,6 +79,9 @@ public final class Bot: ObservableObject, Identifiable {
     public var replyFilter: (() -> ((String) async -> String)?)?
     /// Every reply shown, for plugins listening with bots.onReply.
     public var replyObserver: ((ChatMessage) -> Void)?
+    /// Asked when a turn's reply has shown, with only its words and whether work the app saw
+    /// start will still wake it: true sends it `PromiseCheck.followUp` (see `PromiseCheck`).
+    public var promiseCheck: PromiseCheck.Check?
     /// Called with what each turn cost, in US dollars.
     public var onSpend: ((Double) -> Void)?
     /// Called with the tokens each turn used.
@@ -227,6 +230,10 @@ public final class Bot: ObservableObject, Identifiable {
     private var reportAsked: Set<String> = []
     /// Who started the work paused for you: what it carries on with after is theirs again.
     private var pausedOrigin: TurnOrigin?
+    /// Counts turns that ended, so a check's answer that comes late finds the bot moved on.
+    private var turnsEnded = 0
+    /// The count at which the promise check's follow-up turn ends: its reply is not checked again.
+    private var followUpTurn: Int?
     static let pauseNote = "(App: I stopped what you were doing to ask you this. Answer me first; you will be told to carry on with it after.)"
     static let resumeNote = "(App: Now carry on with what you were doing before the user's message, where you left off.)"
 
@@ -887,6 +894,29 @@ public final class Bot: ObservableObject, Identifiable {
             return
         }
         afterTurn()
+        checkPromise(in: message)
+    }
+
+    /// The reply just shown promised work nothing will trigger: it is sent back to do it, once.
+    /// Not for an error, a question it asked, or the follow-up's own reply.
+    private func checkPromise(in message: ChatMessage) {
+        guard let promiseCheck, followUpTurn != turnsEnded, message.role == .bot, message.choices == nil, process != nil else { return }
+        let end = PromiseCheck.TurnEnd(reply: message.text, workPending: hasWorkPending)
+        let turn = turnsEnded
+        Task { [weak self] in
+            guard await promiseCheck(end), let self else { return }
+            // Something else started a turn meanwhile (you wrote, background work woke it).
+            guard turn == turnsEnded, !isWorking, phase == .awake, process != nil, queued.isEmpty,
+                  internalReply == nil, groupReply == nil, groupCommand == nil, !removed else { return }
+            followUpTurn = turnsEnded + 1
+            deliver(Outgoing(text: PromiseCheck.followUp))
+        }
+    }
+
+    /// Work the app saw start that will wake it: a subagent or command still running, a wake-up
+    /// or cron job set.
+    private var hasWorkPending: Bool {
+        trace.subagents.contains(where: \.isRunning) || messages.hasBackgroundWorkRunning(now: now()) || scheduleDue != nil
     }
 
     // MARK: Group chat
@@ -1513,6 +1543,7 @@ public final class Bot: ObservableObject, Identifiable {
     private func endTurnOrigin() {
         if fromBackground { backgroundWake = false }
         turnOrigin = nil
+        turnsEnded += 1
     }
 
     private func afterTurn() {
