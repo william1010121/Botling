@@ -130,7 +130,10 @@ enum StreamEvent {
                 // without its call is still read, by its task.
                 guard let id = object["tool_use_id"] as? String ?? object["task_id"] as? String else { return [] }
                 let status = object["status"] as? String ?? "completed"
-                let summary = object["summary"] as? String
+                // A subagent that handed its report back (SubagentHandback): the summary only says
+                // it came as a message; the report is with it.
+                let report = (object["handback_report"] as? [String: Any])?["text"] as? String
+                let summary = report.flatMap { $0.isEmpty ? nil : $0 } ?? object["summary"] as? String
                 // Not a report: it stopped with a Monitor or background command of its own still
                 // running, and claude says so again each time that work wakes it. Only for the
                 // subagent's card (it keeps running); whether the bot's next turn shows is up to
@@ -287,6 +290,12 @@ enum StreamEvent {
         guard let data = line.data(using: .utf8),
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               object["type"] as? String == "result" else { return nil }
+        // No turn ran (a message claude only took into the transcript, such as a subagent's
+        // task-notification whose report came already as its hand-back): nobody said anything.
+        if (object["num_turns"] as? NSNumber)?.intValue == 0, object["is_error"] as? Bool != true,
+           ((object["result"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return nil
+        }
         return .reply(
             (object["result"] as? String) ?? "",
             isError: (object["is_error"] as? Bool) ?? false

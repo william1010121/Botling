@@ -41,6 +41,16 @@ app and publishes it on GitHub Releases.
   background-work icon for it, and its conversation shows the bot's message, under the bot's
   name, where it came, with what the subagent did after it below. One the app does not know
   (sent off before it restarted) gets a row from what the message says.
+- **A subagent that finishes always gets reported, and no empty bubble shows.** CSIT sent a
+  subagent off to merge two tests ("做完我再回報"); it finished and handed back a report that
+  said only "pending", the bot answered `<no-reply/>`, and claude's result line for the
+  task-notification that followed (no turn ran, no words) drew an empty grey bubble. The user
+  heard nothing until asking 40 minutes later. Now a result line for no turn is not a reply, a
+  wake that ends with nothing to show draws no bubble, and when a finished (or failed)
+  subagent's work went unsaid the app asks the bot once to report it — and if it still says
+  nothing, a notice says the subagent finished, with its report. A hand-back's report is also
+  what its card shows now, instead of "delivered to you as a message". The briefing says
+  `<no-reply/>` is only for interim notifications, never for a subagent that finished.
 - **A bot's reply that says "here is the card" shows the card under it.** A bot that keeps a
   card up to date (`<show name="study-progress" id="progress">…</show>`) and was asked for the
   latest one answered "最新進度卡如下…", but the app put the new data into the card with that id

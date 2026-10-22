@@ -220,6 +220,11 @@ public final class Bot: ObservableObject, Identifiable {
     /// A `task_notification` came (whatever it said, busy or not): the next turn claude starts
     /// itself is background work's, even if nothing marked it started.
     private var backgroundWake = false
+    /// Subagents that finished (a result or a failure, not "still waiting") since the bot last
+    /// showed a reply: what they did has not reached the user yet.
+    private var unreported: [String] = []
+    /// Those the bot was already asked once to report.
+    private var reportAsked: Set<String> = []
     /// Who started the work paused for you: what it carries on with after is theirs again.
     private var pausedOrigin: TurnOrigin?
     static let pauseNote = "(App: I stopped what you were doing to ask you this. Answer me first; you will be told to carry on with it after.)"
@@ -840,6 +845,8 @@ public final class Bot: ObservableObject, Identifiable {
         message.steps = trace.takeSteps()
         message.backgroundTasks = trace.takeTasks()
         if append(message) { unreadCount += 1 }
+        // It said something after its subagents finished: it has told you.
+        unreported.removeAll()
         replyObserver?(message)
         return (message, parsed.requests)
     }
@@ -1249,7 +1256,12 @@ public final class Bot: ObservableObject, Identifiable {
                     toolCallOrder.removeFirst(gone.count)
                 }
             }
+            let wasRunning = Self.endedSubagent(step).flatMap { trace.subagent($0)?.isRunning } ?? false
             if trace.apply(step, at: now()) { store?.save(subagents: trace.subagents) }
+            if wasRunning, let id = Self.endedSubagent(step), let subagent = trace.subagent(id),
+               subagent.status == .completed || subagent.status == .failed, !unreported.contains(subagent.id) {
+                unreported.append(subagent.id)
+            }
             if case let .scheduleResult(id, result) = step, let tool = toolCalls[id]?.tool {
                 if let cancellation = BackgroundTask.Cancellation(tool: tool, result: result) {
                     trace.cancelScheduled(cancellation)
@@ -1354,12 +1366,15 @@ public final class Bot: ObservableObject, Identifiable {
             }
             // The app's own message (an allow it passed on, say) answered with only <no-reply/>:
             // a bubble with no words ("Worked · 1 step") would only look like it stopped.
-            if fromBackground || (!fromUser && Self.saysNothing(text) && trace.tasks.isEmpty), !isError, ReplyParser.saysNoReply(text) {
+            // Or it said nothing at all (no words, only tool calls): no bubble either.
+            let silent = Self.saysNothing(text) && trace.tasks.isEmpty
+            if fromBackground || (!fromUser && silent), !isError, ReplyParser.saysNoReply(text) || (fromBackground && silent) {
                 // Background work woke it with nothing for you: no bubble, and nothing unread.
                 // (A turn you started always shows, and an app's turn with words; the tag is just taken out.)
                 trace.dropSteps()
                 isWorking = false
                 reloadRoutines()
+                if reportFinishedSubagents() { return }
                 afterTurn()
                 return
             }
@@ -1389,6 +1404,8 @@ public final class Bot: ObservableObject, Identifiable {
             if !lostToNetwork { pausedWork = nil }
             turnOrigin = nil
             backgroundWake = false
+            unreported.removeAll()
+            reportAsked.removeAll()
             pausedOrigin = nil
             early = EarlyReplies()
             if trace.stopRunning() { store?.save(subagents: trace.subagents) }
@@ -1434,6 +1451,40 @@ public final class Bot: ObservableObject, Identifiable {
             // What you said here while a group turn ran still gets an answer.
             if !queued.isEmpty { Task { [weak self] in await self?.flushQueue() } }
         }
+    }
+
+    /// The subagent a notification says ended (a result or a failure; "still waiting" is not an end).
+    static func endedSubagent(_ step: TraceEvent) -> String? {
+        if case let .subagentEnded(id, _, _) = step { id } else { nil }
+    }
+
+    /// A turn ended showing nothing while subagents' results have not reached you: the bot is
+    /// asked once to report them (true: that turn is under way); asked already, the app says
+    /// they finished itself. A finished subagent's work is never left unsaid.
+    private func reportFinishedSubagents() -> Bool {
+        let finished = unreported.compactMap { trace.subagent($0) }
+        guard !finished.isEmpty else { return false }
+        let ask = finished.filter { !reportAsked.contains($0.id) }
+        if !ask.isEmpty, process != nil, outage == nil {
+            reportAsked.formUnion(ask.map(\.id))
+            deliver(Outgoing(text: Self.reportNote(ask)))
+            return true
+        }
+        unreported.removeAll()
+        let lines = finished.map { subagent in
+            let report = (subagent.result ?? "").split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+            let line = L("Subagent “{0}” finished.", subagent.description)
+            return report.isEmpty ? line : line + " " + L("Its report: {0}", report)
+        }
+        append(ChatMessage(role: .notice, text: lines.joined(separator: "\n")))
+        unreadCount += 1
+        return false
+    }
+
+    /// What the bot is told when a finished subagent's result went unsaid.
+    static func reportNote(_ subagents: [Subagent]) -> String {
+        let names = subagents.map { "\"\($0.description)\" (\($0.status.rawValue))" }.joined(separator: ", ")
+        return BotPrompts.appLead + "Your subagent \(names) has finished, and you answered with nothing for the user (<no-reply/>), so they have not heard what came of it. A finished subagent's result always goes to the user: tell them now what it did, in a sentence or two. If its report says little (\"pending\", empty), check its work yourself first.)"
     }
 
     /// Something the bot itself does (not one of its subagents), which only happens in a turn.
