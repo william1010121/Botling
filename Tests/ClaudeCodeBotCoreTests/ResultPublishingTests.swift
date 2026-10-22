@@ -72,6 +72,21 @@ struct ResultPublishingTests {
         #expect(AppSettings.load(from: workspace.settingsURL).resultPublishing == .artifactUnlessSensitive)
     }
 
+    @Test func everyLaunchSwitchesOnTheArtifactToolUnlessTheAppsEnvironmentSaysOtherwise() {
+        // `claude -p` leaves the Artifact tool out unless CLAUDE_CODE_ARTIFACT is set; allowing
+        // it in --allowedTools alone gives the bot no such tool (the live test checks claude).
+        let launch = AgentLaunch(model: .haiku, sessionID: UUID(), workingDirectory: root, systemPrompt: "", tools: BotProfile.toolbox)
+        #expect(ClaudeAgentProcess.launchEnvironment(for: launch, inherited: [:])["CLAUDE_CODE_ARTIFACT"] == "1")
+        // Results kept local still need the tool, to ask before publishing one.
+        var local = launch
+        local.tools = BotProfile.toolbox.filter { $0 != ResultPublishing.tool }
+        #expect(ClaudeAgentProcess.launchEnvironment(for: local, inherited: [:])["CLAUDE_CODE_ARTIFACT"] == "1")
+        // The user's own setting wins: switched off in the app's environment, it stays off.
+        let off = ["CLAUDE_CODE_ARTIFACT": "0"]
+        #expect(ClaudeAgentProcess.launchEnvironment(for: launch, inherited: off)["CLAUDE_CODE_ARTIFACT"] == nil)
+        #expect(ClaudeAgentProcess.childEnvironment(for: launch)["CLAUDE_CODE_ARTIFACT"] == (ProcessInfo.processInfo.environment["CLAUDE_CODE_ARTIFACT"] ?? "1"))
+    }
+
     @Test func botsMayUseTheArtifactToolWithoutAskingUnlessResultsStayLocal() async throws {
         let fake = FakeLauncher()
         let workspace = Workspace(root: root.appending(path: "ccb")) { profile, store in
