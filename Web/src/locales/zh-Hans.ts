@@ -125,6 +125,9 @@ export const zhHans: Dictionary = {
   "subagent.back": "返回 {bot} 的聊天",
   "subagent.of": "{bot} 的子代理",
   "subagent.watchOnly": "仅供查看",
+  "subagent.from": "来自 {bot}",
+  "subagent.engine.claude": "Claude 子代理",
+  "subagent.engine.codex": "Codex 子代理",
   "panel.notReady": "这个面板还没准备好。",
   // markdown.ts
   "markdown.video": "视频",

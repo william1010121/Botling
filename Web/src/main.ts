@@ -5,7 +5,7 @@ import { startTaskTicks, taskOutput } from "./tasks";
 import { Composer, sendFile } from "./composer";
 import { extensions, feedback, makeComponents, messageElement, typingElement } from "./messages";
 import { SpecPanel } from "./spec";
-import { statusWord } from "./steps";
+import { fillSubagentBar, subagentLiveElement, subagentMessageElement } from "./subagent";
 import { PinArea } from "./pins";
 import { FloatLayer } from "./float";
 import { handleMediaClicks } from "./lightbox";
@@ -171,7 +171,7 @@ class Chat {
     }
 
     this.typing?.remove();
-    this.typing = state.working ? typingElement(state.avatar, state.live ?? []) : null;
+    this.typing = !state.working ? null : state.subagent ? subagentLiveElement(state.live ?? []) : typingElement(state.avatar, state.live ?? []);
     if (this.typing) this.list.append(this.typing);
 
     this.showSubagentHeader(state);
@@ -203,12 +203,14 @@ class Chat {
   }
 
   /**
-   * Watching a subagent: a bar on top saying whose it is and how it is doing, with the way back.
-   * There is nothing to type to a subagent, so the input box goes away meanwhile.
+   * Watching a subagent: a bar on top saying whose it is, what runs it and how it is doing, with
+   * the way back. There is nothing to type to a subagent, so the input box goes away meanwhile.
    */
   private showSubagentHeader(state: ChatState): void {
     let bar = document.getElementById("subagent-bar");
     document.body.classList.toggle("watching", !!state.subagent);
+    const slot = document.getElementById("composer-slot");
+    if (slot) slot.hidden = !!state.subagent;
     if (!state.subagent) {
       bar?.remove();
       return;
@@ -218,16 +220,11 @@ class Chat {
       bar.id = "subagent-bar";
       document.body.prepend(bar);
     }
-    const { title, owner, status, type } = state.subagent;
-    bar.className = status;
-    bar.innerHTML = `<button class="back" aria-label="${escapeHTML(t("subagent.back", { bot: owner }))}">‹ ${escapeHTML(owner)}</button><div class="subagent-heading"><span class="title"></span><span class="meta"></span></div>`;
-    bar.querySelector(".title")!.textContent = title;
-    bar.querySelector(".meta")!.textContent = [t("subagent.of", { bot: owner }), type, statusWord(status), t("subagent.watchOnly")].filter(Boolean).join(" · ");
-    bar.querySelector(".back")!.addEventListener("click", () => post({ type: "closeSubagent" }));
+    fillSubagentBar(bar, state.subagent);
   }
 
   private render(message: MessageView, state: ChatState): HTMLElement {
-    const element = messageElement(message, state.components);
+    const element = state.subagent ? subagentMessageElement(message) : messageElement(message, state.components);
     if (!message.stamp) return element;
     const group = document.createElement("div");
     group.className = "stamped";

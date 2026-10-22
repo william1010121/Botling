@@ -59,6 +59,8 @@ export interface MessageView {
   earlier?: boolean | null;
   /** A call auto mode blocked that a subagent made: which one (drawn above the card, opens it). */
   fromSubagent?: { id: string; title: string } | null;
+  /** When it was sent, in a subagent's view: its task and each message its bot sent it ("15:58"). */
+  time?: string | null;
   /** claude.ai Artifacts it links to, drawn as cards under it. */
   artifacts?: ArtifactCardView[] | null;
 }
@@ -328,6 +330,17 @@ export interface Draft {
   cursor: number;
 }
 
+/** The subagent being watched: whose it is, how it is doing, what runs it ("claude", "codex") and on which model. */
+export interface SubagentHeaderView {
+  id: string;
+  title: string;
+  owner: string;
+  status: string;
+  type: string | null;
+  engine?: string | null;
+  model?: string | null;
+}
+
 export interface ChatState {
   botID: string;
   botName: string;
@@ -352,7 +365,7 @@ export interface ChatState {
   /** What it is doing right now, while it works. */
   live?: StepView[];
   /** Set while you watch one of its subagents: the page has no input box then. */
-  subagent?: { id: string; title: string; owner: string; status: string; type: string | null } | null;
+  subagent?: SubagentHeaderView | null;
   /** Developer mode: a bot's replies can be flagged as not right. */
   feedback?: boolean;
   /** The bot's pinned components; absent where nothing can be pinned (a subagent). */

@@ -33,6 +33,10 @@ enum StreamEvent {
                     if TraceBook.subagentTools.contains(name), let agent = input["name"] as? String, !agent.isEmpty {
                         events.append(.trace(.subagentNamed(id: id, name: agent)))
                     }
+                    // The model it asked for, for the subagent's view.
+                    if TraceBook.subagentTools.contains(name), let model = input["model"] as? String, !model.isEmpty {
+                        events.append(.trace(.subagentModel(id: id, model: model)))
+                    }
                     // A message for a subagent (or another session): which, the stream says after.
                     if name == TraceBook.messageTool, let to = input["to"] as? String, !to.isEmpty {
                         let message = input["message"] as? String ?? input["content"] as? String ?? ""

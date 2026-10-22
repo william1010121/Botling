@@ -125,6 +125,9 @@ export const ja: Dictionary = {
   "subagent.back": "{bot} のチャットに戻る",
   "subagent.of": "{bot} のサブエージェント",
   "subagent.watchOnly": "表示のみ",
+  "subagent.from": "{bot} から",
+  "subagent.engine.claude": "Claude サブエージェント",
+  "subagent.engine.codex": "Codex サブエージェント",
   "panel.notReady": "このパネルはまだ準備できていません。",
   // markdown.ts
   "markdown.video": "動画",

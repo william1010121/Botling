@@ -151,7 +151,8 @@ function foldedRun(listID: string, steps: StepView[], worked: boolean, earlier =
   return wrap;
 }
 
-function stepList(steps: StepView[]): HTMLElement {
+/** The steps one line each: a tool call folded to its line (click for what went in and came out), a subagent as its card. */
+export function stepList(steps: StepView[]): HTMLElement {
   const list = document.createElement("div");
   list.className = "step-list";
   for (const step of steps) {

@@ -23,6 +23,8 @@ public enum TraceEvent: Equatable, Sendable {
     /// The name the bot gave a subagent (the Agent call's `name`), to reach it again with
     /// SendMessage.
     case subagentNamed(id: String, name: String)
+    /// The model a subagent call asked for (the Agent call's `model`).
+    case subagentModel(id: String, model: String)
     /// A shell command went on in the background (`task_started`, `local_bash`); `id` is the
     /// Bash call. It ends with a `task_notification`, read as `subagentEnded` with that id.
     case backgroundCommandStarted(id: String, description: String)
@@ -122,8 +124,10 @@ public struct Step: Codable, Equatable, Identifiable, Sendable {
     public var done: Bool
     /// Files of the pictures it gave back (see `StepImages`), shown in its OUT box.
     public var images: [String]?
+    /// When it came, for a message its bot sent it (the subagent's view says when); nil otherwise.
+    public var at: Date?
 
-    public init(id: String, kind: Kind, tool: String? = nil, title: String, detail: String? = nil, output: String? = nil, failed: Bool = false, done: Bool = false, images: [String]? = nil) {
+    public init(id: String, kind: Kind, tool: String? = nil, title: String, detail: String? = nil, output: String? = nil, failed: Bool = false, done: Bool = false, images: [String]? = nil, at: Date? = nil) {
         self.id = id
         self.kind = kind
         self.tool = tool
@@ -133,6 +137,7 @@ public struct Step: Codable, Equatable, Identifiable, Sendable {
         self.failed = failed
         self.done = done
         self.images = images
+        self.at = at
     }
 }
 
@@ -168,7 +173,7 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable {
     public var unsettledAt: Date?
 
     private enum CodingKeys: String, CodingKey {
-        case id, description, type, prompt, status, background, startedAt, endedAt, steps, result, parentID, unsettledAt, name, agentID, calls
+        case id, description, type, prompt, status, background, startedAt, endedAt, steps, result, parentID, unsettledAt, name, agentID, calls, model
         case settledAt = "dismissedAt"
     }
     /// The name the bot gave it, when it gave one.
@@ -178,6 +183,8 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable {
     /// The SendMessage calls that reached it: a resumed run's `task_started` and
     /// `task_notification` name the call that resumed it, not the one that started it.
     public var calls: [String]?
+    /// The model its Agent call asked for ("sonnet"), when it asked for one.
+    public var model: String?
 
     public init(id: String, description: String, type: String? = nil, prompt: String, status: Status = .running, background: Bool = false, startedAt: Date = Date(), steps: [Step] = [], parentID: String? = nil) {
         self.id = id
@@ -359,6 +366,10 @@ public struct TraceBook: Equatable, Sendable {
             guard let index = subagentIndex(id), subagents[index].name != name else { return false }
             subagents[index].name = name
             return true
+        case let .subagentModel(id, model):
+            guard let index = subagentIndex(id), subagents[index].model != model else { return false }
+            subagents[index].model = model
+            return true
         case let .backgroundCommandStarted(id, description):
             // A Monitor running a command is a background shell task too.
             let isMonitor = steps.last(where: { $0.id == id })?.tool == "Monitor"
@@ -384,7 +395,7 @@ public struct TraceBook: Equatable, Sendable {
             if sends[id] != nil, let recipient = result.resumedAgentID ?? result.recipient {
                 changed = (result.resumedAgentID != nil
                     ? resume(by: id, agentID: recipient, description: nil, type: nil, at: date)
-                    : queue(by: id, agentID: recipient)) || changed
+                    : queue(by: id, agentID: recipient, at: date)) || changed
             }
             return changed
         case let .messageSent(id, to, summary, message, _):
@@ -406,7 +417,7 @@ public struct TraceBook: Equatable, Sendable {
 
     /// The bot's message goes in the subagent's conversation, once per call. An ended one's last
     /// report stays above it (a resumed run ends with a report of its own).
-    private mutating func deliver(_ call: String, to index: Int) -> Bool {
+    private mutating func deliver(_ call: String, to index: Int, at date: Date) -> Bool {
         guard let sent = sends[call], subagents[index].calls?.contains(call) != true else { return false }
         subagents[index].calls = (subagents[index].calls ?? []) + [call]
         if !subagents[index].isRunning, let result = subagents[index].result?.trimmingCharacters(in: .whitespacesAndNewlines), !result.isEmpty,
@@ -414,7 +425,7 @@ public struct TraceBook: Equatable, Sendable {
             subagents[index].steps.append(Step(id: call + ":result", kind: .text, title: result, done: true))
         }
         let summary = sent.summary.flatMap { $0.isEmpty ? nil : $0 }
-        subagents[index].steps.append(Step(id: call + ":message", kind: .message, tool: "SendMessage", title: Self.shorten(sent.message), detail: summary, done: true))
+        subagents[index].steps.append(Step(id: call + ":message", kind: .message, tool: "SendMessage", title: Self.shorten(sent.message), detail: summary, done: true, at: date))
         return true
     }
 
@@ -425,7 +436,7 @@ public struct TraceBook: Equatable, Sendable {
         let index: Int
         if let known = resolvedIndex(call) ?? sends[call].flatMap({ recipientIndex($0, agentID: agentID) }) {
             index = known
-            _ = deliver(call, to: index)
+            _ = deliver(call, to: index, at: date)
             if agentID != nil, subagents[index].agentID == nil { subagents[index].agentID = agentID }
         } else {
             guard let sent = sends[call] else { return false }
@@ -435,7 +446,7 @@ public struct TraceBook: Equatable, Sendable {
             if sent.to != subagent.agentID { subagent.name = sent.to }
             subagents.append(subagent)
             index = subagents.count - 1
-            _ = deliver(call, to: index)
+            _ = deliver(call, to: index, at: date)
         }
         if !subagents[index].isRunning {
             subagents[index].status = .running
@@ -451,9 +462,9 @@ public struct TraceBook: Equatable, Sendable {
 
     /// A message queued for a subagent at work (it reads it at its next tool call): it goes in
     /// its conversation. Should it end first, claude resumes it, naming this call.
-    private mutating func queue(by call: String, agentID: String) -> Bool {
+    private mutating func queue(by call: String, agentID: String, at date: Date) -> Bool {
         guard let sent = sends[call], let index = recipientIndex(sent, agentID: agentID) else { return false }
-        return deliver(call, to: index)
+        return deliver(call, to: index, at: date)
     }
 
     /// A ScheduleWakeup or CronCreate call that scheduled something: waiting work, until it fires

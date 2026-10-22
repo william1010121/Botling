@@ -126,6 +126,9 @@ export const en = {
   "subagent.back": "Back to {bot}'s chat",
   "subagent.of": "Subagent of {bot}",
   "subagent.watchOnly": "watch only",
+  "subagent.from": "From {bot}",
+  "subagent.engine.claude": "Claude subagent",
+  "subagent.engine.codex": "Codex subagent",
   "panel.notReady": "This panel is not ready yet.",
   // markdown.ts
   "markdown.video": "Video",

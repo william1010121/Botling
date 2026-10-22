@@ -1,0 +1,126 @@
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { sent } from "../src/bridge";
+import type { ChatState, MessageView, StepView } from "../src/types";
+
+// jsdom has no ResizeObserver; the chat follows sizes with one.
+globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
+
+function message(overrides: Partial<MessageView>): MessageView {
+  return {
+    id: "m1", role: "bot", text: "", stamp: null, avatar: "data:image/png;base64,AA==",
+    choices: null, chosen: null, answer: null, open: false, display: null,
+    attachments: null, replyTo: null, replyPreview: null, openable: false,
+    ...overrides,
+  };
+}
+
+const step = (id: string, title: string, extra: Partial<StepView> = {}): StepView =>
+  ({ id, kind: "tool", tool: "Bash", title, detail: null, output: null, failed: false, done: true, status: null, count: null, ...extra });
+
+/** A subagent's view as the app sends it: its task and a later message from its bot, its calls, its report. */
+function watching(overrides: Partial<ChatState> = {}): ChatState {
+  return {
+    botID: "b1/toolu_A", botName: "Review PR #7", working: false, avatar: "", placeholder: "",
+    replyingTo: null, pendingFiles: [], components: {},
+    subagent: { id: "toolu_A", title: "Review PR #7", owner: "Main", status: "completed", type: "general-purpose", engine: "claude", model: "Sonnet" },
+    messages: [
+      message({ id: "a-task", role: "user", text: "Review the diff of PR #7.", speaker: "Main", time: "15:58", avatar: null }),
+      message({ id: "a-1", text: "", steps: [
+        step("s1", "Run git diff main...HEAD --stat", { detail: "git diff main...HEAD --stat", output: " 3 files changed, 40 insertions(+)" }),
+        step("s2", "Read WebBotView.swift", { tool: "Read", detail: "/x/WebBotView.swift", output: "import SwiftUI\n…" }),
+      ] }),
+      message({ id: "a-2", role: "user", text: "Also check the sign-in store is per site.", speaker: "Main", time: "16:01", avatar: null }),
+      message({ id: "a-result", text: "**No blocking issues.** The store is per site.", steps: [
+        step("s3", "Run swift test --filter WebBot", { output: "Test run with 12 tests passed" }),
+      ] }),
+    ],
+    ...overrides,
+  };
+}
+
+const bar = () => document.getElementById("subagent-bar")!;
+const lines = () => [...document.querySelectorAll<HTMLElement>("#messages .step.tool")];
+
+beforeAll(async () => {
+  document.body.innerHTML = `<main id="scroller"><div id="messages"></div></main><div id="composer-slot"></div>`;
+  await import("../src/main");
+});
+
+beforeEach(() => {
+  sent.length = 0;
+});
+
+describe("a subagent's view", () => {
+  it("heads it with the bot › the subagent, its engine and its model, and goes back by the bot", () => {
+    window.ccb.setState(watching());
+    expect(bar().querySelector(".crumb-owner")?.textContent).toBe("Main");
+    expect(bar().querySelector(".title")?.textContent).toBe("Review PR #7");
+    expect(bar().querySelector(".engine-badge")?.textContent).toBe("Claude subagent");
+    expect(bar().querySelector(".engine-badge")?.classList.contains("claude")).toBe(true);
+    expect(bar().querySelector(".meta")?.textContent).toContain("Sonnet");
+    bar().querySelector<HTMLButtonElement>(".crumb-owner")!.click();
+    expect(sent).toContainEqual({ type: "closeSubagent" });
+  });
+
+  it("has no input box, and gets it back on leaving", () => {
+    window.ccb.setState(watching());
+    expect(document.getElementById("composer-slot")!.hidden).toBe(true);
+    expect(document.querySelector("#messages .reply-button")).toBeNull();
+    window.ccb.setState({ ...watching(), botID: "b1", subagent: null, messages: [] });
+    expect(document.getElementById("composer-slot")!.hidden).toBe(false);
+    expect(document.getElementById("subagent-bar")).toBeNull();
+  });
+
+  it("shows what the bot sent it, in order, as boxes from the bot with their time", () => {
+    window.ccb.setState(watching());
+    const boxes = [...document.querySelectorAll<HTMLElement>("#messages .sub-from")];
+    expect(boxes.map((box) => box.querySelector(".sub-from-label")?.textContent)).toEqual(["From Main · 15:58", "From Main · 16:01"]);
+    expect(boxes.map((box) => box.querySelector(".sub-from-body")?.textContent?.trim())).toEqual([
+      "Review the diff of PR #7.",
+      "Also check the sign-in store is per site.",
+    ]);
+    // The second came after the first two calls, before the last one.
+    const order = [...document.querySelectorAll<HTMLElement>("#messages .sub-from, #messages .step.tool")]
+      .map((element) => element.classList.contains("sub-from") ? "from" : element.querySelector(".step-title")!.textContent);
+    expect(order).toEqual(["from", "Run git diff main...HEAD --stat", "Read WebBotView.swift", "from", "Run swift test --filter WebBot"]);
+    // No bubbles or faces: compact boxes.
+    expect(document.querySelector("#messages .user-bubble")).toBeNull();
+    expect(document.querySelector("#messages .avatar")).toBeNull();
+  });
+
+  it("draws its work one line per step, not folded away", () => {
+    const running = watching();
+    window.ccb.setState({ ...running, working: true, subagent: { ...running.subagent!, status: "running" }, live: [step("s4", "Run swift build", { done: false })] });
+    expect(document.querySelector("#messages .steps-toggle")).toBeNull();
+    const titles = lines().map((line) => line.querySelector(".step-title")!.textContent);
+    expect(titles).toEqual(["Run git diff main...HEAD --stat", "Read WebBotView.swift", "Run swift test --filter WebBot", "Run swift build"]);
+    for (const line of lines()) expect(line.querySelectorAll(".step-head").length).toBe(1);
+    expect(lines().every((line) => !line.closest("[hidden]"))).toBe(true);
+    // The one under way has a spinner, and no typing bubble with a face.
+    expect(lines()[3].querySelector(".step-icon.spinner")).not.toBeNull();
+    expect(lines()[0].querySelector(".step-icon.spinner")).toBeNull();
+    expect(document.querySelector("#messages .bubble.working")).toBeNull();
+  });
+
+  it("keeps a command's output folded until its line is clicked, and folds it again", () => {
+    window.ccb.setState(watching());
+    const line = lines()[0];
+    const body = line.querySelector<HTMLElement>(".step-body")!;
+    expect(body.hidden).toBe(true);
+    line.querySelector<HTMLButtonElement>(".step-head")!.click();
+    expect(body.hidden).toBe(false);
+    expect(body.textContent).toContain("3 files changed");
+    line.querySelector<HTMLButtonElement>(".step-head")!.click();
+    expect(body.hidden).toBe(true);
+    // A long read is folded the same way.
+    expect(lines()[1].querySelector<HTMLElement>(".step-body")!.hidden).toBe(true);
+  });
+
+  it("ends with its report in prose, after its last step", () => {
+    window.ccb.setState(watching());
+    const report = [...document.querySelectorAll<HTMLElement>("#messages .sub-text")].pop()!;
+    expect(report.querySelector("strong")?.textContent).toBe("No blocking issues.");
+    const last = lines().pop()!;
+    expect(last.compareDocumentPosition(report) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});

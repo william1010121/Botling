@@ -43,6 +43,15 @@ app and publishes it on GitHub Releases.
   turn ends, as before, and what the bot then does comes as a second reply. The check doesn't
   depend on the engine, so it can cover other engines' bots too, and with a one-word answer it
   takes about 3–4 seconds instead of 6–8.
+- **A subagent's view reads like its work log.** Clicking a subagent (its row in the left
+  column, or a background-work chip) showed its conversation as chat bubbles with every run of
+  tool calls folded to "Worked · 5 steps". Now it is read only, as in the approved design: a
+  header "Main › Review PR #7" with a "Claude subagent" badge and its model (the one its Agent
+  call asked for, else the bot's subagent model); what the bot sent it (its task, and each
+  later SendMessage message) as a compact box "From Main · 15:58", in order; its work one
+  monospace line per step ("• Run git diff main...HEAD --stat", a spinner on the one under
+  way), a command's output (or a long read or edit) folded until you click its line; and what it
+  said, its report at the end, in prose. No input box.
 
 ### Fixed
 
