@@ -263,6 +263,8 @@ public final class Bot: ObservableObject, Identifiable {
     /// Work it was doing (handed over, a routine) when you wrote: it answers you first, then is
     /// told to carry on. Holds whether that work reports up like handed-over work.
     private var pausedWork: Bool?
+    /// Whether the paused task, rather than the user's intervening question, owes a handback.
+    private var pausedConducted = false
     /// Who started the turn under way: you, the app (handed-over work, a note), or claude itself
     /// because background work told it something (a `task_notification`, a wake-up). Nil
     /// between turns.
@@ -1063,6 +1065,8 @@ public final class Bot: ObservableObject, Identifiable {
                 trace.dropSteps()
                 pausedWork = turnFromRelay
                 pausedOrigin = turnOrigin
+                pausedConducted = turnConducted
+                turnConducted = false
                 turnFromRelay = false
                 var mine = outgoing
                 mine.text = Self.pauseNote + "\n\n" + outgoing.text
@@ -1329,18 +1333,24 @@ public final class Bot: ObservableObject, Identifiable {
         lastTags = HeadTags()
         if sharesChat || tags.handoff != nil { (primary ?? self).headReplied(message, by: engine, tags: tags, handed: handed) }
         if held, !queued.isEmpty { Task { [weak self] in await self?.flushQueue() } }
-        if let fromRelay = pausedWork, process != nil {
-            // It answered you; now back to what it was doing.
-            pausedWork = nil
-            turnFromRelay = fromRelay
-            let origin = pausedOrigin
-            pausedOrigin = nil
-            deliver(Outgoing(text: Self.resumeNote))
-            if let origin { turnOrigin = origin }
-            return
-        }
+        if resumePausedWork() { return }
         afterTurn()
         checkPromise(in: message)
+    }
+
+    /// A user question can interrupt handed work, but neither its answer nor a silent
+    /// acknowledgement completes that work. Restore its own origin and return route.
+    private func resumePausedWork() -> Bool {
+        guard let fromRelay = pausedWork, process != nil else { return false }
+        pausedWork = nil
+        turnFromRelay = fromRelay
+        let origin = pausedOrigin
+        pausedOrigin = nil
+        let conducted = pausedConducted
+        pausedConducted = false
+        deliver(Outgoing(text: Self.resumeNote, conducted: conducted))
+        if let origin { turnOrigin = origin }
+        return true
     }
 
     /// The reply just shown promised work nothing will trigger: it is sent back to do it, once.
@@ -1856,6 +1866,12 @@ public final class Bot: ObservableObject, Identifiable {
                 trace.dropSteps()
                 isWorking = false
                 reloadRoutines()
+                let handed = turnConducted
+                turnConducted = false
+                lastTags = HeadTags()
+                let owner = primary ?? self
+                owner.conduct(owner.conductor.replied(engine, "", tags: HeadTags(), handed: handed))
+                if resumePausedWork() { return }
                 if reportFinishedSubagents() { return }
                 afterTurn()
                 return
@@ -1883,7 +1899,10 @@ public final class Bot: ObservableObject, Identifiable {
             turnInput = nil
             interruptions = 0
             turnLostConnection = false
-            if !lostToNetwork { pausedWork = nil }
+            if !lostToNetwork {
+                pausedWork = nil
+                pausedConducted = false
+            }
             turnOrigin = nil
             backgroundWake = false
             unreported.removeAll()

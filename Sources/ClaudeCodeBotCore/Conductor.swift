@@ -129,17 +129,16 @@ struct Conductor {
     /// Handed work is out: a head works for the other.
     var isRunning: Bool { handedBy.values.contains { !$0.isEmpty } }
 
-    /// The user wrote: the counts start again; work handed for the last message is forgotten.
+    /// The user wrote: a fresh budget, while already handed work still reports to its owner.
+    /// Only an explicit stop cancels outstanding return routes.
     mutating func userMessage() -> [ConductorAction] {
-        let was = isRunning
         counts = [:]
         total = 0
         extra = [:]
         extraTotal = 0
-        handedBy = [:]
         blocked = nil
         stopped = false
-        return was ? [.progress(nil)] : []
+        return []
     }
 
     /// "Stop now": no more hand-offs for this message; work under way still shows when it comes.
@@ -153,7 +152,9 @@ struct Conductor {
 
     /// A head's reply was shown. `handed`: its turn did work the other head handed it.
     mutating func replied(_ head: BotEngine, _ text: String, tags: HeadTags, handed: Bool) -> [ConductorAction] {
-        latest[head] = text
+        // Empty text is a typed silent completion, not a replacement for a useful reply on
+        // a later limit card. It still closes the pending handback.
+        if !text.isEmpty { latest[head] = text }
         var out: [ConductorAction] = []
         // Handed work done: the reply goes back to the one who handed it.
         if handed, var waiting = handedBy[head], let from = waiting.popLast() {
@@ -253,7 +254,10 @@ struct Conductor {
     }
 
     static func handBack(from: BotEngine, reply: String) -> String {
-        "(App: \(from.displayName) finished what you handed over. Its reply:\n\(reply)\n\nCarry on from there, and tell the user what came of it.)"
+        if reply.isEmpty {
+            return "(App: \(from.displayName) finished what you handed over without a user-facing reply. Continue if work remains; otherwise reply only <no-reply/>.)"
+        }
+        return "(App: \(from.displayName) finished what you handed over. Its reply:\n\(reply)\n\nCarry on from there, and tell the user what came of it.)"
     }
 
     static func limitReached(other: BotEngine) -> String {

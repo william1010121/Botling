@@ -94,6 +94,13 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **Progress questions keep an in-flight handoff connected.** Writing while one head works
+  for the other resets the message's round budget without deleting the pending return route.
+  A question to the recipient is answered first, then the handed work resumes with its own
+  completion tracking; the progress reply does not count as the completed task. A recipient
+  finishing with `<no-reply/>` closes its handoff and gives the initiator one quiet completion
+  note, without an empty bubble or a wake loop. Stop now still cancels pending handbacks.
+
 - **Two heads hear a claim before starting together.** Both heads used to get a message to Both at the
   same instant, so neither saw the other's "I'll take X" before starting, and they did the
   same task or one took over everything. Now one head (the one not busy, taking turns when both
