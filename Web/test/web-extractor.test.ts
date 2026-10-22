@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { JSDOM } from "jsdom";
 import { describe, expect, it } from "vitest";
 
 // The page readers ClaudeCodeBot runs in a web AI's page (Sources/ClaudeCodeBot/Resources/
@@ -16,11 +15,11 @@ type Reading = { title: string | null; turns: { role: string; text: string }[] }
 function read(site: string, fixture: string): Reading {
   const source = readFileSync(join(readers, `${site}.js`), "utf8");
   const html = readFileSync(join(here, "fixtures", fixture), "utf8");
-  const dom = new JSDOM(html);
-  const before = dom.serialize();
-  const result = new Function("document", `${source}\n;return JSON.parse(JSON.stringify(extract(document)));`)(dom.window.document);
+  const page = new DOMParser().parseFromString(html, "text/html");
+  const before = page.documentElement.outerHTML;
+  const result = new Function("document", `${source}\n;return JSON.parse(JSON.stringify(extract(document)));`)(page);
   // Read only: the page is left exactly as it was.
-  expect(dom.serialize()).toBe(before);
+  expect(page.documentElement.outerHTML).toBe(before);
   return result;
 }
 
