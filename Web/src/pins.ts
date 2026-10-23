@@ -788,6 +788,8 @@ function panelHeight(height: number): number {
  * component frames do not load again.
  */
 export class PinArea {
+  /** The row over the input box: the pinned strip on the left, room on its right (the hand-off chip). */
+  readonly row: HTMLElement;
   private readonly dock: HTMLElement;
   private readonly sheet: HTMLElement;
   private readonly board: HTMLElement;
@@ -828,7 +830,10 @@ export class PinArea {
     this.dock.className = "pin-dock";
     this.dock.setAttribute("role", "toolbar");
     this.dock.hidden = true;
-    area.append(this.sheet, this.dock);
+    this.row = document.createElement("div");
+    this.row.className = "dock-row";
+    this.row.append(this.dock);
+    area.append(this.sheet, this.row);
     this.board = board;
     this.boardHead = document.createElement("div");
     this.boardHead.className = "board-head";

@@ -407,7 +407,9 @@ export interface ChatState {
   /** A bot with two heads (Claude and Codex): who the next message goes to. */
   answerWith?: AnswerWithView | null;
   /** A loop between the two heads under way: "Round 2 of 3", and the Stop now button's words. */
-  rounds?: { text: string; stop: string } | null;
+  rounds?: RoundsView | null;
+  /** The hand-offs between the heads (the latest message's, and older ones still under way): the chip and panel over the input box. */
+  handoffs?: HandoffView[] | null;
   /** Bot look Cute in a bot with two heads: each head's tiny character by its mark ("C", "X"); absent: letters. */
   seenHeads?: Record<string, string> | null;
   animatedHeads?: AnimatedHead[] | null;
@@ -431,6 +433,36 @@ export interface AnimatedHead {
   sleeping: string;
   hat: string;
   clips: CharacterClip[];
+}
+
+/** Where a loop between the heads stands: its line ("Hand-off 1 of 6"), Stop now's words, and the numbers for the meter. */
+export interface RoundsView {
+  text: string;
+  stop: string;
+  kind?: "discussion" | "review" | "handoff";
+  round?: number;
+  limit?: number;
+}
+
+/** One hand-off between the heads, as the hand-off panel lists it. */
+export interface HandoffView {
+  id: string;
+  /** "claude" or "codex". */
+  from: string;
+  to: string;
+  fromName: string;
+  toName: string;
+  kind: "task" | "review" | "discuss";
+  /** Its first line. */
+  task: string;
+  /** The user's message it was made for (an excerpt). */
+  origin?: string | null;
+  /** Its place in that message's budget ("2 of 6"). */
+  round: number;
+  limit: number;
+  state: "running" | "waiting" | "done" | "stopped";
+  /** The hand-off and the replies about it, oldest first. */
+  lines: { who: string; name: string; text: string }[];
 }
 
 /** "Answer with" above the input box: Both (the usual) and each head, and the default. */

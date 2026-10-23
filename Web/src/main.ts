@@ -7,6 +7,7 @@ import { extensions, feedback, makeComponents, messageElement, typingElement, up
 import { SpecPanel } from "./spec";
 import { fillSubagentBar, subagentLiveElement, subagentMessageElement } from "./subagent";
 import { PinArea } from "./pins";
+import { HandoffDock } from "./handoffs";
 import { FloatLayer } from "./float";
 import { handleMediaClicks } from "./lightbox";
 import { PluginHost, type PluginSpec } from "./plugins";
@@ -37,6 +38,7 @@ class Chat {
   private readonly composer: Composer;
   /** Pinned components: chips above the input box, and the Board. */
   private readonly pins: PinArea;
+  private readonly handoffs: HandoffDock;
   /** Pins floated in a corner of this chat (and other bots' shown in all bots), over the chat and the Board. */
   private readonly floats: FloatLayer;
   /**
@@ -71,6 +73,7 @@ class Chat {
     this.list = document.getElementById("messages")!;
     this.composer = new Composer(document.getElementById("composer-slot")!);
     this.pins = new PinArea(slot("pin-area", "div"), slot("board", "section"));
+    this.handoffs = new HandoffDock(this.pins.row);
     this.floats = new FloatLayer(document.body);
     const composer = this.composer;
     this.plugins = new PluginHost({
@@ -214,6 +217,7 @@ class Chat {
 
     this.showSubagentHeader(state);
     this.pins.update(state);
+    this.handoffs.update(state);
     this.floats.update(state);
     this.composer.update(state);
     // Something you just sent always shows, even if you had scrolled up.

@@ -72,6 +72,58 @@ public struct RoundsProgress: Equatable, Sendable {
     }
 }
 
+/// One hand-off between the heads as the hand-off panel over the input box lists it: who handed
+/// what to whom for which of your messages, how it stands, and what the two said about it. Read
+/// only: the conductor keeps it beside its counts and never decides anything from it.
+public struct HandoffRecord: Equatable, Sendable, Identifiable {
+    /// `running`: the other head works on it; `waiting`: its reply went back to the head that
+    /// handed it, which carries on from there; `done`: that head replied after it; `stopped`:
+    /// "Stop now" was pressed while it was under way.
+    public enum State: String, Sendable { case running, waiting, done, stopped }
+    public struct Line: Equatable, Sendable {
+        public var who: BotEngine
+        public var text: String
+
+        public init(who: BotEngine, text: String) {
+            self.who = who
+            self.text = text
+        }
+    }
+
+    public let id: UUID
+    public var from: BotEngine
+    public var to: BotEngine
+    public var kind: HandoffKind
+    public var task: String
+    /// The user's message it was made for (an excerpt), when the app knew it.
+    public var origin: String?
+    /// Which user message it belongs to (each has its own budget), counting from 1.
+    public var message: Int
+    /// Its place in that message's budget, as the rounds line counts it ("2 of 6").
+    public var round: Int
+    public var limit: Int
+    public var state: State
+    /// The hand-off and the replies about it, oldest first.
+    public var lines: [Line]
+
+    public init(id: UUID = UUID(), from: BotEngine, to: BotEngine, kind: HandoffKind, task: String, origin: String?, message: Int,
+                round: Int, limit: Int, state: State, lines: [Line]) {
+        self.id = id
+        self.from = from
+        self.to = to
+        self.kind = kind
+        self.task = task
+        self.origin = origin
+        self.message = message
+        self.round = round
+        self.limit = limit
+        self.state = state
+        self.lines = lines
+    }
+
+    public var isActive: Bool { state == .running || state == .waiting }
+}
+
 /// A button on the card shown at a limit.
 public enum CardPick: Equatable, Sendable {
     case goWith(BotEngine)
@@ -121,6 +173,16 @@ struct Conductor {
     private var blocked: (from: BotEngine, handoff: HeadTags.Handoff)?
     /// "Stop now" was pressed: no more hand-offs until the user writes again.
     private var stopped = false
+    /// The hand-offs the panel over the input box lists: the latest message's, and older ones
+    /// still under way (see `HandoffRecord`). Bookkeeping only.
+    private(set) var records: [HandoffRecord] = []
+    /// For each head working on handed work, the record of each hand-off (in `handedBy` order).
+    private var pendingRecords: [BotEngine: [UUID]] = [:]
+    /// The user's latest message (an excerpt), and how many there were.
+    private var origin: String?
+    private var messageCount = 0
+    /// The most records kept.
+    static let recordLimit = 12
 
     init(settings: HeadsSettings) {
         self.settings = settings
@@ -131,7 +193,10 @@ struct Conductor {
 
     /// The user wrote: a fresh budget, while already handed work still reports to its owner.
     /// Only an explicit stop cancels outstanding return routes.
-    mutating func userMessage() -> [ConductorAction] {
+    mutating func userMessage(_ text: String? = nil) -> [ConductorAction] {
+        messageCount += 1
+        origin = text.map { Self.excerpt($0, 280) }.flatMap { $0.isEmpty ? nil : $0 }
+        records.removeAll { !$0.isActive }
         counts = [:]
         total = 0
         extra = [:]
@@ -143,6 +208,8 @@ struct Conductor {
 
     /// "Stop now": no more hand-offs for this message; work under way still shows when it comes.
     mutating func stop() -> [ConductorAction] {
+        for index in records.indices where records[index].isActive { records[index].state = .stopped }
+        pendingRecords = [:]
         guard isRunning || blocked != nil else { return [] }
         handedBy = [:]
         blocked = nil
@@ -156,10 +223,22 @@ struct Conductor {
         // a later limit card. It still closes the pending handback.
         if !text.isEmpty { latest[head] = text }
         var out: [ConductorAction] = []
+        // A head that got a reply handed back has now carried on from it.
+        for index in records.indices where records[index].from == head && records[index].state == .waiting {
+            records[index].state = .done
+            if !text.isEmpty { records[index].lines.append(.init(who: head, text: text)) }
+        }
         // Handed work done: the reply goes back to the one who handed it.
         if handed, var waiting = handedBy[head], let from = waiting.popLast() {
             handedBy[head] = waiting
             out.append(.ask(from, Self.handBack(from: head, reply: text)))
+            if var ids = pendingRecords[head], let id = ids.popLast() {
+                pendingRecords[head] = ids
+                if let index = records.firstIndex(where: { $0.id == id }) {
+                    records[index].state = .waiting
+                    if !text.isEmpty { records[index].lines.append(.init(who: head, text: text)) }
+                }
+            }
         }
         if !stopped, let handoff = tags.handoff, handoff.to != head,
            settings.handoffs || !settings.engines.contains(handoff.to) {
@@ -210,6 +289,11 @@ struct Conductor {
         case .review: RoundsProgress(kind: .review, round: counts[.review] ?? 1, limit: kindLimit ?? 1)
         case .discuss: RoundsProgress(kind: .discussion, round: counts[.discuss] ?? 1, limit: kindLimit ?? 1)
         }
+        let record = HandoffRecord(from: from, to: handoff.to, kind: handoff.kind, task: handoff.task, origin: origin, message: messageCount,
+                                   round: progress.round, limit: progress.limit, state: .running, lines: [.init(who: from, text: handoff.task)])
+        records.append(record)
+        if records.count > Self.recordLimit { records.removeFirst(records.count - Self.recordLimit) }
+        pendingRecords[handoff.to, default: []].append(record.id)
         let line = "\(from.displayName) → \(handoff.to.displayName): \(handoff.task.split(whereSeparator: \.isNewline).first.map(String.init) ?? handoff.task)"
         return [.line(line), .progress(progress),
                 .ask(handoff.to, Self.handed(from: from, handoff: handoff, count: total, limit: totalLimit))]
@@ -235,6 +319,12 @@ struct Conductor {
             return [.progress(nil), .line(L("Hand-off limit reached ({0} for this message): not handed to {1}", done, handoff.to.displayName)),
                     .ask(from, Self.limitReached(other: handoff.to))]
         }
+    }
+
+    /// `text` on one line, at most `limit` characters.
+    static func excerpt(_ text: String, _ limit: Int) -> String {
+        let line = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.joined(separator: " ")
+        return line.count > limit ? String(line.prefix(limit)) + "…" : line
     }
 
     static func short(_ text: String) -> String {

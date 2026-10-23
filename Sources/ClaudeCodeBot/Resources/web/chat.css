@@ -16,8 +16,18 @@
   --orange-text: #F7C27F;
   --error: #FF8A80;
   --code: #111114;
+  /* The controls over and in the input box (pinned strip, hand-off chip, toolbar): one height,
+     radius, border and muted color; status is a 7px dot and its color. */
+  --control-h: 32px;
+  --control-radius: 10px;
+  --border: #2E2E35;
+  --raised: #2C2C33;
+  --claude: #D97757;
+  --codex: #6E9BFF;
   color-scheme: dark;
 }
+/* The chat is always dark; should it ever get a light theme, the controls read on white. */
+:root[data-theme="light"] { --border: #DADADF; --raised: #FFFFFF; --claude: #C2603F; --codex: #3D6FE0; }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--ground); color: var(--text); }
@@ -322,19 +332,32 @@ button.primary:disabled { opacity: 0.4; cursor: default; }
 
 /* The input box */
 #composer-slot { max-width: 640px; width: 100%; margin: 0 auto; padding: 8px 24px 24px; }
-.composer { background: var(--bubble); border: 1px solid #2A2A2F; border-radius: 26px; }
-/* "Answer with" over the input box, in a bot with two heads */
-.answer-with { display: flex; align-items: center; gap: 6px; padding: 0 4px 6px; flex-wrap: wrap; }
-.answer-with[hidden] { display: none; }
-.answer-label { font-size: 12px; color: var(--faint); margin-right: 4px; }
-.answer-chip {
-  height: 30px; padding: 0 12px; border-radius: 15px; border: 1px solid #33333A; background: transparent;
-  color: var(--muted); font: inherit; font-size: 13px; cursor: pointer;
+.composer { background: var(--bubble); border: 1px solid var(--border); border-radius: 16px; container: composer / inline-size; }
+/* Under the text: + and "Answer with" on the left, send on the right. */
+.composer-tools { display: flex; align-items: center; gap: 8px; padding: 0 8px 8px; flex-wrap: wrap; }
+.composer-gap { flex: 1; }
+/* "Answer with", in a bot with two heads: Both / Claude / Codex as one segmented control */
+.answer-with {
+  display: inline-flex; align-items: center; gap: 2px; height: var(--control-h); padding: 2px; flex: none;
+  border: 1px solid var(--border); border-radius: var(--control-radius);
 }
-.answer-chip.picked { border-color: var(--text); color: var(--text); background: var(--chip); }
-.answer-chip[data-head="claude"].picked { border-color: #E3895F; }
-.answer-chip[data-head="codex"].picked { border-color: #8AB4FF; }
-.answer-hint { margin-left: auto; font-size: 12px; color: var(--faint); }
+.answer-with[hidden], .answer-hint[hidden] { display: none; }
+.answer-chip {
+  height: calc(var(--control-h) - 6px); padding: 0 10px; border-radius: 8px; border: none; background: transparent;
+  display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+}
+.answer-chip:hover { color: var(--text); }
+.answer-chip.picked { color: var(--text); background: var(--raised); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); }
+.answer-chip.picked::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.answer-chip[data-head="claude"].picked::before { background: var(--claude); }
+.answer-chip[data-head="codex"].picked::before { background: var(--codex); }
+.answer-chip[data-head="both"].picked::before { background: linear-gradient(90deg, var(--claude) 50%, var(--codex) 50%); }
+.answer-hint { font-size: 11.5px; color: var(--faint); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@container composer (max-width: 430px) { .answer-hint { display: none; } }
+/* The dot each head has (Claude warm, Codex blue) */
+.head-dot { display: inline-block; flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.head-dot[data-head="claude"] { background: var(--claude); }
+.head-dot[data-head="codex"] { background: var(--codex); }
 /* Which heads a line has reached (a bot with two heads) */
 .seen-marks { display: flex; gap: 3px; margin-top: 3px; font-size: 10px; line-height: 1; letter-spacing: 0.02em; }
 .user-body .seen-marks { justify-content: flex-end; }
@@ -356,13 +379,72 @@ body.seen-heads .typing > .avatar { animation: head-working 1.8s ease-in-out inf
 @media (prefers-reduced-motion: reduce) {
   body.seen-heads .head-arrive, body.seen-heads .receipt-arrive, body.seen-heads .typing > .avatar { animation: none; transform: none; }
 }
-/* "Round 2 of 3 · Stop now" while the heads discuss, review or hand work over */
-.rounds-line { display: flex; align-items: center; gap: 10px; padding: 0 4px 8px; font-size: 12px; color: var(--muted); }
-.rounds-line[hidden] { display: none; }
-.rounds-text::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 3px; background: var(--green, #5FD38D); margin-right: 8px; vertical-align: middle; }
-.rounds-stop {
-  height: 26px; padding: 0 10px; border-radius: 8px; border: 1px solid #33333A; background: transparent;
-  color: var(--text); font: inherit; font-size: 12px; cursor: pointer;
+/* The hand-offs between the heads (handoffs.ts): a chip at the end of the pinned strip's row,
+   and the panel it opens above the row. */
+.handoff-chip {
+  margin-left: auto; display: inline-flex; align-items: center; flex: none; max-width: 100%; height: var(--control-h);
+  border: 1px solid var(--border); border-radius: var(--control-radius); background: var(--bubble); overflow: hidden;
+}
+.handoff-chip[hidden], .handoff-panel[hidden] { display: none; }
+.handoff-toggle {
+  height: 100%; display: inline-flex; align-items: center; gap: 8px; padding: 0 10px; min-width: 0;
+  border: none; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.handoff-toggle:disabled { cursor: default; }
+.handoff-toggle:not(:disabled):hover { color: var(--text); }
+.handoff-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.handoff-meter { display: inline-flex; gap: 2px; }
+.handoff-meter i { width: 4px; height: 10px; border-radius: 1.5px; background: var(--border); }
+.handoff-meter i.on { background: var(--green); }
+.handoff-dots { display: inline-flex; }
+.handoff-dots .head-dot { box-shadow: 0 0 0 2px var(--bubble); }
+.handoff-dots .head-dot + .head-dot { margin-left: -3px; }
+.handoff-chevron { display: inline-flex; transition: transform 0.15s; }
+.handoff-toggle[aria-expanded="true"] .handoff-chevron { transform: rotate(180deg); }
+.handoff-stop, .handoff-stop-all, .handoff-stop-one {
+  height: 24px; padding: 0 9px; border-radius: 7px; border: 1px solid var(--border); background: transparent;
+  color: var(--text); font-size: 11.5px; cursor: pointer; white-space: nowrap;
+}
+.handoff-stop { margin-right: 4px; }
+.handoff-stop:hover, .handoff-stop-all:hover, .handoff-stop-one:hover { border-color: var(--error); color: var(--error); }
+.handoff-panel {
+  margin-top: 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--bubble);
+  max-height: min(46vh, 380px); overflow-y: auto; overscroll-behavior: contain;
+}
+.handoff-panel-head {
+  position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 8px 0 12px;
+  background: var(--bubble); border-bottom: 1px solid var(--border); font-size: 12px;
+}
+.handoff-panel-title { flex: 1; color: var(--muted); font-weight: 600; }
+.handoff-panel-counts { color: var(--faint); font-size: 11.5px; white-space: nowrap; }
+.handoff-list { list-style: none; margin: 0; padding: 4px; }
+.handoff-row { border-radius: 8px; }
+.handoff-row + .handoff-row { border-top: 1px solid var(--border); }
+.handoff-row.expanded { background: rgba(127, 127, 140, 0.06); }
+.handoff-row-head {
+  width: 100%; min-height: var(--control-h); display: flex; align-items: center; gap: 10px; padding: 6px 8px;
+  border: none; background: transparent; color: var(--text); font-size: 12.5px; text-align: left; cursor: pointer;
+}
+.handoff-route { display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--faint); font-size: 11px; }
+.handoff-task { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.handoff-state { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.handoff-state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.handoff-row[data-state="running"] .handoff-state::before { background: var(--green); }
+.handoff-row[data-state="waiting"] .handoff-state::before { background: var(--orange-text); }
+.handoff-row[data-state="done"] .handoff-state::before { background: var(--blue); }
+.handoff-row[data-state="stopped"] .handoff-state::before { background: var(--faint); }
+.handoff-row[data-state="done"] .handoff-task, .handoff-row[data-state="stopped"] .handoff-task { color: var(--muted); }
+.handoff-count { flex: none; min-width: 28px; text-align: right; font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+.handoff-detail { padding: 2px 10px 10px 30px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.handoff-origin { margin: 0; font-size: 12px; color: var(--muted); }
+.handoff-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; width: 100%; }
+.handoff-lines li { display: flex; gap: 8px; font-size: 12.5px; line-height: 1.5; }
+.handoff-who { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 19px; color: var(--muted); font-size: 11.5px; min-width: 56px; }
+.handoff-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 9em; overflow: hidden; }
+@media (max-width: 480px) {
+  .handoff-route, .handoff-who { min-width: 0; }
+  .handoff-detail { padding-left: 10px; }
+  .handoff-lines li { flex-direction: column; gap: 2px; }
 }
 .reply-bar { display: flex; align-items: center; gap: 10px; padding: 10px 18px 0; }
 .reply-bar[hidden], .pending-files[hidden] { display: none; }
@@ -381,15 +463,17 @@ body.seen-heads .typing > .avatar { animation: head-working 1.8s ease-in-out inf
   position: absolute; top: -8px; right: -8px; width: 22px; height: 22px; border-radius: 50%;
   background: rgba(0, 0, 0, 0.7); color: var(--text); font-size: 13px; line-height: 1;
 }
-.composer-row { display: flex; align-items: flex-end; gap: 4px; padding: 6px; }
+.composer-row { display: flex; padding: 12px 14px 6px; }
 .plus, .send {
-  width: 40px; height: 40px; flex-shrink: 0; border: none; border-radius: 50%;
+  width: var(--control-h); height: var(--control-h); flex-shrink: 0; border-radius: var(--control-radius);
   display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
 }
-.plus { background: transparent; color: var(--muted); }
-.send { background: var(--text); color: var(--ground); }
+.plus { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+.plus:hover { color: var(--text); }
+.send { background: var(--text); color: var(--ground); border: none; }
 .send:disabled { background: var(--muted); cursor: default; }
-.editor { flex: 1; min-width: 0; padding: 8px 4px; }
+.plus svg, .send svg { width: 16px; height: 16px; }
+.editor { flex: 1; min-width: 0; padding: 2px 0; }
 .editor .cm-editor { background: transparent; color: var(--text); font-size: 15px; }
 .editor .cm-editor.cm-focused { outline: none; }
 .editor .cm-scroller { max-height: 160px; font-family: inherit; line-height: 1.55; scrollbar-width: none; }
@@ -659,19 +743,26 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
 
 /* The chips above the input box, and the sheet one raises. */
 #pin-area { position: relative; max-width: 640px; width: 100%; margin: 0 auto; padding: 0 24px; }
-.pin-dock { display: flex; gap: 6px; align-items: center; padding-top: 6px; overflow-x: auto; scrollbar-width: none; }
-.pin-dock::-webkit-scrollbar { display: none; }
+/* The row over the input box: the pinned strip, and the hand-off chip on its right. Wraps when narrow. */
+.dock-row { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; padding-top: 6px; }
+.dock-row:not(:has(> :not([hidden]))) { display: none; }
+/* The pins are one segmented strip: one border, thin dividers between the items, + at the end. */
+.pin-dock {
+  display: inline-flex; flex-wrap: wrap; align-items: stretch; min-height: var(--control-h); max-width: 100%; min-width: 0;
+  border: 1px solid var(--border); border-radius: var(--control-radius); background: var(--bubble); overflow: hidden;
+}
 .pin-dock[hidden], .pin-sheet[hidden] { display: none; }
 /* A pin is a small status icon: its component's icon, a short value, a dot for its tone. */
 .pin-chip {
-  height: 28px; flex: none; max-width: 132px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px 0 7px;
-  border-radius: 9px; background: var(--bubble); border: 1px solid #2A2A31; font-size: 12px; cursor: pointer; white-space: nowrap;
-  color: var(--text);
+  height: calc(var(--control-h) - 2px); flex: none; max-width: 132px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px 0 9px;
+  border-radius: 0; background: transparent; border: none; font-size: 12px; cursor: pointer; white-space: nowrap;
+  color: var(--muted);
 }
-.pin-chip:hover { background: #222227; }
-.pin-chip.on { background: #26262C; border-color: var(--blue); }
-.pin-chip.add { padding: 0 8px; color: var(--muted); }
-.pin-chip.drop-target { outline: 2px solid var(--blue); outline-offset: 1px; }
+.pin-chip + .pin-chip { box-shadow: inset 1px 0 0 var(--border); }
+.pin-chip:hover { background: rgba(127, 127, 140, 0.1); color: var(--text); }
+.pin-chip.on { background: var(--raised); color: var(--text); box-shadow: inset 0 -2px 0 var(--blue); }
+.pin-chip.add { padding: 0 9px; color: var(--muted); }
+.pin-chip.drop-target { outline: 2px solid var(--blue); outline-offset: -2px; }
 .pin-chip-icon {
   position: relative; flex: none; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center;
   font-size: 14px; line-height: 1; color: var(--muted);
@@ -694,9 +785,6 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
   min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
-.pin-chip[data-tone="good"] .pin-chip-status { color: var(--green); }
-.pin-chip[data-tone="warning"] .pin-chip-status { color: var(--orange-text); }
-.pin-chip[data-tone="bad"] .pin-chip-status { color: var(--error); }
 /* An opened pin and a floating pin are one card: the same header (pins.ts fillPinHead: icon, name,
    status, ↻ ⋯), border, radius and type, and the component under it as tall as its content up to
    the card's most, then scrolling (no empty area under a short one). The component is told it is
@@ -797,7 +885,7 @@ body.pin-resizing { cursor: grabbing; user-select: none; }
 /* The Board: every pin as a card, in place of the messages. */
 #board { display: none; }
 body.board #board { display: flex; flex: 1; min-height: 0; flex-direction: column; padding: 12px 28px 0; }
-body.board #scroller, body.board #pin-area { display: none; }
+body.board #scroller, body.board .pin-sheet, body.board .pin-dock { display: none; }
 body.board #composer-slot { max-width: none; padding: 12px 28px 16px; }
 body.board .editor .cm-scroller { max-height: 72px; }
 .board-head { display: flex; align-items: center; gap: 10px; padding-bottom: 14px; flex: none; flex-wrap: wrap; }
