@@ -82,3 +82,28 @@ extension Workspace {
         return URL(filePath: path).lastPathComponent
     }
 }
+
+/// One explicit batch operation. Other per-bot settings and inactive models are retained.
+/// This is not a continuously enforced default: later per-bot edits and new bots stay independent.
+extension Workspace {
+    public var modelSettingsBots: [Bot] {
+        [mainBot] + everyProject.compactMap(bot(for:))
+    }
+
+    @discardableResult
+    public func applyModelToAllBots(engine: BotEngine, claudeModel: BotModel, codexModel: String?) async -> Int {
+        guard !isApplyingBotModel else { return 0 }
+        isApplyingBotModel = true
+        defer { isApplyingBotModel = false }
+        let bots = modelSettingsBots
+        for bot in bots {
+            // Select the model first so an engine handoff remains the pending restart reason.
+            switch engine {
+            case .claude: await bot.switchModel(to: claudeModel)
+            case .codex: await bot.setCodexModel(codexModel)
+            }
+            await bot.setHeads([engine])
+        }
+        return bots.count
+    }
+}

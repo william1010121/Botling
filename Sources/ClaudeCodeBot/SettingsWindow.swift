@@ -237,6 +237,7 @@ struct SettingsWindow: View {
                         switch navigator.section {
                         case .general:
                             LanguageSection(workspace: workspace)
+                            AllBotsModelSection(workspace: workspace)
                             BotLookSection(workspace: workspace)
                         case .usage: UsageSection(workspace: workspace)
                         case .permissions: PermissionsSection(workspace: workspace, commands: workspace.componentCommands)
@@ -955,5 +956,77 @@ struct DoctorDot: View {
                 .allowsHitTesting(false)
                 .accessibilityLabel(L("Claude Code needs attention"))
         }
+    }
+}
+
+/// Stage a choice, then apply it explicitly; merely opening Settings never changes a bot.
+struct AllBotsModelSection: View {
+    @ObservedObject var workspace: Workspace
+    @State private var engine: BotEngine = .claude
+    @State private var claudeModel: BotModel = .sonnet
+    @State private var codexModel: String?
+    @State private var codexModels: [CodexModel] = []
+    @State private var applied: Int?
+
+    var body: some View {
+        PanelSection(L("Engine and model for all bots")) {
+            VStack(spacing: 12) {
+                HStack {
+                    Text(L("Engine"))
+                    Spacer()
+                    Picker(L("Engine"), selection: $engine) {
+                        ForEach(BotEngine.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                    }.labelsHidden().fixedSize()
+                }
+                HStack {
+                    Text(L("Model"))
+                    Spacer()
+                    if engine == .claude {
+                        Picker(L("Model"), selection: $claudeModel) {
+                            ForEach(BotModel.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                        }.labelsHidden().fixedSize()
+                    } else {
+                        Picker(L("Codex model"), selection: $codexModel) {
+                            Text(L("Codex's default model")).tag(String?.none)
+                            ForEach(codexChoices, id: \.self) { id in
+                                Text(codexModels.first { $0.id == id }?.name ?? id).tag(Optional(id))
+                            }
+                        }.labelsHidden().fixedSize()
+                    }
+                }
+                HStack {
+                    Button(L("Apply to all bots")) {
+                        let choice = (engine, claudeModel, codexModel)
+                        Task {
+                            applied = await workspace.applyModelToAllBots(engine: choice.0, claudeModel: choice.1, codexModel: choice.2)
+                        }
+                    }
+                    Spacer()
+                    if workspace.isApplyingBotModel { ProgressView().controlSize(.small) }
+                    else if let applied { Text(L("Applied to {0} bots", applied)).font(.system(size: 12)).foregroundStyle(Theme.muted) }
+                }
+            }
+            .disabled(workspace.isApplyingBotModel)
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+            Text(L("Applies to all existing bots, including the main bot and Maintainer. Keeps chats and other settings. You can change each bot or reenable its other engine in that bot's settings; new bots keep their own defaults."))
+                .font(.system(size: 12)).foregroundStyle(Theme.faint)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .task {
+            engine = workspace.mainBot.engine
+            claudeModel = workspace.mainBot.model
+            codexModel = workspace.mainBot.heads.codexModel
+            codexModels = await CodexModels.load()
+        }
+        .onChange(of: engine) { _, _ in applied = nil }
+        .onChange(of: claudeModel) { _, _ in applied = nil }
+        .onChange(of: codexModel) { _, _ in applied = nil }
+    }
+
+    private var codexChoices: [String] {
+        var ids = codexModels.map(\.id)
+        if let codexModel, !ids.contains(codexModel) { ids.append(codexModel) }
+        return ids
     }
 }

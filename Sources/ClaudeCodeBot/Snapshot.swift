@@ -437,6 +437,8 @@ enum Snapshot {
         // `CCB_SNAPSHOT_HEADS=1`: the first project has Claude and Codex ("C + X").
         if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEADS"] != nil {
             BotStore(directory: Workspace.Layout.bot(projects[0].id, in: root)).save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .claude))
+            // Side-by-side regression fixture: both, Codex only, then Claude only.
+            BotStore(directory: Workspace.Layout.bot(projects[1].id, in: root)).save(heads: .single(.codex))
         }
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)

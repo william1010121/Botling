@@ -23,6 +23,16 @@ extension L10n {
         "Week": ["每週", "每周", "週", "주간"],
         "no data": ["沒有資料", "没有数据", "データなし", "데이터 없음"],
         "{0} limit, {1} used, {2}": ["{0}額度，已用 {1}，{2}", "{0}额度，已用 {1}，{2}", "{0}の上限、{1} 使用、{2}", "{0} 한도, {1} 사용, {2}"],
+        "Engine": ["引擎", "引擎", "エンジン", "엔진"],
+        "Engine and model for all bots": ["所有 Bot 的引擎與模型", "所有 Bot 的引擎与模型", "すべてのボットのエンジンとモデル", "모든 봇의 엔진 및 모델"],
+        "Apply to all bots": ["套用至所有 Bot", "应用到所有 Bot", "すべてのボットに適用", "모든 봇에 적용"],
+        "Applied to {0} bots": ["已套用至 {0} 個 Bot", "已应用到 {0} 个 Bot", "{0} 個のボットに適用済み", "봇 {0}개에 적용됨"],
+        "Applies to all existing bots, including the main bot and Maintainer. Keeps chats and other settings. You can change each bot or reenable its other engine in that bot's settings; new bots keep their own defaults.": [
+            "套用至所有現有 Bot，包含主 Bot 與 Maintainer；保留聊天及其他設定。之後仍可在各 Bot 設定中個別調整或重新啟用另一個引擎；新 Bot 維持自己的預設值。",
+            "应用到所有现有 Bot，包含主 Bot 与 Maintainer；保留聊天及其他设置。之后仍可在各 Bot 设置中单独调整或重新启用另一个引擎；新 Bot 保持自己的默认值。",
+            "メインボットと Maintainer を含む既存の全ボットに適用します。チャットと他の設定は保持します。各ボットの設定で個別の変更や別のエンジンの再有効化ができます。新しいボットは独自の初期設定を使います。",
+            "메인 봇과 Maintainer를 포함한 기존 모든 봇에 적용합니다. 채팅과 다른 설정은 유지됩니다. 각 봇의 설정에서 개별 변경이나 다른 엔진 재활성화가 가능합니다. 새 봇은 자체 기본값을 유지합니다.",
+        ],
         // Usage
         "Usage today": ["今天的用量", "今天的用量", "今日の使用量", "오늘 사용량"],
         "Cost": ["費用", "费用", "コスト", "비용"],
