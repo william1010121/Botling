@@ -43,10 +43,11 @@ export function messageElement(message: MessageView, components: Record<string, 
   row.dataset.id = message.id;
 
   drawRole(row, message, components);
-  if (message.reactionEnabled) {
+  const tasks = row.querySelector<HTMLElement>(".task-chips");
+  if (tasks || message.reactionEnabled || message.seen?.length) {
     let holder = row.querySelector<HTMLElement>(".user-body, .speaker-column, .bot-column");
     if (!holder) {
-      const body = row.querySelector<HTMLElement>(".bot-bubble, .notice-bubble, .relay, .relay-column, .error-text");
+      const body = row.querySelector<HTMLElement>(".bot-bubble, .notice-bubble, .relay-column, .relay:not(.row), .error-text");
       if (body) {
         holder = document.createElement("div");
         holder.className = "reaction-message-column";
@@ -54,12 +55,15 @@ export function messageElement(message: MessageView, components: Record<string, 
         holder.append(body);
       }
     }
-    holder?.append(reactionBar(message));
-  }
-  if (message.seen?.length) {
-    // Which heads this line has reached: under your bubble, or under the reply.
-    const holder = row.querySelector<HTMLElement>(".user-body, .speaker-column, .bot-column") ?? row.querySelector<HTMLElement>(".bot-body") ?? row;
-    holder.append(seenMarks(message.seen));
+    if (holder) {
+      // Keep all compact metadata together; expanded work details get their own footer line.
+      const footer = document.createElement("div");
+      footer.className = "message-footer";
+      if (tasks) footer.append(tasks);
+      if (message.reactionEnabled) footer.append(reactionBar(message));
+      if (message.seen?.length) footer.append(seenMarks(message.seen));
+      holder.append(footer);
+    }
   }
   for (const { plugin, handler } of extensions.afterRender) {
     extensions.guard(plugin, () => handler(row, { id: message.id, role: message.role, text: message.text }));
