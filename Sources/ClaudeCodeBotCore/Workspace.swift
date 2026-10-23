@@ -589,7 +589,7 @@ public final class Workspace: ObservableObject {
             if selecting { select(existing.id) }
             return existing
         }
-        let project = Project(id: UUID(), name: folder.lastPathComponent, folder: folder, avatar: nextAvatar())
+        let project = Project(id: UUID(), name: ProjectBotNaming.defaultName(for: folder), folder: folder, avatar: nextAvatar())
         prepareNotesFolder(for: project)
         attach(project)
         saveProjects()
@@ -2242,7 +2242,11 @@ public final class Workspace: ObservableObject {
 
     private func loadProjects() -> [Project] {
         guard let data = try? Data(contentsOf: projectsURL) else { return [] }
-        return (try? JSONDecoder().decode([Project].self, from: data)) ?? []
+        let renamed = (try? ProjectBotNaming.migrate(data, developerProjectID: settings.developerProjectID)) ?? data
+        guard let projects = try? JSONDecoder().decode([Project].self, from: renamed) else { return [] }
+        // Update only metadata before attach builds the manager profile. IDs and all chat paths stay fixed.
+        if renamed != data { try? renamed.write(to: projectsURL, options: .atomic) }
+        return projects
     }
 
     private func saveProjects() {

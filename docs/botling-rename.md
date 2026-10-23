@@ -4,7 +4,7 @@ The product is **Botling**. Its Swift package and executable slug are `botling`;
 `scripts/make-app.sh` produces `dist/Botling.app` and `dist/botling-<version>-macOS.zip`.
 Use `swift run botling` for development. The checkout can keep any folder name.
 
-Existing data is reused in place. No automatic rename or migration is performed:
+Existing data is reused in place. No directory or chat migration is performed. The specific own-project bot label migration below changes metadata only:
 
 | Retained identifier | Reason |
 | --- | --- |
@@ -52,3 +52,43 @@ new capture pass should use the integrated app so it includes the final sidebar/
   `python3 scripts/check-relocated-app.py <app> <evidence-folder>`. This last step needs a
   WindowServer and must precede distribution. The packaging fixture does not verify signing,
   launch or the full app's compilation.
+
+## The current project bot is named `botling` (lowercase)
+
+The original branding commit `09539aa` changed the product to **Botling** and snapshot
+example project names to **Botling**. It did **not** change existing entries in
+`projects.json`; project managers used their saved name, and new projects defaulted
+to their folder name. Consequently the user's current project bot remained ClaudeCodeBot.
+
+The follow-up separates these names:
+
+| Surface | Value / behavior |
+| --- | --- |
+| App, window, distribution | Botling / Botling.app |
+| Current own-project bot | `botling` (exact lowercase) |
+| Stored identity and folder | Existing UUID and folder URL unchanged |
+| Chat/archive/memory | Existing UUID-based store and `.bot/` locations unchanged; historical message text is not rewritten |
+
+At the next workspace load in the integrated version, `loadProjects()` uses the saved
+`developerProjectID` to identify the own-project manager. It changes only a legacy
+`ClaudeCodeBot` name (case-insensitive) to `botling`, and only when the source folder
+has this app's Package.swift target and app entry source markers. Standalone/plugin
+bots, other project IDs, arbitrary same-named folders and custom project names are
+excluded. The metadata write is atomic, preserves unrelated JSON fields and happens
+before manager profiles are created. It does not require developer mode to be active
+if that project's ID remains configured. A failed write is retried on a later load.
+
+For a new own-source project added from a folder named ClaudeCodeBot or botling
+(case-insensitive), the default is `botling`. Custom checkout folder names keep their
+folder-based default. Existing installations with no configured developer project are
+not guessed or renamed; the current user's installation was verified read-only to
+have the correct developer project ID. No live metadata was changed by this task.
+
+The sidebar and native chat header read `Bot.name`, derived from the manager profile's
+`Project.name`; web chat payloads use the same name. They therefore pick up the migrated
+label together on that next load. Folder paths, historical messages, and any external
+host/coordinator UI that caches a name are separate: this code does not mutate an
+external host's session metadata or force an immediate UI refresh in the running app.
+
+Regression: `ProjectBotNamingTests` first failed against the former no-migration,
+folder-default behavior, then passed with the targeted migration and naming policy.
