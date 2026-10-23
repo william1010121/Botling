@@ -101,6 +101,9 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// Extra lines for the wake-up message, read at each wake (the main bot's project list).
     public var wakeNote: (() -> String)?
+    /// Its components and the rest of the library as they are now. Each session gets the whole
+    /// briefing once, then only what changed (`componentNote`). Nil: a chat without components.
+    public var componentKnowledge: (() -> ComponentKnowledge?)?
     /// Folders outside its own it may read and edit, read at each wake.
     public var extraDirectories: (() -> [URL])?
     /// Plugins' Claude parts (skills, agents, MCP) it starts with.
@@ -238,6 +241,12 @@ public final class Bot: ObservableObject, Identifiable {
     private var turnFromRelay = false
     /// Something the App needs this awake bot to know, sent ahead of its next message.
     private var pendingNote: String?
+    /// What this session was told about components; nil: nothing yet (a new session).
+    private var briefedComponents: ComponentKnowledge?
+    /// Its list or the library may have changed since: its next message says what did.
+    private var componentsMayHaveChanged = false
+    /// The reactions this session has seen; nil: none yet (a new session gets the intro).
+    private var reactionsSeen: ReactionContext.Seen?
 
     private var process: AgentProcess?
     private var idleTask: Task<Void, Never>?
@@ -749,6 +758,7 @@ public final class Bot: ObservableObject, Identifiable {
         made.now = now
         made.sessionExists = sessionExists
         made.wakeNote = wakeNote
+        made.componentKnowledge = componentKnowledge
         made.extraDirectories = extraDirectories
         made.pluginDirectories = pluginDirectories
         made.pluginStamp = pluginStamp
@@ -837,6 +847,10 @@ public final class Bot: ObservableObject, Identifiable {
         for action in actions {
             try? owner.setReaction(messageID: action.messageID, emoji: action.emoji,
                                    present: action.present, actor: actor ?? "head:\(engine.rawValue)")
+            // Its own reaction is not news to this head's session.
+            if actor == nil, let seen = reactionsSeen {
+                reactionsSeen = ReactionContext.applying(action, by: "head:\(engine.rawValue)", to: seen)
+            }
         }
     }
 
@@ -1274,17 +1288,50 @@ public final class Bot: ObservableObject, Identifiable {
         if resumeProbe, resumeRetry == nil, groupReply == nil { resumeRetry = outgoing }
         var text = outgoing.text
         var seen = outgoing.about + [outgoing.messageID].compactMap { $0 }
+        if componentsMayHaveChanged {
+            let components = componentNote()
+            if !components.isEmpty { text = components + "\n\n" + text }
+        }
         if let note = pendingNote {
             pendingNote = nil
             text = note + "\n\n" + text
             seen += pendingAbout
             pendingAbout = []
         }
-        if !outgoing.contextOnly && (outgoing.fromUser || outgoing.messageID != nil) {
-            text += "\n\n" + ReactionContext.snapshot(chat)
+        if !outgoing.contextOnly {
+            let reactions = reactionNote(for: outgoing)
+            if !reactions.isEmpty { text += "\n\n" + reactions }
         }
         if let id { process.send(text, images: outgoing.images, id: id) } else { process.send(text, images: outgoing.images) }
         markSeen(seen, by: engine)
+    }
+
+    /// Its component list or the library changed: its next message (this head's and the other's)
+    /// says what changed since its session was told. An asleep bot gets the whole list at its wake.
+    public func componentsChanged() {
+        componentsMayHaveChanged = true
+        partner?.componentsMayHaveChanged = true
+    }
+
+    /// The components part of a message: the whole briefing the first time in a session, then
+    /// only what changed since (empty when nothing did).
+    private func componentNote() -> String {
+        componentsMayHaveChanged = false
+        guard let now = componentKnowledge?() ?? nil else { return "" }
+        defer { briefedComponents = now }
+        guard let told = briefedComponents else { return now.full }
+        return now.changes(since: told) ?? ""
+    }
+
+    /// The reactions part of a message from the user or for a line of the chat: how to react and
+    /// the newest lines' ids the first time in a session, then this line's id and only the
+    /// reactions that changed since.
+    private func reactionNote(for outgoing: Outgoing) -> String {
+        guard outgoing.fromUser || outgoing.messageID != nil else { return "" }
+        let (text, seen) = reactionsSeen.map { ReactionContext.update(chat, seen: $0, current: outgoing.messageID) }
+            ?? ReactionContext.intro(chat, current: outgoing.messageID)
+        reactionsSeen = seen
+        return text
     }
 
     /// Tells an awake bot something with its next message (a later note replaces an earlier one).
@@ -1305,6 +1352,7 @@ public final class Bot: ObservableObject, Identifiable {
             turnConducted = outgoing.conducted
             pendingAbout = []
             let note = wakeNote?() ?? ""
+            let components = componentNote()
             let recent = engine == .codex ? "" : recentChat(leavingOut: outgoing.messageID)
             // It read the chat's last lines, and the message itself.
             markSeen(recentLines(leavingOut: outgoing.messageID).map(\.id) + outgoing.about + [outgoing.messageID].compactMap { $0 }, by: engine)
@@ -1312,7 +1360,7 @@ public final class Bot: ObservableObject, Identifiable {
                 ? withSavedMemory(profile.keepsMemory ? prompts.wake : "", leavingOut: outgoing.messageID)
                 : (profile.keepsMemory ? prompts.wake : "")
             let cutOff = takeInterruptedNote() ?? ""
-            let text = [wakeLine, note, cutOff, recent, (outgoing.fromUser || outgoing.messageID != nil) ? ReactionContext.snapshot(chat) : "", outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            let text = [wakeLine, note, components, cutOff, recent, reactionNote(for: outgoing), outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
             if let id { process.send(text, images: outgoing.images, id: id) } else { process.send(text, images: outgoing.images) }
         } catch {
             append(ChatMessage(role: .error, text: L("Couldn't wake up: {0}", error.localizedDescription)))
@@ -1385,6 +1433,17 @@ public final class Bot: ObservableObject, Identifiable {
     private func start(resuming: UUID? = nil) throws -> AgentProcess {
         guard !removed else { throw CocoaError(.userCancelled) }
         let session = resuming ?? UUID()
+        // A tool-schema migration keeps the App session UUID but starts an empty Codex
+        // coordinator (the same stamp check as CodexAgentProcess.config). Its old deltas
+        // belong to the previous internal thread, so brief this one in full too.
+        let migrated = engine == .codex && resuming != nil
+            && CodexThreads.shared.thread(for: session).map { !CodexThreads.shared.isManaged(session, thread: $0) } == true
+        if resuming == nil || migrated {
+            // A new session knows nothing yet: its first message briefs it in full.
+            briefedComponents = nil
+            componentsMayHaveChanged = false
+            reactionsSeen = nil
+        }
         // A new process loads what it starts with now (plugins, effort, folders): a restart
         // waiting for it is done.
         pendingRestart = nil
@@ -2781,6 +2840,7 @@ public final class Bot: ObservableObject, Identifiable {
         guard names != componentList else { return }
         componentList = names
         store?.save(componentList: names)
+        componentsChanged()
     }
 
     /// Changes its pins (see `Workspace+Pins`) and saves them, if anything changed.
@@ -2890,7 +2950,7 @@ public final class Bot: ObservableObject, Identifiable {
             append(ChatMessage(role: .divider, text: Self.shownDivider(reason, resumed: true)))
             resumeProbe = true
             resumeRetry = nil
-            let briefing = wakeNote?() ?? ""
+            let briefing = [wakeNote?() ?? "", componentNote()].filter { !$0.isEmpty }.joined(separator: "\n\n")
             let note = "(App: Botling restarted you in this same conversation (\(reason.told)); carry on as before." + (briefing.isEmpty ? ")" : " What the app tells you at a wake, as it is now:)\n" + briefing)
             pendingNote = [withSavedMemory(note, leavingOut: queued.last?.messageID), pendingNote].compactMap { $0 }.joined(separator: "\n\n")
             scheduleIdle()
@@ -2916,7 +2976,7 @@ public final class Bot: ObservableObject, Identifiable {
         append(ChatMessage(role: .divider, text: Self.shownDivider(reason, resumed: false)))
         do {
             _ = try start()
-            let briefing = wakeNote?() ?? ""
+            let briefing = [wakeNote?() ?? "", componentNote()].filter { !$0.isEmpty }.joined(separator: "\n\n")
             let reply = await ask(withSavedMemory(briefing.isEmpty ? prompts.resume : prompts.resume + "\n\n" + briefing))
             guard !removed else { return }
             phase = process == nil ? .asleep : .awake

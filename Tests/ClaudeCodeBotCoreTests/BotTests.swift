@@ -25,7 +25,20 @@ final class FakeAgent: AgentProcess, @unchecked Sendable {
     var sent: [String] { wireSent.map(Self.withoutReactionSnapshot) }
 
     private static func withoutReactionSnapshot(_ text: String) -> String {
-        guard let start = text.range(of: "(App: Current message reactions in this chat;"),
+        var text = text
+        for header in ["(App: Current message reactions in this chat;", "(App: Message reactions.", "(App: Reactions changed since"] {
+            text = withoutBlock(text, header: header)
+        }
+        // The id line each message from the chat carries.
+        if let line = text.range(of: #"\n*\(App: message_id of this message: [0-9A-F-]{36}\)\n*"#, options: .regularExpression) {
+            text.replaceSubrange(line, with: "\n\n")
+        }
+        return text.trimmingCharacters(in: .newlines)
+    }
+
+    /// `text` without a header line and the JSON line after it.
+    private static func withoutBlock(_ text: String, header: String) -> String {
+        guard let start = text.range(of: header),
               let headerEnd = text[start.lowerBound...].firstIndex(of: "\n") else { return text }
         let jsonStart = text.index(after: headerEnd)
         let jsonEnd = text[jsonStart...].firstIndex(of: "\n") ?? text.endIndex

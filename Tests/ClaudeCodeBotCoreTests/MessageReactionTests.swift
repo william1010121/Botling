@@ -42,6 +42,71 @@ struct MessageReactionTests {
         #expect((row["reactions"] as? [Any])?.isEmpty == true)
         #expect(rows.count == 21)
     }
+    @Test func introOnceThenOnlyChanges() throws {
+        var old = ChatMessage(role: .bot, text: "an old line with a reaction")
+        old.reactions = [MessageReaction(emoji: "🎉", actor: "user")]
+        var messages = [old] + (0..<30).map { ChatMessage(role: .user, text: "line \($0)") }
+        let current = try #require(messages.last?.id)
+        let (intro, seen) = ReactionContext.intro(messages, current: current)
+        #expect(intro.contains("<reaction message=\"UUID\" emoji=\"👍\" present=\"true\"/>"))
+        #expect(intro.contains(old.id.uuidString))
+        #expect(intro.hasSuffix("(App: message_id of this message: \(current.uuidString))"))
+        let json = String(intro.split(separator: "\n")[1])
+        let rows = try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [[String: Any]])
+        #expect(rows.count == ReactionContext.recentTargets + 1)
+        #expect(!messages[10].text.isEmpty && !intro.contains(messages[10].id.uuidString))
+
+        // Nothing changed: only the id of the line going out, or nothing at all.
+        #expect(ReactionContext.update(messages, seen: seen, current: current).text == "(App: message_id of this message: \(current.uuidString))")
+        #expect(ReactionContext.update(messages, seen: seen, current: nil).text.isEmpty)
+
+        // A reaction added on one line, one removed on another: just those two rows.
+        messages[5].reactions = [MessageReaction(emoji: "👍", actor: "user")]
+        messages[0].reactions = []
+        let (update, after) = ReactionContext.update(messages, seen: seen, current: nil)
+        #expect(update.hasPrefix("(App: Reactions changed since your last message;"))
+        let changed = try #require(JSONSerialization.jsonObject(with: Data(String(update.split(separator: "\n")[1]).utf8)) as? [[String: Any]])
+        #expect(Set(changed.compactMap { $0["message_id"] as? String }) == [messages[5].id.uuidString, old.id.uuidString])
+        #expect(changed.first { $0["message_id"] as? String == old.id.uuidString }?["reactions"] as? [Any] != nil)
+        #expect(ReactionContext.update(messages, seen: after, current: nil).text.isEmpty)
+        // The head's own reaction is not news to it.
+        let own = ReactionContext.applying(ReactionAction(messageID: messages[7].id, emoji: "👀", present: true), by: "head:codex", to: after)
+        messages[7].reactions = [MessageReaction(emoji: "👀", actor: "head:codex")]
+        #expect(ReactionContext.update(messages, seen: own, current: nil).text.isEmpty)
+    }
+
+    @MainActor @Test(arguments: [BotEngine.claude, .codex])
+    func eachHeadGetsTheIntroOnceThenOnlyChanges(_ engine: BotEngine) async throws {
+        let fake = FakeLauncher()
+        fake.respondFor = { _, _ in nil }
+        let bot = makeBot(fake)
+        await bot.setHeads([.claude, .codex])
+        let target: AnswerTarget = engine == .claude ? .claude : .codex
+        defer { bot.stop(); bot.partner?.stop() }
+        bot.send("hello", to: target)
+        await eventually { fake.agents.contains { $0.launch.engine == engine } }
+        let agent = try #require(fake.agents.first { $0.launch.engine == engine })
+        let head = try #require(engine == .claude ? bot : bot.partner)
+        #expect(agent.wireSent[0].contains("(App: Message reactions."))
+        agent.reply("Hi")
+        await eventually { !head.isWorking && bot.messages.contains { $0.text == "Hi" } }
+        bot.send("second", to: target)
+        await eventually { agent.wireSent.count == 2 }
+        let line = try #require(bot.messages.last { $0.text == "second" })
+        #expect(agent.wireSent[1].hasSuffix("second\n\n(App: message_id of this message: \(line.id.uuidString))"))
+        #expect(!agent.wireSent[1].contains("Reactions changed") && !agent.wireSent[1].contains("Message reactions."))
+        agent.reply("Ok")
+        await eventually { !head.isWorking && bot.messages.contains { $0.text == "Ok" } }
+        let reply = try #require(bot.messages.first { $0.text == "Hi" })
+        try bot.setUserReaction(messageID: reply.id, emoji: "❤️", present: true)
+        bot.send("third", to: target)
+        await eventually { agent.wireSent.count == 3 }
+        let third = agent.wireSent[2]
+        #expect(third.contains("(App: Reactions changed since your last message;"))
+        #expect(third.contains(reply.id.uuidString) && third.contains("❤️"))
+        #expect(!third.contains("(App: Message reactions."))
+    }
+
     @MainActor @Test func editsAreQuietOwnedIdempotentAndPersistent() throws {
         let fake = FakeLauncher()
         let dir = FileManager.default.temporaryDirectory.appending(path: "reaction-bot-\(UUID())")
@@ -124,11 +189,17 @@ struct MessageReactionTests {
         try bot.setUserReaction(messageID: id, emoji: "❤️", present: true)
         partner.post(ChatMessage(role: .notice, text: "later update"), unread: false)
         #expect(bot.messages.first { $0.id == id }?.reactions?.count == 1)
+        bot.send("seen it?", to: .codex)
+        await eventually { codex.wireSent.count >= 2 }
+        codex.reply("Yes")
+        await eventually { !partner.isWorking }
+        #expect(codex.wireSent.last?.contains(id.uuidString) == true)
+        #expect(codex.wireSent.last?.contains("❤️") == true)
         try bot.setUserReaction(messageID: id, emoji: "❤️", present: false)
         partner.post(ChatMessage(role: .notice, text: "another update"), unread: false)
         #expect(bot.messages.first { $0.id == id }?.reactions == [])
         bot.send("next", to: .codex)
-        await eventually { codex.wireSent.count >= 2 }
+        await eventually { codex.wireSent.count >= 3 }
         #expect(codex.wireSent.last?.contains(id.uuidString) == true)
         #expect(codex.wireSent.last?.contains("\"reactions\":[]") == true)
         let target = try #require(bot.messages.first?.id)

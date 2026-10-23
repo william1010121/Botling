@@ -18,6 +18,12 @@ app and publishes it on GitHub Releases.
   it says "3 hand-offs in progress" and opens a panel above the strip listing each one (who to
   whom, its task, running / waiting reply / done, its count). A row opens to the message it
   came from and what the two heads said; Stop all stops them (hand-offs stop together).
+- **Fewer tokens per message.** The reactions list no longer goes with every message: a new
+  session gets how to react and the newest lines' ids once; after that each message carries only
+  its own id and the lines whose reactions changed (about 4.4k characters down to under 100
+  when nothing changed). Component usage goes to a session once; a changed library or list then
+  sends only what changed (new, changed or dropped components), never the whole list again, and
+  the Codex head hears about it too. Both heads behave the same.
 - **Quieter left column.** Bot and group rows no longer show the orange "waiting on you" dot,
   and running subagent rows no longer show a blue dot (the owner head's face is on the row);
   the folded strip drops the orange dot too. Only the unread count (a blue dot when folded)
