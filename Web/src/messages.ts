@@ -455,6 +455,7 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
   message.previews?.forEach((preview, index) => {
     const card = componentElement(preview.name, components[preview.name], preview.data, null, `${message.id}/preview-${index}`, null, null, undefined, "chat", false, null, true);
     if (!card) return;
+    card.classList.add("page-preview");
     if (!makeComponents.enabled || message.role !== "bot") {
       appendWide(card);
       return;
