@@ -15,6 +15,7 @@ struct CodexManagedWorkerRecord: Codable, Equatable {
     var turn: String?
     var tokens: TokenUsage?
     var runtime: WorkerRuntimeInfo?
+    var reconciliationAttempt: Int?
 }
 
 /// Which Codex thread each bot session is: `codex app-server` names its threads itself, while a
@@ -203,7 +204,8 @@ struct CodexSession {
             workers[record.id] = ManagedWorker(record: record)
             if record.reportPending, let report = record.report, let status = record.status {
                 workerResults.append(ManagedResult(task: record.id, name: record.name, thread: record.thread,
-                    turn: record.turn, run: record.run, status: status, report: report))
+                    turn: record.turn, run: record.run, status: status, report: report,
+                    reconciliationAttempt: record.reconciliationAttempt ?? 0))
             } else if record.wasActive {
                 workerResults.append(ManagedResult(task: record.id, name: record.name, thread: record.thread,
                     turn: nil, run: record.run, status: "interrupted",
@@ -574,6 +576,16 @@ struct CodexSession {
         default:
             if let handback, current.said.last(where: { $0.phase != "commentary" })?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
                 out.append(.event(.reply(Self.handbackFallback(handback, reason: "The summary ended without a final answer."), isError: true)))
+            } else if var handback, !handback.reconciled, !stopped {
+                if handback.reconciliationAttempt == 0 {
+                    // One event-driven decision turn, never a timer or an execution retry.
+                    handback.reconciliationAttempt = 1
+                    workerResults.insert(handback, at: 0)
+                    out.append(.event(.trace(.text("Worker turn ended; reconciling acceptance and next owner action.", parent: nil))))
+                } else {
+                    out.append(.event(.reply(Self.handbackFallback(handback,
+                        reason: "No acceptance checkpoint or next owner action was recorded after one reconciliation. The user objective remains unverified; no automatic retry is scheduled."), isError: true)))
+                }
             } else {
                 out.append(.event(.reply(Self.reply(from: current.said), isError: false)))
             }
@@ -653,9 +665,13 @@ struct CodexSession {
         var run: Int
         var status: String
         var report: String
+        var reconciliationAttempt = 0
+        var reconciled = false
         var payload: [String: Any] {
             ["task_id": task, "name": name, "thread_id": thread as Any? ?? NSNull(),
-             "turn_id": turn as Any? ?? NSNull(), "run": run, "status": status, "report": report]
+             "turn_id": turn as Any? ?? NSNull(), "run": run, "status": status, "report": report,
+             "completion_scope": "worker_turn", "objective_status": "unverified",
+             "reconciliation_attempt": reconciliationAttempt]
         }
     }
 
@@ -676,7 +692,8 @@ struct CodexSession {
                 ?? activeResult.flatMap { $0.task == worker.id && $0.run == worker.run ? $0 : nil }
             return CodexManagedWorkerRecord(id: worker.id, name: worker.name, instructions: worker.instructions,
                 thread: worker.thread, run: worker.run, wasActive: worker.active, reportPending: result != nil,
-                report: result?.report, status: result?.status, turn: result?.turn, tokens: worker.tokens, runtime: worker.runtime)
+                report: result?.report, status: result?.status, turn: result?.turn, tokens: worker.tokens, runtime: worker.runtime,
+                reconciliationAttempt: result?.reconciliationAttempt)
         }.sorted { $0.id < $1.id }
     }
 
@@ -700,7 +717,14 @@ struct CodexSession {
          "inputSchema": ["type": "object", "properties": ["instructions": ["type": "string"], "name": ["type": "string"]], "required": ["instructions"], "additionalProperties": false]],
         ["type": "function", "name": "app_send_message",
          "description": "Send instructions or a follow-up to the same worker task/session. Busy workers receive steering; idle workers start a new turn. Returns acceptance, not the completed result.",
-         "inputSchema": ["type": "object", "properties": ["task_id": ["type": "string"], "message": ["type": "string"]], "required": ["task_id", "message"], "additionalProperties": false]]
+         "inputSchema": ["type": "object", "properties": ["task_id": ["type": "string"], "message": ["type": "string"]], "required": ["task_id", "message"], "additionalProperties": false]],
+        ["type": "function", "name": "app_task_checkpoint",
+         "description": "Resolve the active app_task_result against the authorized user objective. Worker completed means only its execution turn ended. Record concrete acceptance evidence, an exact user input/permission needed, a real blocker, or an actively running dependency. If authorized work remains actionable, dispatch it using app_send_message/app_handoff instead. A bare waiting status is not completion. This checkpoint grants no new authorization.",
+         "inputSchema": ["type": "object", "properties": [
+            "task_id": ["type": "string"],
+            "outcome": ["type": "string", "enum": ["complete", "waiting_user", "waiting_dependency", "blocked"]],
+            "evidence": ["type": "string"], "dependency_task_id": ["type": "string"]],
+            "required": ["task_id", "outcome", "evidence"], "additionalProperties": false]]
     ]
 
     private mutating func managedTool(_ rpcID: Any, params: [String: Any]) -> [CodexOutput] {
@@ -710,7 +734,8 @@ struct CodexSession {
             ["jsonrpc": "2.0", "id": rpcID,
              "result": ["success": success, "contentItems": [["type": "inputText", "text": Self.json(payload)]]]]
         }
-        guard config.workerInstructions != nil, !stopped, !finishing,
+        guard config.workerInstructions != nil, !stopped,
+              (!finishing || params["tool"] as? String == "app_task_checkpoint"),
               params["threadId"] as? String == threadID else {
             let response = reply(["error": "App handoff tools are available only to the active coordinator."], success: false)
             toolReplies[key] = response
@@ -732,6 +757,7 @@ struct CodexSession {
                     .event(.trace(.subagentStarted(id: id, description: name, type: "codex-worker", prompt: instructions, background: true))),
                     .event(.trace(.subagentNamed(id: id, name: name)))]
             out.append(startWorkerThread(id))
+            activeResult?.reconciled = true
             response = reply(["task_id": id, "status": "accepted",
                               "message": "The app owns this task. Finish this turn; app_task_result will arrive when the worker finishes."], success: true)
         } else if tool == "app_send_message", let id = arguments?["task_id"] as? String,
@@ -741,9 +767,26 @@ struct CodexSession {
             out.append(.event(.trace(.messageSent(id: callID, to: workers[id]?.thread ?? id,
                 summary: nil, message: message, parent: nil))))
             out += messageWorker(id, text: message)
+            activeResult?.reconciled = true
             out.append(.event(.trace(.launchResult(id: callID,
                 result: LaunchResult(recipient: workers[id]?.thread ?? id), parent: nil))))
             response = reply(["task_id": id, "status": queued ? "queued" : "accepted"], success: true)
+        } else if tool == "app_task_checkpoint" {
+            let task = arguments?["task_id"] as? String
+            let outcome = arguments?["outcome"] as? String ?? ""
+            let evidence = (arguments?["evidence"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let dependency = arguments?["dependency_task_id"] as? String
+            let outcomes = ["complete", "waiting_user", "waiting_dependency", "blocked"]
+            if let task, activeResult?.task == task, outcomes.contains(outcome), !evidence.isEmpty,
+               outcome != "waiting_dependency" || (dependency != task && dependency.flatMap { workers[$0]?.active } == true) {
+                activeResult?.reconciled = true
+                out.append(.event(.trace(.toolUse(id: key, tool: "app_task_checkpoint", title: "Task checkpoint: " + outcome,
+                    detail: Self.json(arguments), parent: nil))))
+                out.append(.event(.trace(.toolResult(id: key, output: evidence, failed: false, parent: nil))))
+                response = reply(["task_id": task, "outcome": outcome, "recorded": true], success: true)
+            } else {
+                response = reply(["error": "Checkpoint requires the active report task_id, a valid outcome and concrete evidence. A dependency must be another actively running app task; otherwise assign an owner, request exact user input, or report a concrete blocker."], success: false)
+            }
         } else {
             response = reply(["error": "Invalid app tool arguments or unknown task_id. Use app_handoff to create a task, then app_send_message with its task_id."], success: false)
         }
