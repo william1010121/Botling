@@ -55,6 +55,17 @@ struct BotPrompts {
     /// there, so results stay local and timed work goes into its Routines file.
     static let codexNote = "- You run on the Codex CLI, not Claude Code. The Claude Code tools these instructions name (the Artifact tool, ScheduleWakeup, CronCreate, the Agent tool, Skill) are not yours: put results in a local page as said above, and put timed work in your Routines file. When the user wants a result published as a claude.ai Artifact or Design, hand it to Claude: end your reply with <handoff to=\"claude\">what to publish, with the full path of the local file</handoff>; Claude publishes it and its link comes back to you."
 
+    /// Codex-only: local reports load through the app's preview scheme, not file://.
+    static func codexLocalReportRule(folder: String) -> String {
+        """
+        Local HTML report image rules:
+        - Keep reports in \(localPage(folder: folder))
+        - Prefer embedding original image/animation bytes as a base64 data URI with the correct MIME type; verify the embedded bytes match the source. Do not use file:// URLs or temporary worktree paths as HTML subresources: the app's ccb-preview: scheme blocks file:// images. Standalone images/videos in chat still use file:// links.
+        - Before delivery, validate the saved report in production PagePreview/WKWebView through ccb-preview: (window and sandbox/card routes as applicable). Any alternative supported resource method must pass the same route. Await load/decode for every img and require complete plus naturalWidth > 0, or equivalent decoding evidence; capture rendered screenshots and inspect them yourself. File existence or opening the HTML directly via file:// is not display acceptance.
+        - For animations, preserve all frames and verify playback with multiple distinct decoded frames over time, not only the first frame. If images are missing, recover a traceable original or state the missing content; never fabricate replacement images or claim unperformed checks passed. If preview/decode/playback checks are unavailable, disclose that limitation instead of claiming display acceptance.
+        """
+    }
+
     /// The app owns worker sessions and wakes the coordinator with correlated results.
     static let codexDelegationPolicy = """
     App-owned Codex delegation policy:
@@ -94,6 +105,7 @@ struct BotPrompts {
         - Own only the assigned files and scope. Other workers may be editing simultaneously: re-read before editing, make targeted changes, and preserve their work. Do not reserve routine validation for the coordinator; perform the checks needed to support your result yourself.
         - Memory: \(profile.memoryPath). You may read relevant context there. The archive at \(profile.archiveURL.path) is read-only; search only necessary excerpts. Do not change shared memory or routines unless your assignment specifically requests it. When assigned memory updates, preserve the app's four headings (\(MemorySection.allCases.map(\.heading).joined(separator: ", "))) and keep the file under 150 lines. In .bot/ leave app-owned files alone; only the assigned memory/routines/inbox files and artifacts/ may be changed.
         - Keep secrets, credentials, and private material local. Never print credentials or publish sensitive information. \(resultsRule(.localOnly, folder: profile.artifactsURL.path)) Simple execution reports may be plain text; create a page when the task asks for a report, comparison, or preview meant for the user. Give the coordinator the full paths and links of result artifacts.
+        \(codexLocalReportRule(folder: profile.artifactsURL.path))
         - Preserve the user's authorization and project tool restrictions. A denied tool call is not permission to bypass the restriction; report what is needed to continue.
         - Final report: state completed or failed, what changed or was found, source locations or artifact paths, checks actually run with their results, and any remaining blocker. Distinguish observed evidence from inference. On a follow-up in this same session, retain the prior context and execute only the requested additional scope.
         """
@@ -195,7 +207,7 @@ struct BotPrompts {
             \(profile.instructions ?? "")
             """
         }
-        if engine == .codex { system += "\n" + Self.codexNote }
+        if engine == .codex { system += "\n" + Self.codexNote + "\n" + Self.codexLocalReportRule(folder: artifacts) }
         if heads?.hasTwo == true { system += "\n" + headsRule }
         if engine == .codex { system += "\n" + Self.codexDelegationPolicy }
         if engine == .codex {
