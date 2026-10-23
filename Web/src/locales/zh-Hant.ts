@@ -2,6 +2,14 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Traditional Chinese, as used in Taiwan (keys as in `en.ts`). */
 export const zhHant: Dictionary = {
+  "avatar.library": "角色動圖",
+  "avatar.portrait": "頭像",
+  "avatar.sticker": "全身貼圖",
+  "avatar.blink": "眨眼",
+  "avatar.typing": "打字",
+  "avatar.wave": "揮手",
+  "avatar.previewHint": "此處僅預覽。聊天頭像依工作狀態播放；減少動態效果時顯示靜態圖。",
+
   // steps.ts
   "steps.worked": "已處理",
   "steps.notes": "{n} 段說明",

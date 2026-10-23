@@ -3,6 +3,15 @@
 export type Word = string | readonly [one: string, other: string];
 
 export const en = {
+  "avatar.library": "Character animations",
+  "avatar.portrait": "Avatar",
+  "avatar.sticker": "Sticker",
+  "avatar.blink": "Blink",
+  "avatar.typing": "Typing",
+  "avatar.wave": "Wave",
+  "avatar.previewHint": "Preview only. Automatic avatars follow the turn state; reduced motion shows still images.",
+
+
   // steps.ts
   "steps.worked": "Worked",
   "steps.notes": ["{n} note", "{n} notes"],

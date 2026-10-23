@@ -2,6 +2,14 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Japanese (keys as in `en.ts`). */
 export const ja: Dictionary = {
+  "avatar.library": "キャラクターアニメーション",
+  "avatar.portrait": "アバター",
+  "avatar.sticker": "ステッカー",
+  "avatar.blink": "まばたき",
+  "avatar.typing": "入力中",
+  "avatar.wave": "手を振る",
+  "avatar.previewHint": "プレビューのみ。チャットでは作業状態に応じて再生します。動きを減らす設定では静止画を表示します。",
+
   // steps.ts
   "steps.worked": "作業済み",
   "steps.notes": "メモ {n} 件",

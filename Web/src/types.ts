@@ -408,6 +408,27 @@ export interface ChatState {
   rounds?: { text: string; stop: string } | null;
   /** Bot look Cute in a bot with two heads: each head's tiny character by its mark ("C", "X"); absent: letters. */
   seenHeads?: Record<string, string> | null;
+  animatedHeads?: AnimatedHead[] | null;
+  avatarMood?: "normal" | "work" | "think" | "sleep" | null;
+}
+
+export interface CharacterClip {
+  id: string;
+  engine: string;
+  kind: "avatar" | "sticker";
+  action: "blink" | "typing" | "wave";
+  file: string;
+  poster: string;
+  duration: number;
+}
+
+export interface AnimatedHead {
+  engine: string;
+  avatar: string;
+  thinking: string;
+  sleeping: string;
+  hat: string;
+  clips: CharacterClip[];
 }
 
 /** "Answer with" above the input box: Both (the usual) and each head, and the default. */
