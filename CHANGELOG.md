@@ -8,6 +8,12 @@ app and publishes it on GitHub Releases.
 
 ### Changed
 
+- **Settings look like macOS System Settings.** A searchable sidebar with coloured icons and
+  grouped forms with a note under each group, in light and dark. General gains the reminder for
+  quiet runs; Usage shows the Claude and Codex 5-hour and weekly limits; the component editor
+  moved to the new **Engines and subagents** page, which sets the Claude subagent model and the
+  Codex workers' model, effort and Fast mode for every bot (or follows `~/.codex/config.toml`,
+  showing what is in effect). Each bot's own settings page can still override them.
 - **Codex hands work to app-managed workers.** The main conversation finishes its turn after
   handing off a task, so you can keep chatting while an independent worker session runs. Live
   worker cards keep their progress and follow-up history. The app queues completed results and
