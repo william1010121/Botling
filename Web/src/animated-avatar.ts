@@ -211,7 +211,11 @@ function openLibrary(selectedHead: AnimatedHead): void {
     for (const button of grid.querySelectorAll("button")) button.setAttribute("aria-pressed", String(button.dataset.clip === clip.id));
     refreshAvatarVisibility();
   };
-  for (const head of heads) for (const clip of head.clips) {
+  const listed = new Set<string>();
+  for (const head of [selectedHead, ...heads]) for (const clip of head.clips) {
+    // Multiple bot hats share the same twelve source clips.
+    if (listed.has(clip.id)) continue;
+    listed.add(clip.id);
     const button = document.createElement("button");
     button.type = "button";
     button.dataset.clip = clip.id;

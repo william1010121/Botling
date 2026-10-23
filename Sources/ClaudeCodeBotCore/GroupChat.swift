@@ -299,12 +299,15 @@ extension Workspace {
     /// by plugins, parsed, posted as its line with its steps, its tags handled when `policy`
     /// lets them act. The posted line's id; nil when nothing was posted.
     func postGuestReply(_ reply: String, steps: [Step]?, from member: Member, bot: Bot, into chat: Bot, seen: Bool, policy: GuestReplyPolicy, keep: ((ChatMessage) -> Void)? = nil) async -> UUID? {
+        // The process that answered, not the receiving chat's heads or a tool's name.
+        let engine = bot.engine
         var text = reply
         if let filter = bot.replyFilter?() { text = await filter(text) }
         if policy.passes, Self.isPass(text) { return nil }
         let parsed = ReplyParser.parseAll(text)
-        chat.applyReactions(parsed.reactions, actor: "guest:\(member.id.uuidString):\(bot.engine.rawValue)")
+        chat.applyReactions(parsed.reactions, actor: "guest:\(member.id.uuidString):\(engine.rawValue)")
         var line = ChatMessage(role: .bot, text: parsed.body, choices: parsed.choices, sourceID: member.id)
+        line.engine = engine
         if !parsed.displays.isEmpty { line.displays = parsed.displays }
         line.steps = steps
         keep?(line)
