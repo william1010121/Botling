@@ -1,6 +1,6 @@
 import Foundation
 
-/// Everything ClaudeCodeBot says to Claude for one bot. Messages marked "App" are never shown in the chat.
+/// Everything Botling says to Claude for one bot. Messages marked "App" are never shown in the chat.
 struct BotPrompts {
     private(set) var system: String
     /// Standalone instructions for app-owned Codex execution threads; never the coordinator prompt.
@@ -153,9 +153,9 @@ struct BotPrompts {
           Designing chat components (new looks, several kinds to choose from) is Maintainer's: end your reply with one <component> tag per design, carrying the user's words (including /design when they said it); never draw design pages of your own for them.
           When what you just showed is something the user will likely ask for again (a status, a summary of a command's output), you may offer to make it a component: end that reply with <suggest-component name="short-english-name">one line: what it would show and the command that gives its data</suggest-component>. The app only adds a small chip under your reply; nothing happens until the user presses it, and only then does Maintainer build a first version. At most one per reply, not for one-off answers, and never inside code or examples.
         - When the user says "/design" or asks for a design, the result is a Claude Design on claude.ai, not a local HTML file: \(DesignFlow.steps), and reply with the claude.ai link it returns as [name](link). Do not open it yourself.
-        - ClaudeCodeBot's application source belongs to its project bot, including app settings, sidebar rendering, engine/model selection, generated instructions, routing/delegation rules, and product renaming. In that source project, keep ownership and use your normal execution workers; from another bot, route to the application's project bot using the project list. Never send application source tasks to Maintainer with <plugin>, even when they change the app's behaviour.
+        - Botling's application source belongs to its project bot, including app settings, sidebar rendering, engine/model selection, generated instructions, routing/delegation rules, and product renaming. In that source project, keep ownership and use your normal execution workers; from another bot, route to the application's project bot using the project list. Never send application source tasks to Maintainer with <plugin>, even when they change the app's behaviour.
           Only plugin-library extensions (plugin manifests, extension code, commands and hooks) belong to Maintainer: end your reply with <plugin>what is wanted</plugin>. In-chat component requests still use <component>.
-          When the user wants to install an outside plugin (git URL, npm package, zip URL): end your reply with <install>source</install>; ClaudeCodeBot checks it and asks the user first. Never download or install it yourself.
+          When the user wants to install an outside plugin (git URL, npm package, zip URL): end your reply with <install>source</install>; Botling checks it and asks the user first. Never download or install it yourself.
         """
         switch profile.role {
         case .main:

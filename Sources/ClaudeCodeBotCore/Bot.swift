@@ -193,7 +193,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// How long a tool question waits before it counts as "don't allow", so a routine at night
     /// does not hold the bot awake forever.
     public var permissionTimeout: TimeInterval = 10 * 60
-    /// Removed from ClaudeCodeBot: it never starts again.
+    /// Removed from Botling: it never starts again.
     private var removed = false
     /// Waiting for a group-chat reply, which goes to the group instead of this chat.
     private var groupReply: CheckedContinuation<GroupAnswer, Never>?
@@ -2711,7 +2711,7 @@ public final class Bot: ObservableObject, Identifiable {
             resumeProbe = true
             resumeRetry = nil
             let briefing = wakeNote?() ?? ""
-            let note = "(App: ClaudeCodeBot restarted you in this same conversation (\(reason.told)); carry on as before." + (briefing.isEmpty ? ")" : " What the app tells you at a wake, as it is now:)\n" + briefing)
+            let note = "(App: Botling restarted you in this same conversation (\(reason.told)); carry on as before." + (briefing.isEmpty ? ")" : " What the app tells you at a wake, as it is now:)\n" + briefing)
             pendingNote = [withSavedMemory(note, leavingOut: queued.last?.messageID), pendingNote].compactMap { $0 }.joined(separator: "\n\n")
             scheduleIdle()
         } catch {

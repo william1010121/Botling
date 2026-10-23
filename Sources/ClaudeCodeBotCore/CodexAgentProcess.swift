@@ -47,17 +47,35 @@ public final class CodexThreads: @unchecked Sendable {
     public func save(_ thread: String, for session: UUID) {
         let folder = folder
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        if let old = self.thread(for: session), old != thread {
+            // Keep the old CLI transcript discoverable when tool-schema upgrades require a
+            // new coordinator. App chat/session IDs and worker records are never moved.
+            let lineage = folder.appending(path: session.uuidString.lowercased() + ".previous-threads")
+            var data = (try? Data(contentsOf: lineage)) ?? Data()
+            if !String(decoding: data, as: UTF8.self).split(separator: "\n").contains(Substring(old)) {
+                data.append(Data((old + "\n").utf8))
+                guard (try? data.write(to: lineage, options: .atomic)) != nil else { return }
+            }
+        }
         try? Data(thread.utf8).write(to: folder.appending(path: session.uuidString.lowercased()), options: .atomic)
     }
+
+    private struct ManagedStamp: Codable {
+        var thread: String
+        var tools: String
+    }
+
     func isManaged(_ session: UUID, thread: String) -> Bool {
         let url = folder.appending(path: session.uuidString.lowercased() + ".managed")
-        return (try? String(contentsOf: url, encoding: .utf8)) == thread
+        guard let data = try? Data(contentsOf: url), let stamp = try? JSONDecoder().decode(ManagedStamp.self, from: data) else { return false }
+        return stamp.thread == thread && stamp.tools == CodexSession.managedToolSignature
     }
 
     func markManaged(_ thread: String, for session: UUID) {
         let folder = folder
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try? Data(thread.utf8).write(to: folder.appending(path: session.uuidString.lowercased() + ".managed"), options: .atomic)
+        guard let data = try? JSONEncoder().encode(ManagedStamp(thread: thread, tools: CodexSession.managedToolSignature)) else { return }
+        try? data.write(to: folder.appending(path: session.uuidString.lowercased() + ".managed"), options: .atomic)
     }
 
     func workers(for session: UUID) -> [CodexManagedWorkerRecord] {
@@ -217,7 +235,7 @@ struct CodexSession {
     // MARK: From the bot
 
     mutating func start() -> [CodexOutput] {
-        [request("initialize", ["clientInfo": ["name": "claudecodebot", "title": "ClaudeCodeBot", "version": "1"], "capabilities": ["experimentalApi": true]], as: .initialize)]
+        [request("initialize", ["clientInfo": ["name": "claudecodebot", "title": "Botling", "version": "1"], "capabilities": ["experimentalApi": true]], as: .initialize)]
     }
 
     mutating func send(_ input: Input) -> [CodexOutput] {
@@ -461,7 +479,7 @@ struct CodexSession {
             return [.write(["jsonrpc": "2.0", "id": rpcID, "result": ["action": "decline"]])]
         default:
             // Bots ask in the chat (<choices>); anything else is not the app's to answer.
-            return [.write(["jsonrpc": "2.0", "id": rpcID, "error": ["code": -32601, "message": "Not supported by ClaudeCodeBot."]])]
+            return [.write(["jsonrpc": "2.0", "id": rpcID, "error": ["code": -32601, "message": "Not supported by Botling."]])]
         }
     }
 
@@ -710,6 +728,12 @@ struct CodexSession {
         "features.multi_agent": false, "agents.enabled": false,
         "features.shell_tool": false, "web_search": "disabled"
     ]
+
+    /// Canonical complete schema, not merely the tool count: old two-tool threads and any
+    /// future schema/description changes must acquire a fresh coordinator before execution.
+    static var managedToolSignature: String {
+        json(managedTools)
+    }
 
     private static let managedTools: [[String: Any]] = [
         ["type": "function", "name": "app_handoff",
@@ -1347,8 +1371,10 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
         var resume: String?
         if launch.resume || launch.forkSession {
             guard let thread = threads.thread(for: launch.sessionID) else { throw CocoaError(.fileNoSuchFile) }
-            // Pre-upgrade threads have no dynamic app tools and cannot acquire them on
-            // resume/fork. Begin a managed thread; Bot supplies bounded historical context.
+            // Dynamic tools cannot change on resume/fork. A missing/outdated schema stamp
+            // (including old two-tool managed threads) gets a new coordinator; Bot carries
+            // saved memory/recent chat, save preserves the old thread ID, and task records stay.
+
             if launch.codexWorkerInstructions == nil || threads.isManaged(launch.sessionID, thread: thread) {
                 resume = thread
             }

@@ -655,7 +655,7 @@ enum Snapshot {
     private static func drawWindow(to path: String) {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         let count = ProcessInfo.processInfo.environment["CCB_WINDOW_WAITING"].flatMap(Int.init) ?? 14
-        let projects = (0..<count).map { index in
+        var projects = (0..<count).map { index in
             let code = root.appending(path: "code/project-\(index)")
             try? FileManager.default.createDirectory(at: code.appending(path: ".bot"), withIntermediateDirectories: true)
             try? Data("## Waiting on you\n- Project \(index): pick one of the two layouts for the settings page before I go on\n".utf8)
@@ -663,6 +663,18 @@ enum Snapshot {
             return Workspace.Project(id: UUID(), name: "project-\(index)", folder: code, avatar: "square")
         }
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // Integration-only fixture: exercise the actual load-time own-project migration and
+        // native sidebar together. All metadata/source markers are synthetic and temporary.
+        if ProcessInfo.processInfo.environment["CCB_WINDOW_NAMING"] == "1" {
+            let code = root.appending(path: "own-source/ClaudeCodeBot")
+            let entry = code.appending(path: "Sources/ClaudeCodeBot/ClaudeCodeBotApp.swift")
+            try? FileManager.default.createDirectory(at: entry.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? Data("struct BotlingApp: App {}".utf8).write(to: entry)
+            try? Data(#"name: "botling", name: "ClaudeCodeBotCore""#.utf8).write(to: code.appending(path: "Package.swift"))
+            let own = Workspace.Project(id: UUID(), name: "ClaudeCodeBot", folder: code, avatar: "square")
+            projects.insert(own, at: 0)
+            try? JSONEncoder().encode(AppSettings(developerProjectID: own.id)).write(to: root.appending(path: "settings.json"))
+        }
         try? JSONEncoder().encode(projects).write(to: Workspace.Layout.projectsFile(in: root))
         // `CCB_WINDOW_TEAM=1`: saved teams from BOTH heads, a Codex child open, and a
         // settled Codex child in the native right panel; sample data, no engine launch.
@@ -686,6 +698,13 @@ enum Snapshot {
         }
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
+        }
+        if ProcessInfo.processInfo.environment["CCB_WINDOW_NAMING"] == "1" {
+            guard let own = workspace.projects.first, own.name == "botling", workspace.bot(for: own)?.name == "botling" else {
+                FileHandle.standardError.write(Data("Own-project load/sidebar fixture did not migrate to lowercase botling.\n".utf8))
+                exit(1)
+            }
+            print("PASS: isolated workspace loaded old own-project label as lowercase botling before sidebar rendering")
         }
         workspace.refreshWaiting()
         if teamSample { workspace.view(subagent: "sample-codex", of: workspace.mainBot) }
