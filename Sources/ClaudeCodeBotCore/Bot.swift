@@ -20,6 +20,8 @@ public final class Bot: ObservableObject, Identifiable {
     @Published public private(set) var heads: HeadsSettings
     /// Where the hand-offs for your latest message stand (the line over the input box).
     @Published public private(set) var rounds: RoundsProgress?
+    /// The hand-offs between the heads the panel over the input box lists (see `HandoffRecord`).
+    @Published public private(set) var handoffs: [HandoffRecord] = []
     /// The other head: a bot of its own (its process, its turns, running at the same time as
     /// this one) whose lines show in this chat. There when the bot has two heads, or when Codex
     /// handed Claude something to publish.
@@ -616,7 +618,7 @@ public final class Bot: ObservableObject, Identifiable {
         // Both heads get it and decide between them who does what: one first, the other once
         // the first has said what it takes on (then both work at once); a message named for
         // one reaches the other as a note, with its next message.
-        conduct(conductor.userMessage())
+        conduct(conductor.userMessage(text))
         // Parts of the same message keep the original lead and deadline. Starting the held
         // head here would let it grab the task before it heard the lead's opening words.
         if target == .both, var hold = claimHold {
@@ -940,11 +942,17 @@ public final class Bot: ObservableObject, Identifiable {
                 if rounds != progress { rounds = progress }
             }
         }
+        if handoffs != conductor.records { handoffs = conductor.records }
     }
 
     /// Shows a rounds line with no hand-offs behind it: only for drawing the page (snapshots).
     public func showRoundsForSnapshot(_ progress: RoundsProgress?) {
         rounds = progress
+    }
+
+    /// Shows hand-offs with no heads behind them: only for drawing the page (snapshots).
+    public func showHandoffsForSnapshot(_ records: [HandoffRecord]) {
+        handoffs = records
     }
 
     /// "Stop now" on the rounds line: no more hand-offs for this message.

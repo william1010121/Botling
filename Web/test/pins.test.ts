@@ -307,7 +307,9 @@ describe("chips as small status icons", () => {
     const rule = css.match(/\.pin-chip \{[^}]*\}/)?.[0] ?? "";
     const px = (name: string) => Number(rule.match(new RegExp(`${name}: (\\d+)px`))?.[1]);
     expect(px("max-width")).toBeLessThanOrEqual(140);
-    expect(px("height")).toBeLessThanOrEqual(28);
+    // One segmented strip: the chips share its border and its height, the controls' 32px.
+    expect(rule).toContain("height: calc(var(--control-h) - 2px)");
+    expect(Number(css.match(/--control-h: (\d+)px/)?.[1])).toBe(32);
   });
 
   it("a pin without a chip status (an older app) falls back to its line", () => {

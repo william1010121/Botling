@@ -8,6 +8,16 @@ app and publishes it on GitHub Releases.
 
 ### Changed
 
+- **One dock over the input box.** The pinned chips are one segmented strip (one border, thin
+  dividers, + at the end), and every control there is 32px tall with the same radius, border
+  and muted words; a pin's status is its dot's colour. "Answer with" moved into the input box's
+  toolbar: + on the left, then Both / Claude / Codex as one segmented control (the chosen one
+  raised, with its head's dot) and the ⌥1 ⌥2 ⌥3 hint, send on the right; ⌥1–⌥3 and `@codex`
+  work as before. The "Hand-off 1 of 6 · Stop now" line is now a chip at the right of the
+  strip (a meter, "Hand-off 1/6", Stop); with hand-offs for several of your messages under way
+  it says "3 hand-offs in progress" and opens a panel above the strip listing each one (who to
+  whom, its task, running / waiting reply / done, its count). A row opens to the message it
+  came from and what the two heads said; Stop all stops them (hand-offs stop together).
 - **Quieter left column.** Bot and group rows no longer show the orange "waiting on you" dot,
   and running subagent rows no longer show a blue dot (the owner head's face is on the row);
   the folded strip drops the orange dot too. Only the unread count (a blue dot when folded)
