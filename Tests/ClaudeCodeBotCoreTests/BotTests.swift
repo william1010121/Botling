@@ -88,13 +88,21 @@ final class FakeAgent: AgentProcess, @unchecked Sendable {
     private var _interrupts = 0
     var interrupts: Int { lock.withLock { _interrupts } }
 
+    private var _interruptEndsTurn = true
+    /// False: the turn had already ended when the interrupt came, so no error result follows.
+    var interruptEndsTurn: Bool {
+        get { lock.withLock { _interruptEndsTurn } }
+        set { lock.withLock { _interruptEndsTurn = newValue } }
+    }
+
     /// Like claude: the turn ends with an error result.
     func interrupt() {
-        lock.withLock {
+        let ends = lock.withLock {
             _interrupts += 1
             _log.append("interrupt")
+            return _interruptEndsTurn
         }
-        continuation.yield(.reply("", isError: true))
+        if ends { continuation.yield(.reply("", isError: true)) }
     }
 
     /// Answers to permission requests: (request id, allowed, message).
