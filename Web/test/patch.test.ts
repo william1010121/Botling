@@ -62,6 +62,28 @@ describe("the chat page", () => {
   });
   beforeEach(() => { sent.length = 0; });
 
+  it("resizes existing message and typing faces through patches, clamps values and restores defaults", () => {
+    const state = { ...base({ working: true }), messages: [message("size", "hello", { avatar: "face" })], components: {} } as ChatState;
+    window.ccb.setState(state);
+    const row = document.querySelector(".row.bot");
+    const typing = document.querySelector(".typing > .avatar");
+    const size = () => document.documentElement.style.getPropertyValue("--chat-avatar-size");
+    expect(size()).toBe("");
+    for (const [input, output] of [[80, 80], [999, 96], [-2, 32]]) {
+      window.ccb.patchState({ base: base({ working: true, chatAvatarSize: input }), order: ["size"], changed: [] });
+      expect(size()).toBe(`${output}px`);
+      expect(document.querySelector(".row.bot")).toBe(row);
+      expect(document.querySelector(".typing > .avatar")).toBe(typing);
+    }
+    // Newly opened chats receive the same global size in their first full state.
+    window.ccb.setState({ ...state, botID: "another", chatAvatarSize: 96 });
+    expect(size()).toBe("96px");
+    window.ccb.patchState({ base: base(), order: ["size"], changed: [] });
+    expect(size()).toBe("");
+    window.ccb.setState({ ...state, chatAvatarSize: NaN });
+    expect(size()).toBe("");
+  });
+
   it("redraws only what a patch changed, and asks for everything when it cannot apply one", () => {
     const a = message("a", "first"), b = message("b", "second");
     window.ccb.patchState({ base: base(), components, order: ["a", "b"], changed: [a, b] });

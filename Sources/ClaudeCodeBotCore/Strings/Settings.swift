@@ -2,6 +2,11 @@ extension L10n {
     /// Words of the Settings window (SettingsWindow.swift). Each row: English, then
     /// [繁體中文 (Taiwan), 简体中文, 日本語, 한국어].
     static let settingsStrings: Table = [
+        "Preview": ["預覽", "预览", "プレビュー", "미리보기"],
+        "Chat avatar size": ["聊天頭像大小", "聊天头像大小", "チャットのアバターサイズ", "채팅 아바타 크기"],
+        "Chat avatars": ["聊天頭像", "聊天头像", "チャットのアバター", "채팅 아바타"],
+        "Use default size": ["使用預設大小", "使用默认大小", "既定のサイズを使う", "기본 크기 사용"],
+        "Applies immediately to message avatars in every chat. Sidebar icons and small engine heads keep their size. Default: 48 px, or 40 px in narrow chats.": ["立即套用到所有聊天的訊息頭像。側欄圖示與引擎小頭像維持原大小。預設為 48 px，窄視窗為 40 px。", "立即应用到所有聊天的消息头像。侧栏图标与引擎小头像保持原大小。默认为 48 px，窄窗口为 40 px。", "すべてのチャットのメッセージにすぐ反映されます。サイドバーと小さなエンジンアイコンのサイズは変わりません。既定は48 px、狭いチャットでは40 pxです。", "모든 채팅의 메시지 아바타에 즉시 적용됩니다. 사이드바 아이콘과 작은 엔진 아이콘은 원래 크기를 유지합니다. 기본값은 48 px, 좁은 채팅에서는 40 px입니다."],
         // Sections
         "General": ["一般", "常规", "一般", "일반"],
         "Usage": ["用量", "用量", "使用量", "사용량"],

@@ -282,15 +282,22 @@ enum Snapshot {
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
         prepare(workspace)
+        if let size = ProcessInfo.processInfo.environment["CCB_CHAT_AVATAR_SIZE"].flatMap(Int.init) {
+            workspace.setChatAvatarSize(size)
+        }
         let board = CommandLine.arguments.contains("--board")
         let json = if let watched = subagent {
-            ChatPayload.make(subagent: watched, of: workspace.mainBot, components: workspace.components, avatar: AvatarImages.dataURL(.circle, eyes: .open)).json()
+            ChatPayload.make(subagent: watched, of: workspace.mainBot, components: workspace.components, avatar: AvatarImages.dataURL(.circle, eyes: .open), chatAvatarSize: workspace.settings.chatAvatarSizeChoice).json()
         } else {
-            ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, pins: pins ? workspace.pinContext(for: workspace.mainBot, board: board) : nil, specs: pins, look: look == .cute ? ChibiImages.look(for: .circle) : nil) { projectID in
+            ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, pins: pins ? workspace.pinContext(for: workspace.mainBot, board: board) : nil, specs: pins, look: look == .cute ? ChibiImages.look(for: .circle) : nil, chatAvatarSize: workspace.settings.chatAvatarSizeChoice) { projectID in
                 AvatarImages.dataURL(projectID == nil ? .circle : .triangle, eyes: .open)
             }.json()
         }
 
+        // Synthetic state export for checking this same payload at several browser widths.
+        if let statePath = ProcessInfo.processInfo.environment["CCB_SNAPSHOT_STATE"] {
+            try? Data(json.utf8).write(to: URL(filePath: statePath))
+        }
         // `CCB_SNAPSHOT_HEIGHT=900`: a shorter (or taller) window than 1300 points.
         let height = ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEIGHT"].flatMap(Double.init) ?? 1300
         let frame = NSRect(x: 0, y: 0, width: ProcessInfo.processInfo.environment["CCB_SNAPSHOT_WIDTH"].flatMap(Double.init) ?? 760, height: height)
@@ -611,6 +618,10 @@ enum Snapshot {
         // `CCB_LANGUAGE=ja`: drawn in that language, picked in Settings → General.
         if let language = HeadlessRun.language() { workspace.setLanguage(language) }
         workspace.setBotLook(look)
+        // Synthetic settings preview; never writes the user's settings.
+        if let size = ProcessInfo.processInfo.environment["CCB_CHAT_AVATAR_SIZE"].flatMap(Int.init) {
+            workspace.setChatAvatarSize(size)
+        }
         let navigator = SettingsNavigator()
         // CCB_SETTINGS_SECTION=plugins draws another section.
         navigator.section = ProcessInfo.processInfo.environment["CCB_SETTINGS_SECTION"].flatMap(SettingsSection.init(rawValue:)) ?? .doctor

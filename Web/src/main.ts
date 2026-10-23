@@ -106,6 +106,12 @@ class Chat {
 
   setState(state: ChatState, redrawing = false): void {
     this.last = state;
+    // Root style updates existing rows and the typing face without replacing their DOM.
+    if (typeof state.chatAvatarSize === "number" && Number.isFinite(state.chatAvatarSize)) {
+      document.documentElement.style.setProperty("--chat-avatar-size", `${Math.min(96, Math.max(32, Math.round(state.chatAvatarSize)))}px`);
+    } else {
+      document.documentElement.style.removeProperty("--chat-avatar-size");
+    }
     const switched = state.botID !== this.botID;
     let animateArrivals = !switched && !redrawing;
     const newestBefore = this.newestID;
