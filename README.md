@@ -4,7 +4,7 @@
 
 # Botling
 
-Formerly ClaudeCodeBot. Existing data stays in `~/.claudecodebot`; see [naming and compatibility](docs/botling-rename.md).
+Formerly ClaudeCodeBot (the repository moved from `william1010121/ClaudeCodeBot`; old links redirect). Existing data stays in `~/.claudecodebot`; see [naming and compatibility](docs/botling-rename.md).
 
 **A team of Claude Code agents on your Mac, in one chat.**
 
@@ -12,16 +12,16 @@ Hand off real work to background subagents running in parallel, see the results 
 components you can pin, and change the app itself with plugins. All local, on the `claude` CLI
 you already have.
 
-[![Latest release](https://img.shields.io/github/v/release/william1010121/ClaudeCodeBot?label=release&color=4c8bf5)](https://github.com/william1010121/ClaudeCodeBot/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/william1010121/ClaudeCodeBot/total?color=4c8bf5)](https://github.com/william1010121/ClaudeCodeBot/releases)
-[![CI](https://img.shields.io/github/actions/workflow/status/william1010121/ClaudeCodeBot/ci.yml?branch=main&label=CI)](https://github.com/william1010121/ClaudeCodeBot/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/william1010121/Botling?label=release&color=4c8bf5)](https://github.com/william1010121/Botling/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/william1010121/Botling/total?color=4c8bf5)](https://github.com/william1010121/Botling/releases)
+[![CI](https://img.shields.io/github/actions/workflow/status/william1010121/Botling/ci.yml?branch=main&label=CI)](https://github.com/william1010121/Botling/actions/workflows/ci.yml)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 <br>
 [![macOS 14+](https://img.shields.io/badge/macOS-14%2B-black?logo=apple&logoColor=white)](#requirements)
 [![Swift 6.2](https://img.shields.io/badge/Swift-6.2-F05138?logo=swift&logoColor=white)](Package.swift)
 [![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-D97757?logo=claude&logoColor=white)](https://docs.claude.com/en/docs/claude-code)
 
-[**Download**](https://github.com/william1010121/ClaudeCodeBot/releases/latest) ·
+[**Download**](https://github.com/william1010121/Botling/releases/latest) ·
 [Quick start](#quick-start) ·
 [Features](#features) ·
 [Plugins](#plugins--components) ·
@@ -191,7 +191,7 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
 ## Install
 
 1. Download the latest `botling-<version>-macOS.zip` from
-   [**Releases**](https://github.com/william1010121/ClaudeCodeBot/releases/latest).
+   [**Releases**](https://github.com/william1010121/Botling/releases/latest).
 2. Unzip it and drag **Botling.app** to `/Applications`.
 3. The app is ad-hoc signed, not notarized. The first time, right-click it → **Open** → **Open**.
 
@@ -302,7 +302,7 @@ Swift 6.2 (Xcode 26) is needed. The web chat is prebuilt and committed in
 `Sources/ClaudeCodeBot/Resources`, so `swift build` does not need npm.
 
 ```bash
-git clone https://github.com/william1010121/ClaudeCodeBot.git botling
+git clone https://github.com/william1010121/Botling.git botling
 cd botling
 swift run botling          # build and run a debug build
 scripts/make-app.sh              # or build dist/Botling.app and its zip (version from VERSION)
@@ -337,7 +337,7 @@ together from them.
 Botling uses [semantic versioning](https://semver.org); the current version is in
 [`VERSION`](VERSION) and every change is in [CHANGELOG.md](CHANGELOG.md). Pushing a `v<version>`
 tag runs the [release workflow](.github/workflows/release.yml), which tests, builds the universal
-app and publishes it on [GitHub Releases](https://github.com/william1010121/ClaudeCodeBot/releases).
+app and publishes it on [GitHub Releases](https://github.com/william1010121/Botling/releases).
 
 ## License
 

@@ -1,6 +1,6 @@
 # Changelog
 
-ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bumps the minor
+Botling uses [semantic versioning](https://semver.org): a new feature bumps the minor
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
@@ -8,6 +8,9 @@ app and publishes it on GitHub Releases.
 
 ### Changed
 
+- **The GitHub repository is now `william1010121/Botling`.** README, docs, contributing and
+  security links, release notes and `/share` pull requests point at the new name; old
+  `ClaudeCodeBot` URLs redirect, and bundle ID, data folder and Swift target names are unchanged.
 - **Codex hands work to app-managed workers.** The main conversation finishes its turn after
   handing off a task, so you can keep chatting while an independent worker session runs. Live
   worker cards keep their progress and follow-up history. The app queues completed results and

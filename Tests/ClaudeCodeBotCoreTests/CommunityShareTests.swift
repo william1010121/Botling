@@ -4,7 +4,7 @@ import Testing
 
 /// Developer mode's /share: the developer project's chat lists the features you built (local
 /// branches ahead of upstream), checks the one you pick (up to date, no keys or personal paths),
-/// and opens a pull request for it to ClaudeCodeBot with the community-feature label. Pushing and
+/// and opens a pull request for it to Botling with the community-feature label. Pushing and
 /// `gh` never run here: a fake records what would have.
 @MainActor
 @Suite(.integration)
@@ -16,7 +16,7 @@ struct CommunityShareTests {
         private let lock = NSLock()
         private var _ran: [[String]] = []
         var answer: @Sendable ([String]) -> (ok: Bool, output: String) = { arguments in
-            arguments.first == "gh" ? (true, "https://github.com/william1010121/ClaudeCodeBot/pull/42\n") : (true, "")
+            arguments.first == "gh" ? (true, "https://github.com/william1010121/Botling/pull/42\n") : (true, "")
         }
         var ran: [[String]] { lock.withLock { _ran } }
         var runner: Workspace.ShareRunner {
@@ -123,12 +123,12 @@ struct CommunityShareTests {
         #expect(CommunityShare.privacyFindings(in: "+++ b/a.swift\n+let x = 1\n", home: "/Users/mei").isEmpty)
     }
 
-    @Test func thePullRequestGoesToClaudeCodeBotWithTheLabel() {
+    @Test func thePullRequestGoesToBotlingWithTheLabel() {
         let feature = CommunityShare.Feature(branch: "bot/pin-reactions", title: "Add emoji reactions", commits: 2, files: ["a.ts"], subjects: ["Add emoji reactions", "Style"])
         let command = CommunityShare.pullRequest(for: feature, owner: "mei-lin", label: true)
         #expect(command.prefix(3) == ["gh", "pr", "create"])
         func value(_ flag: String) -> String? { command.firstIndex(of: flag).map { command[$0 + 1] } }
-        #expect(value("--repo") == "william1010121/ClaudeCodeBot")
+        #expect(value("--repo") == "william1010121/Botling")
         #expect(value("--base") == "main")
         #expect(value("--head") == "mei-lin:bot/pin-reactions")
         #expect(value("--title") == "Add emoji reactions")
@@ -163,7 +163,7 @@ struct CommunityShareTests {
         // Whether the label goes on is only known once the pull request opens: no ✓ for it yet.
         #expect(!check.text.contains("✓ Label"))
         #expect(check.text.contains("! Label: community-feature"))
-        #expect(check.text.contains("from mei-lin/ClaudeCodeBot to william1010121/ClaudeCodeBot"))
+        #expect(check.text.contains("from mei-lin/Botling to william1010121/Botling"))
         #expect(check.choices?.map(\.label) == ["Open pull request", "Not now"])
         // Nothing went out yet.
         #expect(runner.ran.isEmpty)
@@ -209,10 +209,10 @@ struct CommunityShareTests {
         #expect(runner.ran.isEmpty)
     }
 
-    @Test func aLabelMissingOnClaudeCodeBotIsCreatedAndThePullRequestCarriesIt() async throws {
+    @Test func aLabelMissingOnBotlingIsCreatedAndThePullRequestCarriesIt() async throws {
         let fake = FakeLauncher()
         let runner = FakeRunner()
-        // ClaudeCodeBot has no community-feature label until `gh label create` makes it.
+        // Botling has no community-feature label until `gh label create` makes it.
         final class Labels: @unchecked Sendable { var made = false }
         let labels = Labels()
         runner.answer = { arguments in
@@ -223,7 +223,7 @@ struct CommunityShareTests {
             }
             return arguments.contains("--label") && !labels.made
                 ? (false, "could not add label: 'community-feature' not found")
-                : (true, "https://github.com/william1010121/ClaudeCodeBot/pull/44\n")
+                : (true, "https://github.com/william1010121/Botling/pull/44\n")
         }
         let (workspace, _, manager) = try developerSetUp(fake, runner: runner)
         await workspace.send("/share bot/pin-reactions", to: manager)
@@ -233,7 +233,7 @@ struct CommunityShareTests {
         let gh = runner.ran.filter { $0.first == "gh" }
         let create = try #require(gh.first { $0.starts(with: ["gh", "label", "create"]) })
         #expect(create.contains("community-feature"))
-        #expect(create.firstIndex(of: "--repo").map { create[$0 + 1] } == "william1010121/ClaudeCodeBot")
+        #expect(create.firstIndex(of: "--repo").map { create[$0 + 1] } == "william1010121/Botling")
         // The pull request that opened is the one with the label.
         #expect(gh.last?.prefix(3) == ["gh", "pr", "create"])
         #expect(gh.last?.contains("--label") == true)
@@ -250,10 +250,10 @@ struct CommunityShareTests {
             if arguments.starts(with: ["gh", "label", "create"]) {
                 return (false, "label with name \"community-feature\" already exists; use `--force` to update its color and description")
             }
-            guard arguments.contains("--label") else { return (true, "https://github.com/william1010121/ClaudeCodeBot/pull/45\n") }
+            guard arguments.contains("--label") else { return (true, "https://github.com/william1010121/Botling/pull/45\n") }
             tries.labelled += 1
             // Someone made the label a moment ago: the second try finds it.
-            return tries.labelled == 1 ? (false, "could not add label: 'community-feature' not found") : (true, "https://github.com/william1010121/ClaudeCodeBot/pull/45\n")
+            return tries.labelled == 1 ? (false, "could not add label: 'community-feature' not found") : (true, "https://github.com/william1010121/Botling/pull/45\n")
         }
         let (workspace, _, manager) = try developerSetUp(fake, runner: runner)
         await workspace.send("/share bot/pin-reactions", to: manager)
@@ -274,7 +274,7 @@ struct CommunityShareTests {
             }
             return arguments.contains("--label")
                 ? (false, "could not add label: 'community-feature' not found")
-                : (true, "https://github.com/william1010121/ClaudeCodeBot/pull/43\n")
+                : (true, "https://github.com/william1010121/Botling/pull/43\n")
         }
         let (workspace, _, manager) = try developerSetUp(fake, runner: runner)
         await workspace.send("/share bot/pin-reactions", to: manager)

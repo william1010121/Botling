@@ -84,6 +84,6 @@ title.draw(at: NSPoint(x: 80, y: 250))
 let para = NSMutableParagraphStyle(); para.lineSpacing = 6
 let tag = NSAttributedString(string: "A front desk for your local\nClaude Code agents, on macOS.", attributes: [.font: NSFont.systemFont(ofSize: 30, weight: .regular), .foregroundColor: NSColor(white: 0.78, alpha: 1), .paragraphStyle: para])
 tag.draw(in: NSRect(x: 80, y: 130, width: 520, height: 100))
-let small = NSAttributedString(string: "github.com/william1010121/ClaudeCodeBot", attributes: [.font: NSFont.monospacedSystemFont(ofSize: 18, weight: .regular), .foregroundColor: NSColor(white: 0.55, alpha: 1)])
+let small = NSAttributedString(string: "github.com/william1010121/Botling", attributes: [.font: NSFont.monospacedSystemFont(ofSize: 18, weight: .regular), .foregroundColor: NSColor(white: 0.55, alpha: 1)])
 small.draw(at: NSPoint(x: 80, y: 70))
 save(S, "\(out)/social-preview.png")
