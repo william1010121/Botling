@@ -15,17 +15,19 @@ extension Workspace {
         return components.names.filter(own.contains)
     }
 
-    /// The components `bot` (the main bot when nil) can draw or ask for.
+    /// The components `bot` (the main bot when nil) can draw or ask for, in full.
     func componentBriefing(for bot: Bot? = nil) -> String {
+        componentKnowledge(for: bot).full
+    }
+
+    /// What `bot` (the main bot when nil) has and what else the library holds, one entry each.
+    func componentKnowledge(for bot: Bot? = nil) -> ComponentKnowledge {
         let bot = bot ?? mainBot
         let own = ownComponents(of: bot)
         let others = components.names.filter { !own.contains($0) }
-        let limit = ComponentLibrary.limit
-        var text = "(App: Components in the chat: \(own.count) / \(limit) yours, each with its usage below (a bot has at most \(limit)). <show name=\"name\">JSON</show> draws one; <show name=\"name\" command=\"git diff --stat\"></show> fills it with what that command prints instead (run in your project folder once the user allows it; JSON output is used as the data, other output as one string; the card has a refresh button). A component whose usage has a \"Command:\" line needs only <show name=\"name\"></show>; any other one (even with a \"Board command:\" line, which the chat never runs) needs its JSON inside the tag, and an empty one draws nothing; add refresh=\"2s\" to rerun a command card every 2 seconds while it is on screen (a usage with a \"Refresh: every 2s\" line does so already). Give a card an id, <show name=\"name\" id=\"tests\">JSON</show>, and a later <show> with the same id updates that card in place instead of adding a new one when it is all your reply holds (for progress you keep up to date); with words it moves the card under them. Cards may keep state the user changes (ccb.save); you get it with the user's next message. <component name=\"name\">request</component> asks Maintainer to change one, make a new one, or give you one from the shared library.)\n" + components.catalog(of: own)
-        if !others.isEmpty {
-            text += "\n(App: Also in the shared library, not yours yet, one line each. To use one, ask Maintainer for it with <component name=\"name\">add it to my list</component>; you then get its usage.)\n" + components.summaries(of: others)
-        }
-        return text
+        return ComponentKnowledge(own: own.map { .init(name: $0, text: components.catalog(of: [$0])) },
+                              others: others.map { .init(name: $0, text: components.summaries(of: [$0])) },
+                              limit: ComponentLibrary.limit)
     }
 
     /// A bot from before 1.9 (or a new one) has no list yet: it gets the built-ins plus every
@@ -127,8 +129,7 @@ extension Workspace {
         let request = ask.request.isEmpty ? "" : " (your request: \(Self.shortened(ask.request, to: 200)))"
         let user = ask.userAsked.isEmpty ? "" : " The user had asked you: \"\(ask.userAsked)\"."
         let usage = components.catalog(of: [name])
-        bot.queueNote("(App: Here are your components now.)\n" + componentBriefing(for: bot))
-        bot.appMessage(Self.arrivalLead(name, changed: changed) + "\(instead)\(request).\(user) Answer that now: draw it with <show name=\"\(name)\">…</show> as its usage says, with one short sentence in the user's language. Do not ask Maintainer for it again.)\n\(usage)")
+                bot.appMessage(Self.arrivalLead(name, changed: changed) + "\(instead)\(request).\(user) Answer that now: draw it with <show name=\"\(name)\">…</show> as its usage says, with one short sentence in the user's language. Do not ask Maintainer for it again.)\n\(usage)")
         tell(bot, changed
             ? L("{0} changed {1} as {2} asked.", maker ?? "Maintainer", title, bot.name)
             : L("{0} added {1} to your components.", maker ?? "Maintainer", title), sourceID: Self.maintainerID)
@@ -192,10 +193,10 @@ extension Workspace {
                 componentAsks.removeAll { $0 == asked }
                 componentArrived(name, for: asked, to: bot, by: "Maintainer")
             } else {
-                bot.queueNote("(App: Maintainer gave you the component \"\(name)\"; here are your components now.)\n" + componentBriefing(for: bot))
+                bot.queueNote("(App: Maintainer gave you the component \"\(name)\".)")
             }
         } else if takeComponent(name, from: bot) {
-            bot.queueNote("(App: \"\(name)\" was taken off your components; it stays in the shared library.)\n" + componentBriefing(for: bot))
+            bot.queueNote("(App: \"\(name)\" was taken off your components; it stays in the shared library.)")
             // Room now for one it asked for while its list was full.
             deliverAskedComponents()
         }
@@ -215,7 +216,7 @@ extension Workspace {
         let owner = message.role == .bot ? (message.sourceID.flatMap(member) ?? chat) : chat
         if takeComponent(name, from: owner) {
             tell(chat, L("Took \"{0}\" off {1}'s components. The shared library keeps it; to delete it from there, ask Maintainer.", name, owner.name))
-            owner.queueNote("(App: The user took \"\(name)\" off your components; it stays in the shared library.)\n" + componentBriefing(for: owner))
+            owner.queueNote("(App: The user took \"\(name)\" off your components; it stays in the shared library.)")
         } else {
             tell(chat, L("\"{0}\" is not on {1}'s components; nothing changed.", name, owner.name))
         }
@@ -263,5 +264,47 @@ extension Bot {
         case .switching: "Handing off"
         case .awake: waitingForPermission ? "Waiting for your OK" : retryingConnection ? NetworkResume.label + "，重試中…" : isWorking ? "Working" : "Awake"
         }
+    }
+}
+
+/// What a bot is told about components: its own, each with its whole usage, and one line for each
+/// of the rest of the library. A session gets `full` once; later, `changes(since:)` only.
+public struct ComponentKnowledge: Equatable, Sendable {
+    public struct Entry: Equatable, Sendable {
+        public var name: String
+        /// Its catalog lines: the whole usage when it is the bot's own, else its first line.
+        public var text: String
+    }
+    public var own: [Entry]
+    public var others: [Entry]
+    public var limit: Int
+
+    public var full: String {
+        var text = "(App: Components in the chat: \(own.count) / \(limit) yours, each with its usage below (a bot has at most \(limit)). <show name=\"name\">JSON</show> draws one; <show name=\"name\" command=\"git diff --stat\"></show> fills it with what that command prints instead (run in your project folder once the user allows it; JSON output is used as the data, other output as one string; the card has a refresh button). A component whose usage has a \"Command:\" line needs only <show name=\"name\"></show>; any other one (even with a \"Board command:\" line, which the chat never runs) needs its JSON inside the tag, and an empty one draws nothing; add refresh=\"2s\" to rerun a command card every 2 seconds while it is on screen (a usage with a \"Refresh: every 2s\" line does so already). Give a card an id, <show name=\"name\" id=\"tests\">JSON</show>, and a later <show> with the same id updates that card in place instead of adding a new one when it is all your reply holds (for progress you keep up to date); with words it moves the card under them. Cards may keep state the user changes (ccb.save); you get it with the user's next message. <component name=\"name\">request</component> asks Maintainer to change one, make a new one, or give you one from the shared library.)\n" + own.map(\.text).joined(separator: "\n")
+        if !others.isEmpty {
+            text += "\n(App: Also in the shared library, not yours yet, one line each. To use one, ask Maintainer for it with <component name=\"name\">add it to my list</component>; you then get its usage.)\n" + others.map(\.text).joined(separator: "\n")
+        }
+        return text
+    }
+
+    /// Only what changed since `told` (what the session already has); nil when nothing did.
+    public func changes(since told: ComponentKnowledge) -> String? {
+        let toldOwn = Dictionary(told.own.map { ($0.name, $0.text) }, uniquingKeysWith: { a, _ in a })
+        let toldOthers = Dictionary(told.others.map { ($0.name, $0.text) }, uniquingKeysWith: { a, _ in a })
+        let ownNames = Set(own.map(\.name))
+        let library = ownNames.union(others.map(\.name))
+        let added = own.filter { toldOwn[$0.name] == nil }
+        let changed = own.filter { entry in toldOwn[entry.name].map { $0 != entry.text } ?? false }
+        let dropped = others.filter { toldOwn[$0.name] != nil }
+        let gone = (told.own + told.others).map(\.name).filter { !library.contains($0) }
+        let shelf = others.filter { toldOwn[$0.name] == nil && toldOthers[$0.name] != $0.text }
+        var parts: [String] = []
+        if !added.isEmpty { parts.append("New on your list, with usage:\n" + added.map(\.text).joined(separator: "\n")) }
+        if !changed.isEmpty { parts.append("Usage changed (this replaces what you had):\n" + changed.map(\.text).joined(separator: "\n")) }
+        if !dropped.isEmpty { parts.append("No longer yours (still in the shared library; ask Maintainer to get one back):\n" + dropped.map(\.text).joined(separator: "\n")) }
+        if !gone.isEmpty { parts.append("Gone from the library: " + gone.joined(separator: ", ")) }
+        if !shelf.isEmpty { parts.append("New or changed in the shared library, not yours yet:\n" + shelf.map(\.text).joined(separator: "\n")) }
+        guard !parts.isEmpty else { return nil }
+        return "(App: Components were updated; only what changed since you were last told, the rest is as before. You have \(own.count) / \(limit).)\n" + parts.joined(separator: "\n")
     }
 }
