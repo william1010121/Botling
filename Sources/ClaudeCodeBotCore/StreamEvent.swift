@@ -7,7 +7,21 @@ enum StreamEvent {
     /// subagents as trace events.
     static func events(in line: String) -> [AgentEvent] {
         if isPartial(line) { return [] }
-        return subagentOutput(in: line) + contentEvents(in: line)
+        return subagentOutput(in: line) + subagentModel(in: line) + contentEvents(in: line)
+    }
+
+    /// The model that actually runs a subagent: its own messages name it, also when its Agent
+    /// call asked for none ("same model") or its definition picks one (Explore on Haiku).
+    private static func subagentModel(in line: String) -> [AgentEvent] {
+        guard line.contains("\"parent_tool_use_id\""), line.contains("\"model\""),
+              let data = line.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              object["type"] as? String == "assistant",
+              let parent = object["parent_tool_use_id"] as? String,
+              let model = (object["message"] as? [String: Any])?["model"] as? String,
+              // "<synthetic>": a line Claude Code wrote itself (an error), not a model's.
+              !model.isEmpty, !model.hasPrefix("<") else { return [] }
+        return [.trace(.subagentModel(id: parent, model: model))]
     }
 
     /// Only explicit, attributable output counts; input/cache counts and text length are not output.

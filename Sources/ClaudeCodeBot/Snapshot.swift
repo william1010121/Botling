@@ -456,12 +456,24 @@ enum Snapshot {
             BotStore(directory: Workspace.Layout.bot(projects[0].id, in: root)).save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .claude))
             // Side-by-side regression fixture: both, Codex only, then Claude only.
             BotStore(directory: Workspace.Layout.bot(projects[1].id, in: root)).save(heads: .single(.codex))
+            // Sample subagents under the first project, two per head, marked with their head.
+            let store = BotStore(directory: Workspace.Layout.bot(projects[0].id, in: root))
+            func sample(_ id: String, _ title: String) -> Subagent {
+                var subagent = Subagent(id: id, description: title, type: "general-purpose", prompt: title, status: .completed)
+                subagent.endedAt = Date()
+                return subagent
+            }
+            store.save(subagents: [sample("c1", "Settings page redesign"), sample("c2", "Grok Web support")])
+            BotStore(directory: store.directory.appending(path: "partner-codex"))
+                .save(subagents: [sample("x1", "Codex worker model setting"), sample("x2", "Emoji reactions")])
         }
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
         // Main bot's icon (36 + 40) and the gap (4), then half of Maintainer's.
         let tip = RailTip(title: workspace.maintainer.name, detail: RailLayout.tipDetail(status: "Done, click to see", unread: 2, waiting: false), midY: 36 + 40 + 4 + 20)
+        // Taller with the sample subagents, so every row shows.
+        let extra: CGFloat = ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEADS"] != nil ? 180 : 0
         let pane = { (collapsed: Bool) in
             HStack(spacing: 0) {
                 RailView(workspace: workspace, settings: SettingsNavigator(), collapsed: collapsed)
@@ -476,7 +488,7 @@ enum Snapshot {
                 }
                 .padding(EdgeInsets(top: 44, leading: 16, bottom: 16, trailing: 16))
             }
-            .frame(width: 520, height: 560)
+            .frame(width: 520, height: 560 + extra)
             .background(Theme.ground)
             .overlay(alignment: .topLeading) { RailChrome(collapsed: collapsed, tip: collapsed ? tip : nil) {} }
             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -489,11 +501,11 @@ enum Snapshot {
                 }
             }
             .padding(30)
-            .frame(width: 1140, height: 620)
+            .frame(width: 1140, height: 620 + extra)
             .foregroundStyle(Theme.text)
             .background(Color(hex: 0x0A0A0C))
             .preferredColorScheme(.dark)
-        let frame = NSRect(x: 0, y: 0, width: 1140, height: 620)
+        let frame = NSRect(x: 0, y: 0, width: 1140, height: 620 + extra)
         let window = HeadlessRun.offscreenWindow(frame)
         window.appearance = NSAppearance(named: .darkAqua)
         let host = NSHostingView(rootView: content)

@@ -10,6 +10,20 @@ public enum BotModel: String, CaseIterable, Codable, Sendable {
         case .opus: "Opus"
         }
     }
+
+    /// A model as Claude Code names it ("sonnet", "claude-opus-4-5-20251101") read as a name
+    /// ("Sonnet", "Opus 4.5"). Anything else (a Codex model) is kept as it is.
+    public static func displayName(ofModelID id: String) -> String {
+        let lower = id.lowercased()
+        if let alias = BotModel(rawValue: lower) { return alias.displayName }
+        // A context-window suffix ("[1m]") is not part of the name.
+        let bare = lower.split(separator: "[", maxSplits: 1).first.map(String.init) ?? lower
+        let parts = bare.split(separator: "-").map(String.init)
+        guard parts.first == "claude", let family = parts.lazy.compactMap(BotModel.init(rawValue:)).first else { return id }
+        // Version numbers are short; the release date (20251101) is not.
+        let version = parts.dropFirst().filter { $0.count <= 2 && $0.allSatisfy(\.isNumber) }
+        return version.isEmpty ? family.displayName : "\(family.displayName) \(version.joined(separator: "."))"
+    }
 }
 
 /// Which CLI a bot runs on: Claude Code (`claude`) or Codex (`codex app-server`). Both read and
