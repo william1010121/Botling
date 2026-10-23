@@ -153,6 +153,42 @@ struct CodexManagedWorkerTests {
         #expect(!late.events.contains(.backgroundTurnStarted))
     }
 
+    @Test func selectedWorkerCancellationKeepsConcurrentWorkerAndItsReportAlive() throws {
+        var (session, _) = ready()
+        rootTurn(&session)
+        let (a, _) = launch(&session)
+        let second = tool(102, arguments: ["instructions": "independent task", "name": "second"], &session)
+        let b = try #require(second.traces.compactMap { event -> String? in
+            if case let .subagentStarted(id, _, _, _, _) = event { return id }; return nil
+        }.first)
+        let thread = response(write(second, "thread/start"), ["thread": ["id": "worker-second"]], &session)
+        _ = response(write(thread, "turn/start"), ["turn": ["id": "second-1"]], &session)
+        _ = completed("root", "parent-1", &session)
+        let stopped = Out(session.cancelManagedWorkers([a]))
+        #expect(stopped.writes.filter { $0["method"] as? String == "turn/interrupt" }.count == 1)
+        #expect(stopped.params("turn/interrupt")?["threadId"] as? String == "worker")
+        #expect(stopped.traces.contains { if case .subagentEnded(a, "killed", _) = $0 { true } else { false } })
+        #expect(!stopped.events.contains(.managedWorkPending(false)))
+        #expect(session.managedWorkerRecords.first { $0.id == b }?.wasActive == true)
+        #expect(completed("worker", "worker-1", &session).methods.isEmpty)
+        _ = item("worker-second", "second-1", ["id": "proof", "type": "agentMessage", "text": "second evidence"], &session)
+        let report = completed("worker-second", "second-1", &session)
+        #expect(report.events.contains(.managedWorkerReportStarted(taskID: b)))
+        #expect(((report.params("turn/start")?["toolOutput"] as? [String: Any])?["output"] as? String)?.contains("second evidence") == true)
+        #expect(Out(session.cancelManagedWorkers(["stale"])).writes.isEmpty)
+    }
+
+    @Test func selectedCancellationBeforeThreadStartsSuppressesOnlyItsLateStart() throws {
+        var (session, _) = ready()
+        rootTurn(&session)
+        let handoff = tool(100, &session)
+        let id = try #require(session.managedWorkerRecords.first?.id)
+        _ = session.cancelManagedWorkers([id])
+        let late = response(write(handoff, "thread/start"), ["thread": ["id": "late-worker"]], &session)
+        #expect(!late.methods.contains("turn/start"))
+        #expect(session.managedWorkerRecords.first?.wasActive == false)
+    }
+
     @Test func savedCompletedTaskResumesSameThreadForFollowup() {
         let record = CodexManagedWorkerRecord(id: "task-1", name: "billing", instructions: "original", thread: "saved-worker", run: 3, wasActive: false)
         var (session, _) = ready(restored: [record])

@@ -8,7 +8,7 @@ struct ConductorTests {
     let two = HeadsSettings(engines: [.claude, .codex])
 
     func asks(_ actions: [ConductorAction]) -> [(BotEngine, String)] {
-        actions.compactMap { if case let .ask(head, text) = $0 { (head, text) } else { nil } }
+        actions.compactMap { if case let .ask(head, text, _) = $0 { (head, text) } else { nil } }
     }
 
     func card(_ actions: [ConductorAction]) -> (String, [String])? {

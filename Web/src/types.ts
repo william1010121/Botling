@@ -486,6 +486,7 @@ export type Action =
   | { type: "reply"; messageID: string }
   | { type: "cancelReply" }
   | { type: "stopRounds" }
+  | { type: "stopHandoff"; botID: string; handoffID: string }
   | { type: "openURL"; url: string; label: string }
   | { type: "openExternal"; url: string }
   | { type: "revealFile"; url: string }

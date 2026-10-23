@@ -286,6 +286,10 @@ struct ChatSurface: NSViewRepresentable {
                 view?.evaluateJavaScript("ccb.focus()")
             case "cancelReply":
                 inputs.replies[bot.id] = nil
+            case "stopHandoff":
+                // A stale page event may arrive after the user switched conversations.
+                guard id("botID") == bot.id, let handoffID = id("handoffID") else { return }
+                bot.stopHandoff(handoffID)
             case "stopRounds":
                 bot.stopRounds()
             case "openURL":

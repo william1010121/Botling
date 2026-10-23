@@ -52,7 +52,7 @@ describe("the hand-off chip on the pinned strip's row", () => {
     expect(chip().querySelectorAll(".handoff-meter i")).toHaveLength(6);
     expect(chip().querySelectorAll(".handoff-meter i.on")).toHaveLength(1);
     click(".handoff-stop");
-    expect(sent).toContainEqual({ type: "stopRounds" });
+    expect(sent).toContainEqual({ type: "stopHandoff", botID: "b1", handoffID: "H1" });
   });
 
   it("is in the page's language", () => {
@@ -119,8 +119,11 @@ describe("the hand-off panel", () => {
     expect(row.querySelector(".handoff-origin")?.textContent).toBe("From your message: Also publish it");
     expect([...row.querySelectorAll(".handoff-lines li")].map((li) => [li.querySelector(".handoff-who")?.textContent, li.querySelector(".handoff-text")?.textContent]))
       .toEqual([["Codex", "Publish the page"], ["Claude", "Published: claude.ai/x"]]);
-    // Hand-offs stop together, and the button says so when others are under way.
-    expect(row.querySelector(".handoff-stop-one")?.textContent).toBe("Stop all");
+    // A selected row must never post the global stop action.
+    expect(row.querySelector(".handoff-stop-one")?.textContent).toBe("Stop this one");
+    click(".handoff-row[data-id='H2'] .handoff-stop-one");
+    expect(sent).toEqual([{ type: "stopHandoff", botID: "b1", handoffID: "H2" }]);
+    expect(panel().querySelector(".handoff-row[data-id='H1']")?.getAttribute("data-state")).toBe("running");
     // Kept open through the next state, and per chat.
     dock.update(state({ handoffs: three }));
     expect(panel().querySelector(".handoff-row[data-id='H2'] .handoff-detail")).not.toBeNull();
@@ -138,6 +141,44 @@ describe("the hand-off panel", () => {
     click(".handoff-toggle");
     click(".handoff-row-head");
     expect(panel().querySelector(".handoff-stop-one")?.textContent).toBe("Stop this one");
+  });
+
+  it("keeps the other row active after the selected one stops and removes ended controls", () => {
+    const dock = setUp();
+    dock.update(state({ handoffs: three }));
+    click(".handoff-toggle");
+    click(".handoff-row[data-id='H2'] .handoff-row-head");
+    click(".handoff-row[data-id='H2'] .handoff-stop-one");
+    dock.update(state({ handoffs: three.map((one) => one.id === "H2" ? { ...one, state: "stopped" } : one) }));
+    expect(chip().querySelector(".handoff-label")?.textContent).toBe("Hand-off 1/6");
+    expect(panel().querySelector(".handoff-row[data-id='H2'] .handoff-stop-one")).toBeNull();
+    expect(panel().querySelector(".handoff-row[data-id='H1']")?.getAttribute("data-state")).toBe("running");
+    click(".handoff-row[data-id='H3'] .handoff-row-head");
+    expect(panel().querySelector(".handoff-row[data-id='H3'] .handoff-stop-one")).toBeNull();
+    expect(sent).toEqual([{ type: "stopHandoff", botID: "b1", handoffID: "H2" }]);
+  });
+
+  it("binds a delayed click to its original bot and UUID after switching chats", () => {
+    const dock = setUp();
+    dock.update(state({ handoffs: three }));
+    click(".handoff-toggle");
+    click(".handoff-row[data-id='H2'] .handoff-row-head");
+    const oldButton = panel().querySelector<HTMLButtonElement>(".handoff-stop-one")!;
+    dock.update(state({ botID: "b2", handoffs: [handoff({ id: "other" })] }));
+    oldButton.click();
+    expect(sent).toEqual([{ type: "stopHandoff", botID: "b1", handoffID: "H2" }]);
+    click(".handoff-stop");
+    expect(sent[1]).toEqual({ type: "stopHandoff", botID: "b2", handoffID: "other" });
+  });
+
+  it("uses the selected-stop label in Chinese even when other handoffs are active", () => {
+    setLanguage("zh-Hant");
+    const dock = setUp();
+    dock.update(state({ lang: "zh-Hant", handoffs: three }));
+    click(".handoff-toggle");
+    click(".handoff-row[data-id='H2'] .handoff-row-head");
+    expect(panel().querySelector(".handoff-stop-one")?.textContent).toBe("停止這筆");
+    expect(panel().querySelector(".handoff-stop-all")?.textContent).toBe("全部停止");
   });
 
   it("closes once nothing is under way", () => {
