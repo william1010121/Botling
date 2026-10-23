@@ -742,13 +742,13 @@ struct CodexSession {
 
     private static let managedTools: [[String: Any]] = [
         ["type": "function", "name": "app_handoff",
-         "description": "Assign the whole execution scope to an independent app-managed worker. Returns acceptance immediately. Finish this turn after the receipt; the app will deliver app_task_result in a later turn.",
+         "description": "Assign one independently accepted deliverable to an app-managed worker. Returns acceptance and task_id immediately, not a completed result. Continue other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn without waiting. The app delivers correlated app_task_result reports in later turns. A new handoff does not resolve the active report.",
          "inputSchema": ["type": "object", "properties": ["instructions": ["type": "string"], "name": ["type": "string"]], "required": ["instructions"], "additionalProperties": false]],
         ["type": "function", "name": "app_send_message",
-         "description": "Send instructions or a follow-up to the same worker task/session. Busy workers receive steering; idle workers start a new turn. Returns acceptance, not the completed result.",
+         "description": "Send a follow-up within the same worker task/session; never append a new independent deliverable. Busy workers receive steering; idle workers start a new turn. Returns acceptance, not the completed result. Continue other eligible dispatches and required report decisions before ending the dispatch phase. Only continuation of the active report task_id resolves that report.",
          "inputSchema": ["type": "object", "properties": ["task_id": ["type": "string"], "message": ["type": "string"]], "required": ["task_id", "message"], "additionalProperties": false]],
         ["type": "function", "name": "app_task_checkpoint",
-         "description": "Resolve the active app_task_result against the authorized user objective. Worker completed means only its execution turn ended. Record concrete acceptance evidence, an exact user input/permission needed, a real blocker, or an actively running dependency. If authorized work remains actionable, dispatch it using app_send_message/app_handoff instead. A bare waiting status is not completion. This checkpoint grants no new authorization.",
+         "description": "Resolve the active app_task_result against the authorized user objective. Worker completed means only its execution turn ended. Record concrete acceptance evidence, an exact user input/permission needed, a real blocker, or an actively running dependency. Continue the same authorized task with app_send_message when needed. A new handoff or a message to another task does not resolve this report; after dispatching a separate downstream worker, explicitly record waiting_dependency with its task_id. A bare waiting status is not completion. This checkpoint grants no new authorization.",
          "inputSchema": ["type": "object", "properties": [
             "task_id": ["type": "string"],
             "outcome": ["type": "string", "enum": ["complete", "waiting_user", "waiting_dependency", "blocked"]],
@@ -786,9 +786,10 @@ struct CodexSession {
                     .event(.trace(.subagentStarted(id: id, description: name, type: "codex-worker", prompt: instructions, background: true))),
                     .event(.trace(.subagentNamed(id: id, name: name)))]
             out.append(startWorkerThread(id))
-            activeResult?.reconciled = true
+            // Acceptance of a separate deliverable is not a disposition of the active report.
+            // A related downstream task must be linked by an explicit dependency checkpoint.
             response = reply(["task_id": id, "status": "accepted",
-                              "message": "The app owns this task. Finish this turn; app_task_result will arrive when the worker finishes."], success: true)
+                              "message": "This task is accepted and owned by its worker. Continue any other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn. app_task_result will arrive when this worker finishes."], success: true)
         } else if tool == "app_send_message", let id = arguments?["task_id"] as? String,
                   let message = arguments?["message"] as? String, !message.isEmpty, workers[id] != nil {
             let queued = workers[id]?.active == true
@@ -796,7 +797,7 @@ struct CodexSession {
             out.append(.event(.trace(.messageSent(id: callID, to: workers[id]?.thread ?? id,
                 summary: nil, message: message, parent: nil))))
             out += messageWorker(id, text: message)
-            activeResult?.reconciled = true
+            if activeResult?.task == id { activeResult?.reconciled = true }
             out.append(.event(.trace(.launchResult(id: callID,
                 result: LaunchResult(recipient: workers[id]?.thread ?? id), parent: nil))))
             response = reply(["task_id": id, "status": queued ? "queued" : "accepted"], success: true)

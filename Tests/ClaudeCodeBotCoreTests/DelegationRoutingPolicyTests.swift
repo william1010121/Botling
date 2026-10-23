@@ -47,9 +47,10 @@ struct DelegationRoutingPolicyTests {
         #expect(system.contains("each source-editing worker its own isolated git worktree and branch"))
         #expect(system.contains("Integrate completed changes sequentially"))
         #expect(system.contains("single writer"))
-        #expect(system.contains("Do not dispatch further tools after an acceptance receipt"))
-        #expect(system.contains("name the remaining scopes as pending (not accepted)"))
-        #expect(!system.contains("all independent app_handoff calls before ending the turn"))
+        #expect(system.contains("You may call app_handoff sequentially multiple times in this same turn"))
+        #expect(system.contains("Record its deliverable-to-task_id mapping"))
+        #expect(!system.contains("Do not dispatch further tools after an acceptance receipt"))
+        #expect(system.contains("pending conversation text is not an app-owned dispatch queue"))
         #expect(system.contains("app_task_result, correlated by task_id"))
     }
 
