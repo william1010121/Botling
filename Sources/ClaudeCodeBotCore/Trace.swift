@@ -643,6 +643,13 @@ public struct TraceBook: Equatable, Sendable {
         return tags
     }
 
+    /// A turn cut off before it answered gave its steps to a bubble of their own; its result
+    /// came after all, so they go back ahead of what it did since, for its reply.
+    public mutating func putBack(steps earlier: [Step], tasks earlierTasks: [BackgroundTask]) {
+        steps = earlier + steps
+        tasks = earlierTasks + tasks.filter { task in !earlierTasks.contains { $0.id == task.id } }
+    }
+
     /// Forgets the turn's steps (a turn nobody sees: tidying, a group turn).
     public mutating func dropSteps() {
         steps = []

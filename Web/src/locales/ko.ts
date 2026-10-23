@@ -156,6 +156,7 @@ export const ko: Dictionary = {
   "messages.addReaction": "반응 추가",
   "messages.reactEmoji": "{emoji} 반응",
   "messages.reply": "답장",
+  "messages.interrupted": "중단됨",
   "messages.fold": "접기",
   "messages.answered": "답변함",
   "messages.answeredLabel": "답변함: {label}. 선택지 보기",

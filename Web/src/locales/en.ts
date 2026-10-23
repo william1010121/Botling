@@ -157,6 +157,7 @@ export const en = {
   "messages.addReaction": "Add reaction",
   "messages.reactEmoji": "React {emoji}",
   "messages.reply": "Reply",
+  "messages.interrupted": "Interrupted",
   "messages.fold": "Fold",
   "messages.answered": "Answered",
   "messages.answeredLabel": "Answered: {label}. Show the options",

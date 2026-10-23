@@ -126,6 +126,11 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **An interrupted reply no longer disappears.** When you send another message while the bot
+  is still working (or it pauses handed-over work for you, its process dies, or the app quits
+  mid-turn), what it had already written and its Worked steps stay in the chat as a bubble
+  marked "Interrupted", saved with the chat and archive, instead of the live bubble vanishing.
+  If that turn turns out to have finished anyway, its full reply replaces the kept part.
 - **A Claude subagent's token speed counts all of its output.** Streamed subagent lines carry
   only the count from when each block ended and the last message is not streamed, so tok/s
   read about 11 times too low. The app now reads each message's final output count from the

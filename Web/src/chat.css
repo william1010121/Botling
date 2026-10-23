@@ -186,6 +186,8 @@ video.media { width: 480px; max-height: 270px; background: #000; cursor: default
 }
 .from-subagent > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .from-subagent-open { flex-shrink: 0; color: var(--link); }
+/* A turn cut off before it answered: what it had said and done so far stays, marked. */
+.interrupted-note { margin-top: 6px; font-size: 12px; color: var(--faint); font-style: italic; }
 
 /* Components and choice buttons */
 .component { display: flex; align-items: flex-start; gap: 6px; margin-top: 10px; position: relative; }
