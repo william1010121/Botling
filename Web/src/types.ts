@@ -363,6 +363,8 @@ export interface SubagentHeaderView {
 }
 
 export interface ChatState {
+  /** Message avatar size; absent keeps the responsive CSS defaults. */
+  chatAvatarSize?: number | null;
   botID: string;
   botName: string;
   messages: MessageView[];

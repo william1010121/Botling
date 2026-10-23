@@ -82,6 +82,14 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     public var botLook: BotLook { botLookChoice ?? .cute }
 
+    /// Chat message faces only. Nil keeps the original responsive 48/40 px sizes.
+    public var chatAvatarSizeChoice: Int?
+    public static let chatAvatarSizeRange = 32...96
+    public static func clampedChatAvatarSize(_ size: Int) -> Int {
+        min(chatAvatarSizeRange.upperBound, max(chatAvatarSizeRange.lowerBound, size))
+    }
+    public var chatAvatarSize: Int { Self.clampedChatAvatarSize(chatAvatarSizeChoice ?? 48) }
+
     /// The language the app's words are in and bots reply in by default. Nil (System default,
     /// or a settings file from before it) follows the Mac's preferred languages.
     public var languageChoice: AppLanguage?

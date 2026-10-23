@@ -427,6 +427,7 @@ private struct GeneralPage: View {
     var body: some View {
         LanguageSection(workspace: workspace)
         BotLookSection(workspace: workspace)
+        ChatAvatarSizeSection(workspace: workspace)
         Section {
             Picker(L("Remind after no new step for"), selection: Binding(
                 get: { workspace.settings.stallReminder },
@@ -507,6 +508,44 @@ struct BotLookSection: View {
             }
         } header: {
             Text(L("Bot look"))
+        }
+    }
+}
+
+/// Message faces only: the preview uses the actual selected size, with the bot's hat intact.
+struct ChatAvatarSizeSection: View {
+    @ObservedObject var workspace: Workspace
+
+    var body: some View {
+        Section {
+            HStack {
+                Text(L("Chat avatar size"))
+                Spacer()
+                Text("\(workspace.settings.chatAvatarSize) px").monospacedDigit().foregroundStyle(.secondary)
+            }
+            Slider(value: Binding(
+                get: { Double(workspace.settings.chatAvatarSize) },
+                set: { workspace.setChatAvatarSize(Int($0)) }
+            ), in: Double(AppSettings.chatAvatarSizeRange.lowerBound)...Double(AppSettings.chatAvatarSizeRange.upperBound), step: 1) {
+                Text(L("Chat avatar size"))
+            }
+            .labelsHidden()
+            HStack(spacing: 12) {
+                if workspace.settings.botLook == .cute {
+                    ChibiHeadView(head: .claude, hat: .square, size: CGFloat(workspace.settings.chatAvatarSize))
+                } else {
+                    AvatarView(kind: .square, size: CGFloat(workspace.settings.chatAvatarSize), eyes: .open)
+                }
+                Text(L("Preview")).font(.system(size: 12)).foregroundStyle(.secondary)
+                Spacer()
+                Button(L("Use default size")) { workspace.setChatAvatarSize(nil) }
+                    .disabled(workspace.settings.chatAvatarSizeChoice == nil)
+            }
+            .frame(minHeight: 96)
+        } header: {
+            Text(L("Chat avatars"))
+        } footer: {
+            Footnote(L("Applies immediately to message avatars in every chat. Sidebar icons and small engine heads keep their size. Default: 48 px, or 40 px in narrow chats."))
         }
     }
 }
