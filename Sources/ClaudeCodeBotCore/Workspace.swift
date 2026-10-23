@@ -253,6 +253,7 @@ public final class Workspace: ObservableObject {
             guard let self else { return "" }
             return [projectBriefing(), webBriefing()].filter { !$0.isEmpty }.joined(separator: "\n\n")
         }
+        mainBot.componentKnowledge = { [weak self] in self?.componentKnowledge() }
         mainBot.extraDirectories = { [weak self] in self?.everyProject.map(\.notesFolder) ?? [] }
         giveClaudeParts(to: mainBot)
         countComponents(of: mainBot)
@@ -285,9 +286,7 @@ public final class Workspace: ObservableObject {
             deliverAskedComponents()
             finishSpecBuilds()
             finishBoardCommands()
-            for bot in botsWithComponents {
-                bot.queueNote("(App: Components were updated; here is how to use them now.)\n" + componentBriefing(for: bot))
-            }
+            for bot in botsWithComponents { bot.componentsChanged() }
         }
         plugins.onNotice = { [weak self] text in
             guard let self else { return }
@@ -1022,7 +1021,6 @@ public final class Workspace: ObservableObject {
         \(maintainerLine)\(cardLine)
         (App: Temporary teams you can start, with <team name="name">task</team>.)
         \(teamLines)
-        \(componentBriefing(for: mainBot))
         """
     }
 
@@ -2200,9 +2198,10 @@ public final class Workspace: ObservableObject {
         bot.onTokens = { [weak self] tokens in self?.record(0, tokens: tokens, by: project.name) }
         bot.onRateLimits = { [weak self] limits in self?.note(limits) }
         bot.onCodexRateLimits = { [weak self] limits in self?.note(codex: limits) }
-        bot.wakeNote = { [weak self, weak bot] in
-            guard let self else { return "" }
-            return [componentBriefing(for: bot), developerBriefing(for: project)].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        bot.wakeNote = { [weak self] in self?.developerBriefing(for: project) ?? "" }
+        bot.componentKnowledge = { [weak self, weak bot] in
+            guard let self, let bot else { return nil }
+            return componentKnowledge(for: bot)
         }
         giveClaudeParts(to: bot)
         countComponents(of: bot)
