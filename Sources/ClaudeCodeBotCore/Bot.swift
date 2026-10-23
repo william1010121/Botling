@@ -104,6 +104,20 @@ public final class Bot: ObservableObject, Identifiable {
     /// Its components and the rest of the library as they are now. Each session gets the whole
     /// briefing once, then only what changed (`componentNote`). Nil: a chat without components.
     public var componentKnowledge: (() -> ComponentKnowledge?)?
+    /// App injection strategy, independent for each kind of context. Changing mode never
+    /// interrupts a turn; the next normal message establishes a fresh complete baseline.
+    public var reactionChangesOnly = true {
+        didSet {
+            if oldValue != reactionChangesOnly { reactionsNeedBaseline = true }
+            partner?.reactionChangesOnly = reactionChangesOnly
+        }
+    }
+    public var componentChangesOnly = true {
+        didSet {
+            if oldValue != componentChangesOnly { componentsNeedBaseline = true }
+            partner?.componentChangesOnly = componentChangesOnly
+        }
+    }
     /// Folders outside its own it may read and edit, read at each wake.
     public var extraDirectories: (() -> [URL])?
     /// Plugins' Claude parts (skills, agents, MCP) it starts with.
@@ -247,6 +261,8 @@ public final class Bot: ObservableObject, Identifiable {
     private var componentsMayHaveChanged = false
     /// The reactions this session has seen; nil: none yet (a new session gets the intro).
     private var reactionsSeen: ReactionContext.Seen?
+    private var reactionsNeedBaseline = false
+    private var componentsNeedBaseline = false
 
     private var process: AgentProcess?
     private var idleTask: Task<Void, Never>?
@@ -759,6 +775,8 @@ public final class Bot: ObservableObject, Identifiable {
         made.sessionExists = sessionExists
         made.wakeNote = wakeNote
         made.componentKnowledge = componentKnowledge
+        made.reactionChangesOnly = reactionChangesOnly
+        made.componentChangesOnly = componentChangesOnly
         made.extraDirectories = extraDirectories
         made.pluginDirectories = pluginDirectories
         made.pluginStamp = pluginStamp
@@ -1288,7 +1306,7 @@ public final class Bot: ObservableObject, Identifiable {
         if resumeProbe, resumeRetry == nil, groupReply == nil { resumeRetry = outgoing }
         var text = outgoing.text
         var seen = outgoing.about + [outgoing.messageID].compactMap { $0 }
-        if componentsMayHaveChanged {
+        if componentsMayHaveChanged || (!outgoing.contextOnly && (!componentChangesOnly || componentsNeedBaseline)) {
             let components = componentNote()
             if !components.isEmpty { text = components + "\n\n" + text }
         }
@@ -1318,8 +1336,12 @@ public final class Bot: ObservableObject, Identifiable {
     private func componentNote() -> String {
         componentsMayHaveChanged = false
         guard let now = componentKnowledge?() ?? nil else { return "" }
-        defer { briefedComponents = now }
+        let full = !componentChangesOnly || componentsNeedBaseline
+        defer { briefedComponents = now; componentsNeedBaseline = false }
         guard let told = briefedComponents else { return now.full }
+        if full {
+            return "(App: Complete component snapshot; this replaces your previous component list and shared library shelf. Anything absent is no longer available.)\n" + now.full
+        }
         return now.changes(since: told) ?? ""
     }
 
@@ -1328,8 +1350,15 @@ public final class Bot: ObservableObject, Identifiable {
     /// reactions that changed since.
     private func reactionNote(for outgoing: Outgoing) -> String {
         guard outgoing.fromUser || outgoing.messageID != nil else { return "" }
-        let (text, seen) = reactionsSeen.map { ReactionContext.update(chat, seen: $0, current: outgoing.messageID) }
-            ?? ReactionContext.intro(chat, current: outgoing.messageID)
+        let result: (text: String, seen: ReactionContext.Seen)
+        if !reactionChangesOnly || reactionsNeedBaseline {
+            result = ReactionContext.full(chat, previous: reactionsSeen ?? [:], current: outgoing.messageID)
+        } else {
+            result = reactionsSeen.map { ReactionContext.update(chat, seen: $0, current: outgoing.messageID) }
+                ?? ReactionContext.intro(chat, current: outgoing.messageID)
+        }
+        let (text, seen) = result
+        reactionsNeedBaseline = false
         reactionsSeen = seen
         return text
     }

@@ -870,11 +870,35 @@ struct ResultsSection: View {
 
 // MARK: Usage
 
+/// The App's context strategy, shared by the two engines; no CLI cache policy changes.
+struct PromptSavingsSection: View {
+    @ObservedObject var workspace: Workspace
+
+    var body: some View {
+        Section {
+            Toggle(L("Send only reaction changes"), isOn: Binding(
+                get: { workspace.settings.reactionChangesOnly },
+                set: { workspace.setReactionChangesOnly($0) }
+            ))
+            Toggle(L("Send only component changes"), isOn: Binding(
+                get: { workspace.settings.componentChangesOnly },
+                set: { workspace.setComponentChangesOnly($0) }
+            ))
+        } header: {
+            Text(L("App context savings"))
+        } footer: {
+            Footnote(L("Applies to all bots, both Claude and Codex, from the next normal turn. On: send a full snapshot first, then only changes. Off: send a full snapshot every turn. Turning it back on sends a fresh full snapshot first."))
+        }
+        .toggleStyle(.switch)
+    }
+}
+
 /// Cost and tokens today, the subscriptions' limits, by bot, and the days before.
 private struct UsagePage: View {
     @ObservedObject var workspace: Workspace
 
     var body: some View {
+        PromptSavingsSection(workspace: workspace)
         let spending = workspace.spending
         let isToday = spending.day == Spending.today()
         let tokens = isToday ? spending.tokens : TokenUsage()
