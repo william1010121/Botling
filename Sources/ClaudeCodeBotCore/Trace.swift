@@ -230,6 +230,19 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable, Settleable {
     public var unsettledAt: Date?
 
     private enum CodingKeys: String, CodingKey {
+        case id, description, type, prompt, status, background, startedAt, endedAt, steps, result, parentID, unsettledAt, name, agentID, calls, model, runtime, outputTokenCounters
+        case settledAt = "dismissedAt"
+    }
+    /// The name the bot gave it, when it gave one.
+    public var name: String?
+    /// claude's id for it (the Agent call's `agentId`), which SendMessage names it by.
+    public var agentID: String?
+    /// The SendMessage calls that reached it: a resumed run's `task_started` and
+    /// `task_notification` name the call that resumed it, not the one that started it.
+    public var calls: [String]?
+    /// The model its Agent call asked for ("sonnet"), when it asked for one.
+    public var model: String?
+    public var runtime: WorkerRuntimeInfo?
     /// Absolute counters replace earlier snapshots, so repeated/streamed usage is not added twice.
     public var outputTokenCounters: [String: Int]?
 
@@ -238,3 +251,529 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable, Settleable {
         let total = counters.values.reduce(0.0) { $0 + Double($1) }
         return total.isFinite ? total : nil
     }
+
+    public init(id: String, description: String, type: String? = nil, prompt: String, status: Status = .running, background: Bool = false, startedAt: Date = Date(), steps: [Step] = [], parentID: String? = nil) {
+        self.id = id
+        self.description = description
+        self.type = type
+        self.prompt = prompt
+        self.status = status
+        self.background = background
+        self.startedAt = startedAt
+        self.steps = steps
+        self.parentID = parentID
+    }
+
+    public var isRunning: Bool { status == .running }
+
+    /// How the left column marks it. Only one still at work gets a live dot; a finished one
+    /// gets a check, so it never looks like a bot that is awake (green).
+    public enum Mark: Equatable, Sendable {
+        case live, done, failed, stopped
+    }
+
+    public var mark: Mark {
+        switch status {
+        case .running: .live
+        case .completed: .done
+        case .failed: .failed
+        case .stopped: .stopped
+        }
+    }
+
+    /// Its tool calls so far.
+    public var toolCount: Int { steps.filter { $0.kind == .tool || $0.kind == .subagent }.count }
+
+    /// Its bot reaches it with SendMessage by this (an agentId or a name).
+    func answers(to recipient: String) -> Bool {
+        agentID == recipient || name == recipient || id == recipient
+    }
+}
+
+/// A bot's running record: the steps of the turn under way, and its subagents (newest last).
+public struct TraceBook: Equatable, Sendable {
+    public private(set) var steps: [Step] = []
+    public private(set) var subagents: [Subagent]
+    /// Background work the turn under way started (its reply's chips).
+    public private(set) var tasks: [BackgroundTask] = []
+    /// ScheduleWakeup and CronCreate calls of the turn under way, until their results come.
+    private var scheduleCalls: [String: ScheduleCall] = [:]
+    /// Structured launch results waiting for their call's `toolResult`.
+    private var launches: [String: LaunchResult] = [:]
+    /// SendMessage calls, until their results come.
+    private var sends: [String: SentMessage] = [:]
+
+    struct SentMessage: Equatable, Sendable {
+        var to: String
+        var summary: String?
+        var message: String
+    }
+    /// Subagents kept once ended; running ones are always kept.
+    static let keptSubagents = 40
+    /// Longest detail or output kept for one step.
+    static let longest = 4000
+    /// Where pictures tool calls gave back are kept (the bot's store); nil: a temporary folder.
+    public var imageFolder: URL?
+
+    public init(subagents: [Subagent] = []) {
+        self.subagents = subagents
+    }
+
+    /// The tools that start a subagent.
+    static let subagentTools: Set<String> = ["Agent", "Task"]
+    /// The tool that sends a subagent (or another session) a message, resuming one that ended.
+    static let messageTool = "SendMessage"
+
+    /// Takes in one event. Returns true when a subagent started or ended (worth saving).
+    @discardableResult
+    public mutating func apply(_ event: TraceEvent, at date: Date = Date()) -> Bool {
+        switch event {
+        case let .subagentOutput(id, counter, tokens):
+            guard tokens >= 0, let index = resolvedIndex(id),
+                  subagents[index].outputTokenCounters?[counter] != tokens else { return false }
+            if subagents[index].outputTokenCounters == nil { subagents[index].outputTokenCounters = [:] }
+            subagents[index].outputTokenCounters?[counter] = tokens
+            return true
+        case let .toolUse(id, tool, title, detail, parent):
+            let isSubagent = Self.subagentTools.contains(tool)
+            let step = Step(id: id, kind: isSubagent ? .subagent : .tool, tool: tool, title: title, detail: Self.shorten(detail))
+            if let parent {
+                guard let index = subagentIndex(parent) else { return false }
+                subagents[index].steps.append(step)
+            } else {
+                steps.append(step)
+            }
+            guard isSubagent, subagentIndex(id) == nil else { return false }
+            subagents.append(Subagent(id: id, description: "", prompt: detail, startedAt: date, parentID: parent))
+            trim()
+            return true
+        case let .toolResult(id, output, failed, parent):
+            let launch = launches.removeValue(forKey: id)
+            sends[id] = nil
+            if let index = subagentIndex(id), subagents[index].agentID == nil {
+                subagents[index].agentID = launch?.agentID ?? LaunchText.agentID(in: output)
+            }
+            if parent == nil, let at = tasks.firstIndex(where: { $0.id == id }) {
+                tasks[at].outputFile = launch?.outputFile ?? LaunchText.outputFile(in: output) ?? tasks[at].outputFile
+            }
+            // A call whose structured result did not come (refused, failed) schedules nothing.
+            if parent == nil { scheduleCalls[id] = nil }
+            let output = Self.shorten(output)
+            if let parent {
+                guard let index = subagentIndex(parent), let at = subagents[index].steps.lastIndex(where: { $0.id == id }) else { return false }
+                subagents[index].steps[at].output = output
+                subagents[index].steps[at].failed = failed
+                subagents[index].steps[at].done = true
+            } else if let at = steps.lastIndex(where: { $0.id == id }) {
+                steps[at].output = output
+                steps[at].failed = failed
+                // A subagent's step is done when the subagent is, not when the call returns.
+                if steps[at].kind != .subagent { steps[at].done = true }
+            }
+            // The call that started a subagent returned: unless it runs on in the background,
+            // that is its result.
+            guard let index = subagentIndex(id), subagents[index].isRunning,
+                  !subagents[index].background, !(launch?.background ?? LaunchText.launchedInBackground(output)) else { return false }
+            end(index, status: failed ? .failed : .completed, result: output, at: date)
+            trim()
+            return true
+        case let .toolImages(id, images, parent):
+            let paths = StepImages.save(images, in: imageFolder ?? StepImages.temporaryFolder)
+            guard !paths.isEmpty else { return false }
+            if let parent {
+                guard let index = subagentIndex(parent), let at = subagents[index].steps.lastIndex(where: { $0.id == id }) else { return false }
+                subagents[index].steps[at].images = paths
+            } else if let at = steps.lastIndex(where: { $0.id == id }) {
+                steps[at].images = paths
+            }
+            return false
+        case let .text(text, parent):
+            let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return false }
+            let step = Step(id: UUID().uuidString, kind: .text, title: text, done: true)
+            if let parent {
+                guard let index = subagentIndex(parent) else { return false }
+                subagents[index].steps.append(step)
+            } else {
+                steps.append(step)
+            }
+            return false
+        case let .subagentStarted(id, description, type, prompt, background):
+            // A run of a subagent it already knows, resumed by a SendMessage call (`id`).
+            if subagentIndex(id) == nil, sends[id] != nil || resolvedIndex(id) != nil {
+                return resume(by: id, agentID: nil, description: description, type: type, at: date)
+            }
+            if background { addTask(id, kind: .agent, title: description, at: date) }
+            if let index = subagentIndex(id) {
+                // An explicit new start can reuse an agent's stable call id (Codex names
+                // its thread once, then starts further turns on the same thread).
+                if !subagents[index].isRunning {
+                    subagents[index].status = .running
+                    subagents[index].endedAt = nil
+                }
+                if !description.isEmpty { subagents[index].description = description }
+                if !prompt.isEmpty { subagents[index].prompt = prompt }
+                subagents[index].type = type ?? subagents[index].type
+                subagents[index].background = background
+            } else {
+                var subagent = Subagent(id: id, description: description, type: type, prompt: prompt, startedAt: date)
+                subagent.background = background
+                subagents.append(subagent)
+                trim()
+            }
+            return true
+        case let .subagentEnded(id, status, summary):
+            if let at = tasks.firstIndex(where: { $0.id == id && $0.isRunning }) {
+                tasks[at].end(status, summary: summary, at: date)
+            }
+            guard let index = resolvedIndex(id), subagents[index].isRunning else { return false }
+            let ended: Subagent.Status = switch TaskEnd(status) {
+            case .completed: .completed
+            case .failed: .failed
+            case .killed, nil: .stopped
+            }
+            end(index, status: ended, result: summary.map(Self.shorten) ?? subagents[index].result, at: date)
+            trim()
+            return true
+        case .subagentWaiting:
+            return false
+        case let .subagentNamed(id, name):
+            guard let index = subagentIndex(id), subagents[index].name != name else { return false }
+            subagents[index].name = name
+            return true
+        case let .subagentRuntime(id, runtime):
+            guard let index = subagentIndex(id), subagents[index].runtime != runtime else { return false }
+            subagents[index].runtime = runtime
+            return true
+        case let .subagentModel(id, model):
+            guard let index = subagentIndex(id), subagents[index].model != model else { return false }
+            subagents[index].model = model
+            return true
+        case let .backgroundCommandStarted(id, description):
+            // A Monitor running a command is a background shell task too.
+            let isMonitor = steps.last(where: { $0.id == id })?.tool == "Monitor"
+            addTask(id, kind: isMonitor ? .monitor : .command, title: description, at: date)
+            return false
+        case let .monitorStarted(id, description):
+            addTask(id, kind: .monitor, title: description, at: date)
+            return false
+        case let .scheduleCalled(id, call):
+            scheduleCalls[id] = call
+            return false
+        case let .scheduleResult(id, result):
+            if let call = scheduleCalls.removeValue(forKey: id) { addSchedule(id, call: call, result: result, at: date) }
+            return false
+        case let .launchResult(id, result, _):
+            launches[id] = result
+            var changed = false
+            if let index = subagentIndex(id), let agentID = result.agentID, subagents[index].agentID != agentID {
+                subagents[index].agentID = agentID
+                changed = true
+            }
+            // A SendMessage call's result: resumed (`resumedAgentId`), or queued for one at work.
+            if sends[id] != nil, let recipient = result.resumedAgentID ?? result.recipient {
+                changed = (result.resumedAgentID != nil
+                    ? resume(by: id, agentID: recipient, description: nil, type: nil, at: date)
+                    : queue(by: id, agentID: recipient, at: date)) || changed
+            }
+            return changed
+        case let .messageSent(id, to, summary, message, _):
+            sends[id] = SentMessage(to: to, summary: summary, message: message)
+            return false
+        case let .subagentDescribed(id, description):
+            guard let index = subagentIndex(id), subagents[index].description.isEmpty else { return false }
+            subagents[index].description = description
+            return true
+        }
+    }
+
+    /// The subagent a SendMessage call is for: by the agentId claude says it reached, or by the
+    /// agentId or name the call gave.
+    private func recipientIndex(_ sent: SentMessage, agentID: String?) -> Int? {
+        if let agentID, let index = subagents.lastIndex(where: { $0.agentID == agentID }) { return index }
+        return subagents.lastIndex { $0.answers(to: sent.to) }
+    }
+
+    /// The bot's message goes in the subagent's conversation, once per call. An ended one's last
+    /// report stays above it (a resumed run ends with a report of its own).
+    private mutating func deliver(_ call: String, to index: Int, at date: Date) -> Bool {
+        guard let sent = sends[call], subagents[index].calls?.contains(call) != true else { return false }
+        subagents[index].calls = (subagents[index].calls ?? []) + [call]
+        if !subagents[index].isRunning, let result = subagents[index].result?.trimmingCharacters(in: .whitespacesAndNewlines), !result.isEmpty,
+           subagents[index].steps.last(where: { $0.kind == .text })?.title.trimmingCharacters(in: .whitespacesAndNewlines) != result {
+            subagents[index].steps.append(Step(id: call + ":result", kind: .text, title: result, done: true))
+        }
+        let summary = sent.summary.flatMap { $0.isEmpty ? nil : $0 }
+        subagents[index].steps.append(Step(id: call + ":message", kind: .message, tool: "SendMessage", title: Self.shorten(sent.message), detail: summary, done: true, at: date))
+        return true
+    }
+
+    /// A SendMessage call (`call`) resumed a subagent: its row is at work again, with the message
+    /// in its conversation, and the turn gets a chip for the run. One the app does not know (sent
+    /// off before it restarted, or trimmed) gets a row from what is known. True if it changed.
+    private mutating func resume(by call: String, agentID: String?, description: String?, type: String?, at date: Date) -> Bool {
+        let index: Int
+        if let known = resolvedIndex(call) ?? sends[call].flatMap({ recipientIndex($0, agentID: agentID) }) {
+            index = known
+            _ = deliver(call, to: index, at: date)
+            if agentID != nil, subagents[index].agentID == nil { subagents[index].agentID = agentID }
+        } else {
+            guard let sent = sends[call] else { return false }
+            let about = description.flatMap { $0.isEmpty ? nil : $0 } ?? sent.summary.flatMap { $0.isEmpty ? nil : $0 } ?? sent.to
+            var subagent = Subagent(id: call, description: about, type: type, prompt: "", background: true, startedAt: date)
+            subagent.agentID = agentID ?? sent.to
+            if sent.to != subagent.agentID { subagent.name = sent.to }
+            subagents.append(subagent)
+            index = subagents.count - 1
+            _ = deliver(call, to: index, at: date)
+        }
+        if !subagents[index].isRunning {
+            subagents[index].status = .running
+            subagents[index].endedAt = nil
+        }
+        subagents[index].background = true
+        if let type, subagents[index].type == nil { subagents[index].type = type }
+        let title = description.flatMap { $0.isEmpty ? nil : $0 } ?? subagents[index].description
+        addTask(call, kind: .agent, title: title, at: date)
+        trim()
+        return true
+    }
+
+    /// A message queued for a subagent at work (it reads it at its next tool call): it goes in
+    /// its conversation. Should it end first, claude resumes it, naming this call.
+    private mutating func queue(by call: String, agentID: String, at date: Date) -> Bool {
+        guard let sent = sends[call], let index = recipientIndex(sent, agentID: agentID) else { return false }
+        return deliver(call, to: index, at: date)
+    }
+
+    /// A ScheduleWakeup or CronCreate call that scheduled something: waiting work, until it fires
+    /// (or, for a recurring job, until it is deleted or expires).
+    private mutating func addSchedule(_ id: String, call: ScheduleCall, result: ScheduleResult, at date: Date) {
+        guard !tasks.contains(where: { $0.id == id }) else { return }
+        var task = BackgroundTask(id: id, kind: call.kind, title: call.title, startedAt: date)
+        switch call.kind {
+        case .wakeup:
+            guard !result.stopped, let fire = result.fireAt else { return }
+            task.fireAt = fire
+        case .cron:
+            guard let job = result.jobID else { return }
+            task.jobID = job
+            task.schedule = call.cron
+            task.recurring = call.recurring
+            // claude's own next run; older versions do not give it, so it is worked out here.
+            task.fireAt = result.fireAt ?? call.cron.flatMap(CronSchedule.init)?.nextTime(after: date)
+        default:
+            return
+        }
+        if !call.prompt.isEmpty { task.detail = call.prompt.count > 600 ? String(call.prompt.prefix(600)) + "…" : call.prompt }
+        tasks.append(task)
+    }
+
+    /// Scheduled work of the turn under way taken back (see `Array.cancelScheduled`).
+    @discardableResult
+    public mutating func cancelScheduled(_ cancellation: BackgroundTask.Cancellation) -> Bool {
+        let before = tasks.count
+        tasks.removeAll(where: cancellation.matches)
+        return tasks.count != before
+    }
+
+    /// Scheduled work of the turn under way whose time came (see `Array.settleDueSchedules`).
+    public mutating func settleDueSchedules(now: Date) {
+        tasks = tasks.map { $0.settled(now: now) }
+    }
+
+    /// The soonest scheduled work of the turn under way is due.
+    var nextScheduleDue: Date? { tasks.compactMap(\.dueAt).min() }
+
+    /// A chip for background work the bot itself started in this turn (not one of its
+    /// subagents: their work is theirs), once.
+    private mutating func addTask(_ id: String, kind: BackgroundTask.Kind, title: String, at date: Date) {
+        guard let step = steps.last(where: { $0.id == id }), !tasks.contains(where: { $0.id == id }) else { return }
+        let title = title.isEmpty ? (subagentIndex(id).map { subagents[$0].description }.flatMap { $0.isEmpty ? nil : $0 } ?? step.title) : title
+        var task = BackgroundTask(id: id, kind: kind, title: title, startedAt: date)
+        if let detail = step.detail, !detail.isEmpty { task.detail = detail.count > 600 ? String(detail.prefix(600)) + "…" : detail }
+        tasks.append(task)
+    }
+
+    /// The background work the finished turn started, for its reply. Nil when there was none.
+    public mutating func takeTasks() -> [BackgroundTask]? {
+        let taken = tasks
+        tasks = []
+        return taken.isEmpty ? nil : taken
+    }
+
+    /// The finished turn's steps, for its reply. Words after the last tool call are the reply
+    /// itself, so they are left out. Nil when it used no tools.
+    public mutating func takeSteps() -> [Step]? {
+        var taken = steps
+        steps = []
+        while taken.last?.kind == .text { taken.removeLast() }
+        return taken.isEmpty ? nil : taken
+    }
+
+    /// Takes the app's tags out of the bot's own words before its last tool call (the words
+    /// after it are the reply itself, which has its own) and returns them, in order. A part
+    /// that was only tags is left out of the steps.
+    public mutating func liftReplyTags() -> [String] {
+        guard let lastTool = steps.lastIndex(where: { $0.kind != .text }) else { return [] }
+        var tags: [String] = []
+        var kept: [Step] = []
+        for (index, step) in steps.enumerated() {
+            guard index < lastTool, step.kind == .text else {
+                kept.append(step)
+                continue
+            }
+            let lifted = ReplyParser.liftTags(step.title)
+            tags += lifted.tags
+            if lifted.tags.isEmpty {
+                kept.append(step)
+            } else if !lifted.rest.isEmpty {
+                var changed = step
+                changed.title = lifted.rest
+                kept.append(changed)
+            }
+        }
+        steps = kept
+        return tags
+    }
+
+    /// Forgets the turn's steps (a turn nobody sees: tidying, a group turn).
+    public mutating func dropSteps() {
+        steps = []
+        tasks = []
+    }
+
+    /// The process went away: what still runs is stopped. True if any was.
+    @discardableResult
+    public mutating func stopRunning(at date: Date = Date()) -> Bool {
+        steps = []
+        tasks = []
+        var any = false
+        for index in subagents.indices where subagents[index].isRunning {
+            end(index, status: .stopped, result: subagents[index].result, at: date)
+            any = true
+        }
+        trim()
+        return any
+    }
+
+    /// Subagents left from an earlier run of the app (loaded from disk) went away with their
+    /// process. Stopped as of when they were last known to be at work (they started), so
+    /// they do not come back to the left column as if they just ended. True if any was.
+    @discardableResult
+    public mutating func stopLeftovers() -> Bool {
+        steps = []
+        var any = false
+        for index in subagents.indices where subagents[index].isRunning {
+            end(index, status: .stopped, result: subagents[index].result, at: subagents[index].startedAt)
+            any = true
+        }
+        trim()
+        return any
+    }
+
+    /// How long a finished subagent stays in the left column.
+    public static let listedAfterEnding: TimeInterval = 10 * 60
+    /// Most rows listed under one bot.
+    public static let listedAtMost = 4
+
+    /// The subagents the left column lists under the bot at `date`: the ones the bot itself
+    /// sent off that still run, or ended a short while ago (or were brought back from
+    /// "Settled" a short while ago), and that you did not settle. Running ones come first,
+    /// then the rest, newest first within each; the cap keeps the first `limit` rows of that
+    /// order (nil lists them all, for "Show more").
+    public func listed(at date: Date = Date(), limit: Int? = Self.listedAtMost) -> [Subagent] {
+        let shown = Self.ordered(subagents.enumerated().filter { _, subagent in
+            guard subagent.parentID == nil, !subagent.isSettled else { return false }
+            if subagent.isRunning { return true }
+            guard let ended = subagent.endedAt else { return false }
+            let since = max(ended, subagent.unsettledAt ?? ended)
+            return date.timeIntervalSince(since) < Self.listedAfterEnding
+        })
+        guard let limit else { return shown }
+        return Array(shown.prefix(limit))
+    }
+
+    /// How many rows the capped list leaves out at `date`.
+    public func beyondCap(at date: Date = Date()) -> Int {
+        max(0, listed(at: date, limit: nil).count - Self.listedAtMost)
+    }
+
+    /// The subagents you settled, for the right column's "Settled": running ones first, then
+    /// the rest, newest first within each (the same order as the left column).
+    public var settled: [Subagent] {
+        Self.ordered(subagents.enumerated().filter { _, subagent in
+            subagent.parentID == nil && subagent.isSettled
+        })
+    }
+
+    /// Running first, then newest first; later in the book counts as newer when two started
+    /// at the same moment.
+    private static func ordered(_ shown: [EnumeratedSequence<[Subagent]>.Element]) -> [Subagent] {
+        shown.sorted { a, b in
+            if a.element.isRunning != b.element.isRunning { return a.element.isRunning }
+            if a.element.startedAt != b.element.startedAt { return a.element.startedAt > b.element.startedAt }
+            return a.offset > b.offset
+        }.map(\.element)
+    }
+
+    /// Settles it: its row leaves the left column for "Settled" in the right one. It does not
+    /// stop it: a running one works on and still reports back. True if it was listed until
+    /// now (worth saving).
+    @discardableResult
+    public mutating func settle(_ id: String, at date: Date = Date()) -> Bool {
+        guard let index = subagentIndex(id) else { return false }
+        return subagents[index].settle(at: date)
+    }
+
+    /// Brings a settled one back to the left column; one that has ended stays listed for
+    /// `listedAfterEnding` from `date`. True if it was settled until now (worth saving).
+    @discardableResult
+    public mutating func unsettle(_ id: String, at date: Date = Date()) -> Bool {
+        guard let index = subagentIndex(id) else { return false }
+        return subagents[index].unsettle(at: date)
+    }
+
+    /// The subagent by the call that started it, or by a SendMessage call that reached it.
+    public func subagent(_ id: String) -> Subagent? {
+        resolvedIndex(id).map { subagents[$0] }
+    }
+
+    private func subagentIndex(_ id: String) -> Int? {
+        subagents.lastIndex { $0.id == id }
+    }
+
+    /// By the call that started it, or by a SendMessage call that reached it.
+    private func resolvedIndex(_ id: String) -> Int? {
+        subagentIndex(id) ?? subagents.lastIndex { $0.calls?.contains(id) == true }
+    }
+
+    private mutating func end(_ index: Int, status: Subagent.Status, result: String?, at date: Date) {
+        subagents[index].status = status
+        subagents[index].endedAt = date
+        subagents[index].result = result
+        let id = subagents[index].id
+        // The step that started it, in the turn or in the subagent that sent it.
+        if let at = steps.lastIndex(where: { $0.id == id }) {
+            steps[at].done = true
+            steps[at].failed = status == .failed
+        }
+        if let parent = subagents[index].parentID, let owner = subagentIndex(parent),
+           let at = subagents[owner].steps.lastIndex(where: { $0.id == id }) {
+            subagents[owner].steps[at].done = true
+            subagents[owner].steps[at].failed = status == .failed
+        }
+    }
+
+    /// Keeps the newest ended ones; running ones always stay.
+    private mutating func trim() {
+        let ended = subagents.filter { !$0.isRunning }
+        guard ended.count > Self.keptSubagents else { return }
+        let drop = Set(ended.prefix(ended.count - Self.keptSubagents).map(\.id))
+        subagents.removeAll { drop.contains($0.id) }
+    }
+
+    static func shorten(_ text: String) -> String {
+        text.count > longest ? String(text.prefix(longest)) + "\n… (\(text.count) characters in all)" : text
+    }
+}
