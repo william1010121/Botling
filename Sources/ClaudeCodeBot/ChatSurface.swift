@@ -115,6 +115,9 @@ struct ChatSurface: NSViewRepresentable {
             openSpec: workspace.openSpecID,
             floating: workspace.floatingPinViews(in: bot),
             look: workspace.settings.botLook == .cute ? ChibiImages.look(for: bot.avatarKind) : nil,
+            sourceLook: { id in
+                workspace.settings.botLook == .cute ? ChibiImages.look(for: workspace.avatar(for: id) ?? .ghost) : nil
+            },
             chatAvatarSize: workspace.settings.chatAvatarSizeChoice,
             avatar: { projectID in
                 if let projectID, let kind = workspace.avatar(for: projectID) {

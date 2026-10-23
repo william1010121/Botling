@@ -46,6 +46,13 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("actual GIF avatar lifecycle", () => {
+  it("keeps source bot hats distinct without duplicating the twelve library clips", () => {
+    const guest = { ...heads[1], avatar: "guest-codex-portrait", hat: "maintainer-hat" };
+    window.ccb.setState(state({ animatedHeads: [...heads, guest], messages: [message("guest", { avatar: guest.avatar, speaker: "Maintainer · Codex" })] }));
+    expect(document.querySelector<HTMLImageElement>(".row.bot .avatar-hat")!.getAttribute("src")).toBe("maintainer-hat");
+    document.querySelector<HTMLButtonElement>(".row.bot .animated-avatar")!.click();
+    expect(document.querySelectorAll(".avatar-library-grid button")).toHaveLength(12);
+  });
   it("animates only the latest visible reply; never 100 history avatars", () => {
     window.ccb.setState(state({ botID: "initial-history", messages: Array.from({ length: 100 }, (_, i) => message(`m${i}`)) }));
     expect(document.querySelectorAll(".animated-avatar")).toHaveLength(100);
