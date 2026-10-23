@@ -127,7 +127,8 @@ struct RailStrip: View {
                 ) {
                     workspace.openFresh(site)
                 } face: {
-                    WebSiteFace(site: site, size: 28)
+                    let accounts = workspace.web.accounts(of: site)
+                    WebSiteFace(site: site, size: 28, badge: site.offersAccounts && accounts.hasSeveral ? accounts.look(of: workspace.web.account(of: site)) : nil)
                 }
             }
 

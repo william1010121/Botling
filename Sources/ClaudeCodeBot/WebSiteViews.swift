@@ -23,6 +23,8 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
 
     let id: UUID
     let site: WebSite
+    /// The account it is signed in to: its own data store.
+    let account: WebAccount
     let shelf: WebShelf
     let webView: WKWebView
     let openedAt = Date()
@@ -37,12 +39,16 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
     /// What each page reader (by hash) declares: whether it reads the traffic, and which requests.
     private static var declarations: [String: (network: Bool, urls: [String])] = [:]
 
-    init(id: UUID = UUID(), site: WebSite, shelf: WebShelf) {
+    init(id: UUID = UUID(), site: WebSite, account: WebAccount? = nil, shelf: WebShelf) {
         self.id = id
         self.site = site
+        // The first account is the site's own store (`site.dataStoreID`), as before accounts.
+        let account = account ?? WebAccount.first(of: site)
+        self.account = account
         self.shelf = shelf
+        shelf.attach(id, account: account)
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: site.dataStoreID)
+        configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: account.dataStoreID)
         // A page out of sight (behind the one in front, or while a bot is picked) keeps running,
         // so an answer still comes and is read.
         configuration.preferences.inactiveSchedulingPolicy = .none
@@ -245,8 +251,9 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
     }
 }
 
-/// One site's pages and their sign-in (a persistent data store per site), kept for the whole
-/// run: switching bots and back does not reload them. The page in front is in the chat column;
+/// One site's pages in one of its accounts, and their sign-in (a persistent data store per
+/// account; the first account's is the site's own), kept for the whole run: switching bots and
+/// back does not reload them. The page in front is in the chat column;
 /// one you leave while its question still waits for an answer goes on behind it until the answer
 /// is read and saved, so a new question or another bot never loses it.
 @MainActor
@@ -262,56 +269,100 @@ final class WebSession {
     /// Pages opened at once only to read a waiting row again.
     private static let readingAgainAtMost = 2
 
-    static func session(for site: WebSite, shelf: WebShelf) -> WebSession {
-        if let session = sessions[site.id] { return session }
-        let session = WebSession(site: site, shelf: shelf)
-        sessions[site.id] = session
+    private static func key(_ site: WebSite, _ account: WebAccount) -> String { "\(site.id)/\(account.id)" }
+
+    /// The site's pages in `account` (else the account the column shows it in).
+    static func session(for site: WebSite, account: WebAccount? = nil, shelf: WebShelf) -> WebSession {
+        let account = account ?? shelf.account(of: site)
+        if let session = sessions[key(site, account)] { return session }
+        let session = WebSession(site: site, account: account, shelf: shelf)
+        sessions[key(site, account)] = session
         return session
     }
 
     /// Opens pages behind to read rows still waiting for an answer (after a restart), only
-    /// when there are any.
+    /// when there are any, each on its own account's store.
     static func readAgain(_ site: WebSite, shelf: WebShelf) {
-        guard !HeadlessRun.isRequested(), !shelf.toReadAgain(on: site).isEmpty else { return }
-        session(for: site, shelf: shelf).readAgain()
+        guard !HeadlessRun.isRequested() else { return }
+        for account in shelf.accounts(of: site).accounts where !shelf.toReadAgain(on: site, account: account).isEmpty {
+            session(for: site, account: account, shelf: shelf).readAgain()
+        }
+    }
+
+    /// An account removed from its menu: its pages close, then its data store (its cookies and
+    /// sign-in) is removed. Never the first account's store, nor any built-in site's.
+    static func remove(_ account: WebAccount, of site: WebSite) {
+        if let session = sessions.removeValue(forKey: key(site, account)) { session.closeAll() }
+        guard !account.isFirst, WebAccountList.isRemovableStore(account.dataStoreID) else { return }
+        let identifier = account.dataStoreID
+        // WebKit's main run loop must be up before a store is removed (it crashes otherwise when
+        // no page was opened this run); asking for the default store sets it up.
+        _ = WKWebsiteDataStore.default()
+        Task { @MainActor in
+            // WebKit lets go of a store a moment after its last view closes.
+            for attempt in 0..<5 {
+                try? await Task.sleep(for: .seconds(1 + attempt))
+                do {
+                    try await WKWebsiteDataStore.remove(forIdentifier: identifier)
+                    return
+                } catch {
+                    continue
+                }
+            }
+        }
     }
 
     let site: WebSite
+    let account: WebAccount
     let shelf: WebShelf
     private(set) var front: WebTab
     private(set) var behind: [WebTab] = []
     /// Rows read again this run, so one whose answer never comes is not opened over and over.
     private var readAgainRows: Set<String> = []
 
-    private init(site: WebSite, shelf: WebShelf) {
+    private init(site: WebSite, account: WebAccount, shelf: WebShelf) {
         self.site = site
+        self.account = account
         self.shelf = shelf
-        front = WebTab(id: WebShelf.firstPage, site: site, shelf: shelf)
+        // The first account's first page keeps the id it always had.
+        front = WebTab(id: account.isFirst ? WebShelf.firstPage : UUID(), site: site, account: account, shelf: shelf)
     }
 
     /// Loads what was asked for (a row, "New question"); on first show, the open conversation.
+    /// This account's page in front is the site's page in the chat column from now.
     func loadIfNeeded() {
         if let url = shelf.requested[site.id] {
             let row = shelf.requestedRow[site.id]
             shelf.handled(site)
             if let row, shelf.row(of: front.id, on: site)?.id == row {
                 // Already in front.
+                put(front)
             } else if let row, let index = behind.firstIndex(where: { shelf.row(of: $0.id, on: site)?.id == row }) {
                 let tab = behind.remove(at: index)
                 leaveFront()
                 put(tab)
             } else if front.webView.url == nil {
+                put(front)
                 front.load(url)
             } else {
                 leaveFront()
-                let tab = WebTab(site: site, shelf: shelf)
+                let tab = WebTab(site: site, account: account, shelf: shelf)
                 put(tab)
                 tab.load(url)
             }
-        } else if front.webView.url == nil {
-            front.load(shelf.openConversation(of: site).flatMap { shelf.hasAddress($0, on: site) ? $0.url : nil } ?? site.startURL)
+        } else {
+            if shelf.frontPage(of: site) != front.id { put(front) }
+            if front.webView.url == nil {
+                front.load(shelf.openConversation(of: site).flatMap { shelf.hasAddress($0, on: site) ? $0.url : nil } ?? site.startURL)
+            }
         }
         readAgain()
+    }
+
+    /// Every page of this account closes (it was removed).
+    private func closeAll() {
+        for tab in behind + [front] { tab.close() }
+        behind = []
     }
 
     private func put(_ tab: WebTab) {
@@ -329,9 +380,9 @@ final class WebSession {
     /// Reads rows still waiting for an answer from their own address, on pages behind.
     func readAgain() {
         let reading = behind.filter { tab in readAgainRows.contains { shelf.row(of: tab.id, on: site)?.id == $0 } }.count
-        for row in shelf.toReadAgain(on: site).prefix(max(0, Self.readingAgainAtMost - reading)) where !readAgainRows.contains(row.id) {
+        for row in shelf.toReadAgain(on: site, account: account).prefix(max(0, Self.readingAgainAtMost - reading)) where !readAgainRows.contains(row.id) {
             readAgainRows.insert(row.id)
-            let tab = WebTab(site: site, shelf: shelf)
+            let tab = WebTab(site: site, account: account, shelf: shelf)
             behind.append(tab)
             tab.load(row.url)
         }
@@ -408,6 +459,10 @@ private struct WebPage: NSViewRepresentable {
 struct WebSiteFace: View {
     let site: WebSite
     var size: CGFloat = 32
+    /// The account it shows now, as a small badge at its corner (only with several accounts).
+    var badge: WebAccountMark.Look?
+    /// The ground around the badge (where the face sits).
+    var ground: Color = Theme.side
 
     var body: some View {
         RoundedRectangle(cornerRadius: size * 0.28)
@@ -418,7 +473,46 @@ struct WebSiteFace: View {
                     .font(.system(size: size * 0.5, weight: .semibold))
                     .foregroundStyle(.white)
             }
+            .overlay(alignment: .bottomTrailing) {
+                if let badge {
+                    let mark = (size * 0.5).rounded()
+                    WebAccountMark(look: badge, size: mark)
+                        .padding(2)
+                        .background(Circle().fill(ground))
+                        .offset(x: mark * 0.44, y: mark * 0.44)
+                }
+            }
             .accessibilityHidden(true)
+    }
+}
+
+/// An account's small round mark: its colour, with its letter or number.
+struct WebAccountMark: View {
+    struct Look: Equatable {
+        let letter: String
+        let color: UInt32
+    }
+
+    let look: Look
+    var size: CGFloat = 14
+
+    var body: some View {
+        Circle()
+            .fill(Color(hex: look.color))
+            .frame(width: size, height: size)
+            .overlay {
+                Text(look.letter)
+                    .font(.system(size: size * 0.6, weight: .bold))
+                    .foregroundStyle(Theme.ground)
+                    .minimumScaleFactor(0.6)
+            }
+            .accessibilityHidden(true)
+    }
+}
+
+extension WebAccountList {
+    func look(of account: WebAccount) -> WebAccountMark.Look {
+        WebAccountMark.Look(letter: letter(of: account), color: account.colorValue)
     }
 }
 
@@ -446,10 +540,13 @@ struct WebSiteColumn: View {
                 if HeadlessRun.isRequested() {
                     placeholder
                 } else {
+                    // The account shown now: its own pages, on its own sign-in.
                     let session = WebSession.session(for: site, shelf: shelf)
                     WebPage(session: session, front: shelf.frontPage(of: site))
-                        .onAppear { session.loadIfNeeded() }
-                        .onChange(of: shelf.requested[site.id]) { _, _ in session.loadIfNeeded() }
+                        .id(session.account.id)
+                        .onAppear { WebSession.session(for: site, shelf: shelf).loadIfNeeded() }
+                        .onChange(of: shelf.requested[site.id]) { _, _ in WebSession.session(for: site, shelf: shelf).loadIfNeeded() }
+                        .onChange(of: shelf.account(of: site).id) { _, _ in WebSession.session(for: site, shelf: shelf).loadIfNeeded() }
                 }
             }
             .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
@@ -554,7 +651,7 @@ struct WebRailSection: View {
             .frame(height: 28)
             .padding(.top, 6)
         ForEach(WebSite.all) { site in
-            WebSiteRow(site: site, count: shelf.conversations(of: site).count, selected: workspace.selectedWebSite == site && shelf.open[site.id] == nil) {
+            WebSiteRow(workspace: workspace, shelf: shelf, site: site, count: shelf.conversations(of: site).count, selected: workspace.selectedWebSite == site && shelf.open[site.id] == nil) {
                 workspace.openFresh(site)
             }
             WebConversationRows(workspace: workspace, shelf: shelf, site: site)
@@ -562,33 +659,219 @@ struct WebRailSection: View {
     }
 }
 
-/// A site's row, drawn like a bot's.
+/// A site's row, drawn like a bot's. On a site with accounts (Gemini), a small ⌄ by its name
+/// opens the account menu, and with several accounts its face wears the current one's badge.
 private struct WebSiteRow: View {
+    @ObservedObject var workspace: Workspace
+    @ObservedObject var shelf: WebShelf
     let site: WebSite
     let count: Int
     let selected: Bool
     let action: () -> Void
     @State private var hovering = false
+    @State private var menu = false
+    /// `CCB_WINDOW_WEB_MENU`: a snapshot draws the menu's trigger as open.
+    static let snapshotMenu = ProcessInfo.processInfo.environment["CCB_WINDOW_WEB_MENU"] != nil
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                WebSiteFace(site: site)
+        let list = shelf.accounts(of: site)
+        let current = shelf.account(of: site)
+        HStack(spacing: 12) {
+            WebSiteFace(site: site, badge: site.offersAccounts && list.hasSeveral ? list.look(of: current) : nil,
+                        ground: selected ? Theme.selected : hovering ? Theme.hover : Theme.side)
+            HStack(spacing: 6) {
                 Text(site.name).font(.system(size: 15)).lineLimit(1)
-                Spacer(minLength: 4)
-                if count > 0 {
-                    Text("\(count)").font(.system(size: 12)).monospacedDigit().foregroundStyle(Theme.faint)
+                if site.offersAccounts {
+                    Button { menu.toggle() } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(Theme.muted)
+                            .frame(width: 18, height: 20)
+                            .background(RoundedRectangle(cornerRadius: 5).fill(menu || Self.snapshotMenu ? Theme.chip : .clear))
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(L("{0} account: {1}", site.name, list.label(of: current)))
+                    .accessibilityLabel(L("{0} account: {1}", site.name, list.label(of: current)))
+                    .popover(isPresented: $menu, arrowEdge: .trailing) {
+                        WebAccountMenu(workspace: workspace, shelf: shelf, site: site) { menu = false }
+                    }
                 }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 48)
-            .background(RoundedRectangle(cornerRadius: 12).fill(selected ? Theme.selected : hovering ? Theme.hover : .clear))
-            .contentShape(Rectangle())
+            Spacer(minLength: 4)
+            if count > 0 {
+                Text("\(count)").font(.system(size: 12)).monospacedDigit().foregroundStyle(Theme.faint)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .frame(height: 48)
+        .background(RoundedRectangle(cornerRadius: 12).fill(selected ? Theme.selected : hovering ? Theme.hover : .clear))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: action)
         .onHover { hovering = $0 }
         .help(L("{0} in the app: a new question; conversations are saved as text the main bot can search", site.name))
+        .accessibilityElement(children: .contain)
         .accessibilityLabel(L("{0}, web, {1} conversations", site.name, count))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { action() }
+    }
+}
+
+/// The account menu by a site's name: its accounts (a check on the one shown; picking one opens a
+/// new question in it), "Add account…", and renaming or removing one. Names are yours; nothing
+/// is read from the page.
+struct WebAccountMenu: View {
+    @ObservedObject var workspace: Workspace
+    @ObservedObject var shelf: WebShelf
+    let site: WebSite
+    let close: () -> Void
+    /// The account being named, if one is.
+    @State var naming: String?
+    @State private var name = ""
+    /// The account asked about removing, if one is.
+    @State var removing: String?
+    @State private var hovered: String?
+    @FocusState private var nameFocused: Bool
+
+    var body: some View {
+        let list = shelf.accounts(of: site)
+        let current = shelf.account(of: site)
+        VStack(alignment: .leading, spacing: 0) {
+            Text(L("{0} account", site.name))
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.faint)
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
+                .padding(.bottom, 6)
+            ForEach(list.accounts) { account in
+                if removing == account.id {
+                    removal(of: account, in: list)
+                } else {
+                    row(account, in: list, current: account.id == current.id)
+                }
+            }
+            Rectangle().fill(Theme.tipLine).frame(height: 1).padding(.horizontal, 8).padding(.vertical, 5)
+            Button(action: add) {
+                HStack(spacing: 10) {
+                    Circle()
+                        .strokeBorder(Theme.faint, style: StrokeStyle(lineWidth: 1, dash: [2, 2]))
+                        .frame(width: 18, height: 18)
+                        .overlay { Image(systemName: "plus").font(.system(size: 8, weight: .bold)).foregroundStyle(Theme.muted) }
+                    Text(L("Add account…")).font(.system(size: 13)).foregroundStyle(Theme.text)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 8)
+                .frame(height: 32)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(L("Signs in to another {0} account on its own, separate sign-in", site.name))
+        }
+        .padding(6)
+        .frame(width: 256)
+        .background(Color(hex: 0x2B2B31))
+    }
+
+    @ViewBuilder private func row(_ account: WebAccount, in list: WebAccountList, current: Bool) -> some View {
+        HStack(spacing: 10) {
+            WebAccountMark(look: list.look(of: account), size: 18)
+            if naming == account.id {
+                TextField(L("Name (optional)"), text: $name)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .focused($nameFocused)
+                    .onSubmit { finishNaming(account) }
+                    .onExitCommand { naming = nil }
+                    .onAppear { nameFocused = true }
+            } else {
+                Text(list.label(of: account))
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer(minLength: 4)
+            if naming == account.id {
+                Button { finishNaming(account) } label: { Text(L("Done")).font(.system(size: 12)).foregroundStyle(Theme.blue) }
+                    .buttonStyle(.plain)
+            } else if hovered == account.id {
+                Button { startNaming(account, in: list) } label: {
+                    Image(systemName: "pencil").font(.system(size: 11)).foregroundStyle(Theme.muted).frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .help(L("Rename"))
+                .accessibilityLabel(L("Rename {0}", list.label(of: account)))
+                if !account.isFirst {
+                    Button { removing = account.id } label: {
+                        Image(systemName: "minus.circle").font(.system(size: 11)).foregroundStyle(Theme.muted).frame(width: 18, height: 18)
+                    }
+                    .buttonStyle(.plain)
+                    .help(L("Remove…"))
+                    .accessibilityLabel(L("Remove {0}", list.label(of: account)))
+                }
+            }
+            Image(systemName: "checkmark")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Theme.blue)
+                .frame(width: 14)
+                .opacity(current ? 1 : 0)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 32)
+        .background(RoundedRectangle(cornerRadius: 6).fill(current ? Color(hex: 0x34343C) : hovered == account.id ? Theme.hover : .clear))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard naming != account.id else { return }
+            workspace.openFresh(site, account: account)
+            close()
+        }
+        .onHover { hovered = $0 ? account.id : (hovered == account.id ? nil : hovered) }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(current ? [.isButton, .isSelected] : .isButton)
+        .accessibilityLabel(list.label(of: account))
+        .help(L("A new question as {0}", list.label(of: account)))
+    }
+
+    private func removal(of account: WebAccount, in list: WebAccountList) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(L("Remove {0}? Its sign-in on this Mac is deleted; its saved conversations stay.", list.label(of: account)))
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Spacer()
+                Button(L("Cancel")) { removing = nil }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.muted)
+                Button(L("Remove")) {
+                    removing = nil
+                    if let removed = shelf.removeAccount(account.id, on: site) { WebSession.remove(removed, of: site) }
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.errorText)
+            }
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(hex: 0x34343C)))
+    }
+
+    private func add() {
+        let account = shelf.addAccount(on: site)
+        workspace.openFresh(site, account: account)
+        name = ""
+        naming = account.id
+    }
+
+    private func startNaming(_ account: WebAccount, in list: WebAccountList) {
+        name = account.name
+        naming = account.id
+    }
+
+    private func finishNaming(_ account: WebAccount) {
+        shelf.renameAccount(account.id, to: name, on: site)
+        naming = nil
     }
 }
 
@@ -644,12 +927,16 @@ private struct WebConversationRow: View {
 
     var body: some View {
         let showsSettle = hovering || !conversation.isAwaiting
+        // With several accounts: its arrow in its account's colour, and its mark by the clock.
+        let list = shelf.accounts(of: site)
+        let account = shelf.account(of: conversation, on: site)
+        let marked = site.offersAccounts && list.hasSeveral
         HStack(spacing: 0) {
             Button { workspace.open(conversation, on: site) } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "arrow.turn.down.right")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.faint)
+                        .font(.system(size: 11, weight: marked ? .bold : .regular))
+                        .foregroundStyle(marked ? Color(hex: account.colorValue) : Theme.faint)
                     Text(conversation.title.isEmpty ? site.name : conversation.title)
                         .font(.system(size: 13))
                         .foregroundStyle(open || conversation.isAwaiting ? Theme.text : Theme.muted)
@@ -662,8 +949,13 @@ private struct WebConversationRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(conversation.question ?? conversation.url.absoluteString)
-            .accessibilityLabel(L("{0} conversation: {1}", site.name, conversation.title))
+            .help((conversation.question ?? conversation.url.absoluteString) + (marked ? " · " + list.label(of: account) : ""))
+            .accessibilityLabel(marked ? L("{0} conversation: {1}, as {2}", site.name, conversation.title, list.label(of: account)) : L("{0} conversation: {1}", site.name, conversation.title))
+            if marked {
+                WebAccountMark(look: list.look(of: account))
+                    .padding(.trailing, 2)
+                    .help(list.label(of: account))
+            }
             Button { shelf.settle(conversation, of: site) } label: {
                 Group {
                     if showsSettle {
@@ -808,6 +1100,11 @@ struct WebPanel: View {
                                 .foregroundStyle(open ? Theme.text : Theme.muted)
                                 .lineLimit(1)
                             Spacer(minLength: 8)
+                            if site.offersAccounts, shelf.accounts(of: site).hasSeveral {
+                                let list = shelf.accounts(of: site)
+                                WebAccountMark(look: list.look(of: shelf.account(of: conversation, on: site)))
+                                    .help(list.label(of: shelf.account(of: conversation, on: site)))
+                            }
                             if conversation.isAwaiting {
                                 SubagentRows.mark(.live)
                             } else {
