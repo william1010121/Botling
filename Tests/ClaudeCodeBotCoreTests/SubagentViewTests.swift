@@ -45,15 +45,16 @@ struct SubagentViewTests {
         #expect(payload.subagent?.model == "Haiku")
     }
 
-    /// Without a model in its call, the bot's subagent model is its model; with neither, none is named.
-    @Test func withoutOneTheHeaderNamesTheBotsSubagentModelOrNone() async {
+    /// Without a model in its call, the bot's subagent model is its model; with neither
+    /// ("same model"), the model the bot itself runs on.
+    @Test func withoutOneTheHeaderNamesTheBotsSubagentModelOrItsOwn() async {
         var book = TraceBook()
         replay([ResumeRun.agent], into: &book, at: Date())
         let subagent = try! #require(book.subagent("toolu_A"))
         let bot = makeBot(FakeLauncher())
-        #expect(ChatPayload.make(subagent: subagent, of: bot, components: nil, avatar: "").subagent?.model == nil)
-        await bot.setSubagentModel(.sonnet)
-        #expect(ChatPayload.make(subagent: subagent, of: bot, components: nil, avatar: "").subagent?.model == "Sonnet")
+        #expect(ChatPayload.make(subagent: subagent, of: bot, components: nil, avatar: "").subagent?.model == bot.model.displayName)
+        await bot.setSubagentModel(.haiku)
+        #expect(ChatPayload.make(subagent: subagent, of: bot, components: nil, avatar: "").subagent?.model == "Haiku")
     }
 
     /// Once it ended, a call whose result never came no longer shows as under way.

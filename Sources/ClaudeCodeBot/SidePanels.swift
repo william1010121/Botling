@@ -902,6 +902,26 @@ struct SubagentRows: View {
     }
 }
 
+/// Which head (Claude or Codex) started a subagent: in the Cute look its character, small;
+/// otherwise the head's dot, as in Settings → Heads.
+struct SubagentOwnerMark: View {
+    let head: BotEngine
+    @Environment(\.botLook) private var look
+
+    var body: some View {
+        Group {
+            if look == .cute {
+                ChibiHeadView(head: head, size: 18)
+            } else {
+                Circle().fill(head == .claude ? Color(hex: 0xE3895F) : Color(hex: 0x8AB4FF)).frame(width: 7, height: 7)
+            }
+        }
+        .frame(width: 18, height: 18)
+        .help(head.displayName)
+        .accessibilityHidden(true)
+    }
+}
+
 /// One subagent's row. It has one icon on the right: a blue dot while the subagent works,
 /// and once it has ended (or while the pointer is on a running one) the settle button, a
 /// clock badged with how it ended. Settling moves the row to "Settled" in the right column.
@@ -921,6 +941,9 @@ struct SubagentRow: View {
                     Image(systemName: "arrow.turn.down.right")
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.faint)
+                    if let owner = bot.subagentOwnerMark(subagent.id) {
+                        SubagentOwnerMark(head: owner)
+                    }
                     Text(subagent.description.isEmpty ? L("Subagent") : subagent.description)
                         .font(.system(size: 13))
                         .foregroundStyle(subagent.isRunning ? Theme.text : Theme.muted)
@@ -937,7 +960,7 @@ struct SubagentRow: View {
             }
             .buttonStyle(.plain)
             .help(subagent.prompt)
-            .accessibilityLabel(L("Subagent of {0}: {1}, {2}", bot.name, subagent.description, subagent.status.rawValue))
+            .accessibilityLabel(L("Subagent of {0}: {1}, {2}", bot.subagentOwnerMark(subagent.id).map { "\(bot.name) (\($0.displayName))" } ?? bot.name, subagent.description, subagent.status.rawValue))
             Button(action: settle) {
                 Group {
                     if showsSettle {
@@ -1018,6 +1041,9 @@ struct SettledList: View {
             Button { workspace.view(subagent: subagent.id, of: bot) } label: {
                 HStack(spacing: 10) {
                     SubagentRows.mark(subagent.mark).frame(width: 10)
+                    if let owner = bot.subagentOwnerMark(subagent.id) {
+                        SubagentOwnerMark(head: owner)
+                    }
                     Text(subagent.description.isEmpty ? L("Subagent") : subagent.description)
                         .font(.system(size: 13))
                         .foregroundStyle(subagent.isRunning ? Theme.text : Theme.muted)
