@@ -192,3 +192,27 @@ describe("the saved Answer with choice", () => {
     expect(sends()).toEqual([{ type: "send", text: "after restart", to: "both" }]);
   });
 });
+
+describe("Answer with inside the input box", () => {
+  const state = (answerWith: ChatState["answerWith"]): ChatState => ({
+    botID: "A", botName: "A", messages: [], working: false, avatar: "", placeholder: "Message…",
+    replyingTo: null, pendingFiles: [], components: {}, answerWith,
+  } as ChatState);
+
+  it("sits in the toolbar under the text: +, the segmented heads, the keys, then send", () => {
+    document.body.innerHTML = "";
+    const composer = new Composer(document.body);
+    composer.update(state(answer));
+    const tools = document.querySelector(".composer > .composer-tools")!;
+    expect([...tools.children].map((child) => child.className)).toEqual(["plus", "answer-with", "answer-hint", "composer-gap", "send"]);
+    expect(tools.querySelector(".answer-with")?.getAttribute("aria-label")).toBe("Answer with");
+    expect(tools.querySelector(".answer-hint")?.textContent).toBe("⌥1 ⌥2 ⌥3 · or type @codex");
+    expect(document.querySelector(".composer > .composer-row .editor")).not.toBeNull();
+    // Nothing outside the box any more.
+    expect(document.body.children).toHaveLength(1);
+    composer.update(state(null));
+    expect(tools.querySelector<HTMLElement>(".answer-with")!.hidden).toBe(true);
+    expect(tools.querySelector<HTMLElement>(".answer-hint")!.hidden).toBe(true);
+    composer.view.destroy();
+  });
+});
