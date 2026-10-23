@@ -652,7 +652,7 @@ struct WebRailSection: View {
             .padding(.top, 6)
         ForEach(WebSite.all) { site in
             WebSiteRow(workspace: workspace, shelf: shelf, site: site, count: shelf.conversations(of: site).count, selected: workspace.selectedWebSite == site && shelf.open[site.id] == nil) {
-                workspace.openFresh(site)
+                workspace.navigate(to: site)
             }
             WebConversationRows(workspace: workspace, shelf: shelf, site: site)
         }
@@ -709,7 +709,7 @@ private struct WebSiteRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
         .onHover { hovering = $0 }
-        .help(L("{0} in the app: a new question; conversations are saved as text the main bot can search", site.name))
+        .help(site.name)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(L("{0}, web, {1} conversations", site.name, count))
         .accessibilityAddTraits(.isButton)
@@ -717,8 +717,8 @@ private struct WebSiteRow: View {
     }
 }
 
-/// The account menu by a site's name: its accounts (a check on the one shown; picking one opens a
-/// new question in it), "Add account…", and renaming or removing one. Names are yours; nothing
+/// The account menu by a site's name: its accounts (a check on the one shown; picking one resumes
+/// its current page), "Add account…", and renaming or removing one. Names are yours; nothing
 /// is read from the page.
 struct WebAccountMenu: View {
     @ObservedObject var workspace: Workspace
@@ -822,14 +822,14 @@ struct WebAccountMenu: View {
         .contentShape(Rectangle())
         .onTapGesture {
             guard naming != account.id else { return }
-            workspace.openFresh(site, account: account)
+            workspace.navigate(to: site, account: account)
             close()
         }
         .onHover { hovered = $0 ? account.id : (hovered == account.id ? nil : hovered) }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(current ? [.isButton, .isSelected] : .isButton)
         .accessibilityLabel(list.label(of: account))
-        .help(L("A new question as {0}", list.label(of: account)))
+        .help(L("{0} account: {1}", site.name, list.label(of: account)))
     }
 
     private func removal(of account: WebAccount, in list: WebAccountList) -> some View {
@@ -887,8 +887,9 @@ private struct WebConversationRows: View {
 
     var body: some View {
         let all = shelf.listed(of: site)
-        let more = max(0, all.count - Self.listedAtMost)
-        ForEach(showsAll ? all : Array(all.prefix(Self.listedAtMost))) { conversation in
+        let shortened = shelf.listed(of: site, limit: Self.listedAtMost)
+        let more = max(0, all.count - shortened.count)
+        ForEach(showsAll ? all : shortened) { conversation in
             WebConversationRow(conversation: conversation, workspace: workspace, shelf: shelf, site: site)
         }
         if more > 0 {

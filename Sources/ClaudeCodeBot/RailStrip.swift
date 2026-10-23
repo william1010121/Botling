@@ -125,7 +125,7 @@ struct RailStrip: View {
                     asleep: false, running: false, stuck: false, unread: false,
                     tip: $tip
                 ) {
-                    workspace.openFresh(site)
+                    workspace.navigate(to: site)
                 } face: {
                     let accounts = workspace.web.accounts(of: site)
                     WebSiteFace(site: site, size: 28, badge: site.offersAccounts && accounts.hasSeveral ? accounts.look(of: workspace.web.account(of: site)) : nil)
