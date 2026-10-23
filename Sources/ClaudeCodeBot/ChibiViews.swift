@@ -80,7 +80,17 @@ enum ChibiImages {
     static func look(for kind: AvatarKind) -> ChatPayload.HeadLook {
         ChatPayload.HeadLook(
             avatar: { dataURL($0, hat: kind) },
-            mark: { dataURL($0) }
+            mark: { dataURL($0) },
+            animations: BotEngine.allCases.map { head in
+                ChibiAnimation.Head(
+                    engine: head.rawValue,
+                    avatar: dataURL(head, hat: kind),
+                    thinking: dataURL(head, mood: .think, hat: kind),
+                    sleeping: dataURL(head, mood: .sleep, hat: kind),
+                    hat: Chibi.dataURL("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>" + Chibi.hatSVG(kind.hat) + "</svg>"),
+                    clips: ChibiAnimation.clips.filter { $0.engine == head.rawValue }
+                )
+            }
         )
     }
 }

@@ -17,6 +17,7 @@ import { installImeGuard } from "./ime";
 import { watchFileDrops } from "./drops";
 import { reportVisiblePinsSoon, setWindowVisible } from "./visible";
 import { animateSeenArrivals, setSeenHeads } from "./heads";
+import { configureAnimatedHeads, refreshAvatarVisibility, updateAnimatedAvatars } from "./animated-avatar";
 
 // Before anything listens for keys: an input method's Return never reaches a page handler.
 installImeGuard(window);
@@ -124,6 +125,7 @@ class Chat {
 
     // Bot look Cute: the seen marks show the heads' tiny characters (a style rule, so lines drawn already follow).
     setSeenHeads(state.seenHeads);
+    configureAnimatedHeads(state.animatedHeads);
 
     // A new language (Settings) draws every message again in its words.
     if (setLanguage(state.lang)) {
@@ -219,6 +221,7 @@ class Chat {
     const sentNow = !switched && !redrawing && newest?.role === "user" && newest.id !== newestBefore;
     if (switched || sentNow) this.stuck = true;
     if (this.stuck) this.scrollToBottom();
+    updateAnimatedAvatars(state, animateArrivals);
     // The component frames now in view (or near it) are built; the rest once scrolled to.
     buildNear();
   }
@@ -425,7 +428,7 @@ window.ccb = {
   showPanel: (key) => showPanel(key),
   setSpec: (state) => setSpec(state),
   focus: () => chat.focus(),
-  setWindowVisible: (visible) => setWindowVisible(visible),
+  setWindowVisible: (visible) => { setWindowVisible(visible); refreshAvatarVisibility(); },
 };
 // Which pins the user can see changes as the chat or Board scrolls, the window resizes, or a pin
 // is opened or closed: Swift's timer reruns only those (visible.ts).
