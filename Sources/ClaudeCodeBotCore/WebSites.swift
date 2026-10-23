@@ -512,6 +512,16 @@ public final class WebShelf: ObservableObject {
     /// The account each open page is signed in to, by page (the first when absent).
     private var pageAccounts: [UUID: String] = [:]
 
+    /// Navigation belongs to an account's retained WebSession, for this app run only.
+    private struct AccountNavigation {
+        var open: String?
+        var requested: URL?
+        var requestedRow: String?
+        var status: WebPageStatus?
+        var front: UUID?
+    }
+    private var accountNavigation: [String: [String: AccountNavigation]] = [:]
+
     /// Captures (`~/.claudecodebot/captures`), next to `web`.
     public var capturesFolder: URL { WebCapturePack.root(besides: folder) }
 
@@ -537,6 +547,30 @@ public final class WebShelf: ObservableObject {
     /// The account the chat column shows the site in now.
     public func account(of site: WebSite) -> WebAccount {
         accounts(of: site).resolved(currentAccount[site.id])
+    }
+
+    /// Switches accounts without opening a fresh page or settling the conversation left behind.
+    /// The live WebSession stays cached; restoring a pending request also keeps its account.
+    public func selectAccount(_ account: WebAccount, on site: WebSite) {
+        guard accounts(of: site).account(account.id) == account else { return }
+        let previous = self.account(of: site)
+        guard previous.id != account.id else { return }
+        accountNavigation[site.id, default: [:]][previous.id] = AccountNavigation(
+            open: open[site.id], requested: requested[site.id], requestedRow: requestedRow[site.id],
+            status: status[site.id], front: front[site.id])
+        let restored = accountNavigation[site.id]?[account.id]
+        open[site.id] = restored?.open
+        requested[site.id] = restored?.requested
+        requestedRow[site.id] = restored?.requestedRow
+        status[site.id] = restored?.status ?? .newQuestion
+        front[site.id] = restored?.front
+        // A reply may have finished while this account was elsewhere.
+        if requested[site.id] == nil, let row = openConversation(of: site) {
+            if row.isAwaiting { status[site.id] = .waiting }
+            else if let savedAt = row.savedAt { status[site.id] = .saved(messages: row.messages, at: savedAt) }
+        }
+        // Publish the account last: consumers see only its own restored request and selection.
+        currentAccount[site.id] = account.isFirst ? nil : account.id
     }
 
     /// The account a row was asked in (the first, for a row from before accounts or of one
@@ -582,6 +616,7 @@ public final class WebShelf: ObservableObject {
         guard let removed = list.remove(id) else { return nil }
         list.save()
         accountLists[site.id] = list
+        accountNavigation[site.id]?[id] = nil
         for (page, account) in pageAccounts where account == id { pageAccounts[page] = nil }
         if currentAccount[site.id] == id {
             currentAccount[site.id] = nil
@@ -599,9 +634,15 @@ public final class WebShelf: ObservableObject {
 
     /// The rows the left column lists under the site: the ones you did not settle, those
     /// still waiting for an answer first, then newest first.
-    public func listed(of site: WebSite) -> [WebConversation] {
+    public func listed(of site: WebSite, limit: Int? = nil) -> [WebConversation] {
         let rows = conversations(of: site).filter { !$0.isSettled }
-        return rows.filter(\.isAwaiting) + rows.filter { !$0.isAwaiting }
+        let all = rows.filter(\.isAwaiting) + rows.filter { !$0.isAwaiting }
+        guard let limit else { return all }
+        var visible = Array(all.prefix(max(0, limit)))
+        // Show less still limits the list, but never hides the selected, unsettled row.
+        if let current = all.first(where: { $0.id == open[site.id] }),
+           !visible.contains(where: { $0.id == current.id }) { visible.append(current) }
+        return visible
     }
 
     public func conversation(_ id: String, of site: WebSite) -> WebConversation? {
@@ -700,7 +741,7 @@ public final class WebShelf: ObservableObject {
     public func show(_ conversation: WebConversation, of site: WebSite, now: Date = Date()) {
         // It opens in its own account (signed in on that account's store).
         let account = account(of: conversation, on: site)
-        currentAccount[site.id] = account.isFirst ? nil : account.id
+        selectAccount(account, on: site)
         setOpen(conversation.id, on: site, now: now)
         if !conversation.isAwaiting { seen.insert("\(site.id)/\(conversation.id)") }
         if stores[site.id]?.conversation(conversation.id)?.isSettled == true {
@@ -712,11 +753,11 @@ public final class WebShelf: ObservableObject {
         status[site.id] = conversation.isAwaiting ? .waiting : .reading
     }
 
-    /// "New question" (or the site's own row): the site's start page, fresh, in `account` (an
+    /// "New question": the site's start page, fresh, in `account` (an
     /// account picked in its menu), else the account shown now.
     public func startNew(on site: WebSite, account: WebAccount? = nil, now: Date = Date()) {
         if let account, accounts(of: site).account(account.id) != nil {
-            currentAccount[site.id] = account.isFirst ? nil : account.id
+            selectAccount(account, on: site)
         }
         setOpen(nil, on: site, now: now)
         requested[site.id] = site.startURL
