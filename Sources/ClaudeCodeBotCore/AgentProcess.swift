@@ -293,6 +293,10 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         let stderrTail = Tail()
         let responder = Responder()
         let respond: (([String: Any]) -> Void)? = { response in responder.send?(response) }
+        let transcripts = SubagentTranscriptUsage(
+            workingDirectory: launch.workingDirectory,
+            config: ClaudeCodeFiles.configFolder(environment: process.environment ?? ProcessInfo.processInfo.environment)
+        )
 
         output.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
@@ -307,6 +311,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
                     continue
                 }
                 for event in StreamEvent.events(in: line) { continuation.yield(event) }
+                for event in transcripts.events(in: line) { continuation.yield(event) }
                 if let text = watch.read(line) { continuation.yield(.earlyReply(text)) }
             }
         }

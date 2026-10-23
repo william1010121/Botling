@@ -243,7 +243,7 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable, Settleable {
     /// The model its Agent call asked for ("sonnet"), when it asked for one.
     public var model: String?
     public var runtime: WorkerRuntimeInfo?
-    /// Absolute counters replace earlier snapshots, so repeated/streamed usage is not added twice.
+    /// Absolute counters keep their highest snapshot, so repeated/streamed usage is not added twice.
     public var outputTokenCounters: [String: Int]?
 
     public var reportedOutputTokens: Double? {
@@ -329,8 +329,10 @@ public struct TraceBook: Equatable, Sendable {
     public mutating func apply(_ event: TraceEvent, at date: Date = Date()) -> Bool {
         switch event {
         case let .subagentOutput(id, counter, tokens):
+            // Counters only grow: a streamed snapshot sent after the transcript's final count
+            // (or a repeat) never lowers it.
             guard tokens >= 0, let index = resolvedIndex(id),
-                  subagents[index].outputTokenCounters?[counter] != tokens else { return false }
+                  tokens > subagents[index].outputTokenCounters?[counter] ?? -1 else { return false }
             if subagents[index].outputTokenCounters == nil { subagents[index].outputTokenCounters = [:] }
             subagents[index].outputTokenCounters?[counter] = tokens
             return true
