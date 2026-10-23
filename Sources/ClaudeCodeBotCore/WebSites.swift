@@ -86,9 +86,23 @@ public struct WebSite: Identifiable, Equatable, Sendable {
         dataStoreID: UUID(uuidString: "3E3B0000-0000-4000-8000-0000000000D3")!
     )
 
+    /// Grok's website, with its own persistent sign-in profile (separate from the API).
+    public static let grok = WebSite(
+        id: "grok",
+        name: "Grok",
+        startURL: URL(string: "https://grok.com/")!,
+        host: "grok.com",
+        conversationMarker: "c",
+        insideDomains: ["grok.com", "accounts.x.ai", "auth.x.ai", "accounts.google.com", "appleid.apple.com", "x.com", "twitter.com", "github.com"],
+        accent: 0x555D68,
+        symbol: "bolt",
+        selectionID: UUID(uuidString: "3E3B0000-0000-4000-8000-0000000000E4")!,
+        dataStoreID: UUID(uuidString: "3E3B0000-0000-4000-8000-0000000000D4")!
+    )
+
     /// Every site the column lists, in its order. More are added here as data, each with its
     /// page reader (`<id>.js`) in the plugin.
-    public static let all: [WebSite] = [.gemini, .chatgpt, .claude]
+    public static let all: [WebSite] = [.gemini, .chatgpt, .claude, .grok]
 
     /// The site a column selection stands for.
     public static func site(selection: UUID?) -> WebSite? {
