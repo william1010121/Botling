@@ -1,6 +1,6 @@
 # Changelog
 
-ClaudeCodeBot uses [semantic versioning](https://semver.org): a new feature bumps the minor
+Botling uses [semantic versioning](https://semver.org): a new feature bumps the minor
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
@@ -14,6 +14,15 @@ app and publishes it on GitHub Releases.
   moved to the new **Engines and subagents** page, which sets the Claude subagent model and the
   Codex workers' model, effort and Fast mode for every bot (or follows `~/.codex/config.toml`,
   showing what is in effect). Each bot's own settings page can still override them.
+- **Subagent rows show their head and model.** In the left column and Settled, each subagent
+  row shows which head started it (the head's character in the Cute look, its dot otherwise)
+  when the bot has two heads or the row is the other head's. A Claude subagent started with
+  "same model" now names the model its own stream reports, then the subagent setting, then the
+  Claude head's model, read as a name ("Opus 4.5"); Codex workers no longer borrow the Claude
+  subagent setting as their model.
+- **The GitHub repository is now `william1010121/Botling`.** README, docs, contributing and
+  security links, release notes and `/share` pull requests point at the new name; old
+  `ClaudeCodeBot` URLs redirect, and bundle ID, data folder and Swift target names are unchanged.
 - **Codex hands work to app-managed workers.** The main conversation finishes its turn after
   handing off a task, so you can keep chatting while an independent worker session runs. Live
   worker cards keep their progress and follow-up history. The app queues completed results and
@@ -112,6 +121,11 @@ app and publishes it on GitHub Releases.
   Codex reports.
 
 ### Fixed
+
+- **The chat no longer scrolls sideways.** A long divider label (such as a handoff note) could
+  widen the chat past the window and cut off every bubble at the left edge. Divider labels now
+  wrap, Markdown tables scroll inside their own block, and a page preview's report flag sits in
+  its top-left corner, off the 開啟完整頁面 button.
 
 - **Progress questions keep an in-flight handoff connected.** Writing while one head works
   for the other resets the message's round budget without deleting the pending return route.

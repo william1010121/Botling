@@ -6,7 +6,7 @@ import Foundation
 /// vote on it with 👍 and the owner picks what goes into the next release.
 public enum CommunityShare {
     /// Where shared features go.
-    public static let upstream = "william1010121/ClaudeCodeBot"
+    public static let upstream = "william1010121/Botling"
     public static let label = "community-feature"
     /// The branch of `upstream` pull requests go to, and features are compared with.
     public static let upstreamBranch = "main"
@@ -114,7 +114,7 @@ public enum CommunityShare {
         checks.append(findings.isEmpty
             ? Check(state: .ok, text: "Privacy check: no keys, tokens or personal paths in the diff")
             : Check(state: .failed, text: "Privacy check: " + findings.joined(separator: "; ")))
-        checks.append(owner(in: repo).map { Check(state: .ok, text: "Your fork: \($0)/ClaudeCodeBot") }
+        checks.append(owner(in: repo).map { Check(state: .ok, text: "Your fork: \($0)/Botling") }
             ?? Check(state: .failed, text: "No fork on GitHub: origin should be your fork of \(upstream) (your Manager can set it up)"))
         checks.append(Check(state: .ok, text: "Description drafted from its \(feature.commits) commit\(feature.commits == 1 ? "" : "s")"))
         // Only known once the pull request opens (the label may be missing on upstream, or not
@@ -211,7 +211,7 @@ public enum CommunityShare {
         lines += checks.map(\.line)
         lines.append("")
         if ready {
-            lines.append("Opens a pull request from \(owner ?? "your")/ClaudeCodeBot to \(upstream) and pushes \(feature.branch) to your fork first. Others vote on it with 👍; the owner picks which go into the next release.")
+            lines.append("Opens a pull request from \(owner ?? "your")/Botling to \(upstream) and pushes \(feature.branch) to your fork first. Others vote on it with 👍; the owner picks which go into the next release.")
         } else {
             lines.append("Not ready to share: fix what is marked ✗ (your Manager can), then /share again.")
         }

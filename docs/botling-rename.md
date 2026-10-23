@@ -17,7 +17,6 @@ Existing data is reused in place. No directory or chat migration is performed. T
 | `ccb`, `engines.ccb`, `ccb-*`, plugin RPC/global names | Installed plugins and their manifests keep working |
 | `ClaudeCodeBotCore`, `ClaudeCodeBot`, their source directories and test modules | Existing Swift imports, tools, source-path checks and parallel branches remain compatible; these are internal target names, not the product name |
 | `ClaudeCodeBot.focusComposer`, `ClaudeCodeBot/page-shots` and other existing cache/support paths | Notification and on-disk compatibility |
-| `william1010121/ClaudeCodeBot` and existing GitHub links | The remote repository has not been renamed; release, security and sharing links must still work |
 
 New SwiftPM resources are named `botling_ClaudeCodeBot.bundle` and
 `botling_ClaudeCodeBotCore.bundle`. Both resource resolvers also accept their former
@@ -30,6 +29,14 @@ The installer replaces the running app at its existing path, which may still be
 `ClaudeCodeBot.app`; rollback state records actual paths and continues to work. A manual
 installation should replace the previous copy rather than leave two applications with the
 same bundle ID. Older published releases retain their original archive names.
+
+## GitHub repository
+
+The repository is now `william1010121/Botling` (renamed from `william1010121/ClaudeCodeBot`).
+README, contributing, security and release-note links, the issue template, the hero image
+script and `/share` (`CommunityShare.upstream`) point at the new name. GitHub redirects the
+old URLs, so existing clones, forks and links keep working; a fork created before the rename
+keeps its own name, which does not matter because pull requests use `owner:branch`.
 
 ## Integration boundaries
 
