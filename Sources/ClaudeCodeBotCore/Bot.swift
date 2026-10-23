@@ -461,6 +461,23 @@ public final class Bot: ObservableObject, Identifiable {
         return BotEngine.allCases.first { partnerTeams[$0]?.subagent(id) != nil }
     }
 
+    /// The head to mark a subagent's row with: only needed when the row could be either
+    /// head's (two heads, or a team the other head left behind); nil otherwise.
+    public func subagentOwnerMark(_ id: String) -> BotEngine? {
+        guard let owner = subagentEngine(id) else { return nil }
+        return heads.hasTwo || owner != engine ? owner : nil
+    }
+
+    /// The model a subagent runs on, as a name: the one the stream reported or its Agent call
+    /// asked for; for a Claude subagent without one, the Claude subagent setting, else the
+    /// model the Claude head itself runs ("same model"). Codex reports its workers' own models.
+    public func subagentModelName(_ subagent: Subagent) -> String? {
+        if let model = subagent.model, !model.isEmpty { return BotModel.displayName(ofModelID: model) }
+        guard (subagentEngine(subagent.id) ?? engine) == .claude else { return nil }
+        // Both heads share the bot's model settings (the partner is made with them).
+        return (subagentModel ?? model).displayName
+    }
+
     public func subagentIsWaitingForNetwork(_ id: String) -> Bool {
         if trace.subagent(id) != nil { return outage?.subagents.contains(id) == true }
         return partner?.outage?.subagents.contains(id) == true
