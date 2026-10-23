@@ -27,7 +27,7 @@ public enum StepImages {
     static let compressedMarker = ".compressed-1"
 
     static var temporaryFolder: URL {
-        FileManager.default.temporaryDirectory.appending(path: "ClaudeCodeBot-\(folderName)")
+        FileManager.default.temporaryDirectory.appending(path: "Botling-\(folderName)")
     }
 
     static let extensions: [String: String] = [

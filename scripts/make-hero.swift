@@ -1,6 +1,6 @@
 // Draws docs/images/hero.png and docs/images/social-preview.png from the app's snapshots.
 //
-//   B=.build/debug/ClaudeCodeBot; S=/tmp/shots; mkdir -p $S
+//   B=.build/debug/botling; S=/tmp/shots; mkdir -p $S
 //   CCB_SNAPSHOT=$S/chat.png $B
 //   CCB_RAIL_SNAPSHOT=$S/hero-rail.png CCB_RAIL_HERO=1 $B
 //   CCB_RIGHT_SNAPSHOT=$S/right.png $B
@@ -79,7 +79,7 @@ S.interpolationQuality = .high
 S.draw(hero, in: CGRect(x: 600, y: (640 - hh) / 2 - 10, width: hw, height: hh))
 S.draw(load(icon), in: CGRect(x: 56, y: 640 - 96 - 200, width: 200, height: 200))
 NSGraphicsContext.current = NSGraphicsContext(cgContext: S, flipped: false)
-let title = NSAttributedString(string: "ClaudeCodeBot", attributes: [.font: NSFont.systemFont(ofSize: 64, weight: .bold), .foregroundColor: NSColor.white])
+let title = NSAttributedString(string: "Botling", attributes: [.font: NSFont.systemFont(ofSize: 64, weight: .bold), .foregroundColor: NSColor.white])
 title.draw(at: NSPoint(x: 80, y: 250))
 let para = NSMutableParagraphStyle(); para.lineSpacing = 6
 let tag = NSAttributedString(string: "A front desk for your local\nClaude Code agents, on macOS.", attributes: [.font: NSFont.systemFont(ofSize: 30, weight: .regular), .foregroundColor: NSColor(white: 0.78, alpha: 1), .paragraphStyle: para])

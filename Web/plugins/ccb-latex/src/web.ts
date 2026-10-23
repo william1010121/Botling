@@ -2,7 +2,7 @@ import type { CcbWeb } from "../../../src/plugins";
 import { closingDollar, mathPlugin, renderMath, renderPlainWithMath } from "./math";
 
 /**
- * LaTeX for ClaudeCodeBot: formulas in messages (bot replies through markdown-it, your own messages after
+ * LaTeX for Botling: formulas in messages (bot replies through markdown-it, your own messages after
  * they are drawn), a live preview above the input box while the caret is inside a formula, and
  * copying a typeset formula copies its TeX.
  */

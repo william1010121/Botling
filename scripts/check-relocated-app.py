@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Check an already relocated .app with its compiled SwiftPM fallback paths unavailable.
 
-Usage: python3 scripts/check-relocated-app.py /path/ClaudeCodeBot.app /path/evidence
+Usage: python3 scripts/check-relocated-app.py /path/Botling.app /path/evidence
 Requires an available macOS WindowServer. Only isolated, offscreen snapshot runs are used.
 The caller must first move/remove the original build directory; this script never changes it.
 """
 import json
 import os
+import plistlib
 from pathlib import Path
 import struct
 import subprocess
@@ -16,7 +17,8 @@ import tempfile
 
 def check(app, output):
     app, output = Path(app).resolve(), Path(output).resolve()
-    binary = app / "Contents/MacOS/ClaudeCodeBot"
+    info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+    binary = app / "Contents/MacOS" / info["CFBundleExecutable"]
     strings = subprocess.check_output(["/usr/bin/strings", str(binary)], text=True)
     fallbacks = sorted({line for line in strings.splitlines()
                         if line.startswith("/") and "/.build/" in line

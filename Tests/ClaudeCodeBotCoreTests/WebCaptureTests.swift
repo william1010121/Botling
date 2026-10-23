@@ -154,7 +154,7 @@ struct WebCaptureTests {
     @Test func aPagesInlineScriptsAreRemoved() {
         var redactor = WebRedactor()
         let html = redactor.redact(html: #"<html><script>WIZ_global_data={"SNlM0e":"tok"}</script><script src="/a.js"></script><p>Hi a@b.co</p></html>"#)
-        #expect(html == #"<html><script>/* removed by ClaudeCodeBot */</script><script src="/a.js"></script><p>Hi [email]</p></html>"#)
+        #expect(html == #"<html><script>/* removed by Botling */</script><script src="/a.js"></script><p>Hi [email]</p></html>"#)
         #expect(redactor.counts["inline scripts"] == 1)
     }
 
@@ -354,11 +354,11 @@ struct WebCaptureTests {
 
     @Test func maintainerIsToldWhereTheCaptureIsAndWhatToDo() throws {
         let pack = try WebCapturePack.write(input(at: Date()), in: root.appending(path: "captures"))
-        let text = Workspace.webCaptureHandoff(pack, site: gemini, plugin: root.appending(path: "plugins/ccb-web-extractors"), summary: "It differs.", testCommand: "'/A/ClaudeCodeBot' --test-extractor")
+        let text = Workspace.webCaptureHandoff(pack, site: gemini, plugin: root.appending(path: "plugins/ccb-web-extractors"), summary: "It differs.", testCommand: "'/A/botling' --test-extractor")
         #expect(text.hasPrefix("(App: Web capture)"))
         #expect(text.contains(pack.folder.path) && text.contains("It differs."))
         #expect(text.contains(root.appending(path: "plugins/ccb-web-extractors/gemini.js").path))
-        #expect(text.contains("'/A/ClaudeCodeBot' --test-extractor <capture folder>"))
+        #expect(text.contains("'/A/botling' --test-extractor <capture folder>"))
         #expect(text.contains("expected.json") && text.contains("never commit") && text.contains("never send a request"))
     }
 

@@ -1,5 +1,5 @@
 name: Feature request
-description: An idea for ClaudeCodeBot.
+description: An idea for Botling.
 labels: [enhancement]
 body:
   - type: textarea

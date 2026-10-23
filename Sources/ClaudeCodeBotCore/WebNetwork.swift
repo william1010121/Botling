@@ -459,7 +459,7 @@ public struct WebRedactor: Sendable {
         let stripped = replace(script, in: html, kind: "inline scripts") { match, source in
             let ns = source as NSString
             guard match.range(at: 2).length > 0 else { return ns.substring(with: match.range) }
-            return ns.substring(with: match.range(at: 1)) + "/* removed by ClaudeCodeBot */" + ns.substring(with: match.range(at: 3))
+            return ns.substring(with: match.range(at: 1)) + "/* removed by Botling */" + ns.substring(with: match.range(at: 3))
         }
         return redact(text: stripped)
     }
@@ -533,7 +533,7 @@ public enum WebHAR {
         }
         let log: [String: Any] = ["log": [
             "version": "1.2",
-            "creator": ["name": "ClaudeCodeBot", "version": appVersion],
+            "creator": ["name": "Botling", "version": appVersion],
             "pages": [["id": "page_1", "title": pageTitle ?? pageURL, "startedDateTime": time(startedAt), "pageTimings": [:]]],
             "entries": entries,
         ] as [String: Any]]

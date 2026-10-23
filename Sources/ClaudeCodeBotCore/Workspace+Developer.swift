@@ -1,11 +1,11 @@
 import Foundation
 
-/// Developer mode, for working on ClaudeCodeBot itself (off for everyone else): one project is
-/// ClaudeCodeBot's own source, and its manager may install new builds of the app (you confirm,
+/// Developer mode, for working on Botling itself (off for everyone else): one project is
+/// Botling's own source, and its manager may install new builds of the app (you confirm,
 /// and a build that does not come up is rolled back), look at the app's window, and gets what
 /// you flag as "not right" in any chat.
 extension Workspace {
-    /// The project that is ClaudeCodeBot's own source, while developer mode is on.
+    /// The project that is Botling's own source, while developer mode is on.
     public var developerProject: Project? {
         guard settings.developerMode, let id = settings.developerProjectID else { return nil }
         return projects.first { $0.id == id && !$0.isBot }
@@ -16,7 +16,7 @@ extension Workspace {
         return project.id == developer.id
     }
 
-    /// Turns developer mode on or off, with the project that is ClaudeCodeBot's source. Its
+    /// Turns developer mode on or off, with the project that is Botling's source. Its
     /// manager hears about it at once if awake, else at its next wake.
     public func setDeveloperMode(_ on: Bool, project: UUID?) {
         let before = developerProject
@@ -29,7 +29,7 @@ extension Workspace {
             managers[now.id]?.queueNote(developerBriefing(for: now))
         }
         if let before, before.id != developerProject?.id {
-            managers[before.id]?.queueNote("(App: Developer mode is off for this project now: you can no longer install builds of ClaudeCodeBot or take screenshots of it.)")
+            managers[before.id]?.queueNote("(App: Developer mode is off for this project now: you can no longer install builds of Botling or take screenshots of it.)")
         }
     }
 
@@ -38,11 +38,11 @@ extension Workspace {
         guard isDeveloperProject(project) else { return "" }
         let worktrees = project.notesFolder.appending(path: "worktrees").path
         return """
-        (App: Developer mode. This folder is ClaudeCodeBot's own source, the app you are running in, and you develop it.
+        (App: Developer mode. This folder is Botling's own source, the app you are running in, and you develop it.
         - One writer at a time. Do each task in a git worktree of its own: git worktree add \(worktrees)/<short-task> -b bot/<short-task>. Edit, build and test there; when the tests pass, merge it into the main branch and remove the worktree. If git status in the main folder shows changes you did not make, someone else is working: stop and ask the user.
         - Feedback from the user ("not right" on a reply) comes to you with the chat around it. First write a test that shows the problem (a live test in LiveClaudeTests when it needs the real claude), then fix it, then say in one sentence what was wrong.
-        - To try your work: from the main folder, after merging, build with SINGLE_ARCH=1 scripts/make-app.sh <version>-dev. See how a chat looks in that build without installing it: dist/ClaudeCodeBot.app/Contents/MacOS/ClaudeCodeBot --snapshot "<chat name>" <png path>, then read the PNG.
-        - To install it: write where you are into your memory file first (you are restarted too), then end your reply with <install-build path="full path of dist/ClaudeCodeBot.app">what changed, in a sentence or two</install-build>. The user confirms; the app restarts on the new build and tells you whether it came up. A build that does not come up is rolled back by itself.
+        - To try your work: from the main folder, after merging, build with SINGLE_ARCH=1 scripts/make-app.sh <version>-dev. See how a chat looks in that build without installing it: dist/Botling.app/Contents/MacOS/botling --snapshot "<chat name>" <png path>, then read the PNG.
+        - To install it: write where you are into your memory file first (you are restarted too), then end your reply with <install-build path="full path of dist/Botling.app">what changed, in a sentence or two</install-build>. The user confirms; the app restarts on the new build and tells you whether it came up. A build that does not come up is rolled back by itself.
         - To see the running app: end your reply with <app-screenshot/>; a picture of its window comes back to you.
         - Sharing: after merging a feature, keep its bot/<short-task> branch (delete only the worktree). The user shares one with /share: the app checks it (up to date, no keys or personal paths) and opens a pull request from their fork (origin) to \(CommunityShare.upstream) with the \(CommunityShare.label) label. If origin is not their GitHub fork, set it up when they ask (gh repo fork --remote).
         - Never change what bots may do (tools, permissions, the prompts' rules) unless the user asked for it; the install card shows such changes to the user.)
@@ -57,15 +57,15 @@ extension Workspace {
     func proposeBuild(_ path: String, note: String, from project: Project) {
         let manager = managers[project.id]
         guard isDeveloperProject(project) else {
-            manager?.queueNote("(App: Installing builds of ClaudeCodeBot needs developer mode with this project as ClaudeCodeBot's source; it is off. Nothing was installed.)")
+            manager?.queueNote("(App: Installing builds of Botling needs developer mode with this project as Botling's source; it is off. Nothing was installed.)")
             return
         }
         func refuse(_ why: String) {
-            tell(mainBot, "\(project.name) asked to install a ClaudeCodeBot build, but \(why)", sourceID: project.id)
+            tell(mainBot, "\(project.name) asked to install a Botling build, but \(why)", sourceID: project.id)
             manager?.queueNote("(App: The build was not installed: \(why))")
         }
         guard let running = runningBuild else {
-            return refuse("this ClaudeCodeBot is not running from an app bundle (swift run), so it cannot replace itself.")
+            return refuse("this Botling is not running from an app bundle (swift run), so it cannot replace itself.")
         }
         guard SelfUpdate.failures(in: root) < SelfUpdate.failureLimit else {
             return refuse("the last \(SelfUpdate.failureLimit) builds did not come up, so installing is paused. Turn developer mode off and on in Settings to allow it again.")
@@ -74,12 +74,12 @@ extension Workspace {
             return refuse("there is no app bundle at \(path).")
         }
         guard build.bundleID == running.bundleID else {
-            return refuse("\(path) is not ClaudeCodeBot (\(build.bundleID)).")
+            return refuse("\(path) is not Botling (\(build.bundleID)).")
         }
         guard build.path != running.path else {
             return refuse("that is the build running now; build into dist/ and point at that.")
         }
-        var lines = ["**\(project.name)** wants to install a new ClaudeCodeBot build and restart.", "",
+        var lines = ["**\(project.name)** wants to install a new Botling build and restart.", "",
                      "- New: \(build.label)", "- Running: \(running.label)"]
         let what = note.trimmingCharacters(in: .whitespacesAndNewlines)
         if !what.isEmpty { lines += ["", what] }
@@ -133,8 +133,8 @@ extension Workspace {
                 SelfUpdate.markHealthy(in: root)
                 SelfUpdate.setFailures(0, in: root)
                 let name = project(state.requesterID)?.name ?? "A bot"
-                tell(mainBot, "ClaudeCodeBot restarted on \(state.to.label) (was \(state.from.label)), installed for \(name).", sourceID: state.requesterID)
-                managers[state.requesterID]?.relay("(App) ClaudeCodeBot restarted on \(state.to.label), the build you asked to install\(state.note.isEmpty ? "" : " (\(state.note))"). Read your memory file for where you were, check that your change works (<app-screenshot/> shows the window), then say in one sentence whether it does.")
+                tell(mainBot, "Botling restarted on \(state.to.label) (was \(state.from.label)), installed for \(name).", sourceID: state.requesterID)
+                managers[state.requesterID]?.relay("(App) Botling restarted on \(state.to.label), the build you asked to install\(state.note.isEmpty ? "" : " (\(state.note))"). Read your memory file for where you were, check that your change works (<app-screenshot/> shows the window), then say in one sentence whether it does.")
             }
         case let .rolledBack(state, reason):
             SelfUpdate.finish(in: root)
@@ -144,7 +144,7 @@ extension Workspace {
                 ? " That is \(failures) in a row: installing is paused until developer mode is turned off and on again."
                 : ""
             tell(mainBot, "The new build \(state.to.label) did not come up (\(reason)); \(state.from.label) is running again.\(paused)", sourceID: state.requesterID)
-            managers[state.requesterID]?.relay("(App) The build you asked to install, \(state.to.label), did not come up: \(reason). ClaudeCodeBot put \(state.from.label) back. The install log is \(SelfUpdate.logURL(in: root).path); the failed build was kept beside the app as ClaudeCodeBot.app.failed. Find out why before trying again.\(paused)")
+            managers[state.requesterID]?.relay("(App) The build you asked to install, \(state.to.label), did not come up: \(reason). Botling put \(state.from.label) back. The install log is \(SelfUpdate.logURL(in: root).path); the failed build was kept beside the app as Botling.app.failed. Find out why before trying again.\(paused)")
         }
     }
 
@@ -153,7 +153,7 @@ extension Workspace {
     /// The developer project's manager asked to see the app: a picture of its window comes back.
     func sendScreenshot(to project: Project) {
         guard isDeveloperProject(project) else {
-            managers[project.id]?.queueNote("(App: Screenshots of ClaudeCodeBot need developer mode with this project as its source.)")
+            managers[project.id]?.queueNote("(App: Screenshots of Botling need developer mode with this project as its source.)")
             return
         }
         Task { [weak self] in

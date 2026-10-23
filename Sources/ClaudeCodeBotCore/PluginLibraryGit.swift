@@ -1,7 +1,7 @@
 import Foundation
 
 /// The plugin library (`~/.claudecodebot/plugins`) is a git repo, so every change Maintainer makes can be
-/// undone. ClaudeCodeBot's own commits (the first one, reverts, removals) are signed "ClaudeCodeBot".
+/// undone. Botling's own commits (the first one, reverts, removals) are signed "Botling".
 public struct PluginLibraryGit: Sendable {
     public let folder: URL
     let git: URL?
@@ -33,7 +33,7 @@ public struct PluginLibraryGit: Sendable {
         guard let git else { return (false, "git not found.") }
         let process = Process()
         process.executableURL = git
-        process.arguments = ["-c", "user.name=ClaudeCodeBot", "-c", "user.email=ccb@localhost", "-c", "commit.gpgsign=false"] + arguments
+        process.arguments = ["-c", "user.name=Botling", "-c", "user.email=ccb@localhost", "-c", "commit.gpgsign=false"] + arguments
         process.currentDirectoryURL = folder
         let output = Pipe()
         process.standardOutput = output
@@ -58,7 +58,7 @@ public struct PluginLibraryGit: Sendable {
         }
         run(["init", "-q"])
         run(["add", "-A"])
-        run(["commit", "-q", "-m", "ClaudeCodeBot plugin library"])
+        run(["commit", "-q", "-m", "Botling plugin library"])
     }
 
     /// Changes under `path` not committed yet.

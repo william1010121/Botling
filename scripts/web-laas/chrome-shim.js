@@ -1,5 +1,5 @@
 // The part of `chrome.*` web-laas's isolated-world scripts use (content/isolated.ts and
-// preview/entry.ts), for ClaudeCodeBot's web views, where there is no extension. esbuild injects it
+// preview/entry.ts), for Botling's web views, where there is no extension. esbuild injects it
 // (`inject`), so every free `chrome` in those scripts is this object; their source is not changed.
 //
 // It runs in the app's own content world (`WebLaas.world`): the page's scripts cannot see it.
@@ -49,7 +49,7 @@ function runCommand(command) {
     chrome.storage.local.set({ enabled });
     toast(enabled ? "LaTeX auto-expand is on" : "LaTeX auto-expand is paused", enabled ? "on" : "off", "⌥⇧L to switch");
   } else if (command === "toggle-cheatsheet") {
-    toast("The cheat sheet is not in ClaudeCodeBot", "info", "Use the web-laas extension in a browser for it");
+    toast("The cheat sheet is not in Botling", "info", "Use the web-laas extension in a browser for it");
   }
 }
 

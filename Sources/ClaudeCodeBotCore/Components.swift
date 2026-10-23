@@ -56,10 +56,10 @@ public enum ComponentRefresh {
     }
 }
 
-/// The parts of ClaudeCodeBot's chat that are HTML templates instead of fixed code: one folder each,
+/// The parts of Botling's chat that are HTML templates instead of fixed code: one folder each,
 /// holding `template.html` and `about.md` (what data it takes). They live in the `ccb-components`
 /// plugin (`~/.claudecodebot/plugins/ccb-components/components/<name>/`); other plugins can bring more.
-/// Changes are asked of Maintainer; ClaudeCodeBot notices the file change and redraws without a restart.
+/// Changes are asked of Maintainer; Botling notices the file change and redraws without a restart.
 /// Earlier versions are in the plugin library's git history.
 @MainActor
 public final class ComponentLibrary: ObservableObject {
@@ -67,7 +67,7 @@ public final class ComponentLibrary: ObservableObject {
     @Published public private(set) var versions: [String: Int] = [:]
     /// Components being changed now, with what was asked.
     @Published public private(set) var working: [String: String] = [:]
-    /// Changed since ClaudeCodeBot started (shows "Updated" beside them).
+    /// Changed since Botling started (shows "Updated" beside them).
     @Published public private(set) var updated: Set<String> = []
     @Published public private(set) var names: [String] = []
 
@@ -495,7 +495,7 @@ public enum SlashCommands {
 
     /// Developer mode only, in the developer project's chat: the app answers it (`Workspace.share`).
     public static var share: Command {
-        Command(name: "share", about: L("Share a feature you built: check it, then open a pull request to ClaudeCodeBot"))
+        Command(name: "share", about: L("Share a feature you built: check it, then open a pull request to Botling"))
     }
 }
 
@@ -508,7 +508,7 @@ enum ComponentPrompts {
     /// The Command: line runs as written (a `[repo_dir]` in it made zsh fail: "no matches found").
     static let commandVerbatim = "- The Command: line is executed verbatim by zsh, exactly as written (nothing is filled in), so it must be runnable as written and only read: put no [optional] or <placeholder> notation in it; describe optional arguments in about.md's prose, not in the line. The component-shot command runs it once as written and lists a failure as a problem: fix the line until it passes."
     static let system = """
-    You are ClaudeCodeBot's component editor (component-editor). You look after one component in the chat: its folder holds template.html, and how to use it is written in about.md.
+    You are Botling's component editor (component-editor). You look after one component in the chat: its folder holds template.html, and how to use it is written in about.md.
     - template.html is a piece of HTML (it may include <style> and <script>), drawn on the dark background #1B1B1F; its width follows the frame and its height follows the content.
     - The data is in window.ccb.data. The user's answer always calls ccb.answer(...): a number picks an option by index (from 0), text is an answer the user typed (for example an "Other" input box). The app treats both as answered and passes the answer to the bot that asked.
     - Pictures back: ccb.answer({text, images}) sends words with pictures; images are what ccb.pickImage({multiple: true}) resolves to (call it from a click; [] if cancelled), what ccb.readImage(file) makes of a pasted or dropped File, or data: URLs. Each picked picture has dataURL for a thumbnail. The bot gets the pictures as saved files, like pictures sent with a message.
@@ -533,7 +533,7 @@ enum ComponentPrompts {
     """
 }
 
-/// The templates ClaudeCodeBot ships with; written to `~/.claudecodebot/components/` the first time.
+/// The templates Botling ships with; written to `~/.claudecodebot/components/` the first time.
 enum ComponentDefaults {
     /// Earlier shipped versions, replaced on launch only if still unedited. Older builds shipped
     /// them in Chinese; the Chinese text below is kept on purpose, as data, so that an unedited

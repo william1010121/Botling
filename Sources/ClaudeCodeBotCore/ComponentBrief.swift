@@ -50,7 +50,7 @@ public enum ComponentBrief {
             persistSession: false,
             workingDirectory: job.folder,
             // On --resume the session keeps its own system prompt; this only says what this copy is for.
-            systemPrompt: "This is a read-only copy of your session, asked by the ClaudeCodeBot app for a component brief. Change nothing.",
+            systemPrompt: "This is a read-only copy of your session, asked by the Botling app for a component brief. Change nothing.",
             tools: tools,
             asksPermission: false,
             disallowedTools: deniedTools,

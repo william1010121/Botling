@@ -42,7 +42,7 @@ struct SettingsPopover: View {
                 get: { workspace.settings.autoApprovesSafeActions },
                 set: { workspace.setAutoApprovesSafeActions($0) }
             ))
-            SettingSwitch(L("Develop ClaudeCodeBot itself"), isOn: DeveloperSection.binding(workspace))
+            SettingSwitch(L("Develop Botling itself"), isOn: DeveloperSection.binding(workspace))
             divider
             VStack(spacing: 0) {
                 if workspace.doctor.needsAttention {
@@ -183,7 +183,7 @@ private struct SettingSwitch: View {
     }
 }
 
-/// ClaudeCodeBot's own settings: a sidebar of sections, the chosen one beside it. Opened from
+/// Botling's own settings: a sidebar of sections, the chosen one beside it. Opened from
 /// the gear's popover or with ⌘,.
 struct SettingsWindow: View {
     @ObservedObject var workspace: Workspace
@@ -435,7 +435,7 @@ private struct PermissionsSection: View {
     }
 }
 
-/// ClaudeCodeBot's plugins: on or off, why one broke, and the settings each declares; and
+/// Botling's plugins: on or off, why one broke, and the settings each declares; and
 /// adding one.
 private struct PluginsSection: View {
     @ObservedObject var registry: PluginRegistry
@@ -471,7 +471,7 @@ private struct PluginsSection: View {
             ComponentEditorSection(workspace: workspace)
             PanelSection(L("Add plugin")) {
                 AddPluginRow(workspace: workspace, source: $source)
-                Text(L("ClaudeCodeBot asks before installing. A folder needs a package.json."))
+                Text(L("Botling asks before installing. A folder needs a package.json."))
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
             }
@@ -501,7 +501,7 @@ struct LanguageSection: View {
             .padding(.horizontal, 14)
             .frame(height: 44)
             .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-            Text(L("ClaudeCodeBot's menus, buttons and messages change at once. Bots reply in this language by default; when you write to them in another language, they answer in yours."))
+            Text(L("Botling's menus, buttons and messages change at once. Bots reply in this language by default; when you write to them in another language, they answer in yours."))
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.faint)
                 .fixedSize(horizontal: false, vertical: true)
@@ -692,7 +692,7 @@ private struct PluginRow: View {
     }
 }
 
-/// "Add plugin": paste a git URL, npm name or archive URL (ClaudeCodeBot asks before installing), or pick
+/// "Add plugin": paste a git URL, npm name or archive URL (Botling asks before installing), or pick
 /// a folder of your own (installed right away).
 private struct AddPluginRow: View {
     @ObservedObject var workspace: Workspace
@@ -752,7 +752,7 @@ private struct SettingControl: View {
             Text(setting.title).foregroundStyle(Theme.muted)
             Spacer()
             if setting.secret == true {
-                // Kept in the keychain; ClaudeCodeBot never shows it again.
+                // Kept in the keychain; Botling never shows it again.
                 SecureField(registry.secret(plugin, key) == nil ? L("Not set") : L("Saved in Keychain"), text: $secret)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 140)
@@ -784,7 +784,7 @@ private struct SettingControl: View {
     }
 }
 
-/// For working on ClaudeCodeBot itself: which project is its source, whose manager may then
+/// For working on Botling itself: which project is its source, whose manager may then
 /// install new builds, look at the app, and get what you flag as not right.
 struct DeveloperSection: View {
     @ObservedObject var workspace: Workspace
@@ -795,7 +795,7 @@ struct DeveloperSection: View {
             VStack(alignment: .leading, spacing: 10) {
                 Card {
                     Toggle(isOn: Self.binding(workspace)) {
-                        Text(L("Develop ClaudeCodeBot itself")).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
+                        Text(L("Develop Botling itself")).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .toggleStyle(.switch)
                     .padding(.horizontal, 14)
@@ -824,7 +824,7 @@ struct DeveloperSection: View {
                 }
                 Text(workspace.settings.developerMode
                      ? L("{0}'s manager may install new builds (you confirm; one that does not start is rolled back), take screenshots of this window, and gets what you flag as \"not right\" in any chat.", workspace.developerProject?.name ?? L("That project"))
-                     : L("Off for everyone who only uses ClaudeCodeBot. Turn it on to let one project's manager work on the app itself."))
+                     : L("Off for everyone who only uses Botling. Turn it on to let one project's manager work on the app itself."))
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.faint)
                     .fixedSize(horizontal: false, vertical: true)
@@ -833,7 +833,7 @@ struct DeveloperSection: View {
     }
 
     /// Developer mode on or off; turned on, with the project chosen before or the one that
-    /// looks like ClaudeCodeBot's source.
+    /// looks like Botling's source.
     static func binding(_ workspace: Workspace) -> Binding<Bool> {
         Binding(
             get: { workspace.settings.developerMode },

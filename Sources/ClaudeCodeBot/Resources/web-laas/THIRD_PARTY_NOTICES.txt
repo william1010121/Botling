@@ -1,4 +1,4 @@
-Third-party software in ClaudeCodeBot's web-laas scripts (LaTeX snippets and live preview in
+Third-party software in Botling's web-laas scripts (LaTeX snippets and live preview in
 the web bots), bundled into web-laas-*.js by scripts/build-web-laas.sh.
 web-laas 0.7.2, commit 445df12c4eb128adfd0d49eb5f0fcd3d5f93b88b.
 
@@ -421,11 +421,11 @@ web-laas 0.7.2
 License: GPL-3.0-or-later
 Source: git+https://github.com/william1010121/web-laas.git
 
-The GNU General Public License v3.0: see LICENSE at the top of ClaudeCodeBot's source, or https://www.gnu.org/licenses/gpl-3.0.txt
+The GNU General Public License v3.0: see LICENSE at the top of Botling's source, or https://www.gnu.org/licenses/gpl-3.0.txt
 
 ==============================================================================
 web-laas-engine 0.6.0
 License: GPL-3.0-or-later
 Source: git+https://github.com/william1010121/web-laas.git
 
-The GNU General Public License v3.0: see LICENSE at the top of ClaudeCodeBot's source, or https://www.gnu.org/licenses/gpl-3.0.txt
+The GNU General Public License v3.0: see LICENSE at the top of Botling's source, or https://www.gnu.org/licenses/gpl-3.0.txt

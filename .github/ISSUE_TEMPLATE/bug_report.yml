@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in ClaudeCodeBot does not work as it should.
+description: Something in Botling does not work as it should.
 labels: [bug]
 body:
   - type: textarea
@@ -20,7 +20,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: ClaudeCodeBot version
+      label: Botling version
       placeholder: "1.10.0"
     validations:
       required: true

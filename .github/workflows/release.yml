@@ -26,12 +26,12 @@ jobs:
           (cd Web && npm ci && npm test)
           swift build --build-tests
           swift test --skip-build --no-parallel
-      - name: Build ClaudeCodeBot.app
+      - name: Build Botling.app
         run: scripts/make-app.sh "${GITHUB_REF_NAME#v}"
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" dist/*.zip \
-            --title "ClaudeCodeBot $GITHUB_REF_NAME" \
+            --title "Botling $GITHUB_REF_NAME" \
             --notes-file .github/release-notes.md

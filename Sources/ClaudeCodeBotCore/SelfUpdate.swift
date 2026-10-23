@@ -1,6 +1,6 @@
 import Foundation
 
-/// A build of ClaudeCodeBot: what `scripts/make-app.sh` wrote into its Info.plist.
+/// A build of Botling: what `scripts/make-app.sh` wrote into its Info.plist.
 public struct BuildInfo: Codable, Equatable, Sendable {
     public var path: String
     public var bundleID: String
@@ -39,7 +39,7 @@ public struct BuildInfo: Codable, Equatable, Sendable {
     }
 }
 
-/// Installing a new build of ClaudeCodeBot while it runs. The app cannot replace itself, so a
+/// Installing a new build of Botling while it runs. The app cannot replace itself, so a
 /// small script outside it does: it waits for the app to quit (bots write their memory first),
 /// moves the running build aside, puts the new one in its place and opens it. The new app says
 /// it came up by writing `healthy`; if it does not within `healthWait` seconds, the script puts
@@ -90,7 +90,7 @@ public enum SelfUpdate {
         try FileManager.default.createDirectory(at: folder.appending(path: "backups"), withIntermediateDirectories: true)
         for marker in [healthyURL(in: root), rolledBackURL(in: root)] { try? FileManager.default.removeItem(at: marker) }
         let stamp = Spending.today(now) + "-" + String(Int(now.timeIntervalSince1970))
-        let backup = folder.appending(path: "backups/ClaudeCodeBot-\(running.version)-\(stamp).app").path
+        let backup = folder.appending(path: "backups/Botling-\(running.version)-\(stamp).app").path
         let state = State(from: running, to: new, requesterID: requester, note: note, startedAt: now, backup: backup)
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -103,11 +103,11 @@ public enum SelfUpdate {
     /// The script, run as: install.sh pid target new backup healthy rolled-back seconds.
     static let script = """
     #!/bin/bash
-    # Installs a new ClaudeCodeBot build while the old one quits; puts the old one back if the
-    # new one does not come up. Written by ClaudeCodeBot (SelfUpdate.swift).
+    # Installs a new Botling build while the old one quits; puts the old one back if the
+    # new one does not come up. Written by Botling (SelfUpdate.swift).
     PID="$1"; TARGET="$2"; NEW="$3"; BACKUP="$4"; HEALTHY="$5"; ROLLED="$6"; WAIT="$7"
     say() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
-    say "waiting for ClaudeCodeBot ($PID) to quit"
+    say "waiting for Botling ($PID) to quit"
     for i in $(seq 1 300); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
     if kill -0 "$PID" 2>/dev/null; then say "it did not quit; nothing changed"; echo "did not quit" > "$ROLLED"; exit 1; fi
     say "moving $TARGET to $BACKUP"

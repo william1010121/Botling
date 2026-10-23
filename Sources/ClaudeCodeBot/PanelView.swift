@@ -3,7 +3,7 @@ import ClaudeCodeBotCore
 import SwiftUI
 import WebKit
 
-/// What any page running plugins (the chat, a panel) can ask of ClaudeCodeBot.
+/// What any page running plugins (the chat, a panel) can ask of Botling.
 @MainActor
 enum PluginBridge {
     static func handle(_ type: String, _ body: [String: Any], workspace: Workspace, view: WKWebView?) {

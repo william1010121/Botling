@@ -4,14 +4,14 @@ import WebKit
 
 /// Headless runs for web captures:
 ///
-/// `ClaudeCodeBot --test-extractor <capture | site folder | captures folder> [--extractor <file.js>]`
+/// `botling --test-extractor <capture | site folder | captures folder> [--extractor <file.js>]`
 /// replays each capture: its dom.html in an offscreen web view (no page scripts, no network) and
 /// its events, through the page reader (the plugin's, else the app's; or `--extractor`), exactly
 /// as the app reads a page. A capture passes when what is read is its expected.json and the
 /// page and traffic readings agree; one without expected.json is skipped. Exits 0 when at least
 /// one passed and none failed.
 ///
-/// `ClaudeCodeBot --capture-test <page URL> --site <id> [--seconds N] [--out <folder>] [--extractor <file.js>]`
+/// `botling --capture-test <page URL> --site <id> [--seconds N] [--out <folder>] [--extractor <file.js>]`
 /// is for testing the capture itself against a local page that mimics a site: the page loads in
 /// a real web bot page (the tap, the reader) while a capture records, then the capture is written
 /// under `<folder>/captures` and what the bot saved is printed.

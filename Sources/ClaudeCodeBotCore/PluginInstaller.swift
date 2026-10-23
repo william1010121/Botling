@@ -1,6 +1,6 @@
 import Foundation
 
-/// A plugin fetched and checked but not installed yet: what ClaudeCodeBot shows you before asking.
+/// A plugin fetched and checked but not installed yet: what Botling shows you before asking.
 public struct InstallProposal: Identifiable, Sendable {
     public let id = UUID()
     /// What was given: a folder, git URL, npm name or archive URL.

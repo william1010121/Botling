@@ -35,7 +35,7 @@ struct HostMessage: Codable {
 
 /// Runs the Node plugin host (`Resources/host/host.mjs`) for every plugin with a program part,
 /// and talks to it with one JSON-RPC message per line on stdin/stdout. If the process dies it is
-/// started again at once and the plugins reloaded; ClaudeCodeBot is told which plugin it was running, so
+/// started again at once and the plugins reloaded; Botling is told which plugin it was running, so
 /// one that keeps bringing it down can be turned off.
 @MainActor
 public final class PluginHostClient: ObservableObject {
@@ -74,9 +74,9 @@ public final class PluginHostClient: ObservableObject {
 
     public let script: URL
     private let locateNode: () -> URL?
-    /// The host asks ClaudeCodeBot for something (bots.list, routines.add).
+    /// The host asks Botling for something (bots.list, routines.add).
     public var onRequest: ((_ method: String, _ params: JSONValue) async throws -> JSONValue)?
-    /// The host tells ClaudeCodeBot something (notify, bots.send, pluginError).
+    /// The host tells Botling something (notify, bots.send, pluginError).
     public var onNotification: ((_ method: String, _ params: JSONValue) -> Void)?
     /// A plugin's program part threw, or the host died while running it (`fatal`: it failed to
     /// load at all).
@@ -286,7 +286,7 @@ public final class PluginHostClient: ObservableObject {
         guard let message = try? JSONDecoder().decode(HostMessage.self, from: Data(line.utf8)) else { return }
         if let method = message.method {
             if let id = message.id {
-                // The host asks ClaudeCodeBot for something.
+                // The host asks Botling for something.
                 Task { [weak self] in
                     guard let self else { return }
                     do {

@@ -148,7 +148,7 @@ export interface SpecState {
   draft: number;
   /** The chat it is in. */
   chat: string;
-  /** "from ClaudeCodeBot's reply at 22:14", "suggested by garden". */
+  /** "from Botling's reply at 22:14", "suggested by garden". */
   from: string;
   suggestedBy: string | null;
   /** The reply already is this component: only which bots get it is left. */

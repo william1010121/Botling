@@ -1,12 +1,12 @@
 import Foundation
 
-/// PLUGINS.md: how to write a ClaudeCodeBot plugin. Written into the plugin library on launch.
+/// PLUGINS.md: how to write a Botling plugin. Written into the plugin library on launch.
 enum PluginGuide {
     static func text(builtIns: String) -> String {
         #"""
-        # ClaudeCodeBot plugins
+        # Botling plugins
 
-        This folder is ClaudeCodeBot's plugin library (a git repo). One folder per plugin. ClaudeCodeBot watches it; whenever a file changes it re-checks and hot-updates.
+        This folder is Botling's plugin library (a git repo). One folder per plugin. Botling watches it; whenever a file changes it re-checks and hot-updates.
         The sources of the plugins built into the app are in: \#(builtIns) (read-only; to change one, copy the whole folder here; a plugin with the same name overrides the built-in one).
 
         ## Folder
@@ -53,7 +53,7 @@ enum PluginGuide {
 
         - name: lowercase letters, digits, - . _. version: semver.
         - Permissions: composer, messages, network, files, exec, bots (talk to bots, make new ones), claude.
-        - Setting types: boolean, enum (needs options), string, number. ClaudeCodeBot generates the controls in Settings.
+        - Setting types: boolean, enum (needs options), string, number. Botling generates the controls in Settings.
         - Settings with `secret: true` (passwords, tokens) are stored in the macOS Keychain; the web part cannot read them, the program part can with settings.get;
           those with `env` become environment variables of the bot processes, and MCP servers read them in .mcp.json as `${EXAMPLE_TOKEN}`.
         - panels: panels in the right column (at most 3 icons are shown; the rest go under "More"). icon is an SF Symbol name.
@@ -80,7 +80,7 @@ enum PluginGuide {
         - `ccb.host.call(method, params)`: calls your own program part (which answers with `ccb.web.handle`).
         - `ccb.notify(text)`: adds a line to the main bot's chat.
 
-        The web part must be bundled into a single ES module (esbuild --bundle --format=esm). On errors it is disabled; if an earlier version worked, ClaudeCodeBot keeps using that one.
+        The web part must be bundled into a single ES module (esbuild --bundle --format=esm). On errors it is disabled; if an earlier version worked, Botling keeps using that one.
 
         ## Program part (dist/host.mjs, Node)
 
@@ -99,7 +99,7 @@ enum PluginGuide {
         - `ccb.routines.add(botId, "minute hour day month weekday", "Name: what to do")`. Adding exactly the same job again does nothing.
         - `ccb.storage.dir`, `ccb.storage.get(key)`, `ccb.storage.set(key, value)`.
         - `ccb.commands.register(id, run)`, `ccb.web.handle(method, fn)`, `ccb.settings.get/onChange`, `ccb.notify(text)`.
-        - console.log goes to stderr and does not disturb ClaudeCodeBot. A plugin that fails 3 times within 10 minutes is disabled.
+        - console.log goes to stderr and does not disturb Botling. A plugin that fails 3 times within 10 minutes is disabled.
 
         ## Claude part (claude/)
 
@@ -195,14 +195,14 @@ enum PluginGuide {
         1. Edit the files, bump version.
         2. Run `ccb plugin check` (Maintainer's instructions have the actual command): checks package.json, runs npm build/test, validates the Claude part, and loads the web part once in an invisible chat view.
         3. `git add <plugin>`, `git commit -m "<plugin>: <what you did>"`, `git tag <plugin>--v<version>`.
-        4. ClaudeCodeBot hot-updates; a "Plugin … updated" line appears in the main bot's chat.
+        4. Botling hot-updates; a "Plugin … updated" line appears in the main bot's chat.
 
-        Reverting: right-click the plugin in the plugin list in Settings and choose "Revert to previous version"; ClaudeCodeBot uses git to put that plugin back to its previous version.
+        Reverting: right-click the plugin in the plugin list in Settings and choose "Revert to previous version"; Botling uses git to put that plugin back to its previous version.
 
         ## Outside plugins
 
         Install from a git URL, an npm package, or a .zip/.tgz URL: "Add plugin" in Settings, or a bot adds `<install>source</install>` to its reply.
-        ClaudeCodeBot fetches and checks it first, then asks the user with a card listing the source, author, license, permissions and MCP servers; only "Install" puts it into the plugin library and commits it.
+        Botling fetches and checks it first, then asks the user with a card listing the source, author, license, permissions and MCP servers; only "Install" puts it into the plugin library and commits it.
         Folders the user picked themselves are trusted directly. MCP tools (`mcp__plugin_<name>_<server>`) are automatically allowed for the bots.
 
         """#

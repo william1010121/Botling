@@ -91,14 +91,14 @@ const sections = [...packages]
     const license = typeof meta.license === "string" ? meta.license : meta.license?.type ?? "UNKNOWN";
     const where = meta.repository?.url ?? meta.repository ?? meta.homepage ?? "";
     const text = license.startsWith("GPL-3.0")
-      ? "The GNU General Public License v3.0: see LICENSE at the top of ClaudeCodeBot's source, or https://www.gnu.org/licenses/gpl-3.0.txt"
+      ? "The GNU General Public License v3.0: see LICENSE at the top of Botling's source, or https://www.gnu.org/licenses/gpl-3.0.txt"
       : licenseText(dir) ?? `(no license file in the package; its package.json says ${license})`;
     return [`${meta.name} ${meta.version ?? ""}`.trim(), `License: ${license}`, where && `Source: ${where}`, "", text].filter((l) => l !== false && l !== null).join("\n");
   });
 writeFileSync(
   path.join(out, "THIRD_PARTY_NOTICES.txt"),
   [
-    "Third-party software in ClaudeCodeBot's web-laas scripts (LaTeX snippets and live preview in",
+    "Third-party software in Botling's web-laas scripts (LaTeX snippets and live preview in",
     "the web bots), bundled into web-laas-*.js by scripts/build-web-laas.sh.",
     `web-laas ${version}, commit ${commit}${dirty ? " (with uncommitted changes)" : ""}.`,
     "",

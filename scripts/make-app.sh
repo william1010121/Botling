@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds ClaudeCodeBot.app (universal: Apple silicon + Intel) and a zip of it in dist/.
+# Builds Botling.app (universal: Apple silicon + Intel) and a zip of it in dist/.
 #   scripts/make-app.sh 1.1.0     (without a version, the one in VERSION)
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -13,16 +13,16 @@ if [[ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]]; then D
 ARCHS=(--arch arm64 --arch x86_64)
 if [[ "${SINGLE_ARCH:-}" == "1" ]]; then ARCHS=(); fi
 
-swift build -c release ${ARCHS[@]+"${ARCHS[@]}"}
-BIN="$(swift build -c release ${ARCHS[@]+"${ARCHS[@]}"} --show-bin-path)"
+swift build --jobs 2 -c release ${ARCHS[@]+"${ARCHS[@]}"}
+BIN="$(swift build --jobs 2 -c release ${ARCHS[@]+"${ARCHS[@]}"} --show-bin-path)"
 
-APP="dist/ClaudeCodeBot.app"
+APP="dist/Botling.app"
 rm -rf dist
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN/ClaudeCodeBot" "$APP/Contents/MacOS/ClaudeCodeBot"
+cp "$BIN/botling" "$APP/Contents/MacOS/botling"
 # The web chat, built-in plugins and plugin host live in SwiftPM's resource bundle.
-cp -R "$BIN/ClaudeCodeBot_ClaudeCodeBot.bundle" "$APP/Contents/Resources/"
-cp -R "$BIN/ClaudeCodeBot_ClaudeCodeBotCore.bundle" "$APP/Contents/Resources/"
+cp -R "$BIN/botling_ClaudeCodeBot.bundle" "$APP/Contents/Resources/"
+cp -R "$BIN/botling_ClaudeCodeBotCore.bundle" "$APP/Contents/Resources/"
 if [[ -f Assets/AppIcon.icns ]]; then cp Assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"; fi
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -30,10 +30,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>ClaudeCodeBot</string>
-  <key>CFBundleDisplayName</key><string>ClaudeCodeBot</string>
+  <key>CFBundleName</key><string>Botling</string>
+  <key>CFBundleDisplayName</key><string>Botling</string>
   <key>CFBundleIdentifier</key><string>io.github.william1010121.ClaudeCodeBot</string>
-  <key>CFBundleExecutable</key><string>ClaudeCodeBot</string>
+  <key>CFBundleExecutable</key><string>botling</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
@@ -50,5 +50,5 @@ PLIST
 
 # Ad-hoc signature: not notarized, so the first launch needs right-click → Open.
 codesign --force --deep --sign - "$APP"
-ditto -c -k --keepParent "$APP" "dist/ClaudeCodeBot-${VERSION}-macOS.zip"
-echo "Built $APP and dist/ClaudeCodeBot-${VERSION}-macOS.zip"
+ditto -c -k --keepParent "$APP" "dist/botling-${VERSION}-macOS.zip"
+echo "Built $APP and dist/botling-${VERSION}-macOS.zip"

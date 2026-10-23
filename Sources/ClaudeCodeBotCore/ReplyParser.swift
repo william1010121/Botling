@@ -1,25 +1,25 @@
 import Foundation
 
-/// Asks a bot can make by putting a tag in its reply. ClaudeCodeBot acts on them and strips them from
+/// Asks a bot can make by putting a tag in its reply. Botling acts on them and strips them from
 /// what the user sees.
 public enum BotRequest: Equatable, Sendable {
     /// `<team name="research">task</team>`: pull up a temporary team.
     case team(name: String, task: String)
     /// `<component name="choices">request</component>`: ask the component team for a change.
     case component(name: String, request: String)
-    /// `<plugin>request</plugin>`: ask Maintainer for a change to ClaudeCodeBot itself.
+    /// `<plugin>request</plugin>`: ask Maintainer for a change to Botling itself.
     case plugin(request: String)
     /// `<need-folder>/path</need-folder>`: Maintainer asks to read a folder outside the library.
     case folder(path: String)
-    /// `<install>source</install>`: install a plugin from outside (ClaudeCodeBot asks the user first).
+    /// `<install>source</install>`: install a plugin from outside (Botling asks the user first).
     case install(source: String)
     /// `<new-bot name="Morning news">job</new-bot>`: a bot of its own, added to the left column.
     case newBot(name: String, job: String)
     /// `<new-project folder="/path">first task</new-project>`: make a folder a project with its
-    /// own manager (ClaudeCodeBot asks the user first), then hand it the task, if any.
+    /// own manager (Botling asks the user first), then hand it the task, if any.
     case newProject(folder: String, task: String)
-    /// `<install-build path="/…/ClaudeCodeBot.app">what changed</install-build>`: developer mode
-    /// only. Install a new build of ClaudeCodeBot and restart (the user confirms first).
+    /// `<install-build path="/…/Botling.app">what changed</install-build>`: developer mode
+    /// only. Install a new build of Botling and restart (the user confirms first).
     case installBuild(path: String, note: String)
     /// `<app-screenshot/>`: developer mode only. A picture of the app's window, sent back.
     case appScreenshot

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import ClaudeCodeBotCore
 
-/// Developer mode: one project is ClaudeCodeBot's source; its manager may install builds (you
+/// Developer mode: one project is Botling's source; its manager may install builds (you
 /// confirm, a build that does not come up is rolled back), look at the app, and gets feedback.
 @MainActor
 @Suite(.integration)
@@ -67,7 +67,7 @@ struct DeveloperModeTests {
         let (workspace, _, manager) = try developerSetUp(fake)
         manager.send("hi")
         await eventually { fake.agents.count == 1 }
-        #expect(fake.agents[0].sent.first?.contains("(App: Developer mode. This folder is ClaudeCodeBot's own source") == true)
+        #expect(fake.agents[0].sent.first?.contains("(App: Developer mode. This folder is Botling's own source") == true)
         withExtendedLifetime(workspace) {}
     }
 
@@ -88,10 +88,10 @@ struct DeveloperModeTests {
         #expect(workspace.mainBot.messages.last?.text.contains("not running from an app bundle") == true)
 
         workspace.runningBuild = BuildInfo.read(running)
-        // Not ClaudeCodeBot, or no app at all.
+        // Not Botling, or no app at all.
         let other = try makeApp("other/Other.app", id: "com.example.other")
         workspace.handle([.installBuild(path: other.path, note: "")], from: project)
-        #expect(workspace.mainBot.messages.last?.text.contains("is not ClaudeCodeBot") == true)
+        #expect(workspace.mainBot.messages.last?.text.contains("is not Botling") == true)
         workspace.handle([.installBuild(path: root.appending(path: "nothing.app").path, note: "")], from: project)
         #expect(workspace.mainBot.messages.last?.text.contains("there is no app bundle") == true)
 
@@ -170,7 +170,7 @@ struct DeveloperModeTests {
         _ = try SelfUpdate.prepare(from: running, to: new, requester: project.id, note: "Unread counts", pid: 1, in: ccb)
         workspace.checkSelfUpdate(healthyAfter: 0.05)
         await eventually { manager.messages.first?.role == .relay }
-        #expect(manager.messages.first?.text.hasPrefix("(App) ClaudeCodeBot restarted on 1.4.0") == true)
+        #expect(manager.messages.first?.text.hasPrefix("(App) Botling restarted on 1.4.0") == true)
         #expect(FileManager.default.fileExists(atPath: ccb.appending(path: "update/healthy").path))
         #expect(SelfUpdate.outcome(in: ccb) == nil)
 
@@ -264,7 +264,7 @@ struct DeveloperModeTests {
         #expect(manager.messages.first?.feedback == FeedbackNote(about: "Main bot", words: "It could have made projects"))
         await eventually { fake.agents.last?.sent.isEmpty == false }
         #expect(fake.agents.last?.sent.first?.contains(text) == true)
-        #expect(main.messages.last?.text.hasPrefix("Sent to ClaudeCodeBot as feedback") == true)
+        #expect(main.messages.last?.text.hasPrefix("Sent to Botling as feedback") == true)
         let log = try String(contentsOf: root.appending(path: "ccb/feedback.md"), encoding: .utf8)
         #expect(log.contains("It could have made projects"))
     }

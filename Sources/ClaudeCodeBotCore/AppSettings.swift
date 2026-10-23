@@ -1,11 +1,11 @@
 import Foundation
 
-/// ClaudeCodeBot's own settings, in `~/.claudecodebot/settings.json`. Keys it no longer has
+/// Botling's own settings, in `~/.claudecodebot/settings.json`. Keys it no longer has
 /// (such as an old `dailyBudget`) are ignored when loading.
 public struct AppSettings: Codable, Equatable, Sendable {
-    /// For working on ClaudeCodeBot itself: off for everyone else.
+    /// For working on Botling itself: off for everyone else.
     public var developerMode = false
-    /// The project whose folder is ClaudeCodeBot's own source (developer mode only).
+    /// The project whose folder is Botling's own source (developer mode only).
     public var developerProjectID: UUID?
     /// "Waiting on you" items you chose to ignore, by `Workspace.Waiting.id`. Optional so a
     /// settings file from before it still loads.

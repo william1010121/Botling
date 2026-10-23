@@ -90,7 +90,7 @@ public struct PluginManifest: Codable, Equatable, Sendable {
         public var `default`: JSONValue?
         public var title: String
         public var options: [String]?
-        /// Kept in the keychain, never shown in ClaudeCodeBot or sent to the chat page.
+        /// Kept in the keychain, never shown in Botling or sent to the chat page.
         public var secret: Bool?
         /// For a secret: the environment variable bots get it in (for MCP servers' .mcp.json).
         public var env: String?
@@ -144,17 +144,17 @@ extension PluginManifest {
 
     /// The `.claude-plugin/plugin.json` of its Claude part, at the same version.
     static func claudePluginText(name: String, description: String) -> String {
-        let object: [String: Any] = ["name": name, "version": firstVersion, "description": description, "author": ["name": "ClaudeCodeBot"]]
+        let object: [String: Any] = ["name": name, "version": firstVersion, "description": description, "author": ["name": "Botling"]]
         let data = (try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])) ?? Data("{}".utf8)
         return String(decoding: data, as: UTF8.self) + "\n"
     }
 }
 
-/// One plugin found in the plugin library or shipped with ClaudeCodeBot.
+/// One plugin found in the plugin library or shipped with Botling.
 public struct InstalledPlugin: Identifiable, Equatable, Sendable {
     public var manifest: PluginManifest
     public var folder: URL
-    /// Shipped with ClaudeCodeBot (read-only); a plugin of the same name in the library replaces it.
+    /// Shipped with Botling (read-only); a plugin of the same name in the library replaces it.
     public var builtIn: Bool
     public var enabled: Bool
     /// Why its web part was turned off, when it broke.
@@ -180,9 +180,9 @@ public struct WebPluginSpec: Encodable, Equatable {
     public var commands: [PluginManifest.Command]
 }
 
-/// Plugins for ClaudeCodeBot itself: `~/.claudecodebot/plugins/<name>/` (the plugin library) plus the ones shipped
+/// Plugins for Botling itself: `~/.claudecodebot/plugins/<name>/` (the plugin library) plus the ones shipped
 /// inside the app. Keeps which are on, their settings, and which broke, in `~/.claudecodebot/plugins.json`.
-/// Watches the files so an edited plugin reloads without restarting ClaudeCodeBot.
+/// Watches the files so an edited plugin reloads without restarting Botling.
 @MainActor
 public final class PluginRegistry: ObservableObject {
     @Published public private(set) var plugins: [InstalledPlugin] = []
@@ -710,7 +710,7 @@ public final class PluginRegistry: ObservableObject {
         return .success(manifest)
     }
 
-    /// The ClaudeCodeBot version plugins are written against.
+    /// The Botling version plugins are written against.
     nonisolated public static let apiVersion = (major: 2, minor: 0)
 
     nonisolated public static func check(_ folder: URL) -> [String] {
@@ -733,7 +733,7 @@ public final class PluginRegistry: ObservableObject {
             problems.append("engines.ccb is missing (for example \"\(PluginManifest.engineRange)\").")
             return problems
         }
-        if !compatible(range) { problems.append("engines.ccb \"\(range)\" is not compatible with this ClaudeCodeBot (\(apiVersion.major).\(apiVersion.minor)).") }
+        if !compatible(range) { problems.append("engines.ccb \"\(range)\" is not compatible with this Botling (\(apiVersion.major).\(apiVersion.minor)).") }
         guard let ccb = manifest.ccb else {
             problems.append("The ccb field is missing.")
             return problems

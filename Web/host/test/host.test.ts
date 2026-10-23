@@ -85,7 +85,7 @@ describe("plugin host (in process)", () => {
     expect(JSON.parse(readFileSync(join(scratch, "data/tool/storage.json"), "utf8"))).toEqual({ count: 2 });
   });
 
-  it("asks ClaudeCodeBot for bots and routines, and answers when ClaudeCodeBot replies", async () => {
+  it("asks Botling for bots and routines, and answers when Botling replies", async () => {
     let list: unknown;
     const { host, written } = makeHost({
       lister: async (ccb) => { list = await ccb.bots.list(); },
@@ -100,7 +100,7 @@ describe("plugin host (in process)", () => {
 });
 
 describe("making bots", () => {
-  it("asks ClaudeCodeBot to make a bot, naming the plugin, and returns it", async () => {
+  it("asks Botling to make a bot, naming the plugin, and returns it", async () => {
     let made: unknown;
     const { host, written } = makeHost({
       maker: async (ccb) => { made = await ccb.bots.create({ name: "Morning news", job: "Tech news at 08:00" }); },

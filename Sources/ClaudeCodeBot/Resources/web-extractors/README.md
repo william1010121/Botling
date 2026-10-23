@@ -1,6 +1,6 @@
 # Web page readers
 
-ClaudeCodeBot shows web AIs (Gemini, ChatGPT, Claude) as bots in the left column, in a real web view. After the
+Botling shows web AIs (Gemini, ChatGPT, Claude) as bots in the left column, in a real web view. After the
 page settles (an answer has finished), the app runs this plugin's script for that site to read
 the conversation as text, and saves it to `~/.claudecodebot/web/<site>/<name>.md` for the main bot
 to search. While the page still changes it also runs it about once a second, only to see a
@@ -88,7 +88,7 @@ Maintainer writes `expected.json` from the screenshot; the user confirms it on a
 Cookies, sign-in tokens, CSRF values, e-mail addresses and account ids are masked before anything
 is written; the screenshot is not.
 
-`ClaudeCodeBot --test-extractor <capture, a site's captures folder, or the captures folder>
+`botling --test-extractor <capture, a site's captures folder, or the captures folder>
 [--extractor <file.js>]` replays each capture (its `dom.html` with no page scripts and no
 network, and its events) through this script exactly as the app runs it, and passes when it reads
 `expected.json` and the page and traffic readings agree. Run it on every capture before you commit.

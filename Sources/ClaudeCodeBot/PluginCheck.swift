@@ -2,7 +2,7 @@ import AppKit
 import ClaudeCodeBotCore
 import WebKit
 
-/// `ClaudeCodeBot --check-plugin <folder>` (`ccb plugin check`): checks a plugin before ClaudeCodeBot uses it, and
+/// `botling --check-plugin <folder>` (`ccb plugin check`): checks a plugin before Botling uses it, and
 /// exits 0 when it passes, 1 when it does not, printing what is wrong.
 /// 1. package.json is valid, engines.ccb fits, the files it names exist.
 /// 2. `npm run build` if it has a build script; 3. `npm test` if it has a test script.
