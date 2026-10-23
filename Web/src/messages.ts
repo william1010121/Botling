@@ -494,6 +494,13 @@ function botBody(message: MessageView, components: Record<string, ComponentInfo>
     appendComponent(shown);
   }
   appendText(message.text.length);
+  // Cut off before it answered: its words and steps so far stay, and it says so.
+  if (message.interrupted) {
+    const note = document.createElement("div");
+    note.className = "interrupted-note";
+    note.textContent = t("messages.interrupted");
+    bubble.append(note);
+  }
   if (message.choices) {
     // Loose: the app leaves out a nil chosen or answer (undefined), not only null.
     const answered = message.chosen != null || message.answer != null;

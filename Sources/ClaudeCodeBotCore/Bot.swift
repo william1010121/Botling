@@ -303,6 +303,9 @@ public final class Bot: ObservableObject, Identifiable {
     /// Turns interrupted to take in what you added whose error results have not come back yet;
     /// those are not shown. (You may add twice before the first one comes back.)
     private var interruptions = 0
+    /// The bubble a turn cut off before it answered was kept as (`keepCutOff`), and what it
+    /// took from the trace: if that turn's own result still comes, the reply takes its place.
+    private var cutOff: (id: UUID, text: String, steps: [Step], tasks: [BackgroundTask])?
     /// It should restart (new plugins, a model, a new folder) before its next real message, with
     /// this divider. Nothing restarts an idle bot: it costs nothing until someone writes.
     private var pendingRestart: RestartReason?
@@ -411,6 +414,13 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// The steps of the turn under way.
     public var liveSteps: [Step] { trace.steps }
+
+    /// The app is quitting while it works: what the turn under way has said and done so far
+    /// stays in the chat (its process ends with the app, before its exit would be read).
+    public func keepTurnSoFar() {
+        keepCutOff()
+        partner?.keepTurnSoFar()
+    }
 
     /// What an opened background chip shows: a command's last lines of output; for a subagent,
     /// its report once it ended, else what it did last.
@@ -1180,7 +1190,8 @@ public final class Bot: ObservableObject, Identifiable {
                 // You added to what you said before it answered: stop that turn and ask again
                 // with all of it, so one reply answers the whole thing. The message goes first:
                 // the interrupt stops the turn for it (and leaves background subagents running).
-                trace.dropSteps()
+                // What it said and did so far stays, as a bubble cut off before your new line.
+                keepCutOff(before: outgoing.messageID)
                 deliver(merged)
                 process?.interrupt()
                 interruptions += 1
@@ -1189,7 +1200,7 @@ public final class Bot: ObservableObject, Identifiable {
             if pausing(for: outgoing) {
                 // You come first: what it was doing waits until it has answered you. Its
                 // subagents in the background carry on and still report back.
-                trace.dropSteps()
+                keepCutOff(before: outgoing.messageID)
                 pausedWork = turnFromRelay
                 pausedOrigin = turnOrigin
                 pausedConducted = turnConducted
@@ -1411,6 +1422,70 @@ public final class Bot: ObservableObject, Identifiable {
     var launchTools: [String] {
         let own = resultPublishing?() == .localOnly ? profile.tools.filter { $0 != ResultPublishing.tool } : profile.tools
         return own + alwaysAllowed.filter { !own.contains($0) && !Self.isRule($0) }
+    }
+
+    /// The turn under way stops before it answered (you wrote again, it pauses for you, its
+    /// process went away): its words so far and its steps become a bubble marked interrupted,
+    /// before `id` (the line that cut it off) when that is in this chat, instead of vanishing
+    /// with the live bubble. Nothing when it had said and done nothing, or the turn is not
+    /// the chat's (tidying, a group's line, one background work woke it for, which only shows
+    /// once it has something to say). True when a bubble was kept.
+    @discardableResult
+    private func keepCutOff(before id: UUID? = nil) -> Bool {
+        guard isWorking, !fromBackground, internalReply == nil, groupCommand?.ownsReply != true, groupReply == nil else { return false }
+        // Tags written before a tool call are not acted on for a turn that never answered.
+        _ = trace.liftReplyTags()
+        let taken = trace.steps
+        let tasks = trace.tasks
+        var steps = taken
+        var words: [String] = []
+        while let last = steps.last, last.kind == .text {
+            words.insert(last.title, at: 0)
+            steps.removeLast()
+        }
+        let text = Self.cutOffText(words.joined(separator: "\n\n"))
+        guard !text.isEmpty || !steps.isEmpty || !tasks.isEmpty else { return false }
+        trace.dropSteps()
+        var message = ChatMessage(role: .bot, text: text)
+        message.interrupted = true
+        message.session = sessionID
+        message.engine = engine
+        if sharesChat { message.seenBy = [engine] }
+        if !steps.isEmpty { message.steps = steps }
+        if !tasks.isEmpty { message.backgroundTasks = tasks }
+        if let id, let index = messages.firstIndex(where: { $0.id == id }) {
+            messages.insert(message, at: index)
+            store?.save(messages: messages)
+            archive(message)
+            onNewMessage?(message)
+        } else {
+            append(message)
+        }
+        if cutOff == nil { cutOff = (message.id, text, taken, tasks) }
+        return true
+    }
+
+    /// The words of a cut-off turn as its bubble shows them: no tags for the app (they are
+    /// not acted on), no hand-off marks.
+    static func cutOffText(_ text: String) -> String {
+        let body = ReplyParser.parseAll(text).body
+        let words = HeadTags.parse(body).body
+        return (ReplyParser.saysNoReply(words) ? "" : words).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The cut-off turn's result came after all: the bubble kept for it goes, and its steps go
+    /// back to the trace for the reply.
+    private func takeBackCutOff() {
+        guard let kept = cutOff else { return }
+        cutOff = nil
+        guard let index = messages.firstIndex(where: { $0.id == kept.id }) else { return }
+        messages.remove(at: index)
+        store?.save(messages: messages)
+        if let primary, let mirrored = primary.messages.firstIndex(where: { $0.id == kept.id }) {
+            primary.messages.remove(at: mirrored)
+            primary.store?.save(messages: primary.messages)
+        }
+        trace.putBack(steps: kept.steps, tasks: kept.tasks)
     }
 
     private func show(reply text: String, isError: Bool) {
@@ -1980,6 +2055,7 @@ public final class Bot: ObservableObject, Identifiable {
             turnLostConnection = false
             // Words already shown as this turn's reply (before its Stop hook ran): the turn just ends.
             if !isError, interruptions == 0, let shown = early.matching(text) {
+                cutOff = nil
                 turnInput = nil
                 endTurnOrigin()
                 trace.dropSteps()
@@ -1990,11 +2066,20 @@ public final class Bot: ObservableObject, Identifiable {
             if interruptions > 0 {
                 if isError {
                     interruptions -= 1
+                    // The cut-off turn is over: what it had done stays as it was kept.
+                    if interruptions == 0 { cutOff = nil }
                     return
                 }
                 // A turn that ended well before the interrupt reached it: nothing more is coming
-                // back for the interrupts sent so far.
+                // back for the interrupts sent so far. Its reply is the whole of what was kept.
                 interruptions = 0
+                takeBackCutOff()
+            }
+            // A turn that went on (Codex takes your message into it) and ended on the very
+            // words kept: the reply takes the kept bubble's place.
+            if let kept = cutOff {
+                if !isError, !kept.text.isEmpty, Self.cutOffText(text) == kept.text { takeBackCutOff() }
+                cutOff = nil
             }
             turnInput = nil
             let fromBackground = self.fromBackground
@@ -2074,6 +2159,9 @@ public final class Bot: ObservableObject, Identifiable {
                 show(reply: text, isError: isError)
             }
         case let .exited(status, stderr):
+            // Gone in the middle of a turn: what it had said and done so far stays.
+            keepCutOff()
+            cutOff = nil
             // Gone because of the network (or gone while waiting for it): its session and the
             // subagents still at work are picked up again when the network is back.
             let lostToNetwork = exitWaiter == nil && (outage != nil || (status != 0 && ConnectionErrorText.mentionsConnectionError(stderr)))
@@ -3012,6 +3100,7 @@ public final class Bot: ObservableObject, Identifiable {
         if let choices = message.choices, !choices.isEmpty {
             text += " [options: " + choices.map(\.label).joined(separator: " / ") + "]"
         }
+        if message.interrupted == true, !text.isEmpty { text += " (interrupted)" }
         guard !text.isEmpty else { return nil }
         let stamp = message.date.formatted(.verbatim("\(year: .defaultDigits)-\(month: .twoDigits)-\(day: .twoDigits) \(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased)):\(minute: .twoDigits)", timeZone: .current, calendar: .current))
         return "[\(stamp)] \(speaker(message.role)): \(text)"

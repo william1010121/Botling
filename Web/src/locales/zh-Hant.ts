@@ -156,6 +156,7 @@ export const zhHant: Dictionary = {
   "messages.addReaction": "加入表情回應",
   "messages.reactEmoji": "以 {emoji} 回應",
   "messages.reply": "回覆",
+  "messages.interrupted": "已中斷",
   "messages.fold": "收合",
   "messages.answered": "已回答",
   "messages.answeredLabel": "已回答：{label}。顯示選項",

@@ -73,6 +73,8 @@ public struct ChatPayload: Encodable, Equatable {
         /// When it was sent, in a subagent's view: its task and each message its bot sent it
         /// ("From Main · 15:58").
         var time: String? = nil
+        /// A bot's turn cut off before it answered: what it had said and done so far.
+        var interrupted: Bool? = nil
     }
 
     public struct SubagentRef: Encodable, Equatable {
@@ -583,7 +585,8 @@ public struct ChatPayload: Encodable, Equatable {
                         return reaction.label
                     }, own: matching.contains { $0.actor == "user" })
                 },
-                seen: group == nil ? seenMarks(message, in: bot) : nil
+                seen: group == nil ? seenMarks(message, in: bot) : nil,
+                interrupted: message.interrupted == true ? true : nil
             )
         }
         // All the chat's background work goes on its latest message, as one row of counts.
