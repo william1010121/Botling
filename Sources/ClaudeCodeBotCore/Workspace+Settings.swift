@@ -27,7 +27,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Sendable {
         case .general: ["Language", "App language", "Bot look", "Chat avatars", "Chat avatar size", "Reminders", "Remind after no new step for"]
         case .engines: ["Claude subagents", "Codex workers", "Follow Codex config file", "Model", "Reasoning effort", "Fast mode", "Component editor", "Engine and model for all bots"]
         case .permissions: ["Auto mode", "Auto-approve safe actions", "Reports and results", "Publish as", "Approved component commands", "Ignored"]
-        case .usage: ["Usage today", "Cost", "Tokens", "Subscription limits", "By bot", "Earlier days"]
+        case .usage: ["App context savings", "Send only reaction changes", "Send only component changes", "Usage today", "Cost", "Tokens", "Subscription limits", "By bot", "Earlier days"]
         case .plugins: ["Installed", "Add plugin"]
         case .doctor: ["Command-line tools", "Run again"]
         case .developer: ["Develop Botling itself", "Its source"]
@@ -140,5 +140,23 @@ extension Workspace {
             await bot.setHeads([engine])
         }
         return bots.count
+    }
+}
+
+
+extension Workspace {
+    /// Saved immediately; existing heads and newly attached bots use it on their next normal turn.
+    public func setReactionChangesOnly(_ on: Bool) {
+        guard on != settings.reactionChangesOnly else { return }
+        settings.reactionChangesOnlyChoice = on
+        settings.save(to: settingsURL)
+        for bot in modelSettingsBots { bot.reactionChangesOnly = on }
+    }
+
+    public func setComponentChangesOnly(_ on: Bool) {
+        guard on != settings.componentChangesOnly else { return }
+        settings.componentChangesOnlyChoice = on
+        settings.save(to: settingsURL)
+        for bot in modelSettingsBots { bot.componentChangesOnly = on }
     }
 }

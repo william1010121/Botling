@@ -16,6 +16,13 @@ public struct AppSettings: Codable, Equatable, Sendable {
 
     public var autoApprovesSafeActions: Bool { autoApprove ?? true }
 
+    /// App-side context savings for both Claude and Codex. Missing keys preserve the
+    /// existing delta behavior; false sends a complete snapshot each normal turn.
+    public var reactionChangesOnlyChoice: Bool?
+    public var componentChangesOnlyChoice: Bool?
+    public var reactionChangesOnly: Bool { reactionChangesOnlyChoice ?? true }
+    public var componentChangesOnly: Bool { componentChangesOnlyChoice ?? true }
+
     /// Minutes a running bot or subagent may show no new step before you are reminded; nil
     /// (a settings file from before it) means `StallWatch.defaultMinutes`, 0 never reminds.
     public var stallReminderMinutes: Int?
