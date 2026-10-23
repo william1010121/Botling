@@ -122,6 +122,12 @@ app and publishes it on GitHub Releases.
 
 ### Fixed
 
+- **A Claude subagent's token speed counts all of its output.** Streamed subagent lines carry
+  only the count from when each block ended and the last message is not streamed, so tok/s
+  read about 11 times too low. The app now reads each message's final output count from the
+  subagent's transcript on its progress and completion notices; counters keep their highest
+  value.
+
 - **The chat no longer scrolls sideways.** A long divider label (such as a handoff note) could
   widen the chat past the window and cut off every bubble at the left edge. Divider labels now
   wrap, Markdown tables scroll inside their own block, and a page preview's report flag sits in
