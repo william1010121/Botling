@@ -6,6 +6,9 @@ app and publishes it on GitHub Releases.
 
 ## Unreleased
 
+Development target: **1.18.0** (`VERSION`); local development builds use `1.18.0-dev`.
+The changes below remain unreleased; this version target does not create a tag or release.
+
 ### Changed
 
 - **One dock over the input box.** The pinned chips are one segmented strip (one border, thin
