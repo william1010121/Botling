@@ -655,6 +655,13 @@ enum Snapshot {
         if let size = ProcessInfo.processInfo.environment["CCB_CHAT_AVATAR_SIZE"].flatMap(Int.init) {
             workspace.setChatAvatarSize(size)
         }
+        // Synthetic context-savings variants; isolated root, no model calls or user settings.
+        if let value = ProcessInfo.processInfo.environment["CCB_SETTINGS_REACTION_CHANGES"] {
+            workspace.setReactionChangesOnly(value != "0")
+        }
+        if let value = ProcessInfo.processInfo.environment["CCB_SETTINGS_COMPONENT_CHANGES"] {
+            workspace.setComponentChangesOnly(value != "0")
+        }
         let navigator = SettingsNavigator()
         // CCB_SETTINGS_SECTION=plugins draws another section.
         navigator.section = ProcessInfo.processInfo.environment["CCB_SETTINGS_SECTION"].flatMap(SettingsSection.init(rawValue:)) ?? .doctor
@@ -663,13 +670,17 @@ enum Snapshot {
             if ProcessInfo.processInfo.environment["CCB_SETTINGS_LATEST"] == "0" {
                 workspace.doctor = DoctorModel(doctor: Doctor(latest: { _ in nil }))
             }
-            await workspace.doctor.run(includeLatest: true)
-            let frame = NSRect(x: 0, y: 0, width: SettingsWindow.size.width, height: ProcessInfo.processInfo.environment["CCB_SETTINGS_HEIGHT"].flatMap(Double.init) ?? SettingsWindow.size.height)
+            if navigator.section == .doctor { await workspace.doctor.run(includeLatest: true) }
+            let narrow = ProcessInfo.processInfo.environment["CCB_SETTINGS_SAVINGS_NARROW"] == "1"
+            let frame = NSRect(x: 0, y: 0, width: narrow ? 360 : SettingsWindow.size.width, height: ProcessInfo.processInfo.environment["CCB_SETTINGS_HEIGHT"].flatMap(Double.init) ?? SettingsWindow.size.height)
             let window = HeadlessRun.offscreenWindow(frame)
             // `CCB_SETTINGS_APPEARANCE=light`: drawn in light mode (the window follows either).
             let light = ProcessInfo.processInfo.environment["CCB_SETTINGS_APPEARANCE"] == "light"
             window.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
-            let host = NSHostingView(rootView: SettingsWindow(workspace: workspace, navigator: navigator, height: frame.height)
+            let content: AnyView = narrow
+                ? AnyView(Form { PromptSavingsSection(workspace: workspace) }.formStyle(.grouped))
+                : AnyView(SettingsWindow(workspace: workspace, navigator: navigator, height: frame.height))
+            let host = NSHostingView(rootView: content
                 .frame(width: frame.width, height: frame.height)
                 .preferredColorScheme(light ? .light : .dark))
             host.frame = frame

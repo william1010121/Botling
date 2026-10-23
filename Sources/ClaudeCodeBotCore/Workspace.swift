@@ -1583,6 +1583,8 @@ public final class Workspace: ObservableObject {
         bot.pluginStamp = { [weak self] in self?.plugins.claudeStamp() ?? [] }
         bot.pluginTools = { [weak self] in self?.plugins.claudeTools() ?? [] }
         bot.pluginEnvironment = { [weak self] in self?.plugins.secretEnvironment() ?? [:] }
+        bot.reactionChangesOnly = settings.reactionChangesOnly
+        bot.componentChangesOnly = settings.componentChangesOnly
         bot.autoMode = { [weak self] in self?.settings.autoApprovesSafeActions ?? false }
         bot.resultPublishing = { [weak self] in self?.settings.resultPublishing ?? .artifactUnlessSensitive }
         bot.language = { [weak self] in self?.language ?? .english }
