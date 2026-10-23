@@ -651,37 +651,35 @@ describe("messages", () => {
       step("toolu_A", "subagent", "Check the form", { status: "running", count: 2, done: false }),
     ] }), {});
     document.body.append(row);
-    expect(row.querySelector(".steps-toggle")?.textContent).toBe("Worked · 2 steps · 1 subagent (1 running)");
+    expect(row.querySelector(".steps-toggle")?.textContent).toBe("Worked · 1 step");
     // Folded: the step lines are hidden, the subagent card is not.
-    const lists = row.querySelectorAll<HTMLElement>(".steps .step-list");
+    const lists = row.querySelectorAll<HTMLElement>(".steps > .step-list");
     expect(lists[0].hidden).toBe(true);
-    expect(lists[1].hidden).toBe(false);
-    lists[1].querySelector<HTMLButtonElement>(".subagent-card")!.click();
+    const card = row.querySelector<HTMLButtonElement>(".reply-subagents .subagent-card")!;
+    expect(card.closest("[hidden]")).toBeNull();
+    card.click();
     expect(sent).toEqual([{ type: "openSubagent", id: "toolu_A" }]);
     row.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
     expect(lists[0].hidden).toBe(false);
-    expect(lists[1].hidden).toBe(true);
+    expect(card.closest("[hidden]")).toBeNull();
+    expect(row.querySelectorAll(".subagent-card")).toHaveLength(1);
     const head = lists[0].querySelector<HTMLButtonElement>(".step-head")!;
     head.click();
     expect(lists[0].querySelector<HTMLElement>(".step-body")!.hidden).toBe(false);
     expect(lists[0].querySelector("pre")?.textContent).toBe("swift test");
   });
 
-  it("fold an earlier reply's finished subagents away, keeping running ones in sight", () => {
+  it("keeps earlier replies' stopped, completed and running cards in the reply", () => {
     const step = (id: string, title: string, status: string) =>
       ({ id, kind: "subagent" as const, tool: null, title, detail: null, output: null, failed: false, done: status !== "running", status, count: 0 });
     const steps = [step("a1", "Stopped one", "stopped"), step("a2", "Done one", "completed"), step("a3", "Still going", "running")];
-    const cards = (row: HTMLElement) => [...row.querySelectorAll<HTMLElement>(".steps > .step-list:not([hidden]) .subagent-title")].map((card) => card.textContent);
-    // The latest reply keeps every card in sight while folded.
-    expect(cards(messageElement(message({ id: "e1", text: "Sent three.", steps }), {}))).toEqual(["Stopped one", "Done one", "Still going"]);
-    // One before your latest line: only the running one; unfolded, all three are still listed.
-    const earlier = messageElement(message({ id: "e2", text: "Sent three.", steps, earlier: true }), {});
-    expect(cards(earlier)).toEqual(["Still going"]);
-    earlier.querySelector<HTMLButtonElement>(".steps-toggle")!.click();
-    expect(earlier.querySelectorAll(".steps > .step-list:not([hidden]) .subagent-card").length).toBe(3);
-    // All finished: no cards line at all.
-    const settled = messageElement(message({ id: "e3", text: "Sent two.", steps: steps.slice(0, 2), earlier: true }), {});
-    expect(cards(settled)).toEqual([]);
+    for (const earlier of [false, true]) {
+      const row = messageElement(message({ id: `e-${earlier}`, text: "Sent three.", steps, earlier }), {});
+      const cards = [...row.querySelectorAll<HTMLElement>(".subagent-card")];
+      expect(cards.map(card => card.querySelector(".subagent-title")!.textContent)).toEqual(["Stopped one", "Done one", "Still going"]);
+      expect(cards.every(card => !card.closest("[hidden], .steps"))).toBe(true);
+      expect(row.querySelector(".steps-toggle")).toBeNull();
+    }
   });
 
   it("show the bot's words between tool calls in sight, each run of calls folded between them", () => {
