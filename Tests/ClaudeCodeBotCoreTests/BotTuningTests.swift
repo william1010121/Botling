@@ -96,7 +96,14 @@ struct BotTuningTests {
 
     @Test func sameAsBotSetsNoSubagentModel() {
         let environment = ClaudeAgentProcess.launchEnvironment(for: launch(environment: ["TOKEN": "x"]), inherited: [:])
-        #expect(environment == ["TOKEN": "x", "CLAUDE_CODE_ARTIFACT": "1"])
+        #expect(environment == ["TOKEN": "x", "CLAUDE_CODE_ARTIFACT": "1", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL": "1h"])
+    }
+
+    @Test func subagentsKeepTheirPromptCacheForAnHourUnlessTheAppSaysOtherwise() {
+        #expect(ClaudeAgentProcess.launchEnvironment(for: launch(), inherited: [:])["CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"] == "1h")
+        let set = ["CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL": "5m"]
+        #expect(ClaudeAgentProcess.launchEnvironment(for: launch(), inherited: set)["CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"] == nil)
+        #expect(ClaudeAgentProcess.launchEnvironment(for: launch(environment: set), inherited: [:])["CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"] == "5m")
     }
 
     @Test func eachSubagentModelGoesInTheEnvironment() {

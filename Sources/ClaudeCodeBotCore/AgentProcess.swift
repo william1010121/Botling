@@ -275,10 +275,19 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         if let model = launch.subagentModel {
             environment["CLAUDE_CODE_SUBAGENT_MODEL"] = model.rawValue
         }
+        // Subagents keep their prompt cache for an hour, like the bot's own turns: a subagent
+        // that waits more than 5 minutes (on a tool, a build, the user) would otherwise write its
+        // whole context again. One the app's environment sets ("5m") is left as it is.
+        if inherited[subagentCacheTTL] == nil, environment[subagentCacheTTL] == nil {
+            environment[subagentCacheTTL] = "1h"
+        }
         return environment
     }
 
     static let artifactSwitch = "CLAUDE_CODE_ARTIFACT"
+    /// Claude Code's prompt cache TTL for everything outside the main conversation (subagents,
+    /// background and helper requests): "5m" or "1h".
+    static let subagentCacheTTL = "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"
 
     /// The whole environment `claude` runs with: the app's, cleaned up, plus `launchEnvironment`.
     static func childEnvironment(for launch: AgentLaunch) -> [String: String] {

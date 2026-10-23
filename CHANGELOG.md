@@ -68,6 +68,9 @@ app and publishes it on GitHub Releases.
   the Codex head hears about it too. Both heads behave the same. Settings → Usage → App context
   savings has separate, saved switches for reaction and component deltas, both on by default;
   turning one off sends its full context with the next normal message.
+- **Claude subagents keep their prompt cache for an hour.** Botling starts `claude` with
+  `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h` (unless the app's environment sets it), so a
+  subagent that pauses more than 5 minutes no longer writes its whole context again.
 - **Quieter left column.** Bot and group rows no longer show the orange "waiting on you" dot,
   and running subagent rows no longer show a blue dot (the owner head's face is on the row);
   the folded strip drops the orange dot too. Only the unread count (a blue dot when folded)
