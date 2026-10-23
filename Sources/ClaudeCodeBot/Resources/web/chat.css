@@ -38,8 +38,9 @@ body.dropping::after {
 }
 button { font: inherit; color: inherit; }
 
-/* The message list: anchored to the bottom, no visible scroller (it would shift the column). */
-#scroller { flex: 1; overflow-y: auto; scrollbar-width: none; }
+/* The message list: anchored to the bottom, no visible scroller (it would shift the column).
+   Never sideways: wide content wraps, or scrolls inside its own block (a table, a code block). */
+#scroller { flex: 1; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; }
 #scroller::-webkit-scrollbar { display: none; }
 #messages {
   max-width: 640px;
@@ -132,8 +133,9 @@ button { font: inherit; color: inherit; }
   color: var(--muted); font-size: 13px;
 }
 .row.divider { align-items: center; gap: 12px; }
-.row.divider .line { flex: 1; height: 1px; background: var(--line); }
-.row.divider .label { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.row.divider .line { flex: 1; min-width: 24px; height: 1px; background: var(--line); }
+/* A long handoff note wraps (centered) instead of widening the chat past the window. */
+.row.divider .label { min-width: 0; font-size: 12px; color: var(--faint); text-align: center; overflow-wrap: anywhere; }
 .error-text { color: var(--error); font-size: 13px; }
 
 /* Markdown inside bubbles */
@@ -149,7 +151,8 @@ button { font: inherit; color: inherit; }
 .markdown code { font: 13px ui-monospace, "SF Mono", Menlo, monospace; background: var(--code); padding: 1px 5px; border-radius: 5px; }
 .markdown pre { margin: 0 0 10px; padding: 12px; background: var(--code); border-radius: 10px; white-space: pre-wrap; }
 .markdown pre code { padding: 0; background: none; }
-.markdown table { border-collapse: collapse; margin: 0 0 10px; font-size: 14px; }
+.markdown .table-scroll { max-width: 100%; margin: 0 0 10px; overflow-x: auto; overflow-y: hidden; }
+.markdown table { border-collapse: collapse; margin: 0; font-size: 14px; }
 .markdown table.fitted { width: 100%; }
 /* break-word, not the bubble's anywhere: a column is never narrower than its longest word. */
 .markdown th, .markdown td { text-align: left; vertical-align: top; overflow-wrap: break-word; padding: 4px 14px 4px 0; border-bottom: 1px solid var(--line); }
@@ -977,6 +980,9 @@ body.viewer { display: block; overflow-y: auto; height: auto; min-height: 100%; 
 .wide-part .component-frame, .spec-built .component-frame { min-width: 0; border-radius: 12px; }
 .wide-part .component-side, .spec-built .component-side { position: absolute; right: 4px; bottom: 4px; min-width: 0; z-index: 1; }
 .wide-part .component:hover .flag, .spec-built .component:hover .flag { background: rgba(43, 43, 49, 0.92); }
+/* A page preview card has its 開啟完整頁面 button in that corner: its flag goes over the page's
+   picture, top-left (the card's own Make bar is top-right). */
+.wide-part .component.page-preview > .component-side, .wide-part.component.page-preview > .component-side { top: 4px; left: 4px; right: auto; bottom: auto; }
 
 /* Spec mode: the component spec workspace in the right panel instead of the chat */
 body.spec-mode #scroller, body.spec-mode #composer-slot, body.spec-mode #board, body.spec-mode #pin-area { display: none; }
