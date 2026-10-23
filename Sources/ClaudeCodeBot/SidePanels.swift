@@ -1508,17 +1508,14 @@ extension SettingsPage {
     }
 }
 
-/// Each head's state; Cute also shows disabled engines asleep.
+/// Only enabled heads appear, including the selected character in single-engine Cute mode.
 private struct HeadsNow: View {
     @ObservedObject var bot: Bot
-    @Environment(\.botLook) private var look
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ForEach(look == .cute ? BotEngine.allCases : bot.heads.engines, id: \.self) { head in
-                let enabled = bot.heads.engines.contains(head)
-                HeadNowRow(head: head, bot: enabled ? bot.runner(of: head) : nil, hat: bot.avatarKind)
-                    .opacity(enabled ? 1 : 0.55)
+            ForEach(bot.heads.engines, id: \.self) { head in
+                HeadNowRow(head: head, bot: bot.runner(of: head), hat: bot.avatarKind)
             }
         }
     }

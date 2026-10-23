@@ -84,6 +84,8 @@ public final class Workspace: ObservableObject {
     /// Shapes handed out to new projects, in order (`AvatarShape.handedOut`).
     static let avatars = AvatarShape.handedOut.map(\.rawValue)
 
+    @Published public internal(set) var isApplyingBotModel = false
+
     @Published public private(set) var projects: [Project] = []
     /// nil = the main bot; else a project's, a bot's, Maintainer's or a group's id.
     @Published public private(set) var selection: UUID?

@@ -74,6 +74,9 @@ public struct HeadsSettings: Codable, Equatable, Sendable {
         HeadsSettings(engines: [engine], answerWith: AnswerTarget(engine))
     }
 
+    /// Visible identities follow the persisted engine selection, even while asleep.
+    public var engineNames: String { engines.map(\.displayName).joined(separator: " & ") }
+
     public var hasTwo: Bool { engines.count > 1 }
 
     /// What can be picked: both (the usual), or one of them by name.

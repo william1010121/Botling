@@ -119,7 +119,7 @@ extension Bot {
 }
 
 /// The left column's face in Bot look Cute: the bot's own face in front,
-/// full size, with Claude and Codex peeking out from behind it, each in its mood.
+/// full size, with only its enabled characters peeking out, each in its mood.
 struct BotWithHeadsAvatar: View {
     @ObservedObject var bot: Bot
     var size: CGFloat = 32
@@ -130,17 +130,18 @@ struct BotWithHeadsAvatar: View {
     var body: some View {
         let peek = size * 0.8
         ZStack {
-            HeadPeek(head: .claude, bot: bot, size: peek)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            HeadPeek(head: .codex, bot: bot, size: peek)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+            ForEach(bot.heads.engines, id: \.self) { head in
+                HeadPeek(head: head, bot: bot, size: peek)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity,
+                           alignment: head == .claude || !bot.heads.hasTwo ? .topLeading : .topTrailing)
+            }
             AvatarView(kind: bot.avatarKind, size: size, eyes: bot.eyes)
                 .frame(maxHeight: .infinity, alignment: .bottom)
         }
         .frame(width: Self.width(size), height: size * 1.15)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(L("Claude and Codex"))
-        .help(L("Claude and Codex"))
+        .accessibilityLabel(bot.heads.engineNames)
+        .help(bot.heads.engineNames)
     }
 }
 
@@ -151,10 +152,7 @@ private struct HeadPeek: View {
     let size: CGFloat
 
     var body: some View {
-        if !bot.heads.engines.contains(head) {
-            ChibiHeadView(head: head, mood: .sleep, size: size)
-                .opacity(0.55)
-        } else if let runner = bot.runner(of: head), runner !== bot {
+        if let runner = bot.runner(of: head), runner !== bot {
             HeadPeekOf(head: head, runner: runner, size: size)
         } else {
             ChibiHeadView(head: head, mood: bot.runner(of: head) == nil ? .sleep : chibiMood(of: bot), size: size)

@@ -246,7 +246,7 @@ private struct BotIcon: View {
             action: action
         ) {
             if look == .cute {
-                // Both characters fit inside the 40-point cell, including with only one enabled.
+                // Enabled characters fit inside the 40-point cell, including a single head.
                 BotWithHeadsAvatar(bot: bot, size: 18)
             } else {
                 AvatarView(kind: kind ?? bot.avatarKind, size: 28, eyes: working ? .open : bot.eyes)
