@@ -183,13 +183,70 @@ private struct SettingSwitch: View {
     }
 }
 
-/// Botling's own settings: a sidebar of sections, the chosen one beside it. Opened from
-/// the gear's popover or with ⌘,.
+// MARK: - The settings window
+
+/// The colours of the settings window, as macOS System Settings draws them, in light and dark.
+struct SettingsPalette {
+    let pane: Color
+    let side: Color
+    let line: Color
+    let search: Color
+    let selected: Color
+    let text: Color
+    let sub: Color
+
+    static func of(_ scheme: ColorScheme) -> SettingsPalette {
+        scheme == .dark
+            ? SettingsPalette(pane: Color(hex: 0x1E1E20), side: Color(hex: 0x262628), line: Color(hex: 0x38383B), search: Color(hex: 0x323235),
+                              selected: Color(hex: 0x0A5FC4), text: Color(hex: 0xF2F2F4), sub: Color(hex: 0xA3A3A8))
+            : SettingsPalette(pane: Color(hex: 0xF6F6F8), side: Color(hex: 0xEBEBEE), line: Color(hex: 0xE1E1E5), search: Color(hex: 0xDCDCE0),
+                              selected: Color(hex: 0x0B6FD8), text: Color(hex: 0x1D1D1F), sub: Color(hex: 0x626267))
+    }
+}
+
+extension SettingsSection {
+    /// The sidebar's icon: a symbol on a coloured rounded square.
+    var symbol: String {
+        switch self {
+        case .general: "gearshape.fill"
+        case .engines: "cpu"
+        case .permissions: "checkmark.shield.fill"
+        case .usage: "chart.bar.fill"
+        case .plugins: "puzzlepiece.extension.fill"
+        case .doctor: "waveform.path.ecg"
+        case .developer: "chevron.left.forwardslash.chevron.right"
+        case .releases: "list.bullet"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .general: Color(hex: 0x8E8E93)
+        case .engines: Color(hex: 0x8A5CF6)
+        case .permissions: Color(hex: 0x1F7AE0)
+        case .usage: Color(hex: 0x2FA84F)
+        case .plugins: Color(hex: 0xF08A24)
+        case .doctor: Color(hex: 0xE5484D)
+        case .developer: Color(hex: 0x4A4A50)
+        case .releases: Color(hex: 0x12A1A8)
+        }
+    }
+}
+
+/// Botling's own settings, drawn like macOS System Settings: a sidebar of sections (with a
+/// search field) and the chosen one as grouped forms beside it. Opened from the gear's popover
+/// or with ⌘,.
 struct SettingsWindow: View {
     @ObservedObject var workspace: Workspace
     @ObservedObject var navigator: SettingsNavigator
     /// Settings → Release planner's list; the snapshot hands in one with sample PRs.
     var releasePlanner: ReleasePlanner?
+    /// The snapshot draws it taller to show a whole page.
+    var height = SettingsWindow.size.height
+    @Environment(\.colorScheme) private var scheme
+    @State private var query = ""
+
+    static let size = CGSize(width: 900, height: 640)
 
     /// Release planner only shows with developer mode on.
     private var sections: [SettingsSection] {
@@ -197,285 +254,201 @@ struct SettingsWindow: View {
     }
 
     var body: some View {
+        let palette = SettingsPalette.of(scheme)
         HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(L("Settings"))
-                    .font(.system(size: 15, weight: .semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 14)
-                ForEach(sections) { section in
-                    Button { navigator.section = section } label: {
-                        Text(section.title)
-                            .font(.system(size: 14))
-                            .foregroundStyle(navigator.section == section ? Theme.text : Theme.muted)
-                            .padding(.horizontal, 10)
-                            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                            .background(RoundedRectangle(cornerRadius: 8).fill(navigator.section == section ? Theme.selected : .clear))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(navigator.section == section ? .isSelected : [])
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 20)
-            .frame(width: 200)
-            .frame(maxHeight: .infinity, alignment: .top)
-            .background(Theme.ground)
-            Rectangle().fill(Theme.line).frame(width: 1)
+            sidebar(palette)
+            Rectangle().fill(palette.line).frame(width: 1)
             VStack(spacing: 0) {
                 HStack {
                     Text(navigator.section.title).font(.system(size: 15, weight: .semibold))
                     Spacer()
                     Button(L("Done")) { navigator.close() }.keyboardShortcut(.defaultAction)
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 20)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 28) {
-                        switch navigator.section {
-                        case .general:
-                            LanguageSection(workspace: workspace)
-                            AllBotsModelSection(workspace: workspace)
-                            BotLookSection(workspace: workspace)
-                        case .usage: UsageSection(workspace: workspace)
-                        case .permissions: PermissionsSection(workspace: workspace, commands: workspace.componentCommands)
-                        case .plugins: PluginsSection(registry: workspace.plugins, host: workspace.pluginHost, workspace: workspace)
-                        case .developer: DeveloperSection(workspace: workspace)
-                        case .releases: ReleasesSection(workspace: workspace, planner: releasePlanner)
-                        case .doctor: DoctorSection(model: workspace.doctor)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 24)
-                }
-                .scrollIndicators(.never)
+                .padding(.horizontal, 20)
+                .frame(height: 52)
+                Rectangle().fill(palette.line).frame(height: 1)
+                Form { page }
+                    .formStyle(.grouped)
+                    .scrollContentBackground(.hidden)
+                    .background(palette.pane)
+                    .id(navigator.section)
             }
-            .background(Theme.side)
+            .background(palette.pane)
         }
-        .frame(width: 760, height: 600)
-        .foregroundStyle(Theme.text)
-        .background(Theme.side)
+        .frame(width: Self.size.width, height: height)
+        .foregroundStyle(palette.text)
+        .background(palette.pane)
+        .tint(Color(nsColor: .systemBlue))
     }
-}
 
-/// A card of rows with a line between each, as lists in settings are drawn.
-private struct Card<Content: View>: View {
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(spacing: 0) { content }
-            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-    }
-}
-
-private struct RowDivider: View {
-    var body: some View {
-        Rectangle().fill(Theme.line).frame(height: 1)
-    }
-}
-
-/// Cost and tokens: today in all and by bot, and the days before.
-private struct UsageSection: View {
-    @ObservedObject var workspace: Workspace
-
-    var body: some View {
-        let spending = workspace.spending
-        let isToday = spending.day == Spending.today()
-        let tokens = isToday ? spending.tokens : TokenUsage()
-        PanelSection(L("Usage today")) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    tile(L("Cost"), Workspace.dollars(isToday ? spending.spent : 0))
-                    tile(L("Tokens"), Workspace.tokenCount(tokens.total))
-                }
-                Text(L("In {0} · out {1} · cache write {2} · cache read {3}", Workspace.tokenCount(tokens.input), Workspace.tokenCount(tokens.output), Workspace.tokenCount(tokens.cacheWrite), Workspace.tokenCount(tokens.cacheRead)))
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.faint)
-            }
-        }
-        let bots = isToday ? Set(spending.byBot.keys).union(spending.tokensByBot.keys).sorted {
-            (spending.byBot[$0] ?? 0, spending.tokensByBot[$0]?.total ?? 0) > (spending.byBot[$1] ?? 0, spending.tokensByBot[$1]?.total ?? 0)
-        } : []
-        PanelSection(L("By bot")) {
-            Card {
-                if bots.isEmpty {
-                    Text(L("No bot has used anything today."))
-                        .font(.system(size: 14))
-                        .foregroundStyle(Theme.faint)
-                        .padding(.horizontal, 14)
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                }
-                ForEach(bots, id: \.self) { name in
-                    row(name, spending.byBot[name] ?? 0, spending.tokensByBot[name]?.total ?? 0)
-                    if name != bots.last { RowDivider() }
-                }
-            }
-        }
-        if !spending.history.isEmpty {
-            let days = Array(spending.history.reversed())
-            PanelSection(L("Earlier days")) {
-                Card {
-                    ForEach(days, id: \.day) { day in
-                        row(day.day, day.spent, day.tokens.total)
-                        if day.day != days.last?.day { RowDivider() }
-                    }
-                }
-            }
+    @ViewBuilder private var page: some View {
+        switch navigator.section {
+        case .general: GeneralPage(workspace: workspace)
+        case .engines: EnginesPage(workspace: workspace)
+        case .usage: UsagePage(workspace: workspace)
+        case .permissions: PermissionsPage(workspace: workspace, commands: workspace.componentCommands)
+        case .plugins: PluginsPage(registry: workspace.plugins, host: workspace.pluginHost, workspace: workspace)
+        case .developer: DeveloperSection(workspace: workspace)
+        case .releases: ReleasesSection(workspace: workspace, planner: releasePlanner)
+        case .doctor: DoctorSection(model: workspace.doctor)
         }
     }
 
-    private func tile(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.system(size: 12)).foregroundStyle(Theme.faint)
-            Text(value).font(.system(size: 20, weight: .semibold)).monospacedDigit()
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-    }
-
-    private func row(_ name: String, _ cost: Double, _ tokens: Int) -> some View {
-        HStack(spacing: 12) {
-            Text(name).lineLimit(1)
-            Spacer()
-            Text(L("{0} tokens", Workspace.tokenCount(tokens))).foregroundStyle(Theme.faint).monospacedDigit()
-            Text(Workspace.dollars(cost)).monospacedDigit().frame(width: 72, alignment: .trailing)
-        }
-        .font(.system(size: 14))
-        .padding(.horizontal, 14)
-        .frame(height: 44)
-    }
-}
-
-/// Auto mode, the component commands you allowed (each can be taken back), and items taken off
-/// "Waiting on you".
-private struct PermissionsSection: View {
-    @ObservedObject var workspace: Workspace
-    /// Watched so a command allowed or forgotten shows at once.
-    @ObservedObject var commands: ComponentCommands
-
-    var body: some View {
-        PanelSection(L("Auto mode")) {
-            VStack(alignment: .leading, spacing: 10) {
-                Toggle(isOn: Binding(
-                    get: { workspace.settings.autoApprovesSafeActions },
-                    set: { workspace.setAutoApprovesSafeActions($0) }
-                )) {
-                    Text(L("Auto-approve safe actions")).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .toggleStyle(.switch)
-                .padding(.horizontal, 14)
-                .frame(height: 44)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-                Text(workspace.settings.autoApprovesSafeActions
-                     ? L("Bots use Claude Code's auto mode: reading, searching and ordinary commands just run; a safety check blocks risky ones (deleting files that were there before, sending data out, force pushes, downloading and running code). It is not a guarantee. Anything it still wants your OK for comes as a card in the chat.")
-                     : L("Bots ask in the chat before each tool they are not always allowed to use."))
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.faint)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        ResultsSection(workspace: workspace)
-        let approved = workspace.approvedCommands
-        PanelSection(L("Approved component commands")) {
-            Card {
-                if approved.isEmpty {
-                    Text(L("None yet. A component asks before it first runs a command."))
-                        .font(.system(size: 14))
-                        .foregroundStyle(Theme.faint)
-                        .padding(.horizontal, 14)
-                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                }
-                ForEach(approved) { item in
-                    HStack(spacing: 12) {
-                        Text(item.command)
-                            .font(.system(size: 12, design: .monospaced))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Text(item.owner)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.faint)
-                            .lineLimit(1)
-                            .help(item.folder)
-                        Button(L("Forget")) { workspace.forget(item) }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Theme.muted)
-                            .help(L("Ask again before this command runs in {0}", item.owner))
-                            .accessibilityLabel(L("Forget {0}", item.command))
-                    }
-                    .padding(.horizontal, 14)
-                    .frame(minHeight: 44)
-                    if item.id != approved.last?.id { RowDivider() }
-                }
-            }
-        }
-        if workspace.ignoredWaitingCount > 0 {
-            PanelSection(L("Ignored")) {
-                HStack {
-                    Text(L("{0} item(s) taken off \"Waiting on you\"", workspace.ignoredWaitingCount))
-                    Spacer()
-                    Button(L("Show again")) { workspace.showIgnoredWaiting() }
+    private func sidebar(_ palette: SettingsPalette) -> some View {
+        let found = SettingsSection.matching(query, in: sections)
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(palette.sub)
+                TextField(L("Search settings"), text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .onSubmit { if let first = found.first { navigator.section = first } }
+                if !query.isEmpty {
+                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(palette.sub) }
                         .buttonStyle(.plain)
-                        .foregroundStyle(Theme.blue)
+                        .accessibilityLabel(L("Clear"))
                 }
-                .font(.system(size: 14))
-                .padding(.horizontal, 14)
-                .frame(height: 44)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
             }
+            .padding(.horizontal, 8)
+            .frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 7).fill(palette.search))
+            .padding(.horizontal, 2)
+            .padding(.bottom, 10)
+            if found.isEmpty {
+                Text(L("No results"))
+                    .font(.system(size: 13))
+                    .foregroundStyle(palette.sub)
+                    .padding(.horizontal, 10)
+                    .padding(.top, 4)
+            }
+            ForEach(found) { section in
+                if section == .developer {
+                    Text(L("Advanced"))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(palette.sub)
+                        .padding(.horizontal, 10)
+                        .padding(.top, 14)
+                        .padding(.bottom, 4)
+                }
+                sidebarRow(section, palette)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 14)
+        .frame(width: 236)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(palette.side)
+    }
+
+    private func sidebarRow(_ section: SettingsSection, _ palette: SettingsPalette) -> some View {
+        let on = navigator.section == section
+        return Button { navigator.section = section } label: {
+            HStack(spacing: 8) {
+                Image(systemName: section.symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 20, height: 20)
+                    .background(RoundedRectangle(cornerRadius: 5).fill(section.tint))
+                Text(section.title)
+                    .font(.system(size: 13))
+                    .foregroundStyle(on ? .white : palette.text)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if section == .engines {
+                    Text(L("New"))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .frame(height: 16)
+                        .background(Capsule().fill(on ? Color.white.opacity(0.25) : Color(nsColor: .systemBlue)))
+                }
+            }
+            .padding(.horizontal, 6)
+            .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 7).fill(on ? palette.selected : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
+/// The explanation under a group, as System Settings words it.
+private struct Footnote: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A row's title with a quieter line under it.
+private struct TitleAndNote: View {
+    let title: String
+    let note: String
+    var monospaced = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+            Text(note)
+                .font(.system(size: 11, design: monospaced ? .monospaced : .default))
+                .foregroundStyle(.secondary)
         }
     }
 }
 
-/// Botling's plugins: on or off, why one broke, and the settings each declares; and
-/// adding one.
-private struct PluginsSection: View {
-    @ObservedObject var registry: PluginRegistry
-    var host: PluginHostClient?
-    var workspace: Workspace?
-    @State private var open: String?
-    @State private var source = ""
+/// The C or X mark beside Claude's and Codex's groups.
+private struct EngineMark: View {
+    let engine: BotEngine
 
     var body: some View {
-        PanelSection(L("Installed")) {
-            VStack(spacing: 0) {
-                ForEach(registry.plugins) { plugin in
-                    PluginRow(registry: registry, plugin: plugin, open: open == plugin.name) {
-                        open = open == plugin.name ? nil : plugin.name
-                    }
-                    if plugin.id != registry.plugins.last?.id {
-                        Rectangle().fill(Theme.line).frame(height: 1)
-                    }
+        Text(engine == .claude ? "C" : "X")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(engine == .claude ? Color.white : Color(nsColor: .windowBackgroundColor))
+            .frame(width: 16, height: 16)
+            .background(RoundedRectangle(cornerRadius: 4).fill(engine == .claude ? Color(hex: 0xD97757) : Color.primary))
+            .accessibilityHidden(true)
+    }
+}
+
+// MARK: General
+
+/// Language, how two-headed bots look, and the reminder for quiet runs.
+private struct GeneralPage: View {
+    @ObservedObject var workspace: Workspace
+
+    var body: some View {
+        LanguageSection(workspace: workspace)
+        BotLookSection(workspace: workspace)
+        Section {
+            Picker(L("Remind after no new step for"), selection: Binding(
+                get: { workspace.settings.stallReminder },
+                set: { workspace.setStallReminderMinutes($0) }
+            )) {
+                ForEach(Self.choices(keeping: workspace.settings.stallReminder), id: \.self) { minutes in
+                    Text(minutes == 0 ? L("Never") : L("{0} min", minutes)).tag(minutes)
                 }
             }
-            .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            if let problem = host?.problem {
-                Text(problem).font(.system(size: 12)).foregroundStyle(Theme.errorText)
-            }
-            ForEach(registry.problems.keys.sorted(), id: \.self) { folder in
-                Text(L("Couldn't read \"{0}\": {1}", folder, registry.problems[folder]?.joined(separator: "; ") ?? ""))
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.errorText)
-            }
+            .pickerStyle(.menu)
+        } header: {
+            Text(L("Reminders"))
+        } footer: {
+            Footnote(L("When a running bot or subagent shows no new step for this long, you get a reminder in its chat. Never turns it off."))
         }
-        if let workspace {
-            ComponentEditorSection(workspace: workspace)
-            PanelSection(L("Add plugin")) {
-                AddPluginRow(workspace: workspace, source: $source)
-                Text(L("Botling asks before installing. A folder needs a package.json."))
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.faint)
-            }
-        }
+    }
+
+    /// The offered minutes, with one set by hand in settings.json kept in order.
+    static func choices(keeping current: Int) -> [Int] {
+        var minutes = AppSettings.stallReminderChoices.filter { $0 > 0 }
+        if current > 0, !minutes.contains(current) { minutes = (minutes + [current]).sorted() }
+        return minutes + [0]
     }
 }
 
@@ -485,26 +458,20 @@ struct LanguageSection: View {
     @ObservedObject var workspace: Workspace
 
     var body: some View {
-        PanelSection(L("Language")) {
-            HStack(spacing: 12) {
-                Text(L("App language")).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
-                Picker("", selection: Binding(
-                    get: { workspace.settings.languageChoice },
-                    set: { workspace.setLanguage($0) }
-                )) {
-                    Text(L("System default ({0})", AppLanguage.preferred().nativeName)).tag(AppLanguage?.none)
-                    Divider()
-                    ForEach(AppLanguage.allCases, id: \.self) { Text($0.nativeName).tag(Optional($0)) }
-                }
-                .labelsHidden().pickerStyle(.menu).fixedSize()
+        Section {
+            Picker(L("App language"), selection: Binding(
+                get: { workspace.settings.languageChoice },
+                set: { workspace.setLanguage($0) }
+            )) {
+                Text(L("System default ({0})", AppLanguage.preferred().nativeName)).tag(AppLanguage?.none)
+                Divider()
+                ForEach(AppLanguage.allCases, id: \.self) { Text($0.nativeName).tag(Optional($0)) }
             }
-            .padding(.horizontal, 14)
-            .frame(height: 44)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-            Text(L("Botling's menus, buttons and messages change at once. Bots reply in this language by default; when you write to them in another language, they answer in yours."))
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.faint)
-                .fixedSize(horizontal: false, vertical: true)
+            .pickerStyle(.menu)
+        } header: {
+            Text(L("Language"))
+        } footer: {
+            Footnote(L("Botling's menus, buttons and messages change at once. Bots reply in this language by default; when you write to them in another language, they answer in yours."))
         }
     }
 }
@@ -514,31 +481,317 @@ struct BotLookSection: View {
     @ObservedObject var workspace: Workspace
 
     var body: some View {
-        PanelSection(L("Bot look")) {
-            HStack(spacing: 12) {
-                Text(L("Bot look")).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
-                Picker("", selection: Binding(
-                    get: { workspace.settings.botLook },
-                    set: { workspace.setBotLook($0) }
-                )) {
-                    ForEach(BotLook.allCases, id: \.self) { Text($0.displayName).tag($0) }
-                }
-                .labelsHidden().pickerStyle(.segmented).fixedSize()
+        Section {
+            Picker(L("Bot look"), selection: Binding(
+                get: { workspace.settings.botLook },
+                set: { workspace.setBotLook($0) }
+            )) {
+                ForEach(BotLook.allCases, id: \.self) { Text($0.displayName).tag($0) }
             }
-            .padding(.horizontal, 14)
-            .frame(height: 44)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-            HStack(spacing: 4) {
+            .pickerStyle(.segmented)
+            .fixedSize()
+            HStack(spacing: 6) {
                 if workspace.settings.botLook == .cute {
                     ChibiHeadView(head: .claude, hat: .square, size: 28)
                     ChibiHeadView(head: .codex, hat: .square, size: 28)
+                } else {
+                    EngineMark(engine: .claude)
+                    EngineMark(engine: .codex)
                 }
                 Text(workspace.settings.botLook == .cute
                     ? L("A bot with Claude and Codex shows them as two characters wearing the bot's face: on each reply, as small heads under the lines they have seen, behind the bot's face in the left column and under Now.")
                     : L("Plain bot faces, with C and X marks for Claude and Codex."))
                     .font(.system(size: 12))
-                    .foregroundStyle(Theme.faint)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        } header: {
+            Text(L("Bot look"))
+        }
+    }
+}
+
+// MARK: Engines and subagents
+
+/// What bots' Claude subagents and Codex workers start on, for every bot; the component editor's
+/// model; and the one-off "engine and model for all bots".
+private struct EnginesPage: View {
+    @ObservedObject var workspace: Workspace
+    @State private var config = CodexConfig()
+    @State private var codexModels: [CodexModel] = []
+
+    private var follow: Bool { workspace.settings.codexWorkersFollowConfig }
+    /// Botling's own choice, or (to start one) what the config says now.
+    private var choice: CodexWorkerDefaults { workspace.settings.codexWorkerChoice ?? .seeded(from: config) }
+
+    var body: some View {
+        let effective = workspace.settings.effectiveCodexWorker(config: config)
+        Section {
+            Picker(L("Model"), selection: Binding(
+                get: { workspace.settings.subagentModelDefault },
+                set: { model in Task { await workspace.setSubagentModelDefault(model) } }
+            )) {
+                Text(L("Same as bot")).tag(BotModel?.none)
+                ForEach(BotModel.allCases, id: \.self) { Text($0.displayName).tag(Optional($0)) }
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+        } header: {
+            VStack(alignment: .leading, spacing: 18) {
+                Text(L("Which model the subagents (Claude) and workers (Codex) bots send out use by default. Each bot's own engine, model and thinking effort stay on that bot's settings page, right of the chat."))
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 6) {
+                    EngineMark(engine: .claude)
+                    Text(L("Claude subagents"))
+                }
+                .font(.system(size: 13, weight: .semibold))
+            }
+            .textCase(nil)
+        } footer: {
+            Footnote(L("A subagent whose definition names a model keeps it; the Subagent model on each bot's settings page can override this default."))
+        }
+        Section {
+            Toggle(isOn: Binding(
+                get: { follow },
+                set: { on in
+                    let kept = choice
+                    Task { await workspace.setCodexWorkerDefaults(follow: on, choice: kept) }
+                }
+            )) {
+                TitleAndNote(title: L("Follow Codex config file"), note: "~/.codex/config.toml", monospaced: true)
+            }
+            .toggleStyle(.switch)
+            Group {
+                if follow {
+                    Picker(L("Model"), selection: .constant(0)) {
+                        Text(config.model ?? L("Codex's default model")).tag(0)
+                    }
+                } else {
+                    Picker(L("Model"), selection: Binding(
+                        get: { choice.model },
+                        set: { model in update { $0.model = model } }
+                    )) {
+                        Text(L("Same as bot")).tag(String?.none)
+                        ForEach(modelChoices, id: \.self) { id in
+                            Text(codexModels.first { $0.id == id }?.name ?? id).tag(Optional(id))
+                        }
+                    }
+                }
+            }
+            .pickerStyle(.menu)
+            .disabled(follow)
+            Picker(L("Reasoning effort"), selection: Binding(
+                get: { follow ? config.effort : choice.effort },
+                set: { level in update { $0.effort = level } }
+            )) {
+                ForEach(EffortLevel.allCases, id: \.self) { Text($0.displayName).tag(Optional($0)) }
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            .disabled(follow)
+            Toggle(isOn: Binding(
+                get: { follow ? config.fast ?? false : choice.fast ?? false },
+                set: { on in update { $0.fast = on } }
+            )) {
+                TitleAndNote(title: L("Fast mode"), note: L("{0}: faster replies, uses more of your limits", "service_tier = priority"))
+            }
+            .toggleStyle(.switch)
+            .disabled(follow)
+        } header: {
+            HStack(spacing: 6) {
+                EngineMark(engine: .codex)
+                Text(L("Codex workers")).font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Text(L("In effect: {0} · {1} · {2}", effective.model ?? L("Codex's default model"), effortName(effective), effective.fast ? "Fast" : L("Standard")))
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(.secondary)
+                    .textCase(nil)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        } footer: {
+            VStack(alignment: .leading, spacing: 6) {
+                Footnote(follow
+                    ? L("Now following config.toml: {0}, {1} effort, {2}. A change to the file applies to the next worker. Turn this switch off to choose for Botling's workers.", effective.model ?? L("Codex's default model"), effortName(effective), effective.fast ? "Fast" : L("Standard"))
+                    : L("Applies only to the Codex workers Botling sends out; codex you run yourself in Terminal still reads config.toml."))
+                Footnote(L("Applied to every bot now; a bot's own settings page (right of its chat) can still choose differently for that bot."))
+            }
+        }
+        ComponentEditorSection(workspace: workspace)
+        AllBotsModelSection(workspace: workspace, codexModels: codexModels)
+            .task {
+                config = CodexConfig.load()
+                codexModels = await CodexModels.load()
+            }
+    }
+
+    /// The model and effort controls are only for Botling's own choice.
+    private func update(_ change: (inout CodexWorkerDefaults) -> Void) {
+        guard !follow else { return }
+        var next = choice
+        change(&next)
+        Task { await workspace.setCodexWorkerDefaults(follow: false, choice: next) }
+    }
+
+    private func effortName(_ effective: EffectiveCodexWorker) -> String {
+        effective.effort?.displayName ?? effective.effortName ?? L("Default")
+    }
+
+    private var modelChoices: [String] {
+        var ids = codexModels.map(\.id)
+        for kept in [choice.model, config.model].compactMap({ $0 }) where !ids.contains(kept) { ids.append(kept) }
+        return ids
+    }
+}
+
+/// The model ccb-core's component editor runs on: the app writes its agent file with it.
+private struct ComponentEditorSection: View {
+    @ObservedObject var workspace: Workspace
+
+    var body: some View {
+        Section {
+            Picker(L("Model"), selection: Binding(
+                get: { workspace.settings.componentEditor },
+                set: { workspace.setComponentEditorModel($0) }
+            )) {
+                ForEach(BotModel.allCases, id: \.self) { Text($0.displayName).tag($0) }
+            }
+            .pickerStyle(.menu)
+        } header: {
+            Text(L("Component editor"))
+        } footer: {
+            Footnote(L("The agent Maintainer hands component changes to. A change here rewrites its file in ccb-core; awake bots pick it up before their next message."))
+        }
+    }
+}
+
+/// Stage a choice, then apply it explicitly; merely opening Settings never changes a bot.
+struct AllBotsModelSection: View {
+    @ObservedObject var workspace: Workspace
+    var codexModels: [CodexModel]
+    @State private var engine: BotEngine = .claude
+    @State private var claudeModel: BotModel = .sonnet
+    @State private var codexModel: String?
+    @State private var applied: Int?
+
+    var body: some View {
+        Section {
+            Picker(L("Engine"), selection: $engine) {
+                ForEach(BotEngine.allCases, id: \.self) { Text($0.displayName).tag($0) }
+            }
+            .pickerStyle(.menu)
+            if engine == .claude {
+                Picker(L("Model"), selection: $claudeModel) {
+                    ForEach(BotModel.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .pickerStyle(.menu)
+            } else {
+                Picker(L("Model"), selection: $codexModel) {
+                    Text(L("Codex's default model")).tag(String?.none)
+                    ForEach(codexChoices, id: \.self) { id in
+                        Text(codexModels.first { $0.id == id }?.name ?? id).tag(Optional(id))
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+            HStack {
+                if workspace.isApplyingBotModel { ProgressView().controlSize(.small) }
+                else if let applied { Text(L("Applied to {0} bots", applied)).font(.system(size: 12)).foregroundStyle(.secondary) }
+                Spacer()
+                Button(L("Apply to all bots")) {
+                    let choice = (engine, claudeModel, codexModel)
+                    Task {
+                        applied = await workspace.applyModelToAllBots(engine: choice.0, claudeModel: choice.1, codexModel: choice.2)
+                    }
+                }
+            }
+        } header: {
+            Text(L("Engine and model for all bots"))
+        } footer: {
+            Footnote(L("Applies to all existing bots, including the main bot and Maintainer. Keeps chats and other settings. You can change each bot or reenable its other engine in that bot's settings; new bots keep their own defaults."))
+        }
+        .disabled(workspace.isApplyingBotModel)
+        .task {
+            engine = workspace.mainBot.engine
+            claudeModel = workspace.mainBot.model
+            codexModel = workspace.mainBot.heads.codexModel
+        }
+        .onChange(of: engine) { _, _ in applied = nil }
+        .onChange(of: claudeModel) { _, _ in applied = nil }
+        .onChange(of: codexModel) { _, _ in applied = nil }
+    }
+
+    private var codexChoices: [String] {
+        var ids = codexModels.map(\.id)
+        if let codexModel, !ids.contains(codexModel) { ids.append(codexModel) }
+        return ids
+    }
+}
+
+// MARK: Permissions
+
+/// Auto mode, where results go, the component commands you allowed (each can be taken back),
+/// and items taken off "Waiting on you".
+private struct PermissionsPage: View {
+    @ObservedObject var workspace: Workspace
+    /// Watched so a command allowed or forgotten shows at once.
+    @ObservedObject var commands: ComponentCommands
+
+    var body: some View {
+        Section {
+            Toggle(L("Auto-approve safe actions"), isOn: Binding(
+                get: { workspace.settings.autoApprovesSafeActions },
+                set: { workspace.setAutoApprovesSafeActions($0) }
+            ))
+            .toggleStyle(.switch)
+        } header: {
+            Text(L("Auto mode"))
+        } footer: {
+            Footnote(workspace.settings.autoApprovesSafeActions
+                ? L("Bots use Claude Code's auto mode: reading, searching and ordinary commands just run; a safety check blocks risky ones (deleting files that were there before, sending data out, force pushes, downloading and running code). It is not a guarantee. Anything it still wants your OK for comes as a card in the chat.")
+                : L("Bots ask in the chat before each tool they are not always allowed to use."))
+        }
+        ResultsSection(workspace: workspace)
+        let approved = workspace.approvedCommands
+        Section {
+            if approved.isEmpty {
+                Text(L("None yet. A component asks before it first runs a command."))
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(approved) { item in
+                HStack(spacing: 12) {
+                    Text(item.command)
+                        .font(.system(size: 12, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(item.owner)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .help(item.folder)
+                    Button(L("Forget")) { workspace.forget(item) }
+                        .help(L("Ask again before this command runs in {0}", item.owner))
+                        .accessibilityLabel(L("Forget {0}", item.command))
+                }
+            }
+        } header: {
+            Text(L("Approved component commands"))
+        } footer: {
+            Footnote(L("Each row is a command, the bot it belongs to, and Forget: once forgotten, you are asked again before it runs."))
+        }
+        if workspace.ignoredWaitingCount > 0 {
+            Section {
+                HStack {
+                    Text(L("{0} item(s) taken off \"Waiting on you\"", workspace.ignoredWaitingCount))
+                    Spacer()
+                    Button(L("Show again")) { workspace.showIgnoredWaiting() }
+                }
+            } header: {
+                Text(L("Ignored"))
             }
         }
     }
@@ -549,24 +802,18 @@ struct ResultsSection: View {
     @ObservedObject var workspace: Workspace
 
     var body: some View {
-        PanelSection(L("Reports and results")) {
-            HStack(spacing: 12) {
-                Text(L("Publish as")).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
-                Picker("", selection: Binding(
-                    get: { workspace.settings.resultPublishing },
-                    set: { workspace.setResultPublishing($0) }
-                )) {
-                    ForEach(ResultPublishing.allCases, id: \.self) { Text($0.displayName).tag($0) }
-                }
-                .labelsHidden().pickerStyle(.menu).fixedSize()
+        Section {
+            Picker(L("Publish as"), selection: Binding(
+                get: { workspace.settings.resultPublishing },
+                set: { workspace.setResultPublishing($0) }
+            )) {
+                ForEach(ResultPublishing.allCases, id: \.self) { Text($0.displayName).tag($0) }
             }
-            .padding(.horizontal, 14)
-            .frame(height: 44)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-            Text(Self.explanation(workspace.settings.resultPublishing))
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.faint)
-                .fixedSize(horizontal: false, vertical: true)
+            .pickerStyle(.menu)
+        } header: {
+            Text(L("Reports and results"))
+        } footer: {
+            Footnote(Self.explanation(workspace.settings.resultPublishing))
         }
     }
 
@@ -582,29 +829,136 @@ struct ResultsSection: View {
     }
 }
 
-/// The model ccb-core's component editor runs on: the app writes its agent file with it.
-private struct ComponentEditorSection: View {
+// MARK: Usage
+
+/// Cost and tokens today, the subscriptions' limits, by bot, and the days before.
+private struct UsagePage: View {
     @ObservedObject var workspace: Workspace
 
     var body: some View {
-        PanelSection(L("Component editor")) {
-            HStack(spacing: 12) {
-                Text(L("Model")).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
-                Picker("", selection: Binding(
-                    get: { workspace.settings.componentEditor },
-                    set: { workspace.setComponentEditorModel($0) }
-                )) {
-                    ForEach(BotModel.allCases, id: \.self) { Text($0.displayName).tag($0) }
-                }
-                .labelsHidden().pickerStyle(.menu).fixedSize()
+        let spending = workspace.spending
+        let isToday = spending.day == Spending.today()
+        let tokens = isToday ? spending.tokens : TokenUsage()
+        Section {
+            LabeledContent(L("Cost")) {
+                Text(Workspace.dollars(isToday ? spending.spent : 0)).monospacedDigit()
             }
-            .padding(.horizontal, 14)
-            .frame(height: 44)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-            Text(L("The agent Maintainer hands component changes to. A change here rewrites its file in ccb-core; awake bots pick it up before their next message."))
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.faint)
-                .fixedSize(horizontal: false, vertical: true)
+            LabeledContent(L("Tokens")) {
+                Text(Workspace.tokenCount(tokens.total)).monospacedDigit()
+            }
+        } header: {
+            Text(L("Usage today"))
+        } footer: {
+            Footnote(L("In {0} · out {1} · cache write {2} · cache read {3}", Workspace.tokenCount(tokens.input), Workspace.tokenCount(tokens.output), Workspace.tokenCount(tokens.cacheWrite), Workspace.tokenCount(tokens.cacheRead)))
+        }
+        Section {
+            LimitRow(name: "Claude", limits: workspace.rateLimits)
+            if !workspace.codexRateLimits.isEmpty { LimitRow(name: "Codex", limits: workspace.codexRateLimits) }
+        } header: {
+            Text(L("Subscription limits"))
+        }
+        let bots = isToday ? Set(spending.byBot.keys).union(spending.tokensByBot.keys).sorted {
+            (spending.byBot[$0] ?? 0, spending.tokensByBot[$0]?.total ?? 0) > (spending.byBot[$1] ?? 0, spending.tokensByBot[$1]?.total ?? 0)
+        } : []
+        Section {
+            if bots.isEmpty {
+                Text(L("No bot has used anything today.")).foregroundStyle(.secondary)
+            }
+            ForEach(bots, id: \.self) { name in
+                row(name, spending.byBot[name] ?? 0, spending.tokensByBot[name]?.total ?? 0)
+            }
+        } header: {
+            Text(L("By bot"))
+        }
+        if !spending.history.isEmpty {
+            Section {
+                ForEach(Array(spending.history.reversed()), id: \.day) { day in
+                    row(day.day, day.spent, day.tokens.total)
+                }
+            } header: {
+                Text(L("Earlier days"))
+            }
+        }
+    }
+
+    private func row(_ name: String, _ cost: Double, _ tokens: Int) -> some View {
+        HStack(spacing: 12) {
+            Text(name).lineLimit(1)
+            Spacer()
+            Text(L("{0} tokens", Workspace.tokenCount(tokens))).foregroundStyle(.secondary).monospacedDigit()
+            Text(Workspace.dollars(cost)).monospacedDigit().frame(width: 72, alignment: .trailing)
+        }
+    }
+}
+
+/// One subscription's 5-hour and weekly use, with when each starts over.
+private struct LimitRow: View {
+    let name: String
+    let limits: RateLimits
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let now = context.date
+            HStack(alignment: .firstTextBaseline) {
+                Text(name)
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    if limits.isEmpty {
+                        Text(L("no data")).foregroundStyle(.secondary)
+                    }
+                    if let five = limits.fiveHour {
+                        Text("\(L("5 hours")) \(RateLimitText.percent(five, now: now)) · \(RateLimitText.countdown(five, now: now))")
+                    }
+                    if let week = limits.week {
+                        Text("\(L("Week")) \(RateLimitText.percent(week, now: now)) · \(RateLimitText.resetDay(week, now: now))")
+                            .foregroundStyle(.secondary)
+                    }
+                    if let since = limits.staleSince(now: now) {
+                        Text(RateLimitText.asOf(since, now: now)).font(.system(size: 11)).foregroundStyle(.tertiary)
+                    }
+                }
+                .monospacedDigit()
+            }
+        }
+    }
+}
+
+// MARK: Plugins
+
+/// Botling's plugins: on or off, why one broke, and the settings each declares; and adding one.
+private struct PluginsPage: View {
+    @ObservedObject var registry: PluginRegistry
+    var host: PluginHostClient?
+    var workspace: Workspace
+    @State private var open: String?
+    @State private var source = ""
+
+    var body: some View {
+        Section {
+            ForEach(registry.plugins) { plugin in
+                PluginRow(registry: registry, plugin: plugin, open: open == plugin.name) {
+                    open = open == plugin.name ? nil : plugin.name
+                }
+            }
+            if let problem = host?.problem {
+                Text(problem).font(.system(size: 12)).foregroundStyle(.red)
+            }
+            ForEach(registry.problems.keys.sorted(), id: \.self) { folder in
+                Text(L("Couldn't read \"{0}\": {1}", folder, registry.problems[folder]?.joined(separator: "; ") ?? ""))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.red)
+            }
+        } header: {
+            Text(L("Installed"))
+        } footer: {
+            Footnote(L("Click a plugin to see its description and the settings it declares; right-click to revert to the previous version or remove (external plugins)."))
+        }
+        Section {
+            AddPluginRow(workspace: workspace, source: $source)
+        } header: {
+            Text(L("Add plugin"))
+        } footer: {
+            Footnote(L("Botling asks before installing. A folder needs a package.json."))
         }
     }
 }
@@ -620,17 +974,17 @@ private struct PluginRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Button(action: toggleOpen) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(plugin.manifest.title).foregroundStyle(plugin.enabled ? Theme.text : Theme.muted)
+                        Text(plugin.manifest.title).foregroundStyle(plugin.enabled ? .primary : .secondary)
                         Text(plugin.builtIn ? L("Built-in · {0}", plugin.manifest.version)
                              : plugin.installedFrom.map { L("External · {0} · {1}", plugin.manifest.version, $0) } ?? plugin.manifest.version)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.faint)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
@@ -643,27 +997,22 @@ private struct PluginRow: View {
                 ))
                 .labelsHidden()
                 .toggleStyle(.switch)
-                .controlSize(.small)
                 .accessibilityLabel(L("Enable {0}", plugin.manifest.title))
             }
             if let failure = plugin.failure {
                 Text(plugin.usingPrevious ? L("New version failed, using the previous one: {0}", failure) : L("Failed and disabled: {0}", failure))
                     .font(.system(size: 12))
-                    .foregroundStyle(Theme.errorText)
+                    .foregroundStyle(.red)
             }
             if open {
                 if let description = plugin.manifest.description {
-                    Text(description).font(.system(size: 12)).foregroundStyle(Theme.muted)
+                    Text(description).font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 ForEach(settings, id: \.key) { key, setting in
                     SettingControl(registry: registry, plugin: plugin.name, key: key, setting: setting)
                 }
             }
         }
-        .font(.system(size: 14))
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .frame(minHeight: 48)
         .contentShape(Rectangle())
         .contextMenu {
             if !plugin.builtIn {
@@ -701,8 +1050,9 @@ private struct AddPluginRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                TextField(L("Git URL, npm name or .zip URL"), text: $source)
+                TextField("", text: $source, prompt: Text(L("Git URL, npm name or .zip URL")))
                     .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
                     .onSubmit(add)
                 Button(L("Add"), action: add).disabled(source.trimmingCharacters(in: .whitespaces).isEmpty)
                 Button {
@@ -720,11 +1070,10 @@ private struct AddPluginRow: View {
                 .help(L("Add from folder"))
                 .accessibilityLabel(L("Add plugin from folder"))
             }
-            .font(.system(size: 13))
             ForEach(workspace.fetching, id: \.self) { item in
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text(L("Fetching {0}…", item)).font(.system(size: 12)).foregroundStyle(Theme.faint).lineLimit(1)
+                    Text(L("Fetching {0}…", item)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
         }
@@ -749,13 +1098,14 @@ private struct SettingControl: View {
     var body: some View {
         let value = registry.setting(plugin, key)
         HStack {
-            Text(setting.title).foregroundStyle(Theme.muted)
+            Text(setting.title).foregroundStyle(.secondary)
             Spacer()
             if setting.secret == true {
                 // Kept in the keychain; Botling never shows it again.
                 SecureField(registry.secret(plugin, key) == nil ? L("Not set") : L("Saved in Keychain"), text: $secret)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 140)
+                    .labelsHidden()
+                    .frame(width: 160)
                     .onSubmit {
                         registry.setSecret(plugin, key, to: secret)
                         secret = ""
@@ -772,17 +1122,19 @@ private struct SettingControl: View {
                 .labelsHidden().pickerStyle(.menu).fixedSize()
             case "number":
                 TextField("", value: Binding(get: { value?.number ?? 0 }, set: { registry.set(plugin, key, to: .number($0)) }), format: .number)
-                    .textFieldStyle(.roundedBorder).frame(width: 70)
+                    .textFieldStyle(.roundedBorder).labelsHidden().frame(width: 70)
             default:
                 TextField("", text: Binding(get: { value?.string ?? "" }, set: { registry.set(plugin, key, to: .string($0)) }))
-                    .textFieldStyle(.roundedBorder).frame(width: 140)
+                    .textFieldStyle(.roundedBorder).labelsHidden().frame(width: 160)
             }
             }
         }
-        .font(.system(size: 13))
+        .font(.system(size: 12))
         .accessibilityLabel(setting.title)
     }
 }
+
+// MARK: Developer mode
 
 /// For working on Botling itself: which project is its source, whose manager may then
 /// install new builds, look at the app, and get what you flag as not right.
@@ -791,44 +1143,27 @@ struct DeveloperSection: View {
 
     var body: some View {
         let folders = workspace.projects.filter { !$0.isBot }
-        PanelSection(L("Developer mode")) {
-            VStack(alignment: .leading, spacing: 10) {
-                Card {
-                    Toggle(isOn: Self.binding(workspace)) {
-                        Text(L("Develop Botling itself")).font(.system(size: 14)).frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .toggleStyle(.switch)
-                    .padding(.horizontal, 14)
-                    .frame(height: 44)
-                    if workspace.settings.developerMode {
-                        RowDivider()
-                        HStack {
-                            Text(L("Its source")).font(.system(size: 14))
-                            Spacer()
-                            Picker(L("Its source"), selection: Binding(
-                                get: { workspace.settings.developerProjectID },
-                                set: { workspace.setDeveloperMode(true, project: $0) }
-                            )) {
-                                Text(L("Choose a project")).tag(UUID?.none)
-                                ForEach(folders) { project in
-                                    Text(project.name).tag(Optional(project.id))
-                                }
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .fixedSize()
-                        }
-                        .padding(.horizontal, 14)
-                        .frame(height: 44)
+        Section {
+            Toggle(L("Develop Botling itself"), isOn: Self.binding(workspace))
+                .toggleStyle(.switch)
+            if workspace.settings.developerMode {
+                Picker(L("Its source"), selection: Binding(
+                    get: { workspace.settings.developerProjectID },
+                    set: { workspace.setDeveloperMode(true, project: $0) }
+                )) {
+                    Text(L("Choose a project")).tag(UUID?.none)
+                    ForEach(folders) { project in
+                        Text(project.name).tag(Optional(project.id))
                     }
                 }
-                Text(workspace.settings.developerMode
-                     ? L("{0}'s manager may install new builds (you confirm; one that does not start is rolled back), take screenshots of this window, and gets what you flag as \"not right\" in any chat.", workspace.developerProject?.name ?? L("That project"))
-                     : L("Off for everyone who only uses Botling. Turn it on to let one project's manager work on the app itself."))
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.faint)
-                    .fixedSize(horizontal: false, vertical: true)
+                .pickerStyle(.menu)
             }
+        } header: {
+            Text(L("Developer mode"))
+        } footer: {
+            Footnote(workspace.settings.developerMode
+                ? L("{0}'s manager may install new builds (you confirm; one that does not start is rolled back), take screenshots of this window, and gets what you flag as \"not right\" in any chat.", workspace.developerProject?.name ?? L("That project"))
+                : L("Off for everyone who only uses Botling. Turn it on to let one project's manager work on the app itself."))
         }
     }
 
@@ -844,27 +1179,23 @@ struct DeveloperSection: View {
     }
 }
 
+// MARK: Doctor
+
 /// Settings → Doctor: Claude Code and (optional) Codex, each found the way bots find it, with its version,
 /// sign-in, and a command to copy when something is wrong.
 struct DoctorSection: View {
     @ObservedObject var model: DoctorModel
 
     var body: some View {
-        PanelSection(L("Command-line tools")) {
-            Card {
-                if model.checks.isEmpty {
-                    HStack(spacing: 10) {
-                        ProgressView().controlSize(.small)
-                        Text(L("Checking…")).foregroundStyle(Theme.muted)
-                    }
-                    .font(.system(size: 14))
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        Section {
+            if model.checks.isEmpty {
+                HStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text(L("Checking…")).foregroundStyle(.secondary)
                 }
-                ForEach(Array(model.checks.enumerated()), id: \.element.id) { index, check in
-                    if index > 0 { RowDivider() }
-                    DoctorRow(check: check)
-                }
+            }
+            ForEach(model.checks) { check in
+                DoctorRow(check: check)
             }
             HStack(spacing: 10) {
                 Button(L("Run again")) { Task { await model.run(includeLatest: true) } }
@@ -874,12 +1205,13 @@ struct DoctorSection: View {
                 } else if let checkedAt = model.checkedAt {
                     Text(L("Checked {0}", checkedAt.formatted(date: .omitted, time: .shortened)))
                         .font(.system(size: 12))
-                        .foregroundStyle(Theme.faint)
+                        .foregroundStyle(.secondary)
                 }
             }
-            Text(L("Bots run Claude Code; Codex is optional. Each check has a {0}-second limit and spends no tokens.", Int(Doctor.timeout)))
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.faint)
+        } header: {
+            Text(L("Command-line tools"))
+        } footer: {
+            Footnote(L("Bots run Claude Code; Codex is optional. Each check has a {0}-second limit and spends no tokens.", Int(Doctor.timeout)))
         }
         .task {
             if !model.includedLatest || model.checks.isEmpty { await model.run(includeLatest: true) }
@@ -900,19 +1232,19 @@ struct DoctorRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Circle().fill(Self.color(check.status)).frame(width: 9, height: 9)
                     .accessibilityLabel(check.status == .ok ? L("OK") : check.status == .warning ? L("Warning") : L("Failing"))
-                Text(check.tool.name).font(.system(size: 14, weight: .medium))
-                Text(check.version ?? "—").font(.system(size: 13)).monospacedDigit().foregroundStyle(Theme.muted)
+                Text(check.tool.name).fontWeight(.medium)
+                Text(check.version ?? "—").monospacedDigit().foregroundStyle(.secondary)
                 Spacer()
-                Text(L("needs {0}+", check.tool.minimum.description)).font(.system(size: 12)).foregroundStyle(Theme.faint)
+                Text(L("needs {0}+", check.tool.minimum.description)).font(.system(size: 11)).foregroundStyle(.secondary)
             }
             Group {
-                Text(check.summary).foregroundStyle(check.status == .ok ? Theme.muted : Self.color(check.status))
+                Text(check.summary).foregroundStyle(check.status == .ok ? Color.secondary : Self.color(check.status))
                 if let path = check.path {
-                    Text((path as NSString).abbreviatingWithTildeInPath).help(path).lineLimit(1).truncationMode(.middle).foregroundStyle(Theme.faint).textSelection(.enabled)
+                    Text((path as NSString).abbreviatingWithTildeInPath).help(path).lineLimit(1).truncationMode(.middle).foregroundStyle(.tertiary).textSelection(.enabled)
                 }
             }
             .font(.system(size: 12))
@@ -935,12 +1267,11 @@ struct DoctorRow: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.ground))
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.06)))
                 .padding(.leading, 19)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.vertical, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -956,77 +1287,5 @@ struct DoctorDot: View {
                 .allowsHitTesting(false)
                 .accessibilityLabel(L("Claude Code needs attention"))
         }
-    }
-}
-
-/// Stage a choice, then apply it explicitly; merely opening Settings never changes a bot.
-struct AllBotsModelSection: View {
-    @ObservedObject var workspace: Workspace
-    @State private var engine: BotEngine = .claude
-    @State private var claudeModel: BotModel = .sonnet
-    @State private var codexModel: String?
-    @State private var codexModels: [CodexModel] = []
-    @State private var applied: Int?
-
-    var body: some View {
-        PanelSection(L("Engine and model for all bots")) {
-            VStack(spacing: 12) {
-                HStack {
-                    Text(L("Engine"))
-                    Spacer()
-                    Picker(L("Engine"), selection: $engine) {
-                        ForEach(BotEngine.allCases, id: \.self) { Text($0.displayName).tag($0) }
-                    }.labelsHidden().fixedSize()
-                }
-                HStack {
-                    Text(L("Model"))
-                    Spacer()
-                    if engine == .claude {
-                        Picker(L("Model"), selection: $claudeModel) {
-                            ForEach(BotModel.allCases, id: \.self) { Text($0.displayName).tag($0) }
-                        }.labelsHidden().fixedSize()
-                    } else {
-                        Picker(L("Codex model"), selection: $codexModel) {
-                            Text(L("Codex's default model")).tag(String?.none)
-                            ForEach(codexChoices, id: \.self) { id in
-                                Text(codexModels.first { $0.id == id }?.name ?? id).tag(Optional(id))
-                            }
-                        }.labelsHidden().fixedSize()
-                    }
-                }
-                HStack {
-                    Button(L("Apply to all bots")) {
-                        let choice = (engine, claudeModel, codexModel)
-                        Task {
-                            applied = await workspace.applyModelToAllBots(engine: choice.0, claudeModel: choice.1, codexModel: choice.2)
-                        }
-                    }
-                    Spacer()
-                    if workspace.isApplyingBotModel { ProgressView().controlSize(.small) }
-                    else if let applied { Text(L("Applied to {0} bots", applied)).font(.system(size: 12)).foregroundStyle(Theme.muted) }
-                }
-            }
-            .disabled(workspace.isApplyingBotModel)
-            .padding(14)
-            .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-            Text(L("Applies to all existing bots, including the main bot and Maintainer. Keeps chats and other settings. You can change each bot or reenable its other engine in that bot's settings; new bots keep their own defaults."))
-                .font(.system(size: 12)).foregroundStyle(Theme.faint)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .task {
-            engine = workspace.mainBot.engine
-            claudeModel = workspace.mainBot.model
-            codexModel = workspace.mainBot.heads.codexModel
-            codexModels = await CodexModels.load()
-        }
-        .onChange(of: engine) { _, _ in applied = nil }
-        .onChange(of: claudeModel) { _, _ in applied = nil }
-        .onChange(of: codexModel) { _, _ in applied = nil }
-    }
-
-    private var codexChoices: [String] {
-        var ids = codexModels.map(\.id)
-        if let codexModel, !ids.contains(codexModel) { ids.append(codexModel) }
-        return ids
     }
 }

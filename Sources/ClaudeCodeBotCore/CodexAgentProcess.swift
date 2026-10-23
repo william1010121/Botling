@@ -140,7 +140,12 @@ struct CodexSession {
         /// The Codex model (`model/list`'s id); nil: Codex's own default.
         var model: String?
         var workerInstructions: String?
+        /// What app-managed workers start on; unset values follow `model`/`effort` above.
+        var workerDefaults = CodexWorkerDefaults()
         var restoredWorkers: [CodexManagedWorkerRecord] = []
+
+        var workerModel: String? { workerDefaults.model ?? model }
+        var workerEffort: EffortLevel? { workerDefaults.effort ?? effort }
     }
 
     private enum Call {
@@ -833,7 +838,8 @@ struct CodexSession {
             "developerInstructions": config.workerInstructions ?? "Execute the assigned task yourself and return concrete evidence. Do not delegate.",
             "config": overrides
         ]
-        if let model = config.model { params["model"] = model }
+        if let model = config.workerModel { params["model"] = model }
+        if let tier = config.workerDefaults.serviceTier { params["serviceTier"] = tier }
         if let thread = worker.thread {
             params["threadId"] = thread; params["excludeTurns"] = true
             return request("thread/resume", params, as: .workerThread(task))
@@ -864,13 +870,13 @@ struct CodexSession {
 
     private mutating func startWorkerTurn(_ task: String, text: String) -> [CodexOutput] {
         guard let worker = workers[task], let thread = worker.thread, !worker.cancelled, !stopped else { return [] }
-        let override = config.effort.map(Self.effort)
+        let override = config.workerEffort.map(Self.effort)
         workers[task]?.pendingEffortOverride = override
         workers[task]?.turnID = nil
         workers[task]?.said = []
         workers[task]?.tokensAtRunStart = worker.tokens
         var params: [String: Any] = ["threadId": thread, "input": [["type": "text", "text": text]]]
-        if let effort = config.effort { params["effort"] = Self.effort(effort) }
+        if let override { params["effort"] = override }
         return [request("turn/start", params, as: .workerTurn(task, worker.run))]
     }
 
@@ -1388,6 +1394,7 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
             resumeThread: resume,
             model: launch.codexModel,
             workerInstructions: launch.codexWorkerInstructions,
+            workerDefaults: launch.codexWorkerDefaults,
             restoredWorkers: launch.codexWorkerInstructions == nil ? [] : threads.workers(for: launch.sessionID)
         )
     }

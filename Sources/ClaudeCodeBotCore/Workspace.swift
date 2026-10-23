@@ -591,6 +591,7 @@ public final class Workspace: ObservableObject {
         }
         let project = Project(id: UUID(), name: ProjectBotNaming.defaultName(for: folder), folder: folder, avatar: nextAvatar())
         prepareNotesFolder(for: project)
+        seedEngineDefaults(for: project.id)
         attach(project)
         saveProjects()
         if selecting { select(project.id) }
@@ -844,6 +845,7 @@ public final class Workspace: ObservableObject {
         let shape = avatar.flatMap { Self.avatars.contains($0) ? $0 : nil } ?? nextAvatar()
         let project = Project(id: id, name: name, folder: folder, avatar: shape, job: job, plugin: plugin)
         prepareNotesFolder(for: project)
+        seedEngineDefaults(for: id)
         attach(project)
         saveProjects()
         tell(mainBot, (creator.map { L("New bot \"{0}\" (made by {1})", name, $0) } ?? L("New bot \"{0}\"", name)) + ": " + Self.firstLine(of: job), sourceID: id)

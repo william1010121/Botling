@@ -47,6 +47,9 @@ public struct BotStore: Sendable {
         /// build does not know leaves the rest of the file readable. Missing: the defaults.
         var subagentModel: String?
         var effort: String?
+        /// What its app-managed Codex workers start on; missing: follow the coordinator and
+        /// Codex's config. Unknown values inside read as unset.
+        var codexWorkers: CodexWorkerDefaults?
         /// The CLI it runs on, as text like the two above; missing: Claude.
         var engine: String?
         /// Its heads (engines, who messages go to); missing: one, `engine`.
@@ -137,6 +140,17 @@ public struct BotStore: Sendable {
     public func save(subagentModel: BotModel?) {
         var settings = loadSettings()
         settings.subagentModel = subagentModel?.rawValue
+        write(settings, to: settingsURL)
+    }
+
+    /// What its Codex workers start on; unset values follow the bot and Codex's config.
+    public func loadCodexWorkerDefaults() -> CodexWorkerDefaults {
+        loadSettings().codexWorkers ?? CodexWorkerDefaults()
+    }
+
+    public func save(codexWorkerDefaults: CodexWorkerDefaults) {
+        var settings = loadSettings()
+        settings.codexWorkers = codexWorkerDefaults == CodexWorkerDefaults() ? nil : codexWorkerDefaults
         write(settings, to: settingsURL)
     }
 
