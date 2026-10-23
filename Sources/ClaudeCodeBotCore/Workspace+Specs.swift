@@ -469,7 +469,7 @@ extension Workspace {
                 had.append(holder.name)
             } else if giveComponent(name, to: holder) {
                 added.append(holder.name)
-                holder.queueNote("(App: The user added the component \"\(name)\" to your list; here are your components now.)\n" + componentBriefing(for: holder))
+                holder.queueNote("(App: The user added the component \"\(name)\" to your list.)")
             } else if holder.componentList != nil {
                 full.append(holder.name)
             }

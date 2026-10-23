@@ -140,6 +140,59 @@ struct AnswerAndUsageTests {
         #expect(fake.agents[0].sent.last == "One more thing")
     }
 
+    @Test func aBriefedSessionGetsOnlyWhatChangedNeverTheWholeListAgain() async throws {
+        let fake = FakeLauncher()
+        let (workspace, _, _) = try setUp(fake)
+        let main = workspace.mainBot
+        main.send("hi")
+        await eventually { main.messages.count == 2 }
+        // The wake has the whole list once.
+        let wake = try #require(fake.agents[0].sent.first)
+        #expect(wake.components(separatedBy: "(App: Components in the chat:").count == 2)
+        let full = workspace.componentBriefing(for: main)
+
+        let about = workspace.components.aboutURL("choices")
+        try "Choices: now with \"Other\".\nData: {}".write(to: about, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(5)], ofItemAtPath: about.path)
+        workspace.components.rescan()
+        main.send("next")
+        await eventually { main.messages.count == 4 }
+        let diff = try #require(fake.agents[0].sent.last)
+        #expect(!diff.contains("(App: Components in the chat:"))
+        #expect(diff.contains("Usage changed"))
+        #expect(diff.contains("- choices: Choices: now with \"Other\"."))
+        let others = workspace.ownComponents(of: main).filter { $0 != "choices" }
+        for name in others { #expect(!diff.contains("- \(name): ")) }
+        #expect(diff.count < full.count / 2)
+
+        // Taken off its list: a line, not the list.
+        workspace.takeComponent("choices", from: main)
+        main.send("after")
+        await eventually { main.messages.count == 6 }
+        let dropped = try #require(fake.agents[0].sent.last)
+        #expect(dropped.contains("No longer yours"))
+        #expect(!dropped.contains("(App: Components in the chat:"))
+        #expect(dropped.hasSuffix("after"))
+    }
+
+    @Test func componentChangesListOnlyTheDifference() {
+        typealias Entry = ComponentKnowledge.Entry
+        let told = ComponentKnowledge(own: [Entry(name: "a", text: "- a: A"), Entry(name: "b", text: "- b: B")],
+                                      others: [Entry(name: "c", text: "- c: C"), Entry(name: "d", text: "- d: D")], limit: 20)
+        #expect(told.changes(since: told) == nil)
+        let now = ComponentKnowledge(own: [Entry(name: "a", text: "- a: A2"), Entry(name: "c", text: "- c: C\n  usage")],
+                                     others: [Entry(name: "b", text: "- b: B"), Entry(name: "e", text: "- e: E")], limit: 20)
+        let diff = try! #require(now.changes(since: told))
+        #expect(diff.hasPrefix("(App: Components were updated"))
+        #expect(diff.contains("You have 2 / 20."))
+        #expect(diff.contains("New on your list, with usage:\n- c: C\n  usage"))
+        #expect(diff.contains("Usage changed (this replaces what you had):\n- a: A2"))
+        #expect(diff.contains("No longer yours (still in the shared library; ask Maintainer to get one back):\n- b: B"))
+        #expect(diff.contains("Gone from the library: d"))
+        #expect(diff.contains("not yours yet:\n- e: E"))
+        #expect(!diff.contains("- d: D"))
+    }
+
     @Test func asleepBotsAreNotNotedTwice() throws {
         let fake = FakeLauncher()
         let (workspace, _, _) = try setUp(fake)
