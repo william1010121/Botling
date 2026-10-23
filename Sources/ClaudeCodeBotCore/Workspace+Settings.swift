@@ -24,7 +24,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Sendable {
     /// shown in the app's language).
     var searchTerms: [String] {
         switch self {
-        case .general: ["Language", "App language", "Bot look", "Reminders", "Remind after no new step for"]
+        case .general: ["Language", "App language", "Bot look", "Chat avatars", "Chat avatar size", "Reminders", "Remind after no new step for"]
         case .engines: ["Claude subagents", "Codex workers", "Follow Codex config file", "Model", "Reasoning effort", "Fast mode", "Component editor", "Engine and model for all bots"]
         case .permissions: ["Auto mode", "Auto-approve safe actions", "Reports and results", "Publish as", "Approved component commands", "Ignored"]
         case .usage: ["Usage today", "Cost", "Tokens", "Subscription limits", "By bot", "Earlier days"]

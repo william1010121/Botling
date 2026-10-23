@@ -91,7 +91,7 @@ struct ChatSurface: NSViewRepresentable {
 
     var payload: ChatPayload {
         if let id = workspace.viewingSubagent, let subagent = bot.subagent(id) {
-            return ChatPayload.make(subagent: subagent, of: bot, components: components, avatar: AvatarImages.dataURL(bot.avatarKind, eyes: .open))
+            return ChatPayload.make(subagent: subagent, of: bot, components: components, avatar: AvatarImages.dataURL(bot.avatarKind, eyes: .open), chatAvatarSize: workspace.settings.chatAvatarSizeChoice)
         }
         return ChatPayload.make(
             bot: bot,
@@ -115,6 +115,7 @@ struct ChatSurface: NSViewRepresentable {
             openSpec: workspace.openSpecID,
             floating: workspace.floatingPinViews(in: bot),
             look: workspace.settings.botLook == .cute ? ChibiImages.look(for: bot.avatarKind) : nil,
+            chatAvatarSize: workspace.settings.chatAvatarSizeChoice,
             avatar: { projectID in
                 if let projectID, let kind = workspace.avatar(for: projectID) {
                     return AvatarImages.dataURL(kind, eyes: .open)

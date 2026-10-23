@@ -331,6 +331,7 @@ public struct ChatPayload: Encodable, Equatable {
         var title: String? = nil
     }
 
+    var chatAvatarSize: Int? = nil
     var botID: String
     var botName: String
     var messages: [Message]
@@ -507,6 +508,7 @@ public struct ChatPayload: Encodable, Equatable {
         openSpec: UUID? = nil,
         floating: [FloatingPin]? = nil,
         look: HeadLook? = nil,
+        chatAvatarSize: Int? = nil,
         avatar: (_ projectID: UUID?) -> String
     ) -> ChatPayload {
         // Cute is independent of which engines are enabled. Group speakers keep their faces.
@@ -629,6 +631,7 @@ public struct ChatPayload: Encodable, Equatable {
             )
         }
         return ChatPayload(
+            chatAvatarSize: chatAvatarSize.map(AppSettings.clampedChatAvatarSize),
             botID: bot.id.uuidString,
             botName: bot.name,
             messages: messages,
@@ -815,7 +818,7 @@ public struct ChatPayload: Encodable, Equatable {
     /// (SendMessage) as lines from the bot with when they were sent, in order; what it said, each
     /// with the tool calls before it (the page draws them one line each); the ones still going show live.
     @MainActor
-    public static func make(subagent: Subagent, of bot: Bot, components library: ComponentLibrary?, avatar: String) -> ChatPayload {
+    public static func make(subagent: Subagent, of bot: Bot, components library: ComponentLibrary?, avatar: String, chatAvatarSize: Int? = nil) -> ChatPayload {
         var messages: [Message] = []
         func message(_ id: String, role: String, text: String, steps: [Step], speaker: String? = nil, at date: Date? = nil) -> Message {
             var line = Message(
@@ -861,6 +864,7 @@ public struct ChatPayload: Encodable, Equatable {
             pending = []
         }
         return ChatPayload(
+            chatAvatarSize: chatAvatarSize.map(AppSettings.clampedChatAvatarSize),
             botID: "\(bot.id.uuidString)/\(subagent.id)",
             botName: subagent.description,
             messages: messages,
