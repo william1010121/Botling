@@ -153,6 +153,8 @@ export const ko: Dictionary = {
   "messages.seenBy": "{names} 읽음",
   "messages.toHeads": "{names}에게",
   "messages.notSeenBy": "{names} 아직 안 읽음",
+  "messages.addReaction": "반응 추가",
+  "messages.reactEmoji": "{emoji} 반응",
   "messages.reply": "답장",
   "messages.fold": "접기",
   "messages.answered": "답변함",

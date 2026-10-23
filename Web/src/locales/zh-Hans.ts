@@ -153,6 +153,8 @@ export const zhHans: Dictionary = {
   "messages.seenBy": "{names} 已读",
   "messages.toHeads": "给 {names}",
   "messages.notSeenBy": "{names} 还没读",
+  "messages.addReaction": "添加表情回应",
+  "messages.reactEmoji": "以 {emoji} 回应",
   "messages.reply": "回复",
   "messages.fold": "折叠",
   "messages.answered": "已回答",

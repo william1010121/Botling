@@ -43,6 +43,19 @@ export function messageElement(message: MessageView, components: Record<string, 
   row.dataset.id = message.id;
 
   drawRole(row, message, components);
+  if (message.reactionEnabled) {
+    let holder = row.querySelector<HTMLElement>(".user-body, .speaker-column, .bot-column");
+    if (!holder) {
+      const body = row.querySelector<HTMLElement>(".bot-bubble, .notice-bubble, .relay, .relay-column, .error-text");
+      if (body) {
+        holder = document.createElement("div");
+        holder.className = "reaction-message-column";
+        body.replaceWith(holder);
+        holder.append(body);
+      }
+    }
+    holder?.append(reactionBar(message));
+  }
   if (message.seen?.length) {
     // Which heads this line has reached: under your bubble, or under the reply.
     const holder = row.querySelector<HTMLElement>(".user-body, .speaker-column, .bot-column") ?? row.querySelector<HTMLElement>(".bot-body") ?? row;
@@ -52,6 +65,43 @@ export function messageElement(message: MessageView, components: Record<string, 
     extensions.guard(plugin, () => handler(row, { id: message.id, role: message.role, text: message.text }));
   }
   return row;
+}
+
+export function reactionBar(message: MessageView): HTMLElement {
+  const bar = document.createElement("div");
+  bar.className = "reactions";
+  const send = (emoji: string, present: boolean) => post({ type: "setReaction", messageID: message.id, emoji, present });
+  for (const reaction of message.reactions ?? []) {
+    const chip = document.createElement("button");
+    chip.className = "reaction-chip";
+    chip.textContent = `${reaction.emoji} ${reaction.actors.length}`;
+    chip.title = `${reaction.emoji} · ${reaction.actors.join(", ")}`;
+    chip.setAttribute("aria-label", chip.title);
+    chip.setAttribute("aria-pressed", String(reaction.own));
+    chip.addEventListener("click", () => send(reaction.emoji, !reaction.own));
+    bar.append(chip);
+  }
+  const picker = document.createElement("details");
+  picker.className = "reaction-picker";
+  const add = document.createElement("summary");
+  add.textContent = "☺ +";
+  add.setAttribute("aria-label", t("messages.addReaction"));
+  add.title = t("messages.addReaction");
+  picker.append(add);
+  const palette = document.createElement("div");
+  palette.className = "reaction-palette";
+  for (const emoji of ["👍", "❤️", "😂", "🎉", "🤔", "👀"]) {
+    const button = document.createElement("button");
+    button.textContent = emoji;
+    button.setAttribute("aria-label", t("messages.reactEmoji", { emoji }));
+    const own = message.reactions?.some((r) => r.emoji === emoji && r.own) ?? false;
+    button.setAttribute("aria-pressed", String(own));
+    button.addEventListener("click", () => { picker.open = false; send(emoji, !own); });
+    palette.append(button);
+  }
+  picker.append(palette);
+  bar.append(picker);
+  return bar;
 }
 
 /**

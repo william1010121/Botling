@@ -3,7 +3,7 @@ import Foundation
 /// The chat history and settings (model, routines), kept per bot under `~/.claudecodebot`. The bot's own
 /// memory lives only in memory.md; this is just what the app shows and schedules.
 public struct BotStore: Sendable {
-    private static let historyLimit = 500
+    static let historyLimit = 500
     public let directory: URL
 
     public init(directory: URL) {
@@ -81,6 +81,12 @@ public struct BotStore: Sendable {
 
     public func save(messages: [ChatMessage]) {
         write(Array(messages.suffix(Self.historyLimit)), to: chatURL)
+    }
+
+    /// Reaction edits must report disk failure before publishing a successful UI state.
+    public func saveReactionMessages(_ messages: [ChatMessage]) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONEncoder().encode(Array(messages.suffix(Self.historyLimit))).write(to: chatURL, options: .atomic)
     }
 
     /// The subagents it sent off, with everything they did.

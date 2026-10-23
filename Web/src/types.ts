@@ -21,6 +21,8 @@ export interface FileView {
 
 export interface MessageView {
   id: string;
+  reactionEnabled?: boolean | null;
+  reactions?: { emoji: string; actors: string[]; own: boolean }[] | null;
   role: Role;
   text: string;
   /** "Today 08:15" above this message, when it starts a new stretch of time. */
@@ -423,6 +425,7 @@ export type Action =
   | { type: "draft"; botID: string; text: string; cursor: number }
   | { type: "choose"; messageID: string; index: number }
   | { type: "answer"; messageID: string; text: string; images?: { name: string; base64: string }[] }
+  | { type: "setReaction"; messageID: string; emoji: string; present: boolean }
   | { type: "reply"; messageID: string }
   | { type: "cancelReply" }
   | { type: "stopRounds" }

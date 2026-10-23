@@ -18,6 +18,12 @@ public struct ChatPayload: Encodable, Equatable {
         var url: String
     }
 
+    public struct ReactionView: Encodable, Equatable {
+        var emoji: String
+        var actors: [String]
+        var own: Bool
+    }
+
     public struct Message: Encodable, Equatable {
         var id: String
         var role: String
@@ -61,6 +67,8 @@ public struct ChatPayload: Encodable, Equatable {
         /// a way to open it).
         var fromSubagent: SubagentRef? = nil
         /// In a bot with two heads: each head, and whether this line has reached it ("C", "X").
+        var reactionEnabled: Bool? = nil
+        var reactions: [ReactionView]? = nil
         var seen: [Seen]? = nil
         /// When it was sent, in a subagent's view: its task and each message its bot sent it
         /// ("From Main · 15:58").
@@ -562,6 +570,18 @@ public struct ChatPayload: Encodable, Equatable {
                     let agent = bot.subagent(id)
                     let title = agent.map { $0.description.isEmpty ? ($0.name ?? "") : $0.description } ?? ""
                     return SubagentRef(id: id, title: title.isEmpty ? L("Subagent") : title)
+                },
+                reactionEnabled: message.role != .divider && index >= max(0, bot.messages.count - BotStore.historyLimit),
+                reactions: MessageReaction.palette.compactMap { emoji in
+                    let matching = (message.reactions ?? []).filter { $0.emoji == emoji }
+                    return matching.isEmpty ? nil : ReactionView(emoji: emoji, actors: matching.map { reaction in
+                        let parts = reaction.actor.split(separator: ":")
+                        if parts.count == 3, parts[0] == "guest", let id = UUID(uuidString: String(parts[1])),
+                           let name = speaker?(id) {
+                            return name + " · " + (BotEngine(rawValue: String(parts[2]))?.displayName ?? String(parts[2]))
+                        }
+                        return reaction.label
+                    }, own: matching.contains { $0.actor == "user" })
                 },
                 seen: group == nil ? seenMarks(message, in: bot) : nil
             )

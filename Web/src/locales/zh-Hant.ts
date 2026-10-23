@@ -153,6 +153,8 @@ export const zhHant: Dictionary = {
   "messages.seenBy": "{names} 已讀",
   "messages.toHeads": "給 {names}",
   "messages.notSeenBy": "{names} 還沒讀",
+  "messages.addReaction": "加入表情回應",
+  "messages.reactEmoji": "以 {emoji} 回應",
   "messages.reply": "回覆",
   "messages.fold": "收合",
   "messages.answered": "已回答",
