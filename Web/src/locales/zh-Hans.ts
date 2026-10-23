@@ -124,6 +124,8 @@ export const zhHans: Dictionary = {
   "float.fold": "折叠成一行",
   "float.stop": "停止浮动",
   // main.ts: watching a subagent, plugin panels
+  "subagent.speed": "≈ {value} tok/s · 平均",
+  "subagent.speedHint": "已报告的输出 tokens ÷ 子代理启动至今的经过时间（包含工具、等待及恢复执行前的暂停）。随用量报告更新，完成后固定。这是估算平均，非模型生成速度；— 表示数据不足。",
   "subagent.back": "返回 {bot} 的聊天",
   "subagent.of": "{bot} 的子代理",
   "subagent.unknown": "未知",

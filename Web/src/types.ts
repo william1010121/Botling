@@ -343,6 +343,10 @@ export interface Draft {
 
 /** The subagent being watched: whose it is, how it is doing, what runs it ("claude", "codex") and on which model. */
 export interface SubagentHeaderView {
+  /** Output reported by this child only; timestamps are epoch milliseconds. */
+  outputTokens?: number | null;
+  startedAt?: number | null;
+  endedAt?: number | null;
   id: string;
   title: string;
   owner: string;
