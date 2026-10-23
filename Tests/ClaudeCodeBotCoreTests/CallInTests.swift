@@ -129,7 +129,7 @@ struct CallInTests {
         let json = try #require(JSONSerialization.jsonObject(with: payload.json().data(using: .utf8)!) as? [String: Any])
         #expect(json["mentions"] as? [String] == ["Main bot", "Maintainer"])
         let messages = try #require(json["messages"] as? [[String: Any]])
-        #expect(messages.first { $0["text"] as? String == "I'll fix the flag." }?["speaker"] as? String == "Maintainer")
+        #expect(messages.first { $0["text"] as? String == "I'll fix the flag." }?["speaker"] as? String == "Maintainer · Claude")
         #expect(messages.first { $0["text"] as? String == "Got it" }?["speaker"] == nil)
     }
 

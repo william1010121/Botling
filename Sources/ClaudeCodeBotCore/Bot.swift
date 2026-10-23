@@ -1671,6 +1671,7 @@ public final class Bot: ObservableObject, Identifiable {
         var copy = ChatMessage(role: .bot, text: line.text)
         copy.displays = line.displays
         copy.steps = line.steps
+        copy.engine = line.engine
         copy.session = sessionID
         copy.backgroundTasks = trace.takeTasks()
         if copy.text.isEmpty, copy.displays == nil, copy.backgroundTasks == nil { return }

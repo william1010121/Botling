@@ -564,10 +564,11 @@ public struct ChatPayload: Encodable, Equatable {
         openSpec: UUID? = nil,
         floating: [FloatingPin]? = nil,
         look: HeadLook? = nil,
+        sourceLook: ((UUID) -> HeadLook?)? = nil,
         chatAvatarSize: Int? = nil,
         avatar: (_ projectID: UUID?) -> String
     ) -> ChatPayload {
-        // Cute is independent of which engines are enabled. Group speakers keep their faces.
+        // Each guest wears its own bot's hat. Never infer an old reply's engine from settings.
         let look = group == nil ? look : nil
         let pinnedNames = pinning.map { _ in Set(bot.pins.map(\.name)) }
         let own = avatar(nil)
@@ -577,17 +578,28 @@ public struct ChatPayload: Encodable, Equatable {
         let guest = bot.isWorking || bot.partner?.isWorking == true ? nil : callIn?.typing
         // The live bubble's face and steps must describe the same process.
         let workingBot = group.map(\.working) ?? (bot.isWorking ? bot : bot.partner?.isWorking == true ? bot.partner : guest.flatMap { _ in callIn?.working })
-        let workingAvatar = (group?.typing ?? guest).map { avatar($0) }
+        let sourceIDs = Set(bot.messages.filter { $0.role == .bot && $0.engine != nil && $0.subagentID == nil }.compactMap(\.sourceID)
+            + [group?.typing ?? guest].compactMap { $0 }).sorted { $0.uuidString < $1.uuidString }
+        let sourceLooks = Dictionary(uniqueKeysWithValues: sourceIDs.compactMap { id in sourceLook?(id).map { (id, $0) } })
+        var knownAvatars = Set<String>()
+        let animations = ((look?.animations ?? []) + sourceIDs.flatMap { sourceLooks[$0]?.animations ?? [] })
+            .filter { knownAvatars.insert($0.avatar).inserted }
+        let workingAvatar = (group?.typing ?? guest).map { id in
+            sourceLooks[id].flatMap { look in workingBot.map { look.avatar($0.engine) } } ?? avatar(id)
+        }
             ?? look.flatMap { look in workingBot.map { look.avatar($0.engine) } }
             ?? own
         let working = group.map { $0.typing != nil } ?? (bot.isWorking || bot.partner?.isWorking == true || guest != nil)
         let lastHead = bot.messages.last(where: { $0.role == .bot })?.engine
         let moodBot = workingBot ?? (lastHead == bot.partner?.engine ? bot.partner : nil) ?? bot
         var messages = bot.messages.enumerated().map { index, message -> Message in
+            let sourceName = message.role == .bot ? message.sourceID.map { speaker?($0) ?? "A removed bot" } : nil
+            let sourceHead = message.sourceID.flatMap { sourceLooks[$0] }
             let face: String? = switch message.role {
             // In a group chat each line has the face of the bot that said it.
             // So does a bot called into a bot's own chat.
-            case .bot where speaker != nil && message.sourceID != nil: avatar(message.sourceID)
+            case .bot where message.sourceID != nil:
+                message.subagentID == nil ? message.engine.flatMap { sourceHead?.avatar($0) } ?? avatar(message.sourceID) : avatar(message.sourceID)
             // A head's reply under its character (a subagent's keeps the bot's face).
             case .bot: look.flatMap { look in message.subagentID == nil ? message.engine.map(look.avatar) : nil } ?? own
             case .notice: avatar(message.sourceID)
@@ -616,7 +628,7 @@ public struct ChatPayload: Encodable, Equatable {
                 replyTo: message.replyTo?.uuidString,
                 replyPreview: message.replyPreview,
                 openable: message.role == .notice && message.sourceID != nil,
-                speaker: message.role == .bot ? message.sourceID.flatMap { id in speaker.map { $0(id) ?? "A removed bot" } } ?? headLabel(message, in: bot) : headLabel(message, in: bot),
+                speaker: sourceName.map { name in message.engine.map { "\(name) · \($0.displayName)" } ?? name } ?? headLabel(message, in: bot),
                 steps: message.steps.map { $0.map { stepView($0, in: bot) } },
                 previews: previews(for: message, in: library),
                 feedback: message.role == .relay
@@ -722,8 +734,9 @@ public struct ChatPayload: Encodable, Equatable {
             rounds: group == nil ? bot.rounds.map(Rounds.of) : nil,
             handoffs: group == nil && !bot.handoffs.isEmpty ? bot.handoffs.map(Handoff.of) : nil,
             seenHeads: look.map { look in Dictionary(uniqueKeysWithValues: bot.heads.engines.map { (markLetter($0), look.mark($0)) }) },
-            animatedHeads: look.flatMap { $0.animations.isEmpty ? nil : $0.animations },
-            avatarMood: look.map { _ in Chibi.mood(asleep: moodBot.phase == .asleep, working: moodBot.isWorking, waiting: moodBot.waitingForPermission).rawValue }
+            animatedHeads: animations.isEmpty ? nil : animations,
+            avatarMood: look != nil || !sourceLooks.isEmpty
+                ? Chibi.mood(asleep: moodBot.phase == .asleep, working: moodBot.isWorking, waiting: moodBot.waitingForPermission).rawValue : nil
         )
     }
 
