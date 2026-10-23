@@ -320,6 +320,8 @@ public struct ChatPayload: Encodable, Equatable {
     var botName: String
     var messages: [Message]
     var working: Bool
+    /// The coordinator is free to chat while its workers continue. This does not mark a turn active.
+    var waitingForWorkers: Bool = false
     var avatar: String
     var placeholder: String
     var replyingTo: Reply?
@@ -505,6 +507,7 @@ public struct ChatPayload: Encodable, Equatable {
         let workingAvatar = (group?.typing ?? guest).map { avatar($0) }
             ?? look.flatMap { look in workingBot.map { look.avatar($0.engine) } }
             ?? own
+        let working = group.map { $0.typing != nil } ?? (bot.isWorking || bot.partner?.isWorking == true || guest != nil)
         var messages = bot.messages.enumerated().map { index, message -> Message in
             let face: String? = switch message.role {
             // In a group chat each line has the face of the bot that said it.
@@ -601,7 +604,8 @@ public struct ChatPayload: Encodable, Equatable {
             botID: bot.id.uuidString,
             botName: bot.name,
             messages: messages,
-            working: group.map { $0.typing != nil } ?? (bot.isWorking || bot.partner?.isWorking == true || guest != nil),
+            working: working,
+            waitingForWorkers: group == nil && !working && bot.subagents.contains(where: \.isRunning),
             avatar: workingAvatar,
             placeholder: group != nil ? L("Message everyone, or @name one bot…")
                 : bot.profile.role == .main ? L("Make a wish, or ask how things are going…") : L("Message {0}…", bot.name),

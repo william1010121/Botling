@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""Opt-in acceptance test using RPC payloads exported by CodexDelegationTests.
+"""Retired native-subagent probe, preserved as historical experiment evidence.
 
-CCB_CODEX_DELEGATION_EXPORT=/tmp/ccb-delegation swift test -j 2 --filter CodexDelegationTests
-python3 Tests/LiveCodexDelegation/probe.py /tmp/ccb-delegation
-
-Requires a signed-in real Codex CLI. Runs sequential isolated fixtures, not this repo.
-Preserves incoming/outgoing events, parent/worker tools, prompts and assertions.
-No policy is appended or rewritten here: developerInstructions come from the app.
+The production app now owns worker sessions. Run the actual production transport:
+CCB_LIVE_CODEX_MANAGED=1 swift test --filter LiveCodexManagedWorkersTests
 """
 import argparse
 import asyncio
@@ -308,4 +304,4 @@ async def main():
     raise SystemExit(0 if all(r['passed'] for r in rows) else 1)
 
 if __name__=='__main__':
-    asyncio.run(main())
+    raise SystemExit('Retired native-subagent probe. Run: CCB_LIVE_CODEX_MANAGED=1 swift test --filter LiveCodexManagedWorkersTests')

@@ -1,5 +1,21 @@
 import Foundation
 
+/// Persisted app task identity. Execution itself belongs to a live app-server process;
+/// unfinished records become interrupted results after restart, never phantom running cards.
+struct CodexManagedWorkerRecord: Codable, Equatable {
+    var id: String
+    var name: String
+    var instructions: String
+    var thread: String?
+    var run: Int
+    var wasActive: Bool
+    var reportPending = false
+    var report: String?
+    var status: String?
+    var turn: String?
+    var tokens: TokenUsage?
+}
+
 /// Which Codex thread each bot session is: `codex app-server` names its threads itself, while a
 /// bot names its session (a UUID) before it starts. One small file per session, holding the
 /// thread's id, so a later process can `thread/resume` it. Under `~/.claudecodebot/codex-threads`.
@@ -31,6 +47,30 @@ public final class CodexThreads: @unchecked Sendable {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try? Data(thread.utf8).write(to: folder.appending(path: session.uuidString.lowercased()), options: .atomic)
     }
+    func isManaged(_ session: UUID, thread: String) -> Bool {
+        let url = folder.appending(path: session.uuidString.lowercased() + ".managed")
+        return (try? String(contentsOf: url, encoding: .utf8)) == thread
+    }
+
+    func markManaged(_ thread: String, for session: UUID) {
+        let folder = folder
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try? Data(thread.utf8).write(to: folder.appending(path: session.uuidString.lowercased() + ".managed"), options: .atomic)
+    }
+
+    func workers(for session: UUID) -> [CodexManagedWorkerRecord] {
+        let url = folder.appending(path: session.uuidString.lowercased() + ".workers.json")
+        guard let data = try? Data(contentsOf: url) else { return [] }
+        return (try? JSONDecoder().decode([CodexManagedWorkerRecord].self, from: data)) ?? []
+    }
+
+    func saveWorkers(_ records: [CodexManagedWorkerRecord], for session: UUID) {
+        guard let data = try? JSONEncoder().encode(records) else { return }
+        let folder = folder
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try? data.write(to: folder.appending(path: session.uuidString.lowercased() + ".workers.json"), options: .atomic)
+    }
+
 }
 
 /// What the Codex protocol asks of the process around it: a JSON-RPC line to write, an event for
@@ -66,6 +106,7 @@ struct CodexSession {
         var text: String
         var images: [Attachment] = []
         var id: UUID?
+        var token = UUID()
     }
 
     struct Config {
@@ -78,10 +119,16 @@ struct CodexSession {
         var resumeThread: String?
         /// The Codex model (`model/list`'s id); nil: Codex's own default.
         var model: String?
+        var workerInstructions: String?
+        var restoredWorkers: [CodexManagedWorkerRecord] = []
     }
 
     private enum Call {
-        case initialize, thread, turn, steer, interrupt, other
+        case initialize, thread, turn, interrupt, other
+        case steer(Input, String)
+        case workerThread(String)
+        case workerTurn(String, Int)
+        case workerSteer(String, Int, String, String)
     }
 
     private struct Turn {
@@ -110,8 +157,9 @@ struct CodexSession {
     /// The last message that joined a running turn: the one an interrupt sends again.
     private var lastSteer: Input?
     private var afterInterrupt: Input?
+    private var interruptedSteers: Set<UUID> = []
     /// Questions waiting for the user, by the request's id as text, with the id as it came.
-    private var approvals: [String: (rpcID: Any, kind: Approval)] = [:]
+    private var approvals: [String: (rpcID: Any, kind: Approval, thread: String?, turn: String?)] = [:]
     /// The files each file-change item touches, for its approval question.
     private var changedFiles: [String: [String]] = [:]
     /// The thread's token totals as last reported, and as they were when this turn began.
@@ -137,14 +185,33 @@ struct CodexSession {
     private var activeSubagentActivityThreads: Set<String> = []
     private var endedSubagentActivityItems: Set<String> = []
 
+    // App-owned independent sessions. Native Codex multi-agent execution is disabled.
+    private var workers: [String: ManagedWorker] = [:]
+    private var workerResults: [ManagedResult] = []
+    private var activeResult: ManagedResult?
+    private var toolReplies: [String: [String: Any]] = [:]
+    private var managedPending = false
+    private var stopped = false
+
     init(config: Config) {
         self.config = config
+        for record in config.restoredWorkers {
+            workers[record.id] = ManagedWorker(record: record)
+            if record.reportPending, let report = record.report, let status = record.status {
+                workerResults.append(ManagedResult(task: record.id, name: record.name, thread: record.thread,
+                    turn: record.turn, run: record.run, status: status, report: report))
+            } else if record.wasActive {
+                workerResults.append(ManagedResult(task: record.id, name: record.name, thread: record.thread,
+                    turn: nil, run: record.run, status: "interrupted",
+                    report: "The app stopped before this worker completed. Send a message to the same task_id to resume its session."))
+            }
+        }
     }
 
     // MARK: From the bot
 
     mutating func start() -> [CodexOutput] {
-        [request("initialize", ["clientInfo": ["name": "claudecodebot", "title": "ClaudeCodeBot", "version": "1"]], as: .initialize)]
+        [request("initialize", ["clientInfo": ["name": "claudecodebot", "title": "ClaudeCodeBot", "version": "1"], "capabilities": ["experimentalApi": true]], as: .initialize)]
     }
 
     mutating func send(_ input: Input) -> [CodexOutput] {
@@ -170,6 +237,7 @@ struct CodexSession {
         guard var turn, !turn.interruptAsked else { return [] }
         turn.interruptAsked = true
         afterInterrupt = lastSteer
+        if let lastSteer { interruptedSteers.insert(lastSteer.token) }
         lastSteer = nil
         var out: [CodexOutput] = []
         if let id = turn.id, let thread = threadID {
@@ -188,8 +256,13 @@ struct CodexSession {
         }
         var out: [CodexOutput] = [.write(["jsonrpc": "2.0", "id": approval.rpcID, "result": result])]
         // A refusal carries no words in Codex's protocol: why goes to the turn as a message.
-        if !allow, let message, !message.isEmpty, let turn, let id = turn.id {
-            out.append(steer(Input(text: "(App: \(message))"), turnID: id))
+        if !allow, let message, !message.isEmpty {
+            if let thread = approval.thread, thread != threadID,
+               let task = workers.first(where: { $0.value.thread == thread })?.key {
+                out += messageWorker(task, text: "(App: \(message))")
+            } else if let turn, let id = turn.id {
+                out.append(steer(Input(text: "(App: \(message))"), turnID: id))
+            }
         }
         return out
     }
@@ -211,7 +284,7 @@ struct CodexSession {
     /// Stdin closes once the turn under way (and any waiting) is done.
     mutating func finish() -> [CodexOutput] {
         finishing = true
-        return turn == nil && inbox.isEmpty ? [.close] : []
+        return turn == nil && inbox.isEmpty && !hasManagedWork ? [.close] : []
     }
 
     // MARK: From codex
@@ -245,32 +318,50 @@ struct CodexSession {
             threadID = thread
             var out: [CodexOutput] = [.thread(thread)]
             if !inbox.isEmpty { out += startTurn(inbox.removeFirst()) }
+            else { out += next() }
+            out += pendingChanged()
             return out
         case .turn:
             if let error {
                 // The turn never started: its message gets an error reply, and the next goes.
                 turn = nil
-                var out: [CodexOutput] = [.event(.reply(Self.message(error), isError: true))]
+                let message = activeResult.map { Self.handbackFallback($0, reason: Self.message(error)) } ?? Self.message(error)
+                activeResult = nil
+                var out: [CodexOutput] = [.event(.reply(message, isError: true))]
                 out += next()
                 return out
             }
             if let id = (result?["turn"] as? [String: Any])?["id"] as? String { return learnTurn(id) }
             return []
-        case .steer:
-            // The turn ended just before the message reached it: it goes as a turn of its own.
-            guard error != nil, let input = lastSteer else { return [] }
-            lastSteer = nil
+        case let .steer(input, _):
+            // Each rejected message keeps its own input, even after the target turn ended.
+            guard error != nil, !interruptedSteers.contains(input.token) else { return [] }
             if turn == nil { return startTurn(input) }
             inbox.append(input)
             return []
+        case let .workerThread(task):
+            return workerThreadReady(task, result: result, error: error)
+        case let .workerTurn(task, run):
+            return workerTurnReady(task, run: run, result: result, error: error)
+        case let .workerSteer(task, run, targetTurn, text):
+            guard error != nil, let worker = workers[task], !worker.cancelled else { return [] }
+            if worker.active {
+                workers[task]?.messages.append(text)
+                return []
+            }
+            // The old turn completed between dispatch and rejection. Reuse the same session.
+            _ = run; _ = targetTurn
+            return messageWorker(task, text: text)
         case .interrupt, .other:
             return []
         }
     }
 
     private mutating func notification(_ method: String, _ params: [String: Any]) -> [CodexOutput] {
-        // A line from one of Codex's own subagents: a step under it, not the bot's turn.
         if let thread = params["threadId"] as? String, let main = threadID, thread != main {
+            if let task = workers.first(where: { $0.value.thread == thread })?.key {
+                return workerLine(method, params, task: task)
+            }
             return subagentLine(method, params, thread: thread)
         }
         switch method {
@@ -318,18 +409,19 @@ struct CodexSession {
 
     private mutating func serverRequest(_ method: String, id rpcID: Any, params: [String: Any]) -> [CodexOutput] {
         let key = Self.key(rpcID)
+        if method == "item/tool/call" { return managedTool(rpcID, params: params) }
         switch method {
         case "item/commandExecution/requestApproval":
             let asked = [params["command"] as? String, Self.command(params)].compactMap { $0 }
             if asked.contains(where: allowedCommands.contains) {
                 return [.write(["jsonrpc": "2.0", "id": rpcID, "result": ["decision": "accept"]])]
             }
-            approvals[key] = (rpcID, .command)
+            approvals[key] = (rpcID, .command, params["threadId"] as? String, params["turnId"] as? String)
             var summary = params["command"] as? String ?? ""
             if let reason = params["reason"] as? String, !reason.isEmpty { summary += (summary.isEmpty ? "" : "\n\n") + reason }
             return [.event(.permission(PermissionRequest(id: key, tool: "Bash", summary: summary, input: "{}")))]
         case "item/fileChange/requestApproval":
-            approvals[key] = (rpcID, .fileChange)
+            approvals[key] = (rpcID, .fileChange, params["threadId"] as? String, params["turnId"] as? String)
             let files = (params["itemId"] as? String).flatMap { changedFiles[$0] } ?? []
             var summary = files.joined(separator: "\n")
             if let root = params["grantRoot"] as? String, !root.isEmpty { summary += (summary.isEmpty ? "" : "\n") + root }
@@ -337,7 +429,7 @@ struct CodexSession {
             return [.event(.permission(PermissionRequest(id: key, tool: "Edit", summary: summary, input: "{}")))]
         case "item/permissions/requestApproval":
             let asked = params["permissions"] as? [String: Any] ?? [:]
-            approvals[key] = (rpcID, .permissions(asked))
+            approvals[key] = (rpcID, .permissions(asked), params["threadId"] as? String, params["turnId"] as? String)
             let json = (try? JSONSerialization.data(withJSONObject: asked, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? ""
             let summary = [params["reason"] as? String, json].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n\n")
             return [.event(.permission(PermissionRequest(id: key, tool: "Permissions", summary: summary, input: "{}")))]
@@ -360,11 +452,21 @@ struct CodexSession {
             "sandbox": "workspace-write",
             "developerInstructions": config.instructions
         ]
+        var overrides: [String: Any] = [:]
+        if config.workerInstructions != nil {
+            params["environments"] = []
+            params["dynamicTools"] = Self.managedTools
+            overrides = Self.coordinatorConfig
+        }
         if let model = config.model { params["model"] = model }
         if !config.writableRoots.isEmpty {
-            params["config"] = ["sandbox_workspace_write": ["writable_roots": config.writableRoots.map(\.path)]]
+            overrides["sandbox_workspace_write"] = ["writable_roots": config.writableRoots.map(\.path)]
         }
+        if !overrides.isEmpty { params["config"] = overrides }
         if let thread = config.resumeThread {
+            // Tools are persisted at thread creation. Resume cannot add or replace them.
+            params.removeValue(forKey: "dynamicTools")
+            params.removeValue(forKey: "environments")
             params["threadId"] = thread
             params["excludeTurns"] = true
             return request("thread/resume", params, as: .thread)
@@ -381,12 +483,13 @@ struct CodexSession {
         tokensAtTurnStart = tokensTotal
         startingID = input.id
         var params: [String: Any] = ["threadId": thread, "input": Self.items(input)]
+        if config.workerInstructions != nil { params["environments"] = [] }
         if let effort = config.effort { params["effort"] = Self.effort(effort) }
         if let reviewer = reviewerNext {
             params["approvalsReviewer"] = reviewer
             reviewerNext = reviewer == "user" ? "auto_review" : nil
         }
-        return [request("turn/start", params, as: .turn)]
+        return [.event(.turnStarted), request("turn/start", params, as: .turn)]
     }
 
     private mutating func learnTurn(_ id: String) -> [CodexOutput] {
@@ -406,6 +509,8 @@ struct CodexSession {
         guard let current = turn else { return [] }
         if let id = current.id, let ended = finished["id"] as? String, ended != id { return [] }
         turn = nil
+        let handback = activeResult
+        activeResult = nil
         lastSteer = nil
         var out: [CodexOutput] = []
         let used = tokensTotal - tokensAtTurnStart
@@ -414,7 +519,9 @@ struct CodexSession {
         case "interrupted":
             // Stopped for a message (`interrupt`): an error result the bot does not show, then
             // that message as a turn of its own.
-            out.append(.event(.reply(current.interruptAsked ? "" : "Codex stopped this turn.", isError: true)))
+            let message = handback.map { Self.handbackFallback($0, reason: "The summary turn was interrupted.") }
+                ?? (current.interruptAsked ? "" : "Codex stopped this turn.")
+            out.append(.event(.reply(message, isError: true)))
             if let input = afterInterrupt {
                 afterInterrupt = nil
                 inbox.insert(input, at: 0)
@@ -422,9 +529,14 @@ struct CodexSession {
         case "failed":
             let error = finished["error"] as? [String: Any]
             if Self.isConnectionLoss(error?["codexErrorInfo"]) { out.append(.event(.connectionLost(parent: nil))) }
-            out.append(.event(.reply(error?["message"] as? String ?? "Codex failed.", isError: true)))
+            let reason = error?["message"] as? String ?? "Codex failed."
+            out.append(.event(.reply(handback.map { Self.handbackFallback($0, reason: reason) } ?? reason, isError: true)))
         default:
-            out.append(.event(.reply(Self.reply(from: current.said), isError: false)))
+            if let handback, current.said.last(where: { $0.phase != "commentary" })?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                out.append(.event(.reply(Self.handbackFallback(handback, reason: "The summary ended without a final answer."), isError: true)))
+            } else {
+                out.append(.event(.reply(Self.reply(from: current.said), isError: false)))
+            }
         }
         out += next()
         return out
@@ -433,11 +545,25 @@ struct CodexSession {
     /// The next waiting message's turn, or the end once `finish` asked for it.
     private mutating func next() -> [CodexOutput] {
         if !inbox.isEmpty { return startTurn(inbox.removeFirst()) }
-        return finishing ? [.close] : []
+        if !workerResults.isEmpty, threadID != nil, !stopped {
+            let result = workerResults.removeFirst()
+            activeResult = result
+            turn = Turn()
+            tokensAtTurnStart = tokensTotal
+            var params: [String: Any] = ["threadId": threadID!, "input": [],
+                "toolOutput": ["name": "app_task_result", "namespace": NSNull(), "output": Self.json(result.payload)]]
+            params["environments"] = []
+            if let effort = config.effort { params["effort"] = Self.effort(effort) }
+            var out: [CodexOutput] = [.event(.managedWorkerReportStarted(taskID: result.task)),
+                                     .event(.backgroundTurnStarted), request("turn/start", params, as: .turn)]
+            out += pendingChanged()
+            return out
+        }
+        return finishing && !hasManagedWork ? [.close] : []
     }
 
     private mutating func steer(_ input: Input, turnID: String) -> CodexOutput {
-        request("turn/steer", ["threadId": threadID ?? "", "expectedTurnId": turnID, "input": Self.items(input)], as: .steer)
+        request("turn/steer", ["threadId": threadID ?? "", "expectedTurnId": turnID, "input": Self.items(input)], as: .steer(input, turnID))
     }
 
     private mutating func request(_ method: String, _ params: [String: Any], as call: Call) -> CodexOutput {
@@ -445,6 +571,343 @@ struct CodexSession {
         nextID += 1
         calls[id] = call
         return .write(["jsonrpc": "2.0", "id": id, "method": method, "params": params])
+    }
+
+    // MARK: App-managed workers
+
+    private struct ManagedWorker {
+        var id: String
+        var name: String
+        var instructions: String
+        var thread: String?
+        var turnID: String?
+        var run = 1
+        var active = true
+        var loaded = false
+        var cancelled = false
+        var messages: [String] = []
+        var said: [(text: String, phase: String?)] = []
+        var completedTurns: Set<String> = []
+        var tokens = TokenUsage()
+        var tokensAtRunStart = TokenUsage()
+
+        init(id: String, name: String, instructions: String) {
+            self.id = id; self.name = name; self.instructions = instructions
+        }
+        init(record: CodexManagedWorkerRecord) {
+            id = record.id; name = record.name; instructions = record.instructions
+            thread = record.thread; run = record.run; active = false
+            tokens = record.tokens ?? TokenUsage()
+            tokensAtRunStart = tokens
+        }
+    }
+
+    private struct ManagedResult {
+        var task: String
+        var name: String
+        var thread: String?
+        var turn: String?
+        var run: Int
+        var status: String
+        var report: String
+        var payload: [String: Any] {
+            ["task_id": task, "name": name, "thread_id": thread as Any? ?? NSNull(),
+             "turn_id": turn as Any? ?? NSNull(), "run": run, "status": status, "report": report]
+        }
+    }
+
+    private static func handbackFallback(_ result: ManagedResult, reason: String) -> String {
+        let evidence = "Reason: \(reason)\nWorker: \(result.name)\nTask: \(result.task)\nStatus: \(result.status)\n\n\(result.report)"
+        // Worker evidence may contain examples of the app's control tags. A dynamically
+        // sized fence keeps ReplyParser from treating any of it as app instructions.
+        let longest = evidence.split(whereSeparator: { $0 != "~" }).map(\.count).max() ?? 0
+        let fence = String(repeating: "~", count: max(3, longest + 1))
+        return "The coordinator could not summarize a worker result. The original evidence is preserved below.\n\n\(fence)text\n\(evidence)\n\(fence)"
+    }
+
+    /// Save task/thread identity separately from the UI cards: follow-ups work after the
+    /// app-server process is recreated, without trying to resurrect an in-flight turn.
+    var managedWorkerRecords: [CodexManagedWorkerRecord] {
+        workers.values.map { worker in
+            let result = workerResults.first(where: { $0.task == worker.id && $0.run == worker.run })
+                ?? activeResult.flatMap { $0.task == worker.id && $0.run == worker.run ? $0 : nil }
+            return CodexManagedWorkerRecord(id: worker.id, name: worker.name, instructions: worker.instructions,
+                thread: worker.thread, run: worker.run, wasActive: worker.active, reportPending: result != nil,
+                report: result?.report, status: result?.status, turn: result?.turn, tokens: worker.tokens)
+        }.sorted { $0.id < $1.id }
+    }
+
+    private var hasManagedWork: Bool { workers.values.contains(where: \.active) || !workerResults.isEmpty }
+
+    private mutating func pendingChanged() -> [CodexOutput] {
+        let pending = hasManagedWork
+        guard pending != managedPending else { return [] }
+        managedPending = pending
+        return [.event(.managedWorkPending(pending))]
+    }
+
+    private static let coordinatorConfig: [String: Any] = [
+        "features.multi_agent": false, "agents.enabled": false,
+        "features.shell_tool": false, "web_search": "disabled"
+    ]
+
+    private static let managedTools: [[String: Any]] = [
+        ["type": "function", "name": "app_handoff",
+         "description": "Assign the whole execution scope to an independent app-managed worker. Returns acceptance immediately. Finish this turn after the receipt; the app will deliver app_task_result in a later turn.",
+         "inputSchema": ["type": "object", "properties": ["instructions": ["type": "string"], "name": ["type": "string"]], "required": ["instructions"], "additionalProperties": false]],
+        ["type": "function", "name": "app_send_message",
+         "description": "Send instructions or a follow-up to the same worker task/session. Busy workers receive steering; idle workers start a new turn. Returns acceptance, not the completed result.",
+         "inputSchema": ["type": "object", "properties": ["task_id": ["type": "string"], "message": ["type": "string"]], "required": ["task_id", "message"], "additionalProperties": false]]
+    ]
+
+    private mutating func managedTool(_ rpcID: Any, params: [String: Any]) -> [CodexOutput] {
+        let key = Self.key(rpcID)
+        if let response = toolReplies[key] { return [.write(response)] }
+        func reply(_ payload: [String: Any], success: Bool) -> [String: Any] {
+            ["jsonrpc": "2.0", "id": rpcID,
+             "result": ["success": success, "contentItems": [["type": "inputText", "text": Self.json(payload)]]]]
+        }
+        guard config.workerInstructions != nil, !stopped, !finishing,
+              params["threadId"] as? String == threadID else {
+            let response = reply(["error": "App handoff tools are available only to the active coordinator."], success: false)
+            toolReplies[key] = response
+            return [.write(response)]
+        }
+        var arguments = params["arguments"] as? [String: Any]
+        if arguments == nil, let string = params["arguments"] as? String, let data = string.data(using: .utf8) {
+            arguments = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        }
+        let tool = params["tool"] as? String
+        var out: [CodexOutput] = []
+        let response: [String: Any]
+        if tool == "app_handoff", let instructions = arguments?["instructions"] as? String,
+           !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let id = UUID().uuidString.lowercased()
+            let name = (arguments?["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? Self.firstLine(instructions)
+            workers[id] = ManagedWorker(id: id, name: name, instructions: instructions)
+            out += [.event(.trace(.toolUse(id: id, tool: "Agent", title: "Delegate " + name, detail: instructions, parent: nil))),
+                    .event(.trace(.subagentStarted(id: id, description: name, type: "codex-worker", prompt: instructions, background: true))),
+                    .event(.trace(.subagentNamed(id: id, name: name)))]
+            out.append(startWorkerThread(id))
+            response = reply(["task_id": id, "status": "accepted",
+                              "message": "The app owns this task. Finish this turn; app_task_result will arrive when the worker finishes."], success: true)
+        } else if tool == "app_send_message", let id = arguments?["task_id"] as? String,
+                  let message = arguments?["message"] as? String, !message.isEmpty, workers[id] != nil {
+            let queued = workers[id]?.active == true
+            let callID = params["callId"] as? String ?? params["itemId"] as? String ?? key
+            out.append(.event(.trace(.messageSent(id: callID, to: workers[id]?.thread ?? id,
+                summary: nil, message: message, parent: nil))))
+            out += messageWorker(id, text: message)
+            out.append(.event(.trace(.launchResult(id: callID,
+                result: LaunchResult(recipient: workers[id]?.thread ?? id), parent: nil))))
+            response = reply(["task_id": id, "status": queued ? "queued" : "accepted"], success: true)
+        } else {
+            response = reply(["error": "Invalid app tool arguments or unknown task_id. Use app_handoff to create a task, then app_send_message with its task_id."], success: false)
+        }
+        toolReplies[key] = response
+        // Receipt precedes worker RPCs, so slow thread startup never keeps the model waiting.
+        out.insert(.write(response), at: 0)
+        out += pendingChanged()
+        return out
+    }
+
+    private mutating func startWorkerThread(_ task: String) -> CodexOutput {
+        let worker = workers[task]!
+        var overrides: [String: Any] = ["features.multi_agent": false, "agents.enabled": false]
+        if !config.writableRoots.isEmpty {
+            overrides["sandbox_workspace_write"] = ["writable_roots": config.writableRoots.map(\.path)]
+        }
+        var params: [String: Any] = [
+            "cwd": config.workingDirectory.path, "approvalPolicy": "on-request",
+            "approvalsReviewer": config.autoMode ? "auto_review" : "user", "sandbox": "workspace-write",
+            "developerInstructions": config.workerInstructions ?? "Execute the assigned task yourself and return concrete evidence. Do not delegate.",
+            "config": overrides
+        ]
+        if let model = config.model { params["model"] = model }
+        if let thread = worker.thread {
+            params["threadId"] = thread; params["excludeTurns"] = true
+            return request("thread/resume", params, as: .workerThread(task))
+        }
+        return request("thread/start", params, as: .workerThread(task))
+    }
+
+    private mutating func workerThreadReady(_ task: String, result: [String: Any]?, error: [String: Any]?) -> [CodexOutput] {
+        guard let worker = workers[task], worker.active, !worker.cancelled, !stopped else { return [] }
+        guard error == nil, let thread = (result?["thread"] as? [String: Any])?["id"] as? String else {
+            return failWorker(task, report: "Could not start worker session: " + Self.message(error))
+        }
+        workers[task]?.thread = thread
+        workers[task]?.loaded = true
+        var out: [CodexOutput] = [.event(.trace(.launchResult(id: task, result: LaunchResult(agentID: thread), parent: nil)))]
+        if let model = config.model { out.append(.event(.trace(.subagentModel(id: task, model: model)))) }
+        out += startWorkerTurn(task, text: worker.instructions)
+        return out
+    }
+
+    private mutating func startWorkerTurn(_ task: String, text: String) -> [CodexOutput] {
+        guard let worker = workers[task], let thread = worker.thread, !worker.cancelled, !stopped else { return [] }
+        workers[task]?.turnID = nil
+        workers[task]?.said = []
+        workers[task]?.tokensAtRunStart = worker.tokens
+        var params: [String: Any] = ["threadId": thread, "input": [["type": "text", "text": text]]]
+        if let effort = config.effort { params["effort"] = Self.effort(effort) }
+        return [request("turn/start", params, as: .workerTurn(task, worker.run))]
+    }
+
+    private mutating func workerTurnReady(_ task: String, run: Int, result: [String: Any]?, error: [String: Any]?) -> [CodexOutput] {
+        guard let worker = workers[task], worker.run == run, worker.active, !worker.cancelled, !stopped else { return [] }
+        if let error { return failWorker(task, report: "Could not start worker turn: " + Self.message(error)) }
+        guard let id = (result?["turn"] as? [String: Any])?["id"] as? String else { return [] }
+        return learnWorkerTurn(task, id: id)
+    }
+
+    private mutating func learnWorkerTurn(_ task: String, id: String) -> [CodexOutput] {
+        guard let worker = workers[task], worker.active, worker.turnID == nil,
+              !worker.completedTurns.contains(id), !worker.cancelled else { return [] }
+        workers[task]?.turnID = id
+        workers[task]?.messages = []
+        return worker.messages.map { workerSteer(task, text: $0, turnID: id, run: worker.run) }
+    }
+
+    private mutating func workerSteer(_ task: String, text: String, turnID: String, run: Int) -> CodexOutput {
+        request("turn/steer", ["threadId": workers[task]?.thread ?? "", "expectedTurnId": turnID,
+            "input": [["type": "text", "text": text]]], as: .workerSteer(task, run, turnID, text))
+    }
+
+    private mutating func messageWorker(_ task: String, text: String) -> [CodexOutput] {
+        guard let worker = workers[task], !stopped else { return [] }
+        if worker.active {
+            if let turnID = worker.turnID {
+                return [workerSteer(task, text: text, turnID: turnID, run: worker.run)]
+            }
+            workers[task]?.messages.append(text)
+            return []
+        }
+        workerResults.removeAll { $0.task == task }
+        workers[task]?.run += 1
+        workers[task]?.active = true
+        workers[task]?.cancelled = false
+        workers[task]?.instructions = text
+        workers[task]?.turnID = nil
+        var out: [CodexOutput] = [.event(.trace(.subagentStarted(id: task, description: worker.name, type: "codex-worker", prompt: text, background: true)))]
+        if worker.loaded { out += startWorkerTurn(task, text: text) }
+        else { out.append(startWorkerThread(task)) }
+        out += pendingChanged()
+        return out
+    }
+
+    private mutating func workerLine(_ method: String, _ params: [String: Any], task: String) -> [CodexOutput] {
+        guard let worker = workers[task] else { return [] }
+        switch method {
+        case "thread/tokenUsage/updated":
+            if let total = (params["tokenUsage"] as? [String: Any])?["total"] as? [String: Any] {
+                workers[task]?.tokens = Self.tokens(total)
+            }
+            return []
+        case "turn/started":
+            guard let id = (params["turn"] as? [String: Any])?["id"] as? String else { return [] }
+            if worker.cancelled || stopped {
+                return [request("turn/interrupt", ["threadId": worker.thread ?? "", "turnId": id], as: .interrupt)]
+            }
+            return learnWorkerTurn(task, id: id)
+        case "item/started", "item/completed":
+            guard worker.active, !worker.cancelled,
+                  let item = params["item"] as? [String: Any] else { return [] }
+            if let itemTurn = params["turnId"] as? String, let current = worker.turnID, itemTurn != current { return [] }
+            if method == "item/started" {
+                return started(item).map { [.event(.trace(Self.under(task, $0)))] } ?? []
+            }
+            if item["type"] as? String == "agentMessage" {
+                let text = item["text"] as? String ?? ""
+                workers[task]?.said.append((text, item["phase"] as? String))
+                return text.isEmpty ? [] : [.event(.trace(.text(text, parent: task)))]
+            }
+            return completed(item).map { .event(.trace(Self.under(task, $0))) }
+        case "turn/completed":
+            guard worker.active, !worker.cancelled, let ended = params["turn"] as? [String: Any],
+                  let id = ended["id"] as? String, !worker.completedTurns.contains(id),
+                  worker.turnID == nil || worker.turnID == id else { return [] }
+            workers[task]?.completedTurns.insert(id)
+            workers[task]?.turnID = nil
+            var status = ended["status"] as? String ?? "failed"
+            let said = worker.said.last(where: { $0.phase != "commentary" })?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            var report = status == "failed" ? (ended["error"] as? [String: Any])?["message"] as? String ?? (said.isEmpty ? "Worker failed." : said) : said
+            if status == "completed", said.isEmpty {
+                status = "failed"
+                report = "Worker turn ended without a final evidence report. Ask the same task_id for the missing result."
+            }
+            let used = worker.tokens - worker.tokensAtRunStart
+            var out: [CodexOutput] = used.total > 0 ? [.event(.usage(totalCost: 0, tokens: used))] : []
+            // A rejected steer can have queued a message while the old turn was ending.
+            if !worker.messages.isEmpty {
+                workers[task]?.messages = []
+                workers[task]?.run += 1
+                return out + startWorkerTurn(task, text: worker.messages.joined(separator: "\n\n"))
+            }
+            workers[task]?.active = false
+            workerResults.append(ManagedResult(task: task, name: worker.name, thread: worker.thread,
+                turn: id, run: worker.run, status: status, report: report))
+            out.append(.event(.trace(.subagentEnded(id: task,
+                status: status == "interrupted" ? "killed" : status, summary: report))))
+            if turn == nil { out += next() }
+            out += pendingChanged()
+            return out
+        case "item/autoApprovalReview/completed":
+            return reviewed(params).map { output in
+                if case let .event(.trace(trace)) = output { return .event(.trace(Self.under(task, trace))) }
+                return output
+            }
+        case "serverRequest/resolved":
+            guard let id = params["requestId"].map(Self.key), approvals.removeValue(forKey: id) != nil else { return [] }
+            return [.event(.permissionCancelled(id))]
+        case "error":
+            guard params["willRetry"] as? Bool == true else { return [] }
+            return [.event(.connectionTrouble(attempt: 1, maxRetries: 0))]
+        default:
+            return []
+        }
+    }
+
+    private mutating func failWorker(_ task: String, report: String) -> [CodexOutput] {
+        guard let worker = workers[task], worker.active else { return [] }
+        workers[task]?.active = false
+        workers[task]?.turnID = nil
+        workers[task]?.messages = []
+        workerResults.append(ManagedResult(task: task, name: worker.name, thread: worker.thread,
+            turn: nil, run: worker.run, status: "failed", report: report))
+        var out: [CodexOutput] = [.event(.trace(.subagentEnded(id: task, status: "failed", summary: report)))]
+        if turn == nil { out += next() }
+        out += pendingChanged()
+        return out
+    }
+
+    /// Global app stop cancels independent workers. Interrupting only the coordinator
+    /// deliberately leaves their sessions running.
+    mutating func cancelManagedWorkers() -> [CodexOutput] {
+        var out: [CodexOutput] = []
+        workerResults = []
+        activeResult = nil
+        for (task, worker) in workers where worker.active {
+            workers[task]?.active = false
+            workers[task]?.cancelled = true
+            workers[task]?.messages = []
+            if let thread = worker.thread, let turn = worker.turnID {
+                out.append(request("turn/interrupt", ["threadId": thread, "turnId": turn], as: .interrupt))
+            }
+            let used = worker.tokens - worker.tokensAtRunStart
+            if used.total > 0 { out.append(.event(.usage(totalCost: 0, tokens: used))) }
+            workers[task]?.tokensAtRunStart = worker.tokens
+            out.append(.event(.trace(.subagentEnded(id: task, status: "killed", summary: "Stopped by the app."))))
+        }
+        out += pendingChanged()
+        return out
+    }
+
+    mutating func stop() -> [CodexOutput] {
+        stopped = true
+        inbox = []
+        afterInterrupt = nil
+        return cancelManagedWorkers()
     }
 
     // MARK: Items
@@ -734,9 +1197,11 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
     private let lock = NSLock()
     private var session: CodexSession
     private var closed = false
+    private var savedWorkers: [CodexManagedWorkerRecord] = []
     private let continuation: AsyncStream<AgentEvent>.Continuation
     private let sessionID: UUID
     private let threads: CodexThreads
+    private let managedMode: Bool
     private let failure = Failure()
 
     public static func launcher(executable: URL, threads: CodexThreads = .shared) -> AgentLauncher {
@@ -749,7 +1214,11 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
         var resume: String?
         if launch.resume || launch.forkSession {
             guard let thread = threads.thread(for: launch.sessionID) else { throw CocoaError(.fileNoSuchFile) }
-            resume = thread
+            // Pre-upgrade threads have no dynamic app tools and cannot acquire them on
+            // resume/fork. Begin a managed thread; Bot supplies bounded historical context.
+            if launch.codexWorkerInstructions == nil || threads.isManaged(launch.sessionID, thread: thread) {
+                resume = thread
+            }
         }
         return CodexSession.Config(
             workingDirectory: launch.workingDirectory,
@@ -758,7 +1227,9 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
             writableRoots: launch.extraDirectories,
             effort: launch.effort,
             resumeThread: resume,
-            model: launch.codexModel
+            model: launch.codexModel,
+            workerInstructions: launch.codexWorkerInstructions,
+            restoredWorkers: launch.codexWorkerInstructions == nil ? [] : threads.workers(for: launch.sessionID)
         )
     }
 
@@ -767,6 +1238,7 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
         session = CodexSession(config: try Self.config(for: launch, threads: threads))
         sessionID = launch.sessionID
         self.threads = threads
+        managedMode = launch.codexWorkerInstructions != nil
         process = Process()
         process.executableURL = executable
         process.arguments = ["app-server"]
@@ -828,7 +1300,13 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
     /// Steps the session and does what it says, in order, under the lock (writes keep their order).
     private func run(_ step: (inout CodexSession) -> [CodexOutput]) {
         lock.withLock {
-            for output in step(&session) {
+            let outputs = step(&session)
+            let records = session.managedWorkerRecords
+            if records != savedWorkers {
+                threads.saveWorkers(records, for: sessionID)
+                savedWorkers = records
+            }
+            for output in outputs {
                 switch output {
                 case let .write(object):
                     guard !closed, var data = try? JSONSerialization.data(withJSONObject: object) else { continue }
@@ -838,6 +1316,7 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
                     continuation.yield(event)
                 case let .thread(id):
                     threads.save(id, for: sessionID)
+                    if managedMode { threads.markManaged(id, for: sessionID) }
                 case .close:
                     closeInput()
                 case let .failed(message):
@@ -888,6 +1367,7 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
     }
 
     public func stop() {
+        run { $0.stop() }
         lock.withLock { closeInput() }
         guard process.isRunning else { return }
         process.terminate()

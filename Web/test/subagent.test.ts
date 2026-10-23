@@ -51,6 +51,15 @@ beforeEach(() => {
 });
 
 describe("a subagent's view", () => {
+  it("identifies independent Codex workers without renaming native subagents", () => {
+    const base = watching();
+    window.ccb.setState({ ...base, subagent: { ...base.subagent!, engine: "codex", type: "codex-worker" } });
+    expect(bar().querySelector(".engine-badge")?.textContent).toBe("Codex worker");
+    expect(bar().querySelector(".meta")?.textContent).not.toContain("codex-worker");
+    window.ccb.setState({ ...base, subagent: { ...base.subagent!, engine: "codex", type: "codex" } });
+    expect(bar().querySelector(".engine-badge")?.textContent).toBe("Codex subagent");
+  });
+
   it("heads it with the bot › the subagent, its engine and its model, and goes back by the bot", () => {
     window.ccb.setState(watching());
     expect(bar().querySelector(".crumb-owner")?.textContent).toBe("Main");

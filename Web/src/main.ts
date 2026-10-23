@@ -54,6 +54,7 @@ class Chat {
   /** The components object `componentsText` was made from (a patch hands the same one back). */
   private componentsSeen: unknown = null;
   private typing: HTMLElement | null = null;
+  private workerWaiting: HTMLElement | null = null;
   private botID: string | null = null;
   private last: ChatState | null = null;
   /** Following the bottom of the chat; false once you scroll up to read. */
@@ -100,6 +101,7 @@ class Chat {
     this.list.innerHTML = "";
     this.drawn.clear();
     this.typing = null;
+    this.workerWaiting = null;
   }
 
   setState(state: ChatState, redrawing = false): void {
@@ -188,6 +190,19 @@ class Chat {
       this.typing = !state.working ? null : state.subagent ? subagentLiveElement(state.live ?? []) : typingElement(state.avatar, state.live ?? []);
     }
     if (this.typing && this.list.lastElementChild !== this.typing) this.list.append(this.typing);
+    // Workers have their own live cards. An idle coordinator has no thinking animation.
+    if (state.waitingForWorkers && !state.working && !state.subagent) {
+      if (!this.workerWaiting) {
+        this.workerWaiting = document.createElement("div");
+        this.workerWaiting.className = "worker-waiting";
+        this.workerWaiting.setAttribute("role", "status");
+      }
+      this.workerWaiting.textContent = t("messages.waitingForWorkers");
+      if (this.list.lastElementChild !== this.workerWaiting) this.list.append(this.workerWaiting);
+    } else {
+      this.workerWaiting?.remove();
+      this.workerWaiting = null;
+    }
 
     this.showSubagentHeader(state);
     this.pins.update(state);

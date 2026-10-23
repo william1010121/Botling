@@ -3,35 +3,89 @@ import Testing
 @testable import ClaudeCodeBotCore
 
 struct CodexDelegationTests {
-    private let expectedPolicy = """
-    Delegation ownership policy, scoped by agent role:
-
-    If you are a spawned subagent, execute the assigned task yourself and return evidence. Do not delegate it again. The coordinator restrictions below do not apply to you.
-
-    If you are the main parent agent, use Codex's native subagent tools when delegating; the Claude Code Agent tool name in the generic app instructions is not the tool name to call here.
-
-    For building, fixing, and researching requests, your parent role is orchestration: delegate the entire execution scope to workers, communicate with the user, and synthesize their evidence. Do not reserve a coding, testing, or source-inspection lane for yourself merely to stay busy. A separate parent execution task requires an explicit user assignment.
-
-    After a subagent accepts a task, that subagent owns its scope until it returns a completed or failed result. While it is pending, do not read/search the assigned source, run its tests, edit its files, or perform a parallel version of its task. Do not perform work merely to reassure yourself that progress is happening.
-
-    You may do a different task only when it has an explicitly separate scope and no dependency on the subagent's result. If no such work exists, invoke the native agent-wait tool immediately. Waiting on a dependency is correct progress. Use a long event-driven wait, not repeated short status checks, shell sleeps, or work invented to fill the gap. If the wait times out, wait again while the task remains pending.
-
-    An informational progress note or a request for status does not transfer task ownership back to you. Report known status briefly and then wait again. Do not take over due to elapsed time alone.
-
-    When the worker's completed report contains source locations, concrete inputs/outputs, and test results sufficient to answer the request, directly synthesize those results. Do not reopen the assigned source files or rerun its tests just to reconfirm them. For a specific missing or contradictory fact, send a bounded follow-up question to the same worker and wait for the answer; continue to respect its task ownership. Take over only if the worker explicitly reports it cannot continue, the user reassigns the work, or a new authorized task requires it. Routine memory updates and formatting the worker's evidence for the user are allowed, but must not become a second source audit.
-    """
-
-    @Test func ownershipPolicyIsCodexOnlyAndPreservesTheTestedWording() {
+    @Test func coordinatorEndsAfterAppAcceptanceAndClaudeKeepsNativeAgents() {
         let root = URL(filePath: "/tmp/delegation-prompt")
         for profile in [BotProfile.main(home: root), .manager(name: "Probe", avatar: "square", folder: root)] {
             let claude = BotPrompts(profile: profile).system
             let codex = BotPrompts(profile: profile, engine: .codex).system
-            #expect(codex.contains(expectedPolicy))
-            #expect(!codex.contains("For this one-small-task experiment"))
+            #expect(codex.contains("app_handoff"))
+            #expect(codex.contains("app_send_message with task_id and message"))
+            #expect(codex.contains("END YOUR CURRENT TURN"))
+            #expect(codex.contains("app_task_result, correlated by task_id"))
+            #expect(codex.contains("A user status question does not transfer task ownership"))
+            #expect(!codex.contains("invoke the native agent-wait tool"))
+            #expect(!codex.contains("use Codex's native subagent tools when delegating"))
             #expect(!codex.contains("then check its work yourself"))
             #expect(claude.contains("; then check its work yourself and say what you found."))
-            #expect(!claude.contains("Delegation ownership policy"))
+            #expect(!claude.contains("App-owned Codex delegation policy"))
         }
+        let manager = BotProfile.manager(name: "Probe", avatar: "square", folder: root)
+        #expect(BotPrompts(profile: manager).system.contains("to subagents with the Agent tool"))
+        #expect(!BotPrompts(profile: manager, engine: .codex).system.contains("to subagents with the Agent tool"))
+    }
+
+    @Test func workerGetsExecutionScopeAndProjectContextWithoutCoordinatorRouting() {
+        let root = URL(filePath: "/tmp/delegation-prompt")
+        var profile = BotProfile.manager(name: "Probe", avatar: "square", folder: root)
+        profile.instructions = "Preserve the billing API and check quantity validation."
+        profile.job = "Maintain the billing project."
+        let prompts = BotPrompts(profile: profile, language: .traditionalChinese, engine: .codex)
+        let worker = prompts.codexWorkerSystem
+        #expect(worker.contains("Execute your assigned scope yourself"))
+        #expect(worker.contains("Do not reserve routine validation for the coordinator"))
+        #expect(worker.contains(profile.instructions!))
+        #expect(worker.contains(profile.job!))
+        #expect(worker.contains(root.path))
+        #expect(worker.contains(profile.memoryPath))
+        #expect(worker.contains(profile.archiveURL.path))
+        #expect(worker.contains("Reply in Traditional Chinese (as used in Taiwan) by default"))
+        #expect(worker.contains("Never print credentials"))
+        #expect(worker.contains(BotPrompts.resultsRule(.localOnly, folder: profile.artifactsURL.path)))
+        #expect(!worker.contains("END YOUR CURRENT TURN"))
+        #expect(!worker.contains("You are the coordinator"))
+        #expect(!worker.contains("Your job is to hand work over"))
+        #expect(!worker.contains("end your reply with <handoff"))
+        #expect(!worker.contains("<plugin>"))
+        #expect(!worker.contains(BotPrompts.codexDelegationPolicy))
+    }
+
+    @Test func codexMaintenanceUsesSnapshotsAndWaitsForDurableMemoryEvidence() {
+        let root = URL(filePath: "/tmp/delegation-prompt")
+        let profile = BotProfile.manager(name: "Probe", avatar: "square", folder: root)
+        let codex = BotPrompts(profile: profile, engine: .codex)
+        let claude = BotPrompts(profile: profile)
+        #expect(codex.wake.hasPrefix(BotPrompts.wakeLead))
+        #expect(codex.tidy.hasPrefix(BotPrompts.tidyLead))
+        #expect(codex.wake.contains("saved memory snapshot"))
+        #expect(codex.resume.contains("saved memory snapshot"))
+        #expect(codex.wake.contains("Do not start a worker just to read memory"))
+        #expect(!codex.wake.contains("Read \(profile.memoryPath) before answering"))
+        for maintenance in [codex.tidy, codex.handoff] {
+            #expect(maintenance.contains("Use app_handoff"))
+            #expect(maintenance.contains("END YOUR CURRENT TURN"))
+            #expect(maintenance.contains("app_task_result confirms the update completed"))
+            #expect(maintenance.contains("do not claim the memory was saved"))
+        }
+        #expect(claude.wake.contains("Read \(profile.memoryPath) before answering"))
+        #expect(!claude.tidy.contains("app_handoff"))
+        #expect(!claude.handoff.contains("app_handoff"))
+    }
+
+    @MainActor
+    @Test func productionBotLaunchCarriesSeparateCoordinatorAndWorkerInstructions() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-worker-prompts-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fake = FakeLauncher()
+        let profile = BotProfile.manager(name: "Probe", avatar: "square", folder: root)
+        let bot = Bot(profile: profile, launcher: fake.launcher, store: BotStore(directory: root.appending(path: "store")))
+        await bot.switchEngine(to: .codex)
+        bot.send("Fix billing and test it.")
+        await eventually { !fake.agents.isEmpty }
+        let launch = try #require(fake.agents.first?.launch)
+        #expect(launch.systemPrompt.contains(BotPrompts.codexDelegationPolicy))
+        #expect(launch.codexWorkerInstructions == bot.prompts.codexWorkerSystem)
+        #expect(launch.codexWorkerInstructions?.contains("Execute your assigned scope yourself") == true)
+        #expect(launch.codexWorkerInstructions?.contains(BotPrompts.codexDelegationPolicy) == false)
     }
 
     @Test func ownershipPolicyReachesDeveloperInstructionsOnStartAndResume() throws {
@@ -47,13 +101,11 @@ struct CodexDelegationTests {
             #expect(request["method"] as? String == (resume == nil ? "thread/start" : "thread/resume"))
             let params = try #require(request["params"] as? [String: Any])
             #expect(params["developerInstructions"] as? String == instructions)
-            #expect((params["developerInstructions"] as? String)?.contains(expectedPolicy) == true)
+            #expect((params["developerInstructions"] as? String)?.contains(BotPrompts.codexDelegationPolicy) == true)
         }
     }
 
-    /// Export the actual app-generated RPC payload for the opt-in real Codex probe.
-    /// CCB_CODEX_DELEGATION_EXPORT=/tmp/evidence swift test --filter CodexDelegationTests
-    /// python3 Tests/LiveCodexDelegation/probe.py /tmp/evidence
+    /// Exports the actual production prompts/RPC payload for an opt-in real Codex probe.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_CODEX_DELEGATION_EXPORT"] != nil))
     func exportActualAppRequestsForLiveProbe() throws {
         let root = URL(filePath: try #require(ProcessInfo.processInfo.environment["CCB_CODEX_DELEGATION_EXPORT"]))
@@ -61,14 +113,16 @@ struct CodexDelegationTests {
             let folder = root.appending(path: name)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let profile = BotProfile.manager(name: "Probe", avatar: "square", folder: folder)
-            let instructions = BotPrompts(profile: profile, language: .traditionalChinese, engine: .codex).system
-            var session = CodexSession(config: .init(workingDirectory: folder, instructions: instructions))
+            let prompts = BotPrompts(profile: profile, language: .traditionalChinese, engine: .codex)
+            let instructions = prompts.system
+            var session = CodexSession(config: .init(workingDirectory: folder, instructions: instructions, workerInstructions: prompts.codexWorkerSystem))
             _ = session.start()
             let output = session.receive(#"{"id":1,"result":{}}"#)
             let request = try #require(output.compactMap { if case let .write(value) = $0 { value } else { nil } }.last)
             #expect(request["method"] as? String == "thread/start")
             try JSONSerialization.data(withJSONObject: request, options: [.prettyPrinted, .sortedKeys]).write(to: folder.appending(path: "thread-start.json"))
             try instructions.write(to: folder.appending(path: "developer-instructions.txt"), atomically: true, encoding: .utf8)
+            try prompts.codexWorkerSystem.write(to: folder.appending(path: "worker-instructions.txt"), atomically: true, encoding: .utf8)
         }
     }
 }

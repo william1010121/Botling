@@ -130,6 +130,7 @@ export const zhHans: Dictionary = {
   "subagent.from": "来自 {bot}",
   "subagent.engine.claude": "Claude 子代理",
   "subagent.engine.codex": "Codex 子代理",
+  "subagent.engine.codexWorker": "Codex 工作 agent",
   "panel.notReady": "这个面板还没准备好。",
   // markdown.ts
   "markdown.video": "视频",
@@ -149,6 +150,7 @@ export const zhHans: Dictionary = {
   "messages.answered": "已回答",
   "messages.answeredLabel": "已回答：{label}。显示选项",
   "messages.working": "处理中",
+  "messages.waitingForWorkers": "等待工作 agent 汇报 · 可以继续聊天",
   "feedback.title": "反馈：{bot} 的一条回复不对",
   "feedback.noWords": "（没有说明，只附上前后的聊天。）",
   "feedback.hideFull": "隐藏完整反馈",

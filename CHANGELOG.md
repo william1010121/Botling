@@ -8,6 +8,13 @@ app and publishes it on GitHub Releases.
 
 ### Changed
 
+- **Codex hands work to app-managed workers.** The main conversation finishes its turn after
+  handing off a task, so you can keep chatting while an independent worker session runs. Live
+  worker cards keep their progress and follow-up history. The app queues completed results and
+  wakes the main conversation to report them; an idle conversation shows that it is waiting
+  for workers instead of continuing the thinking animation. Existing chats keep their visible
+  history; their first upgraded Codex session starts a managed coordinator with saved memory
+  and recent conversation context.
 - **Updated Cute character art.** Claude and Codex use the supplied transparent portrait pack
   throughout the app, with separate awake, working, waiting and sleepy expressions. Bot hats,
   recipient highlights, the existing work animation and the Original look remain available.

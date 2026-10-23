@@ -130,6 +130,7 @@ export const ko: Dictionary = {
   "subagent.from": "{bot}에게서",
   "subagent.engine.claude": "Claude 서브에이전트",
   "subagent.engine.codex": "Codex 서브에이전트",
+  "subagent.engine.codexWorker": "Codex 워커",
   "panel.notReady": "이 패널은 아직 준비되지 않았습니다.",
   // markdown.ts
   "markdown.video": "동영상",
@@ -149,6 +150,7 @@ export const ko: Dictionary = {
   "messages.answered": "답변함",
   "messages.answeredLabel": "답변함: {label}. 선택지 보기",
   "messages.working": "작업 중",
+  "messages.waitingForWorkers": "워커 보고 대기 중 · 계속 대화할 수 있습니다",
   "feedback.title": "피드백: {bot}의 답장이 맞지 않음",
   "feedback.noWords": "(설명 없음, 앞뒤 채팅만 있음.)",
   "feedback.hideFull": "전체 보고 숨기기",

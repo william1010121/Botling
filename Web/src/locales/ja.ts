@@ -130,6 +130,7 @@ export const ja: Dictionary = {
   "subagent.from": "{bot} から",
   "subagent.engine.claude": "Claude サブエージェント",
   "subagent.engine.codex": "Codex サブエージェント",
+  "subagent.engine.codexWorker": "Codex ワーカー",
   "panel.notReady": "このパネルはまだ準備できていません。",
   // markdown.ts
   "markdown.video": "動画",
@@ -149,6 +150,7 @@ export const ja: Dictionary = {
   "messages.answered": "回答済み",
   "messages.answeredLabel": "回答済み：{label}。選択肢を表示",
   "messages.working": "作業中",
+  "messages.waitingForWorkers": "ワーカーの報告待ち · チャットを続けられます",
   "feedback.title": "フィードバック：{bot} の返信が正しくありません",
   "feedback.noWords": "（説明なし。前後のチャットのみ。）",
   "feedback.hideFull": "レポート全文を隠す",

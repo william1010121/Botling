@@ -357,6 +357,8 @@ export interface ChatState {
   botName: string;
   messages: MessageView[];
   working: boolean;
+  /** No coordinator turn is active; worker cards continue independently. */
+  waitingForWorkers?: boolean;
   /** The bot's face for the typing bubble. */
   avatar: string;
   placeholder: string;

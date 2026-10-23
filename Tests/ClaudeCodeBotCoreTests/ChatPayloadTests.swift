@@ -124,4 +124,51 @@ struct ChatPayloadTests {
         #expect(ChatPayload.stamp(for: messages, at: 1, now: now) == nil)
         #expect(ChatPayload.stamp(for: messages, at: 2, now: now)?.hasPrefix("Today") == true)
     }
+
+    @Test(arguments: BotEngine.allCases)
+    func idleCoordinatorWaitsWithoutPretendingToThink(_ engine: BotEngine) async throws {
+        let fake = FakeLauncher()
+        fake.respond = { _ in nil }
+        let bot = Bot(profile: .main(home: root), launcher: fake.launcher)
+        await bot.setHeads([engine])
+        defer { bot.stop() }
+        func payload() -> ChatPayload {
+            ChatPayload.make(bot: bot, components: nil, pending: [], replyingTo: nil) { _ in "data:bot" }
+        }
+        bot.send("Delegate this task")
+        await eventually { !fake.agents.isEmpty }
+        let agent = try #require(fake.agents.last)
+        agent.emit(.trace(.toolUse(id: "worker", tool: "Agent", title: "Check protocol", detail: "Research", parent: nil)))
+        agent.emit(.trace(.subagentStarted(id: "worker", description: "Check protocol", type: engine == .codex ? "codex-worker" : "general-purpose", prompt: "Research", background: true)))
+        await eventually { bot.subagent("worker")?.isRunning == true }
+        #expect(payload().working)
+        #expect(!payload().waitingForWorkers)
+
+        agent.reply("Ready.")
+        await eventually { !bot.isWorking }
+        #expect(!payload().working)
+        #expect(payload().waitingForWorkers)
+        #expect(try json(payload())["waitingForWorkers"] as? Bool == true)
+        let cards = payload().messages.flatMap { $0.steps ?? [] }.filter { $0.kind == "subagent" }
+        #expect(cards.map(\.id) == ["worker"])
+        #expect(cards.first?.status == "running")
+        let detail = ChatPayload.make(subagent: try #require(bot.subagent("worker")), of: bot, components: nil, avatar: "data:bot")
+        #expect(detail.subagent?.engine == engine.rawValue)
+        #expect(detail.subagent?.type == (engine == .codex ? "codex-worker" : "general-purpose"))
+
+        // Chatting does not remove the worker or confuse its activity with the coordinator's.
+        bot.send("What have you learned so far?")
+        await eventually { bot.isWorking }
+        #expect(payload().working)
+        #expect(!payload().waitingForWorkers)
+        #expect(bot.subagents.map(\.id) == ["worker"])
+        agent.reply("The worker is still checking.")
+        await eventually { !bot.isWorking }
+        #expect(payload().waitingForWorkers)
+
+        agent.emit(.trace(.subagentEnded(id: "worker", status: "completed", summary: "Protocol verified")))
+        await eventually { bot.subagent("worker")?.status == .completed }
+        #expect(!payload().waitingForWorkers)
+        #expect(bot.subagent("worker")?.result == "Protocol verified")
+    }
 }

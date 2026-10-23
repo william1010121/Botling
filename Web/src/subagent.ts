@@ -82,9 +82,9 @@ export function fillSubagentBar(bar: HTMLElement, header: SubagentHeaderView): v
   name.textContent = title;
   const badge = document.createElement("span");
   badge.className = `engine-badge ${engine}`;
-  badge.textContent = t(`subagent.engine.${engine}` as Key);
+  badge.textContent = t(type === "codex-worker" && engine === "codex" ? "subagent.engine.codexWorker" : `subagent.engine.${engine}` as Key);
   const meta = document.createElement("span");
   meta.className = "meta";
-  meta.textContent = [header.model, type, statusWord(status), t("subagent.watchOnly")].filter(Boolean).join(" · ");
+  meta.textContent = [header.model, type === "codex-worker" ? null : type, statusWord(status), t("subagent.watchOnly")].filter(Boolean).join(" · ");
   bar.append(back, separator, name, badge, meta);
 }

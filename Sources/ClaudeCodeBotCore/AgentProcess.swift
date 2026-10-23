@@ -112,6 +112,15 @@ public enum AgentEvent: Equatable, Sendable {
     /// The turn that takes in that message begins (`command_lifecycle` "started"): the next
     /// result line is its reply.
     case commandStarted(UUID)
+    /// A real foreground turn starts, including a message retried after a steer/turn race.
+    case turnStarted
+    /// The app starts a turn to deliver completed background work, independently of a user
+    /// message. Sent before that turn's first trace or reply.
+    case backgroundTurnStarted
+    /// Identifies the worker whose result the next background turn delivers.
+    case managedWorkerReportStarted(taskID: String)
+    /// App-managed work still owns execution or has a result queued for a later turn.
+    case managedWorkPending(Bool)
     case exited(status: Int32, stderr: String)
 }
 
@@ -156,6 +165,8 @@ public struct AgentLaunch: Equatable, Sendable {
     public var effort: EffortLevel? = nil
     /// On Codex: its model (`model/list`'s id); nil: Codex's default.
     public var codexModel: String? = nil
+    /// Instructions for app-managed Codex worker sessions, separate from the coordinator's.
+    public var codexWorkerInstructions: String? = nil
     /// The model its subagents use (`CLAUDE_CODE_SUBAGENT_MODEL`); nil: the same as its own.
     /// An agent whose definition names a model keeps that one.
     public var subagentModel: BotModel? = nil

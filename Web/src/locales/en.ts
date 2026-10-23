@@ -131,6 +131,7 @@ export const en = {
   "subagent.from": "From {bot}",
   "subagent.engine.claude": "Claude subagent",
   "subagent.engine.codex": "Codex subagent",
+  "subagent.engine.codexWorker": "Codex worker",
   "panel.notReady": "This panel is not ready yet.",
   // markdown.ts
   "markdown.video": "Video",
@@ -150,6 +151,7 @@ export const en = {
   "messages.answered": "Answered",
   "messages.answeredLabel": "Answered: {label}. Show the options",
   "messages.working": "Working",
+  "messages.waitingForWorkers": "Waiting for workers · You can keep chatting",
   "feedback.title": "Feedback: a reply of {bot} was not right",
   "feedback.noWords": "(No words, only the chat around it.)",
   "feedback.hideFull": "Hide the full report",
