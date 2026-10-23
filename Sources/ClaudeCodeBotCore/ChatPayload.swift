@@ -877,7 +877,7 @@ public struct ChatPayload: Encodable, Equatable {
                 status: subagent.status.rawValue,
                 type: subagent.type,
                 engine: (bot.subagentEngine(subagent.id) ?? bot.engine).rawValue,
-                model: subagent.model.map { BotModel(rawValue: $0.lowercased())?.displayName ?? $0 } ?? bot.subagentModel?.displayName,
+                model: bot.subagentModelName(subagent),
                 runtime: subagent.runtime,
                 outputTokens: subagent.reportedOutputTokens,
                 startedAt: subagent.startedAt.timeIntervalSince1970 * 1000,
