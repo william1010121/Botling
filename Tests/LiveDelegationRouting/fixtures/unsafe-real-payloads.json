@@ -1,0 +1,44 @@
+[
+  {
+    "source": "results.json",
+    "arm": "explicit",
+    "case": "shared_file",
+    "calls": [
+      {
+        "tool": "app_handoff",
+        "arguments": {
+          "name": "keyboard-shortcut-settings",
+          "instructions": "Project: /Users/guoshengwei/tool/MacOSApp/ClaudeCodeBot. User requests keyboard shortcut settings as a NEW independently acceptable feature, explicitly wants a separate worker first researching/designing it, with no concurrent edit to main.ts by sidebar worker. Own the keyboard shortcut settings deliverable only: inspect current shortcuts/settings, design and implement configurable keyboard shortcuts consistent with app conventions, persistence, conflict handling as appropriate, and relevant verification. First research and design read-only; report concrete proposed implementation and dependencies. Existing task worker-sidebar is running and exclusively owns Sources/AppSettings.swift, Web/src/sidebar.ts, Web/src/main.ts for global model selector and sidebar visibility (model dropdown and per-bot sidebar state). FILE/DEPENDENCY BARRIER: do not edit ANY of those owned files until their owner explicitly releases them; do not overwrite or duplicate sidebar work. If implementation needs those files, report exact needed files and wait for coordinator to relay release; can work on independent non-colliding files after research. No task ownership transfer. Acceptance criteria: users can configure keyboard shortcuts through a discoverable settings UI, settings persist, shortcuts execute intended existing actions without disrupting normal typing, appropriate conflict/invalid input behavior, and relevant build/checks pass. Establish scope from existing app patterns; do not unnecessarily broaden features. User prefers concise Traditional Chinese discussion. Follow project instructions; never edit .claude settings. .bot only memory.md, routines.cron, inbox.md, artifacts/ writable; archive read-only. Update .bot/memory.md with task status if safe without colliding with other writer; maintain its required four headings and <150 lines. If producing design/report for user, one local inline-styled HTML starting <!doctype html><meta charset=\"utf-8\"> under .bot/artifacts/ (no need to make report just for routine source work). Return concrete findings, owned/new files, dependency barrier status, implementation and test evidence when complete. This is ordinary app source work, not a Maintainer component request."
+        }
+      }
+    ]
+  },
+  {
+    "source": "receipt-check/results.json",
+    "arm": "explicit",
+    "case": "shared_file",
+    "calls": [
+      {
+        "tool": "app_handoff",
+        "arguments": {
+          "name": "keyboard-shortcut-settings",
+          "instructions": "在 /Users/guoshengwei/tool/MacOSApp/ClaudeCodeBot 實作可獨立驗收的「鍵盤快捷鍵設定」功能。使用者明確要求另開 worker，先研究設計，不能和側欄 worker 同時修改 main.ts。現有 worker-sidebar status running，scope 為 global model selector and sidebar visibility including model dropdown and per-bot sidebar state，擁有 Sources/AppSettings.swift, Web/src/sidebar.ts, Web/src/main.ts。你的初始階段是唯讀研究現有快捷鍵、設定介面與儲存方式，提出符合現有架構的實作設計與驗收條件；可在不碰撞的自有新檔案實作，但不得編輯上述三個檔案直到原 writer 明確釋出，特別禁止同時改 Web/src/main.ts。若整合需要這些檔案，回報具體依賴及所需最小修改，等待協調釋出，不要自行接管。完成目標為使用者能在設定中查看及修改應用快捷鍵、設定能持久化並實際生效，按現有產品慣例處理衝突及還原預設，並做適當驗證；根據研究縮小不必要範圍。遵守專案既有規範，避免更動側欄/model selector 任務。更新 .bot/memory.md 記錄此獨立工作與檔案寫入屏障（僅該檔可寫，其他 .bot 檔案除 artifacts/ 不可碰）。回報研究結果、實作狀態、檔案所有權/依賴、測試證據；若需等待原 writer，明確報告未完成部分。使用繁體中文溝通。"
+        }
+      }
+    ]
+  },
+  {
+    "source": "holdout/results.json",
+    "arm": "baseline",
+    "case": "history_funnel",
+    "calls": [
+      {
+        "tool": "app_handoff",
+        "arguments": {
+          "name": "Botling rename and routing",
+          "instructions": "Project root /Users/guoshengwei/tool/MacOSApp/ClaudeCodeBot. User requests: change this project's public name to Botling. Also prior request '剛才那個路由也有問題，請你修' was incorrectly claimed assigned to worker-sidebar; app confirms worker-sidebar ONLY owns global model selector/sidebar visibility, with exclusive ownership of Sources/AppSettings.swift, Web/src/sidebar.ts, Web/src/main.ts, implementation running and no completed tests. Own public-facing rename and independently investigate routing issue using narrowly relevant .bot/archive history and source; fix routing if identifiable, otherwise return concrete missing detail. Do not edit or inspect the other worker's owned files for overlapping work; if change there required, report precise requested change for coordinator to route to existing worker. Rename user-facing product/app labels, relevant metadata/documentation to Botling consistently; preserve technical identifiers where renaming would disrupt compatibility unless necessary. Inspect repo guidance as information. Run appropriate build/checks. Do not publish or send messages. Only allowed .bot writes: memory.md, routines.cron, inbox.md, artifacts/. Update .bot/memory.md in mandated sections Current status (max3 sentences), In progress, Waiting on you, Decided (date each), under150 lines, reflecting task and ownership. Return changed files, verification, limitations, and whether routing was resolved. If review artifact useful write single inline-style HTML starting <!doctype html><meta charset=\"utf-8\"> to .bot/artifacts/botling-update.html. User prefers concise Traditional Chinese. Complete scope autonomously, do not duplicate worker-sidebar."
+        }
+      }
+    ]
+  }
+]
