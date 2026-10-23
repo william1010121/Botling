@@ -60,6 +60,12 @@ func run() async throws {
         shelf.record(on: site, page: session.front.id, url: site.conversationURL("sample\(i)1234"), pageTitle: nil,
                      reading: .read(title: account.name, turns: [WebTurn(role: .user, text: "Keep my current question")] + (i == 1 ? [WebTurn(role: .assistant, text: "Current answer")] : [])), settled: i == 1)
     }
+    // Pin both account rows before navigating; exercise pin + visibility on real sessions.
+    for i in accounts.indices {
+        let row = shelf.conversation("sample\(i)1234", of: site)!
+        shelf.setPinned(true, conversation: row, of: site)
+    }
+    checks["bothAccountPinsVisibleWhenShortened"] = shelf.listed(of: site, limit: 1).filter(\.isPinned).count == 2
     // Show the real sidebar, then invoke the same navigation callback as its provider rows.
     let content = HStack(spacing: 0) {
         VStack(alignment: .leading, spacing: 0) {
@@ -95,6 +101,12 @@ func run() async throws {
     checks["providerQueuesNoLoad"] = shelf.requested[site.id] == nil
     // Avoid actually consuming a broken baseline's unwanted remote start-page request.
     shelf.handled(site)
+    let frontBeforePin = shelf.front, requestBeforePin = shelf.requested, openBeforePin = shelf.open
+    let workRow = shelf.conversation("sample11234", of: site)!
+    shelf.setPinned(false, conversation: workRow, of: site)
+    shelf.setPinned(true, conversation: workRow, of: site)
+    checks["pinToggleKeepsNavigation"] = shelf.front == frontBeforePin && shelf.requested == requestBeforePin && shelf.open == openBeforePin
+    checks["pinToggleKeepsWorkAccount"] = shelf.account(of: site) == work
     for (i, account) in accounts.enumerated() {
         workspace.navigate(to: site, account: account)
         checks["account\(i)RestoresSelection"] = shelf.open[site.id] == "sample\(i)1234"
