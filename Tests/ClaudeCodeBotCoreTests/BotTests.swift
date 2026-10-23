@@ -19,7 +19,22 @@ final class FakeAgent: AgentProcess, @unchecked Sendable {
         (events, continuation) = AsyncStream.makeStream(of: AgentEvent.self)
     }
 
-    var sent: [String] { lock.withLock { _sent } }
+    /// Full transport input, including the reaction snapshot (asserted by MessageReactionTests).
+    var wireSent: [String] { lock.withLock { _sent } }
+    /// Existing conversation tests inspect the message independently of reaction metadata.
+    var sent: [String] { wireSent.map(Self.withoutReactionSnapshot) }
+
+    private static func withoutReactionSnapshot(_ text: String) -> String {
+        guard let start = text.range(of: "(App: Current message reactions in this chat;"),
+              let headerEnd = text[start.lowerBound...].firstIndex(of: "\n") else { return text }
+        let jsonStart = text.index(after: headerEnd)
+        let jsonEnd = text[jsonStart...].firstIndex(of: "\n") ?? text.endIndex
+        guard let data = String(text[jsonStart..<jsonEnd]).data(using: .utf8),
+              (try? JSONSerialization.jsonObject(with: data)) is [[String: Any]] else { return text }
+        let before = text[..<start.lowerBound].trimmingCharacters(in: .newlines)
+        let after = text[jsonEnd...].trimmingCharacters(in: .newlines)
+        return [before, after].filter { !$0.isEmpty }.joined(separator: "\n\n")
+    }
     var sentImages: [[ClaudeCodeBotCore.Attachment]] { lock.withLock { _sentImages } }
     var finished: Bool { lock.withLock { _finished } }
 
@@ -32,7 +47,7 @@ final class FakeAgent: AgentProcess, @unchecked Sendable {
             _sent.append(text)
             _log.append("send")
         }
-        if let reply = respond(text) {
+        if let reply = respond(Self.withoutReactionSnapshot(text)) {
             continuation.yield(.reply(reply, isError: false))
         }
     }
