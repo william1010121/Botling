@@ -158,7 +158,7 @@ public final class Workspace: ObservableObject {
     public var briefWriter: BriefWriter?
     /// Components Maintainer was asked to give a Command for the Board (`makeLive`), not in yet.
     var boardCommandAsks: Set<String> = []
-    /// Plugins for ClaudeCodeBot itself: `~/.claudecodebot/plugins/` and the ones shipped with the app.
+    /// Plugins for Botling itself: `~/.claudecodebot/plugins/` and the ones shipped with the app.
     public let plugins: PluginRegistry
     /// Settings → Doctor: whether Claude Code is installed, new enough and signed in.
     /// A var only so a snapshot can check without asking npm.
@@ -169,7 +169,7 @@ public final class Workspace: ObservableObject {
     /// Web AIs in the left column (Gemini): their conversations and saved text.
     public let web: WebShelf
     private let makeBot: BotFactory
-    /// ClaudeCodeBot's own settings: developer mode, auto-approve, ignored items.
+    /// Botling's own settings: developer mode, auto-approve, ignored items.
     @Published public internal(set) var settings: AppSettings
     /// The right panel folded (or opened) for a while by a view such as a Board, not saved;
     /// nil when the user's own choice holds. See `setRightPanelCollapsed(_:remember:)`.
@@ -186,7 +186,7 @@ public final class Workspace: ObservableObject {
     var codexRateLimitsURL: URL { root.appending(path: "codex-rate-limits.json") }
     /// Unsent text in each chat's input box, kept over switching bots and restarts.
     public private(set) lazy var drafts = ComposerDrafts(url: root.appending(path: "drafts.json"))
-    /// The ClaudeCodeBot build running now; nil when not run from an app bundle (`swift run`).
+    /// The Botling build running now; nil when not run from an app bundle (`swift run`).
     public var runningBuild: BuildInfo?
     /// Runs the install script, detached, and quits the app (the app sets it).
     public var launchInstaller: (([String]) -> Void)?
@@ -294,7 +294,7 @@ public final class Workspace: ObservableObject {
             tell(mainBot, text)
         }
         plugins.onBroken = { [weak self] plugin, problem in
-            self?.handToMaintainer("(App: Hot-update check) The plugin \"\(plugin)\" is broken; ClaudeCodeBot fell back to the previous version or disabled it for now. Please fix it: \(problem)")
+            self?.handToMaintainer("(App: Hot-update check) The plugin \"\(plugin)\" is broken; Botling fell back to the previous version or disabled it for now. Please fix it: \(problem)")
         }
         plugins.onUpdated = { [weak self] plugin, old in
             guard let self else { return }
@@ -322,10 +322,10 @@ public final class Workspace: ObservableObject {
     /// The user's projects and Maintainer.
     var everyProject: [Project] { projects + [maintainerProject] }
 
-    /// How Maintainer runs `ccb plugin check` (the ClaudeCodeBot binary with --check-plugin).
+    /// How Maintainer runs `ccb plugin check` (the Botling binary with --check-plugin).
     private let checkCommand: String?
     /// How Maintainer and the component editor draw a component as the app does and list what
-    /// is wrong (the ClaudeCodeBot binary with --component-shot, see `ComponentShot`).
+    /// is wrong (the Botling binary with --component-shot, see `ComponentShot`).
     private let shotCommand: String?
 
     // MARK: Installing plugins from outside
@@ -922,7 +922,7 @@ public final class Workspace: ObservableObject {
 
     /// Checks every `interval` seconds for routines whose time has come. Checking a wall-clock
     /// time (rather than sleeping until it) survives the Mac sleeping, and a time missed while
-    /// ClaudeCodeBot was closed still runs once later that day.
+    /// Botling was closed still runs once later that day.
     public func startRoutines(every interval: TimeInterval = 30) {
         routineTask?.cancel()
         routineTask = Task { [weak self] in
@@ -1096,7 +1096,7 @@ public final class Workspace: ObservableObject {
         guard changed, files.fileExists(atPath: library.appending(path: ".git").path) else { return }
         let git = PluginLibraryGit(folder: library)
         git.run(["add", "-A"])
-        git.run(["commit", "-q", "-m", "Rename plugins for ClaudeCodeBot (deck-* → ccb-*)"])
+        git.run(["commit", "-q", "-m", "Rename plugins for Botling (deck-* → ccb-*)"])
     }
 
     /// `deck-x` → `ccb-x`; any other name as it is.
@@ -1291,7 +1291,7 @@ public final class Workspace: ObservableObject {
                 if project == nil { showOpenQuestion(of: name) }
             case let .plugin(request):
                 if project?.isMaintainer != true {
-                    handToMaintainer("\(project?.name ?? mainBot.name)'s request for ClaudeCodeBot: \(request)")
+                    handToMaintainer("\(project?.name ?? mainBot.name)'s request for Botling: \(request)")
                 }
             }
         }
@@ -1384,19 +1384,19 @@ public final class Workspace: ObservableObject {
             """
         } ?? "  (No component-shot command this time: review the template by reading it.)"
         return """
-        - You are "Maintainer": you look after the plugin library of the ClaudeCodeBot app. Your working folder \(library) is the plugin library, a git repo.
+        - You are "Maintainer": you look after the plugin library of the Botling app. Your working folder \(library) is the plugin library, a git repo.
         - Read \(library)/PLUGINS.md first: the plugin format, the APIs of the three parts (web, program, Claude), and the check and release steps are all there.
         - Every time you change a plugin:
           1. Edit the files (for a plugin with src/, edit src, then bundle with esbuild to the location package.json names).
           2. Bump the version in that plugin's package.json (patch for fixes, minor for new features).
           3. Run the check: \(check). If it fails, fix it, at most 3 rounds; if all 3 fail, use a choices block to tell the user where you are stuck.
           4. git add that plugin folder, git commit -m "<plugin name>: <what you did>", then git tag <plugin name>--v<version>.
-          5. Report it to the user. ClaudeCodeBot hot-updates on its own; no restart needed.
+          5. Report it to the user. Botling hot-updates on its own; no restart needed.
         - The user reads your chat and is not technical: every report is one or two plain sentences, in the user's language, on what you made and where the user will see it. For a component a bot asked for, say you handed it back to that bot, which shows it in its own chat. Leave out versions, tags, checks, file names, APIs and pixel sizes; mention a doubt only when the user must do something about it, and then say what to do in plain words.
         - Components live in ccb-components/components/<name>/ (template.html, about.md). Never edit template.html or about.md yourself:
           every component request (a new component or a change) goes to a ccb-core:component-editor agent with the Agent tool, run in the background, one agent per component, so several components can be worked on at once. Give it the component folder's path and the request (and any attached pictures).
           A component that will be pinned gets ONE responsive layout that adapts to any width and height (the user drags its Board card to any size from \(PinnedComponent.Size.rangeText) and its opened panel taller: CSS grid auto-fill columns, container queries, a summary when short, the key number when tiny; no per-size layouts; ccb.size with px and ccb.onSize, see PLUGINS.md; an about.md "Sizes: 2x2" line is optional, only the size a new pin starts at; on the Board ccb.surface is "board" and <html data-surface="board">: the component is the whole tile, so no own border, background or radius, at most ~12px padding, fill the tile; in the chat ccb.surface is "chat" and <html data-surface="chat">: drawn at its widest size across the whole reply, framed by the bubble, so no own frame there either, as tall as its content; opened above the input box it is "pinned", frameless the same way and as tall as its content) and an "Icon: <SF Symbol name or emoji>" line, and calls ccb.setStatus({text, tone}) with its key value for its chip above the input box (see PLUGINS.md): say so to the editor.
-          Never edit ccb-core/claude/agents/component-editor.md (the editor's own instructions): ClaudeCodeBot writes it. Its model is picked in ClaudeCodeBot's Settings (Plugins › Component editor); a change to its prompt is a request for the ClaudeCodeBot project: tell the user so in one sentence.
+          Never edit ccb-core/claude/agents/component-editor.md (the editor's own instructions): Botling writes it. Its model is picked in Botling's Settings (Plugins › Component editor); a change to its prompt is a request for the Botling project: tell the user so in one sentence.
           Two editors never work on the same component folder at once: if another request comes for a component already being edited, send it to that running editor with SendMessage, or keep it until that editor returns.
           While editors run, stay free for new requests. When an editor returns, review its change, then do the rest yourself, one component at a time: bump the ccb-components version, run the check, then git add, commit and tag as above.
         \(shot)
@@ -1417,8 +1417,8 @@ public final class Workspace: ObservableObject {
         - Turning an existing project into a plugin: first find the reusable core (a library without dependencies is best); the web part should only do the wiring (hook up ccb.composer, settings, commands).
           Bundle it with esbuild into a single ES module (use the esbuild in the original project's node_modules, or npx --yes esbuild@\(Self.bundlerVersion)).
           Copy the original project's license into the plugin (the license in package.json and the LICENSE file); GPL code may only go into a separate plugin.
-        - A "Hot-update check" message means ClaudeCodeBot found a broken plugin: fix it with the steps above.
-        - A bot that only needs instructions and a schedule (a morning news bot, a reading coach) is not a plugin: end your reply with <new-bot name="short name, no quotes">its job in a few sentences, including when it should work</new-bot>; ClaudeCodeBot adds it to the left column and it writes its own routines. Build a plugin with ccb.bots.create (see PLUGINS.md) only when the bot needs code of its own. Never write that tag inside code or examples.
+        - A "Hot-update check" message means Botling found a broken plugin: fix it with the steps above.
+        - A bot that only needs instructions and a schedule (a morning news bot, a reading coach) is not a plugin: end your reply with <new-bot name="short name, no quotes">its job in a few sentences, including when it should work</new-bot>; Botling adds it to the left column and it writes its own routines. Build a plugin with ccb.bots.create (see PLUGINS.md) only when the bot needs code of its own. Never write that tag inside code or examples.
         """
     }
 
@@ -1428,7 +1428,7 @@ public final class Workspace: ObservableObject {
         """
         ---
         name: component-editor
-        description: Edits one component in the ClaudeCodeBot chat (template.html and about.md). Give it the component folder's path and what to change.
+        description: Edits one component in the Botling chat (template.html and about.md). Give it the component folder's path and what to change.
         model: \(model.rawValue)
         tools: Read, Write, Edit, Bash
         ---
@@ -1473,7 +1473,7 @@ public final class Workspace: ObservableObject {
         PluginRegistry.contentHash(text)
     }
 
-    /// `ccb-core`: ClaudeCodeBot's own agents, starting with the component editor (on the model
+    /// `ccb-core`: Botling's own agents, starting with the component editor (on the model
     /// Settings picks). The editor's file follows the app: written when the app's text changes,
     /// but only over a file the app wrote itself (or an older app's text). A file edited since
     /// (Maintainer, by hand) is left as it is, and its hash is returned so you can be asked;

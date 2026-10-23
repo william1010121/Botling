@@ -10,7 +10,7 @@ struct DelegationRoutingPolicyTests {
     @Test func appSourceAndPluginLibraryHaveDifferentOwners() {
         for engine in BotEngine.allCases {
             let system = prompts(engine).system
-            #expect(system.contains("ClaudeCodeBot's application source belongs to its project bot"))
+            #expect(system.contains("Botling's application source belongs to its project bot"))
             #expect(system.contains("Only plugin-library extensions"))
             #expect(!system.contains("For new features or changed behaviour in ClaudeCodeBot itself (plugins)"))
             #expect(system.contains("<component name="))

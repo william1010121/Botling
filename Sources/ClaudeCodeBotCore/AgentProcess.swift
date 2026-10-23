@@ -303,7 +303,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
             for line in lines.append(data) {
                 if let id = StreamEvent.unsupportedRequest(in: line) {
                     // A request the app does not handle gets an error at once, so claude does not wait.
-                    respond?(["subtype": "error", "request_id": id, "error": "Not supported by ClaudeCodeBot."])
+                    respond?(["subtype": "error", "request_id": id, "error": "Not supported by Botling."])
                     continue
                 }
                 for event in StreamEvent.events(in: line) { continuation.yield(event) }
@@ -463,7 +463,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
 
     private static func environment() -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
-        // When ClaudeCodeBot is started from inside a Claude Code session, these would make the child
+        // When Botling is started from inside a Claude Code session, these would make the child
         // think it is nested in that session.
         for key in ["CLAUDECODE", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN"] {
             environment.removeValue(forKey: key)

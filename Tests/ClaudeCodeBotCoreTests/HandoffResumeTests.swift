@@ -35,7 +35,7 @@ struct HandoffResumeTests {
         // system prompt) and yours. No resume prompt, no memory read.
         #expect(resumed.sent.count == 1)
         let first = try #require(resumed.sent.first)
-        #expect(first.hasPrefix("(App: ClaudeCodeBot restarted you in this same conversation (loading new plugins)"))
+        #expect(first.hasPrefix("(App: Botling restarted you in this same conversation (loading new plugins)"))
         #expect(first.contains("(App: Your components: cards.)"))
         #expect(first.hasSuffix("next"))
         #expect(!first.contains(bot.prompts.resume))

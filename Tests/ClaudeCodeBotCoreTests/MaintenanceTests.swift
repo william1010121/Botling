@@ -128,7 +128,7 @@ struct MaintenanceTests {
         }
         let workspace = workspace(fake)
         workspace.mainBot.send("Can the input box do laas?")
-        await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text == "Main bot's request for ClaudeCodeBot: laas quick typing in the input box" } }
+        await eventually { workspace.maintainer.messages.contains { $0.role == .relay && $0.text == "Main bot's request for Botling: laas quick typing in the input box" } }
         #expect(workspace.mainBot.messages.last?.text == "Handed to Maintainer.")
         await workspace.putEveryoneToSleep()
     }
