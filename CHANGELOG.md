@@ -6,8 +6,7 @@ app and publishes it on GitHub Releases.
 
 ## Unreleased
 
-Development target: **1.18.0** (`VERSION`); local development builds use `1.18.0-dev`.
-The changes below remain unreleased; this version target does not create a tag or release.
+## 1.18.0
 
 ### Changed
 
@@ -26,7 +25,9 @@ The changes below remain unreleased; this version target does not create a tag o
   its own id and the lines whose reactions changed (about 4.4k characters down to under 100
   when nothing changed). Component usage goes to a session once; a changed library or list then
   sends only what changed (new, changed or dropped components), never the whole list again, and
-  the Codex head hears about it too. Both heads behave the same.
+  the Codex head hears about it too. Both heads behave the same. Settings → Usage → App context
+  savings has separate, saved switches for reaction and component deltas, both on by default;
+  turning one off sends its full context with the next normal message.
 - **Quieter left column.** Bot and group rows no longer show the orange "waiting on you" dot,
   and running subagent rows no longer show a blue dot (the owner head's face is on the row);
   the folded strip drops the orange dot too. Only the unread count (a blue dot when folded)
@@ -56,9 +57,22 @@ The changes below remain unreleased; this version target does not create a tag o
 - **Updated Cute character art.** Claude and Codex use the supplied transparent portrait pack
   throughout the app, with separate awake, working, waiting and sleepy expressions. Bot hats,
   recipient highlights, the existing work animation and the Original look remain available.
+- **Animated, adjustable chat avatars.** Cute avatars blink when idle, type while working
+  and wave when done, with static fallbacks and motion paused offscreen or for Reduce Motion.
+  Click an avatar to preview the animations. Settings → General saves a chat avatar size from
+  32 to 96 px and applies it immediately; sidebar icons and small engine heads keep their size.
+- **Message details share one footer.** Work status, emoji reactions and the heads that have
+  read a message sit together under its bubble and wrap in narrow chats.
 
 ### Added
 
+- **Emoji reactions on chat messages.** Add or remove reactions on your messages and replies
+  from either head; they stay with the saved chat. A reaction alone does not wake a head or
+  send a message; its context goes with the next normal turn.
+- **Grok in the Web section.** Open Grok beside Gemini, ChatGPT and Claude, with its own web
+  session and page reader for saved conversations.
+- **Pin web conversations.** A web conversation's context menu can pin or unpin it. Pinned
+  rows stay first and visible when the list is shortened, and the choice survives a restart.
 - **Several Google accounts in Gemini.** A small ⌄ beside Gemini in the left column opens its
   account menu: pick an account to ask a new question in it, add one (it signs in on its own,
   separate website data), or rename or remove one. With more than one account, Gemini's face
@@ -94,9 +108,8 @@ The changes below remain unreleased; this version target does not create a tag o
   `~/.codex/config.toml`. Both engines read and write the same `memory.md`: switching engine
   while the bot is awake writes a handoff into it before the next message, and the new session
   reads it. On Codex, results stay as local pages (Codex has no Artifact tool), the model is
-  Codex's own, and its tokens are counted with the rest (no cost in dollars). The first part of
-  the Codex engine plan; one bot with both heads at once, hand-offs between them and round
-  limits come later.
+  Codex's own, and its tokens are counted with the rest (no cost in dollars). A bot can also
+  enable both heads and hand work between them, as described below.
 - **Web capture: the web bots' traffic, for fixing their page readers.** A Capture button over
   Gemini's, ChatGPT's and Claude's page records the page and the traffic the page itself
   fetched (fetch, XHR, EventSource and WebSocket, watched from inside the page: no certificate,
@@ -153,6 +166,15 @@ The changes below remain unreleased; this version target does not create a tag o
 
 ### Fixed
 
+- **Switching web rows keeps the selected conversation.** Picking a provider or Google
+  account returns to its current page instead of starting a new question; the selected row
+  remains visible alongside pinned rows in a shortened list.
+- **Gemini's nested menus stay beside their controls.** A submenu that WebKit places at the
+  page's top-left is anchored to its control and kept within the view, then restored on close.
+- **Cross-bot replies show their source head.** Relayed replies keep the actual engine and
+  source bot's avatar instead of borrowing the receiving chat's head.
+- **Codex can dispatch several independent tasks in one turn.** Accepting the first worker
+  no longer ends dispatch before the remaining ready tasks have been handed off.
 - **An interrupted reply no longer disappears.** When you send another message while the bot
   is still working (or it pauses handed-over work for you, its process dies, or the app quits
   mid-turn), what it had already written and its Worked steps stay in the chat as a bubble
@@ -201,6 +223,13 @@ The changes below remain unreleased; this version target does not create a tag o
   saves to the head that owns the agent. Saved teams
   appear after restart without waking either engine, while each process keeps its own
   liveness and trace state.
+
+### Known limitations
+
+- Hand-offs stop together with **Stop all**; stopping a single row is not implemented.
+- Authenticated Grok replies and sign-in persistence, a second Google account, Gemini's nested
+  menu on the real site, live model reactions and interruption recovery still need live
+  acceptance. Local fixtures, saved-data tests and startup checks do not establish those results.
 
 ## 1.15.1
 
