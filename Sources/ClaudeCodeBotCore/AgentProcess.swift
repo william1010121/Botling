@@ -167,6 +167,8 @@ public struct AgentLaunch: Equatable, Sendable {
     public var codexModel: String? = nil
     /// Instructions for app-managed Codex worker sessions, separate from the coordinator's.
     public var codexWorkerInstructions: String? = nil
+    /// What those worker sessions start on; unset values follow `codexModel`/`effort`.
+    public var codexWorkerDefaults = CodexWorkerDefaults()
     /// The model its subagents use (`CLAUDE_CODE_SUBAGENT_MODEL`); nil: the same as its own.
     /// An agent whose definition names a model keeps that one.
     public var subagentModel: BotModel? = nil

@@ -52,6 +52,33 @@ public enum EffortLevel: String, CaseIterable, Codable, Sendable {
     }
 }
 
+/// What app-managed Codex workers start on. Each value left nil follows what workers did before
+/// there was a choice: the coordinator's model and effort, else `~/.codex/config.toml`.
+public struct CodexWorkerDefaults: Codable, Equatable, Sendable {
+    /// A `model/list` id.
+    public var model: String?
+    public var effort: EffortLevel?
+    /// Fast (Codex's `priority` service tier) on or off.
+    public var fast: Bool?
+
+    public init(model: String? = nil, effort: EffortLevel? = nil, fast: Bool? = nil) {
+        self.model = model
+        self.effort = effort
+        self.fast = fast
+    }
+
+    /// A value this build does not know (a newer effort, say) reads as unset, not as an error.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        model = try? container.decodeIfPresent(String.self, forKey: .model)
+        effort = (try? container.decodeIfPresent(String.self, forKey: .effort)).flatMap { $0.flatMap(EffortLevel.init(rawValue:)) }
+        fast = try? container.decodeIfPresent(Bool.self, forKey: .fast)
+    }
+
+    /// The thread's `serviceTier`: nil (key left out) follows Codex's config.
+    var serviceTier: String? { fast.map { $0 ? "priority" : "default" } }
+}
+
 public enum BotPhase: Equatable, Sendable {
     /// No process. The row is dimmed; the next message wakes it.
     case asleep

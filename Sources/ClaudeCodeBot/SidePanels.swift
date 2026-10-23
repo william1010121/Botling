@@ -1366,6 +1366,42 @@ struct SettingsPage: View {
                             Task { await bot.setCodexModel(model) }
                         }
                         .task { codexModels = await CodexModels.load() }
+                        Rectangle().fill(Theme.line).frame(height: 1)
+                        DropdownRow(
+                            title: L("Codex worker model"),
+                            choices: [nil] + Self.choices(codexModels, keeping: bot.codexWorkerDefaults.model),
+                            chosen: bot.codexWorkerDefaults.model,
+                            label: { id in id.map { id in codexModels.first { $0.id == id }?.name ?? id } ?? L("Same as bot") },
+                            disabled: bot.isSwitching
+                        ) { model in
+                            var defaults = bot.codexWorkerDefaults
+                            defaults.model = model
+                            Task { await bot.setCodexWorkerDefaults(defaults) }
+                        }
+                        Rectangle().fill(Theme.line).frame(height: 1)
+                        DropdownRow(
+                            title: L("Codex worker effort"),
+                            choices: [nil] + EffortLevel.allCases.map(Optional.some),
+                            chosen: bot.codexWorkerDefaults.effort,
+                            label: { $0?.displayName ?? L("Same as bot") },
+                            disabled: bot.isSwitching
+                        ) { level in
+                            var defaults = bot.codexWorkerDefaults
+                            defaults.effort = level
+                            Task { await bot.setCodexWorkerDefaults(defaults) }
+                        }
+                        Rectangle().fill(Theme.line).frame(height: 1)
+                        DropdownRow(
+                            title: L("Codex worker fast mode"),
+                            choices: [nil, true, false],
+                            chosen: bot.codexWorkerDefaults.fast,
+                            label: { $0.map { $0 ? L("On") : L("Off") } ?? L("Follow Codex config") },
+                            disabled: bot.isSwitching
+                        ) { fast in
+                            var defaults = bot.codexWorkerDefaults
+                            defaults.fast = fast
+                            Task { await bot.setCodexWorkerDefaults(defaults) }
+                        }
                     }
                 }
                 .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
@@ -1392,6 +1428,7 @@ struct SettingsPage: View {
                 SettingNote(L("Subagents use their own model and effort when their definition names one. Default effort leaves it to the model. Awake, a change restarts the bot in the same conversation just before its next message; asleep, it applies when it wakes."))
                 if bot.heads.engines.contains(.codex) {
                     SettingNote(L("On Codex the bot asks before commands outside its folders and keeps results as local pages; Claude publishes them when asked. Model, Subagent model are Claude's; Thinking effort is both's."))
+                    SettingNote(L("Codex workers start on the Codex worker model, effort and fast mode. Same as bot uses the bot's Codex model and thinking effort; when those are default too, and with Follow Codex config, workers use ~/.codex/config.toml."))
                 }
             }
 

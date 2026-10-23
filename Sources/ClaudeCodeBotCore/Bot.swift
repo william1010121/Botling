@@ -59,6 +59,9 @@ public final class Bot: ObservableObject, Identifiable {
     @Published public private(set) var switchTarget: BotModel?
     /// The model its subagents use; nil: the same as its own.
     @Published public private(set) var subagentModel: BotModel?
+    /// What its app-managed Codex workers start on; unset values follow the coordinator and
+    /// Codex's own config (`~/.codex/config.toml`).
+    @Published public private(set) var codexWorkerDefaults = CodexWorkerDefaults()
     /// How hard it (and its subagents) think; nil: the model's default.
     @Published public private(set) var effort: EffortLevel?
     /// Components pinned to it: the chips above its input box and its Board (`pins.json`).
@@ -369,6 +372,7 @@ public final class Bot: ObservableObject, Identifiable {
         conductor = Conductor(settings: heads)
         self.engine = heads.engines.contains(engine) ? engine : heads.engines[0]
         subagentModel = store?.loadSubagentModel()
+        codexWorkerDefaults = store?.loadCodexWorkerDefaults() ?? CodexWorkerDefaults()
         effort = store?.loadEffort()
         componentList = store?.loadComponentList()
         pins = store?.loadPins() ?? []
@@ -710,6 +714,7 @@ public final class Bot: ObservableObject, Identifiable {
         made.heads = heads
         made.conductor.settings = heads
         made.subagentModel = subagentModel
+        made.codexWorkerDefaults = codexWorkerDefaults
         made.effort = effort
         made.alwaysAllowed = alwaysAllowed
         made.now = now
@@ -1334,6 +1339,7 @@ public final class Bot: ObservableObject, Identifiable {
             effort: effort,
             codexModel: heads.codexModel,
             codexWorkerInstructions: engine == .codex ? prompts.codexWorkerSystem : nil,
+            codexWorkerDefaults: codexWorkerDefaults,
             subagentModel: subagentModel
         ))
         self.process = process
@@ -2587,6 +2593,16 @@ public final class Bot: ObservableObject, Identifiable {
         await restart(.subagentModel(newModel))
     }
 
+    /// Picks what its Codex workers start on. Awake on Codex: restarts in the same thread before
+    /// its next message, like a Codex model switch; otherwise the next Codex wake uses it.
+    public func setCodexWorkerDefaults(_ defaults: CodexWorkerDefaults) async {
+        guard defaults != codexWorkerDefaults else { return }
+        if let partner { await partner.setCodexWorkerDefaults(defaults) }
+        codexWorkerDefaults = defaults
+        store?.save(codexWorkerDefaults: defaults)
+        if engine == .codex { await restart(.codexWorkers) }
+    }
+
     /// Picks how hard it thinks. Awake: restarts before its next message; asleep: the next wake.
     public func setEffort(_ newEffort: EffortLevel?) async {
         guard newEffort != effort else { return }
@@ -3009,6 +3025,8 @@ public enum RestartReason: Equatable, Sendable {
     case engine(BotEngine)
     /// Another Codex model (nil: Codex's default).
     case codexModel(String?)
+    /// Other defaults for its app-managed Codex workers.
+    case codexWorkers
 
     /// The new session runs on another CLI, which cannot resume this one's conversation.
     var changesEngine: Bool {
@@ -3027,6 +3045,7 @@ public enum RestartReason: Equatable, Sendable {
         case let .autoApprove(on): on ? "auto-approving safe actions" : "asking before tools"
         case let .engine(engine): "running on \(engine.displayName)"
         case let .codexModel(model): "Codex model \(model ?? "default")"
+        case .codexWorkers: "new Codex worker defaults"
         }
     }
 
@@ -3041,6 +3060,7 @@ public enum RestartReason: Equatable, Sendable {
         case let .autoApprove(on): on ? L("auto-approving safe actions") : L("asking before tools")
         case let .engine(engine): engine.displayName
         case let .codexModel(model): model ?? L("Codex's default model")
+        case .codexWorkers: L("new Codex worker defaults")
         }
     }
 }
