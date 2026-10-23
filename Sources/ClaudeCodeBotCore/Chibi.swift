@@ -111,7 +111,7 @@ public enum Chibi {
     }
 
     /// The bot's face on top, with a brim.
-    private static func hatSVG(_ hat: Hat) -> String {
+    public static func hatSVG(_ hat: Hat) -> String {
         let box = Hat.box
         let brimY = box.y + box.size * 0.91
         var out = "<path d='\(hat.path)' fill='\(hat.color)' stroke='\(hat.color)' stroke-width='\(format(box.size * 0.08))' stroke-linejoin='round'/>"
