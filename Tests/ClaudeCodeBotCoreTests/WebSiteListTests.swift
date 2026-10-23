@@ -11,9 +11,9 @@ struct WebSiteListTests {
     let chatgpt = WebSite.chatgpt
     let claude = WebSite.claude
 
-    @Test func theColumnListsGeminiChatGPTAndClaude() {
-        #expect(WebSite.all.map(\.id) == ["gemini", "chatgpt", "claude"])
-        #expect(WebSite.all.map(\.name) == ["Gemini", "ChatGPT", "Claude"])
+    @Test func theColumnListsAllWebProviders() {
+        #expect(WebSite.all.map(\.id) == ["gemini", "chatgpt", "claude", "grok"])
+        #expect(WebSite.all.map(\.name) == ["Gemini", "ChatGPT", "Claude", "Grok"])
         // Each its own selection, sign-in store and face.
         #expect(Set(WebSite.all.map(\.selectionID)).count == WebSite.all.count)
         #expect(Set(WebSite.all.map(\.dataStoreID)).count == WebSite.all.count)
@@ -58,6 +58,51 @@ struct WebSiteListTests {
         #expect(claude.conversationID(in: URL(string: "https://claude.ai/artifact/\(id)")!) == nil)
     }
 
+    @Test func grokRoutesAndLoginStayInsideItsOwnProfile() {
+        let grok = WebSite.grok
+        let id = "4b9e2f10-6c3d-4a8e-9f21-0d7c5b3a1e88"
+        #expect(grok.startURL.absoluteString == "https://grok.com/")
+        #expect(grok.conversationURL(id).absoluteString == "https://grok.com/c/\(id)")
+        #expect(grok.conversationID(in: URL(string: "https://grok.com/c/\(id)?ref=web")!) == id)
+        for url in ["https://grok.com/", "https://grok.com/sign-in", "https://grok.com/share/\(id)", "https://accounts.x.ai/c/\(id)", "https://grok.com/c/a%20b"] {
+            #expect(grok.conversationID(in: URL(string: url)!) == nil)
+        }
+        for host in ["grok.com", "accounts.x.ai", "auth.x.ai", "accounts.google.com", "appleid.apple.com", "x.com", "twitter.com", "github.com"] {
+            #expect(grok.keepsInside(URL(string: "https://\(host)/sign-in")!))
+            #expect(!grok.keepsInside(URL(string: "https://not\(host)/sign-in")!))
+        }
+        // Existing login identities must never move when another provider is added.
+        for (site, suffix) in zip([WebSite.gemini, .chatgpt, .claude, .grok], ["1", "2", "3", "4"]) {
+            #expect(site.dataStoreID.uuidString == "3E3B0000-0000-4000-8000-0000000000D" + suffix)
+            #expect(site.selectionID.uuidString == "3E3B0000-0000-4000-8000-0000000000E" + suffix)
+        }
+    }
+
+    @Test func grokOpensSelectsAndRestoresItsSavedConversation() throws {
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = Workspace(root: root) { profile, store in
+            Bot(profile: profile, launcher: FakeLauncher().launcher, store: store)
+        }
+        workspace.openFresh(.grok)
+        #expect(workspace.selectedWebSite == .grok)
+        #expect(workspace.web.requested["grok"] == WebSite.grok.startURL)
+        #expect(!workspace.showsBoardSwitch)
+        let url = WebSite.grok.conversationURL("grok-test-1234")
+        let file = try #require(workspace.web.record(on: .grok, url: url, pageTitle: "Check - Grok",
+            reading: .read(title: nil, turns: [.init(role: .user, text: "Check"), .init(role: .assistant, text: "Ready")]), now: now))
+        let reloaded = WebShelf(folder: root.appending(path: "web"), library: root)
+        let conversation = try #require(reloaded.conversations(of: .grok).first)
+        #expect(conversation.url == url && conversation.messages == 2)
+        #expect(reloaded.conversation(savedIn: file)?.site == .grok)
+        #expect(reloaded.conversations(of: .claude).isEmpty)
+        #expect(workspace.openSavedWebConversation(file))
+        #expect(workspace.selectedWebSite == .grok)
+        #expect(workspace.web.requested["grok"] == url)
+        workspace.openFresh(.chatgpt)
+        #expect(workspace.selectedWebSite == .chatgpt)
+        #expect(workspace.web.conversations(of: .grok).count == 1)
+    }
+
     @Test func aConversationsAddressIsBuiltFromItsID() {
         for site in WebSite.all {
             let url = site.conversationURL("8f3a2c1d9e0b")
@@ -78,7 +123,7 @@ struct WebSiteListTests {
             #expect(claude.keepsInside(URL(string: url)!), "\(url)")
         }
         // A link in an answer goes to the browser.
-        for site in [chatgpt, claude] {
+        for site in [chatgpt, claude, .grok] {
             #expect(!site.keepsInside(URL(string: "https://www.google.com/search?q=x")!))
             #expect(!site.keepsInside(URL(string: "https://example.com/?q=\(site.host)")!))
             #expect(!site.keepsInside(URL(string: "https://not\(site.host)/")!))
@@ -100,7 +145,7 @@ struct WebSiteListTests {
 
     @Test func eachSiteSavesToItsOwnFolderAndALinkToTheFileOpensIt() throws {
         let shelf = WebShelf(folder: root.appending(path: "web"), library: root)
-        for site in [chatgpt, claude] {
+        for site in [chatgpt, claude, .grok] {
             // A question sent on the start page is a row at once, before the page has an id.
             shelf.startNew(on: site)
             shelf.record(on: site, url: site.startURL, pageTitle: site.name,
@@ -143,6 +188,6 @@ struct WebSiteListTests {
             #expect(script.source.contains("function extract(doc)"))
         }
         let manifest = try String(contentsOf: library.appending(path: "ccb-web-extractors/package.json"), encoding: .utf8)
-        #expect(manifest.contains("Gemini, ChatGPT, Claude"))
+        #expect(manifest.contains("Gemini, ChatGPT, Claude, Grok"))
     }
 }

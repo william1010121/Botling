@@ -1,6 +1,6 @@
 # Web page readers
 
-Botling shows web AIs (Gemini, ChatGPT, Claude) as bots in the left column, in a real web view. After the
+Botling shows web AIs (Gemini, ChatGPT, Claude, Grok) as bots in the left column, in a real web view. After the
 page settles (an answer has finished), the app runs this plugin's script for that site to read
 the conversation as text, and saves it to `~/.claudecodebot/web/<site>/<name>.md` for the main bot
 to search. While the page still changes it also runs it about once a second, only to see a
@@ -12,9 +12,11 @@ script as a fallback and only updates a file here while nobody has edited it.
 
 ## One script per site
 
-`<site id>.js`: `gemini.js`, `chatgpt.js`, `claude.js`. The site id is the folder name under `web/`.
-`chatgpt.js` and `claude.js` differ only in their `SELECTORS`; the part below `extract`
-(the page as Markdown) is the same in both, so a fix to it goes in both.
+`<site id>.js`: `gemini.js`, `chatgpt.js`, `claude.js`, `grok.js`. The site id is the folder name under `web/`.
+`chatgpt.js`, `claude.js` and `grok.js` share the part below `extract`
+(the page as Markdown), so a fix to it goes in all three.
+Grok uses its own persistent profile and `https://grok.com/c/<id>` conversation URLs.
+Its answer selectors are based on public page assets; authenticated reading still needs live verification.
 
 ## The contract
 

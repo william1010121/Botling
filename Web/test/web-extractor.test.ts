@@ -13,8 +13,11 @@ const readers = join(here, "../../Sources/ClaudeCodeBot/Resources/web-extractors
 type Reading = { title: string | null; turns: { role: string; text: string }[] } | { error: string };
 
 function read(site: string, fixture: string): Reading {
+  return readHTML(site, readFileSync(join(here, "fixtures", fixture), "utf8"));
+}
+
+function readHTML(site: string, html: string): Reading {
   const source = readFileSync(join(readers, `${site}.js`), "utf8");
-  const html = readFileSync(join(here, "fixtures", fixture), "utf8");
   const page = new DOMParser().parseFromString(html, "text/html");
   const before = page.documentElement.outerHTML;
   const result = new Function("document", `${source}\n;return JSON.parse(JSON.stringify(extract(document)));`)(page);
@@ -229,5 +232,30 @@ describe("every page reader", () => {
       return source.slice(source.indexOf("function extract"));
     };
     expect(body("claude")).toBe(body("chatgpt"));
+  });
+});
+
+
+describe("the Grok page reader (synthetic fixtures, authenticated reading untested)", () => {
+  it("reads Markdown and pending questions without reasoning, controls or a streaming answer", () => {
+    expect(read("grok", "grok-conversation.html")).toEqual({ title: null, turns: [
+      { role: "user", text: "Why hash?" },
+      { role: "assistant", text: "## Hash tables\n\nAverage **constant** time.\n\n```python\nlookup(key)\n```" },
+      { role: "user", text: "And now?" },
+    ] });
+  });
+  it("does not save the last answer while a stop control is visible", () => {
+    expect(readHTML("grok", `<div data-testid="user-message"><p>Check</p></div>
+      <div class="response-content-markdown"><p>Partial</p></div>
+      <button aria-label="Stop generating">Stop</button>`)).toEqual({ title: null, turns: [{ role: "user", text: "Check" }] });
+  });
+  it("reads a completed answer and keeps code and TeX", () => {
+    expect(readHTML("grok", `<div data-testid="user-message"><p>Formula?</p></div>
+      <div class="response-content-markdown"><p>Use <code>n</code> and <span class="katex"><annotation encoding="application/x-tex">x^2</annotation><span class="katex-html">drawn</span></span>.</p></div>`)).toEqual({
+      title: null, turns: [{ role: "user", text: "Formula?" }, { role: "assistant", text: "Use `n` and $x^2$." }],
+    });
+  });
+  it("finds no conversation on signed-out or unrelated pages", () => {
+    expect(readHTML("grok", `<main><h1>Sign in</h1><form>Email</form></main>`)).toEqual({ title: null, turns: [] });
   });
 });
