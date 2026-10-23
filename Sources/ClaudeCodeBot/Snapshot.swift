@@ -566,6 +566,16 @@ enum Snapshot {
     private static func drawSettings(to path: String) {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // `CCB_SETTINGS_LIMITS=1`: sample Claude and Codex subscription limits under Usage.
+        if ProcessInfo.processInfo.environment["CCB_SETTINGS_LIMITS"] == "1" {
+            let now = Date()
+            let claude = RateLimits(fiveHour: RateLimitWindow(used: 0.42, resetsAt: now.addingTimeInterval(2 * 3600 + 780), seen: now),
+                                    week: RateLimitWindow(used: 0.18, resetsAt: now.addingTimeInterval(3 * 86400), seen: now))
+            let codex = RateLimits(fiveHour: RateLimitWindow(used: 0.07, resetsAt: now.addingTimeInterval(4 * 3600), seen: now),
+                                   week: RateLimitWindow(used: 0.31, resetsAt: now.addingTimeInterval(5 * 86400), seen: now))
+            try? JSONEncoder().encode(claude).write(to: root.appending(path: "rate-limits.json"))
+            try? JSONEncoder().encode(codex).write(to: root.appending(path: "codex-rate-limits.json"))
+        }
         let workspace = Workspace(root: root, builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
         }
@@ -581,10 +591,14 @@ enum Snapshot {
                 workspace.doctor = DoctorModel(doctor: Doctor(latest: { _ in nil }))
             }
             await workspace.doctor.run(includeLatest: true)
-            let frame = NSRect(x: 0, y: 0, width: 760, height: ProcessInfo.processInfo.environment["CCB_SETTINGS_HEIGHT"].flatMap(Double.init) ?? 600)
+            let frame = NSRect(x: 0, y: 0, width: SettingsWindow.size.width, height: ProcessInfo.processInfo.environment["CCB_SETTINGS_HEIGHT"].flatMap(Double.init) ?? SettingsWindow.size.height)
             let window = HeadlessRun.offscreenWindow(frame)
-            window.appearance = NSAppearance(named: .darkAqua)
-            let host = NSHostingView(rootView: SettingsWindow(workspace: workspace, navigator: navigator).preferredColorScheme(.dark))
+            // `CCB_SETTINGS_APPEARANCE=light`: drawn in light mode (the window follows either).
+            let light = ProcessInfo.processInfo.environment["CCB_SETTINGS_APPEARANCE"] == "light"
+            window.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
+            let host = NSHostingView(rootView: SettingsWindow(workspace: workspace, navigator: navigator, height: frame.height)
+                .frame(width: frame.width, height: frame.height)
+                .preferredColorScheme(light ? .light : .dark))
             host.frame = frame
             window.contentView = host
             self.window = window
@@ -629,10 +643,11 @@ enum Snapshot {
         navigator.section = .releases
         Task { @MainActor in
             await planner.refresh()
-            let frame = NSRect(x: 0, y: 0, width: 760, height: 600)
+            let frame = NSRect(x: 0, y: 0, width: SettingsWindow.size.width, height: SettingsWindow.size.height)
             let window = HeadlessRun.offscreenWindow(frame)
-            window.appearance = NSAppearance(named: .darkAqua)
-            let host = NSHostingView(rootView: SettingsWindow(workspace: workspace, navigator: navigator, releasePlanner: planner).preferredColorScheme(.dark))
+            let light = ProcessInfo.processInfo.environment["CCB_SETTINGS_APPEARANCE"] == "light"
+            window.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
+            let host = NSHostingView(rootView: SettingsWindow(workspace: workspace, navigator: navigator, releasePlanner: planner).preferredColorScheme(light ? .light : .dark))
             host.frame = frame
             window.contentView = host
             self.window = window
