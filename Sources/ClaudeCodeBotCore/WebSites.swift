@@ -159,6 +159,9 @@ public struct WebConversation: Codable, Identifiable, Equatable, Sendable, Settl
     /// the right panel's "Questions", and opening it from there brings it back.
     public var settledAt: Date?
     public var unsettledAt: Date?
+    /// The account it was asked in (`WebAccount.id`); nil is the site's first account, as every
+    /// row from before accounts is.
+    public var accountID: String?
 
     public init(id: String, url: URL, title: String, messages: Int = 0, savedAt: Date? = nil, file: String? = nil, updatedAt: Date) {
         self.id = id
@@ -172,6 +175,9 @@ public struct WebConversation: Codable, Identifiable, Equatable, Sendable, Settl
 
     /// A question was sent and no answer has been read since.
     public var isAwaiting: Bool { askedAt != nil }
+
+    /// Its account's id (the first account's for a row from before accounts).
+    public var account: String { accountID ?? WebAccount.firstID }
 }
 
 /// A site's conversation list, in `web/<site>/conversations.json`.
@@ -207,8 +213,13 @@ public struct WebConversationStore: Sendable {
 
     /// Adds the conversation or brings it up to date (its URL, a better title), newest first.
     @discardableResult
-    public mutating func upsert(id: String, url: URL, title: String?, at now: Date) -> WebConversation {
-        var item = conversation(id) ?? WebConversation(id: id, url: url, title: title ?? "", updatedAt: now)
+    public mutating func upsert(id: String, url: URL, title: String?, at now: Date, account: String? = nil) -> WebConversation {
+        var item = conversation(id) ?? {
+            var row = WebConversation(id: id, url: url, title: title ?? "", updatedAt: now)
+            // A new row is of the account its page is signed in to (the first stays nil).
+            if let account, account != WebAccount.firstID { row.accountID = account }
+            return row
+        }()
         item.url = url
         if let title, !title.isEmpty { item.title = title }
         item.updatedAt = now
@@ -494,6 +505,12 @@ public final class WebShelf: ObservableObject {
     @Published public private(set) var readerFixedAt: [String: Date] = [:]
     /// The page reader (its hash) that last could not read the front page, by site id.
     private var failingReader: [String: String] = [:]
+    /// Each site's accounts, by site id (the first account only, until you add one).
+    @Published public private(set) var accountLists: [String: WebAccountList] = [:]
+    /// The account the chat column shows each site in, by site id (the first when absent).
+    @Published public private(set) var currentAccount: [String: String] = [:]
+    /// The account each open page is signed in to, by page (the first when absent).
+    private var pageAccounts: [UUID: String] = [:]
 
     /// Captures (`~/.claudecodebot/captures`), next to `web`.
     public var capturesFolder: URL { WebCapturePack.root(besides: folder) }
@@ -506,7 +523,71 @@ public final class WebShelf: ObservableObject {
         self.library = library
         for site in WebSite.all {
             stores[site.id] = WebConversationStore(folder: siteFolder(site))
+            accountLists[site.id] = WebAccountList(site: site, folder: siteFolder(site))
         }
+    }
+
+    // MARK: Accounts
+
+    /// The site's accounts (its first, then those you added).
+    public func accounts(of site: WebSite) -> WebAccountList {
+        accountLists[site.id] ?? WebAccountList(site: site, folder: siteFolder(site))
+    }
+
+    /// The account the chat column shows the site in now.
+    public func account(of site: WebSite) -> WebAccount {
+        accounts(of: site).resolved(currentAccount[site.id])
+    }
+
+    /// The account a row was asked in (the first, for a row from before accounts or of one
+    /// removed since).
+    public func account(of conversation: WebConversation, on site: WebSite) -> WebAccount {
+        accounts(of: site).resolved(conversation.accountID)
+    }
+
+    /// The account an open page is signed in to.
+    public func account(ofPage page: UUID, on site: WebSite) -> WebAccount {
+        accounts(of: site).resolved(pageAccounts[page])
+    }
+
+    /// A page was opened signed in to `account` (its data store): what it reads is that account's.
+    public func attach(_ page: UUID, account: WebAccount) {
+        pageAccounts[page] = account.isFirst ? nil : account.id
+    }
+
+    /// "Add account…": a new account on a fresh store of its own, saved.
+    @discardableResult
+    public func addAccount(on site: WebSite, name: String = "", now: Date = Date()) -> WebAccount {
+        var list = accounts(of: site)
+        let account = list.add(name: name, now: now)
+        list.save()
+        accountLists[site.id] = list
+        return account
+    }
+
+    public func renameAccount(_ id: String, to name: String, on site: WebSite) {
+        var list = accounts(of: site)
+        list.rename(id, to: name)
+        guard list != accounts(of: site) else { return }
+        list.save()
+        accountLists[site.id] = list
+    }
+
+    /// Takes an added account off the list (never the first): the column shows the first
+    /// account again if it showed this one. Its rows and saved text stay (they open in the first
+    /// account from then on). Returns it, so its data store can be removed once its pages close.
+    @discardableResult
+    public func removeAccount(_ id: String, on site: WebSite, now: Date = Date()) -> WebAccount? {
+        var list = accounts(of: site)
+        guard let removed = list.remove(id) else { return nil }
+        list.save()
+        accountLists[site.id] = list
+        for (page, account) in pageAccounts where account == id { pageAccounts[page] = nil }
+        if currentAccount[site.id] == id {
+            currentAccount[site.id] = nil
+            startNew(on: site, account: list.first, now: now)
+        }
+        return removed
     }
 
     public func siteFolder(_ site: WebSite) -> URL { folder.appending(path: site.id) }
@@ -592,6 +673,7 @@ public final class WebShelf: ObservableObject {
     public func closed(_ page: UUID) {
         pages[page] = nil
         addresses[page] = nil
+        pageAccounts[page] = nil
     }
 
     /// Rows still waiting for an answer that no open page follows and that have their own page:
@@ -599,6 +681,11 @@ public final class WebShelf: ObservableObject {
     public func toReadAgain(on site: WebSite) -> [WebConversation] {
         let followed = Set(pages.values)
         return conversations(of: site).filter { $0.isAwaiting && !followed.contains($0.id) && hasAddress($0, on: site) }
+    }
+
+    /// The same, only the rows of one account (read again on pages signed in to it).
+    public func toReadAgain(on site: WebSite, account: WebAccount) -> [WebConversation] {
+        toReadAgain(on: site).filter { self.account(of: $0, on: site).id == account.id }
     }
 
     // MARK: What you do
@@ -611,6 +698,9 @@ public final class WebShelf: ObservableObject {
     /// A row clicked (in the left column or the right panel): its page loads, and it is listed
     /// in the left column again until you leave it.
     public func show(_ conversation: WebConversation, of site: WebSite, now: Date = Date()) {
+        // It opens in its own account (signed in on that account's store).
+        let account = account(of: conversation, on: site)
+        currentAccount[site.id] = account.isFirst ? nil : account.id
         setOpen(conversation.id, on: site, now: now)
         if !conversation.isAwaiting { seen.insert("\(site.id)/\(conversation.id)") }
         if stores[site.id]?.conversation(conversation.id)?.isSettled == true {
@@ -622,8 +712,12 @@ public final class WebShelf: ObservableObject {
         status[site.id] = conversation.isAwaiting ? .waiting : .reading
     }
 
-    /// "New question" (or the site's own row): the site's start page, fresh.
-    public func startNew(on site: WebSite, now: Date = Date()) {
+    /// "New question" (or the site's own row): the site's start page, fresh, in `account` (an
+    /// account picked in its menu), else the account shown now.
+    public func startNew(on site: WebSite, account: WebAccount? = nil, now: Date = Date()) {
+        if let account, accounts(of: site).account(account.id) != nil {
+            currentAccount[site.id] = account.isFirst ? nil : account.id
+        }
         setOpen(nil, on: site, now: now)
         requested[site.id] = site.startURL
         requestedRow[site.id] = nil
@@ -679,7 +773,7 @@ public final class WebShelf: ObservableObject {
         }
         let title = WebTranscript.clean(pageTitle, site: site)
         if stores[site.id]?.conversation(id) == nil || title != nil {
-            stores[site.id]?.upsert(id: id, url: url, title: title ?? stores[site.id]?.conversation(id)?.title ?? site.name, at: now)
+            stores[site.id]?.upsert(id: id, url: url, title: title ?? stores[site.id]?.conversation(id)?.title ?? site.name, at: now, account: pageAccounts[page])
             stores[site.id]?.save()
         }
     }
@@ -695,7 +789,10 @@ public final class WebShelf: ObservableObject {
             if open[site.id] == previous { open[site.id] = id }
         }
         let followed = Set(pages.filter { $0.key != page }.values)
-        for row in store.conversations where row.id != id && !hasAddress(row, on: site) && !followed.contains(row.id) {
+        // Only a row asked in this page's account: another account's conversation is never it.
+        let own = account(ofPage: page, on: site).id
+        for row in store.conversations where row.id != id && !hasAddress(row, on: site) && !followed.contains(row.id)
+            && accounts(of: site).resolved(row.accountID).id == own {
             if let question = row.question, questions.contains(question) { store.adopt(row.id, as: id, url: url) }
         }
         pages[page] = id
@@ -724,7 +821,7 @@ public final class WebShelf: ObservableObject {
                 if case .nothing(let reason) = reading { status[site.id] = .unreadable(reason) }
             }
             if stores[site.id]?.conversation(id) == nil {
-                stores[site.id]?.upsert(id: id, url: url, title: WebTranscript.clean(pageTitle, site: site) ?? site.name, at: now)
+                stores[site.id]?.upsert(id: id, url: url, title: WebTranscript.clean(pageTitle, site: site) ?? site.name, at: now, account: pageAccounts[page])
                 stores[site.id]?.save()
             }
             return nil
@@ -741,7 +838,7 @@ public final class WebShelf: ObservableObject {
         let asked = turns.last?.role == .user ? turns.last?.text : nil
         let known = store.conversation(id)
         if let asked {
-            store.upsert(id: id, url: url, title: title, at: now)
+            store.upsert(id: id, url: url, title: title, at: now, account: pageAccounts[page])
             store.update(id) { row in
                 if row.askedAt == nil {
                     row.askedAt = now
@@ -758,7 +855,7 @@ public final class WebShelf: ObservableObject {
             if isFront && shown == site.id { seen.insert("\(site.id)/\(id)") }
         }
         guard settled else {
-            if known == nil { store.upsert(id: id, url: url, title: title, at: now) }
+            if known == nil { store.upsert(id: id, url: url, title: title, at: now, account: pageAccounts[page]) }
             if store.conversations != stores[site.id]?.conversations {
                 store.save()
                 stores[site.id] = store
@@ -787,7 +884,7 @@ public final class WebShelf: ObservableObject {
             if isFront { status[site.id] = .unreadable("The text could not be saved to \(target.path).") }
             return nil
         }
-        store.upsert(id: id, url: url, title: title, at: now)
+        store.upsert(id: id, url: url, title: title, at: now, account: pageAccounts[page])
         store.recordSave(id: id, messages: turns.count, file: file, at: now)
         store.save()
         stores[site.id] = store
@@ -828,7 +925,7 @@ public final class WebShelf: ObservableObject {
             id = row.id
         } else {
             id = "new-" + UUID().uuidString.prefix(13).lowercased()
-            store.upsert(id: id, url: site.startURL, title: title, at: now)
+            store.upsert(id: id, url: site.startURL, title: title, at: now, account: pageAccounts[page])
             store.update(id) { row in
                 row.question = first
                 row.askedAt = now

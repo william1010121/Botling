@@ -68,11 +68,21 @@ def source_contract(root, rebrand=False):
     pinned = re.findall(r'dataStoreID: UUID\(uuidString: "([A-F0-9-]+)"\)', sites)
     assert pinned == ['3E3B0000-0000-4000-8000-0000000000D1',
                       '3E3B0000-0000-4000-8000-0000000000D2',
-                      '3E3B0000-0000-4000-8000-0000000000D3'], 'Published profile UUIDs changed'
+                      '3E3B0000-0000-4000-8000-0000000000D3',
+                      '3E3B0000-0000-4000-8000-0000000000D4'], 'Published profile UUIDs changed'
     web = (root / 'Sources/ClaudeCodeBot/WebSiteViews.swift').read_text()
-    assert 'configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: site.dataStoreID)' in web
+    # Each page opens its account's store; the first account is the site's own published store.
+    assert 'configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: account.dataStoreID)' in web
+    assert 'let account = account ?? WebAccount.first(of: site)' in web
+    accounts = (root / 'Sources/ClaudeCodeBotCore/WebAccounts.swift').read_text()
+    assert 'WebAccount(id: firstID, color: 0, dataStoreID: site.dataStoreID)' in accounts
+    assert 'guard id != WebAccount.firstID' in accounts
     assert '.nonPersistent()' not in web
     assert 'removeData' not in web and 'deleteCookie' not in web
+    # The only store removal: an added account's, never the first account's or a built-in site's.
+    assert web.count('WKWebsiteDataStore.remove(forIdentifier:') == 1
+    assert 'guard !account.isFirst, WebAccountList.isRemovableStore(account.dataStoreID) else { return }' in web
+    assert '_ = WKWebsiteDataStore.default()' in web  # WebKit's run loop before a removal
     packaging = (root / 'scripts/make-app.sh').read_text()
     assert '<key>CFBundleIdentifier</key><string>io.github.william1010121.ClaudeCodeBot</string>' in packaging
     assert 'codesign --force --deep --sign - "$APP"' in packaging
@@ -108,6 +118,13 @@ def main():
             ('Botling', 'botling', '3', 'verify', store),
             ('Botling', 'botling', '3', 'empty', other_store),
             ('Botling', 'botling', '3', 'verify', store),
+            # A second account on its own store, signed in beside the first.
+            ('Botling', 'botling', '3', 'seed', other_store),
+            ('Botling', 'botling', '3', 'verify', store),
+            # That account removed: its store goes; the first account's sign-in stays.
+            ('Botling', 'botling', '3', 'remove', other_store),
+            ('Botling', 'botling', '3', 'verify', store),
+            ('Botling', 'botling', '3', 'empty', other_store),
         ]:
             app = temp / (name + '.app')
             if app.exists(): shutil.rmtree(app)  # replaces only this synthetic app bundle
@@ -123,6 +140,12 @@ def main():
             flags = json.loads(process.stdout) if process.stdout.strip().startswith('{') else {}
             result = dict(name=name, executable=executable, version=version, phase=phase, exit=process.returncode, checks=flags)
             print(json.dumps(result), flush=True)
+            if phase == 'remove':
+                removed_dir = pathlib.Path.home() / 'Library/WebKit' / identity / 'WebsiteDataStore' / profile
+                if process.returncode or flags != {'removed': True} or removed_dir.exists():
+                    raise SystemExit('FAIL: removing an added account store')
+                print(json.dumps(dict(removedProfileDirectoryGone=True)), flush=True)
+                continue
             if process.returncode or len(flags) != 4:
                 raise SystemExit('FAIL: synthetic persistence boundary')
         # Inspect paths only inside this random test identity. Never inspect any live store.
@@ -133,6 +156,6 @@ def main():
                               bothSyntheticProfilesOnDisk=on_disk)), flush=True)
         if not on_disk: raise SystemExit('FAIL: synthetic profiles were not persisted on disk')
     server.shutdown()
-    print('PASS: seed, replaced bundle upgrade, renamed bundle/executable; separate native processes')
+    print('PASS: seed, replaced bundle upgrade, renamed bundle/executable, second account store removed; separate native processes')
 
 if __name__ == '__main__': main()
