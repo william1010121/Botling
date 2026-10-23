@@ -42,7 +42,7 @@ struct MaintenanceTests {
         let maintainer = workspace.maintainer
         #expect(maintainer.profile.instructions?.contains("ccb-check <plugin folder>") == true)
         #expect(!workspace.projects.contains { $0.isMaintainer })
-        #expect(workspace.projectBriefing().contains("Maintainer (looks after ClaudeCodeBot itself"))
+        #expect(workspace.projectBriefing().contains("Maintainer (plugin-library extensions and in-chat components only)"))
         workspace.addProject(folder: root.appending(path: "garden"))
         let saved = try String(contentsOf: root.appending(path: "ccb/projects.json"), encoding: .utf8)
         #expect(saved.contains("garden") && !saved.contains("Maintainer"))

@@ -1005,7 +1005,7 @@ public final class Workspace: ObservableObject {
         let botLines = bots.isEmpty ? "" : "\n(App: Bots of their own, which you reach the same way.)\n" + bots.map { bot in
             "- \(bot.name) (\(Self.firstLine(of: bot.job ?? ""))): memory file \(bot.notesFolder.appending(path: "memory.md").path); inbox file \(bot.inboxURL.path)\(openQuestionNote(bot))"
         }.joined(separator: "\n")
-        let maintainerLine = "- Maintainer (looks after ClaudeCodeBot itself: plugins, components): memory file \(maintainerProject.notesFolder.appending(path: "memory.md").path); inbox file \(maintainerProject.inboxURL.path)\(openQuestionNote(maintainerProject))"
+        let maintainerLine = "- Maintainer (plugin-library extensions and in-chat components only): memory file \(maintainerProject.notesFolder.appending(path: "memory.md").path); inbox file \(maintainerProject.inboxURL.path)\(openQuestionNote(maintainerProject))"
         let asking = everyProject.contains { managers[$0.id]?.openQuestion != nil }
         let cardLine = asking ? "\n(App: A decision marked \"open question in its chat\" already has its card there. To bring it up, write <open-question from=\"its name\"/> in your reply: the app shows that same card here. Never write a new choices block for it.)" : ""
         let teamLines = teams.map { "- \($0.name) (\($0.title)): \($0.description)" }.joined(separator: "\n")
