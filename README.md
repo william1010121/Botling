@@ -4,7 +4,7 @@
 
 # Botling
 
-Formerly ClaudeCodeBot (the repository moved from `william1010121/ClaudeCodeBot`; old links redirect). Existing data stays in `~/.claudecodebot`; see [naming and compatibility](docs/botling-rename.md).
+Formerly ClaudeCodeBot (the repository moved from `william1010121/ClaudeCodeBot`; old links redirect). Releases up to 1.15.1 still ship as `ClaudeCodeBot.app`; existing data stays in `~/.claudecodebot`. See [naming and compatibility](docs/botling-rename.md).
 
 **A team of Claude Code agents on your Mac, in one chat.**
 
