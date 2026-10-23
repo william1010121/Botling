@@ -178,6 +178,9 @@ public struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var seenBy: [BotEngine]?
     /// Nil in legacy chats; [] records an explicitly cleared reaction state.
     public var reactions: [MessageReaction]?
+    /// For a bot's line: its turn was cut off before it answered (you wrote again, its process
+    /// went away, the app quit); what it had said and done so far. Nil for a finished reply.
+    public var interrupted: Bool?
 
 
     public init(

@@ -156,6 +156,7 @@ export const ja: Dictionary = {
   "messages.addReaction": "リアクションを追加",
   "messages.reactEmoji": "{emoji} でリアクション",
   "messages.reply": "返信",
+  "messages.interrupted": "中断されました",
   "messages.fold": "折りたたむ",
   "messages.answered": "回答済み",
   "messages.answeredLabel": "回答済み：{label}。選択肢を表示",

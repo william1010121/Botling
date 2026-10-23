@@ -67,6 +67,8 @@ export interface MessageView {
   artifacts?: ArtifactCardView[] | null;
   /** In a bot with two heads: each head's mark ("C", "X") and whether this line has reached it. */
   seen?: SeenView[] | null;
+  /** A bot's turn cut off before it answered (you wrote again, it stopped): what it had said and done so far. */
+  interrupted?: boolean | null;
 }
 
 /** A head under a line: recipient highlighting and its separate actual-read receipt. */

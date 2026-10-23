@@ -991,6 +991,9 @@ public final class Workspace: ObservableObject {
     /// Lets every awake bot write memory.md before the app quits.
     public func putEveryoneToSleep() async {
         for bot in [mainBot] + Array(managers.values) {
+            // One still at work is not put to sleep, and its process ends with the app: what
+            // its turn has said and done so far stays in its chat.
+            bot.keepTurnSoFar()
             await bot.goToSleep()
         }
     }
