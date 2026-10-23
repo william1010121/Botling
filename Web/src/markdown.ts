@@ -40,10 +40,13 @@ export function createMarkdown(): MarkdownIt {
       else if (tokens[i].type === "inline") rows[rows.length - 1]?.push(tokens[i].content);
     }
     const widths = tableColumnWidths(rows);
-    if (!widths) return self.renderToken(tokens, index, options);
+    // In a block of its own that scrolls sideways when the table is still too wide (many columns,
+    // a long URL), so it never widens the chat column.
+    if (!widths) return `<div class="table-scroll">${self.renderToken(tokens, index, options)}`;
     const cols = widths.map((width) => `<col style="width: ${width}%">`).join("");
-    return `<table class="fitted"><colgroup>${cols}</colgroup>\n`;
+    return `<div class="table-scroll"><table class="fitted"><colgroup>${cols}</colgroup>\n`;
   };
+  md.renderer.rules.table_close = (tokens, index, options, _env, self) => `${self.renderToken(tokens, index, options)}</div>\n`;
   return md;
 }
 
