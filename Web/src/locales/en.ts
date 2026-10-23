@@ -127,6 +127,12 @@ export const en = {
   // main.ts: watching a subagent, plugin panels
   "subagent.back": "Back to {bot}'s chat",
   "subagent.of": "Subagent of {bot}",
+  "subagent.unknown": "unknown",
+  "subagent.effort": "Effort: {effort}",
+  "subagent.fastOn": "Fast: on",
+  "subagent.fastOff": "Fast: off",
+  "subagent.fastUnknown": "Fast: unknown",
+  "subagent.runtimeHelp": "Captured session settings; actual request processing may differ. Missing runtime metadata is unknown.",
   "subagent.watchOnly": "watch only",
   "subagent.from": "From {bot}",
   "subagent.engine.claude": "Claude subagent",

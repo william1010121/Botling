@@ -169,6 +169,7 @@ public struct ChatPayload: Encodable, Equatable {
         /// Its model when known ("Sonnet"): what its Agent call asked for, else its bot's
         /// subagent model.
         var model: String? = nil
+        var runtime: WorkerRuntimeInfo? = nil
     }
 
     public struct Display: Encodable, Equatable {
@@ -852,7 +853,8 @@ public struct ChatPayload: Encodable, Equatable {
                 status: subagent.status.rawValue,
                 type: subagent.type,
                 engine: (bot.subagentEngine(subagent.id) ?? bot.engine).rawValue,
-                model: subagent.model.map { BotModel(rawValue: $0.lowercased())?.displayName ?? $0 } ?? bot.subagentModel?.displayName
+                model: subagent.model.map { BotModel(rawValue: $0.lowercased())?.displayName ?? $0 } ?? bot.subagentModel?.displayName,
+                runtime: subagent.runtime
             )
         )
     }

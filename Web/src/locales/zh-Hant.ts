@@ -126,6 +126,12 @@ export const zhHant: Dictionary = {
   // main.ts: watching a subagent, plugin panels
   "subagent.back": "回到 {bot} 的聊天",
   "subagent.of": "{bot} 的子代理",
+  "subagent.unknown": "未知",
+  "subagent.effort": "思考：{effort}",
+  "subagent.fastOn": "Fast：開",
+  "subagent.fastOff": "Fast：關",
+  "subagent.fastUnknown": "Fast：未知",
+  "subagent.runtimeHelp": "此 session 保存的設定；實際請求的處理等級可能不同。缺少 runtime 資料時顯示未知。",
   "subagent.watchOnly": "僅供檢視",
   "subagent.from": "來自 {bot}",
   "subagent.engine.claude": "Claude 子代理",

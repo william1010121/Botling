@@ -14,6 +14,7 @@ struct CodexManagedWorkerRecord: Codable, Equatable {
     var status: String?
     var turn: String?
     var tokens: TokenUsage?
+    var runtime: WorkerRuntimeInfo?
 }
 
 /// Which Codex thread each bot session is: `codex app-server` names its threads itself, while a
@@ -588,6 +589,8 @@ struct CodexSession {
         var messages: [String] = []
         var said: [(text: String, phase: String?)] = []
         var completedTurns: Set<String> = []
+        var runtime: WorkerRuntimeInfo?
+        var pendingEffortOverride: String?
         var tokens = TokenUsage()
         var tokensAtRunStart = TokenUsage()
 
@@ -597,6 +600,7 @@ struct CodexSession {
         init(record: CodexManagedWorkerRecord) {
             id = record.id; name = record.name; instructions = record.instructions
             thread = record.thread; run = record.run; active = false
+            runtime = record.runtime
             tokens = record.tokens ?? TokenUsage()
             tokensAtRunStart = tokens
         }
@@ -633,7 +637,7 @@ struct CodexSession {
                 ?? activeResult.flatMap { $0.task == worker.id && $0.run == worker.run ? $0 : nil }
             return CodexManagedWorkerRecord(id: worker.id, name: worker.name, instructions: worker.instructions,
                 thread: worker.thread, run: worker.run, wasActive: worker.active, reportPending: result != nil,
-                report: result?.report, status: result?.status, turn: result?.turn, tokens: worker.tokens)
+                report: result?.report, status: result?.status, turn: result?.turn, tokens: worker.tokens, runtime: worker.runtime)
         }.sorted { $0.id < $1.id }
     }
 
@@ -739,13 +743,17 @@ struct CodexSession {
         workers[task]?.thread = thread
         workers[task]?.loaded = true
         var out: [CodexOutput] = [.event(.trace(.launchResult(id: task, result: LaunchResult(agentID: thread), parent: nil)))]
-        if let model = config.model { out.append(.event(.trace(.subagentModel(id: task, model: model)))) }
+        let runtime = WorkerRuntimeInfo.codex(result ?? [:], effortKey: "reasoningEffort")
+        workers[task]?.runtime = runtime
+        out += workerSettings(task, settings: result ?? [:], runtime: runtime)
         out += startWorkerTurn(task, text: worker.instructions)
         return out
     }
 
     private mutating func startWorkerTurn(_ task: String, text: String) -> [CodexOutput] {
         guard let worker = workers[task], let thread = worker.thread, !worker.cancelled, !stopped else { return [] }
+        let override = config.effort.map(Self.effort)
+        workers[task]?.pendingEffortOverride = override
         workers[task]?.turnID = nil
         workers[task]?.said = []
         workers[task]?.tokensAtRunStart = worker.tokens
@@ -761,12 +769,31 @@ struct CodexSession {
         return learnWorkerTurn(task, id: id)
     }
 
+    /// A successful turn start accepts the app's explicit effort override. With no override,
+    /// retain the resolved thread value (including inherited profile/project configuration).
+    private mutating func acceptedWorkerSettings(_ task: String) -> [CodexOutput] {
+        guard let effort = workers[task]?.pendingEffortOverride else { return [] }
+        workers[task]?.pendingEffortOverride = nil
+        var runtime = workers[task]?.runtime ?? WorkerRuntimeInfo()
+        runtime.reasoningEffort = effort
+        workers[task]?.runtime = runtime
+        return [.event(.trace(.subagentRuntime(id: task, runtime: runtime)))]
+    }
+
+    private func workerSettings(_ task: String, settings: [String: Any], runtime: WorkerRuntimeInfo) -> [CodexOutput] {
+        var out: [CodexOutput] = [.event(.trace(.subagentRuntime(id: task, runtime: runtime)))]
+        if let model = settings["model"] as? String, !model.isEmpty {
+            out.append(.event(.trace(.subagentModel(id: task, model: model))))
+        }
+        return out
+    }
+
     private mutating func learnWorkerTurn(_ task: String, id: String) -> [CodexOutput] {
         guard let worker = workers[task], worker.active, worker.turnID == nil,
               !worker.completedTurns.contains(id), !worker.cancelled else { return [] }
         workers[task]?.turnID = id
         workers[task]?.messages = []
-        return worker.messages.map { workerSteer(task, text: $0, turnID: id, run: worker.run) }
+        return acceptedWorkerSettings(task) + worker.messages.map { workerSteer(task, text: $0, turnID: id, run: worker.run) }
     }
 
     private mutating func workerSteer(_ task: String, text: String, turnID: String, run: Int) -> CodexOutput {
@@ -799,6 +826,13 @@ struct CodexSession {
     private mutating func workerLine(_ method: String, _ params: [String: Any], task: String) -> [CodexOutput] {
         guard let worker = workers[task] else { return [] }
         switch method {
+        case "thread/settings/updated":
+            guard let settings = params["threadSettings"] as? [String: Any] else { return [] }
+            let runtime = WorkerRuntimeInfo.codex(settings, effortKey: "effort")
+            workers[task]?.runtime = runtime
+            // A resolved runtime notification is stronger evidence than the requested override.
+            workers[task]?.pendingEffortOverride = nil
+            return workerSettings(task, settings: settings, runtime: runtime)
         case "thread/tokenUsage/updated":
             if let total = (params["tokenUsage"] as? [String: Any])?["total"] as? [String: Any] {
                 workers[task]?.tokens = Self.tokens(total)
@@ -1025,6 +1059,9 @@ struct CodexSession {
             ]
             if !path.isEmpty { out.append(.subagentNamed(id: id, name: path)) }
             if let model = item["model"] as? String, !model.isEmpty { out.append(.subagentModel(id: id, model: model)) }
+            // The protocol calls this a resolved effort, unlike collabAgentToolCall's requested effort.
+            let runtime = WorkerRuntimeInfo.codex(item, effortKey: "reasoningEffort")
+            if runtime.reasoningEffort != nil { out.append(.subagentRuntime(id: id, runtime: runtime)) }
             return out
         case "completed", "interrupted":
             guard endedSubagentActivityItems.insert(id).inserted,
@@ -1048,6 +1085,9 @@ struct CodexSession {
     private mutating func subagentLine(_ method: String, _ params: [String: Any], thread: String) -> [CodexOutput] {
         guard let parent = subagentThreads[thread] else { return [] }
         switch method {
+        case "thread/settings/updated":
+            guard let settings = params["threadSettings"] as? [String: Any] else { return [] }
+            return workerSettings(parent, settings: settings, runtime: .codex(settings, effortKey: "effort"))
         case "turn/started":
             guard subagentActivityThreads.contains(thread),
                   activeSubagentActivityThreads.insert(thread).inserted else { return [] }

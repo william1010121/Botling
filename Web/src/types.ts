@@ -350,6 +350,8 @@ export interface SubagentHeaderView {
   type: string | null;
   engine?: string | null;
   model?: string | null;
+  /** Captured worker session settings. Missing/null is unknown, never a global fallback. */
+  runtime?: { reasoningEffort?: string | null; serviceTier?: string | null } | null;
 }
 
 export interface ChatState {

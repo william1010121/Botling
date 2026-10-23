@@ -126,6 +126,12 @@ export const ja: Dictionary = {
   // main.ts: watching a subagent, plugin panels
   "subagent.back": "{bot} のチャットに戻る",
   "subagent.of": "{bot} のサブエージェント",
+  "subagent.unknown": "不明",
+  "subagent.effort": "思考: {effort}",
+  "subagent.fastOn": "Fast: オン",
+  "subagent.fastOff": "Fast: オフ",
+  "subagent.fastUnknown": "Fast: 不明",
+  "subagent.runtimeHelp": "保存されたセッション設定。実際の処理階層は異なる場合があります。実行時情報がなければ不明です。",
   "subagent.watchOnly": "表示のみ",
   "subagent.from": "{bot} から",
   "subagent.engine.claude": "Claude サブエージェント",
