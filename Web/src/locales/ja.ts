@@ -153,6 +153,8 @@ export const ja: Dictionary = {
   "messages.seenBy": "{names} が既読",
   "messages.toHeads": "{names} 宛て",
   "messages.notSeenBy": "{names} は未読",
+  "messages.addReaction": "リアクションを追加",
+  "messages.reactEmoji": "{emoji} でリアクション",
   "messages.reply": "返信",
   "messages.fold": "折りたたむ",
   "messages.answered": "回答済み",

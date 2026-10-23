@@ -758,6 +758,7 @@ public final class Bot: ObservableObject, Identifiable {
             if let index = messages.lastIndex(where: { $0.id == line.id }) {
                 var copy = line
                 copy.seenBy = Self.union(messages[index].seenBy, line.seenBy)
+                copy.reactions = messages[index].reactions
                 if messages[index] != copy {
                     messages[index] = copy
                     changed = true
@@ -773,6 +774,36 @@ public final class Bot: ObservableObject, Identifiable {
             }
         }
         if changed { store?.save(messages: messages) }
+    }
+
+    /// Metadata only: never send, append, notify, mark unread or wake either head.
+    public func setUserReaction(messageID: UUID, emoji: String, present: Bool) throws {
+        try (primary ?? self).setReaction(messageID: messageID, emoji: emoji, present: present, actor: "user")
+    }
+
+    func setReaction(messageID: UUID, emoji: String, present: Bool, actor: String) throws {
+        guard MessageReaction.palette.contains(emoji),
+              let index = messages.firstIndex(where: { $0.id == messageID && $0.role != .divider }),
+              messages.suffix(BotStore.historyLimit).contains(where: { $0.id == messageID }) else {
+            throw CocoaError(.validationMissingMandatoryProperty)
+        }
+        var updated = messages
+        var reactions = updated[index].reactions ?? []
+        reactions.removeAll { $0.emoji == emoji && $0.actor == actor }
+        if present { reactions.append(MessageReaction(emoji: emoji, actor: actor)) }
+        reactions.sort { ($0.emoji, $0.actor) < ($1.emoji, $1.actor) }
+        guard updated[index].reactions != reactions else { return }
+        updated[index].reactions = reactions
+        try store?.saveReactionMessages(updated)
+        messages = updated
+    }
+
+    func applyReactions(_ actions: [ReactionAction], actor: String? = nil) {
+        let owner = primary ?? self
+        for action in actions {
+            try? owner.setReaction(messageID: action.messageID, emoji: action.emoji,
+                                   present: action.present, actor: actor ?? "head:\(engine.rawValue)")
+        }
     }
 
     /// How many of the partner's newest lines are compared on each change.
@@ -816,6 +847,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// What it said between its tool calls, while the other head works too: passed on at once,
     /// so a head that took something on is heard before the other starts on it.
     fileprivate func headWords(_ words: String, by head: BotEngine) {
+        if words.contains("<reaction") { return }
         for other in BotEngine.allCases where other != head {
             let note = Self.wordsNote(head, words)
             if let hold = claimHold, hold.lead == head, hold.held == other {
@@ -1207,6 +1239,9 @@ public final class Bot: ObservableObject, Identifiable {
             seen += pendingAbout
             pendingAbout = []
         }
+        if !outgoing.contextOnly && (outgoing.fromUser || outgoing.messageID != nil) {
+            text += "\n\n" + ReactionContext.snapshot(chat)
+        }
         if let id { process.send(text, images: outgoing.images, id: id) } else { process.send(text, images: outgoing.images) }
         markSeen(seen, by: engine)
     }
@@ -1236,7 +1271,7 @@ public final class Bot: ObservableObject, Identifiable {
                 ? withSavedMemory(profile.keepsMemory ? prompts.wake : "", leavingOut: outgoing.messageID)
                 : (profile.keepsMemory ? prompts.wake : "")
             let cutOff = takeInterruptedNote() ?? ""
-            let text = [wakeLine, note, cutOff, recent, outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            let text = [wakeLine, note, cutOff, recent, (outgoing.fromUser || outgoing.messageID != nil) ? ReactionContext.snapshot(chat) : "", outgoing.text].filter { !$0.isEmpty }.joined(separator: "\n\n")
             if let id { process.send(text, images: outgoing.images, id: id) } else { process.send(text, images: outgoing.images) }
         } catch {
             append(ChatMessage(role: .error, text: L("Couldn't wake up: {0}", error.localizedDescription)))
@@ -1387,6 +1422,7 @@ public final class Bot: ObservableObject, Identifiable {
         guard interruptions == 0, internalReply == nil, groupCommand?.ownsReply != true,
               !((fromBackground || (turnOrigin != .user && Self.saysNothing(text))) && ReplyParser.saysNoReply(text)),
               replyFilter?() == nil, outage == nil else { return }
+        if !ReplyParser.parseAll(text).reactions.isEmpty { return }
         // Your message is answered: what you write now is a new one.
         turnInput = nil
         let lifted = trace.liftReplyTags()
@@ -1966,6 +2002,21 @@ public final class Bot: ObservableObject, Identifiable {
                 afterTurn()
                 Task { [weak self] in await self?.flushQueue() }
                 return
+            }
+            if !isError {
+                let parsed = ReplyParser.parseAll(text)
+                applyReactions(parsed.reactions)
+                if !parsed.reactions.isEmpty && Self.saysNothing(text) && trace.tasks.isEmpty {
+                    trace.dropSteps()
+                    isWorking = false
+                    early = EarlyReplies()
+                    reloadRoutines()
+                    turnConducted = false
+                    lastTags = HeadTags()
+                    if resumePausedWork() { return }
+                    afterTurn()
+                    return
+                }
             }
             if isError, lostConnection {
                 showNetworkLoss(text)

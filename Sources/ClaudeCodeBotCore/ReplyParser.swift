@@ -60,6 +60,7 @@ public enum ReplyParser {
         public var requests: [BotRequest]
         /// Each `<show name="x">{json}</show>`: draw component x with that data, in the order they
         /// came, each at the place in `body` it was written (`at`).
+        public var reactions: [ReactionAction] = []
         public var displays: [ComponentInstance]
     }
 
@@ -154,6 +155,9 @@ public enum ReplyParser {
         return mask
     }
 
+    // Standalone complete lines only: prose, quotations and masked code cannot execute actions.
+    private static let reactionTag = try! NSRegularExpression(pattern: #"(?m)^ {0,3}<reaction message="([0-9A-Fa-f-]{36})" emoji="([^"]+)" present="(true|false)"/>[ \t]*$"#)
+
     public static func parseAll(_ reply: String) -> Parsed {
         let text = NSMutableString(string: reply)
         let mask = masked(reply)
@@ -192,6 +196,18 @@ public enum ReplyParser {
             }
             text.replaceCharacters(in: match.range, with: marker)
             mask.replaceCharacters(in: match.range, with: marker)
+        }
+        var reactions: [ReactionAction] = []
+        let quotedHTML = try! NSRegularExpression(pattern: #"(?is)<(pre|code|blockquote)\b[^>]*>.*?</\1\s*>|<!--.*?-->"#)
+        let quotedRanges = quotedHTML.matches(in: mask as String, range: NSRange(location: 0, length: mask.length)).map(\.range)
+        for match in reactionTag.matches(in: mask as String, range: NSRange(location: 0, length: mask.length)).reversed() {
+            guard !quotedRanges.contains(where: { NSIntersectionRange($0, match.range).length > 0 }) else { continue }
+            let idText = text.substring(with: match.range(at: 1))
+            let emoji = text.substring(with: match.range(at: 2))
+            guard let id = UUID(uuidString: idText), MessageReaction.palette.contains(emoji) else { continue }
+            reactions.insert(ReactionAction(messageID: id, emoji: emoji, present: text.substring(with: match.range(at: 3)) == "true"), at: 0)
+            text.replaceCharacters(in: match.range, with: "")
+            mask.replaceCharacters(in: match.range, with: "")
         }
         var tagged: [BotRequest] = []
         take(requestTag) { groups in
@@ -259,7 +275,7 @@ public enum ReplyParser {
         }
         let (body, places) = placing(text as String, count: displays.count)
         for index in displays.indices { displays[index].at = places[index] }
-        return Parsed(body: body, choices: choices, requests: requests, displays: displays)
+        return Parsed(body: body, choices: choices, requests: requests, reactions: reactions, displays: displays)
     }
 
     /// Every tag the app acts on, in the order `parseAll` knows them.

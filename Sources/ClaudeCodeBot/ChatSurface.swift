@@ -271,6 +271,12 @@ struct ChatSurface: NSViewRepresentable {
                     let text = body["text"] as? String ?? ""
                     workspace.answer(text, files: Self.pictures(body["images"]), in: messageID, of: bot)
                 }
+            case "setReaction":
+                if let messageID = id("messageID"), let emoji = body["emoji"] as? String,
+                   let present = body["present"] as? Bool {
+                    do { try bot.setUserReaction(messageID: messageID, emoji: emoji, present: present) }
+                    catch { view?.evaluateJavaScript("alert('Could not save reaction. Please try again.')") }
+                }
             case "reply":
                 if let messageID = id("messageID") { inputs.replies[bot.id] = messageID }
                 view?.evaluateJavaScript("ccb.focus()")

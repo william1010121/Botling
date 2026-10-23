@@ -154,6 +154,8 @@ export const en = {
   "messages.seenBy": "Seen by {names}",
   "messages.toHeads": "To {names}",
   "messages.notSeenBy": "not yet by {names}",
+  "messages.addReaction": "Add reaction",
+  "messages.reactEmoji": "React {emoji}",
   "messages.reply": "Reply",
   "messages.fold": "Fold",
   "messages.answered": "Answered",

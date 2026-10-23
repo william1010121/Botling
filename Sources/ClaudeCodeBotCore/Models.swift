@@ -135,6 +135,9 @@ public struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var to: AnswerTarget?
     /// In a bot with two heads: the heads this line has reached (in their context).
     public var seenBy: [BotEngine]?
+    /// Nil in legacy chats; [] records an explicitly cleared reaction state.
+    public var reactions: [MessageReaction]?
+
 
     public init(
         id: UUID = UUID(),
