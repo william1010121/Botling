@@ -49,6 +49,7 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
         shelf.attach(id, account: account)
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: account.dataStoreID)
+        WebMenuAnchoring.install(in: configuration, host: site.host)
         // A page out of sight (behind the one in front, or while a bot is picked) keeps running,
         // so an answer still comes and is read.
         configuration.preferences.inactiveSchedulingPolicy = .none
