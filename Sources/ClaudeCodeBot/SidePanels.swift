@@ -3,7 +3,7 @@ import Combine
 import ClaudeCodeBotCore
 import SwiftUI
 
-/// Left column: who. One row per bot; the face shows its state, a dot shows what is new.
+/// Left column: who. One row per bot; the face shows its state, a count shows what is new.
 /// Folded (`collapsed`), it is a strip of faces only (see `RailStrip`).
 struct RailView: View {
     @ObservedObject var workspace: Workspace
@@ -471,10 +471,8 @@ private struct GroupRow: View {
                     }
                 }
                 Spacer(minLength: 4)
-                if workspace.groupHasQuestion(group.id) {
-                    Circle().fill(Theme.orange).frame(width: 9, height: 9)
-                } else if chat.hasUnread && !selected {
-                    UnreadBadge(count: chat.unreadCount)
+                if let count = RailLayout.unreadBadge(unread: chat.unreadCount, waiting: workspace.groupHasQuestion(group.id), selected: selected) {
+                    UnreadBadge(count: count)
                 }
             }
             .padding(.horizontal, 10)
@@ -764,10 +762,8 @@ private struct MaintainerRow: View {
                             .lineLimit(1)
                     }
                     Spacer(minLength: 0)
-                    if waiting {
-                        Circle().fill(Theme.orange).frame(width: 9, height: 9)
-                    } else if bot.hasUnread && !selected {
-                        UnreadBadge(count: bot.unreadCount)
+                    if let count = RailLayout.unreadBadge(unread: bot.unreadCount, waiting: waiting, selected: selected) {
+                        UnreadBadge(count: count)
                     }
                 }
                 .padding(.horizontal, 10)
@@ -819,10 +815,8 @@ private struct BotRow: View {
                     Text("C + X").font(.system(size: 11)).foregroundStyle(Theme.faint)
                         .help(L("Claude and Codex"))
                 }
-                if waiting {
-                    Circle().fill(Theme.orange).frame(width: 9, height: 9)
-                } else if bot.hasUnread && !selected {
-                    UnreadBadge(count: bot.unreadCount)
+                if let count = RailLayout.unreadBadge(unread: bot.unreadCount, waiting: waiting, selected: selected) {
+                    UnreadBadge(count: count)
                 }
             }
             .padding(.leading, 10)
@@ -886,12 +880,13 @@ struct SubagentRows: View {
         }
     }
 
-    /// A dot only while it works (blue, like a bot at work); once ended, a quiet sign of how.
+    /// Nothing while it works (the row's owner head says who is on it); once ended, a quiet
+    /// sign of how.
     @ViewBuilder
     static func mark(_ mark: Subagent.Mark) -> some View {
         switch mark {
         case .live:
-            Circle().fill(Theme.blue).frame(width: 7, height: 7).opacity(0.9)
+            EmptyView()
         case .done:
             Image(systemName: "checkmark").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.faint)
         case .failed:
@@ -922,9 +917,9 @@ struct SubagentOwnerMark: View {
     }
 }
 
-/// One subagent's row. It has one icon on the right: a blue dot while the subagent works,
-/// and once it has ended (or while the pointer is on a running one) the settle button, a
-/// clock badged with how it ended. Settling moves the row to "Settled" in the right column.
+/// One subagent's row. It has one icon on the right, the settle button (a clock badged with
+/// how it ended), shown once it has ended or while the pointer is on a running one; a running
+/// one shows nothing there otherwise. Settling moves the row to "Settled" in the right column.
 struct SubagentRow: View {
     let subagent: Subagent
     @ObservedObject var bot: Bot

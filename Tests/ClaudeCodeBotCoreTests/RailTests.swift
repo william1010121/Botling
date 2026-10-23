@@ -48,4 +48,24 @@ struct RailTests {
         #expect(RailLayout.tipDetail(status: "Working", unread: 1, waiting: true) == "Working · waiting on you · 1 unread")
         #expect(RailLayout.tipDetail(status: "Awake", unread: 120, waiting: false) == "Awake · 99+ unread")
     }
+
+    /// A row's end (and a folded face's corner) shows only the unread count: no orange
+    /// "waiting on you" dot, even with nothing unread.
+    @Test func rowsShowOnlyTheUnreadCountNotAWaitingDot() {
+        #expect(RailLayout.unreadBadge(unread: 0, waiting: true, selected: false) == nil)
+        #expect(RailLayout.unreadBadge(unread: 2, waiting: true, selected: false) == 2)
+        #expect(RailLayout.unreadBadge(unread: 2, waiting: false, selected: false) == 2)
+        #expect(RailLayout.unreadBadge(unread: 2, waiting: true, selected: true) == nil)
+        #expect(RailLayout.unreadBadge(unread: 0, waiting: false, selected: false) == nil)
+    }
+
+    /// A running subagent's row has no blue dot (its owner head's face is on the row); an
+    /// ended one keeps its check, "!" or stop sign.
+    @Test func runningSubagentRowsHaveNoDot() {
+        #expect(!Subagent.Mark.live.showsInSidebar)
+        #expect(Subagent.Mark.done.showsInSidebar)
+        #expect(Subagent.Mark.failed.showsInSidebar)
+        #expect(Subagent.Mark.stopped.showsInSidebar)
+        #expect(Subagent(id: "a", description: "Work", prompt: "Work").mark.showsInSidebar == false)
+    }
 }
