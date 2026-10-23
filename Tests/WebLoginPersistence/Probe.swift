@@ -10,8 +10,22 @@ final class Probe: NSObject, WKNavigationDelegate {
     func start() {
         guard Bundle.main.bundleIdentifier?.hasPrefix("io.botling.session-probe.") == true,
               let identifier = UUID(uuidString: args[2]),
-              !["3E3B0000-0000-4000-8000-0000000000D1", "3E3B0000-0000-4000-8000-0000000000D2", "3E3B0000-0000-4000-8000-0000000000D3"].contains(identifier.uuidString) else {
+              !["3E3B0000-0000-4000-8000-0000000000D1", "3E3B0000-0000-4000-8000-0000000000D2", "3E3B0000-0000-4000-8000-0000000000D3", "3E3B0000-0000-4000-8000-0000000000D4"].contains(identifier.uuidString) else {
             finish(false); return
+        }
+        // An added account removed from its menu: the same public call the app makes
+        // (`WKWebsiteDataStore.remove(forIdentifier:)`), here only on a random test profile.
+        if args[3] == "remove" {
+            // As the app does: WebKit's main run loop is set up first (no page opened here).
+            _ = WKWebsiteDataStore.default()
+            Task { @MainActor in
+                do {
+                    try await WKWebsiteDataStore.remove(forIdentifier: identifier)
+                    print(#"{"removed":true}"#)
+                    finish(true)
+                } catch { finish(false) }
+            }
+            return
         }
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: identifier)
