@@ -875,9 +875,8 @@ struct WebAccountMenu: View {
     }
 }
 
-/// Under a site: its questions that you have not settled, drawn and settled like a bot's
-/// subagents. One still waiting for its answer comes first, with a live dot; once you have
-/// viewed one and moved on (or press its clock) it leaves for the right panel's "Questions".
+/// Under a site: pins stay first, then questions you have not settled, drawn like a bot's
+/// subagents. Unpinned rows keep their awaiting-first order and existing settlement behavior.
 private struct WebConversationRows: View {
     @ObservedObject var workspace: Workspace
     @ObservedObject var shelf: WebShelf
@@ -887,8 +886,10 @@ private struct WebConversationRows: View {
 
     var body: some View {
         let all = shelf.listed(of: site)
-        let more = max(0, all.count - Self.listedAtMost)
-        ForEach(showsAll ? all : Array(all.prefix(Self.listedAtMost))) { conversation in
+        // A collapsed provider list must never hide a pin behind “Show more”.
+        let visibleCount = max(Self.listedAtMost, all.prefix(while: \.isPinned).count)
+        let more = max(0, all.count - visibleCount)
+        ForEach(showsAll ? all : Array(all.prefix(visibleCount))) { conversation in
             WebConversationRow(conversation: conversation, workspace: workspace, shelf: shelf, site: site)
         }
         if more > 0 {
@@ -958,7 +959,11 @@ private struct WebConversationRow: View {
             }
             Button { shelf.settle(conversation, of: site) } label: {
                 Group {
-                    if showsSettle {
+                    if conversation.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Theme.faint)
+                    } else if showsSettle {
                         SubagentRow.settleIcon(mark)
                     } else {
                         SubagentRows.mark(mark)
@@ -969,17 +974,25 @@ private struct WebConversationRow: View {
             }
             .buttonStyle(.plain)
             .allowsHitTesting(showsSettle)
-            .help(conversation.isAwaiting ? L("Settle: move to Questions in the right panel (its answer is still saved)") : L("Settle: move to Questions in the right panel"))
-            .accessibilityLabel(L("Settle {0}", conversation.title))
+            .disabled(conversation.isPinned)
+            .help(conversation.isPinned ? L("Unpin to settle") : conversation.isAwaiting ? L("Settle: move to Questions in the right panel (its answer is still saved)") : L("Settle: move to Questions in the right panel"))
+            .accessibilityLabel(conversation.isPinned ? L("Pinned") : L("Settle {0}", conversation.title))
             .padding(.trailing, 6)
         }
         .background(RoundedRectangle(cornerRadius: 10).fill(open ? Theme.selected : .clear))
         .onHover { hovering = $0 }
         .contextMenu {
+            Button {
+                shelf.setPinned(!conversation.isPinned, conversation: conversation, of: site)
+            } label: {
+                Label(L(conversation.isPinned ? "Unpin" : "Pin"), systemImage: conversation.isPinned ? "pin.slash" : "pin")
+            }
+            Divider()
             if conversation.file != nil {
                 Button(L("Ask Main bot about this")) { workspace.askMainBot(about: conversation, on: site) }
             }
             Button(L("Settle")) { shelf.settle(conversation, of: site) }
+                .disabled(conversation.isPinned)
         }
     }
 }

@@ -162,6 +162,10 @@ public struct WebConversation: Codable, Identifiable, Equatable, Sendable, Settl
     /// The account it was asked in (`WebAccount.id`); nil is the site's first account, as every
     /// row from before accounts is.
     public var accountID: String?
+    /// Local sidebar pin; nil for older lists and unpinned rows. Kept through page refreshes.
+    public var pinnedAt: Date?
+
+    public var isPinned: Bool { pinnedAt != nil }
 
     public init(id: String, url: URL, title: String, messages: Int = 0, savedAt: Date? = nil, file: String? = nil, updatedAt: Date) {
         self.id = id
@@ -239,7 +243,13 @@ public struct WebConversationStore: Sendable {
     public mutating func adopt(_ old: String, as id: String, url: URL) {
         guard old != id, let index = conversations.firstIndex(where: { $0.id == old }) else { return }
         var row = conversations.remove(at: index)
-        guard conversation(id) == nil else { return }
+        if let existing = conversation(id) {
+            // Folding a provisional row must retain its pin without crossing accounts.
+            if row.account == existing.account, let pin = row.pinnedAt {
+                update(id) { $0.pinnedAt = min($0.pinnedAt ?? pin, pin) }
+            }
+            return
+        }
         row.id = id
         row.url = url
         conversations.insert(row, at: min(index, conversations.count))
@@ -597,11 +607,19 @@ public final class WebShelf: ObservableObject {
         stores[site.id]?.conversations ?? []
     }
 
-    /// The rows the left column lists under the site: the ones you did not settle, those
-    /// still waiting for an answer first, then newest first.
+    /// Pins stay under their provider, in pin order even as pages refresh. Other rows keep
+    /// the existing unsettled, awaiting-first order. The Questions list is unchanged.
     public func listed(of site: WebSite) -> [WebConversation] {
-        let rows = conversations(of: site).filter { !$0.isSettled }
-        return rows.filter(\.isAwaiting) + rows.filter { !$0.isAwaiting }
+        let all = conversations(of: site)
+        let pins = all.filter(\.isPinned).sorted {
+            // The list's ISO-8601 dates have second precision: use that same precision in
+            // memory so two quick pins cannot swap when the list reloads.
+            let lhs = $0.pinnedAt!.timeIntervalSince1970.rounded(.down)
+            let rhs = $1.pinnedAt!.timeIntervalSince1970.rounded(.down)
+            return lhs == rhs ? $0.id < $1.id : lhs < rhs
+        }
+        let rows = all.filter { !$0.isPinned && !$0.isSettled }
+        return pins + rows.filter(\.isAwaiting) + rows.filter { !$0.isAwaiting }
     }
 
     public func conversation(_ id: String, of site: WebSite) -> WebConversation? {
@@ -722,6 +740,13 @@ public final class WebShelf: ObservableObject {
         requested[site.id] = site.startURL
         requestedRow[site.id] = nil
         status[site.id] = .newQuestion
+    }
+
+    /// Only changes local list metadata: never opens a page or changes its account/profile.
+    public func setPinned(_ pinned: Bool, conversation: WebConversation, of site: WebSite, now: Date = Date()) {
+        guard let row = stores[site.id]?.conversation(conversation.id), row.isPinned != pinned else { return }
+        stores[site.id]?.update(row.id) { $0.pinnedAt = pinned ? now : nil }
+        stores[site.id]?.save()
     }
 
     /// The row's clock: it leaves the left column (it stays under "Questions").
