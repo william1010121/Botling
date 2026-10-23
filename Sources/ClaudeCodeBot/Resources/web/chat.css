@@ -1214,6 +1214,14 @@ body.spec-mode .float-layer { display: none; }
 /* Message feedback stays under the content, outside reply/card action toolbars. */
 .reaction-message-column { display:flex; flex-direction:column; gap:6px; min-width:0; max-width:100%; }
 .reaction-message-column:has(> .wide) { flex:1; }
+/* Compact message metadata shares one row; only expanded work details span the next line. */
+.message-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; max-width: 100%; }
+.user-body > .message-footer { justify-content: flex-end; }
+.message-footer > .task-chips { display: contents; }
+.message-footer .task-summary { flex-wrap: wrap; max-width: 100%; }
+.message-footer .task-list, .message-footer .task-output { order: 1; flex-basis: 100%; min-width: 0; }
+.message-footer > .reactions { min-width: 0; }
+.message-footer > .seen-marks { margin-top: 0; flex-wrap: wrap; }
 .reactions { display:flex; flex-wrap:wrap; align-items:center; gap:4px; max-width:100%; }
 .reaction-chip, .reaction-picker summary, .reaction-palette button { font:inherit; font-size:13px; color:var(--text); border:1px solid var(--line); background:var(--surface, transparent); border-radius:12px; padding:3px 8px; cursor:pointer; }
 .reaction-chip[aria-pressed="true"], .reaction-palette button[aria-pressed="true"] { background:rgba(76,141,255,.18); border-color:#4c8dff; }
