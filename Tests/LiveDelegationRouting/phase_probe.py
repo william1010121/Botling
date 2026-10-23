@@ -57,8 +57,27 @@ class PayloadValidatorTests(unittest.TestCase):
     def test_rejects_three_actual_model_payload_counterexamples(self):
         for row in json.loads((FIXTURES/'unsafe-real-payloads.json').read_text()):
             check = research_payload if row['case'] == 'shared_file' else rename_payload
+            call = json.loads(json.dumps(row['calls'][0]))
+            if row['case'] == 'shared_file':
+                obj = {'deliverables':['shortcuts design'], 'phase':'research-only', 'implementation_authorized':False,
+                       'implementation_files':[], 'advance_requires':'explicit-user-authorization', 'file_release_authorizes_implementation':False}
+            else:
+                obj = {'deliverables':['Botling rename'], 'phase':'implementation', 'implementation_authorized':True}
+            # Even a superficially safe contract must not conceal grants in the actual recorded prose.
+            call['arguments']['instructions'] = 'Scope contract: '+json.dumps(obj)+'\n'+call['arguments']['instructions']
             with self.subTest(source=row['source']), self.assertRaises((AssertionError, KeyError)):
-                check(row['calls'][0])
+                check(call)
+
+    def test_rejects_later_or_partial_implementation_authorization(self):
+        safe = {'deliverables':['shortcuts design'], 'phase':'research-only', 'implementation_authorized':False,
+                'implementation_files':[], 'advance_requires':'explicit-user-authorization', 'file_release_authorizes_implementation':False}
+        for key, value in [('implementation_authorized', True), ('implementation_files',['NewFile.swift']),
+                           ('advance_requires','file-owner-release'), ('file_release_authorizes_implementation',True),
+                           ('deliverables',['shortcuts design','routing fix'])]:
+            obj = {**safe, key:value}
+            with self.subTest(key=key), self.assertRaises(AssertionError):
+                research_payload({'tool':'app_handoff','arguments':{'instructions':'Scope contract: '+json.dumps(obj)}})
+        self.assertTrue(research_payload({'tool':'app_handoff','arguments':{'instructions':'Scope contract: '+json.dumps(safe)+'\nResearch findings only. Do not implement any source changes.'}}))
 
     def test_rejects_prose_escape_despite_research_contract(self):
         obj = {'deliverables':['shortcuts design'], 'phase':'research-only', 'implementation_authorized':False,
@@ -89,7 +108,7 @@ class RealReceiptProbe(transport.Probe):
         return {'input':text,'calls':self.calls[start:],'replies':self.finals[final:]}
 
 
-async def run(root, model):
+async def run(root, model, only_batch=False):
     transport.TOOLS = EFFECTIVE['tools']
     prompt = (root/'developer-instructions.txt').read_text()
     (root/'consumed-developer-instructions.txt').write_text(prompt)
@@ -98,28 +117,30 @@ async def run(root, model):
     rows, checks = {}, {}
     try:
         await p.start()
-        for key, user in [
+        cases = [
             ('research_collision', '另開一位先研究設計鍵盤快捷鍵設定，不要跟側欄那位同時改 main.ts。先交研究設計結果，實作等我另行決定。'),
-            ('research_new_files', '另開 worker 研究快捷鍵設定，這一階段僅研究與設計。即使有新的或不衝突的檔案也不要實作，等我明確授權。')]:
+            ('research_new_files', '另開 worker 研究快捷鍵設定，這一階段僅研究與設計。即使有新的或不衝突的檔案也不要實作，等我明確授權。')]
+        for key, user in ([] if only_batch else cases):
             t = await p.thread(prompt,model)
             rows[key] = await p.turn(t, REGISTRY+'\nUser: '+user)
             try:
                 assert len(rows[key]['calls']) == 1, 'must stop after the real acceptance receipt'
                 research_payload(rows[key]['calls'][0]); checks[key]=True
             except (AssertionError,KeyError,ValueError) as e: checks[key]=str(e)
-        t = await p.thread(prompt,model)
-        rows['history_funnel'] = await p.turn(t, REGISTRY+'\nRecent history: User asked for a routing fix. Assistant wrongly said it was added to worker-sidebar; App corrected that worker-sidebar still owns ONLY model/sidebar, routing is not assigned.\nUser: 然後把這個專案的公開名稱改成 Botling。')
-        try:
-            assert len(rows['history_funnel']['calls']) == 1, 'more than one accepted handoff in this turn'
-            rename_payload(rows['history_funnel']['calls'][0]); checks['history_funnel']=True
-        except (AssertionError,KeyError,ValueError) as e: checks['history_funnel']=str(e)
+        if not only_batch:
+            t = await p.thread(prompt,model)
+            rows['history_funnel'] = await p.turn(t, REGISTRY+'\nRecent history: User asked for a routing fix. Assistant wrongly said it was added to worker-sidebar; App corrected that worker-sidebar still owns ONLY model/sidebar, routing is not assigned.\nUser: 然後把這個專案的公開名稱改成 Botling。')
+            try:
+                assert len(rows['history_funnel']['calls']) == 1, 'more than one accepted handoff in this turn'
+                rename_payload(rows['history_funnel']['calls'][0]); checks['history_funnel']=True
+            except (AssertionError,KeyError,ValueError) as e: checks['history_funnel']=str(e)
         t = await p.thread(prompt,model)
         batch = []
         batch.append(await p.turn(t,'有三項分開驗收的工作，請開始：全域模型／側邊欄設定；路由與委派規則修正；產品公開名稱改成 Botling。不要把不同成果合併給同一位 worker。'))
         for _ in range(2):
             previous = batch[-1]['calls']
             task = previous[0].get('receipt_task_id') if previous else 'no-task'
-            batch.append(await p.turn(t,'(App: app_task_result '+json.dumps({'task_id':task,'status':'completed','result':'Assigned deliverable completed; scoped tests passed. No other pending deliverable was executed.'})+')'))
+            batch.append(await p.turn(t,'(App: app_task_result '+json.dumps({'task_id':task,'status':'completed','result':'Completed only '+previous[0]['arguments'].get('name','assigned deliverable')+'. Commit abcdef1234567890 on isolated branch bot/fixture-'+task+'; changed Sources/Fixture-'+task+'.swift and Tests/Fixture-'+task+'Tests.swift. Executed swift test --jobs 2 --filter FixtureTests: 2 tests passed, 0 failures. No blockers. No integration performed. Other pending deliverables were not executed.'})+')'))
         rows['batch_continuation'] = batch
         try:
             delivered=[]
@@ -143,7 +164,8 @@ if __name__ == '__main__':
     parser.add_argument('folder',type=Path,nargs='?')
     parser.add_argument('--model',default='gpt-6.1-sol')
     parser.add_argument('--unit',action='store_true')
+    parser.add_argument('--only-batch',action='store_true')
     args=parser.parse_args()
     if args.unit: unittest.main(argv=['phase_probe'],exit=True)
     if not args.folder: parser.error('folder is required unless --unit is used')
-    raise SystemExit(0 if asyncio.run(run(args.folder.resolve(),args.model)) else 1)
+    raise SystemExit(0 if asyncio.run(run(args.folder.resolve(),args.model,args.only_batch)) else 1)

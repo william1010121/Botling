@@ -47,8 +47,19 @@ struct DelegationRoutingPolicyTests {
         #expect(system.contains("each source-editing worker its own isolated git worktree and branch"))
         #expect(system.contains("Integrate completed changes sequentially"))
         #expect(system.contains("single writer"))
-        #expect(system.contains("all independent app_handoff calls before ending the turn"))
+        #expect(system.contains("Do not dispatch further tools after an acceptance receipt"))
+        #expect(system.contains("name the remaining scopes as pending (not accepted)"))
+        #expect(!system.contains("all independent app_handoff calls before ending the turn"))
         #expect(system.contains("app_task_result, correlated by task_id"))
+    }
+
+    @Test func researchPhaseRemainsLimitedInCoordinatorAndWorkerInstructions() {
+        let p = prompts(.codex)
+        #expect(p.system.contains("implementation_files=[]"))
+        #expect(p.system.contains("file_release_authorizes_implementation=false"))
+        #expect(p.system.contains("Do not grant conditional future implementation"))
+        #expect(p.codexWorkerSystem.contains("new or non-conflicting files and isolated worktrees"))
+        #expect(p.codexWorkerSystem.contains("Require explicit user authorization"))
     }
 
     @Test func routingPolicyReachesStartAndResumeRPC() throws {
