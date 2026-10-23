@@ -1,4 +1,5 @@
 :root {
+  --chat-avatar-size: 48px;
   --ground: #0E0E10;
   --bubble: #1B1B1F;
   --user-bubble: #2B2B31;
@@ -60,7 +61,12 @@ button { font: inherit; color: inherit; }
 .row.user .reply-button { order: -1; }
 .row.bot, .row.notice { justify-content: flex-start; }
 
-.avatar { width: 28px; height: 28px; flex-shrink: 0; margin-top: 6px; }
+/* Scale the complete character + bot hat together, including working and notice rows. */
+.avatar { width: var(--chat-avatar-size); height: var(--chat-avatar-size); flex-shrink: 0; margin-top: 6px; }
+@media (width < 480px) {
+  #messages { padding-left: 16px; padding-right: 16px; }
+  :root { --chat-avatar-size: 40px; }
+}
 .mini-avatar { width: 18px; height: 18px; flex-shrink: 0; }
 
 .reply-button {
@@ -444,7 +450,8 @@ body.panel-mode #scroller, body.panel-mode #composer-slot { display: none; }
 .subagent-title { font-size: 14px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .subagent-meta { font-size: 12px; color: var(--faint); }
 .subagent-open { flex-shrink: 0; font-size: 12px; color: var(--link); }
-.bubble.working { min-width: 280px; }
+/* Keep tool traces readable without pushing past the avatar on narrow chats. */
+.bubble.working { min-width: min(280px, calc(100% - var(--chat-avatar-size) - 10px)); }
 .bubble.working .dots { padding: 8px 0 0; }
 
 /* Watching a subagent (read only): "Main › Review PR #7  [Claude subagent]   Sonnet · …", no input box. */
