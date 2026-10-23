@@ -80,8 +80,8 @@ struct RailToggle: View {
 }
 
 /// The left column folded: only faces. A dashed blue ring while one works, an orange ring
-/// and "!" when its connection is stuck, an orange dot when it waits on you, a blue dot when
-/// it has lines you have not read, a dimmed face while it sleeps. Hover for name and status.
+/// and "!" when its connection is stuck, a blue dot when it has lines you have not read, a
+/// dimmed face while it sleeps (waiting on you is in the hover tip, not a dot). Hover for name and status.
 struct RailStrip: View {
     @ObservedObject var workspace: Workspace
     /// The pinned ones first (`pinnedCount` of them), then the rest.
@@ -122,7 +122,7 @@ struct RailStrip: View {
                     title: site.name,
                     detail: L("Web · {0} conversations", workspace.web.conversations(of: site).count),
                     selected: workspace.selectedWebSite == site,
-                    asleep: false, running: false, stuck: false, waiting: false, unread: false,
+                    asleep: false, running: false, stuck: false, unread: false,
                     tip: $tip
                 ) {
                     workspace.openFresh(site)
@@ -240,8 +240,7 @@ private struct BotIcon: View {
             asleep: bot.phase == .asleep && !working,
             running: working,
             stuck: bot.outage != nil || bot.retryingConnection,
-            waiting: waiting,
-            unread: bot.hasUnread && !selected,
+            unread: RailLayout.unreadBadge(unread: bot.unreadCount, waiting: waiting, selected: selected) != nil,
             tip: $tip,
             action: action
         ) {
@@ -278,8 +277,7 @@ private struct GroupIcon: View {
             asleep: false,
             running: speaker != nil,
             stuck: false,
-            waiting: question,
-            unread: chat.hasUnread && !selected,
+            unread: RailLayout.unreadBadge(unread: chat.unreadCount, waiting: question, selected: selected) != nil,
             tip: $tip,
             action: action
         ) {
@@ -301,7 +299,6 @@ private struct RailIcon<Face: View>: View {
     let asleep: Bool
     let running: Bool
     let stuck: Bool
-    let waiting: Bool
     let unread: Bool
     @Binding var tip: RailTip?
     let action: () -> Void
@@ -325,9 +322,9 @@ private struct RailIcon<Face: View>: View {
             .frame(width: 40, height: 40)
             .background(RoundedRectangle(cornerRadius: 10).fill(selected ? Theme.selected : hovering ? Theme.hover : .clear))
             .overlay(alignment: .topTrailing) {
-                if waiting || unread {
+                if unread {
                     Circle()
-                        .fill(waiting ? Theme.orange : Theme.blue)
+                        .fill(Theme.blue)
                         .frame(width: 9, height: 9)
                         .padding(2)
                         .background(Circle().fill(Theme.side))

@@ -266,10 +266,14 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable, Settleable {
 
     public var isRunning: Bool { status == .running }
 
-    /// How the left column marks it. Only one still at work gets a live dot; a finished one
-    /// gets a check, so it never looks like a bot that is awake (green).
+    /// How the left column marks it. One still at work gets no mark (its row carries the
+    /// owner head's face); a finished one gets a check, so it never looks like a bot that is
+    /// awake (green).
     public enum Mark: Equatable, Sendable {
         case live, done, failed, stopped
+
+        /// Whether a sidebar row draws this mark: not while it works (no blue dot), once ended.
+        public var showsInSidebar: Bool { self != .live }
     }
 
     public var mark: Mark {

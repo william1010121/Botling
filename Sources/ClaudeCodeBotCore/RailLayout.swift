@@ -19,6 +19,13 @@ public enum RailLayout {
         return parts.joined(separator: " · ")
     }
 
+    /// The one sign at the end of a bot or group row (or at a folded face's corner): how many
+    /// lines you have not read, nil for none or while the chat is open. Waiting on you draws
+    /// nothing here (no orange dot); it stays in the hover tip and the accessibility label.
+    public static func unreadBadge(unread: Int, waiting: Bool, selected: Bool) -> Int? {
+        unread > 0 && !selected ? unread : nil
+    }
+
     /// What the search field says when nothing in the column matches.
     public static let noMatches = "No bots match"
     /// Puts the cursor in the column's search field (and opens a folded column).
