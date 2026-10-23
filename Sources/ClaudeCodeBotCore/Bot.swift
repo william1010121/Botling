@@ -2184,7 +2184,7 @@ public final class Bot: ObservableObject, Identifiable {
         case let .subagentStarted(id, _, _, _, _): id
         case let .subagentWaiting(id): id
         case let .launchResult(_, _, parent), let .messageSent(_, _, _, _, parent): parent
-        case .subagentEnded, .subagentNamed, .subagentModel, .subagentDescribed, .backgroundCommandStarted, .monitorStarted, .scheduleCalled, .scheduleResult: nil
+        case .subagentEnded, .subagentNamed, .subagentModel, .subagentRuntime, .subagentDescribed, .backgroundCommandStarted, .monitorStarted, .scheduleCalled, .scheduleResult: nil
         }
     }
 

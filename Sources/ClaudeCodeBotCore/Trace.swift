@@ -25,6 +25,8 @@ public enum TraceEvent: Equatable, Sendable {
     case subagentNamed(id: String, name: String)
     /// The model a subagent call asked for (the Agent call's `model`).
     case subagentModel(id: String, model: String)
+    /// Session-scoped runtime values, never inferred from the model or current global config.
+    case subagentRuntime(id: String, runtime: WorkerRuntimeInfo)
     /// A shell command went on in the background (`task_started`, `local_bash`); `id` is the
     /// Bash call. It ends with a `task_notification`, read as `subagentEnded` with that id.
     case backgroundCommandStarted(id: String, description: String)
@@ -172,6 +174,29 @@ extension Settleable {
 }
 
 /// A subagent a bot sent off with the Agent (or Task) tool, and everything it did.
+/// Last settings reported by this worker's runtime. Nil fields mean unknown, including
+/// a null service tier: absence is not evidence that Fast mode is off. This describes
+/// session settings, not guaranteed per-request processing/billing tier.
+public struct WorkerRuntimeInfo: Codable, Equatable, Sendable {
+    public var reasoningEffort: String?
+    public var serviceTier: String?
+
+    public init(reasoningEffort: String? = nil, serviceTier: String? = nil) {
+        self.reasoningEffort = reasoningEffort
+        self.serviceTier = serviceTier
+    }
+
+    static func codex(_ settings: [String: Any], effortKey: String) -> Self {
+        Self(reasoningEffort: value(settings[effortKey]), serviceTier: value(settings["serviceTier"]))
+    }
+
+    private static func value(_ raw: Any?) -> String? {
+        guard let text = raw as? String else { return nil }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 public struct Subagent: Codable, Equatable, Identifiable, Sendable, Settleable {
     public enum Status: String, Codable, Sendable {
         case running, completed, failed, stopped
@@ -203,7 +228,7 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable, Settleable {
     public var unsettledAt: Date?
 
     private enum CodingKeys: String, CodingKey {
-        case id, description, type, prompt, status, background, startedAt, endedAt, steps, result, parentID, unsettledAt, name, agentID, calls, model
+        case id, description, type, prompt, status, background, startedAt, endedAt, steps, result, parentID, unsettledAt, name, agentID, calls, model, runtime
         case settledAt = "dismissedAt"
     }
     /// The name the bot gave it, when it gave one.
@@ -215,6 +240,7 @@ public struct Subagent: Codable, Equatable, Identifiable, Sendable, Settleable {
     public var calls: [String]?
     /// The model its Agent call asked for ("sonnet"), when it asked for one.
     public var model: String?
+    public var runtime: WorkerRuntimeInfo?
 
     public init(id: String, description: String, type: String? = nil, prompt: String, status: Status = .running, background: Bool = false, startedAt: Date = Date(), steps: [Step] = [], parentID: String? = nil) {
         self.id = id
@@ -398,6 +424,10 @@ public struct TraceBook: Equatable, Sendable {
         case let .subagentNamed(id, name):
             guard let index = subagentIndex(id), subagents[index].name != name else { return false }
             subagents[index].name = name
+            return true
+        case let .subagentRuntime(id, runtime):
+            guard let index = subagentIndex(id), subagents[index].runtime != runtime else { return false }
+            subagents[index].runtime = runtime
             return true
         case let .subagentModel(id, model):
             guard let index = subagentIndex(id), subagents[index].model != model else { return false }

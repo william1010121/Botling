@@ -126,6 +126,12 @@ export const ko: Dictionary = {
   // main.ts: watching a subagent, plugin panels
   "subagent.back": "{bot}의 채팅으로 돌아가기",
   "subagent.of": "{bot}의 서브에이전트",
+  "subagent.unknown": "알 수 없음",
+  "subagent.effort": "사고: {effort}",
+  "subagent.fastOn": "Fast: 켜짐",
+  "subagent.fastOff": "Fast: 꺼짐",
+  "subagent.fastUnknown": "Fast: 알 수 없음",
+  "subagent.runtimeHelp": "저장된 세션 설정입니다. 실제 요청 처리 등급은 다를 수 있습니다. 런타임 정보가 없으면 알 수 없음으로 표시합니다.",
   "subagent.watchOnly": "보기 전용",
   "subagent.from": "{bot}에게서",
   "subagent.engine.claude": "Claude 서브에이전트",

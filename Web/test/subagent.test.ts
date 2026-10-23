@@ -71,6 +71,47 @@ describe("a subagent's view", () => {
     expect(sent).toContainEqual({ type: "closeSubagent" });
   });
 
+  it("shows captured effort and Fast for Codex while keeping model, status and watch only", () => {
+    const state = watching();
+    window.ccb.setState({ ...state, subagent: { ...state.subagent!, engine: "codex", type: "codex-worker",
+      model: "gpt-6.1-sol", runtime: { reasoningEffort: "xhigh", serviceTier: "fast" } } });
+    const meta = bar().querySelector<HTMLElement>(".meta")!;
+    expect(meta.textContent).toContain("gpt-6.1-sol · Effort: xhigh · Fast: on");
+    expect(meta.textContent).toContain("watch only");
+    expect(meta.title).toContain("session settings");
+    expect(bar().querySelector(".engine-badge")?.textContent).toBe("Codex worker");
+  });
+
+  it.each([
+    ["priority", "on"], ["fast", "on"], ["default", "off"], ["flex", "off"],
+    [null, "unknown"], ["auto", "unknown"], ["future-tier", "unknown"],
+  ])("renders service tier %s as Fast %s", (serviceTier, expected) => {
+    const state = watching();
+    window.ccb.setState({ ...state, subagent: { ...state.subagent!, engine: "codex",
+      runtime: { serviceTier } } });
+    expect(bar().querySelector(".meta")?.textContent).toContain(`Fast: ${expected}`);
+    expect(bar().querySelector(".meta")?.textContent).toContain("Effort: unknown");
+  });
+
+  it("keeps legacy data unknown and never shows Fast for Claude", () => {
+    const state = watching();
+    window.ccb.setState({ ...state, subagent: { ...state.subagent!, engine: "codex" } });
+    expect(bar().querySelector(".meta")?.textContent).toContain("Effort: unknown · Fast: unknown");
+    window.ccb.setState({ ...state, subagent: { ...state.subagent!, engine: "claude",
+      runtime: { reasoningEffort: "high", serviceTier: "fast" } } });
+    expect(bar().querySelector(".meta")?.textContent).toContain("Effort: high");
+    expect(bar().querySelector(".meta")?.textContent).not.toContain("Fast:");
+  });
+
+  it("updates runtime values on the same worker header", () => {
+    const state = watching();
+    window.ccb.setState({ ...state, subagent: { ...state.subagent!, engine: "codex",
+      runtime: { reasoningEffort: "high", serviceTier: "fast" } } });
+    window.ccb.setState({ ...state, subagent: { ...state.subagent!, engine: "codex",
+      runtime: { reasoningEffort: "low", serviceTier: "default" } } });
+    expect(bar().querySelector(".meta")?.textContent).toContain("Effort: low · Fast: off");
+  });
+
   it("has no input box, and gets it back on leaving", () => {
     window.ccb.setState(watching());
     expect(document.getElementById("composer-slot")!.hidden).toBe(true);
