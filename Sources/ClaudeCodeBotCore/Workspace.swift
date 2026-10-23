@@ -1626,6 +1626,14 @@ public final class Workspace: ObservableObject {
         settings.save(to: settingsURL)
     }
 
+    /// Saves immediately; published settings refresh existing and newly opened chat surfaces.
+    public func setChatAvatarSize(_ size: Int?) {
+        let size = size.map(AppSettings.clampedChatAvatarSize)
+        guard size != settings.chatAvatarSizeChoice else { return }
+        settings.chatAvatarSizeChoice = size
+        settings.save(to: settingsURL)
+    }
+
     /// Where bots put results for the user. A new session starts with the rule in its system
     /// prompt; an awake one (whose `--resume` keeps the old prompt) hears it with its next message.
     public func setResultPublishing(_ choice: ResultPublishing) {
