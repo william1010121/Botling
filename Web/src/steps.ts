@@ -24,6 +24,24 @@ const chevron = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" str
  * its words show in order as its own words, and each run of tool calls between them folds to a chip.
  */
 export function stepsElement(listID: string, steps: StepView[], earlier = false): HTMLElement {
+  return replyWork(steps, (work) => workedElement(listID, work, earlier));
+}
+
+/** Cards belong to the reply, outside every fold and the live tool tail. Render each once. */
+function replyWork(steps: StepView[], render: (work: StepView[]) => HTMLElement): HTMLElement {
+  if (!steps.some((step) => step.kind === "subagent")) return render(steps);
+  const wrap = document.createElement("div");
+  wrap.className = "reply-work";
+  const work = steps.filter((step) => step.kind !== "subagent");
+  if (work.length) wrap.append(render(work));
+  const cards = document.createElement("div");
+  cards.className = "step-list reply-subagents";
+  for (const step of steps.filter((step) => step.kind === "subagent")) cards.append(subagentCard(step));
+  wrap.append(cards);
+  return wrap;
+}
+
+function workedElement(listID: string, steps: StepView[], earlier: boolean): HTMLElement {
   const parts = segments(steps);
   if (!parts.some((part) => part.text)) {
     const wrap = foldedRun(listID, steps, true, earlier);
@@ -60,6 +78,10 @@ export function stepsElement(listID: string, steps: StepView[], earlier = false)
 
 /** The steps of the turn under way, shown live above the typing dots. Older ones fold away. */
 export function liveElement(steps: StepView[]): HTMLElement {
+  return replyWork(steps, liveWork);
+}
+
+function liveWork(steps: StepView[]): HTMLElement {
   const parts = segments(steps);
   const wrap = document.createElement("div");
   wrap.className = "steps live";

@@ -131,7 +131,10 @@ describe("components in the chat", () => {
     expect(srcdoc.count).toBe(0);
     expect(choices.style.height).toBe("90px");
     expect(card.style.height).toBe("90px");
-    expect(document.querySelector(".row[data-id=\"r1\"] .steps-toggle")?.textContent).toContain("1 subagent");
+    const agentCard = document.querySelector(".row[data-id=\"r1\"] .reply-subagents .subagent-card.completed")!;
+    expect(agentCard).not.toBeNull();
+    expect(agentCard.closest("[hidden], .steps")).toBeNull();
+    expect(document.querySelectorAll(".row[data-id=\"r1\"] .subagent-card")).toHaveLength(1);
   });
 
   it("redraw only the component whose data changed, keeping it on screen until the new drawing is ready", () => {
