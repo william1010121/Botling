@@ -18,8 +18,14 @@ extension Workspace {
         select(site.selectionID)
     }
 
-    /// The site's own row (or its face in the folded column): a new question, fresh, as "New
-    /// question" does. The page you leave is not lost: a question on it still waiting goes on
+    /// Navigation shared by the expanded rail, folded rail and account menu.
+    public func navigate(to site: WebSite, account: WebAccount? = nil) {
+        if let account { web.selectAccount(account, on: site) }
+        select(site)
+    }
+
+    /// Explicitly asks a new question (also used when adding an account). Navigation to an
+    /// existing provider or account uses `navigate` instead. A question still waiting goes on
     /// behind, and its row stays. Already on a fresh page of it, nothing reloads.
     ///
     /// `account` (one picked in the site's account menu): the new question is asked in it, on
