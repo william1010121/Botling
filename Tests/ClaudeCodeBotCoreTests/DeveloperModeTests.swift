@@ -264,7 +264,7 @@ struct DeveloperModeTests {
         #expect(manager.messages.first?.feedback == FeedbackNote(about: "Main bot", words: "It could have made projects"))
         await eventually { fake.agents.last?.sent.isEmpty == false }
         #expect(fake.agents.last?.sent.first?.contains(text) == true)
-        #expect(main.messages.last?.text.hasPrefix("Sent to Botling as feedback") == true)
+        #expect(main.messages.last?.text == "Sent to \(manager.name) as feedback.")
         let log = try String(contentsOf: root.appending(path: "ccb/feedback.md"), encoding: .utf8)
         #expect(log.contains("It could have made projects"))
     }
