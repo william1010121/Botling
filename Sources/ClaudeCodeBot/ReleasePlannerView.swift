@@ -16,28 +16,16 @@ struct ReleasesSection: View {
     }
 
     var body: some View {
-        PanelSection(L("Shared features, most 👍 first")) {
+        Section {
             if planner.prs.isEmpty {
                 Text(planner.loading ? L("Loading…") : planner.problem == nil ? L("No open PRs labelled {0} yet.", CommunityPR.label) : "")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.muted)
-                    .padding(.horizontal, 14)
-                    .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(planner.prs) { pr in
-                        ReleaseRow(planner: planner, pr: pr)
-                        if pr.id != planner.prs.last?.id {
-                            Rectangle().fill(Theme.line).frame(height: 1)
-                        }
-                    }
-                }
-                .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(planner.prs) { pr in
+                ReleaseRow(planner: planner, pr: pr)
             }
             if let problem = planner.problem {
-                Text(problem).font(.system(size: 12)).foregroundStyle(Theme.errorText)
+                Text(problem).font(.system(size: 12)).foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack {
@@ -45,38 +33,38 @@ struct ReleasesSection: View {
                      ? L("A vote is a 👍 on the PR, seen on GitHub too. Tick the ones for the next version.")
                      : L("A vote is a 👍 on the PR, seen on GitHub too. The repo's owner picks what goes into the next version."))
                     .font(.system(size: 12))
-                    .foregroundStyle(Theme.faint)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 Button(L("Reload")) { Task { await planner.refresh() } }
                     .disabled(planner.loading)
             }
+        } header: {
+            Text(L("Shared features, most 👍 first"))
         }
+        .task { if planner.prs.isEmpty { await planner.refresh() } }
         if planner.canPick {
-            PanelSection(L("Next version")) {
+            Section {
                 let picks = planner.pickedPRs
                 HStack(spacing: 12) {
                     Text(picks.isEmpty ? L("Nothing picked yet.") : picks.map { "#\($0.number)" }.joined(separator: ", "))
-                        .font(.system(size: 14))
-                        .foregroundStyle(picks.isEmpty ? Theme.muted : Theme.text)
+                        .foregroundStyle(picks.isEmpty ? .secondary : .primary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Button(sent ? L("Sent") : L("Send to {0}", workspace.developerProject?.name ?? L("manager"))) {
                         sent = workspace.handOffRelease(picks)
                     }
                     .disabled(picks.isEmpty || sent)
                 }
-                .padding(.horizontal, 14)
-                .frame(height: 48)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Theme.bubble))
+            } header: {
+                Text(L("Next version"))
+            } footer: {
                 Text(L("Its manager merges each picked PR whose tests pass and writes the release notes; one that conflicts or fails comes back to you."))
                     .font(.system(size: 12))
-                    .foregroundStyle(Theme.faint)
+                    .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .onChange(of: planner.picked) { sent = false }
         }
-        Color.clear.frame(height: 0)
-            .task { if planner.prs.isEmpty { await planner.refresh() } }
     }
 }
 
@@ -96,10 +84,10 @@ private struct ReleaseRow: View {
                 if let url = pr.url { NSWorkspace.shared.open(url) }
             } label: {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(pr.title).font(.system(size: 14)).lineLimit(1)
+                    Text(pr.title).lineLimit(1)
                     Text("#\(pr.number) · @\(pr.author)\(pr.isDraft ? " · " + L("draft") : "")")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.faint)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
@@ -111,18 +99,16 @@ private struct ReleaseRow: View {
             } label: {
                 Text("👍 \(pr.votes)")
                     .font(.system(size: 13, weight: .medium).monospacedDigit())
-                    .foregroundStyle(planner.voted.contains(pr.number) ? Theme.blue : Theme.text)
+                    .foregroundStyle(planner.voted.contains(pr.number) ? Color.accentColor : Color.primary)
                     .padding(.horizontal, 10)
                     .frame(minWidth: 64, minHeight: 28)
-                    .background(Capsule().fill(planner.voted.contains(pr.number) ? Theme.blue.opacity(0.18) : Theme.chip))
+                    .background(Capsule().fill(planner.voted.contains(pr.number) ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.08)))
             }
             .buttonStyle(.plain)
             .disabled(planner.loading)
             .help(planner.voted.contains(pr.number) ? L("You voted for this") : L("Vote: a 👍 on the PR"))
             .accessibilityLabel(L("{0} votes. Vote for #{1}", pr.votes, pr.number))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .frame(minHeight: 52)
+        .padding(.vertical, 2)
     }
 }

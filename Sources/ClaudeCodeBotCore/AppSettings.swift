@@ -20,7 +20,32 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// (a settings file from before it) means `StallWatch.defaultMinutes`, 0 never reminds.
     public var stallReminderMinutes: Int?
 
-    public var stallReminderInterval: TimeInterval { TimeInterval(max(0, stallReminderMinutes ?? StallWatch.defaultMinutes) * 60) }
+    public var stallReminder: Int { max(0, stallReminderMinutes ?? StallWatch.defaultMinutes) }
+
+    public var stallReminderInterval: TimeInterval { TimeInterval(stallReminder * 60) }
+
+    /// What Settings → General offers for the reminder, in minutes; 0 is Never.
+    public static let stallReminderChoices = [5, 10, 15, 30, 60, 0]
+
+    /// The model subagents of every bot use unless that bot says otherwise (Settings → Engines
+    /// and subagents); nil: the same as the bot. Applied to all bots when it changes, and given
+    /// to new ones.
+    public var subagentModelDefault: BotModel?
+
+    /// App-managed Codex workers follow `~/.codex/config.toml`. Nil (a settings file from before
+    /// it) means on.
+    public var codexWorkersFollow: Bool?
+
+    public var codexWorkersFollowConfig: Bool { codexWorkersFollow ?? true }
+
+    /// Botling's own choice for Codex workers, kept while following the config so turning the
+    /// switch off again brings it back.
+    public var codexWorkerChoice: CodexWorkerDefaults?
+
+    /// What every bot's workers are set to: nothing (Codex's config) while following it.
+    public var appliedCodexWorkerDefaults: CodexWorkerDefaults {
+        codexWorkersFollowConfig ? CodexWorkerDefaults() : codexWorkerChoice ?? CodexWorkerDefaults()
+    }
 
     /// The left column folded into a strip of faces. Nil (a settings file from before it)
     /// means open.

@@ -207,7 +207,7 @@ struct DoctorTests {
     }
 
     @Test func doctorIsASettingsSection() {
-        #expect(SettingsSection.allCases.last == .doctor)
+        #expect(SettingsSection.allCases.contains(.doctor) && !SettingsSection.doctor.isAdvanced)
         #expect(SettingsSection.doctor.title == "Doctor")
     }
 }

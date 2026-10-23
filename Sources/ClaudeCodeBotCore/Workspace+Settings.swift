@@ -1,27 +1,62 @@
 import Combine
 import Foundation
 
-/// The sections of Botling's settings window, in the order its sidebar lists them.
+/// The sections of Botling's settings window, in the order its sidebar lists them; the last two
+/// sit under "Advanced".
 public enum SettingsSection: String, CaseIterable, Identifiable, Sendable {
     case general
-    case usage
+    case engines
     case permissions
+    case usage
     case plugins
+    case doctor
     case developer
     case releases
-    case doctor
 
     public var id: String { rawValue }
 
-    public var title: String {
+    public var title: String { L(englishTitle) }
+
+    /// Listed under "Advanced" in the sidebar.
+    public var isAdvanced: Bool { self == .developer || self == .releases }
+
+    /// What the sidebar's search also finds a section by: the names of its rows (English keys,
+    /// shown in the app's language).
+    var searchTerms: [String] {
         switch self {
-        case .general: L("General")
-        case .usage: L("Usage")
-        case .permissions: L("Permissions")
-        case .plugins: L("Plugins")
-        case .developer: L("Developer mode")
-        case .releases: L("Release planner")
-        case .doctor: L("Doctor")
+        case .general: ["Language", "App language", "Bot look", "Reminders", "Remind after no new step for"]
+        case .engines: ["Claude subagents", "Codex workers", "Follow Codex config file", "Model", "Reasoning effort", "Fast mode", "Component editor", "Engine and model for all bots"]
+        case .permissions: ["Auto mode", "Auto-approve safe actions", "Reports and results", "Publish as", "Approved component commands", "Ignored"]
+        case .usage: ["Usage today", "Cost", "Tokens", "Subscription limits", "By bot", "Earlier days"]
+        case .plugins: ["Installed", "Add plugin"]
+        case .doctor: ["Command-line tools", "Run again"]
+        case .developer: ["Develop Botling itself", "Its source"]
+        case .releases: []
+        }
+    }
+
+    /// The sections of `shown` whose title or rows contain `query`, in English or the app's
+    /// language, ignoring case; all of them for an empty query.
+    public static func matching(_ query: String, in shown: [SettingsSection]) -> [SettingsSection] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return shown }
+        return shown.filter { section in
+            let english = [section.rawValue, section.englishTitle] + section.searchTerms
+            let words = english + [section.title] + section.searchTerms.map { L($0) }
+            return words.contains { $0.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+        }
+    }
+
+    private var englishTitle: String {
+        switch self {
+        case .general: "General"
+        case .engines: "Engines and subagents"
+        case .usage: "Usage"
+        case .permissions: "Permissions"
+        case .plugins: "Plugins"
+        case .developer: "Developer mode"
+        case .releases: "Release planner"
+        case .doctor: "Doctor"
         }
     }
 }
