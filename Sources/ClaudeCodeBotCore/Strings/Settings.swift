@@ -13,7 +13,7 @@ extension L10n {
         // The gear's popover
         "tokens": ["tokens", "tokens", "トークン", "토큰"],
         "Auto-approve safe actions": ["自動核准安全操作", "自动批准安全操作", "安全な操作を自動承認", "안전한 작업 자동 승인"],
-        "Develop ClaudeCodeBot itself": ["開發 ClaudeCodeBot 本身", "开发 ClaudeCodeBot 本身", "ClaudeCodeBot 自体を開発", "ClaudeCodeBot 자체 개발"],
+        "Develop Botling itself": ["開發 Botling 本身", "开发 Botling 本身", "Botling 自体を開発", "Botling 자체 개발"],
         "Claude Code needs attention": ["Claude Code 需要處理", "Claude Code 需要处理", "Claude Code に対応が必要です", "Claude Code 확인 필요"],
         "Doctor ›": ["健康檢查 ›", "健康检查 ›", "診断 ›", "진단 ›"],
         "{0} on": ["已開啟 {0} 個", "已开启 {0} 个", "{0} 個オン", "{0}개 켜짐"],
@@ -63,7 +63,7 @@ extension L10n {
         "Installed": ["已安裝", "已安装", "インストール済み", "설치됨"],
         "Couldn't read \"{0}\": {1}": ["無法讀取「{0}」：{1}", "无法读取“{0}”：{1}", "「{0}」を読み込めませんでした：{1}", "'{0}'을(를) 읽을 수 없습니다: {1}"],
         "Add plugin": ["新增外掛", "添加插件", "プラグインを追加", "플러그인 추가"],
-        "ClaudeCodeBot asks before installing. A folder needs a package.json.": ["ClaudeCodeBot 安裝前會先詢問。資料夾裡需要有 package.json。", "ClaudeCodeBot 安装前会先询问。文件夹里需要有 package.json。", "ClaudeCodeBot はインストール前に確認します。フォルダには package.json が必要です。", "ClaudeCodeBot은 설치 전에 묻습니다. 폴더에는 package.json이 있어야 합니다."],
+        "Botling asks before installing. A folder needs a package.json.": ["Botling 安裝前會先詢問。資料夾裡需要有 package.json。", "Botling 安装前会先询问。文件夹里需要有 package.json。", "Botling はインストール前に確認します。フォルダには package.json が必要です。", "ClaudeCodeBot은 설치 전에 묻습니다. 폴더에는 package.json이 있어야 합니다."],
         "Component editor": ["元件編輯器", "组件编辑器", "コンポーネントエディタ", "컴포넌트 편집기"],
         "Model": ["模型", "模型", "モデル", "모델"],
         "The agent Maintainer hands component changes to. A change here rewrites its file in ccb-core; awake bots pick it up before their next message.": [
@@ -120,10 +120,10 @@ extension L10n {
             "{0}의 매니저는 새 빌드를 설치하고(확인은 사용자가 하며, 시작되지 않는 빌드는 되돌립니다), 이 창의 스크린샷을 찍고, 어느 채팅에서든 '잘못됨'으로 표시한 내용을 받습니다.",
         ],
         "That project": ["該專案", "该项目", "そのプロジェクト", "해당 프로젝트"],
-        "Off for everyone who only uses ClaudeCodeBot. Turn it on to let one project's manager work on the app itself.": [
-            "只使用 ClaudeCodeBot 的人不需要開啟。開啟後，可讓某個專案的管理 Bot 開發這個 App 本身。",
-            "只使用 ClaudeCodeBot 的人不需要开启。开启后，可让某个项目的管理 Bot 开发这个应用本身。",
-            "ClaudeCodeBot を使うだけならオフのままで構いません。オンにすると、1 つのプロジェクトのマネージャーがアプリ自体を開発できます。",
+        "Off for everyone who only uses Botling. Turn it on to let one project's manager work on the app itself.": [
+            "只使用 Botling 的人不需要開啟。開啟後，可讓某個專案的管理 Bot 開發這個 App 本身。",
+            "只使用 Botling 的人不需要开启。开启后，可让某个项目的管理 Bot 开发这个应用本身。",
+            "Botling を使うだけならオフのままで構いません。オンにすると、1 つのプロジェクトのマネージャーがアプリ自体を開発できます。",
             "ClaudeCodeBot을 사용만 한다면 꺼 두세요. 켜면 한 프로젝트의 매니저가 앱 자체를 개발할 수 있습니다.",
         ],
         // Doctor
@@ -161,10 +161,10 @@ extension L10n {
             "평범한 봇 얼굴에 Claude와 Codex를 C와 X 표시로 보여 줍니다.",
         ],
         "System default ({0})": ["系統預設（{0}）", "系统默认（{0}）", "システムのデフォルト（{0}）", "시스템 기본값({0})"],
-        "ClaudeCodeBot's menus, buttons and messages change at once. Bots reply in this language by default; when you write to them in another language, they answer in yours.": [
-            "ClaudeCodeBot 的選單、按鈕和訊息會立即切換。Bot 預設也用這個語言回覆；你用其他語言寫給它們時，它們會用你的語言回答。",
-            "ClaudeCodeBot 的菜单、按钮和消息会立即切换。Bot 默认也用这个语言回复；你用其他语言写给它们时，它们会用你的语言回答。",
-            "ClaudeCodeBot のメニュー、ボタン、メッセージはすぐに切り替わります。ボットも標準でこの言語で返信します。別の言語で書くと、その言語で答えます。",
+        "Botling's menus, buttons and messages change at once. Bots reply in this language by default; when you write to them in another language, they answer in yours.": [
+            "Botling 的選單、按鈕和訊息會立即切換。Bot 預設也用這個語言回覆；你用其他語言寫給它們時，它們會用你的語言回答。",
+            "Botling 的菜单、按钮和消息会立即切换。Bot 默认也用这个语言回复；你用其他语言写给它们时，它们会用你的语言回答。",
+            "Botling のメニュー、ボタン、メッセージはすぐに切り替わります。ボットも標準でこの言語で返信します。別の言語で書くと、その言語で答えます。",
             "ClaudeCodeBot의 메뉴, 버튼, 메시지가 바로 바뀝니다. 봇도 기본적으로 이 언어로 답하며, 다른 언어로 쓰면 그 언어로 답합니다.",
         ],
     ]

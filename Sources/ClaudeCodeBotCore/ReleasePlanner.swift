@@ -188,7 +188,7 @@ public final class ReleasePlanner: ObservableObject {
     /// Reads the PRs and whether you may pick. Picks of PRs no longer open are dropped.
     public func refresh() async {
         guard let folder else {
-            problem = "Turn on Developer mode with ClaudeCodeBot's source as its project to see shared features."
+            problem = "Turn on Developer mode with Botling's source as its project to see shared features."
             return
         }
         loading = true

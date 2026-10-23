@@ -22,7 +22,7 @@ extension L10n {
         "Edit group…": ["編輯群組…", "编辑群组…", "グループを編集…", "그룹 편집…"],
         "Add project": ["加入專案", "添加项目", "プロジェクトを追加", "프로젝트 추가"],
         "Add as project": ["加入為專案", "添加为项目", "プロジェクトとして追加", "프로젝트로 추가"],
-        "Pick a project folder; ClaudeCodeBot will give it a manager.": ["選擇一個專案資料夾，ClaudeCodeBot 會為它配一位管理者。", "选择一个项目文件夹，ClaudeCodeBot 会为它配一位管理者。", "プロジェクトフォルダを選んでください。ClaudeCodeBot がマネージャーを付けます。", "프로젝트 폴더를 고르세요. ClaudeCodeBot이 관리자를 붙여 줍니다."],
+        "Pick a project folder; Botling will give it a manager.": ["選擇一個專案資料夾，Botling 會為它配一位管理者。", "选择一个项目文件夹，Botling 会为它配一位管理者。", "プロジェクトフォルダを選んでください。Botling がマネージャーを付けます。", "프로젝트 폴더를 고르세요. ClaudeCodeBot이 관리자를 붙여 줍니다."],
         "New bot": ["新增 Bot", "新建 Bot", "新しいボット", "새 봇"],
         "A bot of its own, with its own memory and routines (a morning news bot, say)": ["一個獨立的 Bot，有自己的記憶和例行工作（例如晨間新聞 Bot）", "一个独立的 Bot，有自己的记忆和例行任务（例如早间新闻 Bot）", "独自のメモリとルーティンを持つボット（たとえば朝のニュースボット）", "자체 메모리와 루틴을 가진 독립 봇(예: 아침 뉴스 봇)"],
         "Settings: today's cost, auto-approve, plugins": ["設定：今日花費、自動核准、外掛", "设置：今日花费、自动批准、插件", "設定：今日の費用、自動承認、プラグイン", "설정: 오늘 비용, 자동 승인, 플러그인"],

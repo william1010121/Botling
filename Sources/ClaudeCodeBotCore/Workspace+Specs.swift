@@ -803,7 +803,7 @@ public struct SpecPayload: Encodable, Equatable {
     var draft: Int
     /// The chat it is in.
     var chat: String
-    /// "from ClaudeCodeBot's reply at 22:14", "suggested by garden".
+    /// "from Botling's reply at 22:14", "suggested by garden".
     var from: String
     var suggestedBy: String?
     var existing: String?

@@ -135,12 +135,12 @@ def lifecycle():
 def plugins_architecture():
     d = Diagram()
     d.text(0, 48, "You", bold=True)
-    d.text(0, 196, "ClaudeCodeBot", bold=True)
+    d.text(0, 196, "Botling", bold=True)
     d.text(0, 366, "Plugin library", bold=True)
     d.text(0, 536, "Plugin users", bold=True)
 
     d.node("you", 540, 20, 200, 56, "You")
-    d.node("app", 290, 160, 700, 72, "ClaudeCodeBot app: scans, validates, hot-reloads plugins; renders components", "blue")
+    d.node("app", 290, 160, 700, 72, "Botling app: scans, validates, hot-reloads plugins; renders components", "blue")
     d.node("lib", 290, 320, 700, 92, "~/.claudecodebot/plugins (git + marketplace)\nccb-core, github, notion, ...", "gray")
     d.node("maint", 1070, 320, 300, 92, "Maintainer\nedits, validates, commits", "gray")
     d.node("bots", 290, 500, 700, 72, "Main bot, managers, temporary teams: --plugin-dir at launch", "gray")
@@ -167,7 +167,7 @@ def plugin_update():
     d.node("fix", 800, 390, 320, 72, "Failed: keep the previous version;\nthe manager fixes it again", "orange")
     d.node("commit", 280, 520, 440, 64, "Passed: git commit, bump version", "gray")
     d.node("reload", 280, 640, 440, 100,
-           "ClaudeCodeBot detects the change:\ncomponents re-render, commands refresh,\nidle bots hand off and restart",
+           "Botling detects the change:\ncomponents re-render, commands refresh,\nidle bots hand off and restart",
            "blue")
 
     d.edge(("ask", "bottom"), ("inbox", "top"))
@@ -189,7 +189,7 @@ def plugin_update():
 def architecture_v2():
     d = Diagram()
     d.text(0, 48, "You", bold=True)
-    d.text(0, 196, "ClaudeCodeBot\napp (Swift)", bold=True)
+    d.text(0, 196, "Botling\napp (Swift)", bold=True)
     d.text(0, 366, "Three runtimes", bold=True)
     d.text(0, 516, "Plugin library", bold=True)
 
@@ -214,13 +214,13 @@ def architecture_v2():
 
 def port_existing():
     d = Diagram()
-    d.node("ask", 280, 20, 480, 72, "You: “Make laas-copy a ClaudeCodeBot plugin”", "blue")
-    d.node("allow", 280, 140, 480, 72, "ClaudeCodeBot asks: let the Maintainer\nread this folder?", "orange")
+    d.node("ask", 280, 20, 480, 72, "You: “Make laas-copy a Botling plugin”", "blue")
+    d.node("allow", 280, 140, 480, 72, "Botling asks: let the Maintainer\nread this folder?", "orange")
     d.node("read", 280, 260, 480, 72, "Maintainer reads the source project,\nfinds the reusable core (web-laas-engine)", "gray")
     d.node("write", 280, 380, 480, 72, "Write the plugin: package.json, web part,\nsettings, tests", "gray")
-    d.node("check", 280, 500, 480, 72, "ClaudeCodeBot --check-plugin: format, build,\ntests, one offline load", "gray")
+    d.node("check", 280, 500, 480, 72, "botling --check-plugin: format, build,\ntests, one offline load", "gray")
     d.node("fix", 840, 500, 260, 72, "Failed: the manager\nfixes it again", "orange")
-    d.node("live", 280, 620, 480, 92, "commit → ClaudeCodeBot hot-reloads\ntype ;a in the composer to get \\alpha", "blue")
+    d.node("live", 280, 620, 480, 92, "commit → Botling hot-reloads\ntype ;a in the composer to get \\alpha", "blue")
 
     d.edge(("ask", "bottom"), ("allow", "top"))
     d.edge(("allow", "bottom"), ("read", "top"), label="approved")

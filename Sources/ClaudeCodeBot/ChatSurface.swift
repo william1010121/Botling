@@ -606,14 +606,15 @@ enum AvatarImages {
     }
 }
 
-/// Where the web chat, built-in plugins and plugin host are. In ClaudeCodeBot.app SwiftPM's
+/// Where the web chat, built-in plugins and plugin host are. In Botling.app SwiftPM's
 /// resource bundle sits in Contents/Resources (its own lookup only checks beside the .app, which a
 /// signed app cannot have); under `swift run` it is SwiftPM's usual place.
 enum AppResources {
     static let bundle: Bundle = {
-        if let url = Bundle.main.resourceURL?.appending(path: "ClaudeCodeBot_ClaudeCodeBot.bundle"),
-           let bundle = Bundle(url: url) {
-            return bundle
+        for name in ["botling_ClaudeCodeBot.bundle", "ClaudeCodeBot_ClaudeCodeBot.bundle"] {
+            if let url = Bundle.main.resourceURL?.appending(path: name), let bundle = Bundle(url: url) {
+                return bundle
+            }
         }
         return Bundle.module
     }()

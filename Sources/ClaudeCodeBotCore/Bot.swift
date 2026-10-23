@@ -1545,7 +1545,7 @@ public final class Bot: ObservableObject, Identifiable {
     // MARK: Asking to use a tool
 
     static var noLongerNeeded: String { L("No longer needed") }
-    static var askAgain: String { L("Closed when ClaudeCodeBot restarted; ask again") }
+    static var askAgain: String { L("Closed when Botling restarted; ask again") }
 
     /// Claude wants a tool it may not use without asking: allowed already if you said always,
     /// otherwise a question in the chat while it waits.

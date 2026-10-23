@@ -4,16 +4,16 @@ import ClaudeCodeBotCore
 import SwiftUI
 
 @main
-struct ClaudeCodeBotApp: App {
+struct BotlingApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     init() {
-        // `ClaudeCodeBot --check-plugin <folder>` checks a plugin and quits (see PluginCheck).
+        // `botling --check-plugin <folder>` checks a plugin and quits (see PluginCheck).
         PluginCheck.exitIfRequested()
     }
 
     var body: some Scene {
-        WindowGroup("ClaudeCodeBot") {
+        WindowGroup("Botling") {
             // Snapshot and plugin-check runs never open the real ~/.claudecodebot.
             if AppDelegate.isHeadless {
                 // SwiftUI still makes its window: it is sent offscreen as soon as it exists.

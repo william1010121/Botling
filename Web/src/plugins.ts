@@ -137,7 +137,7 @@ export class PluginHost {
     try {
       const result = await activate(this.api(spec.name, entry));
       if (typeof result === "function") entry.disposers.push(result);
-      // ClaudeCodeBot keeps this version as the one to fall back to if a later one breaks.
+      // Botling keeps this version as the one to fall back to if a later one breaks.
       if (this.loaded.get(spec.name) === entry) post({ type: "pluginLoaded", name: spec.name, version: spec.version });
     } catch (error) {
       this.fail(spec.name, error);

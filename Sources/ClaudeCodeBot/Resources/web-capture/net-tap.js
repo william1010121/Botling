@@ -1,4 +1,4 @@
-// ClaudeCodeBot's network tap for its web bots (Gemini, ChatGPT, Claude). Put in the page's
+// Botling's network tap for its web bots (Gemini, ChatGPT, Claude). Put in the page's
 // own world before the page's scripts run, it wraps fetch, XMLHttpRequest, EventSource and
 // WebSocket and hands the app each request and each piece of every answer, as the page reads
 // it. It only watches: it never sends, changes or delays a request, and an error in it never

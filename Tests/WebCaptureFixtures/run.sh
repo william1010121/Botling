@@ -5,11 +5,11 @@
 # as Maintainer would, and replays it with `--test-extractor`. A page drawn from older data than
 # its traffic ("stale") must be caught as a mismatch and fail.
 #
-#   swift build && Tests/WebCaptureFixtures/run.sh [path to the ClaudeCodeBot binary]
+#   swift build && Tests/WebCaptureFixtures/run.sh [path to the botling binary]
 set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
-app="${1:-$repo/.build/debug/ClaudeCodeBot}"
+app="${1:-$repo/.build/debug/botling}"
 port="${CCB_FIXTURE_PORT:-8766}"
 work="$(mktemp -d -t ccb-capture-e2e)"
 failures=0

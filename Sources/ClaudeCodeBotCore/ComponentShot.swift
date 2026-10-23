@@ -1,6 +1,6 @@
 import Foundation
 
-/// `ClaudeCodeBot --component-shot <component folder>`: draws one component the way this build of
+/// `botling --component-shot <component folder>`: draws one component the way this build of
 /// the app draws it, in the real chat page, on every surface (in a chat reply, as Board tiles of
 /// several sizes, opened above the input box, floating in a corner), takes pictures, and reports
 /// what is wrong: script errors, failed `ccb` calls, missing resources, content wider than its
@@ -34,7 +34,7 @@ public enum ComponentShot {
     }
 
     public static let usage = """
-    Usage: ClaudeCodeBot --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]
+    Usage: botling --component-shot <component folder> [--out <dir>] [--data <file.json>] [--folder <project dir>]
                          [--surfaces chat,board,pinned,floating] [--sizes 1x1,2x1,2x2,4x2 | all] [--theme dark]
     Draws the component in this build's real chat page on each surface, saves a picture of each
     and a contact sheet, and lists what is wrong. Exit 0: no problems, 1: problems, 2: bad usage.

@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 
-/// The sections of ClaudeCodeBot's settings window, in the order its sidebar lists them.
+/// The sections of Botling's settings window, in the order its sidebar lists them.
 public enum SettingsSection: String, CaseIterable, Identifiable, Sendable {
     case general
     case usage

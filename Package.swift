@@ -3,12 +3,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "ClaudeCodeBot",
+    name: "botling",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "ClaudeCodeBot", targets: ["ClaudeCodeBot"])
+        .executable(name: "botling", targets: ["ClaudeCodeBot"])
     ],
     targets: [
         .target(

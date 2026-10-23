@@ -1,4 +1,4 @@
-# PRD v2: ClaudeCodeBot's plugin system, LaTeX, and self-maintenance
+# PRD v2: Botling's plugin system, LaTeX, and self-maintenance
 
 > **Note:** milestones P1–P7 in this document have since been implemented. The text below is kept as the original plan.
 
@@ -10,7 +10,7 @@
 
 ## 1. In one sentence
 
-Every capability of ClaudeCodeBot can be a **plugin**. A plugin can change ClaudeCodeBot itself: the composer, how messages are rendered, components, panels, commands, bot behavior; it can also bring Claude Code skills, agents, and MCP servers. This is powerful enough to move something like web-laas, an add-on that "lets web editors type LaTeX", straight into ClaudeCodeBot's composer. Plugins are written, tested, and maintained by the "**Maintainer**" manager, and once a plugin is updated ClaudeCodeBot re-renders without restarting.
+Every capability of Botling can be a **plugin**. A plugin can change Botling itself: the composer, how messages are rendered, components, panels, commands, bot behavior; it can also bring Claude Code skills, agents, and MCP servers. This is powerful enough to move something like web-laas, an add-on that "lets web editors type LaTeX", straight into Botling's composer. Plugins are written, tested, and maintained by the "**Maintainer**" manager, and once a plugin is updated Botling re-renders without restarting.
 
 ---
 
@@ -30,10 +30,10 @@ Every capability of ClaudeCodeBot can be a **plugin**. A plugin can change Claud
 **Goals**
 
 1. **LaTeX**: math in both the bot's messages and yours is rendered as typeset formulas.
-2. **Powerful plugins**: plugins can change ClaudeCodeBot's UI and behavior, not just Claude Code's configuration. The acceptance bar: web-laas can become a ClaudeCodeBot plugin and work properly in the composer.
-3. **ClaudeCodeBot maintains its own plugins**: you say "make laas-copy a plugin", and the Maintainer reads the original project, writes the plugin, tests it, and installs it.
-4. **Hot reload**: once a plugin is updated, ClaudeCodeBot reloads it automatically and re-renders in place, without restarting the app.
-5. **A broken plugin doesn't bring ClaudeCodeBot down**: when a plugin fails, only that plugin is disabled and the app keeps working.
+2. **Powerful plugins**: plugins can change Botling's UI and behavior, not just Claude Code's configuration. The acceptance bar: web-laas can become a Botling plugin and work properly in the composer.
+3. **Botling maintains its own plugins**: you say "make laas-copy a plugin", and the Maintainer reads the original project, writes the plugin, tests it, and installs it.
+4. **Hot reload**: once a plugin is updated, Botling reloads it automatically and re-renders in place, without restarting the app.
+5. **A broken plugin doesn't bring Botling down**: when a plugin fails, only that plugin is disabled and the app keeps working.
 6. **The screen stays just as sparse**: plugins don't add clutter to the screen and follow the "3–4 things per page" principle.
 
 **Not in this version**
@@ -41,7 +41,7 @@ Every capability of ClaudeCodeBot can be a **plugin**. A plugin can change Claud
 - Switching to Electron or another cross-platform framework. Stays Swift, macOS only.
 - A plugin store browsing page. For now, install by pasting a URL or a folder path.
 - Long-term compatibility guarantees for the plugin API. The v2 API is marked `0.x` and may change.
-- Letting the Maintainer change the ClaudeCodeBot core (Swift). The core is still changed by me.
+- Letting the Maintainer change the Botling core (Swift). The core is still changed by me.
 
 ---
 
@@ -50,15 +50,15 @@ Every capability of ClaudeCodeBot can be a **plugin**. A plugin can change Claud
 **Scenario A: asking about math**
 You ask the main bot "derive the gradient of softmax". In the reply, `$\frac{\partial L}{\partial z_i} = p_i - y_i$` is rendered as a typeset formula, and `$$…$$` gets its own centered line. Copying a formula gives you the LaTeX source.
 
-**Scenario B: turning laas into a ClaudeCodeBot plugin**
-1. You say "make ~/code/laas-copy a ClaudeCodeBot plugin".
-2. ClaudeCodeBot first asks you: "Let the Maintainer read this folder?" You click "OK".
+**Scenario B: turning laas into a Botling plugin**
+1. You say "make ~/code/laas-copy a Botling plugin".
+2. Botling first asks you: "Let the Maintainer read this folder?" You click "OK".
 3. A "Maintainer · building plugin" row appears in the left column; click it to see what it's doing right now.
 4. A few minutes later, a line appears in the main bot's conversation: "Plugin ccb-laas 0.1.0: you can now type LaTeX with laas in the composer".
 5. You type `;a` in the composer and it becomes `\alpha`; a live preview of the formula appears next to the cursor.
 
 **Scenario C: a plugin breaks**
-You ask it to change the laas plugin's shortcut, it breaks the plugin, and loading fails. ClaudeCodeBot doesn't adopt the new version, keeps using the previous one, and hands the error back to the Maintainer. The change takes effect only after it's fixed. You don't have to deal with any of it.
+You ask it to change the laas plugin's shortcut, it breaks the plugin, and loading fails. Botling doesn't adopt the new version, keeps using the previous one, and hands the error back to the Maintainer. The change takes effect only after it's fixed. You don't have to deal with any of it.
 
 **Scenario D: installing an external plugin**
 You paste a GitHub URL. The Maintainer first lists what the plugin will do and what permissions it needs (for example "read and write your files", "access the network", "run code in the composer"), and asks you with an option card. It's installed only if you agree.
@@ -72,11 +72,11 @@ You click the flag beside a multiple-choice component and report "add an Other o
 
 ![Architecture](flowcharts/flow-7-architecture-v2.png)
 
-ClaudeCodeBot is split into a Swift shell plus three runtimes:
+Botling is split into a Swift shell plus three runtimes:
 
 | Part | What it is | Responsible for |
 |---|---|---|
-| **Swift shell** | The current ClaudeCodeBot app | Left and right columns, settings, bot lifecycle (wake, sleep, handoff), process management, permissions, plugin loading and hot reload |
+| **Swift shell** | The current Botling app | Left and right columns, settings, bot lifecycle (wake, sleep, handoff), process management, permissions, plugin loading and hot reload |
 | **Chat surface** | A web view (WKWebView) | Rendering messages, the composer, components. A plugin's "web part" runs here |
 | **Plugin host** | A Node process (Node v24 is already installed locally) | Runs a plugin's "program part": commands, bot hooks, file I/O, network. Works the same way as VS Code's extension host |
 | **Bots' claude processes** | The existing bots | A plugin's "Claude part" (skills, agents, MCP) is loaded with `--plugin-dir`; tested and works |
@@ -146,7 +146,7 @@ The plugin manifest is npm's `package.json`. This matches the VS Code extension 
 | `commands` | Plugin host or chat surface | A named action; typing `/` in the composer lists them, and they can be bound to shortcuts | `/laas.toggle`, `/export-chat` |
 | `hooks` (bot hooks) | Plugin host | Before sending, after a reply, on wake, before sleep: can modify content or block it | Normalize `\(…\)` to `$…$` before sending |
 | `routines` | Plugin host | Add scheduled jobs, written into the bot's `routines.cron` | Back up the plugin library weekly |
-| `settings` | Shell | Declare settings; ClaudeCodeBot generates toggles and menus in the settings subpage automatically | laas's auto-spacing |
+| `settings` | Shell | Declare settings; Botling generates toggles and menus in the settings subpage automatically | laas's auto-spacing |
 | `claude` (Claude part) | Bot process | Skills, agents (temporary teams), MCP, hooks | Research team, GitHub MCP |
 
 ### 6.4 Plugin API (draft)
@@ -210,7 +210,7 @@ Because the program part runs in Node, it can use `fs`, `fetch`, and `child_proc
 
 | Runtime | How it's isolated | On failure |
 |---|---|---|
-| Chat surface (web) | Each plugin's web code is wrapped in try/catch; if a renderer fails, it falls back to plain text | ClaudeCodeBot disables that plugin's web part, mentions it in the main bot's conversation, and hands it to the Maintainer to fix |
+| Chat surface (web) | Each plugin's web code is wrapped in try/catch; if a renderer fails, it falls back to plain text | Botling disables that plugin's web part, mentions it in the main bot's conversation, and hands it to the Maintainer to fix |
 | Plugin host (Node) | A separate process that talks to the shell over JSON-RPC (the same approach as VS Code and LSP) | If the process crashes it restarts automatically. If the same plugin crashes it 3 times within 10 minutes, that plugin is disabled |
 | Claude part | Each bot's claude process is already separate | Loaded only after passing `claude plugin validate --strict` |
 
@@ -220,7 +220,7 @@ Because the program part runs in Node, it can use `fs`, `fetch`, and `child_proc
 
 ## 8. Permissions and security
 
-The plugin manifest must declare which permissions it needs. **When you install an external plugin, ClaudeCodeBot lists its permissions for you to approve.**
+The plugin manifest must declare which permissions it needs. **When you install an external plugin, Botling lists its permissions for you to approve.**
 
 | Permission | Meaning | Text shown to you |
 |---|---|---|
@@ -247,18 +247,18 @@ Things to be clear about:
 
 **Install sources**: a local folder, a git URL, an npm package name, a `.zip` URL. Whatever the source, the plugin is placed in `~/.claudecodebot/plugins/<name>/` and committed.
 
-**Check** (`ClaudeCodeBot --check-plugin`, built into ClaudeCodeBot and also used by the Maintainer):
+**Check** (`botling --check-plugin`, built into Botling and also used by the Maintainer):
 1. `package.json` is well-formed, `engines.ccb` is compatible, and every declared file exists.
 2. If there is a `build` script, build first (`npm run build`).
 3. If there is a `test` script, run the tests.
 4. If there is a Claude part, run `claude plugin validate --strict`.
 5. **One offline load**: load the plugin in an invisible chat surface, run `activate`, and make sure nothing throws.
 
-**Hot reload**: ClaudeCodeBot watches the plugin library. When a plugin's files change, it runs the check above first:
+**Hot reload**: Botling watches the plugin library. When a plugin's files change, it runs the check above first:
 - **Fails**: nothing takes effect, the previous version stays in use, and the error goes to the Maintainer.
 - **Passes**: update according to what changed:
 
-| Change | How ClaudeCodeBot updates | What you see |
+| Change | How Botling updates | What you see |
 |---|---|---|
 | Web part (composer, renderer, component, panel) | The chat surface reloads this plugin; messages re-render in place; half-typed text in the composer is kept | The screen flickers once and shows the new version |
 | Program part | The plugin host restarts just this plugin | Nothing changes |
@@ -274,7 +274,7 @@ Things to be clear about:
 ## 10. Maintainer
 
 - **What it is**: a built-in project whose folder is `~/.claudecodebot/plugins`; its manager uses Sonnet.
-- **Tools**: Read, Write, Edit, Glob, Grep, Bash (for running `npm`, `ClaudeCodeBot --check-plugin`, `git`).
+- **Tools**: Read, Write, Edit, Glob, Grep, Bash (for running `npm`, `botling --check-plugin`, `git`).
 - **What lands in its inbox**:
   - Your flag-button feedback beside a component;
   - Plugin-related requests you make in conversation (forwarded after the main bot triages them);
@@ -285,13 +285,13 @@ Things to be clear about:
 
 ![Turning an existing project into a plugin](flowcharts/flow-8-port-plugin.png)
 
-  1. **Ask you first**: before reading a folder outside the plugin library, ClaudeCodeBot asks you once and remembers the folders you've approved.
+  1. **Ask you first**: before reading a folder outside the plugin library, Botling asks you once and remembers the folders you've approved.
   2. **Find the core**: read the original project and find the reusable parts. Taking laas as an example:
      - It's a Chrome extension whose core is `web-laas-engine`, with no dependencies, supporting textarea and CodeMirror.
-     - ClaudeCodeBot's composer is CodeMirror 6, so the web part only needs `new LaasController().attach()`, plus wiring up the preview and settings.
+     - Botling's composer is CodeMirror 6, so the web part only needs `new LaasController().attach()`, plus wiring up the preview and settings.
   3. **Write the plugin**: `package.json`, `src/web.ts`, tests, bundled with esbuild.
-  4. **Check**: run `ClaudeCodeBot --check-plugin`; if it fails, fix it itself, up to 3 rounds. If all 3 rounds fail, it asks you about the blocker with an option card.
-  5. **Go live**: commit and tag. After ClaudeCodeBot hot-reloads, a one-line report appears in the main bot's conversation.
+  4. **Check**: run `botling --check-plugin`; if it fails, fix it itself, up to 3 rounds. If all 3 rounds fail, it asks you about the blocker with an option card.
+  5. **Go live**: commit and tag. After Botling hot-reloads, a one-line report appears in the main bot's conversation.
 - **Left column**: while it's working, a temporary "Maintainer" row appears in the left column; click it to see its work log and what it's doing now (just like the current Components row). Once it's done and you've looked, the row collapses.
 
 ---
@@ -317,7 +317,7 @@ Things to be clear about:
 
 **Input side**:
 - Basic: when you type `$…$` in the composer, a formula preview appears next to the cursor. This is done by `ccb-latex` itself.
-- Advanced: the `ccb-laas` plugin (scenario B). web-laas is GPL-3.0 licensed, so it's a **separate plugin** and isn't merged into the ClaudeCodeBot core.
+- Advanced: the `ccb-laas` plugin (scenario B). web-laas is GPL-3.0 licensed, so it's a **separate plugin** and isn't merged into the Botling core.
 
 ---
 
@@ -368,11 +368,11 @@ Built-in plugins also live in `~/.claudecodebot/plugins` and, like any other plu
 | # | Content | Acceptance |
 |---|---|---|
 | **P1 Web chat surface + LaTeX** | Message list and composer become web-based; no feature may be lost (Markdown, chips, multiple choice, attachments, replies, images and video, CJK input methods); add KaTeX | All current tests pass; `$\alpha$` and `$$\int$$` render correctly; `$5 and $10` is not misdetected; pressing Enter while choosing a Zhuyin candidate does not send |
-| **P2 Plugin skeleton + web extension points** | `package.json` format, loader, activate and deactivate, `composer` / `renderers` / `components` / `settings`; built-in plugins switch to this system; `ClaudeCodeBot --check-plugin` | Install a test plugin from a folder and it can change the composer and message rendering; break it on purpose and ClaudeCodeBot disables it instead of crashing |
+| **P2 Plugin skeleton + web extension points** | `package.json` format, loader, activate and deactivate, `composer` / `renderers` / `components` / `settings`; built-in plugins switch to this system; `botling --check-plugin` | Install a test plugin from a folder and it can change the composer and message rendering; break it on purpose and Botling disables it instead of crashing |
 | **P3 Plugin host (Node)** | JSON-RPC, `commands` / `hooks` / `routines` / `storage` / `notify`; automatic restart on crash | A test plugin's `beforeSend` can change outgoing text; after killing the host process, it recovers within 3 seconds |
 | **P4 Claude part** | A plugin's `claude/` is passed to bots with `--plugin-dir`; teams are now read from agents | Bots can use a skill brought by a plugin; temporary teams still spin up |
-| **P5 Maintainer + hot reload** | Built-in project, inbox flow, git, version numbers, checks, hot reload, roll back; component team merged in | Report "add Other" beside a multiple-choice component; it makes the change, commits, and the screen updates in place; break it on purpose and ClaudeCodeBot keeps using the previous version |
-| **P6 Turning existing projects into plugins** | Consent flow for reading external folders, and the flow for turning an existing project into a plugin | Say "make laas-copy a ClaudeCodeBot plugin" and, without your involvement, `;a` → `\alpha` works in the composer |
+| **P5 Maintainer + hot reload** | Built-in project, inbox flow, git, version numbers, checks, hot reload, roll back; component team merged in | Report "add Other" beside a multiple-choice component; it makes the change, commits, and the screen updates in place; break it on purpose and Botling keeps using the previous version |
+| **P6 Turning existing projects into plugins** | Consent flow for reading external folders, and the flow for turning an existing project into a plugin | Say "make laas-copy a Botling plugin" and, without your involvement, `;a` → `\alpha` works in the composer |
 | **P7 External plugins** | Install from git, npm, zip; permission consent card; Keychain for secrets; panels extension point | Install a plugin that brings an MCP server and managers can use its tools; it always asks you before installing |
 
 Every milestone must pass three kinds of tests: Swift unit tests, chat-surface web tests (vitest), and acceptance runs with real claude.
@@ -399,7 +399,7 @@ Every milestone must pass three kinds of tests: Swift unit tests, chat-surface w
 | Plugins' program parts aren't sandboxed | Always ask before installing external plugins; show permissions and source; can be disabled and rolled back at any time |
 | Node is removed or too old | Check at startup; without Node, plugins with a program part are disabled with an explanation, and web parts work as usual |
 | Long conversations slow down the web page | Render only the latest 200 messages; load older ones on scroll up |
-| Licensing (web-laas is GPL-3.0) | laas is only a separate plugin and isn't bundled into ClaudeCodeBot |
+| Licensing (web-laas is GPL-3.0) | laas is only a separate plugin and isn't bundled into Botling |
 | Plugin API changes break old plugins | API marked `0.x`; `engines.ccb` checks compatibility, and incompatible plugins aren't loaded, with an explanation |
 
 ---

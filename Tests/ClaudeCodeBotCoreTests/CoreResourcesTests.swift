@@ -3,7 +3,8 @@ import Testing
 @testable import ClaudeCodeBotCore
 
 struct CoreResourcesTests {
-    @Test func relocatedAppLoadsAvatarsWithoutEvaluatingBuildFallback() throws {
+    @Test(arguments: ["botling_ClaudeCodeBotCore.bundle", "ClaudeCodeBot_ClaudeCodeBotCore.bundle"])
+    func relocatedAppLoadsAvatarsWithoutEvaluatingBuildFallback(bundleName: String) throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appending(path: "ccb-resource-test-\(UUID().uuidString)")
         defer { try? fm.removeItem(at: root) }
@@ -11,7 +12,7 @@ struct CoreResourcesTests {
         let resources = original.appending(path: "Contents/Resources")
         try fm.createDirectory(at: resources, withIntermediateDirectories: true)
         try fm.copyItem(at: CoreResources.bundle.bundleURL,
-                        to: resources.appending(path: "ClaudeCodeBot_ClaudeCodeBotCore.bundle"))
+                        to: resources.appending(path: bundleName))
         let relocated = root.appending(path: "Relocated.app")
         try fm.moveItem(at: original, to: relocated)
         try fm.removeItem(at: root.appending(path: "build"))

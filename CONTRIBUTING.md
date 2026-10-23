@@ -1,4 +1,4 @@
-# Contributing to ClaudeCodeBot
+# Contributing to Botling
 
 Thanks for helping. Bug reports, ideas and pull requests are all welcome.
 
@@ -12,9 +12,9 @@ personal.
 ## Set up
 
 ```bash
-git clone https://github.com/william1010121/ClaudeCodeBot.git
-cd ClaudeCodeBot
-swift run ClaudeCodeBot      # Swift 6.2 (Xcode 26), macOS 14+
+git clone https://github.com/william1010121/ClaudeCodeBot.git botling
+cd botling
+swift run botling      # Swift 6.2 (Xcode 26), macOS 14+
 cd Web && npm ci             # only when you change the chat surface or plugins
 ```
 
@@ -36,7 +36,7 @@ app's window, and gets every reply you mark "Not right".
 4. Add a line to [CHANGELOG.md](CHANGELOG.md) (under Added, Changed or Fixed) saying what changes
    for someone using the app. Leave `VERSION` alone; releases bump it.
 5. For a visible change, attach a screenshot. The snapshot mode draws one with sample data, for
-   example `CCB_SNAPSHOT=/tmp/chat.png swift run ClaudeCodeBot`.
+   example `CCB_SNAPSHOT=/tmp/chat.png swift run botling`.
 
 By contributing you agree that your work is released under the
 [GNU General Public License v3.0 or later](LICENSE).

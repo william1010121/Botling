@@ -1,8 +1,10 @@
 <div align="center">
 
-<img src="docs/images/icon.png" width="128" height="128" alt="ClaudeCodeBot icon">
+<img src="docs/images/icon.png" width="128" height="128" alt="Botling icon">
 
-# ClaudeCodeBot
+# Botling
+
+Formerly ClaudeCodeBot. Existing data stays in `~/.claudecodebot`; see [naming and compatibility](docs/botling-rename.md).
 
 **A team of Claude Code agents on your Mac, in one chat.**
 
@@ -27,7 +29,7 @@ you already have.
 
 <br>
 
-<img src="docs/images/hero.png" alt="ClaudeCodeBot: the left column with the main bot and a project; the main bot's chat with math, a table, a result page preview and a decision; the project's right panel" width="900">
+<img src="docs/images/hero.png" alt="Botling: the left column with the main bot and a project; the main bot's chat with math, a table, a result page preview and a decision; the project's right panel" width="900">
 
 </div>
 
@@ -38,7 +40,7 @@ you already have.
 - **Answers you can see.** Charts and cards drawn right in the chat, one click from becoming a
   pinned chip or a Board tile.
 - **An app that changes itself.** Plugins hot-reload, and in developer mode the bot works on
-  ClaudeCodeBot's own source.
+  Botling's own source.
 - **Nothing leaves your Mac but Claude.** It drives the `claude` CLI you already have; chats and
   memory are plain markdown files.
 - **In your language.** The app speaks English, 繁體中文, 简体中文, 日本語 and 한국어, and bots
@@ -131,7 +133,7 @@ the Maintainer builds that one into the app.
 Plugins change the app VS Code style (the input box, how messages are drawn, panels, hooks,
 skills and MCP servers) and **hot-reload** when their files change, keeping the last good version
 if a new one breaks. Ask the Maintainer to write one for you. Turn on **developer mode** and the
-bot works on ClaudeCodeBot's own source: builds, installs (with rollback) and fixes what you
+bot works on Botling's own source: builds, installs (with rollback) and fixes what you
 mark "Not right"; send the change back upstream as a [pull request](CONTRIBUTING.md).
 
 </td>
@@ -151,7 +153,7 @@ mark "Not right"; send the change back upstream as a [pull request](CONTRIBUTING
 
 ### 6. Everything stays on your Mac
 
-ClaudeCodeBot drives the `claude` CLI already signed in on your Mac: no server, no account of
+Botling drives the `claude` CLI already signed in on your Mac: no server, no account of
 its own. Chats, memory, routines and the plugin library are plain markdown and text files in
 `~/.claudecodebot`; each project's notes live in its git-ignored `.bot/` folder. **Doctor**
 shows which `claude` (and `codex`) the bots use and how each is signed in.
@@ -188,9 +190,9 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
 
 ## Install
 
-1. Download the latest `ClaudeCodeBot-<version>-macOS.zip` from
+1. Download the latest `botling-<version>-macOS.zip` from
    [**Releases**](https://github.com/william1010121/ClaudeCodeBot/releases/latest).
-2. Unzip it and drag **ClaudeCodeBot.app** to `/Applications`.
+2. Unzip it and drag **Botling.app** to `/Applications`.
 3. The app is ad-hoc signed, not notarized. The first time, right-click it → **Open** → **Open**.
 
 The build is universal (Apple silicon and Intel).
@@ -211,7 +213,7 @@ when something is off.
 
 ## Quick start
 
-1. Open ClaudeCodeBot. If the gear at the bottom of the left column has a red dot, open
+1. Open Botling. If the gear at the bottom of the left column has a red dot, open
    **Settings → Doctor** and fix what it lists (usually `claude auth login`).
 2. Say hello to the **Main bot**: "What can you do?"
 3. Click **Add project** and pick a folder, or ask the main bot: "Add `~/code/my-app` as a project."
@@ -276,7 +278,7 @@ The full API (web part, program part, Claude part, components, panels, settings 
 in the `PLUGINS.md` the app writes into the plugin library on launch. Check a plugin with:
 
 ```bash
-/Applications/ClaudeCodeBot.app/Contents/MacOS/ClaudeCodeBot --check-plugin path/to/plugin
+/Applications/Botling.app/Contents/MacOS/botling --check-plugin path/to/plugin
 ```
 
 Or ask the Maintainer to write it for you; it can also turn one of your own projects into a
@@ -286,8 +288,8 @@ servers. Secrets go to the macOS keychain.
 
 ## Developer mode & contributing
 
-ClaudeCodeBot can work on itself. Turn on **Settings → Developer mode** (off by default) and pick
-the project that is your ClaudeCodeBot checkout. Its manager may then install a new build of the
+Botling can work on itself. Turn on **Settings → Developer mode** (off by default) and pick
+the project that is your Botling checkout. Its manager may then install a new build of the
 app after you confirm (a build that does not come up within 90 seconds is rolled back), look at
 the app's window, and receives the replies you mark "Not right" in any chat.
 
@@ -300,10 +302,10 @@ Swift 6.2 (Xcode 26) is needed. The web chat is prebuilt and committed in
 `Sources/ClaudeCodeBot/Resources`, so `swift build` does not need npm.
 
 ```bash
-git clone https://github.com/william1010121/ClaudeCodeBot.git
-cd ClaudeCodeBot
-swift run ClaudeCodeBot          # build and run a debug build
-scripts/make-app.sh              # or build dist/ClaudeCodeBot.app and its zip (version from VERSION)
+git clone https://github.com/william1010121/ClaudeCodeBot.git botling
+cd botling
+swift run botling          # build and run a debug build
+scripts/make-app.sh              # or build dist/Botling.app and its zip (version from VERSION)
 SINGLE_ARCH=1 scripts/make-app.sh   # faster: this Mac's architecture only
 ```
 
@@ -313,7 +315,7 @@ Working on the chat surface, plugins or tests:
 cd Web && npm ci && npm test && npm run build        # chat surface, built-in plugins, plugin host
 swift test                                           # app tests (with a fake claude)
 CCB_LIVE=1 swift test --filter Live                  # acceptance tests with the real claude (costs tokens)
-CCB_SNAPSHOT=/tmp/chat.png swift run ClaudeCodeBot   # render a sample chat to a PNG and quit
+CCB_SNAPSHOT=/tmp/chat.png swift run botling   # render a sample chat to a PNG and quit
 ```
 
 | Path | What |
@@ -332,14 +334,14 @@ together from them.
 
 ## Versioning & releases
 
-ClaudeCodeBot uses [semantic versioning](https://semver.org); the current version is in
+Botling uses [semantic versioning](https://semver.org); the current version is in
 [`VERSION`](VERSION) and every change is in [CHANGELOG.md](CHANGELOG.md). Pushing a `v<version>`
 tag runs the [release workflow](.github/workflows/release.yml), which tests, builds the universal
 app and publishes it on [GitHub Releases](https://github.com/william1010121/ClaudeCodeBot/releases).
 
 ## License
 
-[GPL-3.0-or-later](LICENSE) © william1010121: you may redistribute and modify ClaudeCodeBot under
+[GPL-3.0-or-later](LICENSE) © william1010121: you may redistribute and modify Botling under
 the GNU General Public License, version 3 or (at your option) any later version. Releases up to
 and including 1.14.2 were MIT-licensed.
 
@@ -350,4 +352,4 @@ the app as
 [`web-laas/THIRD_PARTY_NOTICES.txt`](Sources/ClaudeCodeBot/Resources/web-laas/THIRD_PARTY_NOTICES.txt),
 rebuilt by `scripts/build-web-laas.sh`.
 
-ClaudeCodeBot is an independent project and is not affiliated with Anthropic or OpenAI.
+Botling is an independent project and is not affiliated with Anthropic or OpenAI.

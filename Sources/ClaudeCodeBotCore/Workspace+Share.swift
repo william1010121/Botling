@@ -15,7 +15,7 @@ enum ShareCard {
 }
 
 /// /share, in developer mode: the developer project's chat lists the features you built, checks
-/// the one you pick, and opens a pull request for it to ClaudeCodeBot (`CommunityShare`).
+/// the one you pick, and opens a pull request for it to Botling (`CommunityShare`).
 extension Workspace {
     /// /share is offered in the input box of the developer project's chat.
     public func offersShare(in bot: Bot) -> Bool {
@@ -30,7 +30,7 @@ extension Workspace {
         guard words.first == "/share", words.count <= 2 else { return false }
         bot.post(ChatMessage(role: .user, text: text), unread: false)
         guard offersShare(in: bot), let project = developerProject else {
-            tell(bot, "/share needs developer mode, in the chat of the project that is ClaudeCodeBot's source: it shares a feature you built there as a pull request. Turn it on in Settings › Developer mode.")
+            tell(bot, "/share needs developer mode, in the chat of the project that is Botling's source: it shares a feature you built there as a pull request. Turn it on in Settings › Developer mode.")
             return true
         }
         let asked = words.count == 2 ? String(words[1]) : nil
@@ -88,7 +88,7 @@ extension Workspace {
     }
 
     /// Pushes `feature` to your fork and opens its pull request with the label, making the label
-    /// on ClaudeCodeBot first when it is missing there; one you may not add is left for the owner
+    /// on Botling first when it is missing there; one you may not add is left for the owner
     /// to add, and the result says why.
     private func open(_ feature: CommunityShare.Feature, owner: String, from folder: URL, in bot: Bot, project: UUID) async {
         let run = shareRunner
@@ -101,7 +101,7 @@ extension Workspace {
             let labelled = CommunityShare.pullRequest(for: feature, owner: owner, label: true)
             var made = run(labelled, folder)
             guard !made.ok, made.output.localizedCaseInsensitiveContains("label") else { return (made, nil) }
-            // gh refused the label: most often it is missing on ClaudeCodeBot. Make it, then try again.
+            // gh refused the label: most often it is missing on Botling. Make it, then try again.
             let creation = run(CommunityShare.labelCreation(), folder)
             let there = creation.ok || creation.output.localizedCaseInsensitiveContains("already exists")
             if there {

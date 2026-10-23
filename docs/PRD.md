@@ -1,4 +1,4 @@
-# PRD: ClaudeCodeBot, a command center for Claude Code
+# PRD: Botling, a command center for Claude Code
 
 > Version: v0 draft · 2026-10-19 · Purpose: make sure we are aligned; this is not a spec
 > Technical basis: internal notes on Claude Code's multi-agent collaboration mechanisms and the results of a steering-probe prototype (not included in this repository)
@@ -165,7 +165,7 @@ Noise rules:
 | Manager's tools | Read, Write, Edit, Glob, Grep, Bash, used only inside its own project folder, in `acceptEdits` mode. The main bot has only Read, Write, Edit, and can reach only its own folder and each project's `.bot/` |
 | Routine | Each bot has a crontab-style `routines.cron` (main bot in `~/.claudecodebot/main/`, managers in `.bot/`), one job per line: `min hour day month weekday name: what to do`, where "what to do" is a one-line prompt or `@file`, and a leading `#` pauses the job. Bots can edit it themselves, and the settings subpage edits the same file. The app checks the clock every 30 seconds and, when a job is due, sends one line to stdin; the app records when each job last ran |
 | App restart | Nothing special needed: all memory is in `memory.md` and is read as usual on the next wake |
-| UI | Standalone SwiftUI app (`ClaudeCodeBot/`); locating claude and `LineBuffer` are reused from NotchDo |
+| UI | Standalone SwiftUI app (`Botling/`); locating claude and `LineBuffer` are reused from NotchDo |
 | Waiting count | The number on the Dock icon = items still waiting on your decision |
 
 **Not yet tested**:

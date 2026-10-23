@@ -1,6 +1,6 @@
 import Foundation
 
-/// The languages ClaudeCodeBot's own words come in (Settings → General → Language). Bots reply
+/// The languages Botling's own words come in (Settings → General → Language). Bots reply
 /// in it by default too (`BotPrompts.languageRule`).
 public enum AppLanguage: String, Codable, CaseIterable, Sendable {
     case english = "en"

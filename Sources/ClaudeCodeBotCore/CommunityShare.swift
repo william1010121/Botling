@@ -1,6 +1,6 @@
 import Foundation
 
-/// Sharing a feature you built in developer mode back to ClaudeCodeBot: your features are the
+/// Sharing a feature you built in developer mode back to Botling: your features are the
 /// local branches ahead of upstream, each is checked (up to date, no keys or personal paths in
 /// what it adds), and shared as a pull request with the community-feature label, where others
 /// vote on it with 👍 and the owner picks what goes into the next release.
@@ -160,8 +160,8 @@ public enum CommunityShare {
 
     // MARK: The pull request
 
-    /// `gh pr create` for `feature`, from `owner`'s fork to ClaudeCodeBot's main; `label: false`
-    /// leaves the label out (someone without triage rights on ClaudeCodeBot may not add one).
+    /// `gh pr create` for `feature`, from `owner`'s fork to Botling's main; `label: false`
+    /// leaves the label out (someone without triage rights on Botling may not add one).
     public static func pullRequest(for feature: Feature, owner: String, label: Bool) -> [String] {
         var command = ["gh", "pr", "create", "--repo", upstream, "--base", upstreamBranch,
                        "--head", "\(owner):\(feature.branch)", "--title", feature.title, "--body", body(for: feature)]
@@ -169,7 +169,7 @@ public enum CommunityShare {
         return command
     }
 
-    /// `gh label create` for the community-feature label on ClaudeCodeBot, for when it is
+    /// `gh label create` for the community-feature label on Botling, for when it is
     /// missing there (gh says "already exists" when it is not).
     public static func labelCreation() -> [String] {
         ["gh", "label", "create", label, "--repo", upstream, "--color", "0E8A16",
@@ -177,7 +177,7 @@ public enum CommunityShare {
     }
 
     static func body(for feature: Feature) -> String {
-        var lines = ["Shared from ClaudeCodeBot's developer mode with /share.", "", "Commits:"]
+        var lines = ["Shared from Botling's developer mode with /share.", "", "Commits:"]
         lines += feature.subjects.map { "- \($0)" }
         lines += ["", "Files:"]
         lines += feature.files.prefix(30).map { "- `\($0)`" }

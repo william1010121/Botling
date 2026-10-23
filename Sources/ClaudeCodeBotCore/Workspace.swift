@@ -428,7 +428,7 @@ public final class Workspace: ObservableObject {
         guard !editorQuestions.values.contains(edited) else { return }
         let question = tell(
             maintainer,
-            L("ccb-core/claude/agents/component-editor.md was edited outside ClaudeCodeBot (the app did not write this version). Keep the edited version, or use the app's version (its prompt, on {0} as Settings says)?", settings.componentEditor.displayName),
+            L("ccb-core/claude/agents/component-editor.md was edited outside Botling (the app did not write this version). Keep the edited version, or use the app's version (its prompt, on {0} as Settings says)?", settings.componentEditor.displayName),
             choices: [
                 Choice(label: L("Keep the edited version"), detail: L("The app leaves it alone until its own text changes"), recommended: false),
                 Choice(label: L("Use the app's version"), detail: L("The edit is replaced (it stays in the plugin library's git history)"), recommended: false)
@@ -664,7 +664,7 @@ public final class Workspace: ObservableObject {
         }
         if !tooBroad.isEmpty {
             tell(mainBot, L("Couldn't add {0} as a project: a manager there could change far more than one project.", tooBroad.joined(separator: ", ")))
-            notes.append("\(tooBroad.joined(separator: ", ")) was not added: a whole disk, the home folder or ClaudeCodeBot's own folder cannot be a project. Ask for the project's own folder.")
+            notes.append("\(tooBroad.joined(separator: ", ")) was not added: a whole disk, the home folder or Botling's own folder cannot be a project. Ask for the project's own folder.")
         }
         if !handed.isEmpty {
             tell(mainBot, handed.count == 1
@@ -745,7 +745,7 @@ public final class Workspace: ObservableObject {
     private func closeAppCard(_ id: UUID) -> String? {
         if let proposal = buildQuestions.removeValue(forKey: id) {
             managers[proposal.requester]?.queueNote("(App: The user did not install \(proposal.build.label); they wrote instead.)")
-            return "asking to install the ClaudeCodeBot build \(proposal.build.label)"
+            return "asking to install the Botling build \(proposal.build.label)"
         }
         if let card = shareQuestions.removeValue(forKey: id) {
             return card.about
@@ -1506,11 +1506,11 @@ public final class Workspace: ObservableObject {
         }
         guard isNew else { return conflict }
         try? files.createDirectory(at: plugin.appending(path: "claude/.claude-plugin"), withIntermediateDirectories: true)
-        try? Data(PluginManifest.claudePluginText(name: "ccb-core", description: "Agents ClaudeCodeBot uses itself.").utf8)
+        try? Data(PluginManifest.claudePluginText(name: "ccb-core", description: "Agents Botling uses itself.").utf8)
             .write(to: plugin.appending(path: "claude/.claude-plugin/plugin.json"))
         try? Data(PluginManifest.builtIn(
-            name: "ccb-core", displayName: "ClaudeCodeBot core",
-            description: "Agents ClaudeCodeBot uses itself: component-editor edits component templates (its model is set in Settings).",
+            name: "ccb-core", displayName: "Botling core",
+            description: "Agents Botling uses itself: component-editor edits component templates (its model is set in Settings).",
             permissions: [.claude], claude: "claude"
         ).fileText.utf8).write(to: plugin.appending(path: "package.json"))
         return conflict
@@ -1547,7 +1547,7 @@ public final class Workspace: ObservableObject {
         if files.fileExists(atPath: old.path) {
             try? files.moveItem(at: old, to: old.deletingLastPathComponent().appending(path: "teams.v1-backup"))
         }
-        let claudeManifest = PluginManifest.claudePluginText(name: "ccb-teams", description: "ClaudeCodeBot's temporary teams: Research team, Prototype team.")
+        let claudeManifest = PluginManifest.claudePluginText(name: "ccb-teams", description: "Botling's temporary teams: Research team, Prototype team.")
         try? Data(claudeManifest.utf8).write(to: plugin.appending(path: "claude/.claude-plugin/plugin.json"))
         let manifest = PluginManifest.builtIn(
             name: "ccb-teams", displayName: "Temporary teams",

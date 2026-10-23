@@ -418,7 +418,7 @@ struct RailView: View {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = L("Add as project")
-        panel.message = L("Pick a project folder; ClaudeCodeBot will give it a manager.")
+        panel.message = L("Pick a project folder; Botling will give it a manager.")
         if panel.runModal() == .OK, let folder = panel.url {
             workspace.addProject(folder: folder)
         }
@@ -1262,7 +1262,7 @@ private struct SleepCountdown: View {
     }
 }
 
-/// One bot's settings: its model, routines and the tools it may use. ClaudeCodeBot's own are
+/// One bot's settings: its model, routines and the tools it may use. Botling's own are
 /// in the settings window (`SettingsWindow`).
 struct SettingsPage: View {
     @ObservedObject var bot: Bot

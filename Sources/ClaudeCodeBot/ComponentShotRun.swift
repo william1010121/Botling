@@ -2,7 +2,7 @@ import AppKit
 import ClaudeCodeBotCore
 import WebKit
 
-/// `ClaudeCodeBot --component-shot <component folder>` (see `ComponentShot`): draws the component
+/// `botling --component-shot <component folder>` (see `ComponentShot`): draws the component
 /// in this build's chat page, offscreen, once per surface, then pictures each frame, judges it,
 /// writes a contact sheet and report.json, prints what is wrong and quits (0: no problems,
 /// 1: problems, 2: bad usage, 3: it could not draw).

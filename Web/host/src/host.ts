@@ -1,5 +1,5 @@
-// ClaudeCodeBot's plugin host: one Node process that runs every plugin's program part (`ccb.host`).
-// It talks to ClaudeCodeBot over stdin/stdout, one JSON-RPC message per line (like LSP, without headers).
+// Botling's plugin host: one Node process that runs every plugin's program part (`ccb.host`).
+// It talks to Botling over stdin/stdout, one JSON-RPC message per line (like LSP, without headers).
 // Plugins' own console output goes to stderr so it cannot break the protocol.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -18,7 +18,7 @@ interface Message {
   error?: { message: string };
 }
 
-/** What ClaudeCodeBot sends for each plugin with a program part. */
+/** What Botling sends for each plugin with a program part. */
 export interface HostPluginSpec {
   name: string;
   version: string;
@@ -226,7 +226,7 @@ export class Host {
     return this.plugins.has(name);
   }
 
-  /** Tells ClaudeCodeBot which hooks and commands exist, so it only asks when someone is listening. */
+  /** Tells Botling which hooks and commands exist, so it only asks when someone is listening. */
   private announce(): void {
     const plugins = [...this.plugins.values()];
     this.notify("registered", {
@@ -298,7 +298,7 @@ export class Host {
     }
   }
 
-  /** A plugin threw: ClaudeCodeBot counts it, and turns the plugin off if it keeps happening. */
+  /** A plugin threw: Botling counts it, and turns the plugin off if it keeps happening. */
   report(plugin: string | null, error: unknown): void {
     this.notify("pluginError", { plugin: plugin ?? this.current, message: errorText(error) });
   }
@@ -410,7 +410,7 @@ export function main(): void {
   console.info = toStderr;
   console.debug = toStderr;
   const host = new Host(write);
-  // Exits once everything written has reached the pipe; a pipe that never drains (ClaudeCodeBot
+  // Exits once everything written has reached the pipe; a pipe that never drains (Botling
   // stopped reading) still lets it go after `shutdownFallback` ms.
   host.onShutdown = () => {
     setTimeout(() => process.exit(0), shutdownFallback).unref();
@@ -429,7 +429,7 @@ export function main(): void {
     }
     void host.receive(message);
   });
-  // ClaudeCodeBot went away: so does the host.
+  // Botling went away: so does the host.
   lines.on("close", () => process.exit(0));
   host.notify("ready", { pid: process.pid });
 }

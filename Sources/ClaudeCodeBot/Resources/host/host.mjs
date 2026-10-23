@@ -147,7 +147,7 @@ var Host = class {
   isLoaded(name) {
     return this.plugins.has(name);
   }
-  /** Tells ClaudeCodeBot which hooks and commands exist, so it only asks when someone is listening. */
+  /** Tells Botling which hooks and commands exist, so it only asks when someone is listening. */
   announce() {
     const plugins = [...this.plugins.values()];
     this.notify("registered", {
@@ -212,7 +212,7 @@ var Host = class {
       this.current = null;
     }
   }
-  /** A plugin threw: ClaudeCodeBot counts it, and turns the plugin off if it keeps happening. */
+  /** A plugin threw: Botling counts it, and turns the plugin off if it keeps happening. */
   report(plugin, error) {
     this.notify("pluginError", { plugin: plugin ?? this.current, message: errorText(error) });
   }

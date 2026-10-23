@@ -3,7 +3,7 @@ import ClaudeCodeBotCore
 import SwiftUI
 import WebKit
 
-/// `CCB_SNAPSHOT=/path/out.png swift run ClaudeCodeBot` draws the web chat surface with sample messages
+/// `CCB_SNAPSHOT=/path/out.png swift run botling` draws the web chat surface with sample messages
 /// (markdown, LaTeX, choices, a notice, a reply with a picture) in an offscreen window, saves it
 /// as a PNG and quits, so the look can be checked without clicking through the app.
 @MainActor
@@ -208,7 +208,7 @@ enum Snapshot {
         return true
     }
 
-    /// `ClaudeCodeBot --snapshot "<chat name>" out.png`: the chat as this build draws it, with its
+    /// `botling --snapshot "<chat name>" out.png`: the chat as this build draws it, with its
     /// pinned components (`--pins file.json` for others, `--board` for its Board).
     static func chatRequest() -> (String, String)? {
         let arguments = CommandLine.arguments
@@ -327,13 +327,13 @@ enum Snapshot {
     /// `CCB_RAIL_SNAPSHOT=/path/out.png`: the left column open and folded side by side, from
     /// sample projects with unread lines, with the folded one's hover tip on Maintainer.
     /// `CCB_RAIL_SNAPSHOT=/path/out.png CCB_RAIL_HERO=1`: the open left column alone, 1060 pt tall,
-    /// with one sample project (ClaudeCodeBot) and a subagent at work under it: the README's hero
+    /// with one sample project (Botling) and a subagent at work under it: the README's hero
     /// picture takes its left column from this.
     private static func drawHeroRail(to path: String) {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
-        let folder = root.appending(path: "code/ClaudeCodeBot")
+        let folder = root.appending(path: "code/botling")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let project = Workspace.Project(id: UUID(), name: "ClaudeCodeBot", folder: folder, avatar: "square")
+        let project = Workspace.Project(id: UUID(), name: "Botling", folder: folder, avatar: "square")
         try? JSONEncoder().encode([project]).write(to: Workspace.Layout.projectsFile(in: root))
         var subagent = Subagent(id: "toolu_1", description: "Fix login loop", prompt: "Fix it", startedAt: Date())
         subagent.name = "fix-login"
@@ -425,7 +425,7 @@ enum Snapshot {
     private static func drawRail(to path: String) {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let samples: [(String, String, Int)] = [("ClaudeCodeBot", "square", 0), ("Arbor", "triangle", 0), ("Morning news", "star", 5), ("Paper research", "hexagon", 0), ("Home server", "pill", 0)]
+        let samples: [(String, String, Int)] = [("Botling", "square", 0), ("Arbor", "triangle", 0), ("Morning news", "star", 5), ("Paper research", "hexagon", 0), ("Home server", "pill", 0)]
         let projects = samples.map { name, avatar, _ in
             Workspace.Project(id: UUID(), name: name, folder: root.appending(path: "code/\(name)"), avatar: avatar)
         }
@@ -497,7 +497,7 @@ enum Snapshot {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let samples: [(String, String, String, Int)] = [
-            ("ClaudeCodeBot", "square", "ClaudeCodeBot", 0), ("Arbor", "triangle", "arbor", 0), ("Morning news", "star", "morning-news", 5),
+            ("Botling", "square", "botling", 0), ("Arbor", "triangle", "arbor", 0), ("Morning news", "star", "morning-news", 5),
             ("Paper research", "hexagon", "papers", 0), ("Home server", "pill", "home-server", 0), ("News digest", "circle", "digest", 1),
         ]
         let projects = samples.map { name, avatar, folder, _ in
@@ -602,7 +602,7 @@ enum Snapshot {
     /// `CCB_RELEASES_OWNER=0` draws it as someone who can only vote.
     private static func drawReleases(to path: String) {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
-        let code = root.appending(path: "code/ClaudeCodeBot")
+        let code = root.appending(path: "code/botling")
         try? FileManager.default.createDirectory(at: code, withIntermediateDirectories: true)
         let workspace = Workspace(root: root.appending(path: "ccb"), builtInPlugins: ChatSurface.builtInPlugins) { profile, store in
             Bot(profile: profile, launcher: { _ in throw AppError.claudeNotFound }, store: store)
@@ -770,10 +770,10 @@ enum Snapshot {
 
     private static func drawRightPanel(to path: String) {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
-        let code = root.appending(path: "code/ClaudeCodeBot")
+        let code = root.appending(path: "code/botling")
         try? FileManager.default.createDirectory(at: code.appending(path: ".bot"), withIntermediateDirectories: true)
         try? Data("## In progress\n- v1.9.0: fold the right panel into a strip of icons\n".utf8).write(to: code.appending(path: ".bot/memory.md"))
-        let project = Workspace.Project(id: UUID(), name: "ClaudeCodeBot", folder: code, avatar: "square")
+        let project = Workspace.Project(id: UUID(), name: "Botling", folder: code, avatar: "square")
         try? JSONEncoder().encode([project]).write(to: Workspace.Layout.projectsFile(in: root))
         let store = BotStore(directory: Workspace.Layout.bot(project.id, in: root))
         // `CCB_SNAPSHOT_HEADS=1`: the bot has Claude and Codex (each head's state under Now).
@@ -781,7 +781,7 @@ enum Snapshot {
             store.save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .claude))
         }
         store.save(messages: [
-            ChatMessage(role: .bot, text: "Done: [Sidebar option A](file:///tmp/a.html), [Sidebar collapse](file:///tmp/b.html), [ClaudeCodeBot v1.7.1](file:///tmp/c.html)", date: Date())
+            ChatMessage(role: .bot, text: "Done: [Sidebar option A](file:///tmp/a.html), [Sidebar collapse](file:///tmp/b.html), [Botling v1.7.1](file:///tmp/c.html)", date: Date())
         ])
         store.save(subagents: ["Fix choices block not rendering", "Fix markdown table column widths", "Design collapsible sidebar options", "Fix duplicate decision cards"].enumerated().map { index, title in
             var subagent = Subagent(id: "s\(index)", description: title, prompt: title, status: .completed)
