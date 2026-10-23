@@ -66,6 +66,22 @@ enum Snapshot {
         guard let path = ProcessInfo.processInfo.environment["CCB_SNAPSHOT"] else { return false }
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         let now = Date()
+        // Integrated feature fixture: saved sample messages only; no model or live chat access.
+        if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "reactions" {
+            let store = BotStore(directory: Workspace.Layout.mainBot(in: root))
+            store.save(heads: HeadsSettings(engines: [.claude, .codex]))
+            var user = ChatMessage(role: .user, text: "Check the enlarged avatars and per-message reactions. (SAMPLE DATA)", date: now.addingTimeInterval(-180))
+            user.reactions = [MessageReaction(emoji: "👀", actor: "head:claude"), MessageReaction(emoji: "👍", actor: "head:codex")]
+            var claude = ChatMessage(role: .bot, text: "Avatars are 48px here and 40px below 480px. The small relay avatar stays 18px.", date: now.addingTimeInterval(-120))
+            claude.engine = .claude
+            claude.reactions = [MessageReaction(emoji: "👍", actor: "user"), MessageReaction(emoji: "👍", actor: "head:codex")]
+            var codex = ChatMessage(role: .bot, text: "Reactions are saved with the message UUID. A reaction alone does not start another model turn.", date: now.addingTimeInterval(-60))
+            codex.engine = .codex
+            codex.reactions = [MessageReaction(emoji: "🎉", actor: "user"), MessageReaction(emoji: "❤️", actor: "head:claude")]
+            store.save(messages: [user, claude, codex])
+            draw(root: root, to: path)
+            return true
+        }
         // `CCB_SNAPSHOT_SAMPLE=design`: a /design request answered with a Claude Design's link.
         if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "design" {
             BotStore(directory: root.appending(path: "main")).save(messages: [
@@ -277,9 +293,10 @@ enum Snapshot {
 
         // `CCB_SNAPSHOT_HEIGHT=900`: a shorter (or taller) window than 1300 points.
         let height = ProcessInfo.processInfo.environment["CCB_SNAPSHOT_HEIGHT"].flatMap(Double.init) ?? 1300
-        let frame = NSRect(x: 0, y: 0, width: 760, height: height)
+        let frame = NSRect(x: 0, y: 0, width: ProcessInfo.processInfo.environment["CCB_SNAPSHOT_WIDTH"].flatMap(Double.init) ?? 760, height: height)
         let window = HeadlessRun.offscreenWindow(frame)
         let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
         let handler = Handler(path: path, json: json, plugins: ChatSurface.setPluginsScript(workspace.plugins))
         configuration.userContentController.add(handler, name: "ccb")
         configuration.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
