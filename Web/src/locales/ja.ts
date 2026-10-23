@@ -124,6 +124,8 @@ export const ja: Dictionary = {
   "float.fold": "1 行に折りたたむ",
   "float.stop": "フロートをやめる",
   // main.ts: watching a subagent, plugin panels
+  "subagent.speed": "≈ {value} tok/s · 平均",
+  "subagent.speedHint": "報告済み出力トークン数 ÷ サブエージェント起動からの経過時間（ツール、待機、再開までの休止を含む）。使用量の報告時に更新し、完了時に固定。推定平均であり、モデルの生成速度ではありません。— はデータ不足。",
   "subagent.back": "{bot} のチャットに戻る",
   "subagent.of": "{bot} のサブエージェント",
   "subagent.unknown": "不明",

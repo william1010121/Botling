@@ -124,6 +124,8 @@ export const ko: Dictionary = {
   "float.fold": "한 줄로 접기",
   "float.stop": "띄우기 중지",
   // main.ts: watching a subagent, plugin panels
+  "subagent.speed": "≈ {value} tok/s · 평균",
+  "subagent.speedHint": "보고된 출력 토큰 ÷ 하위 에이전트 시작 후 경과 시간(도구, 대기, 재개 전 중단 포함). 사용량 보고 시 갱신하고 완료 시 고정합니다. 모델 생성 속도가 아닌 추정 평균입니다. — 는 데이터 부족입니다.",
   "subagent.back": "{bot}의 채팅으로 돌아가기",
   "subagent.of": "{bot}의 서브에이전트",
   "subagent.unknown": "알 수 없음",

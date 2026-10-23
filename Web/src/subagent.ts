@@ -1,3 +1,4 @@
+import { subagentSpeedElement } from "./subagent-speed";
 import { post } from "./bridge";
 import { t, type Key } from "./i18n";
 import { renderMarkdown } from "./markdown";
@@ -85,14 +86,3 @@ export function fillSubagentBar(bar: HTMLElement, header: SubagentHeaderView): v
   badge.textContent = t(type === "codex-worker" && engine === "codex" ? "subagent.engine.codexWorker" : `subagent.engine.${engine}` as Key);
   const meta = document.createElement("span");
   meta.className = "meta";
-  const effort = header.runtime?.reasoningEffort?.trim() || t("subagent.unknown");
-  const tier = header.runtime?.serviceTier?.trim();
-  // Only explicit standard/flex tiers establish Off; null/auto/unrecognized tiers are unknown.
-  const fast = tier === "fast" || tier === "priority" ? t("subagent.fastOn")
-    : tier === "default" || tier === "flex" ? t("subagent.fastOff")
-    : tier === "ultrafast" ? "Ultrafast" : t("subagent.fastUnknown");
-  meta.textContent = [header.model, type === "codex-worker" ? null : type, t("subagent.effort", { effort }), engine === "codex" ? fast : null,
-    statusWord(status), t("subagent.watchOnly")].filter(Boolean).join(" · ");
-  meta.title = t("subagent.runtimeHelp") + (engine === "codex" && tier ? ` (${tier})` : "");
-  bar.append(back, separator, name, badge, meta);
-}

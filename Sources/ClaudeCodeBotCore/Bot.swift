@@ -2182,7 +2182,7 @@ public final class Bot: ObservableObject, Identifiable {
         switch step {
         case let .toolUse(_, _, _, _, parent), let .toolResult(_, _, _, parent), let .toolImages(_, _, parent), let .text(_, parent): parent
         case let .subagentStarted(id, _, _, _, _): id
-        case let .subagentWaiting(id): id
+        case let .subagentWaiting(id), let .subagentOutput(id, _, _): id
         case let .launchResult(_, _, parent), let .messageSent(_, _, _, _, parent): parent
         case .subagentEnded, .subagentNamed, .subagentModel, .subagentRuntime, .subagentDescribed, .backgroundCommandStarted, .monitorStarted, .scheduleCalled, .scheduleResult: nil
         }

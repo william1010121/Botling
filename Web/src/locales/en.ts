@@ -125,6 +125,8 @@ export const en = {
   "float.fold": "Fold to one line",
   "float.stop": "Stop floating",
   // main.ts: watching a subagent, plugin panels
+  "subagent.speed": "≈ {value} tok/s · avg",
+  "subagent.speedHint": "Reported output tokens ÷ elapsed time since this subagent started (including tools, waiting and pauses between resumed runs). Updates when usage is reported; freezes at completion. An estimated average, not model decoding speed. — means insufficient data.",
   "subagent.back": "Back to {bot}'s chat",
   "subagent.of": "Subagent of {bot}",
   "subagent.unknown": "unknown",

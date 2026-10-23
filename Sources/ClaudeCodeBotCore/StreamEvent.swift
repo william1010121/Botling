@@ -6,6 +6,24 @@ enum StreamEvent {
     /// The result line as a reply; tool calls, their results, words between them and
     /// subagents as trace events.
     static func events(in line: String) -> [AgentEvent] {
+        if isPartial(line) { return [] }
+        return subagentOutput(in: line) + contentEvents(in: line)
+    }
+
+    /// Only explicit, attributable output counts; input/cache counts and text length are not output.
+    private static func subagentOutput(in line: String) -> [AgentEvent] {
+        guard let data = line.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              object["type"] as? String == "assistant",
+              let parent = object["parent_tool_use_id"] as? String,
+              let message = object["message"] as? [String: Any],
+              let id = message["id"] as? String,
+              let usage = message["usage"] as? [String: Any],
+              let tokens = SubagentTokenCounter.read(usage["output_tokens"]) else { return [] }
+        return [.trace(.subagentOutput(id: parent, counter: "message:" + id, tokens: tokens))]
+    }
+
+    private static func contentEvents(in line: String) -> [AgentEvent] {
         // `--include-partial-messages` chunks: many per second, and only `FinalMessageWatch`
         // reads them (the whole message comes again as an `assistant` line).
         if isPartial(line) { return [] }
