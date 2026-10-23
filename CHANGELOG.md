@@ -8,6 +8,10 @@ app and publishes it on GitHub Releases.
 
 ### Changed
 
+- **Quieter left column.** Bot and group rows no longer show the orange "waiting on you" dot,
+  and running subagent rows no longer show a blue dot (the owner head's face is on the row);
+  the folded strip drops the orange dot too. Only the unread count (a blue dot when folded)
+  is left. "Waiting on you" is still in the hover tip and the chat.
 - **Settings look like macOS System Settings.** A searchable sidebar with coloured icons and
   grouped forms with a note under each group, in light and dark. General gains the reminder for
   quiet runs; Usage shows the Claude and Codex 5-hour and weekly limits; the component editor
