@@ -21,11 +21,15 @@ extension Workspace {
     /// The site's own row (or its face in the folded column): a new question, fresh, as "New
     /// question" does. The page you leave is not lost: a question on it still waiting goes on
     /// behind, and its row stays. Already on a fresh page of it, nothing reloads.
-    public func openFresh(_ site: WebSite) {
-        let fresh = selectedWebSite == site && web.open[site.id] == nil && web.requested[site.id] == nil
+    ///
+    /// `account` (one picked in the site's account menu): the new question is asked in it, on
+    /// its own sign-in.
+    public func openFresh(_ site: WebSite, account: WebAccount? = nil) {
+        let sameAccount = account.map { $0.id == web.account(of: site).id } ?? true
+        let fresh = selectedWebSite == site && web.open[site.id] == nil && web.requested[site.id] == nil && sameAccount
         // Left before the site counts as shown: an answer that came while you were elsewhere
         // has not been seen, so its row stays.
-        if !fresh { web.startNew(on: site) }
+        if !fresh { web.startNew(on: site, account: account) }
         select(site)
     }
 

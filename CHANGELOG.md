@@ -40,6 +40,14 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Several Google accounts in Gemini.** A small ⌄ beside Gemini in the left column opens its
+  account menu: pick an account to ask a new question in it, add one (it signs in on its own,
+  separate website data), or rename or remove one. With more than one account, Gemini's face
+  wears the current account's badge, and each question's arrow and small badge show the account
+  it was asked in; clicking a question opens it in that account. Your existing Gemini sign-in
+  is account 1, kept as it is, and every question from before belongs to it. Removing an added
+  account deletes its sign-in on this Mac; its saved conversations stay. With one account,
+  nothing changes but the ⌄.
 - **Claude and Codex as characters (Bot look: Cute).** With either or both engines enabled,
   Claude (orange hair, orange flower and black ribbon) and Codex (white and lavender hair,
   horns, a knot ornament and elf ears) are drawn as small vector characters. Replies and the

@@ -755,11 +755,19 @@ enum Snapshot {
         // `CCB_WINDOW_WEB=gemini` (or `chatgpt`, `claude`): that web site picked, with sample
         // saved conversations, and one on each other site (the page itself is a placeholder: a
         // snapshot loads and signs into nothing).
+        // `CCB_WINDOW_WEB_ACCOUNTS=1`: Gemini with three sample accounts, each row in one.
+        // `CCB_WINDOW_WEB_MENU=<path>`: its account menu drawn on its own, to that PNG (a
+        // popover is a window of its own, which a snapshot of the main one does not show).
+        let accountsSample = ProcessInfo.processInfo.environment["CCB_WINDOW_WEB_ACCOUNTS"] == "1"
         if let id = ProcessInfo.processInfo.environment["CCB_WINDOW_WEB"], let site = WebSite.all.first(where: { $0.id == id }) {
             for (index, other) in WebSite.all.enumerated() where other != site {
                 sampleWebConversation(on: other, index: index, in: workspace)
             }
-            sampleWebConversations(on: site, in: workspace)
+            if accountsSample, site.offersAccounts {
+                sampleWebAccounts(on: site, in: workspace)
+            } else {
+                sampleWebConversations(on: site, in: workspace)
+            }
             // `CCB_WINDOW_CAPTURE=recording` (or `saved`): its capture card, with sample captures.
             if let mode = ProcessInfo.processInfo.environment["CCB_WINDOW_CAPTURE"] { WebCaptureRun.sample(mode, on: site, in: workspace) }
         }
@@ -769,6 +777,12 @@ enum Snapshot {
             .overlay(alignment: .bottomLeading) {
                 if teamSample {
                     Text("SAMPLE DATA · two-head team").font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Theme.faint).padding(8).background(Theme.ground)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if accountsSample {
+                    Text("SAMPLE DATA · three Gemini accounts (no real sign-in)").font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(Theme.faint).padding(8).background(Theme.ground)
                 }
             }
@@ -793,7 +807,61 @@ enum Snapshot {
                 host.cacheDisplay(in: host.bounds, to: rep)
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
             }
+            if let menuPath = ProcessInfo.processInfo.environment["CCB_WINDOW_WEB_MENU"], let site = workspace.selectedWebSite {
+                let menu = NSHostingView(rootView: WebAccountMenu(workspace: workspace, shelf: workspace.web, site: site) {}
+                    .overlay(alignment: .bottom) {
+                        Text("SAMPLE DATA").font(.system(size: 9, weight: .semibold)).foregroundStyle(Theme.faint).offset(y: 14)
+                    }
+                    .padding(.bottom, 18)
+                    .background(Theme.side)
+                    .preferredColorScheme(.dark))
+                menu.frame = NSRect(origin: .zero, size: menu.fittingSize)
+                let menuWindow = HeadlessRun.offscreenWindow(menu.frame)
+                menuWindow.appearance = NSAppearance(named: .darkAqua)
+                menuWindow.contentView = menu
+                menu.layoutSubtreeIfNeeded()
+                if let rep = menu.bitmapImageRepForCachingDisplay(in: menu.bounds) {
+                    menu.cacheDisplay(in: menu.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: menuPath))
+                }
+            }
             exit(columns.count == 3 && off.isEmpty ? 0 : 2)
+        }
+    }
+
+    /// Three sample accounts on `site` (SAMPLE DATA: names only, nothing signed in), its rows
+    /// spread over them: one waiting, the open one in "user2", one settled.
+    private static func sampleWebAccounts(on site: WebSite, in workspace: Workspace) {
+        let shelf = workspace.web
+        shelf.renameAccount(WebAccount.firstID, to: "user1", on: site)
+        let user2 = shelf.addAccount(on: site, name: "user2")
+        let work = shelf.addAccount(on: site, name: "work")
+        let first = shelf.accounts(of: site).first
+        let samples: [(id: String, title: String, turns: Int, minutesAgo: Double, account: WebAccount)] = [
+            ("c0a9e1f27b3d", "CHANGELOG merge conflicts", 4, 60 * 26, first),
+            ("4b7e90d1aa02", "Q3 roadmap summary", 4, 220, work),
+            ("7d21b0c4e9aa", "Release card every 60 s?", 2, 95, first),
+            ("8f3a2c1d9e0b", "WKWebView or iframe?", 6, 3, user2),
+        ]
+        for sample in samples {
+            let page = UUID()
+            shelf.attach(page, account: sample.account)
+            let turns = (0..<sample.turns).map { WebTurn(role: $0 % 2 == 0 ? .user : .assistant, text: "Sample message \($0 + 1)") }
+            shelf.record(on: site, page: page, url: site.conversationURL(sample.id), pageTitle: nil, reading: .read(title: sample.title, turns: turns),
+                         now: Date().addingTimeInterval(-sample.minutesAgo * 60))
+            shelf.closed(page)
+        }
+        workspace.select(site)
+        if let oldest = shelf.conversation("c0a9e1f27b3d", of: site) { shelf.settle(oldest, of: site) }
+        let asking = UUID()
+        shelf.attach(asking, account: first)
+        shelf.record(on: site, page: asking, url: site.startURL, pageTitle: nil, reading: .read(title: nil, turns: [
+            WebTurn(role: .user, text: "Does a hidden WKWebView keep running?"),
+        ]), settled: false)
+        if let open = shelf.conversation("8f3a2c1d9e0b", of: site) {
+            shelf.show(open, of: site)
+            shelf.bringToFront(WebShelf.firstPage, on: site)
+            shelf.record(on: site, url: open.url, pageTitle: nil, reading: .read(title: open.title, turns: (0..<6).map { WebTurn(role: $0 % 2 == 0 ? .user : .assistant, text: "Sample message \($0 + 1)") }), now: open.savedAt ?? Date())
         }
     }
 
