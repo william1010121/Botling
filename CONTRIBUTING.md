@@ -4,7 +4,7 @@ Thanks for helping. Bug reports, ideas and pull requests are all welcome.
 
 ## Report a bug or ask for a feature
 
-Open an [issue](https://github.com/william1010121/ClaudeCodeBot/issues/new/choose) with the
+Open an [issue](https://github.com/william1010121/Botling/issues/new/choose) with the
 bug or feature template. For a bug, include the app version, your macOS version and what
 **Settings → Doctor** shows for Claude Code and Codex. Leave out chats, paths and anything else
 personal.
@@ -12,7 +12,7 @@ personal.
 ## Set up
 
 ```bash
-git clone https://github.com/william1010121/ClaudeCodeBot.git botling
+git clone https://github.com/william1010121/Botling.git botling
 cd botling
 swift run botling      # Swift 6.2 (Xcode 26), macOS 14+
 cd Web && npm ci             # only when you change the chat surface or plugins
