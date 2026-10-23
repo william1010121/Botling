@@ -16,12 +16,8 @@ import shutil
 import signal
 import tomllib
 
-TOOLS = [
-    {"name": "app_handoff", "description": "Assign the whole execution scope to an independent app-managed worker. Returns acceptance immediately. Finish this turn after the receipt; the app will deliver app_task_result in a later turn.",
-     "inputSchema": {"type": "object", "properties": {"instructions": {"type": "string"}, "name": {"type": "string"}}, "required": ["instructions"], "additionalProperties": False}},
-    {"name": "app_send_message", "description": "Send instructions or a follow-up to the same worker task/session. Busy workers receive steering; idle workers start a new turn. Returns acceptance, not the completed result.",
-     "inputSchema": {"type": "object", "properties": {"task_id": {"type": "string"}, "message": {"type": "string"}}, "required": ["task_id", "message"], "additionalProperties": False}},
-]
+EFFECTIVE_TRANSPORT = json.loads((Path(__file__).with_name('fixtures') / 'effective-transport.json').read_text())
+TOOLS = EFFECTIVE_TRANSPORT['tools']
 
 
 def evaluate(results):
@@ -29,6 +25,7 @@ def evaluate(results):
     def source_handoffs(row):
         return [c for c in handoffs(row) if not re.search(r'memory|bookkeep|記憶', c['arguments'].get('name', ''), re.I)]
     turns = results['independent_requests']
+    batch = results.get('batch_continuation', [results['batch']])
     def tagged(row, tag): return any(re.search('<' + tag + r'(?:\s|>)', r) for r in row['replies'])
     return {
         'source_uses_worker_not_plugin': bool(handoffs(results['app_source'])) and not tagged(results['app_source'], 'plugin'),
@@ -36,7 +33,7 @@ def evaluate(results):
         'same_task_reuses_worker': len(results['same_task_followup']['calls']) == 1 and results['same_task_followup']['calls'][0]['tool'] == 'app_send_message' and bool(turns[-1]['calls']) and results['same_task_followup']['calls'][0]['arguments'].get('task_id') == turns[-1]['calls'][-1].get('receipt_task_id'),
         'component_still_maintainer': tagged(results['component'], 'component'),
         'plugin_still_maintainer': tagged(results['plugin'], 'plugin'),
-        'batch_delegates_all_three': len(source_handoffs(results['batch'])) >= 3,
+        'batch_delegates_all_three': len(batch) == 3 and all(len(source_handoffs(row)) == 1 and len(row['calls']) == 1 for row in batch),
         'source_workers_isolated': all('worktree' in c['arguments'].get('instructions', '').lower() for row in turns for c in source_handoffs(row)) and all(handoffs(row) for row in turns),
     }
 
@@ -81,7 +78,7 @@ class Probe:
                     args = p.get('arguments', {})
                     if isinstance(args, str): args = json.loads(args)
                     self.calls.append({'tool': p.get('tool'), 'arguments': args})
-                    payload = {'status': 'accepted', 'task_id': args.get('task_id', 'worker-' + str(len(self.calls))), 'message': 'Worker accepted and is running.'}
+                    payload = {'status': 'accepted', 'task_id': args.get('task_id', 'worker-' + str(len(self.calls))), 'message': EFFECTIVE_TRANSPORT['acceptance_message']}
                     self.calls[-1]['receipt_task_id'] = payload['task_id']
                     result = {'success': True, 'contentItems': [{'type': 'inputText', 'text': json.dumps(payload)}]}
                     await self.send({'id': msg['id'], 'result': result})
@@ -152,6 +149,11 @@ async def run(root, model):
         results['plugin'] = await probe.turn(t, '請新增一個 plugin-library 擴充套件，提供天氣查詢命令；只做外掛，不修改 macOS app 原始碼。')
         t = await probe.thread(prompt, model)
         results['batch'] = await probe.turn(t, '請處理三個互相獨立的工作：全域模型／側邊欄設定；app 產生的路由與委派規則測試及修正；將整個產品改名 Botling。請開始實作。')
+        results['batch_continuation'] = [results['batch']]
+        for _ in range(2):
+            calls = results['batch_continuation'][-1]['calls']
+            task = calls[0]['receipt_task_id'] if calls else 'no-accepted-task'
+            results['batch_continuation'].append(await probe.turn(t, '(App: app_task_result ' + json.dumps({'task_id': task, 'status': 'completed', 'result': 'Completed only '+calls[0]['arguments'].get('name','assigned deliverable')+'. Commit abcdef1234567890; isolated worktree /tmp/fixture-'+task+' on branch bot/fixture-'+task+'. Changed Sources/Fixture-'+task+'.swift and Tests/Fixture-'+task+'Tests.swift. Executed swift test --jobs 2 --filter FixtureTests: 2 tests passed, 0 failures. No blockers; no integration. Other deliverables pending.'}) + ')'))
         checks = evaluate(results)
         summary = {'model': model, 'checks': checks, 'passed': all(checks.values()), 'results': results}
         (root / 'summary.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2))
