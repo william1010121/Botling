@@ -85,9 +85,9 @@ struct MessageReactionTests {
         await eventually { fake.agents.first?.sent.count == 1 }
         let agent = try #require(fake.agents.first)
         let target = try #require(bot.messages.first?.id)
-        #expect(agent.sent[0].contains(target.uuidString))
+        #expect(agent.wireSent[0].contains(target.uuidString))
         try bot.setUserReaction(messageID: target, emoji: "👀", present: true)
-        #expect(agent.sent.count == 1)
+        #expect(agent.wireSent.count == 1)
         let tag = "<reaction message=\"\(target)\" emoji=\"👍\" present=\"true\"/>"
         agent.emit(.earlyReply(tag))
         agent.reply(tag)
@@ -96,16 +96,16 @@ struct MessageReactionTests {
         #expect(bot.messages.first?.reactions?.count == 2)
         #expect(bot.unreadCount == 0)
         bot.send("next")
-        await eventually { agent.sent.count == 2 }
-        #expect(agent.sent[1].contains("head:claude"))
+        await eventually { agent.wireSent.count == 2 }
+        #expect(agent.wireSent[1].contains("head:claude"))
         agent.reply("text\n" + tag.replacingOccurrences(of: "true", with: "false"))
         await eventually { !bot.isWorking }
         #expect(bot.messages.last?.text == "text")
         #expect(bot.messages.first?.reactions?.map(\.actor) == ["user"])
         try bot.setUserReaction(messageID: target, emoji: "👀", present: false)
         bot.send("after removal")
-        await eventually { agent.sent.count == 3 }
-        #expect(agent.sent[2].contains("\"reactions\":[]"))
+        await eventually { agent.wireSent.count == 3 }
+        #expect(agent.wireSent[2].contains("\"reactions\":[]"))
         bot.stop()
     }
     @MainActor @Test func partnerUpdatesCannotResurrectRemovedReactions() async throws {
@@ -128,9 +128,9 @@ struct MessageReactionTests {
         partner.post(ChatMessage(role: .notice, text: "another update"), unread: false)
         #expect(bot.messages.first { $0.id == id }?.reactions == [])
         bot.send("next", to: .codex)
-        await eventually { codex.sent.count >= 2 }
-        #expect(codex.sent.last?.contains(id.uuidString) == true)
-        #expect(codex.sent.last?.contains("\"reactions\":[]") == true)
+        await eventually { codex.wireSent.count >= 2 }
+        #expect(codex.wireSent.last?.contains(id.uuidString) == true)
+        #expect(codex.wireSent.last?.contains("\"reactions\":[]") == true)
         let target = try #require(bot.messages.first?.id)
         codex.reply("<reaction message=\"\(target)\" emoji=\"👀\" present=\"true\"/>")
         await eventually { !partner.isWorking }
