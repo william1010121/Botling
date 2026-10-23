@@ -100,7 +100,10 @@ export class HandoffDock {
       stop.className = "handoff-stop";
       stop.textContent = t("handoffs.stop");
       stop.title = this.rounds?.stop ?? t("handoffs.stop");
-      stop.addEventListener("click", () => post({ type: "stopRounds" }));
+      const botID = this.botID;
+      stop.addEventListener("click", () => post(one
+        ? { type: "stopHandoff", botID, handoffID: one.id }
+        : { type: "stopRounds" }));
       this.chip.append(toggle, stop);
     }
     toggle.addEventListener("click", () => {
@@ -133,11 +136,11 @@ export class HandoffDock {
     }
     const list = document.createElement("ul");
     list.className = "handoff-list";
-    for (const handoff of listed) list.append(this.row(handoff, open.rows.has(handoff.id), active.length));
+    for (const handoff of listed) list.append(this.row(handoff, open.rows.has(handoff.id)));
     this.panel.append(head, list);
   }
 
-  private row(handoff: HandoffView, expanded: boolean, active: number): HTMLElement {
+  private row(handoff: HandoffView, expanded: boolean): HTMLElement {
     const item = document.createElement("li");
     item.className = "handoff-row" + (expanded ? " expanded" : "");
     item.dataset.id = handoff.id;
@@ -196,12 +199,12 @@ export class HandoffDock {
     }
     detail.append(lines);
     if (handoff.state === "running" || handoff.state === "waiting") {
-      // The app stops hand-offs together ("Stop now"): with others under way the button says so.
+      // Capture both identities: a delayed click must not target a newly selected chat.
       const stop = document.createElement("button");
       stop.className = "handoff-stop-one";
-      stop.textContent = active > 1 ? t("handoffs.stopAll") : t("handoffs.stopThis");
-      if (active > 1) stop.title = t("handoffs.stopsAll");
-      stop.addEventListener("click", () => post({ type: "stopRounds" }));
+      stop.textContent = t("handoffs.stopThis");
+      const botID = this.botID;
+      stop.addEventListener("click", () => post({ type: "stopHandoff", botID, handoffID: handoff.id }));
       detail.append(stop);
     }
     item.append(detail);

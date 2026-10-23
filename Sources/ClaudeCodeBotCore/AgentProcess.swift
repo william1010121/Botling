@@ -19,6 +19,10 @@ public protocol AgentProcess: AnyObject, Sendable {
     /// Stops the turn under way to take in the message just sent (send it first); the turn ends
     /// with an error result, and the session goes on. Subagents in the background keep running.
     func interrupt()
+    /// Cancels the current assignment without replaying its most recent steer.
+    func cancelTurn()
+    /// Cancels only app-managed tasks belonging to a stopped cross-head assignment.
+    func cancelTasks(_ ids: Set<String>)
     /// Lets these permission rules ("Bash(rm -rf build)") through from now on, in the running
     /// session (`apply_flag_settings`). They add to what it has; one taken away goes next session.
     func allow(rules: [String])
@@ -36,6 +40,10 @@ extension AgentProcess {
     public func answer(_ request: PermissionRequest, allow: Bool, message: String?) {}
 
     public func interrupt() {}
+
+    public func cancelTurn() { interrupt() }
+
+    public func cancelTasks(_ ids: Set<String>) {}
 
     public func allow(rules: [String]) {}
 }

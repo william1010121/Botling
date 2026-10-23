@@ -277,6 +277,13 @@ struct CodexSession {
         return out
     }
 
+    /// A panel cancellation does not ask to resume the last context-only steer.
+    mutating func cancelTurn() -> [CodexOutput] {
+        let out = interrupt()
+        afterInterrupt = nil
+        return out
+    }
+
     mutating func answer(_ requestID: String, allow: Bool, message: String? = nil) -> [CodexOutput] {
         guard let approval = approvals.removeValue(forKey: requestID) else { return [] }
         let result: [String: Any] = switch approval.kind {
@@ -1039,11 +1046,16 @@ struct CodexSession {
 
     /// Global app stop cancels independent workers. Interrupting only the coordinator
     /// deliberately leaves their sessions running.
-    mutating func cancelManagedWorkers() -> [CodexOutput] {
+    mutating func cancelManagedWorkers(_ ids: Set<String>? = nil) -> [CodexOutput] {
         var out: [CodexOutput] = []
-        workerResults = []
-        activeResult = nil
-        for (task, worker) in workers where worker.active {
+        if let ids {
+            workerResults.removeAll { ids.contains($0.task) }
+            if let result = activeResult, ids.contains(result.task) { activeResult = nil }
+        } else {
+            workerResults = []
+            activeResult = nil
+        }
+        for (task, worker) in workers where worker.active && (ids?.contains(task) ?? true) {
             workers[task]?.active = false
             workers[task]?.cancelled = true
             workers[task]?.messages = []
@@ -1527,6 +1539,14 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
 
     public func interrupt() {
         run { $0.interrupt() }
+    }
+
+    public func cancelTurn() {
+        run { $0.cancelTurn() }
+    }
+
+    public func cancelTasks(_ ids: Set<String>) {
+        run { $0.cancelManagedWorkers(ids) }
     }
 
     public func finish() {

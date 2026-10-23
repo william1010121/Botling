@@ -73,8 +73,8 @@ public struct RoundsProgress: Equatable, Sendable {
 }
 
 /// One hand-off between the heads as the hand-off panel over the input box lists it: who handed
-/// what to whom for which of your messages, how it stands, and what the two said about it. Read
-/// only: the conductor keeps it beside its counts and never decides anything from it.
+/// what to whom for which of your messages, how it stands, and what the two said about it. Its
+/// UUID also identifies the scheduled work and its return route.
 public struct HandoffRecord: Equatable, Sendable, Identifiable {
     /// `running`: the other head works on it; `waiting`: its reply went back to the head that
     /// handed it, which carries on from there; `done`: that head replied after it; `stopped`:
@@ -91,6 +91,8 @@ public struct HandoffRecord: Equatable, Sendable, Identifiable {
     }
 
     public let id: UUID
+    /// All hops descended from one assignment share a cancellation identity.
+    public let chainID: UUID
     public var from: BotEngine
     public var to: BotEngine
     public var kind: HandoffKind
@@ -107,8 +109,9 @@ public struct HandoffRecord: Equatable, Sendable, Identifiable {
     public var lines: [Line]
 
     public init(id: UUID = UUID(), from: BotEngine, to: BotEngine, kind: HandoffKind, task: String, origin: String?, message: Int,
-                round: Int, limit: Int, state: State, lines: [Line]) {
+                round: Int, limit: Int, state: State, lines: [Line], chainID: UUID? = nil) {
         self.id = id
+        self.chainID = chainID ?? id
         self.from = from
         self.to = to
         self.kind = kind
@@ -133,8 +136,8 @@ public enum CardPick: Equatable, Sendable {
 /// What the conductor wants done.
 public enum ConductorAction: Equatable, Sendable {
     /// Work for a head (a hand-off, its hand-back, the user's pick): wakes it if it sleeps,
-    /// joins its turn if it works.
-    case ask(BotEngine, String)
+    /// waits separately if the head is already working.
+    case ask(BotEngine, String, handoffID: UUID? = nil)
     /// A line in the chat between messages ("Claude → Codex: …").
     case line(String)
     /// A card with buttons; the pick comes back through `picked`.
@@ -143,7 +146,7 @@ public enum ConductorAction: Equatable, Sendable {
 
     public static func == (a: ConductorAction, b: ConductorAction) -> Bool {
         switch (a, b) {
-        case let (.ask(h1, t1), .ask(h2, t2)): h1 == h2 && t1 == t2
+        case let (.ask(h1, t1, i1), .ask(h2, t2, i2)): h1 == h2 && t1 == t2 && i1 == i2
         case let (.line(x), .line(y)): x == y
         case let (.card(t1, c1), .card(t2, c2)): t1 == t2 && c1.map(\.label) == c2.map(\.label) && c1.map(\.pick) == c2.map(\.pick)
         case let (.progress(x), .progress(y)): x == y
@@ -170,7 +173,7 @@ struct Conductor {
     /// Each head's latest reply, for the card at a limit.
     private var latest: [BotEngine: String] = [:]
     /// The hand-off a limit stopped, for "One more round".
-    private var blocked: (from: BotEngine, handoff: HeadTags.Handoff)?
+    private var blocked: (from: BotEngine, handoff: HeadTags.Handoff, chainID: UUID?)?
     /// "Stop now" was pressed: no more hand-offs until the user writes again.
     private var stopped = false
     /// The hand-offs the panel over the input box lists: the latest message's, and older ones
@@ -217,32 +220,62 @@ struct Conductor {
         return [.progress(nil), .line(L("Stopped by you"))]
     }
 
+    /// Cancel the selected assignment's chain. Completed or stale identities are harmless.
+    mutating func stop(_ id: UUID) -> [ConductorAction] {
+        guard let index = records.firstIndex(where: { $0.id == id && $0.isActive }) else { return [] }
+        let chainID = records[index].chainID
+        if blocked?.chainID == chainID { blocked = nil }
+        for index in records.indices where records[index].chainID == chainID && records[index].isActive {
+            records[index].state = .stopped
+            removeReturnRoute(records[index].id, to: records[index].to)
+        }
+        return [.progress(remainingProgress), .line(L("Stopped by you"))]
+    }
+
+    private var remainingProgress: RoundsProgress? {
+        guard let record = records.last(where: \.isActive) else { return nil }
+        let kind: RoundsProgress.Kind = switch record.kind {
+        case .task: .handoff
+        case .review: .review
+        case .discuss: .discussion
+        }
+        return RoundsProgress(kind: kind, round: record.round, limit: record.limit)
+    }
+
+    private mutating func removeReturnRoute(_ id: UUID, to head: BotEngine) {
+        guard let position = pendingRecords[head]?.firstIndex(of: id) else { return }
+        pendingRecords[head]?.remove(at: position)
+        handedBy[head]?.remove(at: position)
+    }
+
     /// A head's reply was shown. `handed`: its turn did work the other head handed it.
-    mutating func replied(_ head: BotEngine, _ text: String, tags: HeadTags, handed: Bool) -> [ConductorAction] {
+    mutating func replied(_ head: BotEngine, _ text: String, tags: HeadTags, handed: Bool, handoffID: UUID? = nil) -> [ConductorAction] {
+        // A cancelled or retired turn cannot consume another assignment or create new work.
+        if let handoffID, !records.contains(where: { $0.id == handoffID && $0.isActive }) { return [] }
         // Empty text is a typed silent completion, not a replacement for a useful reply on
         // a later limit card. It still closes the pending handback.
         if !text.isEmpty { latest[head] = text }
         var out: [ConductorAction] = []
         // A head that got a reply handed back has now carried on from it.
-        for index in records.indices where records[index].from == head && records[index].state == .waiting {
+        for index in records.indices where handed && records[index].from == head && records[index].state == .waiting && (handoffID == nil || records[index].id == handoffID) {
             records[index].state = .done
             if !text.isEmpty { records[index].lines.append(.init(who: head, text: text)) }
         }
         // Handed work done: the reply goes back to the one who handed it.
-        if handed, var waiting = handedBy[head], let from = waiting.popLast() {
-            handedBy[head] = waiting
-            out.append(.ask(from, Self.handBack(from: head, reply: text)))
-            if var ids = pendingRecords[head], let id = ids.popLast() {
-                pendingRecords[head] = ids
-                if let index = records.firstIndex(where: { $0.id == id }) {
-                    records[index].state = .waiting
-                    if !text.isEmpty { records[index].lines.append(.init(who: head, text: text)) }
-                }
+        if handed {
+            // Runtime replies carry the exact UUID. The stack fallback is for callers with
+            // no assignment (legacy conductor clients); it never overrides an explicit UUID.
+            let id = handoffID ?? pendingRecords[head]?.last
+            if let id, let index = records.firstIndex(where: { $0.id == id && $0.to == head && $0.state == .running }) {
+                removeReturnRoute(id, to: head)
+                records[index].state = .waiting
+                if !text.isEmpty { records[index].lines.append(.init(who: head, text: text)) }
+                out.append(.ask(records[index].from, Self.handBack(from: head, reply: text), handoffID: id))
             }
         }
         if !stopped, let handoff = tags.handoff, handoff.to != head,
            settings.handoffs || !settings.engines.contains(handoff.to) {
-            out += handOff(from: head, handoff)
+            out += handOff(from: head, handoff, chainID: handoffID.flatMap { id in records.first { $0.id == id }?.chainID })
         } else if !isRunning {
             out.append(.progress(nil))
         }
@@ -259,7 +292,7 @@ struct Conductor {
             blocked = nil
             extra[stopped.handoff.kind, default: 0] += 1
             extraTotal += 1
-            return handOff(from: stopped.from, stopped.handoff)
+            return handOff(from: stopped.from, stopped.handoff, chainID: stopped.chainID)
         }
     }
 
@@ -274,12 +307,12 @@ struct Conductor {
         return base.map { $0 + extra[kind, default: 0] }
     }
 
-    private mutating func handOff(from: BotEngine, _ handoff: HeadTags.Handoff) -> [ConductorAction] {
+    private mutating func handOff(from: BotEngine, _ handoff: HeadTags.Handoff, chainID: UUID? = nil) -> [ConductorAction] {
         let kindLimit = limit(handoff.kind)
         let totalLimit = settings.limits.handoffs + extraTotal
         let done = counts[handoff.kind, default: 0]
         if total >= totalLimit || kindLimit.map({ done >= $0 }) == true {
-            return atLimit(from: from, handoff, done: kindLimit == nil || total >= totalLimit ? total : done)
+            return atLimit(from: from, handoff, done: kindLimit == nil || total >= totalLimit ? total : done, chainID: chainID)
         }
         counts[handoff.kind, default: 0] += 1
         total += 1
@@ -290,20 +323,23 @@ struct Conductor {
         case .discuss: RoundsProgress(kind: .discussion, round: counts[.discuss] ?? 1, limit: kindLimit ?? 1)
         }
         let record = HandoffRecord(from: from, to: handoff.to, kind: handoff.kind, task: handoff.task, origin: origin, message: messageCount,
-                                   round: progress.round, limit: progress.limit, state: .running, lines: [.init(who: from, text: handoff.task)])
+                                   round: progress.round, limit: progress.limit, state: .running, lines: [.init(who: from, text: handoff.task)], chainID: chainID)
         records.append(record)
-        if records.count > Self.recordLimit { records.removeFirst(records.count - Self.recordLimit) }
+        // An active identity must survive history trimming until its own completion.
+        while records.count > Self.recordLimit, let ended = records.firstIndex(where: { !$0.isActive }) {
+            records.remove(at: ended)
+        }
         pendingRecords[handoff.to, default: []].append(record.id)
         let line = "\(from.displayName) → \(handoff.to.displayName): \(handoff.task.split(whereSeparator: \.isNewline).first.map(String.init) ?? handoff.task)"
         return [.line(line), .progress(progress),
-                .ask(handoff.to, Self.handed(from: from, handoff: handoff, count: total, limit: totalLimit))]
+                .ask(handoff.to, Self.handed(from: from, handoff: handoff, count: total, limit: totalLimit), handoffID: record.id)]
     }
 
     /// The limit is reached: a card with where each head stands, or the latest version stands.
-    private mutating func atLimit(from: BotEngine, _ handoff: HeadTags.Handoff, done: Int) -> [ConductorAction] {
+    private mutating func atLimit(from: BotEngine, _ handoff: HeadTags.Handoff, done: Int, chainID: UUID?) -> [ConductorAction] {
         switch settings.limits.atLimit {
         case .ask:
-            blocked = (from, handoff)
+            blocked = (from, handoff, chainID)
             let lead = switch handoff.kind {
             case .task: L("{0} hand-offs for this message: the limit.", done)
             case .review: L("{0} review rounds done.", done)

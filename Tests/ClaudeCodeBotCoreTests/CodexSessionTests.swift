@@ -211,6 +211,30 @@ struct CodexSessionTests {
         #expect((again["input"] as? [[String: Any]])?.first?["text"] as? String == "All of it, in one")
     }
 
+    @Test(arguments: [false, true])
+    func cancellingAssignmentDoesNotReplayContextSteerAndPreservesQueuedInput(queueAnother: Bool) throws {
+        var codex = session()
+        let recording = CodexRecordings.editSteerInterrupt
+        _ = started(&codex, "first", recording: recording)
+        _ = replay(lines(recording, from: #"{"id":3,"#, through: #"{"method":"turn/completed""#), into: &codex)
+        _ = Out(codex.send(.init(text: "second")))
+        _ = replay(lines(recording, from: #"{"id":4,"#, through: #"{"method":"turn/completed""#), into: &codex)
+        _ = Out(codex.send(.init(text: "Run the shell command `sleep 30` then say hi.")))
+        _ = replay(lines(recording, from: #"{"id":6,"#, through: #"{"method":"turn/started""#), into: &codex)
+        _ = codex.send(.init(text: "Peer context from the cancelled assignment"))
+        if queueAnother { _ = codex.send(.init(text: "Independent next assignment", id: UUID())) }
+        let cancelled = Out(codex.cancelTurn())
+        #expect(cancelled.methods == ["turn/interrupt"])
+        let out = replay(lines(recording, from: #"{"id":7,"#, through: #"{"method":"turn/completed""#), into: &codex)
+        #expect(out.replies.first?.1 == true)
+        if queueAnother {
+            let next = try #require(out.params("turn/start"))
+            #expect((next["input"] as? [[String: Any]])?.first?["text"] as? String == "Independent next assignment")
+        } else {
+            #expect(!out.methods.contains("turn/start"))
+        }
+    }
+
     @Test func aMessageWithAnIdWaitsForATurnOfItsOwn() {
         var codex = session()
         let recording = CodexRecordings.editSteerInterrupt

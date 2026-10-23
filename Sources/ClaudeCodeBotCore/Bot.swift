@@ -53,6 +53,12 @@ public final class Bot: ObservableObject, Identifiable {
     private var cards: [UUID: [CardPick]] = [:]
     /// The turn under way does work the other head handed it.
     private var turnConducted = false
+    /// The panel assignment owning this turn; carried through pauses and worker reports.
+    private var turnHandoffID: UUID?
+    private var pausedHandoffID: UUID?
+    /// Wait for the cancelled turn's result before dispatching another assignment.
+    private var cancellingHandoff = false
+    private var filteringReply = false
     /// The hand-off the latest reply carried (taken out of what it shows).
     private var lastTags = HeadTags()
     /// The chat lines the notes waiting in `pendingNote` carry: seen by this head once sent.
@@ -289,6 +295,7 @@ public final class Bot: ObservableObject, Identifiable {
         var about: [UUID] = []
         /// Work the other head handed over: its reply goes back.
         var conducted = false
+        var handoffID: UUID?
         /// A peer's words add context without replacing the user-owned task under way.
         var contextOnly = false
     }
@@ -313,6 +320,8 @@ public final class Bot: ObservableObject, Identifiable {
     /// A cross-head assignment stays owned by this head until its actual worker report.
     private var managedHandbackPending = false
     private var managedHandbackTasks: Set<String> = []
+    private var managedHandbackID: UUID?
+    private var managedTaskHandoffs: [String: UUID] = [:]
     /// Subagents that finished (a result or a failure, not "still waiting") since the bot last
     /// showed a reply: what they did has not reached the user yet.
     private var unreported: [String] = []
@@ -897,7 +906,7 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     /// A head showed a reply: the other head hears it, and the conductor carries any hand-off.
-    fileprivate func headReplied(_ message: ChatMessage, by head: BotEngine, tags: HeadTags, handed: Bool) {
+    fileprivate func headReplied(_ message: ChatMessage, by head: BotEngine, tags: HeadTags, handed: Bool, handoffID: UUID?) {
         guard message.role == .bot else { return }
         for other in BotEngine.allCases where other != head {
             if let hold = claimHold, hold.lead == head, hold.held == other {
@@ -907,7 +916,7 @@ public final class Bot: ObservableObject, Identifiable {
                 tell(other, Self.saidNote(head, message), about: [message.id])
             }
         }
-        conduct(conductor.replied(head, message.text, tags: tags, handed: handed))
+        conduct(conductor.replied(head, message.text, tags: tags, handed: handed, handoffID: handoffID))
     }
 
     /// What it said between its tool calls, while the other head works too: passed on at once,
@@ -958,8 +967,8 @@ public final class Bot: ObservableObject, Identifiable {
         }
         for action in actions {
             switch action {
-            case let .ask(head, text):
-                deliver(Outgoing(text: text, conducted: true), to: head)
+            case let .ask(head, text, handoffID):
+                deliver(Outgoing(text: text, conducted: true, handoffID: handoffID), to: head)
             case let .line(text):
                 append(ChatMessage(role: .divider, text: text))
             case let .card(text, choices):
@@ -987,13 +996,76 @@ public final class Bot: ObservableObject, Identifiable {
         handoffs = records
     }
 
+    /// Stops exactly the selected panel chain. A stale/completed UUID is a no-op.
+    @discardableResult
+    public func stopHandoff(_ id: UUID) -> Bool {
+        if let primary { return primary.stopHandoff(id) }
+        guard let record = conductor.records.first(where: { $0.id == id && $0.isActive }) else { return false }
+        let ids = conductor.records.filter { $0.chainID == record.chainID && $0.isActive }.map(\.id)
+        conduct(conductor.stop(id))
+        for id in ids {
+            cancelHandoffWork(id)
+            partner?.cancelHandoffWork(id)
+        }
+        return true
+    }
+
+    private func cancelHandoffWork(_ id: UUID) {
+        queued.removeAll { $0.handoffID == id }
+        if resumeRetry?.handoffID == id { resumeRetry = nil }
+        if pausedHandoffID == id {
+            pausedHandoffID = nil
+            pausedWork = nil
+            pausedOrigin = nil
+            pausedConducted = false
+        }
+        let tasks = Set(managedTaskHandoffs.compactMap { $0.value == id ? $0.key : nil })
+        for task in tasks { managedTaskHandoffs[task] = nil }
+        managedHandbackTasks.subtract(tasks)
+        if managedHandbackID == id {
+            managedHandbackID = nil
+            managedHandbackPending = false
+        }
+        if !tasks.isEmpty { process?.cancelTasks(tasks) }
+        if turnHandoffID == id, isWorking {
+            // Assigned turns are serialized, so this interrupt cannot stop a peer's turn.
+            cancellingHandoff = true
+            if filteringReply {
+                // The provider already ended this turn; only a plugin callback is pending.
+                finishCancelledHandoff()
+            } else {
+                process?.cancelTurn()
+            }
+        } else if !isWorking {
+            Task { [weak self] in await self?.flushQueue() }
+        }
+    }
+
+    private func finishCancelledHandoff() {
+        cancellingHandoff = false
+        filteringReply = false
+        turnHandoffID = nil
+        turnConducted = false
+        turnInput = nil
+        early = EarlyReplies()
+        lastTags = HeadTags()
+        trace.dropSteps()
+        isWorking = false
+        endTurnOrigin()
+        afterTurn()
+    }
+
     /// "Stop now" on the rounds line: no more hand-offs for this message.
     public func stopRounds() {
         conduct(conductor.stop())
         managedHandbackPending = false
         managedHandbackTasks.removeAll()
+        managedHandbackID = nil
+        managedTaskHandoffs.removeAll()
         partner?.managedHandbackPending = false
         partner?.managedHandbackTasks.removeAll()
+        partner?.managedHandbackID = nil
+        partner?.managedTaskHandoffs.removeAll()
     }
 
     /// How many hand-offs each message may take, and what happens at the limit.
@@ -1203,6 +1275,14 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     private func route(_ outgoing: Outgoing) {
+        if let id = outgoing.handoffID,
+           !(primary ?? self).conductor.records.contains(where: { $0.id == id && $0.isActive }) { return }
+        // Keep independently stoppable work separate, including its return continuation.
+        // Peer context and the user's intervening question still reach the current turn.
+        if cancellingHandoff || (outgoing.handoffID != nil && (isWorking || managedHandbackPending)) {
+            queued.append(outgoing)
+            return
+        }
         // Its group-chat turn is running: what you say here waits, so the reply to it does not
         // end up in the group.
         if groupCommand != nil {
@@ -1244,6 +1324,8 @@ public final class Bot: ObservableObject, Identifiable {
                 pausedWork = turnFromRelay
                 pausedOrigin = turnOrigin
                 pausedConducted = turnConducted
+                pausedHandoffID = turnHandoffID
+                turnHandoffID = nil
                 turnConducted = false
                 turnFromRelay = false
                 var mine = outgoing
@@ -1298,6 +1380,8 @@ public final class Bot: ObservableObject, Identifiable {
         if !outgoing.contextOnly {
             turnInput = outgoing.fromUser && (!isWorking || turnInput != nil) ? outgoing : nil
         }
+        if let id = outgoing.handoffID { turnHandoffID = id }
+        else if !isWorking { turnHandoffID = nil }
         turnConducted = outgoing.conducted || (isWorking && turnConducted)
         // You said something: the reply is yours to see.
         if outgoing.fromUser || !isWorking { turnOrigin = outgoing.fromUser ? .user : .app }
@@ -1379,6 +1463,7 @@ public final class Bot: ObservableObject, Identifiable {
             turnInput = outgoing.fromUser ? outgoing : nil
             turnOrigin = outgoing.fromUser ? .user : .app
             turnConducted = outgoing.conducted
+            turnHandoffID = outgoing.handoffID
             pendingAbout = []
             let note = wakeNote?() ?? ""
             let components = componentNote()
@@ -1635,10 +1720,11 @@ public final class Bot: ObservableObject, Identifiable {
         onReply?(message, turnFromRelay)
         if !requests.isEmpty { onRequests?(requests) }
         // The other head hears the reply; a hand-off in it goes on.
+        let handoffID = turnHandoffID
         let handed = takeHandback()
         let tags = lastTags
         lastTags = HeadTags()
-        if sharesChat || tags.handoff != nil { (primary ?? self).headReplied(message, by: engine, tags: tags, handed: handed) }
+        if sharesChat || tags.handoff != nil { (primary ?? self).headReplied(message, by: engine, tags: tags, handed: handed, handoffID: handoffID) }
         if held, !queued.isEmpty { Task { [weak self] in await self?.flushQueue() } }
         if resumePausedWork() { return }
         afterTurn()
@@ -1648,8 +1734,11 @@ public final class Bot: ObservableObject, Identifiable {
     private func takeHandback() -> Bool {
         let handed = turnConducted
         turnConducted = false
+        let id = turnHandoffID
+        turnHandoffID = nil
         if engine == .codex, handed, !managedHandbackTasks.isEmpty {
             managedHandbackPending = true
+            managedHandbackID = id
             return false
         }
         return handed
@@ -1665,7 +1754,9 @@ public final class Bot: ObservableObject, Identifiable {
         pausedOrigin = nil
         let conducted = pausedConducted
         pausedConducted = false
-        deliver(Outgoing(text: Self.resumeNote, conducted: conducted))
+        let handoffID = pausedHandoffID
+        pausedHandoffID = nil
+        deliver(Outgoing(text: Self.resumeNote, conducted: conducted, handoffID: handoffID))
         if let origin { turnOrigin = origin }
         return true
     }
@@ -2059,6 +2150,8 @@ public final class Bot: ObservableObject, Identifiable {
         case let .managedWorkerReportStarted(taskID):
             if managedHandbackTasks.remove(taskID) != nil, managedHandbackPending {
                 turnConducted = true
+                turnHandoffID = managedHandbackID
+                managedHandbackID = nil
                 managedHandbackPending = false
             }
         case let .managedWorkPending(pending):
@@ -2077,6 +2170,7 @@ public final class Bot: ObservableObject, Identifiable {
             if engine == .codex, turnConducted,
                case let .subagentStarted(id, _, type, _, _) = step, type == "codex-worker" {
                 managedHandbackTasks.insert(id)
+                if let handoffID = turnHandoffID { managedTaskHandoffs[id] = handoffID }
             }
             if sharesChat, case let .text(words, nil) = step, internalReply == nil {
                 (primary ?? self).headWords(words, by: engine)
@@ -2146,8 +2240,14 @@ public final class Bot: ObservableObject, Identifiable {
                 settle(id)
             }
         case let .earlyReply(text):
-            showEarly(text)
+            if !cancellingHandoff { showEarly(text) }
         case .reply(var text, let isError):
+            if cancellingHandoff {
+                // Both an interrupt error and a successful result racing the click settle
+                // only the cancelled UUID. Never parse its tags or run its requested actions.
+                finishCancelledHandoff()
+                return
+            }
             let lostConnection = turnLostConnection
             turnLostConnection = false
             // Words already shown as this turn's reply (before its Stop hook ran): the turn just ends.
@@ -2238,19 +2338,25 @@ public final class Bot: ObservableObject, Identifiable {
                 trace.dropSteps()
                 isWorking = false
                 reloadRoutines()
+                let handoffID = turnHandoffID
                 let handed = takeHandback()
                 lastTags = HeadTags()
                 let owner = primary ?? self
-                owner.conduct(owner.conductor.replied(engine, "", tags: HeadTags(), handed: handed))
+                owner.conduct(owner.conductor.replied(engine, "", tags: HeadTags(), handed: handed, handoffID: handoffID))
                 if resumePausedWork() { return }
                 if reportFinishedSubagents() { return }
                 afterTurn()
                 return
             }
             if !isError, let filter = replyFilter?() {
+                let generation = turnsEnded
+                filteringReply = true
                 Task { [weak self] in
                     let changed = await filter(text)
-                    self?.show(reply: changed, isError: false)
+                    // A cancellation or another completed turn retired this callback.
+                    guard let self, !self.removed, self.turnsEnded == generation else { return }
+                    self.filteringReply = false
+                    self.show(reply: changed, isError: false)
                 }
             } else {
                 show(reply: text, isError: isError)
@@ -2269,6 +2375,9 @@ public final class Bot: ObservableObject, Identifiable {
             resumeProbe = false
             resumeRetry = nil
             process = nil
+            cancellingHandoff = false
+            filteringReply = false
+            turnHandoffID = nil
             sessionID = nil
             turnInput = nil
             interruptions = 0
@@ -2276,12 +2385,15 @@ public final class Bot: ObservableObject, Identifiable {
             if !lostToNetwork {
                 pausedWork = nil
                 pausedConducted = false
+                pausedHandoffID = nil
             }
             turnOrigin = nil
             backgroundWake = false
             managedWorkPending = false
             managedHandbackPending = false
             managedHandbackTasks.removeAll()
+            managedTaskHandoffs.removeAll()
+            managedHandbackID = nil
             unreported.removeAll()
             reportAsked.removeAll()
             pausedOrigin = nil
@@ -2398,6 +2510,7 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     private func afterTurn() {
+        if !queued.isEmpty { Task { [weak self] in await self?.flushQueue() } }
         // A restart waiting is done before the next message, not now: an idle bot costs nothing.
         scheduleIdle()
     }
@@ -3086,16 +3199,11 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     private func flushQueue() async {
-        guard !queued.isEmpty else { return }
+        guard !queued.isEmpty, !cancellingHandoff else { return }
+        // Preserve assignment identity instead of flattening unrelated work into one turn.
         let waiting = queued
         queued.removeAll()
-        // One message goes as it is (yours stays yours to add to).
-        if waiting.count == 1 {
-            route(waiting[0])
-            return
-        }
-        let text = waiting.map(\.text).joined(separator: "\n\n")
-        route(Outgoing(text: text, images: waiting.flatMap(\.images)))
+        for outgoing in waiting { route(outgoing) }
     }
 
     /// Puts `message` in the chat. A bot's `<show id="…">` of a card already in it updates that

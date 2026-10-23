@@ -6,6 +6,14 @@ app and publishes it on GitHub Releases.
 
 ## Unreleased
 
+### Added
+
+- **Stop one hand-off.** Each expanded hand-off row now stops its chain by its stable
+  identity, leaving independent hand-offs running; the single hand-off chip does the same. Pending
+  work and return continuations are cancelled, the selected head turn is interrupted, and its
+  app-managed Codex workers are cancelled without stopping unrelated workers. Completed or
+  stale selections are harmless. The panel still offers an explicit **Stop all**.
+
 ## 1.18.0
 
 ### Changed

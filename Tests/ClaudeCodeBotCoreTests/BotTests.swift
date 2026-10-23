@@ -98,6 +98,10 @@ final class FakeAgent: AgentProcess, @unchecked Sendable {
         finish()
     }
 
+    private var _cancelledTasks: [Set<String>] = []
+    var cancelledTasks: [Set<String>] { lock.withLock { _cancelledTasks } }
+    func cancelTasks(_ ids: Set<String>) { lock.withLock { _cancelledTasks.append(ids) } }
+
     private var _interrupts = 0
     var interrupts: Int { lock.withLock { _interrupts } }
 
