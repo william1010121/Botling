@@ -2,6 +2,14 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Simplified Chinese (keys as in `en.ts`). */
 export const zhHans: Dictionary = {
+  "avatar.library": "角色动图",
+  "avatar.portrait": "头像",
+  "avatar.sticker": "全身贴图",
+  "avatar.blink": "眨眼",
+  "avatar.typing": "打字",
+  "avatar.wave": "挥手",
+  "avatar.previewHint": "此处仅预览。聊天头像依工作状态播放；减少动态效果时显示静态图。",
+
   // steps.ts
   "steps.worked": "已处理",
   "steps.notes": "{n} 段说明",

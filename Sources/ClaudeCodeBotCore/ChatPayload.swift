@@ -382,16 +382,21 @@ public struct ChatPayload: Encodable, Equatable {
     /// Bot look Cute: each enabled head's tiny character by its mark ("C", "X").
     /// Also identifies the Cute look when a single-engine chat has no seen marks; nil is Original.
     var seenHeads: [String: String]? = nil
+    /// Cute character animations, shared once per state rather than embedded in every message.
+    var animatedHeads: [ChibiAnimation.Head]? = nil
+    var avatarMood: String? = nil
 
     /// Bot look Cute: the engine characters as image URLs. `avatar`: a head's
     /// character wearing the bot's face, for its replies; `mark`: its tiny head for seen marks.
     public struct HeadLook {
         public var avatar: (BotEngine) -> String
         public var mark: (BotEngine) -> String
+        public var animations: [ChibiAnimation.Head]
 
-        public init(avatar: @escaping (BotEngine) -> String, mark: @escaping (BotEngine) -> String) {
+        public init(avatar: @escaping (BotEngine) -> String, mark: @escaping (BotEngine) -> String, animations: [ChibiAnimation.Head] = []) {
             self.avatar = avatar
             self.mark = mark
+            self.animations = animations
         }
     }
 
@@ -525,6 +530,8 @@ public struct ChatPayload: Encodable, Equatable {
             ?? look.flatMap { look in workingBot.map { look.avatar($0.engine) } }
             ?? own
         let working = group.map { $0.typing != nil } ?? (bot.isWorking || bot.partner?.isWorking == true || guest != nil)
+        let lastHead = bot.messages.last(where: { $0.role == .bot })?.engine
+        let moodBot = workingBot ?? (lastHead == bot.partner?.engine ? bot.partner : nil) ?? bot
         var messages = bot.messages.enumerated().map { index, message -> Message in
             let face: String? = switch message.role {
             // In a group chat each line has the face of the bot that said it.
@@ -662,7 +669,9 @@ public struct ChatPayload: Encodable, Equatable {
             makeComponents: specs ? true : nil,
             answerWith: group == nil ? AnswerWith.of(bot) : nil,
             rounds: group == nil ? bot.rounds.map { Rounds(text: $0.shown, stop: L("Stop now")) } : nil,
-            seenHeads: look.map { look in Dictionary(uniqueKeysWithValues: bot.heads.engines.map { (markLetter($0), look.mark($0)) }) }
+            seenHeads: look.map { look in Dictionary(uniqueKeysWithValues: bot.heads.engines.map { (markLetter($0), look.mark($0)) }) },
+            animatedHeads: look.flatMap { $0.animations.isEmpty ? nil : $0.animations },
+            avatarMood: look.map { _ in Chibi.mood(asleep: moodBot.phase == .asleep, working: moodBot.isWorking, waiting: moodBot.waitingForPermission).rawValue }
         )
     }
 

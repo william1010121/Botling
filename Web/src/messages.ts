@@ -11,6 +11,7 @@ import { liveElement, stepsElement } from "./steps";
 import { taskChips } from "./tasks";
 import type { ComponentInfo, DisplayView, FileView, MessageView, SeenView, SpecChipView, StepView } from "./types";
 import { escapeHTML } from "./util";
+import { characterAvatar } from "./animated-avatar";
 
 /** What plugins add to how messages are drawn. */
 export const extensions = {
@@ -263,11 +264,7 @@ function feedbackRelay(message: MessageView, note: { about: string; words: strin
 }
 
 function avatar(src: string | null): HTMLElement {
-  const image = document.createElement("img");
-  image.className = "avatar";
-  image.alt = "";
-  if (src) image.src = src;
-  return image;
+  return characterAvatar(src);
 }
 
 /**

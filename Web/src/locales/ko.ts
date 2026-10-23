@@ -2,6 +2,14 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Korean (keys as in `en.ts`). */
 export const ko: Dictionary = {
+  "avatar.library": "캐릭터 애니메이션",
+  "avatar.portrait": "아바타",
+  "avatar.sticker": "스티커",
+  "avatar.blink": "눈 깜빡임",
+  "avatar.typing": "입력 중",
+  "avatar.wave": "손 흔들기",
+  "avatar.previewHint": "미리보기입니다. 채팅 아바타는 작업 상태에 따라 재생되며 동작 줄이기 설정에서는 정지 이미지를 표시합니다.",
+
   // steps.ts
   "steps.worked": "작업함",
   "steps.notes": "메모 {n}개",
