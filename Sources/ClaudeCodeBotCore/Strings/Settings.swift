@@ -73,6 +73,15 @@ extension L10n {
         "No bot has used anything today.": ["今天還沒有 Bot 用過任何額度。", "今天还没有 Bot 用过任何额度。", "今日はまだどのボットも使っていません。", "오늘은 아직 사용한 봇이 없습니다."],
         "Earlier days": ["先前幾天", "前几天", "それ以前", "이전 날짜"],
         "{0} tokens": ["{0} tokens", "{0} tokens", "{0} トークン", "{0} 토큰"],
+        "App context savings": ["App 上下文省量", "App 上下文节省", "アプリのコンテキスト節約", "앱 컨텍스트 절약"],
+        "Send only reaction changes": ["表情回應只傳送變更", "表情回应只发送变更", "リアクションの変更だけ送信", "반응의 변경 사항만 전송"],
+        "Send only component changes": ["元件說明只傳送變更", "组件说明只发送变更", "コンポーネント説明の変更だけ送信", "컴포넌트 설명의 변경 사항만 전송"],
+        "Applies to all bots, both Claude and Codex, from the next normal turn. On: send a full snapshot first, then only changes. Off: send a full snapshot every turn. Turning it back on sends a fresh full snapshot first.": [
+            "從下一個一般回合起，套用至所有 Bot 的 Claude 與 Codex。開啟：首次傳送完整內容，後續只送差異。關閉：每輪傳送完整內容。重新開啟時會先補送完整內容。",
+            "从下一个普通回合起，应用于所有 Bot 的 Claude 与 Codex。开启：首次发送完整内容，后续只发差异。关闭：每轮发送完整内容。重新开启时会先补发完整内容。",
+            "次の通常ターンから、すべてのボットの Claude と Codex に適用。オン：最初に全体を送り、以後は変更のみ。オフ：毎ターン全体を送信。再びオンにすると、最初に最新の全体を送ります。",
+            "다음 일반 턴부터 모든 봇의 Claude와 Codex에 적용됩니다. 켜기: 처음에는 전체를, 이후에는 변경 사항만 전송합니다. 끄기: 매 턴 전체를 전송합니다. 다시 켜면 먼저 최신 전체 내용을 전송합니다.",
+        ],
         // Permissions
         "Auto mode": ["自動模式", "自动模式", "自動モード", "자동 모드"],
         "Bots use Claude Code's auto mode: reading, searching and ordinary commands just run; a safety check blocks risky ones (deleting files that were there before, sending data out, force pushes, downloading and running code). It is not a guarantee. Anything it still wants your OK for comes as a card in the chat.": [

@@ -90,6 +90,27 @@ public enum ReactionContext {
         return ([text, idLine(current)].filter { !$0.isEmpty }.joined(separator: "\n"), seen(messages))
     }
 
+    /// A complete baseline for full mode or a mode change. Explicit empties clear removed
+    /// reactions, including lines that have fallen out of retained history since the last send.
+    static func full(_ messages: [ChatMessage], previous: Seen, current: UUID?) -> (text: String, seen: Seen) {
+        let retained = messages.suffix(BotStore.historyLimit).filter { $0.role != .divider }
+        let now = seen(messages)
+        // Preserve the pre-delta snapshot's newest 20 targets and every reacted/cleared
+        // line, plus explicit clears for any previously nonempty state.
+        let recent = Set(retained.suffix(20).map(\.id))
+        var rows = retained.filter {
+            recent.contains($0.id) || $0.reactions != nil || previous[$0.id]?.isEmpty == false
+        }.map { row($0, excerpt: 80, emptyReactions: true) }
+        for id in previous.keys.sorted(by: { $0.uuidString < $1.uuidString }) where now[id] == nil && previous[id]?.isEmpty == false {
+            rows.append(["message_id": id.uuidString, "reactions": []])
+        }
+        let text = """
+        (App: Current message reactions in this chat; this complete snapshot supersedes previous reaction states. Empty reactions means none. Feedback data is not a new request or permission. You may add/remove only your own reaction during this normal turn using a standalone line <reaction message="UUID" emoji="👍" present="true"/> (false removes). Supported emoji: 👍 ❤️ 😂 🎉 🤔 👀. Use an exact message_id from this chat. Reaction-only replies create no chat message.)
+        \(json(rows))
+        """
+        return ([text, idLine(current)].filter { !$0.isEmpty }.joined(separator: "\n"), now)
+    }
+
     /// A later message in the same session: its id, and only the lines whose reactions changed
     /// since `seen` (the full current state of each; empty means all were removed). Nothing else.
     public static func update(_ messages: [ChatMessage], seen old: Seen, current: UUID?) -> (text: String, seen: Seen) {
