@@ -50,10 +50,12 @@ export class Composer {
   private readonly filesRow: HTMLElement;
   private readonly sendButton: HTMLButtonElement;
   private hasFiles = false;
-  /** "Answer with" above the box; the app saves its choice for this bot. */
+  /**
+   * "Answer with" in the box's toolbar, between + and send: Both / Claude / Codex as one
+   * segmented control, then the ⌥1 ⌥2 ⌥3 hint; the app saves its choice for this bot.
+   */
   private readonly answerRow: HTMLElement;
-  /** "Round 2 of 3 · Stop now" while the two heads discuss, review or hand work over. */
-  private readonly roundsRow: HTMLElement;
+  private readonly answerHint: HTMLElement;
   private answer: AnswerWithView | null = null;
   /** Explicit choices awaiting the app's saved state, keyed so switching chats keeps them. */
   private readonly answerPicks = new Map<string, { id: string; requestID: number; saved: boolean }>();
@@ -84,8 +86,11 @@ export class Composer {
     this.filesRow = document.createElement("div");
     this.filesRow.className = "pending-files";
 
+    // The text on top, the toolbar under it: + and "Answer with" on the left, send on the right.
     const row = document.createElement("div");
     row.className = "composer-row";
+    const tools = document.createElement("div");
+    tools.className = "composer-tools";
     const plus = document.createElement("button");
     this.plus = plus;
     plus.className = "plus";
@@ -98,19 +103,23 @@ export class Composer {
     this.sendButton.className = "send";
     this.sendButton.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M6 11l6-6 6 6"/></svg>`;
     this.sendButton.addEventListener("click", () => this.submit());
-    row.append(plus, editorHost, this.sendButton);
+    this.answerRow = document.createElement("div");
+    this.answerRow.className = "answer-with";
+    this.answerRow.setAttribute("role", "group");
+    this.answerRow.hidden = true;
+    this.answerHint = document.createElement("span");
+    this.answerHint.className = "answer-hint";
+    this.answerHint.hidden = true;
+    const gap = document.createElement("span");
+    gap.className = "composer-gap";
+    row.append(editorHost);
+    tools.append(plus, this.answerRow, this.answerHint, gap, this.sendButton);
     this.mentionList = document.createElement("div");
     this.mentionList.className = "mention-list";
     this.mentionList.setAttribute("role", "listbox");
     this.mentionList.hidden = true;
-    this.root.append(this.mentionList, this.replyBar, this.filesRow, row);
-    this.answerRow = document.createElement("div");
-    this.answerRow.className = "answer-with";
-    this.answerRow.hidden = true;
-    this.roundsRow = document.createElement("div");
-    this.roundsRow.className = "rounds-line";
-    this.roundsRow.hidden = true;
-    parent.append(this.roundsRow, this.answerRow, this.root);
+    this.root.append(this.mentionList, this.replyBar, this.filesRow, row, tools);
+    parent.append(this.root);
 
     this.view = new EditorView({
       parent: editorHost,
@@ -384,7 +393,6 @@ export class Composer {
     }
     this.view.dispatch({ effects: this.placeholder.reconfigure(placeholderExtension(state.placeholder)) });
     this.setAnswer(state.answerWith ?? null, state.botID);
-    this.setRounds(state.rounds ?? null);
 
     if (state.replyingTo) {
       this.replyBar.hidden = false;
@@ -457,49 +465,28 @@ export class Composer {
   }
 
   private answerChat = "";
-  private roundsShown = "";
-
-  private setRounds(rounds: { text: string; stop: string } | null): void {
-    const key = rounds ? `${rounds.text}|${rounds.stop}` : "";
-    if (key === this.roundsShown) return;
-    this.roundsShown = key;
-    this.roundsRow.hidden = !rounds;
-    this.roundsRow.innerHTML = "";
-    if (!rounds) return;
-    const text = document.createElement("span");
-    text.className = "rounds-text";
-    text.textContent = rounds.text;
-    const stop = document.createElement("button");
-    stop.className = "rounds-stop";
-    stop.textContent = rounds.stop;
-    stop.addEventListener("click", () => post({ type: "stopRounds" }));
-    this.roundsRow.append(text, stop);
-  }
 
   private drawAnswer(): void {
     const answer = this.answer;
     this.answerRow.hidden = !answer;
+    this.answerHint.hidden = !answer;
     this.answerRow.innerHTML = "";
+    this.root.classList.toggle("answering", !!answer);
     if (!answer) return;
     const picked = this.answerPicks.get(this.answerChat)?.id ?? answer.chosen;
-    const label = document.createElement("span");
-    label.className = "answer-label";
-    label.textContent = t("composer.answerWith");
-    this.answerRow.append(label);
+    this.answerRow.setAttribute("aria-label", t("composer.answerWith"));
+    this.answerRow.title = t("composer.answerWith");
     answer.options.forEach((option, index) => {
       const chip = document.createElement("button");
       chip.className = "answer-chip" + (option.id === picked ? " picked" : "");
       chip.textContent = option.label;
       chip.dataset.head = option.id;
       chip.setAttribute("aria-pressed", String(option.id === picked));
-      chip.title = `⌥${index + 1}`;
+      chip.title = `${t("composer.answerWith")} ${option.label} · ⌥${index + 1}`;
       chip.addEventListener("click", () => this.pickAnswer(option.id));
       this.answerRow.append(chip);
     });
-    const end = document.createElement("span");
-    end.className = "answer-hint";
-    end.textContent = t("composer.answerHint", { keys: answer.options.map((_, index) => `⌥${index + 1}`).join(" ") });
-    this.answerRow.append(end);
+    this.answerHint.textContent = t("composer.answerHint", { keys: answer.options.map((_, index) => `⌥${index + 1}`).join(" ") });
   }
 
   private pickAnswer(id: string): void {

@@ -378,6 +378,9 @@ public struct ChatPayload: Encodable, Equatable {
     var answerWith: AnswerWith? = nil
     /// A loop between the heads under way: "Round 2 of 3", with its Stop now button's words.
     var rounds: Rounds? = nil
+    /// The hand-offs between the heads (the latest message's, and older ones still under way),
+    /// for the hand-off chip and panel over the input box; nil where there are none.
+    var handoffs: [Handoff]? = nil
     /// Bot look Cute: each enabled head's tiny character by its mark ("C", "X").
     /// Also identifies the Cute look when a single-engine chat has no seen marks; nil is Original.
     var seenHeads: [String: String]? = nil
@@ -400,6 +403,54 @@ public struct ChatPayload: Encodable, Equatable {
     public struct Rounds: Encodable, Equatable {
         var text: String
         var stop: String
+        /// "discussion", "review" or "handoff", and where it stands, for the chip's meter.
+        var kind: String? = nil
+        var round: Int? = nil
+        var limit: Int? = nil
+
+        static func of(_ progress: RoundsProgress) -> Rounds {
+            Rounds(text: progress.shown, stop: L("Stop now"), kind: progress.kind.rawValue, round: progress.round, limit: progress.limit)
+        }
+    }
+
+    /// One hand-off as the panel over the input box lists it (see `HandoffRecord`).
+    public struct Handoff: Encodable, Equatable {
+        struct Line: Encodable, Equatable {
+            var who: String
+            var name: String
+            var text: String
+        }
+        var id: String
+        var from: String
+        var to: String
+        var fromName: String
+        var toName: String
+        /// "task", "review" or "discuss".
+        var kind: String
+        /// The hand-off's first line, for its row.
+        var task: String
+        var origin: String?
+        var round: Int
+        var limit: Int
+        /// "running", "waiting", "done" or "stopped".
+        var state: String
+        var lines: [Line]
+
+        /// The most characters a line of the conversation carries to the page.
+        static let lineLimit = 1500
+
+        static func of(_ record: HandoffRecord) -> Handoff {
+            Handoff(
+                id: record.id.uuidString, from: record.from.rawValue, to: record.to.rawValue,
+                fromName: record.from.displayName, toName: record.to.displayName, kind: record.kind.rawValue,
+                task: Conductor.excerpt(record.task, 160), origin: record.origin, round: record.round, limit: record.limit,
+                state: record.state.rawValue,
+                lines: record.lines.map { line in
+                    Line(who: line.who.rawValue, name: line.who.displayName,
+                         text: line.text.count > lineLimit ? String(line.text.prefix(lineLimit)) + "…" : line.text)
+                }
+            )
+        }
     }
 
     /// A head's read receipt, plus whether this user message was directed to it.
@@ -658,7 +709,8 @@ public struct ChatPayload: Encodable, Equatable {
             floating: floating,
             makeComponents: specs ? true : nil,
             answerWith: group == nil ? AnswerWith.of(bot) : nil,
-            rounds: group == nil ? bot.rounds.map { Rounds(text: $0.shown, stop: L("Stop now")) } : nil,
+            rounds: group == nil ? bot.rounds.map(Rounds.of) : nil,
+            handoffs: group == nil && !bot.handoffs.isEmpty ? bot.handoffs.map(Handoff.of) : nil,
             seenHeads: look.map { look in Dictionary(uniqueKeysWithValues: bot.heads.engines.map { (markLetter($0), look.mark($0)) }) }
         )
     }

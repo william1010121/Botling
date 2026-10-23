@@ -155,6 +155,39 @@ enum Snapshot {
             }
             return true
         }
+        // `CCB_SNAPSHOT_SAMPLE=handoffs`: hand-offs for two of your messages under way at once,
+        // for the hand-off chip and its panel over the input box. Sample data.
+        if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "handoffs" {
+            let store = BotStore(directory: root.appending(path: "main"))
+            store.save(heads: HeadsSettings(engines: [.claude, .codex], answerWith: .both))
+            var claude = ChatMessage(role: .bot, text: "I'll take the toolbar; Codex reviews the diff when it's ready.", date: now.addingTimeInterval(-300))
+            claude.engine = .claude
+            store.save(messages: [
+                ChatMessage(role: .divider, text: "SAMPLE DATA", date: now.addingTimeInterval(-700)),
+                ChatMessage(role: .user, text: "Fix the toolbar overlap at phone width.", date: now.addingTimeInterval(-600)),
+                claude,
+                ChatMessage(role: .divider, text: "Claude → Codex: review the toolbar diff for regressions", date: now.addingTimeInterval(-240)),
+                ChatMessage(role: .user, text: "Also: should the release card read git or a JSON file?", date: now.addingTimeInterval(-120)),
+            ])
+            let records = [
+                HandoffRecord(from: .claude, to: .codex, kind: .review, task: "Review the toolbar diff for regressions at phone width", origin: "Fix the toolbar overlap at phone width.",
+                              message: 1, round: 1, limit: 2, state: .waiting, lines: [
+                                .init(who: .claude, text: "Review the toolbar diff for regressions at phone width"),
+                                .init(who: .codex, text: "One blocking issue: the send button wraps under 380px."),
+                              ]),
+                HandoffRecord(from: .codex, to: .claude, kind: .task, task: "Publish the comparison page as an Artifact", origin: "Also: should the release card read git or a JSON file?",
+                              message: 2, round: 1, limit: 6, state: .running, lines: [.init(who: .codex, text: "Publish the comparison page as an Artifact")]),
+                HandoffRecord(from: .claude, to: .codex, kind: .discuss, task: "Git or a JSON file for the release card?", origin: "Also: should the release card read git or a JSON file?",
+                              message: 2, round: 2, limit: 6, state: .running, lines: [
+                                .init(who: .claude, text: "Git or a JSON file for the release card?"),
+                              ]),
+            ]
+            draw(root: root, to: path) { workspace in
+                workspace.mainBot.showHandoffsForSnapshot(records)
+                workspace.mainBot.showRoundsForSnapshot(RoundsProgress(kind: .handoff, round: 2, limit: 6))
+            }
+            return true
+        }
         // `CCB_SNAPSHOT_SAMPLE=subagent`: a subagent's view (read only), still at work: its task
         // and a later message from its bot, each finished run of calls folded to "N steps" (a long
         // one, with a failed command, among them), the run under way in sight, its last call spinning.
