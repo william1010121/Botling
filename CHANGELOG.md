@@ -4,7 +4,7 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
-## Unreleased
+## Unreleased 1.19.0-dev
 
 ## 1.18.0
 
