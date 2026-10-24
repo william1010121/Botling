@@ -35,6 +35,7 @@
 // over. Its reply: …") "Done: <its reply>".
 // "/slow …" as the handed task: it streams until interrupted (work to pause for the user's message);
 // the app's "(App: Now carry on with what you were doing…" is answered "Carried on: finished the handed work."
+// Work the app hands over ("(From the main bot) …", Maintainer's jobs) is answered "On it.".
 // App notes ("(App: …" paragraphs: the wake briefing, recent lines, reactions) are not the user's
 // words: the reply echoes the rest, and the directive is read from the last paragraph. The tidy
 // note ("(App: You have been idle …") is answered "OK" after writing the memory file it names.
@@ -252,6 +253,12 @@ async function turn(job) {
   // The app asks it to carry on with work it paused for the user's message (1.x's resumeNote).
   if (prompt.startsWith("(App: Now carry on with what you were doing")) {
     const text = await stream("Carried on: finished the handed work.");
+    result(text);
+    return;
+  }
+  // Work the app hands over (Maintainer's jobs): taken on, never echoed (an echo would repeat the job's tags).
+  if (prompt.includes("(From the main bot) ")) {
+    const text = await stream("On it.");
     result(text);
     return;
   }

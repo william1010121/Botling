@@ -270,6 +270,8 @@ export interface MaintainerDeps {
   bots: () => Bot[];
   library: ComponentLibrary;
   plugins: () => Plugins | null;
+  /** Looks at the library on disk now (the core's scan: views redraw, asked components are delivered). */
+  rescan?: () => void;
   log: (line: string) => void;
 }
 
@@ -434,7 +436,9 @@ export class MaintainerDesk {
     if (!maintainer || (record.role !== "bot" && record.role !== "error")) return;
     if (record.choices?.length && record.chosen === undefined && record.answer === undefined) return;
     if (maintainer.subagentsAtWork) return;
-    this.deps.library.rescan();
+    // A component it just committed may not have been seen yet.
+    if (this.deps.rescan) this.deps.rescan();
+    else this.deps.library.rescan();
     for (const ask of [...this.asks]) {
       if (!ask.changing || this.deps.library.stampOf(ask.name) === ask.stamp) continue;
       this.asks = this.asks.filter((other) => other !== ask);

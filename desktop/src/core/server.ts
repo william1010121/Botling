@@ -155,6 +155,7 @@ export class Core {
       bots: () => [...this.bots.values()],
       library: this.components.library,
       plugins: () => this.plugins,
+      rescan: () => this.scanComponents(),
       log: (line) => this.log(`maintainer: ${line}`),
     });
     const host = options.plugins ?? null;

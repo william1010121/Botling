@@ -12,7 +12,7 @@
 // markdown, components) are not available there. ccb-latex stays bundled into the chat page.
 import { join } from "node:path";
 import { z } from "zod";
-import type { PluginsView } from "../../contract";
+import { ContractError, type PluginsView } from "../../contract";
 import { PluginHostClient, type HostCommand, type HostTiming, DEFAULT_TIMING } from "./host-client";
 import { title } from "./manifest";
 import { PluginRegistry } from "./registry";
@@ -139,7 +139,7 @@ export class Plugins {
 
   private known(name: string) {
     const plugin = this.registry.plugin(name);
-    if (!plugin) throw Object.assign(new Error(`No plugin "${name}".`), { code: "not_found" });
+    if (!plugin) throw new ContractError("not_found", `No plugin "${name}".`);
     return plugin;
   }
 
@@ -151,37 +151,37 @@ export class Plugins {
 
   setSetting(name: string, key: string, value: boolean | number | string | null) {
     const setting = this.known(name).manifest.ccb?.contributes?.settings?.[key];
-    if (!setting) throw Object.assign(new Error(`Plugin "${name}" has no setting "${key}".`), { code: "not_found" });
-    if (setting.secret) throw Object.assign(new Error("A secret is set with plugins.secret."), { code: "bad_request" });
+    if (!setting) throw new ContractError("not_found", `Plugin "${name}" has no setting "${key}".`);
+    if (setting.secret) throw new ContractError("bad_request", "A secret is set with plugins.secret.");
     const fits = value === null
       || (setting.type === "boolean" && typeof value === "boolean")
       || (setting.type === "number" && typeof value === "number" && Number.isFinite(value))
       || (setting.type === "string" && typeof value === "string")
       || (setting.type === "enum" && typeof value === "string" && (setting.options ?? []).includes(value));
-    if (!fits) throw Object.assign(new Error(`That is not a ${setting.type} for "${key}".`), { code: "bad_request" });
+    if (!fits) throw new ContractError("bad_request", `That is not a ${setting.type} for "${key}".`);
     this.registry.set(name, key, value);
     return this.view();
   }
 
   async setSecret(name: string, key: string, value: string | null) {
     const setting = this.known(name).manifest.ccb?.contributes?.settings?.[key];
-    if (!setting?.secret) throw Object.assign(new Error(`Plugin "${name}" has no secret "${key}".`), { code: "not_found" });
+    if (!setting?.secret) throw new ContractError("not_found", `Plugin "${name}" has no secret "${key}".`);
     try {
       await this.registry.setSecret(name, key, value ? value : null);
     } catch (error) {
-      throw Object.assign(new Error((error as Error).message), { code: "conflict" });
+      throw new ContractError("conflict", (error as Error).message);
     }
     return this.view();
   }
 
   /** A command a program part registered (`Workspace.runCommand`); a failure is said in the main bot's chat too. */
   async command(id: string): Promise<unknown> {
-    if (!this.host.commands.includes(id)) throw Object.assign(new Error(`No command "${id}".`), { code: "not_found" });
+    if (!this.host.commands.includes(id)) throw new ContractError("not_found", `No command "${id}".`);
     try {
       return await this.host.command(id);
     } catch (error) {
       this.options.world.notice(`Command "${id}" failed: ${(error as Error).message}`);
-      throw Object.assign(new Error((error as Error).message), { code: "conflict" });
+      throw new ContractError("conflict", (error as Error).message);
     }
   }
 
@@ -189,7 +189,7 @@ export class Plugins {
   panel(name: string, id: string) {
     const entry = this.registry.panels().find((candidate) => candidate.plugin.manifest.name === name && candidate.panel.id === id);
     const part = entry ? this.registry.webPart(name) : null;
-    if (!entry || !part) throw Object.assign(new Error(`No panel "${id}" of plugin "${name}".`), { code: "not_found" });
+    if (!entry || !part) throw new ContractError("not_found", `No panel "${id}" of plugin "${name}".`);
     const settings: Record<string, boolean | number | string | null> = {};
     for (const [key, value] of Object.entries(part.settings)) settings[key] = value === null || typeof value !== "object" ? value : null;
     return { title: entry.panel.title.slice(0, 200), source: part.source, settings };
@@ -198,11 +198,11 @@ export class Plugins {
   /** A panel's `ccb.host.call` to its own plugin's program part. */
   async call(name: string, method: string, params: unknown): Promise<unknown> {
     const plugin = this.known(name);
-    if (!plugin.enabled || plugin.failure || !plugin.manifest.ccb?.web) throw Object.assign(new Error(`Plugin "${name}" is not on.`), { code: "conflict" });
+    if (!plugin.enabled || plugin.failure || !plugin.manifest.ccb?.web) throw new ContractError("conflict", `Plugin "${name}" is not on.`);
     try {
       return await this.host.webCall(name, method, params);
     } catch (error) {
-      throw Object.assign(new Error((error as Error).message), { code: "conflict" });
+      throw new ContractError("conflict", (error as Error).message);
     }
   }
 
