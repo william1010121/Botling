@@ -780,7 +780,13 @@ public final class Bot: ObservableObject, Identifiable {
     public func isAtWork(_ task: TaskCard) -> Bool {
         if let owner = task.owner, let head = bot(forExisting: owner), head.isWorking { return true }
         let ids = Set(task.subagentIDs ?? [])
-        return !ids.isEmpty && subagents.contains { ids.contains($0.id) && $0.isRunning }
+        return !ids.isEmpty && !ids.isDisjoint(with: runningSubagentIDs)
+    }
+
+    /// The subagents and workers still running, of either head of this chat.
+    private var runningSubagentIDs: Set<String> {
+        let chat = primary ?? self
+        return Set(([chat] + [chat.partner].compactMap { $0 }).flatMap(\.subagents).filter(\.isRunning).map(\.id))
     }
 
     /// Shown as maybe stuck: running, no news for 10 minutes, nothing of it at work.
@@ -834,7 +840,7 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     /// What the turn under way works on, as the task book reads it.
-    private func currentTaskTurn(handoffID: UUID? = nil, asks: Bool = false) -> TaskBook.Turn {
+    private func currentTaskTurn(handoffID: UUID? = nil, asks: Bool = false, handsOff: Bool = false) -> TaskBook.Turn {
         let owner = primary ?? self
         return TaskBook.Turn(
             head: engine,
@@ -844,19 +850,22 @@ public final class Bot: ObservableObject, Identifiable {
             usedTools: taskTurn?.usedTools ?? false,
             handoffID: handoffID ?? turnHandoffID,
             reporting: taskReporting,
-            asks: asks
+            asks: asks,
+            handsOff: handsOff,
+            runningSubagents: runningSubagentIDs,
+            runningHandoffs: Set(owner.conductor.records.filter { $0.state == .running }.map(\.id))
         )
     }
 
     /// The turn showed its reply: the cards it belongs to are updated from its `<task>` lines.
-    private func noteTaskReply(_ message: ChatMessage, handoffID: UUID?) {
+    private func noteTaskReply(_ message: ChatMessage, handoffID: UUID?, handsOff: Bool) {
         defer {
             taskTurn = nil
             taskReporting = []
             lastTaskTags = []
         }
         guard message.role == .bot, groupCommand == nil else { return }
-        let turn = currentTaskTurn(handoffID: handoffID, asks: message.isOpenQuestion)
+        let turn = currentTaskTurn(handoffID: handoffID, asks: message.isOpenQuestion, handsOff: handsOff)
         let tags = lastTaskTags
         let owner = primary ?? self
         var touched: [UUID] = []
@@ -2129,7 +2138,7 @@ public final class Bot: ObservableObject, Identifiable {
         // judgment confirms a terminal result. A handoff tag already has its own return path.
         let deferHandback = handed && canCheckCompletion(message) && tags.handoff == nil && pausedWork == nil
         // Its task card first, so a hand-off in the reply helps with that task.
-        noteTaskReply(message, handoffID: handoffID)
+        noteTaskReply(message, handoffID: handoffID, handsOff: tags.handoff != nil)
         if sharesChat || tags.handoff != nil { (primary ?? self).headReplied(message, by: engine, tags: tags, handed: handed && !deferHandback, handoffID: handoffID) }
         if held, !queued.isEmpty { Task { [weak self] in await self?.flushQueue() } }
         if promiseCheck == nil, resumePausedWork() { return }

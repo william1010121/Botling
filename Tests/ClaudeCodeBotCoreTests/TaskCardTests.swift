@@ -70,7 +70,7 @@ struct TaskBookTests {
 
         let first = UUID()
         let turn = TaskBook.Turn(head: .claude, userMessage: user, started: start, usedTools: true)
-        book.replied(first, turn: turn, tags: [TaskTag(name: "agent-activity card", now: "Looking at the card", next: "Fix folding")], at: start.addingTimeInterval(30))
+        book.replied(first, turn: turn, tags: [TaskTag(name: "agent-activity card", now: "Looking at the card", next: "Fix folding", state: .running)], at: start.addingTimeInterval(30))
         var card = book.task(id)!
         #expect(card.name == "agent-activity card" && card.now == "Looking at the card" && card.next == "Fix folding")
         #expect(card.state == .running && card.messageIDs == [user, first])
@@ -105,7 +105,7 @@ struct TaskBookTests {
 
         let reply = UUID()
         let touched = book.replied(reply, turn: .init(head: .claude, userMessage: user, started: start.addingTimeInterval(100)),
-                                   tags: [TaskTag(continues: "contribution card", now: "Checking 1x1")], at: start.addingTimeInterval(110))
+                                   tags: [TaskTag(continues: "contribution card", now: "Checking 1x1", state: .running)], at: start.addingTimeInterval(110))
         #expect(touched == [earlier])
         #expect(book.tasks.count == 1)
         let card = book.task(earlier)!
@@ -118,7 +118,7 @@ struct TaskBookTests {
         let first = book.begin(message: user, text: "Fix the cards and clean the disk", owner: .claude, at: start)
         let reply = UUID()
         let touched = book.replied(reply, turn: .init(head: .claude, userMessage: user, started: start),
-                                   tags: [TaskTag(name: "Cards"), TaskTag(name: "Disk", now: "Listing caches")], at: start.addingTimeInterval(5))
+                                   tags: [TaskTag(name: "Cards", state: .running), TaskTag(name: "Disk", now: "Listing caches", state: .running)], at: start.addingTimeInterval(5))
         #expect(touched.count == 2 && touched[0] == first)
         #expect(book.tasks.map(\.name) == ["Cards", "Disk"])
         let disk = book.task(touched[1])!
@@ -145,7 +145,95 @@ struct TaskBookTests {
         tools.begin(message: user, text: "Look into it", owner: .claude, at: start)
         let result2 = tools.replied(UUID(), turn: .init(head: .claude, userMessage: user, started: start, usedTools: true), tags: [], at: start.addingTimeInterval(3))
         #expect(result2.count == 1)
-        #expect(tools.tasks.first?.kept == true && tools.tasks.first?.state == .running)
+        // Kept, and done: its owner's turn is over and no line said it still runs.
+        #expect(tools.tasks.first?.kept == true && tools.tasks.first?.state == .done)
+    }
+
+    @Test func aPlainLongAnswerIsDoneWhenItsTurnEndsAndNeverLooksStuck() {
+        var book = TaskBook()
+        let id = book.begin(message: user, text: "Explain the build", owner: nil, at: start)
+        book.claim(message: user, by: .claude, at: start)
+        #expect(book.task(id)?.state == .running)
+        let end = start.addingTimeInterval(TaskBook.quickAnswer + 30)
+        book.replied(UUID(), turn: .init(head: .claude, userMessage: user, started: start, usedTools: true), tags: [], at: end)
+        let card = book.task(id)!
+        #expect(card.state == .done && card.kept && card.updatedAt == end)
+        #expect(!card.isStale(at: end.addingTimeInterval(TaskBook.staleAfter + 1), working: false))
+    }
+
+    @Test func aLineWithoutAStateIsDoneWhenTheTurnEnds() {
+        var book = TaskBook()
+        let id = book.begin(message: user, text: "Clean the disk", owner: .claude, at: start)
+        book.replied(UUID(), turn: .init(head: .claude, userMessage: user, started: start, usedTools: true),
+                     tags: [TaskTag(name: "Disk", now: "Deleted caches")], at: start.addingTimeInterval(40))
+        let card = book.task(id)!
+        #expect(card.name == "Disk" && card.now == "Deleted caches" && card.state == .done && card.stateFromTag == nil)
+    }
+
+    @Test func aStateTheOwnerWroteAsRunningKeepsRunningAndMayGoStale() {
+        var book = TaskBook()
+        let id = book.begin(message: user, text: "Migrate the store", owner: .claude, at: start)
+        book.replied(UUID(), turn: .init(head: .claude, userMessage: user, started: start, usedTools: true),
+                     tags: [TaskTag(name: "Store", state: .running)], at: start.addingTimeInterval(40))
+        #expect(book.task(id)?.state == .running && book.task(id)?.stateFromTag == .running)
+        // A later reply with no line (or a line without a state) leaves it running.
+        book.replied(UUID(), turn: .init(head: .claude, userMessage: user, started: start, usedTools: true), tags: [], at: start.addingTimeInterval(80))
+        book.replied(UUID(), turn: .init(head: .claude, userMessage: user, started: start, usedTools: true),
+                     tags: [TaskTag(now: "Copying")], at: start.addingTimeInterval(90))
+        let card = book.task(id)!
+        #expect(card.state == .running)
+        #expect(card.isStale(at: start.addingTimeInterval(90 + TaskBook.staleAfter), working: false))
+        // Until it says it is done.
+        book.replied(UUID(), turn: .init(head: .claude, userMessage: user, started: start, usedTools: true),
+                     tags: [TaskTag(state: .done)], at: start.addingTimeInterval(120))
+        #expect(book.task(id)?.state == .done)
+    }
+
+    @Test func aWaitingTaskTheUserAnsweredIsDoneAfterThePlainReply() {
+        var book = TaskBook()
+        let id = book.begin(message: user, text: "Pick a name", owner: .claude, at: start)
+        let question = UUID()
+        book.replied(question, turn: .init(head: .claude, userMessage: user, started: start, usedTools: true),
+                     tags: [TaskTag(name: "Name", state: .waiting)], at: start.addingTimeInterval(30))
+        #expect(book.task(id)?.state == .waiting)
+        let answer = UUID()
+        book.begin(message: answer, text: "Botling", owner: .claude, replyingTo: question, at: start.addingTimeInterval(60))
+        #expect(book.task(id)?.state == .running)
+        book.replied(UUID(), turn: .init(head: .claude, userMessage: answer, started: start.addingTimeInterval(60), usedTools: true), tags: [],
+                     at: start.addingTimeInterval(100))
+        #expect(book.task(id)?.state == .done)
+    }
+
+    @Test func somethingLinkedStillAtWorkKeepsItRunningUntilItsReport() {
+        var book = TaskBook()
+        let id = book.begin(message: user, text: "Research caches", owner: .claude, at: start)
+        book.link(subagent: "agent-1", to: id)
+        book.replied(UUID(), turn: .init(head: .claude, userMessage: user, started: start, usedTools: true, runningSubagents: ["agent-1"]),
+                     tags: [], at: start.addingTimeInterval(30))
+        #expect(book.task(id)?.state == .running)
+        // An unrelated running subagent does not hold it; its own one finished and was reported.
+        book.replied(UUID(), turn: .init(head: .claude, reporting: ["agent-1"], runningSubagents: ["other"]), tags: [], at: start.addingTimeInterval(300))
+        #expect(book.task(id)?.state == .done)
+    }
+
+    @Test func aHandOffUnderWayKeepsItRunning() {
+        var book = TaskBook()
+        let id = book.begin(message: user, text: "Fix and verify", owner: .claude, at: start)
+        // The reply that hands off: the hand-off is not a record yet.
+        book.replied(UUID(), turn: .init(head: .claude, userMessage: user, started: start, usedTools: true, handsOff: true), tags: [], at: start.addingTimeInterval(30))
+        #expect(book.task(id)?.state == .running)
+        let handoff = UUID()
+        book.help(TaskCard.Help(handoffID: handoff, head: .codex, text: "Verify"), on: id)
+        // The other head's reply on it never finishes the owner's card.
+        book.replied(UUID(), turn: .init(head: .codex, handoffID: handoff), tags: [], at: start.addingTimeInterval(60))
+        #expect(book.task(id)?.state == .running)
+        // The owner carries on while another hand-off of it still runs: still running.
+        let second = UUID()
+        book.help(TaskCard.Help(handoffID: second, head: .codex, text: "Verify again"), on: id)
+        book.replied(UUID(), turn: .init(head: .claude, handoffID: handoff, runningHandoffs: [second]), tags: [], at: start.addingTimeInterval(90))
+        #expect(book.task(id)?.state == .running)
+        book.replied(UUID(), turn: .init(head: .claude, handoffID: second), tags: [], at: start.addingTimeInterval(120))
+        #expect(book.task(id)?.state == .done)
     }
 
     @Test func theSecondHeadsLongerAnswerBringsTheCardBack() {
@@ -223,6 +311,7 @@ struct TaskBookTests {
         card.kept = true
         card.helps = [TaskCard.Help(handoffID: UUID(), head: .claude, text: "Review")]
         card.subagentIDs = ["agent-1"]
+        card.stateFromTag = .waiting
         store.save(tasks: [card])
         #expect(store.loadTasks() == [card])
         #expect(FileManager.default.fileExists(atPath: store.directory.appending(path: "tasks.json").path))
@@ -273,7 +362,20 @@ struct BotTaskCardTests {
         // The reply comes 30 seconds later.
         clock.date = clock.date.addingTimeInterval(30)
         await eventually { bot.messages.filter { $0.role == .bot }.count == 2 && !bot.isWorking }
-        #expect(bot.tasks.count == 1 && bot.tasks[0].state == .running && bot.tasks[0].name == "Look into the logs")
+        // No line said it still runs and nothing of it works: done when the turn ends.
+        #expect(bot.tasks.count == 1 && bot.tasks[0].state == .done && bot.tasks[0].name == "Look into the logs")
+        #expect(bot.openTaskCount == 0)
+        #expect(!bot.isStale(bot.tasks[0], at: clock.date.addingTimeInterval(TaskBook.staleAfter)))
+    }
+
+    @Test func aTaskItSaidIsRunningMayGoStale() async {
+        let fake = FakeLauncher()
+        fake.respond = { text in isAppOnly(text) ? "OK" : "Migrating. <task name=\"Store\" state=\"running\"/>" }
+        let clock = Clock()
+        let bot = bot(fake, clock: clock)
+        bot.send("Migrate the store")
+        await eventually { bot.messages.last?.role == .bot && !bot.isWorking }
+        #expect(bot.tasks.count == 1 && bot.tasks[0].state == .running)
         #expect(bot.openTaskCount == 1)
         // Ten quiet minutes later, with nothing at work, it may be stuck.
         #expect(!bot.isStale(bot.tasks[0], at: clock.date))
@@ -336,7 +438,7 @@ struct BotTaskCardTests {
 
     @Test func eachReplyOfATaskCarriesItsChipAndTheLatestSaysHowItStands() async {
         let fake = FakeLauncher()
-        fake.respond = { text in isAppOnly(text) ? "OK" : "On it. <task name=\"Board\" now=\"Drawing card 2\"/>" }
+        fake.respond = { text in isAppOnly(text) ? "OK" : "On it. <task name=\"Board\" now=\"Drawing card 2\" state=\"running\"/>" }
         let clock = Clock()
         let bot = bot(fake, clock: clock)
         bot.send("Draw the board")

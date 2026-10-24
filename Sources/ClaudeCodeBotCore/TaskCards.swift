@@ -50,6 +50,9 @@ public struct TaskCard: Codable, Equatable, Identifiable, Sendable {
     public var helps: [Help]? = nil
     /// Subagents and workers started for it (their ids in subagents.json).
     public var subagentIDs: [String]? = nil
+    /// The state its owner last wrote in a `<task state=…/>` line; nil when no line said one.
+    /// Only a card its owner said is running stays running once the owner's turn is over.
+    public var stateFromTag: State? = nil
 
     public init(id: UUID = UUID(), name: String, owner: BotEngine? = nil, state: State = .pending, now: String? = nil, next: String? = nil,
                 blocked: String? = nil, createdAt: Date, updatedAt: Date? = nil, messageIDs: [UUID] = [], startedByMessageID: UUID? = nil) {
@@ -67,7 +70,7 @@ public struct TaskCard: Codable, Equatable, Identifiable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, owner, state, now, next, blocked, createdAt, updatedAt, messageIDs, startedByMessageID, kept, helps, subagentIDs
+        case id, name, owner, state, now, next, blocked, createdAt, updatedAt, messageIDs, startedByMessageID, kept, helps, subagentIDs, stateFromTag
     }
 
     public init(from decoder: Decoder) throws {
@@ -87,6 +90,7 @@ public struct TaskCard: Codable, Equatable, Identifiable, Sendable {
         kept = try container.decodeIfPresent(Bool.self, forKey: .kept) ?? false
         helps = try container.decodeIfPresent([Help].self, forKey: .helps)
         subagentIDs = try container.decodeIfPresent([String].self, forKey: .subagentIDs)
+        stateFromTag = try container.decodeIfPresent(String.self, forKey: .stateFromTag).flatMap(State.init(rawValue:))
     }
 
     /// The latest chat line of it that is not the user's (else the latest at all).
@@ -264,9 +268,16 @@ public struct TaskBook: Equatable, Sendable {
         public var reporting: [String] = []
         /// The reply asks the user something (a choices block).
         public var asks = false
+        /// The reply hands part of the work to the other head (a `<handoff>`).
+        public var handsOff = false
+        /// Subagents and workers still at work, and hand-offs the other head still works on,
+        /// when the turn ended: a card with one of them linked is not over yet.
+        public var runningSubagents: Set<String> = []
+        public var runningHandoffs: Set<UUID> = []
 
         public init(head: BotEngine, userMessage: UUID? = nil, userText: String? = nil, started: Date? = nil, usedTools: Bool = false,
-                    handoffID: UUID? = nil, reporting: [String] = [], asks: Bool = false) {
+                    handoffID: UUID? = nil, reporting: [String] = [], asks: Bool = false, handsOff: Bool = false,
+                    runningSubagents: Set<String> = [], runningHandoffs: Set<UUID> = []) {
             self.head = head
             self.userMessage = userMessage
             self.userText = userText
@@ -275,6 +286,9 @@ public struct TaskBook: Equatable, Sendable {
             self.handoffID = handoffID
             self.reporting = reporting
             self.asks = asks
+            self.handsOff = handsOff
+            self.runningSubagents = runningSubagents
+            self.runningHandoffs = runningHandoffs
         }
     }
 
@@ -307,6 +321,7 @@ public struct TaskBook: Equatable, Sendable {
             }
             touch(at, message: message, head: turn.head, asks: turn.asks, at: date)
             if !quick { tasks[at].kept = true }
+            settle(card.id, turn: turn, at: date)
             return [card.id]
         }
         var touched: [UUID] = []
@@ -335,6 +350,7 @@ public struct TaskBook: Equatable, Sendable {
             apply(tag, at: at, head: turn.head, message: message, asks: turn.asks, at: date)
             touched.append(tasks[at].id)
         }
+        for id in touched { settle(id, turn: turn, at: date) }
         trim()
         return touched
     }
@@ -363,6 +379,20 @@ public struct TaskBook: Equatable, Sendable {
         if let next = tag.next { tasks[at].next = next.isEmpty ? nil : next }
         if let blocked = tag.blocked { tasks[at].blocked = blocked.isEmpty ? nil : blocked }
         tasks[at].state = tag.state ?? (asks ? .waiting : .running)
+        if let state = tag.state { tasks[at].stateFromTag = state }
+        tasks[at].updatedAt = date
+    }
+
+    /// The owner's turn is over. A card it left running without ever saying so in a `<task>`
+    /// line (a plain long answer), with no subagent, worker or hand-off of it still at work, is
+    /// done: nothing carries it on, so it must not sit there and turn into "may be stuck".
+    /// One its owner said is running keeps running (and may go stale).
+    private mutating func settle(_ id: UUID, turn: Turn, at date: Date) {
+        guard let at = index(id), tasks[at].owner == turn.head, tasks[at].state == .running,
+              tasks[at].stateFromTag != .running, !turn.handsOff else { return }
+        if tasks[at].subagentIDs?.contains(where: turn.runningSubagents.contains) == true { return }
+        if tasks[at].helps?.contains(where: { turn.runningHandoffs.contains($0.handoffID) }) == true { return }
+        tasks[at].state = .done
         tasks[at].updatedAt = date
     }
 
