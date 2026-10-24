@@ -291,6 +291,70 @@ describe("the pin's menu", () => {
   });
 });
 
+describe("reporting a problem from a floating card", () => {
+  const entries = () => [...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")];
+  const more = () => document.querySelector<HTMLButtonElement>(".float-card [aria-label='More']")!.click();
+
+  it("its menu has Report a problem…, which asks what's wrong, can be cancelled, and sends to Maintainer", () => {
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((run) => { run(0); return 0; });
+    const layer = setUp();
+    layer.update(state());
+    more();
+    const labels = entries().map((e) => e.textContent);
+    // After the refresh and fold rows, before Stop floating.
+    expect(labels).toContain("Report a problem…");
+    expect(labels.indexOf("Report a problem…")).toBeLessThan(labels.indexOf("Stop floating"));
+    entries().find((e) => e.textContent === "Report a problem…")!.click();
+    const box = document.querySelector<HTMLElement>(".report")!;
+    expect(box.querySelector(".report-title")?.textContent).toBe("What's wrong?");
+    const shot = box.querySelector<HTMLInputElement>(".report-shot input")!;
+    expect(shot.checked).toBe(true);
+    expect(box.querySelector(".report-shot")?.textContent?.trim()).toBe("Attach a screenshot of this card");
+    // Cancel puts it away, sending nothing.
+    box.querySelector<HTMLButtonElement>(".cancel")!.click();
+    expect(document.querySelector(".report")).toBeNull();
+    expect(sent.some((m) => m.type === "componentReport")).toBe(false);
+
+    more();
+    entries().find((e) => e.textContent === "Report a problem…")!.click();
+    const again = document.querySelector<HTMLElement>(".report")!;
+    const send = again.querySelector<HTMLButtonElement>(".send")!;
+    expect(send.disabled).toBe(true);
+    const textarea = again.querySelector("textarea")!;
+    textarea.value = "The Codex rows never update";
+    textarea.dispatchEvent(new Event("input"));
+    send.click();
+    const report = sent.find((m) => m.type === "componentReport") as Extract<(typeof sent)[number], { type: "componentReport" }>;
+    expect(report).toMatchObject({ type: "componentReport", name: "build", text: "The Codex rows never update", problem: true, pinID: "P1" });
+    // The card's view goes along as a screenshot.
+    expect(report.rect).not.toBeNull();
+    expect(document.querySelector(".report")).toBeNull();
+    expect(document.querySelector(".pin-toast")?.textContent).toBe("Sent to Maintainer");
+  });
+
+  it("without the screenshot ticked, none is taken", () => {
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((run) => { run(0); return 0; });
+    const layer = setUp();
+    layer.update(state());
+    more();
+    entries().find((e) => e.textContent === "Report a problem…")!.click();
+    const box = document.querySelector<HTMLElement>(".report")!;
+    box.querySelector<HTMLInputElement>(".report-shot input")!.checked = false;
+    box.querySelector("textarea")!.value = "Wrong total";
+    box.querySelector("textarea")!.dispatchEvent(new Event("input"));
+    box.querySelector<HTMLButtonElement>(".send")!.click();
+    expect(sent.find((m) => m.type === "componentReport")).toMatchObject({ rect: null, pinID: "P1" });
+  });
+
+  it("while Maintainer is changing it, says so instead", () => {
+    const layer = setUp();
+    layer.update(state({ components: { build: { ...components.build, working: true } } }));
+    more();
+    const busy = entries().find((e) => e.textContent === "Being updated…")!;
+    expect(busy.disabled).toBe(true);
+  });
+});
+
 describe("a floating pin shown in all bots", () => {
   const entries = () => [...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")];
   const more = () => document.querySelector<HTMLButtonElement>(".float-card [aria-label='More']")!.click();

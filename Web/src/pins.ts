@@ -85,7 +85,8 @@ export function pinBar(display: DisplayView, messageID: string, index: number): 
       pinned
         ? { label: t("pins.unpin"), run: () => post({ type: "unpin", id: pinned.id }) }
         : { label: t("pins.pinToBotMenu", { bot: current.botName }), run: () => pinIt(more) },
-      reportItem(more, display.name),
+      reportItem(more, display.name, current.components[display.name], more.closest(".pin-holder")?.querySelector<HTMLElement>(".component-frame") ?? null, pinned?.id)
+        ?? { label: t("pins.report"), disabled: true, run: () => {} },
     ]);
   });
   bar.append(more);
@@ -93,19 +94,14 @@ export function pinBar(display: DisplayView, messageID: string, index: number): 
 }
 
 /**
- * Report, in a chat component's ⋯ menu: its flag is not drawn over it (a second flag in the reply,
- * over its content), so this is where you say what to change.
+ * "Report a problem…", in a component card's ⋯ menu (in a reply, an opened pin, a Board tile, a
+ * floating card): its flag is not drawn over it, so this is where you say what's wrong. Shown off
+ * while Maintainer is changing it; none for a component the library does not have.
  */
-function reportItem(anchor: HTMLElement, name: string): MenuItem {
-  const info = current.components[name];
-  if (info?.working) return { label: t("pins.beingUpdated"), disabled: true, run: () => {} };
-  return {
-    label: t("pins.report"),
-    disabled: !info,
-    run: () => {
-      if (info) reportComponent(anchor, name, info, anchor.closest(".pin-holder")?.querySelector<HTMLElement>(".component-frame") ?? null);
-    },
-  };
+export function reportItem(anchor: HTMLElement, name: string, info: ComponentInfo | undefined, drawn: HTMLElement | null, pinID?: string): MenuItem | null {
+  if (!info) return null;
+  if (info.working) return { label: t("pins.beingUpdated"), disabled: true, run: () => {} };
+  return { label: t("pins.report"), run: () => reportComponent(anchor, name, info, drawn, pinID) };
 }
 
 type PinAction = Extract<Parameters<typeof post>[0], { type: "pin" }>;
@@ -477,15 +473,10 @@ function pinMenu(anchor: HTMLElement, pin: PinView, options: { sizes?: boolean; 
     items.push(...sizeItems(pin, options.resize));
     items.push("-");
   }
-  const info = current.components[pin.name];
-  if (options.report && info) {
-    // An opened pin has no flag over its corner (it covered the content): Report is here.
-    const drawn = options.report;
-    items.push(info.working
-      ? { label: t("pins.beingUpdated"), disabled: true, run: () => {} }
-      : { label: t("pins.report"), run: () => reportComponent(anchor, pin.name, info, drawn) });
-    items.push("-");
-  }
+  // An opened pin or a tile has no flag over its corner (it covered the content): Report is here,
+  // with a screenshot of what `options.report` draws.
+  const report = reportItem(anchor, pin.name, current.components[pin.name], options.report ?? null, pin.id);
+  if (report) items.push(report, "-");
   // Drawn before it floated (or stopped), its sheet or tile still has the old pin.
   const float = floatItem(current.pins.find((p) => p.id === pin.id) ?? pin);
   if (float) items.push(float, "-");
@@ -1527,7 +1518,7 @@ export class PinArea {
       refresh.disabled = status === "running" || status === "approve";
       tools.append(refresh);
     }
-    const more = button("pin-tool", t("pins.more"), icons.more, () => pinMenu(more, pin, { sizes: true, about: true, resize: (picked) => this.resizeTo(pin.id, picked) }));
+    const more = button("pin-tool", t("pins.more"), icons.more, () => pinMenu(more, pin, { sizes: true, about: true, report: card.querySelector<HTMLElement>(".board-card-body") ?? card, resize: (picked) => this.resizeTo(pin.id, picked) }));
     tools.append(more);
     return tools;
   }

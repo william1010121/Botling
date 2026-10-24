@@ -1102,27 +1102,47 @@ function reportControl(name: string, info: ComponentInfo): HTMLElement {
 }
 
 /**
- * The report box for `name`, from somewhere other than its flag (an opened pin's ⋯ menu): shown
- * by `anchor`, with a screenshot of the component drawn in `drawn`.
+ * "Report a problem…", from a card's ⋯ menu (a reply's card, an opened pin, a Board tile, a
+ * floating card): the report box shown by `anchor`, asking what's wrong, with a screenshot of the
+ * card drawn in `drawn` (its component's frame, else all of it). Sent, it goes to Maintainer
+ * with the card's pin (`pinID`), so Swift can say whose chat it is in, how it refreshes and when
+ * its data is from; "Sent to Maintainer" says it went.
  */
-export function reportComponent(anchor: HTMLElement, name: string, info: ComponentInfo, drawn: HTMLElement | null): void {
-  openReport(anchor, name, info, drawn?.querySelector<HTMLElement>(".component-frame") ?? null);
+export function reportComponent(anchor: HTMLElement, name: string, info: ComponentInfo, drawn: HTMLElement | null, pinID?: string): void {
+  const frame = drawn ? drawn.querySelector<HTMLElement>(".component-frame") ?? drawn : null;
+  openReport(anchor, name, info, frame, { pinID: pinID ?? null });
+}
+
+/** "Sent to Maintainer", for a moment, where a pin's Undo shows. */
+function sentToast(): void {
+  document.querySelector(".pin-toast")?.remove();
+  const toast = document.createElement("div");
+  toast.className = "pin-toast";
+  toast.setAttribute("role", "status");
+  toast.textContent = t("component.sentToMaintainer");
+  document.body.append(toast);
+  setTimeout(() => toast.remove(), 3000);
 }
 
 /**
  * Say what to change, in words, pictures or both: a screenshot of the component as it is now
- * goes along unless you untick it, and pictures pasted (⌘V) or dropped on the box go too.
+ * goes along unless you untick it, and pictures pasted (⌘V) or dropped on the box go too. From
+ * a menu (`problem`) it asks what's wrong, has Cancel, and says when it was sent.
  */
-function openReport(anchor: HTMLElement, name: string, info: ComponentInfo, frame?: HTMLElement | null): void {
+function openReport(anchor: HTMLElement, name: string, info: ComponentInfo, frame?: HTMLElement | null, problem?: { pinID: string | null }): void {
   document.querySelector(".report")?.remove();
   const component = frame ?? anchor.closest(".component")?.querySelector<HTMLElement>(".component-frame") ?? null;
   const box = document.createElement("div");
   box.className = "report";
-  box.innerHTML = `<div class="report-title">${escapeHTML(t("component.changeQuestion"))}</div>
-<textarea rows="3" placeholder="${escapeHTML(t("component.changePlaceholder"))}"></textarea>
+  const title = problem ? t("component.problemQuestion") : t("component.changeQuestion");
+  const placeholder = problem ? t("component.problemPlaceholder") : t("component.changePlaceholder");
+  const shotWords = problem ? t("component.attachCardShot") : t("component.attachShot");
+  const cancel = problem ? `<button class="plain cancel">${escapeHTML(t("common.cancel"))}</button>` : "";
+  box.innerHTML = `<div class="report-title">${escapeHTML(title)}</div>
+<textarea rows="3" placeholder="${escapeHTML(placeholder)}"></textarea>
 <div class="report-images" hidden></div>
-${component ? `<label class="report-shot"><input type="checkbox" checked> ${escapeHTML(t("component.attachShot"))}</label>` : ""}
-<div class="report-actions">${info.hasPrevious ? `<button class="plain revert">${escapeHTML(t("component.revert"))}</button>` : ""}<span></span><button class="primary send">${escapeHTML(t("composer.send"))}</button></div>`;
+${component ? `<label class="report-shot"><input type="checkbox" checked> ${escapeHTML(shotWords)}</label>` : ""}
+<div class="report-actions">${info.hasPrevious ? `<button class="plain revert">${escapeHTML(t("component.revert"))}</button>` : ""}<span></span>${cancel}<button class="primary send">${escapeHTML(t("composer.send"))}</button></div>`;
   const textarea = box.querySelector("textarea")!;
   const send = box.querySelector<HTMLButtonElement>(".send")!;
   const strip = box.querySelector<HTMLElement>(".report-images")!;
@@ -1143,8 +1163,13 @@ ${component ? `<label class="report-shot"><input type="checkbox" checked> ${esca
     }
     // Out of the way first, so the screenshot shows the component and not this box.
     box.remove();
-    requestAnimationFrame(() => post({ type: "componentReport", name, text: textarea.value.trim(), images, rect }));
+    const text = textarea.value.trim();
+    requestAnimationFrame(() => post(problem
+      ? { type: "componentReport", name, text, images, rect, problem: true, ...(problem.pinID ? { pinID: problem.pinID } : {}) }
+      : { type: "componentReport", name, text, images, rect }));
+    if (problem) sentToast();
   });
+  box.querySelector(".cancel")?.addEventListener("click", () => box.remove());
   box.querySelector(".revert")?.addEventListener("click", () => {
     post({ type: "componentRevert", name });
     box.remove();

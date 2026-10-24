@@ -16,6 +16,11 @@ app and publishes it on GitHub Releases.
 - **Turn completion verification off.** Settings → Completion verification has an on/off
   switch (on by default). Off, no judge runs for either head of any bot, replies get no
   verification row and nothing is continued automatically; the model picker is dimmed.
+- **Report a problem from a card.** The ⋯ menu of a floating card, an opened pin, a Board tile
+  and a card in the chat now has **Report a problem…**: say what's wrong, keep or untick the
+  screenshot of the card, and send. It reaches Maintainer the same way a bot's component request
+  does, with the card's chat, refresh setting, data time and the screenshot (kept in that bot's
+  attachments), and **Sent to Maintainer** confirms it.
 
 ### Fixed
 

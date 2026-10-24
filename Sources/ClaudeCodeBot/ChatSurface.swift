@@ -354,6 +354,19 @@ struct ChatSurface: NSViewRepresentable {
                 let text = body["text"] as? String ?? ""
                 var files = Self.pictures(body["images"])
                 let rect = (body["rect"] as? [String: Any]).flatMap(Self.rect)
+                if body["problem"] as? Bool == true {
+                    // "Report a problem…" from a card's ⋯ menu: the card's own bot (a floating
+                    // card may be another bot's), its pin, and the screenshot kept with that bot.
+                    let pinID = id("pinID")
+                    let owner = pinBot(pinID)
+                    Task { @MainActor [weak view] in
+                        var shot: URL?
+                        if let rect, let view { shot = await Self.snapshot(of: view, in: rect, named: name) }
+                        workspace.reportComponentProblem(name, text: text, in: owner, pinID: pinID, screenshot: shot, pictures: files)
+                        if let shot { try? FileManager.default.removeItem(at: shot) }
+                    }
+                    break
+                }
                 Task { @MainActor [weak view] in
                     // The component as it looks now, so Maintainer sees what you saw.
                     if let rect, let view, let shot = await Self.snapshot(of: view, in: rect, named: name) {

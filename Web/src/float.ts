@@ -4,7 +4,7 @@ import { shared } from "./contract";
 import { componentSizes, keepFrames, maxColumns, maxRows, pinSize, resizeFrame, sizeInfo } from "./components";
 import { LiveSchedule, liveTick, type LiveCard } from "./refresh";
 import { onScreen, whenShownAgain, windowVisible } from "./visible";
-import { boardCell, boardGap, capture, drawnPart, fillPinHead, openMenu, pinBody, pinHeadKey, pinTitle, refreshItems, whenWords, type MenuItem } from "./pins";
+import { boardCell, boardGap, capture, drawnPart, fillPinHead, openMenu, pinBody, pinHeadKey, pinTitle, refreshItems, reportItem, whenWords, type MenuItem } from "./pins";
 import type { ChatState, ComponentInfo, FloatCorner, FloatView, FloatingPinView, PinSize, PinView } from "./types";
 
 /**
@@ -471,6 +471,9 @@ export class FloatLayer {
       } });
     }
     items.push(...globalItems(entry));
+    // What's wrong with it, to Maintainer, without going back to the chat.
+    const report = reportItem(anchor, pin.name, this.components[pin.name], entry.card.querySelector<HTMLElement>(".float-body") ?? entry.card, pin.id);
+    if (report) items.push(report);
     items.push({ label: t("float.stop"), run: () => post({ type: "floatPin", id: pin.id, floating: false }) });
     // Its ⋯ again closes it; a refresh redrawing the header leaves it as it is.
     openMenu(anchor, items, menuKey(entry));

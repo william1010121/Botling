@@ -212,7 +212,7 @@ describe("the chips above the input box", () => {
       click(head.querySelector("[aria-label='More']"));
       expect(document.querySelector(".pin-menu-heading")?.textContent).toBe("提交紀錄");
       expect([...document.querySelectorAll(".pin-menu-note")].map((n) => n.textContent)).toEqual(["Updated 10:42", "$ python3 git-log-json.py 20"]);
-      expect([...document.querySelectorAll(".pin-menu button")].some((b) => b.textContent === "Report this component…")).toBe(true);
+      expect([...document.querySelectorAll(".pin-menu button")].some((b) => b.textContent === "Report a problem…")).toBe(true);
       document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       // No report flag over the component (it covered the last row).
       expect(getComputedStyle(sheet.querySelector<HTMLElement>(".component-side")!).display).toBe("none");
@@ -389,6 +389,13 @@ describe("the Board", () => {
     const sizesIn = (items: HTMLButtonElement[]) => items.filter((b) => b.closest(".pin-size-grid")).map((b) => b.getAttribute("aria-label"));
     const every = ["Small 1×1", "Wide 2×1", "3×1", "4×1", "Tall 1×2", "Large 2×2", "3×2", "Extra wide 4×2", "1×3", "2×3", "3×3", "4×3", "1×4", "2×4", "3×4", "4×4"];
     expect(sizesIn(menuOf(0))).toEqual(every);
+    // A tile can be reported from its menu too, with a screenshot of the tile.
+    const reportItem = [...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")].find((b) => b.textContent === "Report a problem…");
+    expect(reportItem).toBeDefined();
+    click(reportItem);
+    expect(document.querySelector(".report .report-shot input")).not.toBeNull();
+    document.querySelector(".report")!.remove();
+    click(document.querySelectorAll(".board-card")[0].querySelector("[aria-label='More']"));
     expect([...document.querySelectorAll(".pin-size-grid button.hint")].map((b) => b.getAttribute("aria-label"))).toEqual(["Small 1×1", "Wide 2×1", "Large 2×2"]);
     expect(document.querySelector(".pin-size-grid button.checked")?.getAttribute("aria-label")).toBe("Large 2×2");
     // Pointing at a cell lights the cells it would span and says its size.
@@ -1086,7 +1093,7 @@ describe("a reply that shows a pinnable component, on hover", () => {
       const row = messageElement(message([{ name: "天氣卡片", data: "{}", pinned: false }]), components);
       document.getElementById("scroller")!.append(row);
       click(row.querySelector(".pin-bar [aria-label='More']"));
-      const report = [...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")].find((b) => b.textContent === "Report this component…");
+      const report = [...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")].find((b) => b.textContent === "Report a problem…");
       click(report);
       expect(document.querySelector(".report")).not.toBeNull();
       // The card's frame says its name to VoiceOver without a hover tooltip poking out of the reply.

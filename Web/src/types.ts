@@ -505,7 +505,7 @@ export type Action =
   | { type: "pickFiles" }
   | { type: "removeFile"; id: string }
   | { type: "addFileData"; name: string; base64: string }
-  | { type: "componentReport"; name: string; text: string; images: { name: string; base64: string }[]; rect: { x: number; y: number; width: number; height: number } | null }
+  | { type: "componentReport"; name: string; text: string; images: { name: string; base64: string }[]; rect: { x: number; y: number; width: number; height: number } | null; problem?: true; pinID?: string }
   | { type: "componentRevert"; name: string }
   | { type: "componentCommand"; messageID: string; index: number; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean; live?: boolean }
   | { type: "componentDetail"; requestID: number; name: string; folder: string; values: Record<string, string | number>; card?: string; command?: string }
