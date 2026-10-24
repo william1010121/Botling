@@ -24,6 +24,44 @@ function makeHost(plugins: Record<string, (ccb: CcbHost) => unknown>) {
 }
 
 describe("plugin host (in process)", () => {
+  it("browser operations carry the caller identity and exact tab scope", async () => {
+    let api: CcbHost;
+    const { host, written } = makeHost({ fixture: ccb => { api = ccb; } });
+    await host.sync([spec("fixture")]);
+    const scope = { origin: "https://fixture.test", account: "a", tab: "t" };
+    const pending = api!.browser.perform({ ...scope, operation: "click", target: "observed-1", plugin: "spoof" } as any);
+    const request = written.find(m => m.method === "browser.perform");
+    expect(request?.params).toEqual({ ...scope, operation: "click", target: "observed-1", plugin: "fixture" });
+    await host.receive({ id: request.id, result: { clicked: true } });
+    expect(await pending).toEqual({ clicked: true });
+  });
+
+  it("website tools route to their plugin and unregister on unload", async () => {
+    let api: CcbHost;
+    const { host, written } = makeHost({ fixture: ccb => {
+      api = ccb;
+      ccb.browser.registerTool({ id: "details", title: "Read details", origin: "https://fixture.test" }, async scope => {
+        const observed = await ccb.browser.perform({ ...scope, operation: "observe" }) as any;
+        await ccb.browser.perform({ ...scope, operation: "click", target: observed.targets[0].id });
+        return ccb.browser.perform({ ...scope, operation: "extract", target: "fresh-target" });
+      });
+    }});
+    await host.sync([spec("fixture")]);
+    expect(written).toContainEqual({ method: "browser.register", params: { plugin: "fixture", id: "details", title: "Read details", origin: "https://fixture.test" } });
+    const scope = { origin: "https://fixture.test", account: "a", tab: "t" };
+    const invoke = host.receive({ id: 987, method: "web", params: { plugin: "fixture", method: "browser.tool.details", params: scope } });
+    for (const result of [{ targets: [{ id: "current-target" }] }, { clicked: true }, { text: "Fixture detail" }]) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const request = written.filter(m => m.method === "browser.perform").at(-1)!;
+      await host.receive({ id: request.id, result });
+    }
+    await invoke;
+    expect(written.find(m => m.id === 987)?.result).toEqual({ text: "Fixture detail" });
+    expect(written.filter(m => m.method === "browser.perform").map(m => m.params.operation)).toEqual(["observe", "click", "extract"]);
+    await host.sync([]);
+    expect(written).toContainEqual({ method: "browser.unregister", params: { plugin: "fixture", id: "details" } });
+  });
+
   it("beforeSend hooks change or stop what is sent, in order", async () => {
     const { host, written } = makeHost({
       upper: (ccb) => { ccb.hooks.beforeSend((m) => m.text.toUpperCase()); },

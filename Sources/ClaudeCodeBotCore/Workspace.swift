@@ -167,6 +167,7 @@ public final class Workspace: ObservableObject {
     public let pluginHost: PluginHostClient?
     public let root: URL
     /// Web AIs in the left column (Gemini): their conversations and saved text.
+    public let browser: BrowserShelf
     public let web: WebShelf
     private let makeBot: BotFactory
     let completionClassifier: ((String) -> PromiseCheck.Classifier)?
@@ -232,6 +233,7 @@ public final class Workspace: ObservableObject {
         makeBot: @escaping BotFactory
     ) {
         self.root = root
+        browser = BrowserShelf(folder: Layout.web(in: root))
         web = WebShelf(folder: Layout.web(in: root), library: Layout.plugins(in: root))
         self.makeBot = makeBot
         self.completionClassifier = completionClassifier
@@ -2143,7 +2145,9 @@ public final class Workspace: ObservableObject {
                 // After the change is published, so the registry reads its new state.
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    pluginHost.update(plugins.hostSpecs(dataRoot: dataRoot))
+                    let specs = plugins.hostSpecs(dataRoot: dataRoot)
+                    browser.retainTools(plugins: Set(specs.map(\.name)))
+                    pluginHost.update(specs)
                 }
             }
             .store(in: &subscriptions)
@@ -2158,6 +2162,11 @@ public final class Workspace: ObservableObject {
             switch method {
             case "notify":
                 tell(mainBot, "\(title): \(params["text"]?.string ?? "")")
+            case "browser.register":
+                guard plugins.plugin(plugin)?.enabled == true else { return }
+                try? browser.register(plugin: plugin, key: params["id"]?.string ?? "", title: params["title"]?.string ?? "", origin: params["origin"]?.string ?? "")
+            case "browser.unregister":
+                browser.unregister(plugin: plugin, key: params["id"]?.string ?? "")
             case "bots.send":
                 if let id = params["bot"]?.string, let text = params["text"]?.string { bot(pluginID: id)?.send(text) }
             default:
@@ -2167,6 +2176,11 @@ public final class Workspace: ObservableObject {
         pluginHost.onRequest = { [weak self] method, params in
             guard let self else { return .null }
             switch method {
+            case "browser.perform":
+                guard let plugin = params["plugin"]?.string, plugins.plugin(plugin)?.enabled == true, let perform = browser.perform else {
+                    throw HostMessage.HostError(message: "No active browser tool invocation.")
+                }
+                return try await perform(plugin, params)
             case "bots.list":
                 return .array(([mainBot] + everyProject.compactMap { self.managers[$0.id] }).map(info(for:)))
             case "bots.create":

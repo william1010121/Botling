@@ -38,9 +38,18 @@ export interface NewBot { name: string; job: string; avatar?: string }
 export interface Outgoing { bot: BotInfo; text: string }
 export interface Incoming { bot: BotInfo; text: string }
 
+export interface BrowserScope { origin: string; account: string; tab: string }
+export interface BrowserOperation extends BrowserScope { operation: "observe" | "click" | "extract"; target?: string }
+
 /** The `ccb` object a program part's `activate` receives. */
 export interface CcbHost {
   name: string;
+  browser: {
+    /** Offered only at this exact origin; run receives the user's selected account/tab. */
+    registerTool(tool: { id: string; title: string; origin: string }, run: (scope: BrowserScope) => unknown): Dispose;
+    /** Runs only during a user-invoked tool, on that invocation's exact page scope. */
+    perform(operation: BrowserOperation): Promise<unknown>;
+  };
   bots: {
     list(): Promise<BotInfo[]>;
     /**
@@ -325,6 +334,18 @@ export class Host {
 
     return {
       name,
+      browser: {
+        registerTool: (tool, run) => {
+          const method = `browser.tool.${tool.id}`;
+          plugin.web.set(method, run as (params: unknown) => unknown);
+          this.notify("browser.register", { ...tool, plugin: name });
+          return own(() => {
+            plugin.web.delete(method);
+            this.notify("browser.unregister", { id: tool.id, plugin: name });
+          });
+        },
+        perform: async operation => this.request("browser.perform", { ...operation, plugin: name }),
+      },
       bots: {
         list: async () => (await this.request("bots.list", {})) as BotInfo[],
         create: async (bot) => (await this.request("bots.create", { plugin: name, name: bot?.name, job: bot?.job, avatar: bot?.avatar })) as BotInfo,

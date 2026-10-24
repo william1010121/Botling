@@ -5,7 +5,7 @@ extension Workspace {
 
     /// You are looking at `chat`: it is selected (not a web site), and the window is focused.
     func isViewing(_ chat: Bot) -> Bool {
-        windowFocused && selectedBot === chat && WebSite.site(selection: selection) == nil
+        windowFocused && selection != BrowserShelf.selectionID && selectedBot === chat && WebSite.site(selection: selection) == nil
     }
 
     /// A line arrived in `chat`: read at once if you are looking at it.

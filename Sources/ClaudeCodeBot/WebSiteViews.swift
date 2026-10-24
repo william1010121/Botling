@@ -21,6 +21,7 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
     /// While it changes, it says so at most this often (a question just sent shows at once).
     private static let changedMilliseconds = 1000
 
+    let generalBrowsing: Bool
     let id: UUID
     let site: WebSite
     /// The account it is signed in to: its own data store.
@@ -39,14 +40,15 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
     /// What each page reader (by hash) declares: whether it reads the traffic, and which requests.
     private static var declarations: [String: (network: Bool, urls: [String])] = [:]
 
-    init(id: UUID = UUID(), site: WebSite, account: WebAccount? = nil, shelf: WebShelf) {
+    init(id: UUID = UUID(), site: WebSite, account: WebAccount? = nil, shelf: WebShelf, generalBrowsing: Bool = false) {
+        self.generalBrowsing = generalBrowsing
         self.id = id
         self.site = site
         // The first account is the site's own store (`site.dataStoreID`), as before accounts.
         let account = account ?? WebAccount.first(of: site)
         self.account = account
         self.shelf = shelf
-        shelf.attach(id, account: account)
+        if !generalBrowsing { shelf.attach(id, account: account) }
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: account.dataStoreID)
         WebMenuAnchoring.install(in: configuration, host: site.host)
@@ -80,7 +82,7 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
             configuration.userContentController.add(self, contentWorld: .page, name: WebCaptureScripts.messageName)
         }
         // LaTeX snippets and live preview in the site's input box (web-laas, in the app's resources).
-        WebLaas.shared(resources: AppResources.bundle.url(forResource: "web-laas", withExtension: nil))?.install(in: webView)
+        if !generalBrowsing { WebLaas.shared(resources: AppResources.bundle.url(forResource: "web-laas", withExtension: nil))?.install(in: webView) }
         webView.navigationDelegate = self
         webView.uiDelegate = self
         // A new question gets its id by the page changing its address, without a new load.
@@ -101,11 +103,11 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
         webView.stopLoading()
         webView.configuration.userContentController.removeAllScriptMessageHandlers()
         webView.removeFromSuperview()
-        shelf.closed(id)
+        if !generalBrowsing { shelf.closed(id) }
     }
 
     private func addressChanged() {
-        guard let url = webView.url else { return }
+        guard !generalBrowsing, let url = webView.url else { return }
         shelf.pageChanged(on: site, page: id, url: url, pageTitle: webView.title)
     }
 
@@ -118,6 +120,7 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
                 if let event = WebNetEvent(message: message.body) { network.append(event, now: Date().timeIntervalSince1970 * 1000) }
                 return
             }
+            guard !generalBrowsing else { return }
             let settled = (message.body as? String) != "changed"
             if settled { changedAt = Date() }
             if !settled, shelf.row(of: id, on: site)?.isAwaiting == true { return }
@@ -235,6 +238,11 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
 
     // Sign-in and the site's own pop-ups stay inside; other sites open in the browser.
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void) {
+        if generalBrowsing {
+            guard let url = action.request.url, BrowserShelf.origin(url) != nil || url.absoluteString == "about:blank" else { decisionHandler(.cancel); return }
+            decisionHandler(.allow)
+            return
+        }
         if let url = action.request.url, action.targetFrame?.isMainFrame != false, action.navigationType == .linkActivated,
            ["http", "https"].contains(url.scheme ?? ""), !site.keepsInside(url) {
             NSWorkspace.shared.open(url)
@@ -246,7 +254,7 @@ final class WebTab: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessag
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         if let url = action.request.url {
-            if site.keepsInside(url) { webView.load(action.request) } else { NSWorkspace.shared.open(url) }
+            if generalBrowsing, BrowserShelf.origin(url) != nil { webView.load(action.request) } else if site.keepsInside(url) { webView.load(action.request) } else { NSWorkspace.shared.open(url) }
         }
         return nil
     }
@@ -651,6 +659,7 @@ struct WebRailSection: View {
             .padding(.leading, 10)
             .frame(height: 28)
             .padding(.top, 6)
+        BrowserRailRows(workspace: workspace, browser: workspace.browser)
         ForEach(WebSite.all) { site in
             WebSiteRow(workspace: workspace, shelf: shelf, site: site, count: shelf.conversations(of: site).count, selected: workspace.selectedWebSite == site && shelf.open[site.id] == nil) {
                 workspace.navigate(to: site)

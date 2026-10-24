@@ -1,0 +1,9 @@
+<!doctype html><meta charset="utf-8"><title>Local Tasks</title>
+<style>body{background:#17191f;color:#e4e6eb;font:16px system-ui;padding:32px}button,a{color:#bfcfff}button{background:#303746;border:1px solid #576278;border-radius:8px;padding:10px;margin:8px 8px 8px 0}p{line-height:1.6}</style>
+<h1>Local Tasks</h1><p>Synthetic fixture only — no external account.</p>
+<button id="login" onclick="document.cookie='fixture_login=present;path=/;max-age=3600';localStorage.setItem('fixture','signed-in');document.getElementById('status').textContent='Signed in locally'">Sign in locally</button>
+<button id="details" onclick="document.getElementById('detail').hidden=false">Open details</button>
+<a href="/next.html">Next page</a>
+<p id="status"></p><p id="detail" hidden>Task Alpha · owner Fixture · complete</p>
+<input type="password" value="fixture-password-never-observed">
+<script>document.getElementById('status').textContent=localStorage.getItem('fixture')==='signed-in'?'Signed in locally':'Signed out';fetch('/tasks.json').then(r=>r.json()).then(r=>window.fixtureTasks=r);</script>

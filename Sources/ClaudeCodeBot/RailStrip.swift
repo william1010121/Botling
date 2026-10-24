@@ -117,6 +117,10 @@ struct RailStrip: View {
                     workspace.select(Workspace.maintainerID)
                 }
             }
+            RailIcon(title: "Browser", detail: "Browse and pin websites", selected: workspace.selection == BrowserShelf.selectionID,
+                     asleep: false, running: false, stuck: false, unread: false, tip: $tip) {
+                workspace.select(BrowserShelf.selectionID)
+            } face: { Image(systemName: "globe").font(.system(size: 23)).foregroundStyle(Theme.muted) }
             ForEach(WebSite.all) { site in
                 RailIcon(
                     title: site.name,

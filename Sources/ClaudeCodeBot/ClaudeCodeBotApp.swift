@@ -48,9 +48,10 @@ struct RootView: View {
     var body: some View {
         let bot = workspace.selectedBot
         // A web AI (Gemini) picked in the left column: its site shows instead of a chat.
+        let browsing = workspace.selection == BrowserShelf.selectionID
         let web = workspace.selectedWebSite
         let collapsed = workspace.railCollapsed
-        let spec = workspace.viewingSubagent == nil && workspace.selectedWebSite == nil ? workspace.openSpec(in: bot) : nil
+        let spec = !browsing && workspace.viewingSubagent == nil && workspace.selectedWebSite == nil ? workspace.openSpec(in: bot) : nil
         let rightCollapsed = spec == nil && workspace.rightPanelCollapsed
         GeometryReader { window in
         // The columns never add up to more than the window: a panel too wide for it (the spec
@@ -73,8 +74,11 @@ struct RootView: View {
                 // Kept under a web site's page, so coming back does not reload it either.
                 ChatSurface(bot: bot, workspace: workspace, components: workspace.components, commands: workspace.componentCommands, plugins: workspace.plugins, inputs: inputs)
                     .modifier(BoardMode(workspace: workspace, inputs: inputs, bot: bot))
-                    .opacity(web == nil ? 1 : 0)
-                    .allowsHitTesting(web == nil)
+                    .opacity(web == nil && !browsing ? 1 : 0)
+                    .allowsHitTesting(web == nil && !browsing)
+                BrowserColumn(workspace: workspace, visible: browsing)
+                    .opacity(browsing ? 1 : 0)
+                    .allowsHitTesting(browsing)
                 if let web {
                     WebSiteColumn(shelf: workspace.web, site: web, workspace: workspace)
                 }
@@ -88,6 +92,8 @@ struct RootView: View {
                     } else {
                         WebPanel(workspace: workspace, site: web)
                     }
+                } else if browsing {
+                    BrowserPanel(browser: workspace.browser, collapsed: rightCollapsed) { setRightPanel(collapsed: false) }
                 } else if let spec {
                     // A component spec's chip was pressed: its workspace, until collapsed back.
                     SpecPanelView(specID: spec.id, bot: bot, workspace: workspace, components: workspace.components, commands: workspace.componentCommands)

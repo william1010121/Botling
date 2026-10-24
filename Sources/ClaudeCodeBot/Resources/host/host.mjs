@@ -243,6 +243,18 @@ var Host = class {
     mkdirSync(plugin.spec.storageDir, { recursive: true });
     return {
       name,
+      browser: {
+        registerTool: (tool, run) => {
+          const method = `browser.tool.${tool.id}`;
+          plugin.web.set(method, run);
+          this.notify("browser.register", { ...tool, plugin: name });
+          return own(() => {
+            plugin.web.delete(method);
+            this.notify("browser.unregister", { id: tool.id, plugin: name });
+          });
+        },
+        perform: async (operation) => this.request("browser.perform", { ...operation, plugin: name })
+      },
       bots: {
         list: async () => await this.request("bots.list", {}),
         create: async (bot) => await this.request("bots.create", { plugin: name, name: bot?.name, job: bot?.job, avatar: bot?.avatar }),

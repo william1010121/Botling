@@ -124,6 +124,11 @@ final class WebCapture: ObservableObject {
         let url = tab.webView.url ?? site.startURL
         let parts = await tab.pageParts()
         let screenshot = await tab.screenshot()
+        guard tab.webView.url == url else {
+            state = .failed("The page navigated during capture. Capture the current page again.")
+            done?(nil)
+            return
+        }
         let script = WebExtractors.script(for: site, library: shelf.library, bundled: shelf.bundledExtractors)
         var both: (page: WebReading, network: WebReading?, json: String?)?
         if let script { both = await tab.readBoth(script.source, url: url, events: events) }

@@ -11,7 +11,7 @@ extension Workspace {
     /// Board, not for a subagent's view or a web site (which has no Board, and whose page uses
     /// the room).
     public var showsBoardSwitch: Bool {
-        selectedWebSite == nil && viewingSubagent == nil && selectedBot.profile.capabilities.board
+        selection != BrowserShelf.selectionID && selectedWebSite == nil && viewingSubagent == nil && selectedBot.profile.capabilities.board
     }
 
     public func select(_ site: WebSite) {
