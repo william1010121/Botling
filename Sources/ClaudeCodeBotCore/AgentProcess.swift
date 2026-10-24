@@ -3,6 +3,8 @@ import Foundation
 /// What the bot needs from one running `claude` session.
 public protocol AgentProcess: AnyObject, Sendable {
     var events: AsyncStream<AgentEvent> { get }
+    /// nil: this transport has no authoritative app-worker snapshot. Empty: none exist.
+    var completionWorkerDependencies: [PromiseCheck.WorkerDependency]? { get }
     /// Sends a user message. While a turn is running, Claude merges it into that turn.
     func send(_ text: String)
     /// Sends a user message with images Claude looks at directly.
@@ -29,6 +31,7 @@ public protocol AgentProcess: AnyObject, Sendable {
 }
 
 extension AgentProcess {
+    public var completionWorkerDependencies: [PromiseCheck.WorkerDependency]? { nil }
     public func send(_ text: String, images: [Attachment]) {
         send(text)
     }

@@ -12,6 +12,7 @@ final class FakeAgent: AgentProcess, @unchecked Sendable {
     private var _sent: [String] = []
     private var _sentImages: [[ClaudeCodeBotCore.Attachment]] = []
     private var _finished = false
+    var completionWorkerDependencies: [PromiseCheck.WorkerDependency]?
 
     init(_ launch: AgentLaunch, respond: @escaping @Sendable (String) -> String?) {
         self.launch = launch

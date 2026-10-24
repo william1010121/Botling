@@ -42,6 +42,23 @@ public enum PromiseCheck {
         public init(kind: Kind, evidence: String) { self.kind = kind; self.evidence = evidence }
     }
 
+    /// A snapshot from the live app-server, never reconstructed from saved UI cards.
+    public struct WorkerDependency: Equatable, Sendable, Codable {
+        public enum State: String, Sendable, Codable { case running, reportQueued, inactive }
+        public var id: String
+        public var run: Int
+        public var task: String
+        public var state: State
+        public var callback: String?
+        public var outcome: String?
+        public var taskTruncated = false
+
+        public init(id: String, run: Int, task: String, state: State, callback: String? = nil, outcome: String? = nil) {
+            self.id = id; self.run = run; self.task = task; self.state = state
+            self.callback = callback; self.outcome = outcome
+        }
+    }
+
     public struct TurnEnd: Equatable, Sendable, Codable {
         public var reply: String
         public var workPending: Bool
@@ -53,6 +70,8 @@ public enum PromiseCheck {
         public var terminalRequired: Bool
         public var signals: [Signal]
         public var evidenceTruncated: Bool
+        public var workerDependencies: [WorkerDependency]? = nil
+        public var workerDependenciesTruncated = false
 
         public init(reply: String, workPending: Bool, task: String = "", conversation: String = "",
                     dependencies: [String] = [], actions: [String] = [], memory: String = "", terminalRequired: Bool = false, signals: [Signal] = [], evidenceTruncated: Bool = false) {
