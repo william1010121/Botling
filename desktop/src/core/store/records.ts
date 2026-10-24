@@ -48,6 +48,9 @@ export interface StepRecord {
   at?: number;
 }
 
+/** `MessageReaction`: an emoji on a line, and who put it there ("user", "head:claude"). */
+export interface ReactionRecord { emoji: string; actor: string }
+
 /** A Phase 0 card (2.0 only; 1.x draws components by name from its library instead). */
 export interface CardRecord { id: string; html: string; data: string | null }
 
@@ -70,6 +73,7 @@ export interface ChatRecord {
   interrupted?: boolean;
   engine?: string;
   session?: string;
+  reactions?: ReactionRecord[];
   // ---- 2.0 only (1.x ignores these) ----
   turnID?: string;
   state?: "streaming" | "done" | "stopped" | "failed";
