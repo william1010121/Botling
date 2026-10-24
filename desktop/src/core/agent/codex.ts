@@ -601,7 +601,7 @@ export class CodexSession {
       const queued = this.workers.get(args.task_id)!.active;
       out.push(...this.messageWorker(args.task_id, args.message));
       const active = this.active;
-      if (active?.task === args.task_id) active.reconciled = true;
+      if (active && active.task === args.task_id) active.reconciled = true;
       response = reply({ task_id: args.task_id, status: queued ? "queued" : "accepted" }, true);
     } else if (tool === "app_task_checkpoint") {
       const task = typeof args.task_id === "string" ? args.task_id : null;
