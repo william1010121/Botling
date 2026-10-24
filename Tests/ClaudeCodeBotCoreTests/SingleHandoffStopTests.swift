@@ -241,7 +241,8 @@ struct SingleHandoffStopBotTests {
         recipient.emit(.trace(.subagentStarted(id: "owned-worker", description: "Task A", type: "codex-worker", prompt: "Task A", background: true)))
         recipient.emit(.managedWorkPending(true))
         recipient.reply("Accepted by worker.")
-        await eventually { bot.partner?.isWorking == false }
+        // Task B can use the idle coordinator while A's worker keeps its return route.
+        await eventually { recipient.sent.contains { $0.contains("hands you this") && $0.contains("Task B") } }
         #expect(bot.handoffs.first { $0.id == a }?.state == .running)
         #expect(bot.stopHandoff(a))
         #expect(recipient.cancelledTasks == [Set(["owned-worker"])])
