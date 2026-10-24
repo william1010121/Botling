@@ -1,7 +1,9 @@
 import { post } from "./bridge";
 import { t } from "./i18n";
-import type { CatchUpView, ChatState } from "./types";
+import type { CatchUpView, ChatState, MessageView } from "./types";
 import { sourceLinks, clickableSourceURL, type SourceLink } from "./catchup-links";
+import { summaryMessages, summaryReferences } from "./summary-sources";
+import { summaryViewer, sourceAuthor, sourceHead, summaryBy } from "./summary-viewer";
 import { escapeHTML } from "./util";
 
 /**
@@ -16,7 +18,11 @@ export class CatchUpGroup {
   /** "End of unread", after the last one, while expanded. */
   readonly end: HTMLElement;
   /** Ranges you expanded, by `CatchUpView.key`. */
-  private readonly expanded = new Set<string>();
+  private readonly revealed = new Set<string>();
+  private state: ChatState | null = null;
+  private element: (id: string) => HTMLElement | null = () => null;
+  private tooltip: HTMLElement | null = null;
+  private owner = "";
   private folded = new Set<HTMLElement>();
   private drawnKey = "";
   private view: CatchUpView | null = null;
@@ -29,12 +35,18 @@ export class CatchUpGroup {
     this.end.className = "catchup-extra catchup-end";
     for (const element of [this.head, this.end]) {
       element.addEventListener("click", (event) => this.clicked(event));
+      element.addEventListener("pointerover",event=>this.preview(event));
+      element.addEventListener("focusin",event=>this.preview(event));
+      element.addEventListener("pointerout",()=>this.tooltip?.remove());
+      element.addEventListener("focusout",()=>this.tooltip?.remove());
     }
   }
 
   /** Places the group for `state`; `element` finds a message's drawn row. */
   update(state: ChatState, element: (id: string) => HTMLElement | null): void {
     this.botID = state.botID;
+    this.state = state;
+    this.element = element;
     const view = state.subagent ? null : state.catchUp ?? null;
     const rows = view ? view.ids.map(element).filter((row): row is HTMLElement => !!row) : [];
     if (!view || rows.length === 0) {
@@ -42,15 +54,20 @@ export class CatchUpGroup {
       return;
     }
     this.view = view;
-    const open = this.expanded.has(view.key);
+    const owner = `${state.botID}:${view.key}`;
+    if(this.owner && this.owner!==owner){summaryViewer.close(this.owner);this.revealed.clear();}
+    this.owner=owner;
+    const open = summaryViewer.isOpen(this.owner);
+    const source = summaryMessages(view,state.messages);
+    summaryViewer.sync(this.owner,state,view);
     const avatars = [...new Set(state.messages.filter((m) => view.ids.includes(m.id) && m.avatar).map((m) => m.avatar!))].slice(0, 3);
     const links = sourceLinks(state.messages.filter((m) => view.ids.includes(m.id)));
-    const drawKey = JSON.stringify([view, open, avatars, links, state.lang, state.avatar]);
+    const drawKey = JSON.stringify([view, open, avatars, links, source, state.lang, state.avatar]);
     if (drawKey !== this.drawnKey) {
       const focused = this.head.contains(document.activeElement) || this.end.contains(document.activeElement)
         ? (document.activeElement as HTMLElement).dataset.action : undefined;
       this.drawnKey = drawKey;
-      this.head.innerHTML = this.interval ? intervalHTML(view, open, state.avatar, links) : headHTML(view, open, avatars, links);
+      this.head.innerHTML = this.interval ? intervalHTML(view, open, state.avatar, links, source) : headHTML(view, open, avatars, links, source);
       this.end.innerHTML = endHTML(view.manual);
       if (focused) (this.head.querySelector<HTMLElement>(`[data-action="${focused}"]`) ?? this.end.querySelector<HTMLElement>(`[data-action="${focused}"]`))?.focus({ preventScroll: true });
     }
@@ -59,21 +76,21 @@ export class CatchUpGroup {
 
     const now = new Set(rows);
     for (const row of this.folded) if (!now.has(row)) row.classList.remove("catchup-folded");
-    for (const row of rows) row.classList.toggle("catchup-folded", !open);
+    for (const id of view.ids) element(id)?.classList.toggle("catchup-folded", !this.revealed.has(id));
     this.folded = now;
 
     const first = rows[0], last = rows[rows.length - 1];
     if (first.previousElementSibling !== this.head) first.before(this.head);
-    if (open) {
-      if (last.nextElementSibling !== this.end) last.after(this.end);
-    } else {
-      this.end.remove();
-    }
+    this.end.remove();
   }
 
   clear(): void {
     for (const row of this.folded) row.classList.remove("catchup-folded");
     this.folded.clear();
+    this.revealed.clear();
+    if(this.owner) summaryViewer.close(this.owner);
+    this.owner="";
+    this.tooltip?.remove();
     this.head.remove();
     this.end.remove();
     this.view = null;
@@ -87,15 +104,37 @@ export class CatchUpGroup {
       post({ type: "catchUpRetry", botID: this.botID, ...(this.interval ? { key: this.view.key } : {}) });
       return;
     }
-    const key = this.view.key;
-    if (this.expanded.has(key)) this.expanded.delete(key);
-    else this.expanded.add(key);
+    const point = button.dataset.citePoint == null ? -1 : Number(button.dataset.citePoint);
+    const index = Number(button.dataset.citeIndex ?? 0);
+    if (!this.state) return;
+    this.tooltip?.remove();
+    summaryViewer.open(this.owner,this.state,this.view,this.element,id=>this.revealSource(id),point,index);
     onToggle?.();
-    // Collapsing from the end row: the card is where you are.
-    if (button.dataset.action === "collapse") {
-      this.head.querySelector<HTMLElement>('[data-action="toggle"]')?.focus({ preventScroll: true });
-      this.head.scrollIntoView?.({ block: "nearest" });
-    }
+    summaryViewer.setRestoreTarget(()=>this.head.querySelector<HTMLElement>(point<0?'[data-action="toggle"]':`[data-cite-point="${point}"][data-cite-index="${index}"]`));
+  }
+
+  private preview(event: Event): void {
+    const chip=(event.target as HTMLElement).closest<HTMLElement>("[data-cite-point]");
+    if(!chip || !this.view || !this.state)return;
+    this.tooltip?.remove();
+    const reference=summaryReferences(this.view,this.state.messages)[Number(chip.dataset.citePoint)]?.sources[Number(chip.dataset.citeIndex)];
+    const source=this.state.messages.find(m=>m.id===reference?.messageID);if(!source || !reference)return;
+    const tooltip=document.createElement("div");tooltip.className="source-hover";tooltip.setAttribute("role","tooltip");
+    tooltip.innerHTML=`<strong>${escapeHTML(sourceAuthor(source,reference))}</strong> <span>${escapeHTML(reference.part==="answer"?"":source.sourceTime??source.time??"")}</span><div>${escapeHTML((reference.quote??source.text).slice(0,200))}</div><small>${escapeHTML(t("source.openCitation"))}</small>`;
+    document.body.append(tooltip);this.tooltip=tooltip;
+    const rect=chip.getBoundingClientRect();tooltip.style.left=`${Math.max(8,Math.min(rect.left,innerWidth-Math.min(340,innerWidth-16)-8))}px`;tooltip.style.top=`${Math.max(8,Math.min(rect.bottom+8,innerHeight-tooltip.offsetHeight-8))}px`;
+  }
+
+  private revealSource(id: string): void {
+    if (!this.view?.ids.includes(id)) return;
+    this.revealed.add(id);
+    onToggle?.();
+    const row=this.element(id);if(!row)return;
+    row.classList.remove("catchup-folded");row.classList.add("source-live-flash");
+    row.scrollIntoView?.({block:"center"});
+    const focus=row.querySelector<HTMLElement>('button:not([disabled]),iframe,input,textarea')??row;
+    if(!focus.hasAttribute("tabindex"))focus.setAttribute("tabindex","-1");focus.focus({preventScroll:true});
+    setTimeout(()=>row.classList.remove("source-live-flash"),2000);
   }
 }
 
@@ -103,6 +142,7 @@ export class CatchUpGroup {
 let onToggle: (() => void) | null = null;
 export function onCatchUpToggle(redraw: () => void): void {
   onToggle = redraw;
+  summaryViewer.onClose = redraw;
 }
 
 const sparkle = `<svg class="catchup-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg>`;
@@ -125,14 +165,14 @@ export function bulletHTML(bullet: string): string {
     : `<li><span class="dot" aria-hidden="true"></span><span>${body}</span></li>`;
 }
 
-function headHTML(view: CatchUpView, open: boolean, avatars: string[], links: SourceLink[]): string {
+function headHTML(view: CatchUpView, open: boolean, avatars: string[], links: SourceLink[], source: MessageView[]): string {
   const n = view.manual ? view.ids.length : view.count;
   const divider = view.manual ? t("catchup.manualRange", { n }) : view.since ? t("catchup.divider", { n, since: view.since }) : t("catchup.dividerNoTime", { n });
   const meta = [t(view.manual ? "catchup.messages" : "catchup.count", { n }), view.heads ? t("catchup.heads", { n: view.heads }) : null].filter(Boolean).join(" · ");
   const range = view.since && view.until ? (view.since === view.until ? view.since : `${view.since} – ${view.until}`) : "";
   let body = "";
   if (view.state === "ready") {
-    body = `<ul class="catchup-bullets">${view.bullets.map(bulletHTML).join("")}</ul>`;
+    body = `<ul class="catchup-bullets">${bulletsHTML(view, source)}</ul>`;
   } else if (view.state === "loading") {
     body = `<div class="catchup-loading" role="status"><div class="catchup-writing"><span class="catchup-spinner" aria-hidden="true"></span><span>${escapeHTML(t("catchup.writing", { model: view.model }))}</span></div>`
       + `<div class="catchup-skeleton" aria-hidden="true"><div style="width:92%"></div><div style="width:74%"></div><div style="width:84%"></div><div style="width:58%"></div></div></div>`;
@@ -140,18 +180,18 @@ function headHTML(view: CatchUpView, open: boolean, avatars: string[], links: So
     body = `<div class="catchup-error" role="alert"><div class="catchup-error-title">${escapeHTML(t("catchup.failed"))}</div>`
       + `<div class="catchup-error-detail">${escapeHTML([view.error, t("catchup.nothingLost", { n })].filter(Boolean).join(" "))}</div></div>`;
   }
-  const footer = open ? t(view.manual ? "catchup.showingMessages" : "catchup.showing", { n }) : view.latest ? t("catchup.latest", { line: view.latest }) : "";
+  const footer = view.latest ? t("catchup.latest", { line: view.latest }) : "";
   const faces = avatars.map((src) => `<img src="${escapeHTML(src)}" alt="">`).join("");
   return `<div class="catchup-divider"><div class="line"></div><div>${escapeHTML(divider)}</div><div class="line"></div></div>`
-    + `<section class="catchup-card${open ? "" : " stacked"}" aria-label="${escapeHTML(t("catchup.label"))}">`
+    + `<section class="catchup-card stacked" aria-label="${escapeHTML(t("catchup.label"))}">`
     + `<div class="catchup-card-body">`
     + `<div class="catchup-top">${view.state === "failed" ? alert : sparkle}<span class="catchup-title">${escapeHTML(t(view.manual ? "catchup.manualTitle" : "catchup.title"))}</span><span class="catchup-meta">${escapeHTML(meta)}</span><span class="catchup-space"></span><span class="catchup-range">${escapeHTML(range)}</span></div>`
     + body
     + linksHTML(links)
     + `<div class="catchup-foot"><div class="catchup-faces" aria-hidden="true">${faces}</div><div class="catchup-latest">${escapeHTML(footer)}</div>`
     + (view.state === "failed" ? `<button type="button" class="catchup-button outline" data-action="retry">${retry}${escapeHTML(t("catchup.retry"))}</button>` : "")
-    + `<button type="button" class="catchup-button" data-action="toggle" aria-expanded="${open}">${escapeHTML(open ? t("catchup.hide") : t("catchup.show", { n }))}${open ? up : down}</button></div>`
-    + (view.state === "ready" ? `<div class="catchup-by">${escapeHTML(t("catchup.by", { model: view.model }))}</div>` : "")
+    + `<button type="button" class="catchup-button" data-action="toggle" aria-expanded="${open}" aria-haspopup="dialog">${escapeHTML(t("catchup.show", { n }))}↗</button></div>`
+    + (view.state === "ready" ? `<div class="catchup-by">${escapeHTML(summaryBy(view))}</div>` : "")
     + `</div></section>`;
 }
 
@@ -169,18 +209,18 @@ function linksHTML(links: SourceLink[]): string {
 
 const lines = `<svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h9"/></svg>`;
 
-function intervalHTML(view: CatchUpView, open: boolean, avatar: string, links: SourceLink[]): string {
+function intervalHTML(view: CatchUpView, open: boolean, avatar: string, links: SourceLink[], source: MessageView[]): string {
   const counts = view.speakerCounts ?? {};
   const breakdown = ["codex", "claude", ...Object.keys(counts).filter(k => k !== "codex" && k !== "claude").sort()]
     .filter(k => counts[k] > 0).map(k => `${k === "codex" ? "Codex" : k === "claude" ? "Claude" : t("interval.unknown")} ×${counts[k]}`).join(t("interval.separator"));
   const range = t("interval.originals", { n: view.count, heads: breakdown ? t("interval.heads", { heads: breakdown }) : "" });
-  const body = view.state === "ready" ? `<ul class="catchup-bullets">${view.bullets.map(bulletHTML).join("")}</ul>`
+  const body = view.state === "ready" ? `<ul class="catchup-bullets">${bulletsHTML(view, source)}</ul>`
     : view.state === "loading" ? `<div class="catchup-writing" role="status"><span class="catchup-spinner" aria-hidden="true"></span>${escapeHTML(t("catchup.writing", { model: view.model }))}</div>`
     : `<div class="catchup-error" role="alert"><span class="catchup-error-title">${escapeHTML(t("catchup.failed"))}</span><span class="catchup-error-detail">${escapeHTML(view.error ?? "")}</span><button type="button" class="catchup-button outline" data-action="retry">${escapeHTML(t("catchup.retry"))}</button></div>`;
   return `<div class="row bot"><img class="avatar" src="${escapeHTML(avatar)}" alt=""><div class="bot-column"><div class="speaker">botling · ${escapeHTML(t(view.automatic ? "interval.autoAttribution" : "interval.attribution"))}</div><section class="bubble bot-bubble interval-card" aria-label="${escapeHTML(t("catchup.manualTitle"))}">`
-    + `<button type="button" class="interval-originals" data-action="toggle" aria-expanded="${open}"><span aria-hidden="true">${open ? "⌄" : "›"}</span><span>${escapeHTML(range)}</span></button>`
+    + `<button type="button" class="interval-originals" data-action="toggle" aria-expanded="${open}" aria-haspopup="dialog"><span aria-hidden="true">${open ? "⌄" : "›"}</span><span>${escapeHTML(range)}</span></button>`
     + (view.automatic ? `<div class="interval-auto">${escapeHTML(t("interval.autoHeader", { n: view.count }))}</div>` : "")
-    + body + linksHTML(links) + `</section></div></div>`;
+    + body + linksHTML(links) + `<div class="catchup-by">${escapeHTML(summaryBy(view))}</div></section></div></div>`;
 }
 
 /** One independent group per range. Never routes an older chip to the latest range. */
@@ -249,4 +289,14 @@ export class IntervalSummaries {
       this.triggers.delete(key);
     }
   }
+}
+
+function bulletsHTML(view: CatchUpView, source: MessageView[]): string {
+  return summaryReferences(view,source).map((bullet,point)=>{
+    const chips=bullet.sources.map((reference,index)=>{
+      const message=source.find(m=>m.id===reference.messageID)!;
+      return `<button type="button" class="source-cite ${sourceHead(message,reference)}" data-action="source" data-cite-point="${point}" data-cite-index="${index}" aria-haspopup="dialog" aria-label="${escapeHTML(t("source.openFrom",{author:sourceAuthor(message,reference),n:point+1}))}"><span class="source-head-dot" aria-hidden="true"></span>${escapeHTML(sourceAuthor(message,reference))}</button>`;
+    }).join("");
+    return bulletHTML(bullet.text).replace(/<\/span><\/li>$/,chips+"</span></li>");
+  }).join("");
 }

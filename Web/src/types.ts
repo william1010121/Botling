@@ -26,6 +26,7 @@ export interface CatchUpView {
   manual?: boolean;
   automatic?: boolean;
   speakerCounts?: Record<string, number> | null;
+  requestedBy?: string | null;
   ids: string[];
   count: number;
   heads?: number | null;
@@ -39,6 +40,9 @@ export interface CatchUpView {
 }
 
 export interface MessageView {
+  sourceAuthor?: string | null;
+  sourceEngine?: string | null;
+  sourceTime?: string | null;
   id: string;
   reactionEnabled?: boolean | null;
   reactions?: { emoji: string; actors: string[]; own: boolean }[] | null;

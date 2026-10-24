@@ -1,3 +1,4 @@
+import { sourceSnapshotScript } from "./source-snapshot";
 import { post } from "./bridge";
 import { t } from "./i18n";
 import { shared } from "./contract";
@@ -76,6 +77,7 @@ html[data-surface="board"] #ccb-root{height:100%}
 html[data-fill],html[data-fill] body,html[data-fill] #ccb-root{height:100%}html[data-fill] #ccb-root{container-type:size}
 html[data-fill] body{overflow-y:auto;scrollbar-width:none}html[data-fill] body::-webkit-scrollbar{display:none}</style>
 <script>
+${sourceSnapshotScript}
 // First of all: an input method's Return (Zhuyin, Pinyin) never reaches the template's handlers.
 ${imeGuardScript}
 (() => {

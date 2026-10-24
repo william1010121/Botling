@@ -76,6 +76,10 @@ public struct ChatPayload: Encodable, Equatable {
         /// A bot's turn cut off before it answered: what it had said and done so far.
         var interrupted: Bool? = nil
         var completionVerification: CompletionVerification? = nil
+        /// Source provenance: persisted message identity, never inferred from current engine settings.
+        var sourceAuthor: String? = nil
+        var sourceEngine: String? = nil
+        var sourceTime: String? = nil
     }
 
     public struct SubagentRef: Encodable, Equatable {
@@ -414,6 +418,7 @@ public struct ChatPayload: Encodable, Equatable {
         public var manual: Bool = false
         public var automatic: Bool = false
         public var speakerCounts: [String: Int]? = nil
+        public var requestedBy: String? = nil
     }
 
     /// Bot look Cute: the engine characters as image URLs. `avatar`: a head's
@@ -688,7 +693,10 @@ public struct ChatPayload: Encodable, Equatable {
                 },
                 seen: group == nil ? seenMarks(message, in: bot) : nil,
                 interrupted: message.interrupted == true ? true : nil,
-                completionVerification: message.completionVerification
+                completionVerification: message.completionVerification,
+                sourceAuthor: message.role == .bot ? (sourceName ?? (message.sourceID == nil ? bot.name : nil)) : nil,
+                sourceEngine: message.engine?.rawValue,
+                sourceTime: CatchUp.time(message.date)
             )
         }
         // All the chat's background work goes on its latest message, as one row of counts.

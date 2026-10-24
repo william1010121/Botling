@@ -53,19 +53,19 @@ describe("catch-up summary", () => {
     expect(order()).toEqual(["a", "HEAD", "b", "c", "d", "e"]);
   });
 
-  it("expands to every message with an end row, and collapses again", () => {
+  it("opens all originals in a centered viewer while keeping the main rows folded", () => {
     window.ccb.setState(state(view()));
+    const originals=rows();
     const toggle = document.querySelector<HTMLButtonElement>('[data-action="toggle"]')!;
-    expect(toggle.textContent).toBe("Show 4 messages");
-    toggle.click();
-    expect(document.querySelectorAll(".catchup-folded")).toHaveLength(0);
-    expect(order()).toEqual(["a", "HEAD", "b", "c", "d", "e", "END"]);
-    expect(document.querySelector('[data-action="toggle"]')?.getAttribute("aria-expanded")).toBe("true");
-    expect(document.querySelector(".catchup-latest")?.textContent).toBe("Showing all 4 unread below");
-    expect(document.querySelector(".catchup-end span")?.textContent).toBe("End of unread · you’re caught up");
-    document.querySelector<HTMLButtonElement>('[data-action="collapse"]')!.click();
-    expect(document.querySelectorAll(".catchup-folded")).toHaveLength(4);
+    toggle.focus();toggle.click();
+    expect(document.querySelectorAll("#messages .catchup-folded")).toHaveLength(4);
     expect(order()).toEqual(["a", "HEAD", "b", "c", "d", "e"]);
+    expect(document.querySelectorAll(".summary-source-viewer .source-message")).toHaveLength(4);
+    expect(rows()).toEqual(originals);
+    document.querySelector<HTMLButtonElement>('[data-source-close]')!.click();
+    expect(document.querySelector(".summary-source-viewer")).toBeNull();
+    expect(document.querySelectorAll("#messages .catchup-folded")).toHaveLength(4);
+    expect(document.activeElement?.getAttribute("data-action")).toBe("toggle");
   });
 
   it("shows loading with the selected model, and a failure with Retry", () => {
@@ -187,8 +187,8 @@ it("keeps historical cards, links, retry targets and expansion independent in ev
   expect(heads()[1].textContent).toContain("未知來源 ×1");
   expect(heads()[1].textContent).toContain("你送出下一則時自動結算 · 1 則回覆，達到門檻");
   heads()[0].querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
-  expect(document.querySelector('[data-id="old"]')?.classList.contains("catchup-folded")).toBe(false);
-  expect(document.querySelector('[data-id="metadata"]')?.classList.contains("catchup-folded")).toBe(false);
+  expect(document.querySelector('[data-id="old"]')?.classList.contains("catchup-folded")).toBe(true);
+  expect(document.querySelector('[data-id="metadata"]')?.classList.contains("catchup-folded")).toBe(true);
   expect(document.querySelector('[data-id="new"]')?.classList.contains("catchup-folded")).toBe(true);
   draw("failed");
   expect(sourceURLs()).toHaveLength(2);
@@ -235,12 +235,13 @@ it("folds timestamped component requests and attachments within the cutoff", () 
         expect(container("contribution")).toBe(original);
         expect(original.querySelector("img.thumb")).toBe(image);
         expect(image).not.toBeNull();
-        for (const id of ids) expect(getComputedStyle(container(id)).display).not.toBe("none");
-        document.querySelector<HTMLButtonElement>('[data-action="collapse"]')!.click();
+        for (const id of ids) expect(getComputedStyle(container(id)).display).toBe("none");
+        expect(document.querySelectorAll(".source-message")).toHaveLength(ids.length);
+        document.querySelector<HTMLButtonElement>('[data-source-close]')!.click();
         expect(getComputedStyle(original).display).toBe("none");
       }
     }
     window.ccb.setState(state(null, { messages, intervalSummaries: [] }));
     for (const id of ids) expect(getComputedStyle(container(id)).display).not.toBe("none");
   } finally { style.remove(); }
-});
+}, 30000);

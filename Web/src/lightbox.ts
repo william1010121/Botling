@@ -59,7 +59,7 @@ export function openLightbox(url: string, label: string): void {
   });
 
   const restore = document.activeElement;
-  document.body.append(box);
+  (document.querySelector("dialog.summary-source-viewer[open]") ?? document.body).append(box);
   current = { box, restore };
   box.querySelector<HTMLButtonElement>(".lightbox-close")!.focus();
 }

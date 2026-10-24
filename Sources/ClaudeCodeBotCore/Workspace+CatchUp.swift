@@ -95,11 +95,12 @@ extension Workspace {
             intervalSummaries[chat.id]?[oldKey] = nil
         }
         var state = CatchUpState(key: key, messageIDs: messages.map(\.id), phase: .loading,
-                                 model: settings.catchUpModel, manual: true, automatic: automatic)
+                                 model: settings.catchUpModel, manual: true, automatic: automatic, requestedBy: automatic ? nil : "user")
         if let cached = catchUpCache[key] {
             state.phase = .ready
             state.bullets = cached.bullets
             state.model = cached.model
+            state.requestedBy = cached.requestedBy
         }
         intervalSummaries[chat.id, default: [:]][key] = state
         if state.phase == .loading { runIntervalSummary(in: chat, messages: messages, state: state) }
@@ -112,6 +113,7 @@ extension Workspace {
         guard !source.isEmpty else { return }
         state.phase = .loading
         state.error = nil
+        state.requestedBy = "user"
         state.model = settings.catchUpModel
         intervalSummaries[chat.id]?[key] = state
         runIntervalSummary(in: chat, messages: source, state: state)
@@ -136,7 +138,7 @@ extension Workspace {
             case let .success(bullets):
                 current.phase = .ready
                 current.bullets = bullets
-                catchUpCache.store(bullets, model: model, for: key)
+                catchUpCache.store(bullets, model: model, for: key, requestedBy: current.requestedBy)
             case let .failure(error):
                 current.phase = .failed
                 current.error = error.localizedDescription
@@ -156,7 +158,7 @@ extension Workspace {
             let counts = Dictionary(grouping: replies, by: { $0.engine?.rawValue ?? "unknown" }).mapValues(\.count)
             return ChatPayload.CatchUpView(key: state.key, ids: source.map { $0.id.uuidString },
                 count: replies.count, state: state.phase.rawValue, bullets: state.bullets, error: state.error,
-                model: state.model, manual: true, automatic: state.automatic, speakerCounts: counts)
+                model: state.model, manual: true, automatic: state.automatic, speakerCounts: counts, requestedBy: state.requestedBy)
         }.sorted { lhs, rhs in
             return (positions[lhs.ids.first ?? ""] ?? 0) < (positions[rhs.ids.first ?? ""] ?? 0)
         }
@@ -166,11 +168,12 @@ extension Workspace {
         let key = CatchUp.key(messages, language: language)
         if let current = catchUps[chat.id], current.key == key, current.phase != .failed, current.manual == manual { return }
         let model = settings.catchUpModel
-        var state = CatchUpState(key: key, messageIDs: messages.map(\.id), phase: .loading, model: model, manual: manual)
+        var state = CatchUpState(key: key, messageIDs: messages.map(\.id), phase: .loading, model: model, manual: manual, requestedBy: manual ? "user" : nil)
         if let cached = catchUpCache[key] {
             state.phase = .ready
             state.bullets = cached.bullets
             state.model = cached.model
+            state.requestedBy = cached.requestedBy
             catchUps[chat.id] = state
             return
         }
@@ -186,6 +189,7 @@ extension Workspace {
         guard !messages.isEmpty else { return }
         state.phase = .loading
         state.error = nil
+        state.requestedBy = "user"
         state.model = settings.catchUpModel
         catchUps[chat.id] = state
         summarize(chat, messages: messages, key: state.key, model: state.model)
@@ -211,7 +215,7 @@ extension Workspace {
             case let .success(bullets):
                 state.phase = .ready
                 state.bullets = bullets
-                catchUpCache.store(bullets, model: model, for: key)
+                catchUpCache.store(bullets, model: model, for: key, requestedBy: state.requestedBy)
             case let .failure(error):
                 state.phase = .failed
                 state.error = error.localizedDescription
@@ -227,6 +231,7 @@ extension Workspace {
         case .bot:
             let name = message.sourceID.flatMap { speakerName(for: $0) } ?? chat.name
             return message.engine.map { "\(name) · \($0.displayName)" } ?? name
+        case .user: return "You"
         case .error: return "Error"
         case .relay: return "Handed over"
         default: return "Botling"
@@ -251,7 +256,7 @@ extension Workspace {
             key: state.key, ids: ids.map(\.uuidString), count: counted.count, heads: heads > 1 ? heads : nil,
             state: state.phase.rawValue, bullets: state.bullets, error: state.error, model: state.model,
             since: counted.first.map { CatchUp.time($0.date) }, until: counted.last.map { CatchUp.time($0.date) },
-            latest: latest, manual: state.manual)
+            latest: latest, manual: state.manual, requestedBy: state.requestedBy)
     }
 
     // MARK: Settings

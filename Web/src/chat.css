@@ -1393,3 +1393,46 @@ body.spec-mode .float-layer { display: none; }
 .interval-card .catchup-links li + li { margin-top: 0; }
 .interval-card .catchup-links .chip { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .interval-card .catchup-error .catchup-button { align-self: flex-start; }
+
+/* Approved source viewer: original Catch-up surfaces/tokens, centered 720px dialog. */
+.source-cite { display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 7px;margin-left:4px;border:1px solid var(--border);border-radius:10px;background:#1E1E23;color:var(--muted);font:inherit;font-size:11px;vertical-align:2px;cursor:pointer;max-width:100%; }
+.source-cite:hover,.source-cite:focus-visible { border-color:#4C8DFF;color:var(--text);background:#1C2C4A; }
+.source-head-dot { width:7px;height:7px;border-radius:50%;background:var(--muted);flex:none; }
+.source-cite.claude .source-head-dot,.source-dot.claude { background:#D97757; }
+.source-cite.codex .source-head-dot,.source-dot.codex { background:#6E9BFF; }
+.source-cite.you .source-head-dot,.source-dot.you { background:#EDEDF0; }
+.source-hover { position:fixed;z-index:2000;width:min(340px,calc(100vw - 16px));box-sizing:border-box;padding:12px 14px;border:1px solid var(--border);border-radius:12px;background:#1F1F24;box-shadow:0 10px 28px #0007;font-size:12px;pointer-events:none;overflow-wrap:anywhere; }
+.source-hover > span { color:var(--faint); }.source-hover > div { font-size:13px;line-height:1.5;margin:6px 0;color:#C8C8CE; }.source-hover small { color:var(--link); }
+.summary-source-viewer { position:fixed;inset:0;margin:auto;width:min(720px,calc(100vw - 24px));height:min(760px,calc(100dvh - 32px));max-width:none;max-height:none;padding:0;box-sizing:border-box;border:1px solid #484854;border-radius:18px;background:#0E0E10;color:var(--text);box-shadow:0 24px 64px #0009;overflow:hidden;font:14px -apple-system,BlinkMacSystemFont,"PingFang TC",sans-serif; }
+.summary-source-viewer[open] { display:flex;flex-direction:column; }
+.summary-source-viewer::backdrop { background:rgba(0,0,0,.55); }
+.source-header { display:flex;align-items:center;gap:10px;padding:14px 16px 12px 20px;border-bottom:1px solid var(--line);flex:none; }
+.source-header > div { flex:1;min-width:0; }.source-header strong {font-size:15px;}.source-time,.source-meta { color:var(--faint);font-size:12px; }.source-meta { margin-top:2px;line-height:1.5;overflow-wrap:anywhere; }
+.source-icon { width:32px;height:32px;flex:none;border:none;border-radius:8px;background:transparent;color:var(--muted);font:20px system-ui;cursor:pointer; }.source-icon:hover {background:#2A2A31;}.source-icon:disabled {opacity:.35;cursor:default;}
+.source-nav { display:flex;align-items:center;gap:8px;padding:10px 20px;background:#141A26;border-bottom:1px solid #22324F;font-size:13px;flex:none; }.source-nav strong {color:var(--link);}.source-nav > span {font-size:12px;color:var(--faint);white-space:nowrap;}.source-nav .source-preview-line {flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted);}
+.source-body { flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:20px;display:flex;flex-direction:column;gap:18px; }
+.source-message { display:flex;gap:10px;align-items:flex-start;flex:none;scroll-margin:20px; }.source-avatar {width:32px;height:32px;border-radius:50%;flex:none;margin-top:2px;object-fit:cover;}.source-dot {background:#484854;}.source-column {flex:1;min-width:0;display:flex;flex-direction:column;gap:8px;}
+.source-who {display:flex;align-items:baseline;gap:8px;font-size:12px;flex-wrap:wrap;}.source-who.claude strong {color:#F0A285;}.source-who.codex strong {color:#9DBBFF;}.source-who time {color:var(--faint);}.source-cited-label {margin-left:auto;padding:2px 8px;border-radius:10px;background:#1C2C4A;color:var(--link);font-size:11px;}
+.source-prose {background:#1B1B1F;border-radius:16px;padding:10px 14px;font-size:14px;line-height:1.55;overflow-wrap:anywhere;max-width:100%;}.source-prose:empty {display:none;}.source-prose>:first-child {margin-top:0;}.source-prose>:last-child {margin-bottom:0;}.source-prose .media {max-width:100%;}
+.source-message.cited {border-radius:18px;background:rgba(76,141,255,.12);outline:8px solid rgba(76,141,255,.12);}.source-message.cited .source-prose {box-shadow:0 0 0 1px #4C8DFF;}.source-message mark {background:rgba(76,141,255,.3);color:inherit;border-radius:4px;}
+.source-card {position:relative;box-sizing:border-box;border:1px solid var(--border);border-radius:14px;background:#141418;padding:12px;display:flex;flex-direction:column;gap:8px;overflow-wrap:anywhere;}.source-card pre {white-space:pre-wrap;font-size:12px;}.source-card-top {display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--muted);}.source-unanswered {color:#F7C27F;}.source-answer-in-chat {margin-left:auto;background:#3A2D18;color:#F7C27F;}
+.source-option {display:flex;align-items:center;gap:10px;min-height:40px;padding:6px 12px;border:1px solid var(--border);border-radius:10px;font-size:13px;color:var(--muted);}.source-option>span:first-child {flex:1;min-width:0;}.source-picked {border-color:#4C8DFF;background:#16203A;color:var(--text);}.source-faded {opacity:.55;}.source-note {padding:8px 10px;border-radius:10px;background:#1B1B1F;font-size:13px;line-height:1.5;white-space:pre-wrap;}.source-answer-cited {box-shadow:0 0 0 3px rgba(76,141,255,.25);}
+.source-clipped {max-height:240px;overflow:hidden;padding-bottom:44px;}.source-whole {position:absolute;bottom:8px;left:50%;transform:translateX(-50%);height:28px;white-space:nowrap;box-shadow:0 -14px 22px 12px #141418;z-index:1;}.source-static-frame {border:0;width:100%;display:block;pointer-events:none;flex:none;}
+.source-footer {display:flex;align-items:center;gap:10px;padding:12px 16px 12px 20px;border-top:1px solid var(--line);flex:none;}.source-footer>span {flex:1;font-size:12px;color:var(--faint);}.source-footer button {flex:none;}
+.summary-source-viewer button:focus-visible,.summary-source-viewer a:focus-visible {outline:2px solid #4C8DFF;outline-offset:2px;}.source-live-flash {outline:2px solid #4C8DFF;outline-offset:3px;}
+@media(max-width:480px) { .summary-source-viewer {width:calc(100vw - 16px);height:calc(100dvh - 16px);border-radius:14px;}.source-header,.source-nav,.source-footer {padding:12px;}.source-body {padding:14px;}.source-avatar {width:24px;height:24px;}.source-message {gap:8px;}.source-nav {gap:4px;flex-wrap:wrap;}.source-nav .source-preview-line {flex-basis:100%;order:2;}.source-footer {flex-wrap:wrap;}.source-footer>span {order:2;flex-basis:100%;}.source-column>.chip {max-width:100%;white-space:normal;overflow-wrap:anywhere;}.source-option {flex-wrap:wrap;}.source-header .source-time {display:block;margin-top:3px;} }
+
+.source-column>.chip {align-self:flex-start;max-width:100%;white-space:normal;overflow-wrap:anywhere;}
+.source-option .source-meta:empty {display:none;}
+@media(max-width:480px){.source-option .source-meta{flex-basis:100%;}}
+
+.summary-source-viewer:has(.source-nav) .source-message:not(.cited) {opacity:.5;}
+.source-header>svg {flex:none;}
+/* Keep the existing card usable when its header or retry controls do not fit one line. */
+.catchup-top,.catchup-foot {flex-wrap:wrap;}
+.catchup-title {white-space:nowrap;}
+.catchup-foot .catchup-button {flex-shrink:0;}
+.source-card>* {flex-shrink:0;}
+/* Keep fixed dialog chrome above composited source-card frames in WKWebView. */
+.source-header,.source-nav,.source-footer {position:relative;z-index:1;}
+.source-header,.source-footer {background:#0E0E10;}
