@@ -146,6 +146,8 @@ struct CodexSession {
         var workerDefaults = CodexWorkerDefaults()
         var restoredWorkers: [CodexManagedWorkerRecord] = []
         var routinesURL: URL?
+        var ownerSession = UUID()
+        var restoredMonitors: [CommandMonitor] = []
 
         var workerModel: String? { workerDefaults.model ?? model }
         var workerEffort: EffortLevel? { workerDefaults.effort ?? effort }
@@ -153,6 +155,7 @@ struct CodexSession {
 
     private enum Call {
         case initialize, thread, turn, interrupt, other
+        case monitorCommand(String)
         case coordinatorInstructions(String), workerInstructions(String)
         case steer(Input, String)
         case workerThread(String)
@@ -223,9 +226,15 @@ struct CodexSession {
     private var toolReplies: [String: [String: Any]] = [:]
     private var managedPending = false
     private var stopped = false
+    private var monitors: [String: CommandMonitor] = [:]
+    private var activeMonitor: String?
 
     init(config: Config) {
         self.config = config
+        for var record in config.restoredMonitors where record.owner == config.ownerSession {
+            record.reconcile()
+            monitors[record.id] = record
+        }
         for record in config.restoredWorkers {
             workers[record.id] = ManagedWorker(record: record)
             if record.reportPending, let report = record.report, let status = record.status {
@@ -288,6 +297,7 @@ struct CodexSession {
     }
 
     mutating func answer(_ requestID: String, allow: Bool, message: String? = nil) -> [CodexOutput] {
+        if requestID.hasPrefix("monitor:" ) { return approveMonitor(String(requestID.dropFirst(8)), allow: allow) }
         guard let approval = approvals.removeValue(forKey: requestID) else { return [] }
         let result: [String: Any] = switch approval.kind {
         case .command, .fileChange: ["decision": allow ? "accept" : "decline"]
@@ -370,11 +380,18 @@ struct CodexSession {
             guard let worker = workers[task], worker.active, !worker.cancelled, !stopped else { return [] }
             workers[task]?.loaded = true
             return startWorkerTurn(task, text: worker.instructions)
+        case let .monitorCommand(id):
+            return completeMonitor(id, result: result, error: error)
         case .turn:
+            if let id = activeMonitor {
+                monitors[id]?.wake = error == nil ? .delivered : .uncertain
+            }
             if let error {
                 // The turn never started: its message gets an error reply, and the next goes.
                 turn = nil
-                let message = activeResult.map { Self.handbackFallback($0, reason: Self.message(error)) } ?? Self.message(error)
+                let message = activeMonitor.flatMap { monitors[$0] }.map { "Monitor callback could not start: " + Self.json($0.payload) + "\n" + Self.message(error) }
+                    ?? activeResult.map { Self.handbackFallback($0, reason: Self.message(error)) } ?? Self.message(error)
+                activeMonitor = nil
                 activeResult = nil
                 var out: [CodexOutput] = [.event(.reply(message, isError: true))]
                 out += next()
@@ -543,6 +560,9 @@ struct CodexSession {
         guard !stopped else { return [] }
         threadID = thread
         var out: [CodexOutput] = [.thread(thread)]
+        for record in monitorRecords where record.wake == .uncertain {
+            out.append(.event(.trace(.text("Monitor callback delivery unconfirmed: " + Self.json(record.payload), parent: nil))))
+        }
         if !inbox.isEmpty { out += startTurn(inbox.removeFirst()) }
         else { out += next() }
         out += pendingChanged()
@@ -584,6 +604,8 @@ struct CodexSession {
         guard let current = turn else { return [] }
         if let id = current.id, let ended = finished["id"] as? String, ended != id { return [] }
         turn = nil
+        let monitor = activeMonitor.flatMap { monitors[$0] }
+        activeMonitor = nil
         let handback = activeResult
         activeResult = nil
         lastSteer = nil
@@ -594,7 +616,8 @@ struct CodexSession {
         case "interrupted":
             // Stopped for a message (`interrupt`): an error result the bot does not show, then
             // that message as a turn of its own.
-            let message = handback.map { Self.handbackFallback($0, reason: "The summary turn was interrupted.") }
+            let message = monitor.map { "Monitor continuation was interrupted: " + Self.json($0.payload) }
+                ?? handback.map { Self.handbackFallback($0, reason: "The summary turn was interrupted.") }
                 ?? (current.interruptAsked ? "" : "Codex stopped this turn.")
             out.append(.event(.reply(message, isError: true)))
             if let input = afterInterrupt {
@@ -605,9 +628,12 @@ struct CodexSession {
             let error = finished["error"] as? [String: Any]
             if Self.isConnectionLoss(error?["codexErrorInfo"]) { out.append(.event(.connectionLost(parent: nil))) }
             let reason = error?["message"] as? String ?? "Codex failed."
-            out.append(.event(.reply(handback.map { Self.handbackFallback($0, reason: reason) } ?? reason, isError: true)))
+            out.append(.event(.reply(monitor.map { "Monitor continuation failed: " + Self.json($0.payload) + "\n" + reason }
+                ?? handback.map { Self.handbackFallback($0, reason: reason) } ?? reason, isError: true)))
         default:
-            if let handback, current.said.last(where: { $0.phase != "commentary" })?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            if let monitor, Self.reply(from: current.said).isEmpty {
+                out.append(.event(.reply("Monitor result: " + Self.json(monitor.payload), isError: false)))
+            } else if let handback, current.said.last(where: { $0.phase != "commentary" })?.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
                 out.append(.event(.reply(Self.handbackFallback(handback, reason: "The summary ended without a final answer."), isError: true)))
             } else if var handback, !handback.reconciled, !stopped {
                 if handback.reconciliationAttempt == 0 {
@@ -630,6 +656,17 @@ struct CodexSession {
     /// The next waiting message's turn, or the end once `finish` asked for it.
     private mutating func next() -> [CodexOutput] {
         if !inbox.isEmpty { return startTurn(inbox.removeFirst()) }
+        if let id = monitorRecords.first(where: { $0.wake == .pending })?.id, threadID != nil, !stopped {
+            activeMonitor = id
+            monitors[id]?.wake = .dispatching
+            turn = Turn()
+            tokensAtTurnStart = tokensTotal
+            var params: [String: Any] = ["threadId": threadID!, "input": [],
+                "toolOutput": ["name": "app_monitor_result", "namespace": NSNull(), "output": Self.json(monitors[id]!.payload)],
+                "environments": []]
+            if let effort = config.effort { params["effort"] = Self.effort(effort) }
+            return [.event(.backgroundTurnStarted), request("turn/start", params, as: .turn)] + pendingChanged()
+        }
         if !workerResults.isEmpty, threadID != nil, !stopped {
             let result = workerResults.removeFirst()
             activeResult = result
@@ -732,7 +769,8 @@ struct CodexSession {
         }.sorted { $0.id < $1.id }
     }
 
-    private var hasManagedWork: Bool { workers.values.contains(where: \.active) || !workerResults.isEmpty }
+    private var hasManagedWork: Bool { workers.values.contains(where: \.active) || !workerResults.isEmpty
+        || monitors.values.contains { $0.active || $0.wake == .pending } }
 
     /// Execution/queued callbacks in THIS live runtime. Persisted wasActive flags and UI
     /// trace cards cannot establish liveness. A result already being processed is not a wait.
@@ -747,7 +785,12 @@ struct CodexSession {
             return .init(id: worker.id, run: worker.run, task: worker.ownershipInstructions ?? worker.instructions,
                 state: .reportQueued, callback: "app_task_result", outcome: result.status)
         }
-        return running.sorted { $0.id < $1.id } + queued.sorted { $0.id < $1.id }
+        let commands = monitors.values.compactMap { monitor -> PromiseCheck.WorkerDependency? in
+            guard monitor.state == .running || monitor.wake == .pending else { return nil }
+            return .init(id: monitor.id, run: 1, task: monitor.command,
+                state: monitor.state == .running ? .running : .reportQueued, callback: "app_monitor_result", outcome: monitor.state == .running ? nil : monitor.state.rawValue)
+        }
+        return running.sorted { $0.id < $1.id } + queued.sorted { $0.id < $1.id } + commands.sorted { $0.id < $1.id }
     }
 
     private mutating func pendingChanged() -> [CodexOutput] {
@@ -778,6 +821,15 @@ struct CodexSession {
             "at": ["type": "string"], "cron": ["type": "string"],
             "timezone": ["type": "string"], "id": ["type": "string"]],
             "required": ["operation"], "additionalProperties": false]],
+        ["type": "function", "name": "app_monitor_start",
+         "description": "Start one already authorized command in this bot workspace after an explicit Allow once card, including in auto mode. Supply command as shell text. This is a completion monitor, not a polling/line-event monitor. Returns monitor_id and awaitingApproval immediately; finish the turn without polling. The app queues app_monitor_result on success or nonzero failure with monitor_id, owner_session_id, exit_code and bounded output. No network or permission escalation. Never use to expand scope, bypass a denial or rerun interrupted work. Stop/cancel suppresses callbacks. Commands are not replayed on restart; unconfirmed executions become interrupted. Callback dispatch interrupted before acknowledgement is uncertain and never automatically duplicated; inspect status/owner thread.",
+         "inputSchema": ["type": "object", "properties": ["command": ["type": "string"]], "required": ["command"], "additionalProperties": false]],
+        ["type": "function", "name": "app_monitor_status",
+         "description": "Get one monitor by monitor_id, or list this owner session’s monitors when omitted. Includes execution result and wake delivery state; no external PID adoption.",
+         "inputSchema": ["type": "object", "properties": ["monitor_id": ["type": "string"]], "additionalProperties": false]],
+        ["type": "function", "name": "app_monitor_cancel",
+         "description": "Cancel one owned monitor and suppress any queued completion wake. Cancellation is best effort; side effects cannot be undone. A finished command keeps its actual exit status.",
+         "inputSchema": ["type": "object", "properties": ["monitor_id": ["type": "string"]], "required": ["monitor_id"], "additionalProperties": false]],
         ["type": "function", "name": "app_handoff",
          "description": "Assign one independently accepted deliverable to an app-managed worker. Returns acceptance and task_id immediately, not a completed result. Continue other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn without waiting. The app delivers correlated app_task_result reports in later turns. A new handoff does not resolve the active report.",
          "inputSchema": ["type": "object", "properties": ["instructions": ["type": "string"], "name": ["type": "string"]], "required": ["instructions"], "additionalProperties": false]],
@@ -823,6 +875,15 @@ struct CodexSession {
                 out.append(.event(.trace(.toolUse(id: key, tool: "app_routines", title: "Routines: " + (arguments?["operation"] as? String ?? ""), detail: Self.json(arguments), parent: nil))))
                 out.append(.event(.trace(.toolResult(id: key, output: Self.json(payload), failed: false, parent: nil))))
             } catch { response = reply(["error": error.localizedDescription], success: false) }
+        } else if tool?.hasPrefix("app_monitor_") == true {
+            let handled: (payload: [String: Any], success: Bool, outputs: [CodexOutput])
+            if tool == "app_monitor_start", turn == nil || params["turnId"] as? String != turn?.id {
+                handled = (["error": "A monitor must be created by the current owning Codex turn."], false, [])
+            } else {
+                handled = monitorTool(tool!, arguments: arguments ?? [:])
+            }
+            out += handled.outputs
+            response = reply(handled.payload, success: handled.success)
         } else if tool == "app_handoff", let instructions = arguments?["instructions"] as? String,
            !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let id = UUID().uuidString.lowercased()
@@ -1118,7 +1179,7 @@ struct CodexSession {
         stopped = true
         inbox = []
         afterInterrupt = nil
-        return cancelManagedWorkers()
+        return cancelManagedWorkers() + cancelMonitors()
     }
 
     // MARK: Items
@@ -1402,6 +1463,103 @@ struct CodexSession {
     }
 }
 
+extension CodexSession {
+    var monitorRecords: [CommandMonitor] { monitors.values.sorted { $0.id < $1.id } }
+
+    private mutating func monitorTool(_ tool: String, arguments: [String: Any]) -> (payload: [String: Any], success: Bool, outputs: [CodexOutput]) {
+        if tool == "app_monitor_start", let command = arguments["command"] as? String,
+           !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           command.utf8.count <= 16_384, !command.utf8.contains(0) {
+            // Keep all unacknowledged reports; prune only settled history.
+            if monitors.count >= 128, let oldest = monitors.values.filter({ !$0.active && [.delivered, .suppressed].contains($0.wake) }).min(by: { $0.createdAt < $1.createdAt }) {
+                monitors[oldest.id] = nil
+            }
+            guard monitors.count < 128, monitors.values.filter({ $0.active }).count < 16 else {
+                return (["error": "Monitor limit reached; cancel active monitors or resolve pending results."], false, [])
+            }
+            let id = UUID().uuidString.lowercased()
+            let record = CommandMonitor(id: id, owner: config.ownerSession, command: command,
+                cwd: config.workingDirectory.path, createdAt: Date())
+            monitors[id] = record
+            return (record.payload, true, [
+                .event(.trace(.toolUse(id: id, tool: "Monitor", title: "Monitor " + Self.firstLine(command), detail: command, parent: nil))),
+                .event(.trace(.monitorStarted(id: id, description: Self.firstLine(command)))),
+                .event(.permission(PermissionRequest(id: "monitor:" + id, tool: "Monitored command",
+                    summary: command + "\n\nWorking directory: " + record.cwd + "\nWorkspace sandbox; network disabled. Completion wakes this Codex bot once.", input: "{}")))
+            ] + pendingChanged())
+        }
+        if tool == "app_monitor_status" {
+            if let id = arguments["monitor_id"] as? String {
+                guard let record = monitors[id] else { return (["error": "Unknown monitor_id for this owner."], false, []) }
+                return (record.payload, true, [])
+            }
+            return (["monitors": monitorRecords.map(\.summary)], true, [])
+        }
+        if tool == "app_monitor_cancel", let id = arguments["monitor_id"] as? String, monitors[id] != nil {
+            let outputs = cancelMonitors([id])
+            return (monitors[id]!.payload, true, outputs)
+        }
+        return (["error": "Invalid monitor arguments. Use command (nonempty, at most 16384 bytes), or an owned monitor_id."], false, [])
+    }
+
+    private mutating func approveMonitor(_ id: String, allow: Bool) -> [CodexOutput] {
+        guard !stopped, let record = monitors[id], record.state == .awaitingApproval else { return [] }
+        guard allow else { return cancelMonitors([id]) }
+        monitors[id]?.state = .running
+        let roots = Array(Set(([config.workingDirectory] + config.writableRoots).map(\.path))).sorted()
+        return [
+            // Standalone command/exec does not inherit the thread sandbox. Explicitly
+            // prevent the user's CLI full-access defaults or network settings taking over.
+            request("command/exec", ["command": ["/bin/zsh", "-c", record.command], "cwd": record.cwd,
+                "processId": id, "disableTimeout": true, "outputBytesCap": CommandMonitor.outputLimit,
+                "sandboxPolicy": ["type": "workspaceWrite", "writableRoots": roots, "networkAccess": false]], as: .monitorCommand(id))
+        ] + pendingChanged()
+    }
+
+    private mutating func completeMonitor(_ id: String, result: [String: Any]?, error: [String: Any]?) -> [CodexOutput] {
+        guard var record = monitors[id], (record.state == .running || record.state == .cancelling), !stopped else { return [] }
+        record.exitCode = (result?["exitCode"] as? NSNumber)?.intValue
+        record.stdout = CommandMonitor.bounded(result?["stdout"] as? String ?? "")
+        record.stderr = CommandMonitor.bounded(result?["stderr"] as? String ?? "")
+        let wasCancelled = record.state == .cancelling
+        record.state = wasCancelled ? .cancelled : (error == nil && record.exitCode == 0 ? .succeeded : .failed)
+        record.detail = error.map { CommandMonitor.bounded(Self.message($0)) } ?? (record.exitCode == nil ? "No exit status was returned." : "")
+        record.endedAt = Date()
+        record.wake = wasCancelled ? .suppressed : .pending
+        monitors[id] = record
+        var out: [CodexOutput] = [
+            .event(.trace(.toolResult(id: id, output: Self.json(record.payload), failed: record.state != .succeeded, parent: nil))),
+            .event(.trace(.subagentEnded(id: id, status: wasCancelled ? "killed" : (record.state == .succeeded ? "completed" : "failed"), summary: Self.json(record.payload))))
+        ]
+        if turn == nil { out += next() }
+        out += pendingChanged()
+        return out
+    }
+
+    mutating func cancelMonitors(_ ids: Set<String>? = nil) -> [CodexOutput] {
+        var out: [CodexOutput] = []
+        for id in monitors.keys.sorted() where ids == nil || ids!.contains(id) {
+            guard let record = monitors[id], record.active || record.wake == .pending else { continue }
+            monitors[id]?.wake = .suppressed
+            if record.active {
+                if record.state == .cancelling { continue }
+                monitors[id]?.state = record.state == .running ? .cancelling : .cancelled
+                monitors[id]?.endedAt = record.state == .running ? nil : Date()
+                monitors[id]?.detail = "Cancellation requested; completion wake suppressed. Side effects may have occurred. Termination is unconfirmed until a terminal result arrives."
+                if record.state == .running {
+                    out.append(request("command/exec/terminate", ["processId": id], as: .other))
+                } else {
+                    out.append(.event(.permissionCancelled("monitor:" + id)))
+                }
+                if record.state != .running {
+                    out.append(.event(.trace(.subagentEnded(id: id, status: "killed", summary: "Monitor cancelled before execution; wake suppressed."))))
+                }
+            }
+        }
+        return out + pendingChanged()
+    }
+}
+
 extension TokenUsage {
     static func - (a: TokenUsage, b: TokenUsage) -> TokenUsage {
         TokenUsage(input: max(0, a.input - b.input), output: max(0, a.output - b.output), cacheWrite: max(0, a.cacheWrite - b.cacheWrite), cacheRead: max(0, a.cacheRead - b.cacheRead))
@@ -1417,6 +1575,7 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
     private var session: CodexSession
     private var closed = false
     private var savedWorkers: [CodexManagedWorkerRecord] = []
+    private var savedMonitors: [CommandMonitor] = []
     private let continuation: AsyncStream<AgentEvent>.Continuation
     private let sessionID: UUID
     private let threads: CodexThreads
@@ -1445,9 +1604,13 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
                 resume = thread
             }
         }
+        let restoredMonitors = try threads.monitors(for: launch.sessionID)
+        let uncertain = restoredMonitors.filter { $0.wake == .dispatching || $0.wake == .uncertain }.map(\.id)
+        let recovery = uncertain.isEmpty ? "" : "\n(App: Monitor callback delivery is unconfirmed for IDs " + uncertain.joined(separator: ", ")
+            + ". This is recovery data, not new authorization. Use app_monitor_status and inspect the owner thread before continuing. Do not automatically rerun a command or assume its callback was not consumed.)"
         return CodexSession.Config(
             workingDirectory: launch.workingDirectory,
-            instructions: launch.systemPrompt,
+            instructions: launch.systemPrompt + recovery,
             autoMode: launch.autoMode,
             writableRoots: launch.extraDirectories,
             effort: launch.effort,
@@ -1456,7 +1619,9 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
             workerInstructions: launch.codexWorkerInstructions,
             workerDefaults: launch.codexWorkerDefaults,
             restoredWorkers: launch.codexWorkerInstructions == nil ? [] : threads.workers(for: launch.sessionID),
-            routinesURL: launch.routinesURL
+            routinesURL: launch.routinesURL,
+            ownerSession: launch.sessionID,
+            restoredMonitors: restoredMonitors
         )
     }
 
@@ -1528,6 +1693,23 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
     private func run(_ step: (inout CodexSession) -> [CodexOutput]) {
         lock.withLock {
             let outputs = step(&session)
+            // Persist before any command dispatch or callback write. Storage failures fail
+            // closed: no side-effectful execution is launched without a durable identity.
+            let monitors = session.monitorRecords
+            if monitors != savedMonitors {
+                do {
+                    try threads.saveMonitors(monitors, for: sessionID)
+                    savedMonitors = monitors
+                } catch {
+                    failure.message = "Could not persist command monitor state; stopped before dispatch. " + error.localizedDescription
+                    let tree = monitoredProcessTree()
+                    _ = session.stop()
+                    closeInput()
+                    endMonitoredProcessTree(tree)
+                    if process.isRunning { process.terminate() }
+                    return
+                }
+            }
             let records = session.managedWorkerRecords
             if records != savedWorkers {
                 threads.saveWorkers(records, for: sessionID)
@@ -1594,16 +1776,32 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
     }
 
     public func cancelTasks(_ ids: Set<String>) {
-        run { $0.cancelManagedWorkers(ids) }
+        run { $0.cancelManagedWorkers(ids) + $0.cancelMonitors(ids) }
     }
 
     public func finish() {
         run { $0.finish() }
     }
 
+    /// Called under `lock`, before closing stdin: the server may exit on EOF and reparent
+    /// its commands before cleanup discovers them. Keep their birth identities first.
+    private func monitoredProcessTree() -> [ChildProcessLedger.Entry] {
+        guard process.isRunning, session.monitorRecords.contains(where: { $0.state == .running || $0.state == .cancelling }) else { return [] }
+        return ChildProcessLedger.trees([process.processIdentifier]).compactMap { pid in
+            ChildProcessLedger.startTime(of: pid).map { .init(pid: pid, started: $0, app: getpid()) }
+        }
+    }
+
+    private func endMonitoredProcessTree(_ entries: [ChildProcessLedger.Entry]) {
+        let owned = entries.filter { ChildProcessLedger.startTime(of: $0.pid) == $0.started }.map(\.pid)
+        ChildProcessLedger.endTrees(owned, grace: 0)
+    }
+
     public func stop() {
+        let tree = lock.withLock { monitoredProcessTree() }
         run { $0.stop() }
         lock.withLock { closeInput() }
+        endMonitoredProcessTree(tree)
         guard process.isRunning else { return }
         process.terminate()
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [process] in

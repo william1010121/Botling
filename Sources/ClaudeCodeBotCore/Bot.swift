@@ -2084,7 +2084,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// Claude wants a tool it may not use without asking: allowed already if you said always,
     /// otherwise a question in the chat while it waits.
     private func ask(permission request: PermissionRequest, from source: AgentProcess) {
-        if alwaysAllowed.contains(request.tool) {
+        if request.tool != "Monitored command", alwaysAllowed.contains(request.tool) {
             source.answer(request, allow: true, message: nil)
             return
         }
@@ -2114,7 +2114,7 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     /// Tools whose "always" would be far broader than it sounds; they are asked every time.
-    static let neverAlways: Set<String> = ["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"]
+    static let neverAlways: Set<String> = ["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Monitored command"]
 
     /// The question, with what would run shown as code so nothing in it renders as a link,
     /// a picture or formatting.

@@ -46,7 +46,7 @@ struct CodexToolSchemaMigrationTests {
         let start = CodexSessionTests.Out(session.receive(String(decoding:try JSONSerialization.data(withJSONObject:response),as:UTF8.self)))
         let params = try #require(start.params("thread/start"))
         let tools = try #require(params["dynamicTools"] as? [[String:Any]])
-        #expect(Set(tools.compactMap { $0["name"] as? String }) == ["app_handoff","app_send_message","app_task_checkpoint","app_routines"])
+        #expect(Set(tools.compactMap { $0["name"] as? String }) == ["app_handoff","app_send_message","app_task_checkpoint","app_routines","app_monitor_start","app_monitor_status","app_monitor_cancel"])
         try JSONSerialization.data(withJSONObject:params,options:[.sortedKeys,.prettyPrinted]).write(to:root.appending(path:"production-start.json"))
     }
 }

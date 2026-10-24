@@ -191,7 +191,7 @@ public enum PromiseCheck {
     public static func review(_ judgment: Judgment, for end: TurnEnd) -> Judgment {
         if judgment.verdict == .waitingDependency, let workers = end.workerDependencies,
            end.dependencies.isEmpty,
-           end.workerDependenciesTruncated || packWorkers(workers).omitted || !workers.contains(where: { $0.state == .running && $0.callback == "app_task_result" }) {
+           end.workerDependenciesTruncated || packWorkers(workers).omitted || !workers.contains(where: { $0.state == .running && ["app_task_result", "app_monitor_result"].contains($0.callback ?? "") }) {
             return Judgment(verdict: .unknown, reason: "No complete live worker snapshot with a running owner and callback supports dependency waiting.")
         }
         guard end.terminalRequired else { return judgment }
@@ -216,9 +216,9 @@ public enum PromiseCheck {
         authorization phase, explicit stops, and actual completion criteria. Inspect actions/results and \
         tracked dependency descriptions. workerDependencies, when present, is the authoritative \
         live app-worker snapshot, separate from verbose history or saved UI cards. A running \
-        worker has state running and callback app_task_result. reportQueued means execution ended \
+        worker has state running and callback app_task_result; a live app-owned command has callback app_monitor_result. reportQueued means execution ended \
         and its completed/failed/interrupted result is queued, not that the worker is still running. \
-        An empty snapshot establishes that no app-managed worker is running. Do not infer a live \
+        An empty snapshot establishes that no app-managed worker or monitored command is running. Do not infer a live \
         worker or a callback from a reply or old card against this snapshot. taskTruncated marks \
         an excerpt of its owned task; workerDependenciesTruncated marks omitted worker records. \
         Intact id/run/state/callback facts remain valid when verbose evidence is truncated. \
