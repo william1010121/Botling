@@ -5,7 +5,8 @@ import { join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { CoreClient } from "./core-client";
-import { cardPage, CARD_CSP } from "./card-page";
+import { cardPage, CARD_CSP, COMPONENT_CSP } from "./card-page";
+import { randomBytes } from "node:crypto";
 import {
   AccountView, MAIN_COMMANDS, PROTOCOL_VERSION, RENDERER_COMMANDS, errorResponse, okResponse, parseInbound,
   type Command, type EventEnvelope, type ResponseEnvelope,
@@ -23,6 +24,8 @@ app.setPath("logs", join(dataDir, "electron", "logs"));
 
 const APP_ORIGIN = "app://botling";
 const CARD_PREFIX = "botling-card://card/";
+/** Component pages (Web/src's `componentPage`) the chat page hands over for its sandboxed frames. */
+const PAGE_PREFIX = "botling-card://page/";
 /** The reused Web/src chat page, in a frame of the app page. */
 const CHAT_URL = `${APP_ORIGIN}/chat.html`;
 
@@ -181,8 +184,23 @@ ipcMain.on("botling:post", (event, raw: unknown) => {
   void core.request(cmd, scoped(id)).then((response) => reply({ ...response, id }));
 });
 
+/**
+ * Component pages by token: what the chat page built for a component frame (its template, the
+ * data, the `ccb` runtime), served once from botling-card://page/<token> under COMPONENT_CSP. The
+ * frame is still sandboxed (opaque origin) and reaches nothing; only the app page can add one.
+ */
+const pages = new Map<string, string>();
+const PAGE_LIMIT = 400;
+function addPage(html: string): string {
+  const token = randomBytes(18).toString("hex");
+  pages.set(token, html);
+  while (pages.size > PAGE_LIMIT) pages.delete(pages.keys().next().value!);
+  return `${PAGE_PREFIX}${token}`;
+}
+
 function handleInMain(cmd: Command): unknown {
   switch (cmd.type) {
+    case "card.page": return { url: addPage(cmd.html) };
     case "accounts.list": return { accounts: accounts() };
     case "site.open": return { windowId: openSite(cmd.accountId, cmd.url) };
     default: throw new Error(`main does not handle ${cmd.type}`);
@@ -222,7 +240,7 @@ app.on("web-contents-created", (_, contents: WebContents) => {
     let allowed = false;
     if (details.url === CHAT_URL || details.url.startsWith(`${CHAT_URL}?`)) {
       allowed = parent === mainFrame && (!initiator || initiator === mainFrame);
-    } else if (details.url.startsWith(CARD_PREFIX)) {
+    } else if (details.url.startsWith(CARD_PREFIX) || details.url.startsWith(PAGE_PREFIX)) {
       allowed = (!initiator || initiator === mainFrame || chatFrame(initiator)) && (parent === mainFrame || chatFrame(parent));
     }
     if (!allowed) {
@@ -265,6 +283,24 @@ function serveApp() {
   });
   protocol.handle("botling-card", async (request) => {
     const url = new URL(request.url);
+    if (url.host === "page") {
+      const html = pages.get(url.pathname.slice(1));
+      if (html === undefined) return new Response("Not found", { status: 404 });
+      return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": COMPONENT_CSP, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" } });
+    }
+    if (url.host === "image") {
+      // Only a picture some component's data named (the core keeps which, by token).
+      const token = url.pathname.slice(1);
+      if (!/^[0-9a-f]{40}$/.test(token)) return new Response("Not found", { status: 404 });
+      const response = await core.request({ type: "card.image", token });
+      if (!response.ok) return new Response("Not found", { status: 404 });
+      const { path, type } = response.result as { path: string; type: string };
+      try {
+        return new Response(readFileSync(path), { headers: { "Content-Type": type, "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'", "X-Content-Type-Options": "nosniff" } });
+      } catch {
+        return new Response("Not found", { status: 404 });
+      }
+    }
     const [botId, messageId, cardId] = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
     if (url.host !== "card" || !botId || !messageId || !cardId) return new Response("Not found", { status: 404 });
     const response = await core.request({ type: "card.html", botId, messageId, cardId });

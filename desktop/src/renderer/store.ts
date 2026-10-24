@@ -4,7 +4,7 @@
 // takes a fresh snapshot instead of patching on guesses. Events that arrive while a snapshot is
 // on its way are buffered and replayed if newer than it. Chat events for other bots are not
 // kept (their chats are fetched when shown); `bot.updated` is kept for every bot.
-import type { BotView, CatchUpView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
+import type { BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
 
 /** A turn under way and its steps so far (with two heads, two can run at once). */
 export interface RunState { turnId: string; messageId: string; live: StepView[] }
@@ -23,6 +23,10 @@ export interface ChatView {
   /** Unread lines folded with their summary, and the interval summaries. */
   catchUp?: CatchUpView | null;
   intervalSummaries?: CatchUpView[];
+  /** Its pins, those floating, and what the pin picker offers. */
+  pins?: PinView[];
+  floating?: PinView[];
+  pinChoices?: PinChoiceView[];
 }
 
 export interface WorkspaceView {
@@ -34,12 +38,16 @@ export interface WorkspaceView {
   subagent: SubagentView | null;
   /** Times the store re-synced from a snapshot (for tests and diagnostics). */
   resyncs: number;
+  /** The component library as the page draws it. */
+  components: Record<string, ComponentInfoView>;
+  /** The chat shows its Board instead of its messages. */
+  board: boolean;
 }
 
 type Snapshot = ResultOf<"chat.snapshot">;
 
 export class WorkspaceStore {
-  private view: WorkspaceView = { ready: false, bots: [], imported: null, chat: null, subagent: null, resyncs: 0 };
+  private view: WorkspaceView = { ready: false, bots: [], imported: null, chat: null, subagent: null, resyncs: 0, components: {}, board: false };
   private epoch: string | null = null;
   private seq = 0;
   private syncing = false;
@@ -68,6 +76,11 @@ export class WorkspaceStore {
     return this.resync();
   }
 
+  /** Shows the chat's Board instead of its messages, or the messages again. */
+  showBoard(board: boolean) {
+    this.set({ ...this.view, board });
+  }
+
   /** Watches one of the shown bot's subagents (null: back to the chat). */
   watch(subagent: SubagentView | null) {
     this.set({ ...this.view, subagent });
@@ -89,7 +102,8 @@ export class WorkspaceStore {
       this.seq = snapshot.seq;
       const subagent = this.view.subagent && snapshot.chat?.botId === this.view.chat?.botId ? this.view.subagent : null;
       const chat = snapshot.chat ? { ...snapshot.chat, runs: (snapshot.chat.runs ?? []).map((run) => ({ turnId: run.turnId, messageId: run.messageId, live: run.live })) } : null;
-      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1 });
+      const board = this.view.board && chat?.botId === this.view.chat?.botId;
+      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board });
     } finally {
       this.syncing = false;
     }
@@ -118,6 +132,7 @@ export class WorkspaceStore {
 }
 
 export function apply(view: WorkspaceView, event: Event): WorkspaceView {
+  if (event.type === "components.updated") return { ...view, components: event.components };
   if (event.type === "bot.updated") {
     const bots = view.bots.some((bot) => bot.id === event.bot.id)
       ? view.bots.map((bot) => (bot.id === event.bot.id ? event.bot : bot))
@@ -165,6 +180,8 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
     }
     case "heads.updated":
       return withChat({ ...chat, heads: event.heads });
+    case "pins.updated":
+      return withChat({ ...chat, pins: event.pins, floating: event.floating, pinChoices: event.pinChoices });
     case "catchup.updated":
       return withChat({ ...chat, catchUp: event.catchUp, intervalSummaries: event.intervalSummaries });
     case "card.updated":

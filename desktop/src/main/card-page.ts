@@ -19,6 +19,26 @@ export const CARD_CSP = [
   "base-uri 'none'",
 ].join("; ");
 
+/**
+ * A library component's page (Web/src's `componentPage`): its own inline scripts and styles run,
+ * pictures come only as data:/blob: or from botling-card://image/ (pictures its data named), and
+ * it reaches nothing else — no network, no frames, no forms, no workers.
+ */
+export const COMPONENT_CSP = [
+  "default-src 'none'",
+  "script-src 'unsafe-inline'",
+  "style-src 'unsafe-inline'",
+  "img-src data: blob: botling-card:",
+  "font-src data:",
+  "media-src data: blob:",
+  "connect-src 'none'",
+  "frame-src 'none'",
+  "child-src 'none'",
+  "worker-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+].join("; ");
+
 const runtime = `<script>
 (() => {
   let data = null;

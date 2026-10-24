@@ -2,8 +2,8 @@
 // side builds in ChatPayload.swift. Here the same state is built from the contract's views, so the
 // page runs unchanged. What 2.0 has no data for yet (components, pins, heads, tasks, Catch-up) is
 // left out, which the page treats as "none".
-import type { BotView, CardView, CatchUpView, HeadsView, MessageView, SubagentView, TaskView } from "../contract";
-import type { CatchUpView as WebCatchUp, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView } from "../../../Web/src/types";
+import type { BotView, CardView, CatchUpView, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, SubagentView, TaskView } from "../contract";
+import type { ComponentInfo, DisplayView as WebDisplay, PinSize, PinView as WebPin, CatchUpView as WebCatchUp, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
 import { avatarURL } from "./avatars";
 
@@ -112,7 +112,34 @@ export function catchUpView(view: CatchUpView, tasks: TaskView[]): WebCatchUp {
   };
 }
 
-export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyingTo: ChatState["replyingTo"] = null): { state: ChatState; extras: FrameExtras } {
+/** A component in a line as the page draws it (`ChatPayload.Display`). */
+export function displayView(view: DisplayView): WebDisplay {
+  return {
+    name: view.name, data: view.data, at: view.at, command: view.command, folder: view.folder, detail: view.detail, card: view.card,
+    status: view.status, error: view.error, ranAt: view.ranAt, images: view.images, pinned: view.pinned, every: view.every,
+  };
+}
+
+/** A pin as the page draws it (`ChatPayload.Pin`). */
+export function pinView(view: PinView): WebPin {
+  return {
+    id: view.id, name: view.name, headline: view.headline, chip: view.chip, size: view.size as PinSize, place: view.place, panelHeight: view.panelHeight,
+    refresh: view.refresh, minutes: view.minutes, seconds: view.seconds, display: displayView(view.display), makingLive: view.makingLive,
+    float: view.float ? { corner: view.float.corner, width: view.float.width, height: view.float.height, collapsed: view.float.collapsed } : null,
+    floatMenu: view.floatMenu,
+  };
+}
+
+/** The library as the page needs it: nobody is changing a component in 2.0 yet (no Maintainer), and it has no history. */
+export function componentInfos(components: Record<string, ComponentInfoView>): Record<string, ComponentInfo> {
+  return Object.fromEntries(Object.entries(components).map(([name, info]) => [name, {
+    template: info.template, version: info.version, working: false, updated: info.updated, hasPrevious: false,
+    sizes: info.sizes as PinSize[], icon: info.icon, title: info.title,
+  } satisfies ComponentInfo]));
+}
+
+export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyingTo: ChatState["replyingTo"] = null,
+  { components = {}, board = false }: { components?: Record<string, ComponentInfoView>; board?: boolean } = {}): { state: ChatState; extras: FrameExtras } {
   const face = avatarURL(bot.avatar);
   const running = chat.running;
   const runs = chat.runs?.length ? chat.runs : running ? [{ ...running, live: chat.live }] : [];
@@ -162,6 +189,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       taskCards: message.role === "bot" ? chips.get(message.id) ?? null : null,
       // Replies before your latest line fold their finished subagents away (still in their steps).
       earlier: index < lastYours && !!steps?.length ? true : null,
+      displays: message.displays?.length ? message.displays.map(displayView) : null,
     };
   });
   const state: ChatState = {
@@ -173,10 +201,14 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     placeholder: placeholder(bot),
     replyingTo,
     pendingFiles: [],
-    components: {},
+    components: componentInfos(components),
     live: running && !runningShown ? chat.live.map(step) : [],
     slashCommands: [],
     ...headsParts(chat.heads),
+    pins: (chat.pins ?? []).map(pinView),
+    floating: (chat.floating ?? []).map((view) => ({ botID: bot.id, botName: bot.name, pin: pinView(view), global: null, blocked: null })),
+    pinChoices: chat.pinChoices ?? [],
+    board,
     catchUp: chat.catchUp ? catchUpView(chat.catchUp, chat.tasks ?? []) : null,
     intervalSummaries: (chat.intervalSummaries ?? []).map((view) => catchUpView(view, chat.tasks ?? [])),
   };

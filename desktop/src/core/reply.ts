@@ -10,6 +10,7 @@
 //   parsed and taken out of the text, so the chat never shows raw tags; 2.0 acts on none of them yet
 //   and says so (bot.ts).
 // Offsets are UTF-16, as NSString's and the chat page's.
+import { refreshSeconds } from "./components/library";
 import { REACTION_PALETTE } from "./briefing";
 
 export type BotRequest =
@@ -30,7 +31,7 @@ export type BotRequest =
   | { kind: "componentSpec"; id: string; json: string };
 
 export interface Choice { label: string; detail?: string; recommended: boolean }
-export interface Display { name: string; data: string; at?: number; command?: string; id?: string }
+export interface Display { name: string; data: string; at?: number; command?: string; id?: string; refresh?: number; savedAt?: number; [key: string]: unknown }
 export interface ReactionAction { messageId: string; emoji: string; present: boolean }
 export type TaskState = "pending" | "running" | "waiting" | "done" | "stopped";
 /** `TaskTag`: undefined keeps a field, "" clears it. */
@@ -181,6 +182,9 @@ export function parseReply(reply: string): Parsed {
       if (command) display.command = command;
       const id = found.id?.trim();
       if (id) display.id = id;
+      // refresh="2s" reruns its command while the card is on screen (`ComponentRefresh.seconds`).
+      const refresh = found.refresh !== undefined ? refreshSeconds(found.refresh) : null;
+      if (refresh !== null) display.refresh = refresh;
       displays.unshift(display);
       marker = MARKER;
     }

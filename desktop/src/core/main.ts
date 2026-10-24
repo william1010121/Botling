@@ -93,6 +93,7 @@ const core = new Core({
   quitTidyMs: number(process.env.BOTLING_QUIT_TIDY_MS, 15_000),
   routineTickMs: number(process.env.BOTLING_ROUTINE_TICK_MS, 30_000),
   summarizer: summarizer(),
+  componentScanMs: number(process.env.BOTLING_COMPONENT_SCAN_MS, 1_500),
   languages: process.env.BOTLING_LANGUAGES ? process.env.BOTLING_LANGUAGES.split(",").filter(Boolean) : undefined,
   // 1.x's data folder, to tell whether it has a project open; only when named (packaged: ~/.claudecodebot).
   oneX: {

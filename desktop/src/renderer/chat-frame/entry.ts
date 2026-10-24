@@ -3,6 +3,7 @@
 // Phase 0's sandboxed cards in their bubbles, a Stop button in the input box, and KaTeX (the
 // ccb-latex plugin, bundled in).
 import "./shim";
+import "./component-frames";
 import "../../../../Web/src/main";
 import { CardBroker, type CardTarget } from "../broker";
 import type { FrameExtras } from "../payload";
@@ -138,6 +139,8 @@ window.addEventListener("message", (event: MessageEvent) => {
     decorate(message.extras);
   } else if (message.botling === "answerWithSaved") {
     window.ccb.answerWithSaved({ botID: message.botID, requestID: message.requestID, chosen: message.chosen });
+  } else if (message.botling === "detailReply") {
+    window.ccb.detailReply(message.requestID, message.ok, message.value);
   } else if (message.botling === "response") {
     const entry = waiting.get(message.id);
     if (!entry) return;

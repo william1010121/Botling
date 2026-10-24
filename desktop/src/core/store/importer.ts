@@ -8,11 +8,14 @@
 // - projects.json, and each project's and bot's chat files;
 // - a bot of its own's notes (.bot/memory.md, inbox.md, routines.cron), into 2.0's bots/<ID>/,
 //   with its folder in projects.json pointed there;
-// - settings.json.
+// - settings.json;
+// - the plugin library's components (`plugins/<plugin>/components/<name>/`: template.html, about.md
+//   and the other text files beside them), into 2.0's own plugins folder, where its library reads them.
 // What stays where it is: a project manager's working folder (the user's project, with its
 // .bot/memory.md — 2.0 works in the same folder, like 1.x), attachments, chat archives, result
-// pages and screenshots (messages keep pointing at them, read-only), Maintainer and the plugin
-// library, web AIs' folders, and claude's own sessions (2.0 starts new ones).
+// pages and screenshots (messages keep pointing at them, read-only), Maintainer and the rest of the
+// plugin library (its git history, its plugins' code), web AIs' folders, the commands 1.x was
+// allowed to run (2.0 asks again), and claude's own sessions (2.0 starts new ones).
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -27,6 +30,15 @@ export interface ImportReport {
   bots: { id: string; name: string; messages: number }[];
   messages: number;
   skipped: string[];
+  /** Components imported from the plugin library. */
+  components?: number;
+}
+
+/** What a component folder may bring along: its template, usage and the scripts or styles beside them. */
+const TEXT_FILE = /\.(html?|md|js|mjs|cjs|css|json|txt|sh|py|rb|ts|svg|csv|ya?ml|toml)$/i;
+
+function safeList(dir: string): string[] {
+  try { return readdirSync(dir).sort(); } catch { return []; }
 }
 
 const MAX_FILE = 50 * 1024 * 1024;
@@ -171,7 +183,28 @@ export function importFrom1x(sourceDir: string, targetDir: string): ImportReport
       report.skipped.push(`${Layout.settings(source)}: not valid JSON, left out`);
     }
   }
-  for (const folder of ["web", "plugins", "runs", "teams"]) {
+  // The component library: each plugin's components/ folder, text files only.
+  const plugins = join(source, "plugins");
+  let components = 0;
+  if (existsSync(plugins)) {
+    for (const plugin of safeList(plugins)) {
+      const folder = join(plugins, plugin, "components");
+      if (plugin.startsWith(".") || !existsSync(folder)) continue;
+      for (const name of safeList(folder)) {
+        const from = join(folder, name);
+        if (name.startsWith(".") || !existsSync(join(from, "template.html"))) continue;
+        for (const file of listFiles(from).filter((path) => !path.split(sep).some((part) => part.startsWith(".")))) {
+          if (!TEXT_FILE.test(file)) { report.skipped.push(`${join(from, file)}: not a text file, left out`); continue; }
+          const data = read(join(from, file));
+          if (data) write(join(target, "plugins", plugin, "components", name, file), data);
+        }
+        components++;
+      }
+    }
+    report.skipped.push("plugins/ (only the components were imported; plugins themselves are not in 2.0 yet)");
+  }
+  report.components = components;
+  for (const folder of ["web", "runs", "teams"]) {
     if (existsSync(join(source, folder))) report.skipped.push(`${folder}/ (not used by 2.0 yet)`);
   }
 

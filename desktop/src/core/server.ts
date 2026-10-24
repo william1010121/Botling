@@ -24,6 +24,8 @@ import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/im
 import { MAIN_BOT_ID } from "./store/records";
 import { Layout, loadProfiles, type BotProfile } from "./store/workspace";
 import { CatchUpCache, CatchUps, catchUpSettings, type CatchUpViewData, type Summarizer } from "./catchup";
+import { ComponentsContext } from "./components/service";
+import { readdirSync } from "node:fs";
 
 export interface CoreOptions {
   dataDir: string;
@@ -51,6 +53,8 @@ export interface CoreOptions {
   routineTickMs?: number;
   /** Writes Catch-up summaries (an isolated `codex exec`); null: there is no summary service. */
   summarizer?: Summarizer | null;
+  /** How often the component library is looked at for changes on disk (0: never; 1.x: 1.5 s). */
+  componentScanMs?: number;
 }
 
 export class Core {
@@ -63,6 +67,12 @@ export class Core {
   private imported: ImportView | null = null;
   private routineClock: NodeJS.Timeout | null = null;
   private readonly catchUps: CatchUps;
+  private readonly components: ComponentsContext;
+  private componentStamp = 0;
+  private componentClock: NodeJS.Timeout | null = null;
+  private pinClock: NodeJS.Timeout | null = null;
+  /** The pins the user can see now, in the chat on screen (`RefreshSight`). */
+  private visiblePins: { botId: string; ids: string[] } | null = null;
 
   constructor(private options: CoreOptions) {
     mkdirSync(options.dataDir, { recursive: true });
@@ -73,6 +83,16 @@ export class Core {
       language: () => this.language(),
       changed: (botId) => { const bot = this.bots.get(botId); if (bot) this.event({ type: "catchup.updated", botId, ...this.summaries(bot) }); },
     });
+    // The component library: <data>/plugins/ccb-components/components first, then other plugins' components/.
+    const plugins = join(options.dataDir, "plugins");
+    const own = join(plugins, "ccb-components", "components");
+    this.components = new ComponentsContext(options.dataDir, () => {
+      let others: string[] = [];
+      try { others = readdirSync(plugins).filter((name) => name !== "ccb-components" && !name.startsWith(".")).sort().map((name) => join(plugins, name, "components")); } catch { /* none */ }
+      return [own, ...others];
+    });
+    this.componentStamp = this.components.library.stamp;
+    this.components.commands.onChange = (card) => { for (const bot of this.bots.values()) bot.cardChanged(card); };
     this.ledger = new ProcessLedger(join(options.dataDir, "children.json"));
     const leftovers = this.ledger.endLeftovers();
     if (leftovers.length) this.log(`ended agent process groups an earlier core left running: ${leftovers.join(", ")}`);
@@ -101,18 +121,50 @@ export class Core {
         interruptGraceMs: options.interruptGraceMs ?? 2_000,
         welcome: profile.id === MAIN_BOT_ID && !this.imported,
         projectBriefing: profile.role === "main" ? () => this.projectBriefing(profiles) : undefined,
+        components: this.components,
       });
       this.bots.set(profile.id, bot);
       this.order.push(profile.id);
     }
     // Checking a wall-clock time every 30 s (rather than sleeping until it) survives the computer
     // sleeping; a time missed while the app was closed runs once later that day (1.x).
+    const scan = options.componentScanMs ?? 1_500;
+    if (scan > 0) {
+      this.componentClock = setInterval(() => this.scanComponents(), scan);
+      this.componentClock.unref?.();
+    }
+    // Pins refreshed every so often that the user can see run when their time comes (1.x: each second).
+    this.pinClock = setInterval(() => {
+      const seen = this.visiblePins;
+      if (seen) this.bots.get(seen.botId)?.refreshDuePins(seen.ids);
+    }, 1_000);
+    this.pinClock.unref?.();
     const tick = options.routineTickMs ?? 30_000;
     if (tick > 0) {
       setTimeout(() => this.checkRoutines(), 0);
       this.routineClock = setInterval(() => this.checkRoutines(), tick);
       this.routineClock.unref?.();
     }
+  }
+
+  /** A template or about.md changed on disk: the page draws it anew; bots hear what changed with their next message. */
+  scanComponents() {
+    const catalogChanged = this.components.library.rescan();
+    if (catalogChanged) for (const bot of this.bots.values()) bot.componentsChanged();
+    if (this.components.library.stamp !== this.componentStamp) {
+      this.componentStamp = this.components.library.stamp;
+      this.event({ type: "components.updated", components: this.componentInfos() });
+    }
+  }
+
+  /** Every library component as the page draws it. */
+  private componentInfos(): ResultOf<"chat.snapshot">["components"] {
+    const out: ResultOf<"chat.snapshot">["components"] = {};
+    for (const name of this.components.library.names) {
+      const info = this.components.library.info(name);
+      if (info) out[name] = { ...info, template: info.template.slice(0, 1_000_000), sizes: info.sizes.slice(0, 16), title: info.title?.slice(0, 200) ?? null };
+    }
+    return out;
   }
 
   /** Every bot's routines that are due run now (`Workspace.checkRoutines`). */
@@ -269,6 +321,26 @@ export class Core {
         this.catchUps.arrive(bot.catchUpChat());
         return bot.read();
       }
+      case "component.command": return this.bot(cmd.botId).componentCommand(cmd.messageId, cmd.index, cmd);
+      case "component.detail": return this.bot(cmd.botId).componentDetail(cmd.name, cmd.folder, cmd.values, cmd.card, cmd.command);
+      case "component.save": return this.bot(cmd.botId).componentSave(cmd.messageId, cmd.index, cmd.data);
+      case "pin.add": return this.bot(cmd.botId).pinAdd(cmd.id, { messageId: cmd.messageId, index: cmd.index, name: cmd.name }, cmd.refresh, cmd.minutes, cmd.seconds);
+      case "pin.change": return this.bot(cmd.botId).pinChange(cmd.id, cmd.change);
+      case "pin.arrange": return this.bot(cmd.botId).pinArrange(cmd.places);
+      case "pin.command": return this.bot(cmd.botId).pinCommand(cmd.id, cmd);
+      case "pin.shown": {
+        const bot = this.bot(cmd.botId);
+        if (cmd.visible) {
+          this.visiblePins = { botId: cmd.botId, ids: cmd.ids ?? [] };
+          return { ran: bot.refreshDuePins(cmd.ids ?? []) };
+        }
+        return bot.pinsShown(cmd.ids);
+      }
+      case "card.image": {
+        const file = this.components.images.file(cmd.token);
+        if (!file) throw new ContractError("not_found", "No such picture.");
+        return file satisfies ResultOf<"card.image">;
+      }
       case "catchup.retry": return { started: this.catchUps.retry(this.bot(cmd.botId).catchUpChat(), cmd.key) };
       case "catchup.interval": return { started: this.catchUps.interval(this.bot(cmd.botId).catchUpChat(), cmd.userMessageId) };
       case "turn.stop": return this.bot(cmd.botId).stop(cmd.turnId);
@@ -294,12 +366,15 @@ export class Core {
       bots: this.order.map((id) => this.bots.get(id)!.view()),
       imported: this.imported,
       chat: bot ? { ...bot.snapshot(), ...this.summaries(bot) } : null,
+      components: this.componentInfos(),
     };
   }
 
   /** Ends every turn and head (with their trees) and writes everything out; for quitting. */
   async shutdown() {
     if (this.routineClock) { clearInterval(this.routineClock); this.routineClock = null; }
+    if (this.componentClock) { clearInterval(this.componentClock); this.componentClock = null; }
+    if (this.pinClock) { clearInterval(this.pinClock); this.pinClock = null; }
     await Promise.all([...this.bots.values()].map((bot) => bot.shutdown()));
   }
 }

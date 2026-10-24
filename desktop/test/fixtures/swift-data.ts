@@ -71,5 +71,14 @@ export function writeSwiftFixture(root: string): Fixture {
   write(join(source, "projects", IDS.maintainer, "chat.json"), [{ id: "E0000000-0000-4000-8000-000000000001", role: "user", text: "Fix a plugin", date: at("2026-10-19T10:00:00Z") }]);
   write(join(source, "settings.json"), { language: "en", resultPublishing: "localOnly", unknownSetting: 1 });
   write(join(source, "web", "gemini", "conversations.json"), []);
+  // The plugin library: the components plugin (a component with a script beside it, and a picture
+  // that is not text), another plugin's component, and a plugin's own code (not imported).
+  write(join(source, "plugins", "ccb-components", "components", "status", "template.html"), "<div>status</div>");
+  write(join(source, "plugins", "ccb-components", "components", "status", "about.md"), "Status card: whether it is OK.\nCommand: ./scan.sh");
+  write(join(source, "plugins", "ccb-components", "components", "status", "scan.sh"), "#!/bin/sh\necho '{}'\n");
+  write(join(source, "plugins", "ccb-components", "components", "status", "icon.png"), "binary");
+  write(join(source, "plugins", "ccb-components", ".git", "HEAD"), "ref: refs/heads/main\n");
+  write(join(source, "plugins", "weather", "components", "forecast", "template.html"), "<div>sunny</div>");
+  write(join(source, "plugins", "weather", "plugin.json"), { name: "weather" });
   return { source, projectFolder };
 }

@@ -13,11 +13,17 @@ export type FrameMessage =
   /** A card's save or action, for the core (only these two kinds are accepted). */
   | { botling: "request"; id: number; cmd: Extract<Command, { type: "card.save" | "card.action" }> }
   /** The Stop button the desktop adds to the input box. */
-  | { botling: "stop" };
+  | { botling: "stop" }
+  /** A component frame's page, to be served from botling-card://page/ (component-frames.ts). */
+  | { botling: "page"; id: number; html: string };
 
 /** Shell → frame. */
 export type ShellMessage =
   | { botling: "state"; state: ChatState; extras: FrameExtras }
   | { botling: "response"; id: number; ok: boolean; error?: string }
   /** The composer's Both/Claude/Codex pick was saved (`ccb.answerWithSaved`). */
-  | { botling: "answerWithSaved"; botID: string; requestID: number; chosen: string };
+  | { botling: "answerWithSaved"; botID: string; requestID: number; chosen: string }
+  /** Where a component frame's page is served (null: refused). */
+  | { botling: "page"; id: number; url: string | null }
+  /** A component's `ccb.runDetail` answer (`ccb.detailReply`). */
+  | { botling: "detailReply"; requestID: number; ok: boolean; value: string };

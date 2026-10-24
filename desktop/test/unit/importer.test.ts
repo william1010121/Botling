@@ -101,6 +101,15 @@ describe("import from 1.x", () => {
     expect(readFileSync(join(target, "bots", IDS.standalone, ".bot", "memory.md"), "utf8")).toMatch(/three papers/);
     expect(existsSync(join(target, "projects", IDS.broken, "chat.json"))).toBe(false); // Unreadable: left out.
     expect(existsSync(join(target, "projects", IDS.maintainer))).toBe(false);
+    // The component library comes over (text files only); plugins themselves do not.
+    expect(report.components).toBe(2);
+    expect(readFileSync(join(target, "plugins", "ccb-components", "components", "status", "about.md"), "utf8")).toMatch(/Command: \.\/scan\.sh/);
+    expect(existsSync(join(target, "plugins", "ccb-components", "components", "status", "scan.sh"))).toBe(true);
+    expect(existsSync(join(target, "plugins", "ccb-components", "components", "status", "icon.png"))).toBe(false);
+    expect(existsSync(join(target, "plugins", "weather", "components", "forecast", "template.html"))).toBe(true);
+    expect(existsSync(join(target, "plugins", "weather", "plugin.json"))).toBe(false);
+    expect(existsSync(join(target, "plugins", "ccb-components", ".git"))).toBe(false);
+    expect(report.skipped.join("\n")).toMatch(/icon\.png: not a text file/);
     expect(needsImport(target)).toBe(false);
     expect(() => importFrom1x(source, join(source, "inside"))).toThrow(/separate/);
   });

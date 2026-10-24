@@ -46,7 +46,7 @@
 //     with decision=…, and a pick on any copy of it is applied once, by the head that asked.
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve as resolvePathOf } from "node:path";
 import {
   ContractError, type RoutineView, type BotView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
   type StepView, type SubagentView, type TaskView,
@@ -69,6 +69,11 @@ import { masked, parseReply, saysNoReply, saysNothing, unsupportedRequest } from
 import { SubagentBook, readSubagent, SUBAGENT_TOOLS, toolCount, type SubagentRecord } from "./subagents";
 import { readTaskCard, TaskBook, type TaskCard } from "./tasks";
 import type { CatchUpChat } from "./catchup";
+import { displayCommand, displayView, pinView, type ComponentsContext, type DisplayData, type PinData } from "./components/service";
+import { BUILT_INS, COMPONENT_LIMIT, knowledgeChanges, knowledgeFull, safeName, spelledSize, type ComponentKnowledge } from "./components/library";
+import { clampMinutes, clampPanelHeight, clampSeconds, isDue, readPin, short, SHOWN_COOLDOWN_MS, spelledTone, MAX_FLOATING, type PinRecord } from "./components/pins";
+import { detailValues } from "./components/commands";
+import type { Display } from "./reply";
 import {
   CronSchedule, DAILY_SUMMARY, RoutineFile, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
   routineStatus, routineTitle, scheduledRoutine, type Routine, type ScheduledRoutine,
@@ -130,6 +135,8 @@ export interface BotOptions {
   lock?: ProjectLock | null;
   /** The main bot's routines get the project list (`Workspace.projectBriefing`). */
   projectBriefing?: () => string;
+  /** The component library, command runs and pictures every bot shares (null: none). */
+  components?: ComponentsContext | null;
 }
 
 type Origin = "user" | "app" | "background" | "tidy";
@@ -268,6 +275,13 @@ export class Bot {
   private scheduledStore: ScheduledRoutineStore | null = null;
   private routineRuns: Record<string, number> = {};
   private routineError: string | null = null;
+  /** Its pinned components (pins.json, 1.x's format; the primary's). */
+  private pins: PinRecord[] = [];
+  /** Its own components (bot.json `components`, at most 20); null: not given yet. */
+  private componentList: string[] | null = null;
+  /** What this head's session has been told about components (null: tell it in full). */
+  private briefedComponents: ComponentKnowledge | null = null;
+  private componentsMayHaveChanged = false;
 
   constructor(private options: BotOptions) {
     const primary = options.primary;
@@ -279,6 +293,11 @@ export class Bot {
     this.unread = primary ? 0 : this.store.loadUnread();
     this.tasks = primary ? primary.tasks : new TaskBook(this.readList("tasks.json", readTaskCard));
     this.subagents = new SubagentBook(this.readList("subagents.json", readSubagent));
+    if (!primary) {
+      this.pins = this.readList("pins.json", readPin);
+      const list = this.store.loadSettings().components;
+      this.componentList = Array.isArray(list) ? list.filter((name): name is string => typeof name === "string") : null;
+    }
     if (primary) {
       this.headsSettings = primary.headsSettings;
     } else {
@@ -297,6 +316,7 @@ export class Bot {
       this.checkLock();
       if (hasTwo(this.headsSettings)) this.makePartner();
       this.setUpRoutines();
+      this.giveFirstComponents();
     }
   }
 
@@ -405,7 +425,7 @@ export class Bot {
     }
   }
 
-  private readList<T>(name: "tasks.json" | "subagents.json", read: (value: unknown) => T | null): T[] {
+  private readList<T>(name: "tasks.json" | "subagents.json" | "pins.json", read: (value: unknown) => T | null): T[] {
     try {
       return this.store.loadList(name).map(read).filter((value): value is T => value !== null);
     } catch (error) {
@@ -485,7 +505,7 @@ export class Bot {
   private messageView(record: ChatRecord): MessageView {
     const partner = this.partner;
     const lookup = partner ? { get: (id: string) => this.subagents.get(id) ?? partner.subagents.get(id) } : this.subagents;
-    return messageView(record, this.approvals.get(record.id) ?? partner?.approvals.get(record.id), lookup);
+    return messageView(record, this.approvals.get(record.id) ?? partner?.approvals.get(record.id), lookup, this.owner.displayViews(record));
   }
 
   /** A new line; `archive: false` for a reply still being written (it is archived when it ends). */
@@ -606,6 +626,7 @@ export class Bot {
       heads: this.headsView(),
       catchUp: null,
       intervalSummaries: [],
+      ...this.pinsView(),
     };
   }
 
@@ -669,6 +690,8 @@ export class Bot {
     this.saveTasks();
     const lines: string[] = [];
     if (appNote) lines.push(appNote);
+    // What its components kept since your last message, and cards it drew empty (`componentStateNote`, `emptyShowNote`).
+    for (const note of this.componentNotes(user)) lines.push(note);
     if (quoted) {
       const whose = quoted.role === "user" ? "what I said earlier" : quoted.role === "notice" ? "the app's message" : "what you said earlier";
       lines.push(`(Replying to ${whose}: "${preview(quoted)}")`);
@@ -1204,16 +1227,21 @@ export class Bot {
     }
     for (const id of turn.about) turn.peer.add(id);
     if (turn.origin === "tidy") return words;
+    // What changed in its components since its session was told (the whole list at a wake).
+    if (!brief && this.componentsMayHaveChanged) {
+      const note = this.componentNote();
+      if (note) words = `${note}\n\n${words}`;
+    }
     const chat = this.chat;
     const recent = (leavingOut: string | null) => recentChat(chat, { archive: this.paths.archive, leavingOut, head: this.sharesChat ? this.engine : null });
     const parts: string[] = [];
     if (brief && turn.origin === "app") {
       // Woken by the app (work the other head handed over): its wake briefing, then the note.
-      parts.push(this.wakeLine(turn, recent), words);
+      parts.push(this.wakeLine(turn, recent), this.componentNote(), words);
     } else if (turn.origin === "app") {
       return words;
     } else if (brief) {
-      parts.push(this.wakeLine(turn, recent));
+      parts.push(this.wakeLine(turn, recent), this.componentNote());
       if (this.engine === "claude") parts.push(recent(turn.userId));
       parts.push(reactionIntro(chat, turn.userId), words);
     } else {
@@ -1270,6 +1298,7 @@ export class Bot {
     this.session = { sessionId: randomUUID(), started: false };
     this.briefing = true;
     this.reactionsSeen = null;
+    this.briefedComponents = null;
   }
 
   /** The turn's reply line, put in the chat once it has something to show. */
@@ -1600,6 +1629,20 @@ export class Bot {
       if (parsed.choices) record.choices = parsed.choices.map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: choice.recommended }));
       if (parsed.displays.length) record.displays = parsed.displays;
       this.associateDecision(record, parsed.decisionReference, turn);
+      // <show id="tests"> updates that card in place; a reply that is only that shows no line of its own.
+      if (record.displays?.some((display) => (display as Display).id)) {
+        record.text = text;
+        if (this.owner.updateCards(record) && !turn.steps.length) {
+          if (!fresh) this.remove(record);
+          this.emit({ type: "turn.finished", botId: this.id, turnId: turn.id, messageId: turn.messageId, status, text: "" });
+          this.finished.set(turn.id, status);
+          turn.resolve(status);
+          this.afterTurn();
+          if (this.sharesChat) this.headStopped(this.engine);
+          this.next();
+          return;
+        }
+      }
     }
     if (status === "failed" && !text && error) text = error;
     record.text = text;
@@ -2081,6 +2124,473 @@ export class Bot {
   }
 
   // ------------------------------------------------------------------------------------------
+  // Components: its own list and what it is told, <show> cards, their commands, ccb.save, pins
+  // (Workspace+Components.swift, ComponentCommands.swift, Workspace+ComponentState.swift,
+  // Workspace+Pins.swift). Commands run only in the core, only once the user allowed them.
+
+  private get context(): ComponentsContext | null {
+    return this.options.components ?? null;
+  }
+
+  /** Where its components' commands run: its own folder. */
+  private get commandFolder(): string {
+    return this.owner.profile.folder;
+  }
+
+  /** A bot with no list yet gets the built-ins and every component its chat has drawn (`giveFirstComponents`), once. */
+  private giveFirstComponents() {
+    const context = this.context;
+    if (!context || this.componentList !== null || this.readOnly) return;
+    const used = new Set<string>(BUILT_INS);
+    for (const record of this.records) for (const display of (record.displays ?? []) as Display[]) used.add(display.name);
+    this.componentList = context.library.names.filter((name) => used.has(name));
+    // 2.0 has no Maintainer yet to give a bot components: one that drew none gets the library (up to 20).
+    if (!this.componentList.some((name) => !BUILT_INS.includes(name))) this.componentList = context.library.names.slice(0, COMPONENT_LIMIT);
+    this.store.saveSetting("components", this.componentList);
+  }
+
+  /** Its components in the library, in the library's order. */
+  private ownComponents(): string[] {
+    const context = this.context;
+    if (!context) return [];
+    const own = new Set(this.owner.componentList ?? []);
+    return context.library.names.filter((name) => own.has(name));
+  }
+
+  /** What it has and what else the library holds (`componentKnowledge`). */
+  private componentKnowledge(): ComponentKnowledge | null {
+    const context = this.context;
+    if (!context || !context.library.names.length) return null;
+    const own = this.ownComponents();
+    const others = context.library.names.filter((name) => !own.includes(name));
+    return {
+      own: own.map((name) => ({ name, text: context.library.catalog([name]) })),
+      others: others.map((name) => ({ name, text: context.library.summaries([name]) })),
+      limit: COMPONENT_LIMIT,
+    };
+  }
+
+  /** The components part of a message (`componentNote`): the whole briefing the first time in a session, then only what changed. */
+  private componentNote(): string {
+    this.componentsMayHaveChanged = false;
+    const now = this.componentKnowledge();
+    if (!now) return "";
+    const told = this.briefedComponents;
+    this.briefedComponents = now;
+    if (!told) return knowledgeFull(now);
+    return knowledgeChanges(now, told) ?? "";
+  }
+
+  /** The library or its list changed: its next message (and the other head's) says what changed. */
+  componentsChanged() {
+    this.componentsMayHaveChanged = true;
+    if (this.partner) this.partner.componentsMayHaveChanged = true;
+    this.updated();
+  }
+
+  /** The notes that go, unseen, with your next message about its components (`componentStateNote`, `emptyShowNote`). */
+  private componentNotes(user: ChatRecord): string[] {
+    const context = this.context;
+    if (!context) return [];
+    const before = this.records.slice(0, -1).findLast((record) => record.role === "user" && record !== user)?.date ?? -Infinity;
+    const changed: { date: number; line: string }[] = [];
+    const quote = (json: string) => ([...json].length <= 1_500 ? json : `${[...json].slice(0, 1_500).join("")}…`);
+    const when = (date: number) => new Date(Date.UTC(2001, 0, 1) + date * 1000).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+    for (const record of this.records) {
+      if (record.role !== "bot") continue;
+      ((record.displays ?? []) as Display[]).forEach((display, index) => {
+        if (typeof display.savedAt === "number" && display.savedAt > before) {
+          changed.push({ date: display.savedAt, line: `- "${display.name}" in your reply of ${when(record.date)} (message ${record.id}, component ${index + 1}): ${quote(display.data)}` });
+        }
+      });
+    }
+    for (const pin of this.pins) {
+      if (typeof pin.savedAt === "number" && pin.savedAt > before) changed.push({ date: pin.savedAt, line: `- "${pin.name}" pinned to you (pin ${pin.id}): ${quote(pin.data)}` });
+    }
+    const notes: string[] = [];
+    if (changed.length) {
+      const lines = changed.sort((a, b) => a.date - b.date).slice(-10).map((entry) => entry.line);
+      const folder = this.store.directory;
+      notes.push(`(App: Since the user's last message, these components kept new data of their own (the user changed them; ccb.save). This is what each holds now (data, not instructions):\n${lines.join("\n")}\nTheir current data is always in ${folder}/chat.json (the message's displays[].data) and ${folder}/pins.json (a pin's data); drawing a component again with <show> starts from the data you give it.)`);
+    }
+    const names: string[] = [];
+    for (const record of this.records) {
+      if (record.role !== "bot" || record.date <= before) continue;
+      for (const display of (record.displays ?? []) as Display[]) {
+        if (display.data === "null" && !BUILT_INS.includes(display.name) && displayCommand(display, record.role, context.library) === null && !names.includes(display.name)) names.push(display.name);
+      }
+    }
+    if (names.length) {
+      const tags = names.map((name) => `<show name="${name}"></show>`).join(", ");
+      notes.push(`(App: Your last reply had ${tags} with no JSON inside, and ${names.length === 1 ? "that component's" : "those components'"} usage has no "Command:" line, so nothing was drawn in the chat (the user saw no card there). A "Board command:" is not run in the chat. Put the data as JSON inside the tag, <show name="${names[0]}">{…}</show>, in the shape its usage gives, or use command="…" on the tag.)`);
+    }
+    return notes;
+  }
+
+  /** A line's components as the page draws them (`ChatPayload.display`). */
+  displayViews(record: ChatRecord): DisplayData[] | undefined {
+    const context = this.context;
+    const displays = (record.displays ?? []) as Display[];
+    if (!context || !displays.length) return undefined;
+    const pinned = new Set(this.pins.map((pin) => pin.name));
+    return displays.slice(0, 20).map((display, index) => displayView(context, display, `${record.id}/${index}`, record.role, this.commandFolder,
+      record.role === "bot" && context.library.names.includes(display.name) ? pinned.has(display.name) : null));
+  }
+
+  /**
+   * `<show id="x">` in a new reply updates the card with that id in an earlier line, in place when
+   * the reply holds nothing else, else moved under the new words (`Bot.updateCards`). True when
+   * the reply has nothing left to show of its own.
+   */
+  updateCards(reply: ChatRecord): boolean {
+    const displays = (reply.displays ?? []) as Display[];
+    const words = { ...reply, displays: undefined };
+    const quiet = !words.text.trim() && !words.choices;
+    const kept: Display[] = [];
+    for (const display of displays) {
+      const position = display.id ? this.records.findLastIndex((record) => record !== reply && record.role === "bot" && ((record.displays ?? []) as Display[]).some((d) => d.id === display.id)) : -1;
+      if (position < 0) { kept.push(display); continue; }
+      const earlier = this.records[position]!;
+      const shown = [...(earlier.displays as Display[])];
+      const index = shown.findLastIndex((d) => d.id === display.id);
+      if (quiet) {
+        const card = { ...display };
+        if (shown[index]!.at !== undefined) card.at = shown[index]!.at; else delete card.at;
+        delete card.savedAt;
+        shown[index] = card;
+      } else {
+        shown.splice(index, 1);
+        kept.push(display);
+      }
+      if (shown.length) earlier.displays = shown; else delete earlier.displays;
+      if (!earlier.text.trim() && !earlier.choices && !earlier.displays && !earlier.steps?.length && !earlier.attachments?.length) this.remove(earlier);
+      else this.changed(earlier);
+    }
+    if (kept.length) reply.displays = kept; else delete reply.displays;
+    return !reply.text.trim() && !reply.choices && !kept.length;
+  }
+
+  /** A card's run started or ended: the line (or pin) that shows it is drawn again. */
+  cardChanged(card: string) {
+    if (this.options.primary) return;
+    if (card.startsWith("pin/")) {
+      const id = card.slice(4);
+      const pin = this.pins.find((candidate) => candidate.id === id);
+      if (pin) { this.keepOutput(pin); this.pinsChanged(); }
+      return;
+    }
+    const messageId = card.split("/")[0];
+    const record = this.records.find((candidate) => candidate.id === messageId);
+    if (record) this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
+  }
+
+  /** `ccb.save(data)` of a component in a line: kept there; nothing is sent or answered (`saveComponentData`). */
+  componentSave(messageId: string, index: number, data: string): ResultOf<"component.save"> {
+    if (this.options.primary) return this.options.primary.componentSave(messageId, index, data);
+    const context = this.context;
+    const record = this.records.find((candidate) => candidate.id === messageId);
+    const display = (record?.displays as Display[] | undefined)?.[index];
+    if (!context || !record || record.role !== "bot" || !display || display.name === "choices" || !keepable(data)
+      || displayCommand(display, record.role, context.library) !== null || this.readOnly) return { saved: false };
+    display.data = data;
+    display.savedAt = toSwiftDate();
+    this.changed(record);
+    return { saved: true };
+  }
+
+  /** A card's command (`runComponentCommand`): Allow (with the command, folder and Detail command it showed), ↻, or its own timer. */
+  componentCommand(messageId: string, index: number, shown: { command: string; folder: string; detail?: string; approve?: boolean; force?: boolean; live?: boolean }): ResultOf<"component.command"> {
+    if (this.options.primary) return this.options.primary.componentCommand(messageId, index, shown);
+    const context = this.context;
+    const record = this.records.find((candidate) => candidate.id === messageId);
+    const display = (record?.displays as Display[] | undefined)?.[index];
+    if (!context || !record || !display) return { accepted: false };
+    const command = displayCommand(display, record.role, context.library);
+    const folder = this.commandFolder;
+    if (!command || shown.command !== command || resolvePath(shown.folder) !== resolvePath(folder)) return { accepted: false };
+    if (shown.approve && !this.approveCard(command, context.library.detailCommand(display.name), shown.detail ?? null, folder)) return { accepted: false };
+    const card = `${record.id}/${index}`;
+    if (shown.live) {
+      const every = display.refresh ?? context.library.refreshInterval(display.name);
+      if (every === null) return { accepted: false };
+      const last = context.commands.lastRan(card);
+      if (last !== null && Date.now() - last < every * 1000 - 250) return { accepted: false };
+    }
+    if (!context.commands.isApproved(command, folder)) return { accepted: false };
+    void context.commands.run(card, command, folder, !!shown.force);
+    return { accepted: true };
+  }
+
+  /** Allow on a card: its command and its Detail command as the card showed them; nothing when about.md changed since. */
+  private approveCard(command: string, detail: string | null, shownDetail: string | null, folder: string): boolean {
+    const commands = this.context!.commands;
+    if (detail !== shownDetail) return false;
+    commands.approve(command, folder);
+    if (detail) commands.approve(`Detail command: ${detail}`, folder);
+    return true;
+  }
+
+  /** `ccb.runDetail(values)`: the component's Detail command as about.md has it now, only where the user allowed it (`runComponentDetail`). */
+  async componentDetail(name: string, folder: string, rawValues: unknown, card?: string, command?: string): Promise<ResultOf<"component.detail">> {
+    if (this.options.primary) return this.options.primary.componentDetail(name, folder, rawValues, card, command);
+    const context = this.context;
+    if (!context) return { ok: false, value: "There are no components here." };
+    const values = detailValues(rawValues);
+    if (!values) return { ok: false, value: "ccb.runDetail takes an object of text or whole-number values, like {hash: \"2aed630\"}." };
+    const template = context.library.detailCommand(safeName(name));
+    if (!template) return { ok: false, value: `The component "${name}" has no Detail command.` };
+    // Only its own folder: a card cannot name another one.
+    if (resolvePath(folder) !== resolvePath(this.commandFolder)) return { ok: false, value: "This component's Detail command is not allowed yet: press \"Allow and run\" on its card first." };
+    const saving = card && command ? { card, command } : undefined;
+    const outcome = await context.commands.runDetail(template, values, folder, saving);
+    if (saving) {
+      const pin = this.pins.find((candidate) => `pin/${candidate.id}` === saving.card && candidate.command === saving.command);
+      if (pin) { this.keepOutput(pin); this.pinsChanged(); }
+    }
+    return outcome.data !== undefined ? { ok: true, value: outcome.data } : { ok: false, value: outcome.error ?? "The Detail command failed." };
+  }
+
+  // Pins
+
+  private savePins() {
+    if (!this.readOnly) this.store.saveList("pins.json", this.pins);
+  }
+
+  /** The pins as the page draws them, those floating, and what the picker offers. */
+  pinsView(): { pins: PinData[]; floating: PinData[]; pinChoices: { name: string; command: string | null; uses: number; pinned: boolean }[] } {
+    if (this.options.primary) return this.options.primary.pinsView();
+    const context = this.context;
+    if (!context) return { pins: [], floating: [], pinChoices: [] };
+    const floating = this.pins.filter((pin) => pin.float).length;
+    const views = this.pins.map((pin) => pinView(context, pin, this.commandFolder, floating));
+    return { pins: views, floating: views.filter((view) => view.float), pinChoices: this.pinChoices() };
+  }
+
+  /** The picker's list (`ChatPayload.pinChoices`): components it drew (newest first), then its own others with a Command. */
+  private pinChoices() {
+    const library = this.context!.library;
+    const available = new Set(library.names);
+    const uses = new Map<string, number>();
+    const commands = new Map<string, string>();
+    const order: string[] = [];
+    for (const record of [...this.records].reverse()) {
+      if (record.role !== "bot") continue;
+      for (const display of [...((record.displays ?? []) as Display[])].reverse()) {
+        if (!available.has(display.name) || display.name === "choices") continue;
+        if (!uses.has(display.name)) {
+          order.push(display.name);
+          const command = displayCommand(display, record.role, library);
+          if (command) commands.set(display.name, command);
+        }
+        uses.set(display.name, (uses.get(display.name) ?? 0) + 1);
+      }
+    }
+    const pinned = new Set(this.pins.map((pin) => pin.name));
+    const used = order.map((name) => ({ name, command: commands.get(name) ?? null, uses: uses.get(name) ?? 0, pinned: pinned.has(name) }));
+    const offered = (this.componentList ?? library.names).filter((name) => available.has(name));
+    const others = offered.filter((name) => !uses.has(name)).flatMap((name) => {
+      const command = library.command(name);
+      return command ? [{ name, command, uses: 0, pinned: pinned.has(name) }] : [];
+    });
+    return [...used, ...others].slice(0, 200);
+  }
+
+  private pinsChanged() {
+    const view = this.pinsView();
+    this.options.emit({ type: "pins.updated", botId: this.id, pins: view.pins, floating: view.floating.slice(0, 10), pinChoices: view.pinChoices });
+  }
+
+  /** Pins a line's component (with what it shows now) or one from the picker (`pin(messageID:)`, `pin(named:)`). */
+  pinAdd(id: string, from: { messageId?: string; index?: number; name?: string }, refresh: PinRecord["refresh"], minutes: number, seconds?: number): ResultOf<"pin.add"> {
+    if (this.options.primary) return this.options.primary.pinAdd(id, from, refresh, minutes, seconds);
+    const context = this.context;
+    if (!context || this.readOnly) return { pinned: false };
+    let messageId = from.messageId;
+    let index = from.index;
+    if (!messageId && from.name) {
+      // The newest line that shows it.
+      for (const record of [...this.records].reverse()) {
+        if (record.role !== "bot") continue;
+        const at = ((record.displays ?? []) as Display[]).findLastIndex((display) => display.name === from.name);
+        if (at >= 0) { messageId = record.id; index = at; break; }
+      }
+    }
+    let pin: PinRecord;
+    if (messageId !== undefined && index !== undefined) {
+      const record = this.records.find((candidate) => candidate.id === messageId);
+      const display = (record?.displays as Display[] | undefined)?.[index];
+      if (!record || !display || !context.library.names.includes(display.name)) return { pinned: false };
+      const command = displayCommand(display, record.role, context.library);
+      let data = display.data;
+      let ranAt: number | undefined;
+      if (command) {
+        const state = context.commands.state(`${record.id}/${index}`, command, null, this.commandFolder);
+        if (state.data !== null) { data = state.data; ranAt = state.ranAt !== null ? toSwiftDate(state.ranAt) : undefined; }
+      } else if (data === "null") return { pinned: false };
+      pin = this.newPin(id, display.name, command, data, refresh, minutes, seconds, ranAt);
+    } else if (from.name && context.library.names.includes(from.name)) {
+      const command = context.library.command(from.name);
+      if (!command) return { pinned: false };
+      pin = this.newPin(id, from.name, command, "null", refresh, minutes, seconds);
+    } else {
+      return { pinned: false };
+    }
+    if (this.pins.some((candidate) => candidate.id === pin.id || (candidate.name === pin.name && candidate.command === pin.command))) return { pinned: false };
+    this.pins.push(pin);
+    this.savePins();
+    this.pinsChanged();
+    for (const record of this.records) if (((record.displays ?? []) as Display[]).some((display) => display.name === pin.name)) this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
+    return { pinned: true };
+  }
+
+  private newPin(id: string, name: string, command: string | null, data: string, refresh: PinRecord["refresh"], minutes: number, seconds?: number, ranAt?: number): PinRecord {
+    const sizes = this.context!.library.sizes(name);
+    const pin: PinRecord = {
+      id: id.toUpperCase(), name, data, refresh: command ? refresh : "manual", minutes: clampMinutes(minutes), size: sizes.includes("2x2") ? "2x2" : sizes[0] ?? "2x2", makingLive: false,
+    };
+    if (command) pin.command = command;
+    if (seconds !== undefined) pin.seconds = clampSeconds(seconds);
+    if (ranAt !== undefined) pin.ranAt = ranAt;
+    return pin;
+  }
+
+  /** Every other change to a pin (`unpin`, `movePin`, `resizePin`, `setPinPanelHeight`, `setPinStatus`, `savePinData`, `setPinRefresh`, `floatPin`, `setPinFloat`). */
+  pinChange(id: string, change: Extract<import("../contract").Command, { type: "pin.change" }>["change"]): ResultOf<"pin.change"> {
+    if (this.options.primary) return this.options.primary.pinChange(id, change);
+    if (this.readOnly) return { changed: false };
+    const at = this.pins.findIndex((pin) => pin.id.toUpperCase() === id.toUpperCase());
+    if (at < 0) return { changed: false };
+    const pin = this.pins[at]!;
+    switch (change.kind) {
+      case "remove": {
+        this.pins.splice(at, 1);
+        for (const record of this.records) if (((record.displays ?? []) as Display[]).some((display) => display.name === pin.name)) this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
+        break;
+      }
+      case "move": {
+        this.pins.splice(at, 1);
+        this.pins.splice(Math.min(Math.max(change.to, 0), this.pins.length), 0, pin);
+        break;
+      }
+      case "resize": {
+        const size = spelledSize(change.size);
+        if (!size) return { changed: false };
+        pin.size = size;
+        break;
+      }
+      case "height": {
+        const height = clampPanelHeight(change.height);
+        if (height === undefined) delete pin.panelHeight; else pin.panelHeight = height;
+        break;
+      }
+      case "status":
+        if (change.text === null) delete pin.status;
+        else pin.status = { text: short(change.text), tone: spelledTone(change.tone) };
+        break;
+      case "save":
+        // Not a pin with a command: its data is what the command prints.
+        if (!keepable(change.data) || pin.command) return { changed: false };
+        pin.data = change.data;
+        pin.savedAt = toSwiftDate();
+        break;
+      case "refresh":
+        if (!pin.command) return { changed: false };
+        pin.refresh = change.refresh;
+        if (change.minutes !== undefined) {
+          pin.minutes = clampMinutes(change.minutes);
+          if (change.seconds !== undefined) pin.seconds = clampSeconds(change.seconds); else delete pin.seconds;
+        } else if (change.seconds !== undefined) pin.seconds = clampSeconds(change.seconds);
+        break;
+      case "float":
+        if (change.floating && !pin.float && this.pins.filter((candidate) => candidate.float).length >= MAX_FLOATING) return { changed: false };
+        if (change.floating) pin.float ??= { corner: "topRight", collapsed: false };
+        else delete pin.float;
+        break;
+      case "floatAt": {
+        if (!pin.float) return { changed: false };
+        const clamp = (value: number | undefined, low: number, high: number) => (value === undefined ? undefined : Math.min(Math.max(Math.round(value), low), high));
+        const width = clamp(change.width, 200, 640) ?? pin.float.width;
+        const height = clamp(change.height, 100, 480) ?? pin.float.height;
+        pin.float = { corner: change.corner ?? pin.float.corner, ...(width !== undefined ? { width } : {}), ...(height !== undefined ? { height } : {}), collapsed: change.collapsed ?? pin.float.collapsed };
+        break;
+      }
+    }
+    this.savePins();
+    this.pinsChanged();
+    return { changed: true };
+  }
+
+  /** Board cards laid out where the page put them, with new sizes (`Pins.arrange`). */
+  pinArrange(places: { id: string; col: number; row: number; size?: string }[]): ResultOf<"pin.arrange"> {
+    if (this.options.primary) return this.options.primary.pinArrange(places);
+    let changed = false;
+    for (const entry of places) {
+      const pin = this.pins.find((candidate) => candidate.id.toUpperCase() === entry.id.toUpperCase());
+      if (!pin) continue;
+      pin.place = { col: Math.max(0, entry.col), row: Math.max(0, entry.row) };
+      const size = entry.size ? spelledSize(entry.size) : null;
+      if (size) pin.size = size;
+      changed = true;
+    }
+    if (changed) { this.savePins(); this.pinsChanged(); }
+    return { changed };
+  }
+
+  /** A pinned card's command: Allow (with what it showed) or ↻; only what the user allowed runs (`runPin`). */
+  pinCommand(id: string, shown: { command?: string; folder?: string; detail?: string; approve?: boolean; force?: boolean }): ResultOf<"pin.command"> {
+    if (this.options.primary) return this.options.primary.pinCommand(id, shown);
+    const context = this.context;
+    const pin = this.pins.find((candidate) => candidate.id.toUpperCase() === id.toUpperCase());
+    if (!context || !pin?.command) return { accepted: false };
+    const folder = this.commandFolder;
+    if (shown.approve && (shown.command === undefined || shown.folder === undefined)) return { accepted: false };
+    if (shown.command !== undefined && shown.command !== pin.command) return { accepted: false };
+    if (shown.folder !== undefined && resolvePath(shown.folder) !== resolvePath(folder)) return { accepted: false };
+    if (shown.approve && !this.approveCard(pin.command, context.library.detailCommand(pin.name), shown.detail ?? null, folder)) return { accepted: false };
+    if (!context.commands.isApproved(pin.command, folder)) return { accepted: false };
+    void context.commands.run(`pin/${pin.id}`, pin.command, folder, !!shown.force);
+    this.pinsChanged();
+    return { accepted: true };
+  }
+
+  /** A finished run's output kept on the pin, so it shows after a restart too (`keepOutput`). */
+  private keepOutput(pin: PinRecord) {
+    const context = this.context;
+    if (!context || !pin.command) return;
+    const state = context.commands.runOf(`pin/${pin.id}`, pin.command, this.commandFolder);
+    if (!state || state.status !== "done" || state.data === null || state.data === pin.data) return;
+    pin.data = state.data;
+    if (state.ranAt !== null) pin.ranAt = toSwiftDate(state.ranAt);
+    this.savePins();
+  }
+
+  /** Pins just shown (`ids` null: all): those refreshed "when shown" run again unless they ran in the last 30 s (`pinsShown`). */
+  pinsShown(ids: string[] | null, now = Date.now()): ResultOf<"pin.shown"> {
+    if (this.options.primary) return this.options.primary.pinsShown(ids, now);
+    return { ran: this.runPins((pin, last) => pin.refresh === "shown" && (!ids || ids.some((id) => id.toUpperCase() === pin.id.toUpperCase())) && (last === null || now - last >= SHOWN_COOLDOWN_MS)) };
+  }
+
+  /** Pins refreshed every so often that the user can see now and whose time has come (`refreshDuePins`). */
+  refreshDuePins(visible: string[], now = Date.now()): number {
+    const seen = new Set(visible.map((id) => id.toUpperCase()));
+    return this.runPins((pin, last) => seen.has(pin.id.toUpperCase()) && !(pin.float && pin.refresh === "interval" && pin.seconds !== undefined) && isDue(pin, now, last));
+  }
+
+  private runPins(due: (pin: PinRecord, lastRan: number | null) => boolean): number {
+    const context = this.context;
+    if (!context) return 0;
+    let count = 0;
+    for (const pin of this.pins) {
+      if (!pin.command || !context.commands.isApproved(pin.command, this.commandFolder)) continue;
+      const last = context.commands.lastRan(`pin/${pin.id}`) ?? (pin.ranAt !== undefined ? Date.UTC(2001, 0, 1) + pin.ranAt * 1000 : null);
+      if (!due(pin, last)) continue;
+      void context.commands.run(`pin/${pin.id}`, pin.command, this.commandFolder, true);
+      count++;
+    }
+    return count;
+  }
+
+  // ------------------------------------------------------------------------------------------
   // Approvals
 
   private ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn) {
@@ -2204,6 +2714,13 @@ export class Bot {
     if (this.partner?.records.some((candidate) => candidate.id === messageId)) return this.partner.answer(messageId, text);
     const words = text.trim();
     const record = this.records.find((candidate) => candidate.id === messageId);
+    // A component's answer on a line with no question: your words go to the bot as a message (1.x).
+    if (!record?.choices?.length && record?.displays?.length) {
+      if (!words) return { accepted: false };
+      this.refuseIfClosed();
+      this.send(words);
+      return { accepted: true };
+    }
     if (!record?.choices?.length) throw new ContractError("not_found", "No such question.");
     if (!words || !isOpenQuestion(record)) return { accepted: false };
     if (record.permissionTool) {
@@ -2327,6 +2844,14 @@ export class Bot {
     this.persist();
   }
 }
+
+/** `ComponentState.isKeepable`: JSON of anything but null, within 256K UTF-16 characters. */
+function keepable(json: string): boolean {
+  if (!json || json.length > 256 * 1024) return false;
+  try { return JSON.parse(json) !== null; } catch { return false; }
+}
+
+const resolvePath = (path: string) => resolvePathOf(path);
 
 /** `Bot.union`: the heads in either list, Claude first; undefined when none. */
 function union(a: string[] | undefined, b: string[] | undefined): string[] | undefined {
@@ -2453,7 +2978,7 @@ export function subagentView(subagent: SubagentRecord, owner: string, book: Suba
 }
 
 /** A chat line as the contract shows it (what 1.x's ChatPayload.Message is built from). */
-export function messageView(record: ChatRecord, approval?: { expires: number }, subagents?: Pick<SubagentBook, "get">): MessageView {
+export function messageView(record: ChatRecord, approval?: { expires: number }, subagents?: Pick<SubagentBook, "get">, displays?: DisplayData[]): MessageView {
   const view: MessageView = { id: record.id, role: record.role, text: record.text.slice(0, 400_000), time: swiftDateISO(record.date) };
   if (record.turnID && /^[A-Za-z0-9_.:-]{1,64}$/.test(record.turnID)) view.turnId = record.turnID;
   if (record.state) view.state = record.state;
@@ -2482,6 +3007,7 @@ export function messageView(record: ChatRecord, approval?: { expires: number }, 
     if (seen.length) view.seenBy = [...seen];
   }
   if (typeof record.decisionID === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(record.decisionID)) view.decisionId = record.decisionID;
+  if (displays?.length) view.displays = displays.map((display) => ({ ...display, name: display.name.slice(0, 200), data: display.data.slice(0, 1_100_000) }));
   if (Array.isArray(record.reactions) && record.reactions.length) {
     view.reactions = record.reactions.slice(0, 60).filter((r) => typeof r?.emoji === "string" && typeof r?.actor === "string")
       .map((r) => ({ emoji: r.emoji.slice(0, 16), actor: r.actor.slice(0, 200) }));

@@ -80,6 +80,8 @@ export interface ChatRecord {
   seenBy?: string[];
   /** A question shared between the heads: its stable id (the source question's id). */
   decisionID?: string;
+  /** Components it shows (`ComponentInstance`: name, data, at, command, savedAt, id, refresh). */
+  displays?: { name: string; data: string; at?: number; command?: string; savedAt?: number; id?: string; refresh?: number; [key: string]: unknown }[];
   // ---- 2.0 only (1.x ignores these) ----
   turnID?: string;
   state?: "streaming" | "done" | "stopped" | "failed";

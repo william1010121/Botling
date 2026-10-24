@@ -67,7 +67,9 @@ export class CardBroker {
     let sender: CardTarget | null = null;
     for (const target of this.targets) if (target.frame.contentWindow && target.frame.contentWindow === event.source) sender = target;
     if (!sender) {
-      this.refuse("a message from a frame that is not a registered card", null);
+      // A library component's frame: the chat page's own component broker (Web/src) answers it.
+      const component = [...this.target.document.querySelectorAll<HTMLIFrameElement>("iframe.component-frame")].some((frame) => frame.contentWindow === event.source);
+      if (!component) this.refuse("a message from a frame that is not a registered card", null);
       return;
     }
     if (event.origin !== "null") {
