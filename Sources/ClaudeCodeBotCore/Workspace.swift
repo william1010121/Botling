@@ -1008,13 +1008,25 @@ public final class Workspace: ObservableObject {
         }
     }
 
-    /// Lets every awake bot write memory.md before the app quits.
+    /// Lets independent bots tidy together, waiting for every sleep operation before quitting.
     public func putEveryoneToSleep() async {
-        for bot in [mainBot] + Array(managers.values) {
-            // One still at work is not put to sleep, and its process ends with the app: what
-            // its turn has said and done so far stays in its chat.
+        let bots = [mainBot] + Array(managers.values)
+        for bot in bots {
+            // Preserve each active turn before the app ends its process.
             bot.keepTurnSoFar()
-            await bot.goToSleep()
+        }
+        // Each bot owns its two heads and chooses one memory writer. Keep bots pointing at
+        // the same file in one lane as well, including paths aliased through symlinks.
+        let writers = Dictionary(grouping: bots) {
+            $0.profile.memoryURL.standardizedFileURL.resolvingSymlinksInPath()
+        }
+        await withTaskGroup(of: Void.self) { group in
+            for bots in writers.values {
+                group.addTask { @MainActor in
+                    for bot in bots { await bot.goToSleep() }
+                }
+            }
+            await group.waitForAll()
         }
     }
 
