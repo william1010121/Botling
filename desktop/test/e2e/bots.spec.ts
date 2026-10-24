@@ -6,7 +6,7 @@ import { tempDir } from "../helpers";
 import { IDS, writeSwiftFixture } from "../fixtures/swift-data";
 import { launch, say } from "./launch";
 
-test("a restart keeps the chat, and the head resumes its claude session", async () => {
+test("a restart keeps the chat; the bot wakes a new claude session (1.x), briefed from the chat", async () => {
   const first = await launch();
   await say(first.chat, "remember me");
   await expect(first.chat.locator(".row.bot[data-id]").last()).toHaveAttribute("data-state", "done");
@@ -16,7 +16,7 @@ test("a restart keeps the chat, and the head resumes its claude session", async 
     await expect(again.chat.locator(".row.user").last()).toContainText("remember me");
     await expect(again.chat.locator(".row.bot[data-id]").last().locator(".markdown")).toHaveText("You said: remember me");
     await say(again.chat, "/resume");
-    await expect(again.chat.locator(".row.bot[data-id]").last().locator(".markdown")).toHaveText(/resumed=true/);
+    await expect(again.chat.locator(".row.bot[data-id]").last().locator(".markdown")).toHaveText(/resumed=false/);
   } finally {
     await again.app.close();
   }

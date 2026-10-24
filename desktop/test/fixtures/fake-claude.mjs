@@ -195,6 +195,7 @@ async function turn(job) {
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, `## Current status\nTidied by the fake CLI (session ${session}).\n## In progress\n## Waiting on you\n## Decided\n`);
     }
+    await sleep(Number(process.env.FAKE_CLAUDE_SLOW_TIDY_MS ?? 0));
     const text = await stream("OK");
     result(text);
     return;

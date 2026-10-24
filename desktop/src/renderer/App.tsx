@@ -53,7 +53,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
         </header>
         {bot?.problem && <div className="banner" role="alert">{bot.problem}</div>}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} />
-        {error && <div className="banner bottom" role="alert">{error}</div>}
+        {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
     </div>
   );
