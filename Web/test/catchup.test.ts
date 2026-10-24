@@ -122,22 +122,14 @@ it("preserves all mixed source targets beyond model limits in loading/ready/fail
   expect(sent.at(-1)).toEqual({ type: "openURL", url: "file:///tmp/final%20report.html", label: "Report · Alternate report" });
 });
 
-it("offers a manual trigger without a group, disables it for empty/loading and hides it for subagents", () => {
-  const button = () => document.querySelector<HTMLButtonElement>(".composer-tools .catchup-button")!;
-  window.ccb.setState(state(null));
-  expect(button().textContent).toBe("Summarize");
-  expect(button().title).toContain("between your last two messages");
-  button().click();
-  expect(sent.at(-1)).toEqual({ type: "catchUpManual", botID: "catchup-bot" });
-  window.ccb.setState(state(null, { messages: [] }));
-  expect(button().disabled).toBe(true);
-  expect(button().textContent).toBe("No messages to summarize");
-  window.ccb.setState(state(view({ state: "loading", manual: true })));
-  expect(button().disabled).toBe(true);
-  expect(button().textContent).toBe("Summarizing…");
-  expect(document.querySelector(".catchup-divider")?.textContent).toBe("Summary · 4 messages");
-  window.ccb.setState(state(null, { subagent: { id: "x" } as ChatState["subagent"] }));
-  expect(button().hidden).toBe(true);
+it("puts exact interval triggers only on each last bot footer, never beside Send", () => {
+  window.ccb.setState(state(null, { messages: [line("u1", "user"), line("b1"), line("n", "notice"), line("b2"), line("u2", "user"), line("b3")] }));
+  expect(document.querySelector(".composer-tools .catchup-button")).toBeNull();
+  const buttons = [...document.querySelectorAll<HTMLButtonElement>(".interval-summary-trigger")];
+  expect(buttons.map(b => b.closest<HTMLElement>(".row")?.dataset.id)).toEqual(["b2", "b3"]);
+  expect(buttons.map(b => b.textContent)).toEqual(["Summarize 2 replies", "Summarize 1 reply"]);
+  buttons[0].click();
+  expect(sent.at(-1)).toEqual({ type: "catchUpManual", botID: "catchup-bot", userMessageID: "u1" });
 });
 
 
@@ -168,10 +160,6 @@ it("leaves user boundaries and open replies visible and takes links only from th
   expect([...document.querySelectorAll<HTMLElement>(".catchup-links [data-url]")].map(e => e.dataset.url)).toEqual([
     "file:///tmp/inside.html", "https://claude.ai/public/artifacts/interval"
   ]);
-  const button = () => document.querySelector<HTMLButtonElement>(".composer-tools .catchup-button")!;
-  window.ccb.setState(state(null, { messages: [inside, before, closing, open] }));
-  expect(button().disabled).toBe(true); // Empty closed interval, despite older and open replies.
-  expect(button().textContent).toBe("No messages to summarize");
   window.ccb.setState(state(null, { messages: [inside] }));
-  expect(button().disabled).toBe(true); // No user boundary.
+  expect(document.querySelector(".interval-summary-trigger")).toBeNull();
 });
