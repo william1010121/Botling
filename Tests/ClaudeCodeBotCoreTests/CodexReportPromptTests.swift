@@ -4,7 +4,7 @@ import Testing
 @testable import ClaudeCodeBotCore
 
 struct CodexReportPromptTests {
-    /// Full Claude prompts from all roles/settings, frozen before editing production d2b2d8c.
+    /// Full Claude prompts from all roles/settings, including the accepted routine instructions.
     private func claudeSnapshots() -> [String: String] {
         let root = URL(filePath: "/tmp/codex-report-prompt-baseline")
         let profiles: [BotProfile] = [
@@ -38,11 +38,12 @@ struct CodexReportPromptTests {
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    @Test func allDeliveredClaudePromptsMatchTheFrozenBeforeBaseline() throws {
+    @Test func allDeliveredClaudePromptsMatchRoutineAwareBaseline() throws {
         #expect(claudeSnapshots().count == 288)
-        // Captured by executing production d2b2d8c before modifying Prompts.swift.
+        // Updated for be8bf867's intentional routine instructions. Restoring only that passage
+        // reproduces the original d2b2d8c digest; the other 240 prompt fields are unchanged.
         // SHA-256 of sorted-key JSON containing all 288 complete prompt strings.
-        #expect(try claudeDigest() == "092a4b26d76cfd4a57f7a310fd75920dc095d2a9adb2bd44164f61bac775d5c5")
+        #expect(try claudeDigest() == "1f3fd24a0cf8917e3f7a2d52e828e418d8041b711b9d5723ecc33f8552439d36")
     }
 
     private func expectReportRules(_ instructions: String, folder: String) {
