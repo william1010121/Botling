@@ -9,7 +9,7 @@ export const zhHans: Dictionary = {
   "interval.unknown": "未知来源",
   "interval.attribution": "Summary",
   "interval.autoAttribution": "Summary · 自动",
-  "interval.autoHeader": "你发送下一条时自动结算 · {n} 条回复，超过阈值",
+  "interval.autoHeader": "你发送下一条时自动结算 · {n} 条回复，达到阈值",
 
   "verification.title": "完成验证",
   "verification.checking": "验证中…",

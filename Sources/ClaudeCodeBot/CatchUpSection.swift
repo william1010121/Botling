@@ -16,19 +16,19 @@ struct CatchUpSection: View {
             }
             Toggle(isOn: Binding(get: { settings.intervalSummaryEnabled }, set: { workspace.setIntervalSummaryEnabled($0) })) {
                 Text(L("Summarize between your messages"))
-                Text(L("Your next message summarizes the previous interval if it has more than {0} bot replies", settings.intervalSummaryThreshold))
+                Text(L("Your next message summarizes the previous interval if it has at least {0} bot replies", settings.intervalSummaryThreshold))
             }
             if settings.summaryThresholdsCustomized {
                 Stepper(value: Binding(get: { settings.catchUpThreshold }, set: { workspace.setCatchUpThreshold($0) }), in: CatchUp.thresholdRange) {
                     thresholdLabel(L("Unread threshold"), value: settings.catchUpThreshold)
                 }
                 Stepper(value: Binding(get: { settings.intervalSummaryThreshold }, set: { workspace.setIntervalSummaryThreshold($0) }), in: CatchUp.thresholdRange) {
-                    thresholdLabel(L("Interval threshold"), value: settings.intervalSummaryThreshold)
+                    thresholdLabel(L("Interval threshold"), value: settings.intervalSummaryThreshold, inclusive: true)
                 }
                 Button(L("Use default thresholds")) { workspace.setSummaryThresholdsCustomized(false) }
             } else {
                 HStack {
-                    Text(L("Both thresholds: more than {0} bot replies", CatchUp.defaultThreshold))
+                    Text(L("Default thresholds: unread > {0}, interval ≥ {0} bot replies", CatchUp.defaultThreshold))
                     Spacer()
                     Button(L("Adjust individually")) { workspace.setSummaryThresholdsCustomized(true) }
                 }
@@ -81,11 +81,11 @@ struct CatchUpSection: View {
         .task { models = await CodexModels.load() }
     }
 
-    private func thresholdLabel(_ title: String, value: Int) -> some View {
+    private func thresholdLabel(_ title: String, value: Int, inclusive: Bool = false) -> some View {
         HStack {
             Text(title)
             Spacer()
-            Text(L("More than {0} bot replies", value)).monospacedDigit()
+            Text(L(inclusive ? "At least {0} bot replies" : "More than {0} bot replies", value)).monospacedDigit()
         }
     }
 }

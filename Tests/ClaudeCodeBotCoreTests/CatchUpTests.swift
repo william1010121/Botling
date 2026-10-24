@@ -519,8 +519,8 @@ struct CatchUpTests {
         #expect(fake.prompts.count == 1)
     }
 
-    @Test func intervalThresholdIsStrictAndNoticesErrorsRelaysDoNotCount() async throws {
-        let root = tempRoot("strict-interval")
+    @Test func intervalThresholdIgnoresNoticesErrorsRelaysAndDisabledAutomation() async throws {
+        let root = tempRoot("interval-metadata")
         defer { try? FileManager.default.removeItem(at: root) }
         let workspace = makeWorkspace(root)
         let fake = FakeSummaries()
@@ -528,17 +528,19 @@ struct CatchUpTests {
         workspace.setIntervalSummaryEnabled(true)
         let chat = workspace.mainBot
         chat.post(ChatMessage(role: .user, text: "first"), unread: false)
-        for index in 0..<3 { chat.post(ChatMessage(role: .bot, text: "reply \(index)"), unread: false) }
+        for index in 0..<2 { chat.post(ChatMessage(role: .bot, text: "reply \(index)"), unread: false) }
         for role in [ChatMessage.Role.notice, .error, .relay, .divider] {
             chat.post(ChatMessage(role: role, text: "metadata"), unread: false)
         }
         chat.post(ChatMessage(role: .user, text: "second"), unread: false)
         #expect(workspace.catchUps[chat.id] == nil)
+        #expect(workspace.intervalSummaryViews(for: chat).isEmpty)
         #expect(fake.prompts.isEmpty)
         workspace.setIntervalSummaryEnabled(false)
         for index in 0..<4 { chat.post(ChatMessage(role: .bot, text: "reply \(index)"), unread: false) }
         chat.post(ChatMessage(role: .user, text: "third"), unread: false)
         #expect(workspace.catchUps[chat.id] == nil)
+        #expect(workspace.intervalSummaryViews(for: chat).isEmpty)
         #expect(fake.prompts.isEmpty)
     }
 

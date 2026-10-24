@@ -9,7 +9,7 @@ export const ko: Dictionary = {
   "interval.unknown": "알 수 없는 엔진",
   "interval.attribution": "Summary",
   "interval.autoAttribution": "Summary · 자동",
-  "interval.autoHeader": "다음 메시지를 보낼 때 자동 요약 · 답장 {n}개, 기준 초과",
+  "interval.autoHeader": "다음 메시지를 보낼 때 자동 요약 · 답장 {n}개, 기준 도달",
 
   "verification.title": "완료 검증",
   "verification.checking": "검증 중…",

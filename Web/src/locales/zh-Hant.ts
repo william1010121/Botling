@@ -9,7 +9,7 @@ export const zhHant: Dictionary = {
   "interval.unknown": "未知來源",
   "interval.attribution": "Summary",
   "interval.autoAttribution": "Summary · 自動",
-  "interval.autoHeader": "你送出下一則時自動結算 · {n} 則回覆，超過門檻",
+  "interval.autoHeader": "你送出下一則時自動結算 · {n} 則回覆，達到門檻",
 
   "verification.title": "完成驗證",
   "verification.checking": "驗證中…",

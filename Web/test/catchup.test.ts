@@ -185,7 +185,7 @@ it("keeps historical cards, links, retry targets and expansion independent in ev
   expect(heads()[1].querySelector(".speaker")?.textContent).toBe("botling · Summary · 自動");
   expect(heads()[0].querySelector(".interval-originals")?.textContent).toBe("›1 則回覆（Codex ×1） · 點開看原文");
   expect(heads()[1].textContent).toContain("未知來源 ×1");
-  expect(heads()[1].textContent).toContain("你送出下一則時自動結算 · 1 則回覆，超過門檻");
+  expect(heads()[1].textContent).toContain("你送出下一則時自動結算 · 1 則回覆，達到門檻");
   heads()[0].querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
   expect(document.querySelector('[data-id="old"]')?.classList.contains("catchup-folded")).toBe(false);
   expect(document.querySelector('[data-id="metadata"]')?.classList.contains("catchup-folded")).toBe(false);

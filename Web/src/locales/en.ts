@@ -10,7 +10,7 @@ export const en = {
   "interval.unknown": "Unknown head",
   "interval.attribution": "Summary",
   "interval.autoAttribution": "Summary · Auto",
-  "interval.autoHeader": "Settled when you sent your next message · {n} replies, above threshold",
+  "interval.autoHeader": "Settled when you sent your next message · {n} replies, threshold reached",
 
   "verification.title": "Completion verification",
   "verification.checking": "Checking…",

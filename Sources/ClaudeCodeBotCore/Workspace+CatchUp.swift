@@ -71,7 +71,7 @@ extension Workspace {
               chat.messages.dropLast().contains(where: { $0.role == .user }) else { return }
         intervalSummaryClosures[chat.id] = message.id
         let source = CatchUp.intervalMessages(in: chat.messages)
-        guard CatchUp.replyCount(in: source) > settings.intervalSummaryThreshold else { return }
+        guard CatchUp.replyCount(in: source) >= settings.intervalSummaryThreshold else { return }
         beginIntervalSummary(in: chat, messages: source, automatic: true)
     }
 

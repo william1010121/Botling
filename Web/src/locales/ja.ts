@@ -9,7 +9,7 @@ export const ja: Dictionary = {
   "interval.unknown": "不明なエンジン",
   "interval.attribution": "Summary",
   "interval.autoAttribution": "Summary · 自動",
-  "interval.autoHeader": "次のメッセージ送信時に自動要約 · {n} 件の返信、しきい値超過",
+  "interval.autoHeader": "次のメッセージ送信時に自動要約 · {n} 件の返信、しきい値到達",
 
   "verification.title": "完了検証",
   "verification.checking": "検証中…",
