@@ -369,10 +369,18 @@ Working on the chat surface, plugins or tests:
 
 ```bash
 cd Web && npm ci && npm test && npm run build        # chat surface, built-in plugins, plugin host
-swift test                                           # app tests (with a fake claude)
+scripts/test-fast.sh                                 # app tests, split over several serial processes (~15 s)
+scripts/test-fast.sh Conductor --skip Live           # only test ids matching a regex
+scripts/test-all.sh                                  # reference run: full build, all tests in one serial process, as CI
 CCB_LIVE=1 swift test --filter Live                  # acceptance tests with the real claude (costs tokens)
 CCB_SNAPSHOT=/tmp/chat.png swift run botling   # render a sample chat to a PNG and quit
 ```
+
+The app tests use a fake claude. `scripts/test-fast.sh` rebuilds only the test bundle (and the
+app when `Sources/ClaudeCodeBot` changed), then runs every test in shards that each run serially,
+spread by last run's timings (`.build/test-timings.json`, logs in `.build/test-shards/`). The
+tests share the main actor, so one process running them in parallel (`swift test` without
+`--no-parallel`) lets one test's blocking work starve another's short wait; use the scripts.
 
 | Path | What |
 |---|---|
