@@ -6,6 +6,7 @@ extension L10n {
         "Codex was not found.": ["找不到 Codex。", "找不到 Codex。", "Codex が見つかりません。", "Codex를 찾을 수 없습니다."],
         "The model timed out after {0} s.": ["模型在 {0} 秒後逾時。", "模型在 {0} 秒后超时。", "モデルが {0} 秒でタイムアウトしました。", "모델이 {0}초 후 시간 초과되었습니다."],
         "The model call failed; check your Codex login and model access.": ["模型呼叫失敗；請檢查 Codex 登入與模型存取權。", "模型调用失败；请检查 Codex 登录与模型访问权限。", "モデルの呼び出しに失敗しました。Codex のログインとモデルへのアクセスを確認してください。", "모델 호출에 실패했습니다. Codex 로그인과 모델 접근 권한을 확인하세요."],
+        "The summary service is unavailable.": ["摘要服務目前無法使用。", "摘要服务目前无法使用。", "要約サービスを利用できません。", "요약 서비스를 사용할 수 없습니다."],
         "The model did not return a summary.": ["模型沒有回傳摘要。", "模型没有返回摘要。", "モデルが要約を返しませんでした。", "모델이 요약을 반환하지 않았습니다."],
         // The chat page (ChatPayload)
         "Reply to yourself": ["回覆自己", "回复自己", "自分への返信", "나에게 답장"],
