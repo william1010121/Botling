@@ -1351,8 +1351,19 @@ body.spec-mode .float-layer { display: none; }
 .reaction-message-column .choice .detail { white-space:normal; }
 
 /* The app's actual completion check, attached to the reply it evaluated. */
-.completion-verification { margin-top: 8px; padding: 8px 10px; border-left: 2px solid var(--muted); background: #ffffff05; border-radius: 4px; font-size: 12px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
-.verification-title { color: var(--text); font-weight: 500; }
+.completion-verification { margin-top: 8px; padding: 0 10px; border-left: 2px solid var(--muted); background: #ffffff05; border-radius: 4px; font-size: 12px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
+.completion-verification > summary { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 5px 0; cursor: pointer; list-style: none; }
+.completion-verification > summary::-webkit-details-marker { display: none; }
+.completion-verification > summary::before { content: "›"; flex: 0 0 auto; font-size: 16px; line-height: 1; }
+.completion-verification[open] > summary::before { transform: rotate(90deg); }
+.completion-verification > summary:focus-visible { outline: 2px solid #4c8dff; outline-offset: 2px; border-radius: 2px; }
+.verification-title { display: flex; flex: 1; color: var(--text); font-weight: 500; min-width: 0; white-space: pre; }
+.verification-name, .verification-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.verification-name { flex: 0 4 auto; }
+.verification-status { flex: 0 1 auto; }
+.completion-verification[open] .verification-title { display: block; white-space: normal; }
+.completion-verification[open] .verification-name, .completion-verification[open] .verification-status { overflow: visible; }
+.verification-details { padding: 0 0 7px 12px; }
 .verification-model { font-size: 11px; }
 .verification-reason { margin-top: 3px; white-space: pre-wrap; }
 .completion-verification[data-verdict="COMPLETE"] { border-left-color: #7baa8c; }

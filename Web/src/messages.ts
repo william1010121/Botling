@@ -78,12 +78,13 @@ export function messageElement(message: MessageView, components: Record<string, 
 
 /** App-owned verdict on this reply; all provider text is inserted as text, never HTML. */
 export function completionVerificationElement(record: NonNullable<MessageView["completionVerification"]>): HTMLElement {
-  const card = document.createElement("div");
+  const card = document.createElement("details");
   card.className = "completion-verification";
   card.dataset.state = record.state;
   card.dataset.verdict = record.verdict ?? "";
-  card.setAttribute("role", "status");
-  const title = document.createElement("div");
+  const summary = document.createElement("summary");
+  const title = document.createElement("span");
+  title.setAttribute("role", "status");
   title.className = "verification-title";
   const verdicts = {
     CONTINUE: "verification.continue", CONTINUE_ANALYSIS: "verification.analysis",
@@ -95,21 +96,31 @@ export function completionVerificationElement(record: NonNullable<MessageView["c
   const label = record.state === "checking" ? t("verification.checking")
     : record.state === "interrupted" ? t("verification.interrupted")
     : record.verdict ? t(verdicts[record.verdict]) : t("verification.unknown");
-  title.textContent = `${t("verification.title")} · ${label}`;
+  const name = document.createElement("span");
+  name.className = "verification-name";
+  name.textContent = `${t("verification.title")} · `;
+  const status = document.createElement("span");
+  status.className = "verification-status";
+  status.textContent = label;
+  title.append(name, status);
   const model = document.createElement("div");
   model.className = "verification-model";
   model.textContent = `${record.model} · medium`;
-  card.append(title, model);
+  summary.append(title);
+  const content = document.createElement("div");
+  content.className = "verification-details";
+  content.append(model);
+  card.append(summary, content);
   if (record.state === "judged" && record.reason) {
     const reason = document.createElement("div");
     reason.className = "verification-reason";
     reason.textContent = record.reason;
-    card.append(reason);
+    content.append(reason);
   }
   if (record.continuationPaused) {
     const paused = document.createElement("div");
     paused.textContent = t("verification.paused");
-    card.append(paused);
+    content.append(paused);
   }
   return card;
 }

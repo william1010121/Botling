@@ -22,6 +22,9 @@ describe("actual completion verification", () => {
     const reason = '<img src=x onerror="alert(1)"> Real evidence';
     const card = completionVerificationElement({ model: "actual-model", state: "judged", verdict, reason });
     expect(card.dataset.verdict).toBe(verdict);
+    expect((card as HTMLDetailsElement).open).toBe(false);
+    expect(card.querySelector("summary .verification-status")?.textContent).toBeTruthy();
+    expect(card.querySelector("summary")?.textContent).not.toContain(reason);
     expect(card.textContent).toContain(reason);
     expect(card.querySelector("img")).toBeNull();
     expect(card.textContent).toContain("actual-model");
