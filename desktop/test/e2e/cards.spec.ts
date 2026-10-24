@@ -36,7 +36,7 @@ const evil = String.raw`<pre id="results">running</pre>
   // Spoofed identities and raw contract messages: the broker must refuse each.
   parent.postMessage({ ccb: 'save', data: '{"pwned":1}', messageId: '${VICTIM}', cardId: 'c-victim' }, '*');
   parent.postMessage({ ccb: 'save', data: '{"pwned":2}', botId: 'another-bot' }, '*');
-  parent.postMessage({ v: 5, id: 'x', cmd: { type: 'chat.send', botId: '${MAIN}', text: 'sent by a card' } }, '*');
+  parent.postMessage({ v: 6, id: 'x', cmd: { type: 'chat.send', botId: '${MAIN}', text: 'sent by a card' } }, '*');
   // The app page is the chat page's parent: it must not take the chat page's messages from a card.
   top.postMessage({ botling: 'action', action: { type: 'send', text: 'sent by a card via top' } }, '*');
   top.postMessage({ botling: 'request', id: 1, cmd: { type: 'card.save', botId: '${MAIN}', messageId: '${VICTIM}', cardId: 'c-victim', data: '{"pwned":3}' } }, '*');

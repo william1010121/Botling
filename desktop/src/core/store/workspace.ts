@@ -44,6 +44,8 @@ export interface BotProfile {
   job: string | null;
   /** Why it cannot run (its folder is gone), or null. */
   problem: string | null;
+  /** More of its system prompt, for a manager with a special job (Maintainer). */
+  instructions?: string | null;
 }
 
 export function mainProfile(root: string): BotProfile {

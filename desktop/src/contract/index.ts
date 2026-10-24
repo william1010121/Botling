@@ -22,8 +22,10 @@ import shared from "../../../Web/src/contract.json";
  *    composer's Both/Claude/Codex, hand-offs and their rounds), several turns at once.
  * 5: routines (routines.cron and app-owned schedules), catch-up summaries, components (`<show>`
  *    displays, the component library, pins and the Board) and their commands' approvals.
+ * 6: plugins (the library, on/off, settings, sealed secrets, commands, sandboxed panels and their
+ *    program part's calls), a message a plugin stopped, Maintainer.
  */
-export const PROTOCOL_VERSION = 5 as const;
+export const PROTOCOL_VERSION = 6 as const;
 
 /** The most a card's `ccb.save` keeps, shared with the Swift app (`ComponentState.limit`). */
 export const CARD_SAVE_LIMIT: number = (shared as { saveLimit: number }).saveLimit;
@@ -321,6 +323,39 @@ export type AccountView = z.infer<typeof AccountView>;
 // Commands. `target` says who answers it: main answers some itself, the rest go to the core.
 
 const botId = BotId;
+const PluginName = z.string().min(1).max(214).regex(/^[a-z0-9][a-z0-9._-]*$/);
+const SettingKey = z.string().min(1).max(200);
+const SettingValue = z.union([z.boolean(), z.number(), z.string().max(10_000), z.null()]);
+
+/** One plugin as the Plugins panel shows it. Secrets show only whether they are set. */
+export const PluginView = z.strictObject({
+  name: PluginName,
+  title: z.string().max(200),
+  version: z.string().max(100),
+  description: z.string().max(2_000).nullable(),
+  enabled: z.boolean(),
+  failure: z.string().max(2_000).nullable(),
+  installedFrom: z.string().max(2_000).nullable(),
+  permissions: z.array(z.string().max(40)).max(20),
+  parts: z.array(z.enum(["web", "host", "claude", "components"])).max(4),
+  settings: z.array(z.strictObject({
+    key: SettingKey, type: z.string().max(20), title: z.string().max(400), options: z.array(z.string().max(200)).max(50),
+    value: SettingValue, secret: z.boolean(), set: z.boolean(),
+  })).max(100),
+  commands: z.array(z.strictObject({ id: z.string().max(200), title: z.string().max(200), registered: z.boolean() })).max(100),
+  panels: z.array(z.strictObject({ id: z.string().max(100), title: z.string().max(200) })).max(20),
+});
+export type PluginView = z.infer<typeof PluginView>;
+export const PluginsView = z.strictObject({
+  plugins: z.array(PluginView).max(200),
+  /** Folders that look like plugins but failed the check, with why. */
+  broken: z.array(z.strictObject({ folder: z.string().max(214), problems: z.array(z.string().max(2_000)).max(50) })).max(200),
+  host: z.strictObject({ running: z.boolean(), problem: z.string().max(2_000).nullable() }),
+  /** Why secrets cannot be kept here (no safe storage), or null. */
+  secretsProblem: z.string().max(2_000).nullable(),
+});
+export type PluginsView = z.infer<typeof PluginsView>;
+
 export const Command = z.discriminatedUnion("type", [
   /** Every bot, and (with `botId`) that bot's chat. Main bot when `botId` is left out. */
   z.strictObject({ type: z.literal("chat.snapshot"), botId: botId.optional() }),
@@ -404,8 +439,22 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("pin.command"), botId, id, command: z.string().max(20_000).optional(), folder: z.string().max(4_000).optional(), detail: z.string().max(20_000).optional(), approve: z.boolean().optional(), force: z.boolean().optional() }),
   /** Pins just shown (a chip opened, the Board; none named: all), or the ones the user can see now (`visible`). */
   z.strictObject({ type: z.literal("pin.shown"), botId, ids: z.array(id).max(200).nullable(), visible: z.boolean().optional() }),
-  /** Main only: a component page for a sandboxed frame, served from botling-card://page/<token>. */
-  z.strictObject({ type: z.literal("card.page"), html: z.string().max(4_000_000) }),
+  /** Main only: a component page for a sandboxed frame, served from botling-card://page/<token>. `panel`: a plugin panel (its web part loads as a module). */
+  z.strictObject({ type: z.literal("card.page"), html: z.string().max(4_000_000), panel: z.boolean().optional() }),
+  /** The plugin library: every plugin, what is broken, and the plugin host. */
+  z.strictObject({ type: z.literal("plugins.list") }),
+  /** Turns a plugin on or off (on again gives a broken one another try). */
+  z.strictObject({ type: z.literal("plugins.enable"), name: PluginName, enabled: z.boolean() }),
+  /** A plugin's setting (not a secret). */
+  z.strictObject({ type: z.literal("plugins.setting"), name: PluginName, key: SettingKey, value: SettingValue }),
+  /** A plugin's secret setting: sealed in the core, never sent back (null or "": taken out). */
+  z.strictObject({ type: z.literal("plugins.secret"), name: PluginName, key: SettingKey, value: z.string().max(10_000).nullable() }),
+  /** Runs a command a plugin's program part registered. */
+  z.strictObject({ type: z.literal("plugins.command"), id: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/) }),
+  /** A plugin panel's web part (module text) and its settings, for its sandboxed frame. */
+  z.strictObject({ type: z.literal("plugins.panel"), name: PluginName, panel: z.string().min(1).max(100) }),
+  /** A panel's `ccb.host.call(method, params)` to its own plugin's program part (the plugin comes from the frame). */
+  z.strictObject({ type: z.literal("plugins.call"), name: PluginName, method: z.string().min(1).max(200), params: z.unknown() }),
   /** Main only: the picture a component's data named, by its token. */
   z.strictObject({ type: z.literal("card.image"), token: z.string().regex(/^[0-9a-f]{40}$/) }),
   z.strictObject({ type: z.literal("accounts.list") }),
@@ -421,6 +470,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "catchup.retry", "catchup.interval",
   "component.command", "component.detail", "component.save", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
+  "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
 export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page"]);
@@ -446,8 +496,9 @@ export interface ChatSnapshot {
 }
 
 export interface Results {
-  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView> };
-  "chat.send": { messageId: string; turnId: string };
+  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView };
+  /** `stoppedBy`: a plugin's beforeSend hook stopped it (`messageId` is the notice saying so, `turnId` null). */
+  "chat.send": { messageId: string; turnId: string | null; stoppedBy?: string };
   "heads.set": { engines: ("claude" | "codex")[] };
   "heads.answerWith": { answerWith: "claude" | "codex" | "both" };
   "handoff.stop": { stopped: boolean };
@@ -474,6 +525,13 @@ export interface Results {
   "pin.shown": { ran: number };
   "card.page": { url: string };
   "card.image": { path: string; type: string };
+  "plugins.list": PluginsView;
+  "plugins.enable": PluginsView;
+  "plugins.setting": PluginsView;
+  "plugins.secret": PluginsView;
+  "plugins.command": { result: unknown };
+  "plugins.panel": { title: string; source: string; settings: Record<string, boolean | number | string | null> };
+  "plugins.call": { result: unknown };
   "catchup.retry": { started: boolean };
   "catchup.interval": { started: boolean };
   "accounts.list": { accounts: AccountView[] };
@@ -512,6 +570,8 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("components.updated"), components: z.record(z.string().max(200), ComponentInfoView) }),
   /** A summary started, finished or failed. */
   z.strictObject({ type: z.literal("catchup.updated"), botId, catchUp: CatchUpView.nullable(), intervalSummaries: z.array(CatchUpView).max(200) }),
+  /** The plugin library changed (a plugin added, edited, turned off, broken; the host started or stopped). */
+  z.strictObject({ type: z.literal("plugins.updated"), plugins: PluginsView }),
   /** Its routines changed (one ran, the bot or the app edited them). */
   z.strictObject({ type: z.literal("routines.updated"), botId, routines: z.array(RoutineView).max(200), error: z.string().max(2_000).nullable() }),
 ]);

@@ -69,8 +69,8 @@ import {
 } from "./briefing";
 import { extractCards, welcomeMessages } from "./cards";
 import type { ProcessLedger } from "./process/ledger";
-import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RESUME_NOTE, profilePaths, withoutPartsNote, type BotPrompts } from "./prompts";
-import { masked, parseReply, saysNoReply, saysNothing, unsupportedRequest } from "./reply";
+import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, RESUME_NOTE, profilePaths, withoutPartsNote, type BotPrompts } from "./prompts";
+import { masked, parseReply, saysNoReply, saysNothing, unsupportedRequest, type BotRequest } from "./reply";
 import { SubagentBook, readSubagent, SUBAGENT_TOOLS, toolCount, type SubagentRecord } from "./subagents";
 import { readTaskCard, TaskBook, type TaskCard } from "./tasks";
 import type { CatchUpChat } from "./catchup";
@@ -80,7 +80,7 @@ import { clampMinutes, clampPanelHeight, clampSeconds, isDue, readPin, short, SH
 import { detailValues } from "./components/commands";
 import type { Display } from "./reply";
 import {
-  CronSchedule, DAILY_SUMMARY, RoutineFile, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
+  CronSchedule, DAILY_SUMMARY, RoutineFile, routine, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
   routineStatus, routineTitle, scheduledRoutine, type Routine, type ScheduledRoutine,
 } from "./routines";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
@@ -97,6 +97,9 @@ export interface SessionStart {
   resume: boolean;
   /** Appended to claude's system prompt (Prompts.swift's, ported in prompts.ts). */
   systemPrompt: string;
+  /** Plugins' Claude parts (`--plugin-dir`), and the environment their MCP servers need. */
+  pluginDirs?: string[];
+  pluginEnv?: Record<string, string>;
 }
 
 export interface SessionStartCodex extends SessionStart {
@@ -142,6 +145,14 @@ export interface BotOptions {
   projectBriefing?: () => string;
   /** The component library, command runs and pictures every bot shares (null: none). */
   components?: ComponentsContext | null;
+  /** The requests in a reply (<component>, <plugin>, <install>, …) the app acts on; the rest come back (a notice says 2.0 cannot do them yet). */
+  onRequests?: (bot: Bot, requests: BotRequest[]) => BotRequest[];
+  /** Plugins' afterReply hooks, when any plugin has one: may change a reply after it shows (null: none). */
+  replyFilter?: () => ((text: string) => Promise<string>) | null;
+  /** A reply showed (plugins' `bots.onReply`; Maintainer's requests settle). */
+  replied?: (bot: Bot, record: ChatRecord) => void;
+  /** Plugins' Claude parts (`--plugin-dir`) and the secrets their MCP servers read, for a new claude head. */
+  plugins?: () => { dirs: string[]; env: Record<string, string> };
 }
 
 type Origin = "user" | "app" | "background" | "tidy";
@@ -252,6 +263,10 @@ export class Bot {
   private ignoreResults = 0;
   /** One of those ended on its own before the interrupt reached it: the interrupt may stop the merged turn instead. */
   private mergeRaced = false;
+  /** The app's own questions in this chat (installing a plugin): what a pick does. */
+  private appQuestions = new Map<string, (index: number) => void>();
+  /** What the app tells it with its next message (`queueNote`). */
+  private queuedNote: string | null = null;
   /** Work paused for the user's message (1.x's `pausedWork`): carried on once the user has been answered. */
   private paused: { conducted: boolean; handoffId: string | null } | null = null;
   private session: HeadState;
@@ -485,8 +500,8 @@ export class Bot {
         record.text += (record.text ? "\n\n" : "") + "(Interrupted: the core restarted during this reply. It was not sent again.)";
         changed = true;
       }
-      // A tool question from before a restart has nobody waiting for it any more.
-      if (record.permissionTool && isOpenQuestion(record)) {
+      // A tool question (or the app's own question) from before a restart has nobody waiting for it any more.
+      if ((record.permissionTool || record.appQuestion) && isOpenQuestion(record)) {
         record.answer = NO_LONGER_NEEDED;
         changed = true;
       }
@@ -538,6 +553,115 @@ export class Bot {
 
   private notice(text: string) {
     this.add({ id: newId(), role: "notice", text, date: toSwiftDate() });
+  }
+
+  /**
+   * A line from the app in this chat (`Workspace.tell`): a plugin's notice, Maintainer's news. With
+   * `choices` and `onPick` it is the app's own question (installing a plugin): a pick goes to `onPick`,
+   * never to the bot; after a restart nobody waits for it, so it is closed ("No longer needed").
+   */
+  appNotice(text: string, choices?: { label: string; recommended?: boolean }[], onPick?: (index: number) => void): string {
+    if (this.options.primary) return this.options.primary.appNotice(text, choices, onPick);
+    const record: ChatRecord = { id: newId(), role: "notice", text, date: toSwiftDate() };
+    if (choices?.length) record.choices = choices.map((choice) => ({ label: choice.label, recommended: !!choice.recommended }));
+    if (choices?.length && onPick) {
+      record.appQuestion = true;
+      this.appQuestions.set(record.id, onPick);
+    }
+    this.add(record);
+    this.bumpUnread();
+    return record.id;
+  }
+
+  /**
+   * Work handed over by the app (`Bot.relay`): a "Handed to you" line, and the words to the head with
+   * 1.x's relay prefix, as a message the reply answers.
+   */
+  relay(text: string): ResultOf<"chat.send"> {
+    if (this.options.primary) return this.options.primary.relay(text);
+    this.refuseIfClosed();
+    const words = text.trim();
+    if (!words) throw new ContractError("bad_request", "Nothing to send.");
+    const line: ChatRecord = { id: newId(), role: "relay", text: words, date: toSwiftDate() };
+    this.add(line);
+    this.tasks.begin(line.id, words, this.engine, line.date);
+    this.saveTasks();
+    const turn = this.deliverTo(this.engine, RELAY_PREFIX + words, line.id);
+    return { messageId: turn.messageId, turnId: turn.id };
+  }
+
+  /** Something only the app says (no line in the chat): wakes it like a message (`Bot.appMessage`). */
+  appMessage(text: string): void {
+    if (this.options.primary) return this.options.primary.appMessage(text);
+    const words = text.trim();
+    if (!words || this.problem || this.profile.problem || this.shuttingDown || !this.checkLock()) return;
+    this.deliverTo(this.engine, words, null, { origin: "app" });
+  }
+
+  /** Told with its next message when it is awake (`Bot.queueNote`; a later note replaces an earlier one). An asleep bot reads it all at its wake. */
+  queueNote(note: string) {
+    const bot = this.options.primary ?? this;
+    if (!bot.head?.running) return;
+    bot.queuedNote = note;
+  }
+
+  /** Its own components (bot.json `components`), null when it keeps no list. */
+  get components(): string[] | null {
+    return this.owner.componentList ? [...this.owner.componentList] : null;
+  }
+
+  setComponentList(names: string[]) {
+    const owner = this.owner;
+    owner.componentList = [...new Set(names)];
+    if (!owner.readOnly) owner.store.saveSetting("components", owner.componentList);
+    owner.componentsChanged();
+  }
+
+  /** Its own components that are in the library, in the library's order (`ownComponents(of:)`). */
+  get ownComponentNames(): string[] {
+    return this.ownComponents();
+  }
+
+  /** What you last said to it (or what was handed to it), for a component's arrival note. */
+  get lastAsked(): string {
+    const last = this.chat.findLast((record) => record.role === "user" || record.role === "relay");
+    return last?.text ?? "";
+  }
+
+  /** A subagent of its is at work (Maintainer settles a request only once its editors are done). */
+  get subagentsAtWork(): boolean {
+    return this.subagents.running.length > 0 || !!this.partner?.subagents.running.length;
+  }
+
+  /** Plugins' afterReply hooks may change the reply that just showed; `bots.onReply` listeners hear it. */
+  private afterReplyHooks(record: ChatRecord) {
+    const filter = this.options.replyFilter?.();
+    const shown = record.text;
+    if (!filter) { this.options.replied?.(this.owner, record); return; }
+    void filter(shown).then((changed) => {
+      // A later edit (a card update, a pick) leaves it as it is.
+      if (changed !== shown && record.text === shown) {
+        record.text = changed;
+        this.changed(record);
+      }
+      this.options.replied?.(this.owner, record);
+    }, () => this.options.replied?.(this.owner, record));
+  }
+
+  /** Any crontab schedule, for plugins (`Bot.addRoutine(cron:task:)`); the same job twice is kept once. */
+  addRoutine(cron: string, task: string): boolean {
+    if (this.options.primary) return this.options.primary.addRoutine(cron, task);
+    const words = task.trim();
+    const schedule = CronSchedule.parse(cron);
+    if (!schedule || !words || !this.routineFile || this.readOnly || this.lockProblem || this.profile.problem) return false;
+    if (!this.routineFile.load().some((job) => job.schedule.text === schedule.text && job.task === words)) this.routineFile.add(routine(schedule, words));
+    this.routinesChanged();
+    return true;
+  }
+
+  /** Whether its head is running (plugins' `awake`). */
+  get awake(): boolean {
+    return !!this.head?.running || !!this.partner?.head?.running;
   }
 
   private saveTasks(): void {
@@ -1295,6 +1419,10 @@ export class Bot {
     }
     for (const id of turn.about) turn.peer.add(id);
     if (turn.origin === "tidy") return words;
+    if (this.queuedNote && !brief) {
+      words = `${this.queuedNote}\n\n${words}`;
+      this.queuedNote = null;
+    }
     // What changed in its components since its session was told (the whole list at a wake).
     if (!brief && this.componentsMayHaveChanged) {
       const note = this.componentNote();
@@ -1342,7 +1470,8 @@ export class Bot {
     if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null; }
     const resume = this.session.started && !this.briefing;
     const prompts = this.prompts();
-    const start = { sessionId: this.session.sessionId, resume, systemPrompt: prompts.system };
+    const plugins = this.options.plugins?.() ?? { dirs: [], env: {} };
+    const start = { sessionId: this.session.sessionId, resume, systemPrompt: prompts.system, pluginDirs: plugins.dirs, pluginEnv: plugins.env };
     let head: AgentHead;
     if (this.engine === "codex") {
       if (!this.options.codexConfig) throw new Error("Codex is not available here.");
@@ -1363,6 +1492,7 @@ export class Bot {
 
   /** A new session for the next wake (after a sleep, or a resume claude no longer had). */
   private newSession() {
+    this.queuedNote = null;
     this.session = { sessionId: randomUUID(), started: false };
     this.briefing = true;
     this.reactionsSeen = null;
@@ -1695,7 +1825,11 @@ export class Bot {
       const extracted = extractCards(text);
       if (extracted) { text = extracted.text; cards = extracted.cards; record.cards = cards; }
       if (parsed.choices) record.choices = parsed.choices.map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: choice.recommended }));
-      if (parsed.displays.length) record.displays = parsed.displays;
+      if (parsed.displays.length) {
+        record.displays = parsed.displays;
+        // A library component it drew without having it goes on its list, if there is room (`countComponents`).
+        this.owner.drewComponents((parsed.displays as Display[]).map((display) => display.name));
+      }
       this.associateDecision(record, parsed.decisionReference, turn);
       // <show id="tests"> updates that card in place; a reply that is only that shows no line of its own.
       if (record.displays?.some((display) => (display as Display).id)) {
@@ -1750,10 +1884,12 @@ export class Bot {
     if (status === "done") {
       this.crashes = 0;
       this.bumpUnread();
-      if (parsed.requests.length) {
-        const what = [...new Set(parsed.requests.map(unsupportedRequest))];
+      const left = parsed.requests.length && this.options.onRequests ? this.options.onRequests(this.owner, parsed.requests) : parsed.requests;
+      if (left.length) {
+        const what = [...new Set(left.map(unsupportedRequest))];
         this.notice(`Botling 2.0 cannot do this yet, so nothing happened: ${what.join("; ")}.`);
       }
+      this.afterReplyHooks(record);
       // What it said covers the subagents that ended so far.
       this.pendingEnded = [];
     }
@@ -2216,10 +2352,23 @@ export class Bot {
     if (!context || this.componentList !== null || this.readOnly) return;
     const used = new Set<string>(BUILT_INS);
     for (const record of this.records) for (const display of (record.displays ?? []) as Display[]) used.add(display.name);
+    // As 1.x: the built-ins and what it has drawn; Maintainer gives it more (<component> requests).
     this.componentList = context.library.names.filter((name) => used.has(name));
-    // 2.0 has no Maintainer yet to give a bot components: one that drew none gets the library (up to 20).
-    if (!this.componentList.some((name) => !BUILT_INS.includes(name))) this.componentList = context.library.names.slice(0, COMPONENT_LIMIT);
     this.store.saveSetting("components", this.componentList);
+  }
+
+  private drewComponents(names: string[]) {
+    const context = this.context;
+    const list = this.componentList;
+    if (!context || !list) return;
+    const next = [...list];
+    for (const name of new Set(names)) {
+      if (!context.library.names.includes(name)) continue;
+      const own = context.library.names.filter((candidate) => next.includes(candidate));
+      if (own.includes(name) || own.length >= COMPONENT_LIMIT) continue;
+      next.push(name);
+    }
+    if (next.length !== list.length) this.setComponentList(next);
   }
 
   /** Its components in the library, in the library's order. */
@@ -2722,6 +2871,16 @@ export class Bot {
     if (resolved !== null) return { accepted: resolved };
     // A question the other head asked: its own to settle.
     if (this.partner?.records.some((candidate) => candidate.id === messageId)) return this.partner.choose(messageId, index, notes);
+    const asked = this.appQuestions.get(messageId);
+    if (asked) {
+      const record = this.records.find((candidate) => candidate.id === messageId);
+      if (!record || !isOpenQuestion(record) || !record.choices?.[index]) return { accepted: false };
+      this.appQuestions.delete(messageId);
+      record.chosen = index;
+      this.changed(record);
+      asked(index);
+      return { accepted: true };
+    }
     const picks = this.cardPicks.get(messageId);
     if (picks) {
       const record = this.records.find((candidate) => candidate.id === messageId);

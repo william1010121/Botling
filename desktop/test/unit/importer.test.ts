@@ -79,11 +79,11 @@ describe("import from 1.x", () => {
     expect(listFiles(source).sort()).toEqual(Object.keys(before));
     setWritable(source, false);
 
-    expect(report.bots.map((bot) => bot.name)).toEqual(["Main bot", "blog", "News", "Broken"]);
-    expect(report.messages).toBe(3 + 2 + 1);
+    expect(report.bots.map((bot) => bot.name)).toEqual(["Main bot", "blog", "News", "Broken", "Maintainer"]);
+    expect(report.messages).toBe(3 + 2 + 1 + 1);
     expect(report.skipped.join("\n")).toMatch(/1 line\(s\) 1.x itself would not read/);
     expect(report.skipped.join("\n")).toMatch(/Broken|33333333.*not valid JSON/);
-    expect(report.skipped.join("\n")).toMatch(/Maintainer/);
+    expect(report.skipped.join("\n")).toMatch(/secret settings .*keychain/);
     expect(report.skipped.join("\n")).toMatch(/web\//);
     // The main bot's files, as they were (so 1.x and 2.0 read the same thing).
     expect(readFileSync(join(target, "main", "chat.json"), "utf8")).toBe(readFileSync(join(source, "main", "chat.json"), "utf8"));
@@ -100,14 +100,23 @@ describe("import from 1.x", () => {
     expect(projects[1].job).toBe("Morning news, in three lines.");
     expect(readFileSync(join(target, "bots", IDS.standalone, ".bot", "memory.md"), "utf8")).toMatch(/three papers/);
     expect(existsSync(join(target, "projects", IDS.broken, "chat.json"))).toBe(false); // Unreadable: left out.
-    expect(existsSync(join(target, "projects", IDS.maintainer))).toBe(false);
-    // The component library comes over (text files only); plugins themselves do not.
+    // Maintainer's chat, and its notes in the plugin library.
+    expect(JSON.parse(readFileSync(join(target, "projects", IDS.maintainer, "chat.json"), "utf8"))).toHaveLength(1);
+    expect(readFileSync(join(target, "plugins", ".bot", "memory.md"), "utf8")).toMatch(/library is tidy/);
+    // The plugin library comes over, text files only: components and plugins' own files.
     expect(report.components).toBe(2);
+    expect(report.plugins).toBe(1);
+    expect(readFileSync(join(target, "plugins", "helper", "dist", "host.mjs"), "utf8")).toMatch(/helper loaded/);
+    expect(existsSync(join(target, "plugins", "helper", "node_modules"))).toBe(false);
+    // plugins.json without the secret setting (and no old failures); the secret itself was never in it to read.
+    const state = JSON.parse(readFileSync(join(target, "plugins.json"), "utf8"));
+    expect(state).toEqual({ disabled: ["weather"], settings: { helper: { greeting: "hello" } }, failures: {}, installed: {} });
+    expect(JSON.stringify(listFiles(target).map((file) => readFileSync(join(target, file), "utf8")))).not.toContain("should-never-be-here");
     expect(readFileSync(join(target, "plugins", "ccb-components", "components", "status", "about.md"), "utf8")).toMatch(/Command: \.\/scan\.sh/);
     expect(existsSync(join(target, "plugins", "ccb-components", "components", "status", "scan.sh"))).toBe(true);
     expect(existsSync(join(target, "plugins", "ccb-components", "components", "status", "icon.png"))).toBe(false);
     expect(existsSync(join(target, "plugins", "weather", "components", "forecast", "template.html"))).toBe(true);
-    expect(existsSync(join(target, "plugins", "weather", "plugin.json"))).toBe(false);
+    expect(existsSync(join(target, "plugins", "weather", "plugin.json"))).toBe(true);
     expect(existsSync(join(target, "plugins", "ccb-components", ".git"))).toBe(false);
     expect(report.skipped.join("\n")).toMatch(/icon\.png: not a text file/);
     expect(needsImport(target)).toBe(false);
@@ -123,8 +132,8 @@ describe("import from 1.x", () => {
     const first = new CoreHarness(target, { BOTLING_IMPORT_FROM: source });
     harnesses.push(first);
     const snapshot = await first.call({ type: "chat.snapshot" });
-    expect(snapshot.imported).toMatchObject({ source, bots: 4, messages: 6 });
-    expect(snapshot.bots.map((bot: { name: string }) => bot.name)).toEqual(["Main bot", "blog", "News", "Broken"]);
+    expect(snapshot.imported).toMatchObject({ source, bots: 5, messages: 7 });
+    expect(snapshot.bots.map((bot: { name: string }) => bot.name)).toEqual(["Main bot", "blog", "News", "Broken", "Maintainer"]);
     const [main, blog, news] = snapshot.bots;
     expect(main).toMatchObject({ id: MAIN, role: "main", avatar: "circle", unread: 2 });
     expect(blog).toMatchObject({ id: IDS.manager, role: "manager", avatar: "square", folder: projectFolder });

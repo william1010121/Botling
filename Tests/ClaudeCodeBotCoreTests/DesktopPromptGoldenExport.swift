@@ -242,8 +242,61 @@ struct DesktopPromptGoldenExport {
             "notes": notes,
             "catchUp": catchUp,
             "components": components,
+            "maintainer": try Self.maintainerExport(),
         ]
         try JSONSerialization.data(withJSONObject: export, options: [.prettyPrinted, .sortedKeys]).write(to: URL(filePath: path))
+    }
+
+    /// Phase 3b: Maintainer's instructions, the files the app writes into the plugin library, and
+    /// what Maintainer is told about the bot that asked for a component (`componentAskNote`).
+    @MainActor
+    static func maintainerExport() throws -> [String: Any] {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-desktop-golden-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fake = FakeLauncher()
+        func workspace(_ name: String, check: String?, shot: String?) -> Workspace {
+            Workspace(root: root.appending(path: name), checkCommand: check, shotCommand: shot, launcher: fake.launcher) { profile, store in
+                Bot(profile: profile, launcher: fake.launcher, store: store)
+            }
+        }
+        let plain = workspace("plain", check: nil, shot: nil)
+        let tooled = workspace("tooled", check: "CHECK-COMMAND", shot: "SHOT-COMMAND")
+        let library = root.appending(path: "plain/plugins")
+        // The library with components, and a main bot whose list has one of them.
+        for name in ["status", "chart", "todo"] {
+            let folder = plain.components.folder.appending(path: name)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try "<div>\(name)</div>".write(to: folder.appending(path: "template.html"), atomically: true, encoding: .utf8)
+            try "A \(name) card.\n".write(to: folder.appending(path: "about.md"), atomically: true, encoding: .utf8)
+        }
+        plain.components.rescan()
+        let bot = plain.mainBot
+        bot.setComponentList(["status"])
+        bot.send("Show me my todos please")
+        func normalized(_ text: String) -> String {
+            text.replacingOccurrences(of: #"id=\"[0-9a-f]{8}\""#, with: "id=\"KEY\"", options: .regularExpression)
+        }
+        let changing = normalized(plain.componentAskNote("status", request: "make it blue", exists: true, from: bot))
+        let given = normalized(plain.componentAskNote("todo", request: "a todo list", exists: true, from: bot))
+        let new = normalized(plain.componentAskNote("weather", request: "the weather", exists: false, from: bot))
+        bot.setComponentList(Array(repeating: "status", count: 1) + (0..<19).map { "c\($0)" })
+        let full = normalized(plain.componentAskNote("chart", request: "a chart", exists: true, from: bot))
+        return [
+            "library": library.path,
+            "libraryTooled": root.appending(path: "tooled/plugins").path,
+            "instructions": plain.maintainerInstructions(),
+            "instructionsTooled": tooled.maintainerInstructions(),
+            "editorAgentSonnet": Workspace.componentEditorAgent(model: .sonnet),
+            "editorAgentOpus": Workspace.componentEditorAgent(model: .opus),
+            "pluginGuide": PluginGuide.text(builtIns: "(no built-in plugins this time)"),
+            "componentsManifest": try String(contentsOf: library.appending(path: "ccb-components/package.json"), encoding: .utf8),
+            "coreManifest": try String(contentsOf: library.appending(path: "ccb-core/package.json"), encoding: .utf8),
+            "coreClaudeManifest": try String(contentsOf: library.appending(path: "ccb-core/claude/.claude-plugin/plugin.json"), encoding: .utf8),
+            "askNotes": ["changing": changing, "given": given, "new": new, "full": full],
+            "arrivalLead": Workspace.arrivalLead("todo", changed: false),
+            "arrivalLeadChanged": Workspace.arrivalLead("status", changed: true),
+            "relayPrefix": BotPrompts.relayPrefix,
+        ]
     }
 
     static let replySamples = [

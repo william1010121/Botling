@@ -80,3 +80,10 @@ const style = `<style>
 export function cardPage(html: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${CARD_CSP}">${style}${runtime}</head><body>${html}</body></html>`;
 }
+
+/**
+ * A plugin panel's page (its web part in a sandboxed frame): as COMPONENT_CSP, plus `blob:` scripts so
+ * the plugin's module (its own source text, given by the core) can be imported. Still no network,
+ * frames, forms or workers; the frame is `sandbox="allow-scripts"` (opaque origin).
+ */
+export const PANEL_CSP = COMPONENT_CSP.replace("script-src 'unsafe-inline'", "script-src 'unsafe-inline' blob:");

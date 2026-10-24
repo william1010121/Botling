@@ -5,17 +5,19 @@
 // What comes over (2.0 keeps 1.x's formats, so this is mostly a checked copy):
 // - the main bot's chat files (chat.json, bot.json, subagents.json, tasks.json, pins.json,
 //   specs.json) and its notes (memory.md, routines.cron);
-// - projects.json, and each project's and bot's chat files;
+// - projects.json, and each project's and bot's chat files, and Maintainer's;
 // - a bot of its own's notes (.bot/memory.md, inbox.md, routines.cron), into 2.0's bots/<ID>/,
 //   with its folder in projects.json pointed there;
 // - settings.json;
-// - the plugin library's components (`plugins/<plugin>/components/<name>/`: template.html, about.md
-//   and the other text files beside them), into 2.0's own plugins folder, where its library reads them.
+// - the plugin library (`plugins/`): every plugin's text files (manifests, bundled code, components,
+//   Claude parts) and Maintainer's notes (.bot/memory.md), into 2.0's own plugins folder; and
+//   plugins.json (which plugins are off, their settings, where outside ones came from) without any
+//   setting a plugin declares secret. Secrets themselves are in 1.x's keychain: never read, never copied.
 // What stays where it is: a project manager's working folder (the user's project, with its
 // .bot/memory.md — 2.0 works in the same folder, like 1.x), attachments, chat archives, result
-// pages and screenshots (messages keep pointing at them, read-only), Maintainer and the rest of the
-// plugin library (its git history, its plugins' code), web AIs' folders, the commands 1.x was
-// allowed to run (2.0 asks again), and claude's own sessions (2.0 starts new ones).
+// pages and screenshots (messages keep pointing at them, read-only), the library's git history,
+// node_modules and binary files (pictures, fonts), web AIs' folders, the commands 1.x was allowed to
+// run (2.0 asks again), and claude's own sessions (2.0 starts new ones).
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -32,6 +34,8 @@ export interface ImportReport {
   skipped: string[];
   /** Components imported from the plugin library. */
   components?: number;
+  /** Plugins (folders with a package.json) imported from the plugin library. */
+  plugins?: number;
 }
 
 /** What a component folder may bring along: its template, usage and the scripts or styles beside them. */
@@ -154,7 +158,7 @@ export function importFrom1x(sourceDir: string, targetDir: string): ImportReport
         report.skipped.push(`a projects.json row that is not a project: ${JSON.stringify(row).slice(0, 120)}`);
         continue;
       }
-      if (row.id === MAINTAINER_ID) continue; // Never saved there by 1.x; Maintainer is not ported.
+      if (row.id === MAINTAINER_ID) continue; // Never saved there by 1.x; Maintainer is the app's own (below).
       const project: ProjectRecord = { ...row };
       // A bot of its own lives in the 1.x folder: its notes come over, and it works in 2.0's.
       let folder: string | null = null;
@@ -172,7 +176,12 @@ export function importFrom1x(sourceDir: string, targetDir: string): ImportReport
       report.messages += messages;
     }
   }
-  if (hasMaintainerChat(source)) report.skipped.push("Maintainer's chat (Maintainer and the plugin library are not in 2.0 yet)");
+  // Maintainer: its chat; its notes are in the plugin library (below).
+  if (hasMaintainerChat(source)) {
+    const messages = copyChat(Layout.bot(source, MAINTAINER_ID), Layout.bot(target, MAINTAINER_ID));
+    report.bots.push({ id: MAINTAINER_ID, name: "Maintainer", messages });
+    report.messages += messages;
+  }
 
   const settings = read(Layout.settings(source));
   if (settings) {
@@ -183,26 +192,59 @@ export function importFrom1x(sourceDir: string, targetDir: string): ImportReport
       report.skipped.push(`${Layout.settings(source)}: not valid JSON, left out`);
     }
   }
-  // The component library: each plugin's components/ folder, text files only.
+  // The plugin library: every plugin's text files (its components among them), and Maintainer's notes.
   const plugins = join(source, "plugins");
   let components = 0;
+  let pluginCount = 0;
   if (existsSync(plugins)) {
+    copyNotes(plugins, join(target, "plugins"), [".bot/memory.md", ".bot/inbox.md", ".bot/routines.cron"]);
     for (const plugin of safeList(plugins)) {
-      const folder = join(plugins, plugin, "components");
-      if (plugin.startsWith(".") || !existsSync(folder)) continue;
-      for (const name of safeList(folder)) {
-        const from = join(folder, name);
-        if (name.startsWith(".") || !existsSync(join(from, "template.html"))) continue;
-        for (const file of listFiles(from).filter((path) => !path.split(sep).some((part) => part.startsWith(".")))) {
-          if (!TEXT_FILE.test(file)) { report.skipped.push(`${join(from, file)}: not a text file, left out`); continue; }
-          const data = read(join(from, file));
-          if (data) write(join(target, "plugins", plugin, "components", name, file), data);
-        }
-        components++;
+      const folder = join(plugins, plugin);
+      if (plugin.startsWith(".") || !statSync(folder).isDirectory()) continue;
+      const files = listFiles(folder).filter((path) => !path.split(sep).some((part) => part.startsWith(".") && part !== ".claude-plugin" && part !== ".mcp.json") && !path.split(sep).includes("node_modules"));
+      for (const file of files) {
+        if (!TEXT_FILE.test(file)) { report.skipped.push(`${join(folder, file)}: not a text file, left out`); continue; }
+        const data = read(join(folder, file));
+        if (data) write(join(target, "plugins", plugin, file), data);
       }
+      if (existsSync(join(folder, "package.json"))) pluginCount++;
+      for (const name of safeList(join(folder, "components"))) if (!name.startsWith(".") && existsSync(join(folder, "components", name, "template.html"))) components++;
     }
-    report.skipped.push("plugins/ (only the components were imported; plugins themselves are not in 2.0 yet)");
+    if (existsSync(join(plugins, ".git"))) report.skipped.push("plugins/.git (the library's version history stays in 1.x; 2.0 starts its own)");
   }
+  report.plugins = pluginCount;
+  // Which plugins are off, their settings (never a secret one) and where outside ones came from.
+  const state = read(join(source, "plugins.json"));
+  if (state) {
+    try {
+      const value = JSON.parse(state.toString("utf8")) as Record<string, unknown>;
+      const secretKeys = (plugin: string): Set<string> => {
+        try {
+          const manifest = JSON.parse(readFileSync(join(target, "plugins", plugin, "package.json"), "utf8")) as { ccb?: { contributes?: { settings?: Record<string, { secret?: boolean }> } } };
+          return new Set(Object.entries(manifest.ccb?.contributes?.settings ?? {}).filter(([, setting]) => setting?.secret === true).map(([key]) => key));
+        } catch { return new Set(); }
+      };
+      const settings: Record<string, Record<string, unknown>> = {};
+      for (const [plugin, values] of Object.entries((value.settings ?? {}) as Record<string, Record<string, unknown>>)) {
+        if (!values || typeof values !== "object") continue;
+        const secret = secretKeys(plugin);
+        settings[plugin] = Object.fromEntries(Object.entries(values).filter(([key]) => !secret.has(key)));
+      }
+      const kept = {
+        disabled: Array.isArray(value.disabled) ? value.disabled.filter((name) => typeof name === "string") : [],
+        settings,
+        failures: {},
+        installed: value.installed && typeof value.installed === "object" ? value.installed : {},
+      };
+      write(join(target, "plugins.json"), JSON.stringify(kept, null, 2));
+    } catch {
+      report.skipped.push(`${join(source, "plugins.json")}: not valid JSON, left out`);
+    }
+  }
+  if (pluginCount) report.skipped.push("plugins' secret settings (1.x keeps them in its keychain): enter them again under Plugins");
+  // Whether the component editor's file is the app's own text (so 2.0 may update it).
+  const editorRecord = read(join(source, "component-editor.json"));
+  if (editorRecord) write(join(target, "component-editor.json"), editorRecord);
   report.components = components;
   for (const folder of ["web", "runs", "teams"]) {
     if (existsSync(join(source, folder))) report.skipped.push(`${folder}/ (not used by 2.0 yet)`);

@@ -11,13 +11,19 @@ import type { CodexHeadConfig, CodexThreads } from "./agent/codex";
 import type { BotProfile } from "./store/workspace";
 import type { Outbound } from "../contract";
 import { codexSummarizer } from "./catchup";
+import { PortSealer, testSealer, type Sealer } from "./plugins/secrets";
+import type { HostCommand } from "./plugins/host-client";
 
 const dataDir = resolve(process.env.BOTLING_DATA_DIR ?? join(process.cwd(), ".data"));
 const number = (value: string | undefined, fallback: number) => (value && Number.isFinite(Number(value)) ? Number(value) : fallback);
 
 function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
   const kind = process.env.BOTLING_AGENT ?? "fake";
-  const common = { cwd: profile.folder, sessionId: session.sessionId, resume: session.resume, allowedTools: profile.tools };
+  const common = {
+    cwd: profile.folder, sessionId: session.sessionId, resume: session.resume, allowedTools: profile.tools,
+    // Plugins' Claude parts (Maintainer's component editor among them) and their MCP servers' secrets.
+    pluginDirs: session.pluginDirs ?? [], ...(session.pluginEnv && Object.keys(session.pluginEnv).length ? { env: session.pluginEnv } : {}),
+  };
   if (kind === "claude") {
     return {
       ...common,
@@ -37,7 +43,7 @@ function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
     ...common,
     command: process.execPath,
     prefixArgs: [script],
-    env: { ELECTRON_RUN_AS_NODE: "1" },
+    env: { ...(common.env ?? {}), ELECTRON_RUN_AS_NODE: "1" },
     systemPrompt: session.systemPrompt,
   };
 }
@@ -78,6 +84,25 @@ function summarizer() {
   return script ? codexSummarizer({ file: process.execPath, prefixArgs: [script], env: { ELECTRON_RUN_AS_NODE: "1" } }, timeout) : null;
 }
 
+/**
+ * Node for the plugin host: BOTLING_NODE_PATH, else the Node this core runs on — under Electron that is
+ * Electron itself run as Node (development; packaged builds turn that fuse off, see the README's gaps).
+ */
+function hostNode(): HostCommand | null {
+  if (process.env.BOTLING_NODE_PATH) return { command: process.env.BOTLING_NODE_PATH };
+  if (process.versions.electron) return { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: "1" } };
+  return { command: process.execPath };
+}
+
+/** Plugins' secrets are sealed by main (Electron safeStorage); a headless core has none unless a test gives a key. */
+const portSealer = parentPort ? new PortSealer((message) => parentPort.postMessage(message)) : null;
+const sealer: Sealer | null = portSealer ?? (process.env.BOTLING_TEST_SEAL_KEY ? testSealer(process.env.BOTLING_TEST_SEAL_KEY) : null);
+const hostScript = join(__dirname, "..", "host", "host.mjs");
+const checkScript = join(__dirname, "..", "host", "check-plugin.cjs");
+const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
+const node = hostNode();
+const checkCommand = node ? `${node.env?.ELECTRON_RUN_AS_NODE ? "ELECTRON_RUN_AS_NODE=1 " : ""}${quote(node.command)} ${quote(checkScript)}` : null;
+
 const core = new Core({
   dataDir,
   headConfig,
@@ -94,6 +119,8 @@ const core = new Core({
   routineTickMs: number(process.env.BOTLING_ROUTINE_TICK_MS, 30_000),
   summarizer: summarizer(),
   componentScanMs: number(process.env.BOTLING_COMPONENT_SCAN_MS, 1_500),
+  plugins: { node, hostScript, sealer },
+  checkCommand,
   languages: process.env.BOTLING_LANGUAGES ? process.env.BOTLING_LANGUAGES.split(",").filter(Boolean) : undefined,
   // 1.x's data folder, to tell whether it has a project open; only when named (packaged: ~/.claudecodebot).
   oneX: {
@@ -104,7 +131,12 @@ const core = new Core({
 log(`started epoch ${core.epoch} data ${dataDir} agent ${process.env.BOTLING_AGENT ?? "fake"}`);
 
 if (parentPort) {
-  parentPort.on("message", (event) => core.receive(event.data));
+  parentPort.on("message", (event) => {
+    // Main's answer to a seal/open request (safeStorage), never a contract message.
+    const data = event.data as { botling?: unknown } | null;
+    if (data && typeof data === "object" && data.botling === "sealed") portSealer?.answer(data as Parameters<PortSealer["answer"]>[0]);
+    else core.receive(event.data);
+  });
 } else {
   const lines = createInterface({ input: process.stdin });
   lines.on("line", (line) => {

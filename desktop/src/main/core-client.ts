@@ -12,6 +12,8 @@ export interface CoreClientOptions {
   env: Record<string, string>;
   onEvent: (event: EventEnvelopeT) => void;
   audit: (entry: string) => void;
+  /** Seals or opens a plugin secret (safeStorage); throws when it cannot. */
+  seal?: (op: "seal" | "open", text: string) => string;
 }
 
 interface Pending { resolve: (response: ResponseEnvelopeT) => void }
@@ -52,6 +54,21 @@ export class CoreClient {
   }
 
   private receive(message: unknown) {
+    const raw = message as { botling?: unknown; id?: unknown; op?: unknown; text?: unknown } | null;
+    if (raw && typeof raw === "object" && raw.botling === "seal") {
+      // The core asks main to seal or open a plugin secret (it has no safeStorage of its own).
+      const reply = (answer: Record<string, unknown>) => this.child?.postMessage({ botling: "sealed", id: raw.id, ...answer });
+      if (typeof raw.id !== "number" || (raw.op !== "seal" && raw.op !== "open") || typeof raw.text !== "string" || raw.text.length > 100_000 || !this.options.seal) {
+        reply({ ok: false, error: "Refused." });
+        return;
+      }
+      try {
+        reply({ ok: true, text: this.options.seal(raw.op, raw.text) });
+      } catch (error) {
+        reply({ ok: false, error: String((error as Error)?.message ?? error).slice(0, 500) });
+      }
+      return;
+    }
     const event = EventEnvelope.safeParse(message);
     if (event.success) {
       this.restarts = 0;

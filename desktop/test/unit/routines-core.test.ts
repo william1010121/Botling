@@ -45,7 +45,7 @@ describe("routines", () => {
     const divider = await until(async () => (await again.chat()).messages.find((m: any) => m.role === "divider" && /^Ping · \d\d:\d\d$/.test(m.text)));
     expect(divider).toBeTruthy();
     const prompt = await until(() => claudeInputs(dir).find((text) => text.includes("Time for the routine")));
-    expect(prompt).toContain("(App: Time for the routine \"Ping\". say hi to the user)\n(App: Project list. To check progress, read the memory file and do not wake the manager.)\n(No projects yet.)");
+    expect(prompt).toContain(`(App: Time for the routine "Ping". say hi to the user)\n(App: Project list. To check progress, read the memory file and do not wake the manager.)\n(No projects yet.)\n- Maintainer (plugin-library extensions and in-chat components only): memory file ${join(dir, "plugins", ".bot", "memory.md")}`);
     await sleep(600);
     expect((await again.chat()).messages.filter((m: any) => m.role === "divider" && m.text.startsWith("Ping"))).toHaveLength(1);
     expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).routineRuns["* * * * * Ping: say hi to the user"]).toBeGreaterThan(swiftNow(-60_000));

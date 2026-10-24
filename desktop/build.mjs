@@ -30,6 +30,11 @@ await Promise.all([
   build({ ...node, entryPoints: [join(here, "src/main/main.ts")], outfile: join(out, "main/main.cjs"), external: ["electron"] }),
   build({ ...node, entryPoints: [join(here, "src/preload/preload.ts")], outfile: join(out, "preload/preload.cjs"), external: ["electron"] }),
   build({ ...node, entryPoints: [join(here, "src/core/main.ts")], outfile: join(out, "core/main.cjs") }),
+  // The plugin host: Web/host/src/host.ts unchanged, bundled as Web/build.mjs bundles it for 1.x
+  // (its own process, started by the core; see src/core/plugins/host-client.ts).
+  build({ entryPoints: [join(web, "host/src/host.ts")], bundle: true, platform: "node", format: "esm", target: "node20", legalComments: "eof", outfile: join(out, "host/host.mjs") }),
+  // `ccb plugin check` for Maintainer (the checks the registry runs), as a small command.
+  build({ ...node, entryPoints: [join(here, "src/core/plugins/check-cli.ts")], outfile: join(out, "host/check-plugin.cjs") }),
   build({
     entryPoints: [join(here, "src/renderer/main.tsx")], bundle: true, format: "iife", target: "chrome130",
     outfile: join(out, "renderer/renderer.js"), jsx: "automatic", minify: !watch, sourcemap: "linked", legalComments: "eof",

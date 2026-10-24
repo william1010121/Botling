@@ -26,6 +26,12 @@ import { Layout, loadProfiles, type BotProfile } from "./store/workspace";
 import { CatchUpCache, CatchUps, catchUpSettings, type CatchUpViewData, type Summarizer } from "./catchup";
 import { ComponentsContext } from "./components/service";
 import { readdirSync } from "node:fs";
+import { Plugins, type BotInfo } from "./plugins";
+import type { HostCommand, HostTiming } from "./plugins/host-client";
+import type { Sealer } from "./plugins/secrets";
+import { MaintainerDesk, maintainerProfile, prepareLibrary, MAINTAINER_ID } from "./maintainer";
+import { maintainerInstructions } from "./maintainer-text";
+import type { ChatRecord } from "./store/records";
 
 export interface CoreOptions {
   dataDir: string;
@@ -55,6 +61,10 @@ export interface CoreOptions {
   summarizer?: Summarizer | null;
   /** How often the component library is looked at for changes on disk (0: never; 1.x: 1.5 s). */
   componentScanMs?: number;
+  /** The plugin host (null: plugins' program parts do not run) and how secrets are sealed. */
+  plugins?: { node: HostCommand | null; hostScript: string; sealer: Sealer | null; timing?: HostTiming } | null;
+  /** Maintainer's `ccb plugin check` command (null: none this time). */
+  checkCommand?: string | null;
 }
 
 export class Core {
@@ -73,6 +83,9 @@ export class Core {
   private pinClock: NodeJS.Timeout | null = null;
   /** The pins the user can see now, in the chat on screen (`RefreshSight`). */
   private visiblePins: { botId: string; ids: string[] } | null = null;
+  readonly plugins: Plugins;
+  readonly maintainer: MaintainerDesk;
+  private lastPlugins = "";
 
   constructor(private options: CoreOptions) {
     mkdirSync(options.dataDir, { recursive: true });
@@ -97,13 +110,18 @@ export class Core {
     const leftovers = this.ledger.endLeftovers();
     if (leftovers.length) this.log(`ended agent process groups an earlier core left running: ${leftovers.join(", ")}`);
     this.importOnce();
-    const { profiles, problem } = loadProfiles(options.dataDir);
-    if (problem) this.log(`projects: ${problem}`);
+    const loaded = loadProfiles(options.dataDir);
+    if (loaded.problem) this.log(`projects: ${loaded.problem}`);
+    // Maintainer (1.x's built-in project): the plugin library is its folder, with the app's files in it.
+    const editorModel = this.settingsFile()?.componentEditor;
+    const { editedEditor } = prepareLibrary(options.dataDir, typeof editorModel === "string" && ["sonnet", "opus", "haiku"].includes(editorModel) ? editorModel : "sonnet");
+    if (editedEditor) this.log("ccb-core/claude/agents/component-editor.md was edited by hand; it is left as it is");
+    const profiles = [...loaded.profiles, maintainerProfile(options.dataDir, maintainerInstructions(join(options.dataDir, "plugins"), options.checkCommand ?? null, null))];
     const oneX: OneXCheck = options.oneX ?? { folder: null, process: DEFAULT_ONE_X_PROCESS };
     const threads = new CodexThreads(join(options.dataDir, "codex-threads"));
     const codexConfig = options.codexConfig;
     for (const profile of profiles) {
-      const bot = new Bot({
+      const bot: Bot = new Bot({
         profile,
         headConfig: options.headConfig,
         codexConfig: codexConfig ? (p, session) => codexConfig(p, session, threads) : null,
@@ -122,10 +140,56 @@ export class Core {
         welcome: profile.id === MAIN_BOT_ID && !this.imported,
         projectBriefing: profile.role === "main" ? () => this.projectBriefing(profiles) : undefined,
         components: this.components,
+        onRequests: (bot, requests) => this.maintainer.handle(bot, requests),
+        replyFilter: (): ((text: string) => Promise<string>) | null => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
+        replied: (bot, record) => this.replied(bot, record),
+        plugins: () => ({ dirs: this.plugins.registry.claudeDirectories(), env: this.plugins.registry.secretEnvironment() }),
       });
       this.bots.set(profile.id, bot);
       this.order.push(profile.id);
     }
+    this.maintainer = new MaintainerDesk({
+      root: options.dataDir,
+      maintainer: () => this.bots.get(MAINTAINER_ID) ?? null,
+      mainBot: () => this.bots.get(MAIN_BOT_ID)!,
+      bots: () => [...this.bots.values()],
+      library: this.components.library,
+      plugins: () => this.plugins,
+      log: (line) => this.log(`maintainer: ${line}`),
+    });
+    const host = options.plugins ?? null;
+    this.plugins = new Plugins({
+      dataDir: options.dataDir,
+      node: host?.node ?? null,
+      hostScript: host?.hostScript ?? "",
+      sealer: host?.sealer ?? null,
+      timing: host?.timing,
+      onPid: (pid, alive) => (alive ? this.ledger.record(pid) : this.ledger.forget(pid)),
+      world: {
+        bots: () => this.order.map((id) => this.botInfo(this.bots.get(id)!)),
+        send: (botId, text) => {
+          const bot = this.bots.get(botId === "main" ? MAIN_BOT_ID : botId);
+          try { bot?.send(text); } catch (error) { this.log(`plugin message to ${botId}: ${(error as Error).message}`); }
+        },
+        notice: (text) => this.bots.get(MAIN_BOT_ID)?.appNotice(text),
+        addRoutine: (botId, cron, task) => {
+          const bot = this.bots.get(botId === "main" ? MAIN_BOT_ID : botId);
+          if (!bot) return "no-bot";
+          return bot.addRoutine(cron, task) ? "added" : "bad-schedule";
+        },
+        changed: (view) => {
+          const text = JSON.stringify(view);
+          if (text === this.lastPlugins) return;
+          this.lastPlugins = text;
+          this.event({ type: "plugins.updated", plugins: view });
+        },
+        broken: (plugin, problem) => this.maintainer.broken(plugin, problem),
+        log: (line) => this.log(line),
+      },
+    });
+    // What the snapshot shows already is no event (an event comes only when something changes).
+    this.lastPlugins = JSON.stringify(this.plugins.view());
+    void this.plugins.start().catch((error) => this.log(`plugins: ${(error as Error).message}`));
     // Checking a wall-clock time every 30 s (rather than sleeping until it) survives the computer
     // sleeping; a time missed while the app was closed runs once later that day (1.x).
     const scan = options.componentScanMs ?? 1_500;
@@ -149,8 +213,12 @@ export class Core {
 
   /** A template or about.md changed on disk: the page draws it anew; bots hear what changed with their next message. */
   scanComponents() {
+    this.plugins.scan();
+    const before = this.components.library.names.join("\n");
     const catalogChanged = this.components.library.rescan();
     if (catalogChanged) for (const bot of this.bots.values()) bot.componentsChanged();
+    // Components bots asked Maintainer for that are in the library now go on their lists.
+    if (catalogChanged || before !== this.components.library.names.join("\n")) this.maintainer.deliverAsked();
     if (this.components.library.stamp !== this.componentStamp) {
       this.componentStamp = this.components.library.stamp;
       this.event({ type: "components.updated", components: this.componentInfos() });
@@ -176,15 +244,17 @@ export class Core {
 
   /**
    * What the main bot's routines are told about the projects (`Workspace.projectBriefing`), without
-   * what 2.0 does not have yet: inboxes (nothing delivers them), Maintainer and teams.
+   * what 2.0 does not have yet: inboxes (nothing delivers them) and teams.
    */
   private projectBriefing(profiles: BotProfile[]): string {
     const memory = (profile: BotProfile) => join(profile.folder, profile.memoryPath);
-    const projects = profiles.filter((profile) => profile.role === "manager");
+    const projects = profiles.filter((profile) => profile.role === "manager" && profile.id !== MAINTAINER_ID);
     const own = profiles.filter((profile) => profile.role === "bot");
+    const maintainer = profiles.find((profile) => profile.id === MAINTAINER_ID);
     const projectLines = projects.length ? projects.map((profile) => `- ${profile.name} (folder ${profile.folder}): memory file ${memory(profile)}`).join("\n") : "(No projects yet.)";
     const botLines = own.length ? "\n(App: Bots of their own, which you check the same way.)\n" + own.map((profile) => `- ${profile.name} (${(profile.job ?? "").split("\n")[0]}): memory file ${memory(profile)}`).join("\n") : "";
-    return `(App: Project list. To check progress, read the memory file and do not wake the manager.)\n${projectLines}${botLines}`;
+    const maintainerLine = maintainer ? `\n- Maintainer (plugin-library extensions and in-chat components only): memory file ${memory(maintainer)}` : "";
+    return `(App: Project list. To check progress, read the memory file and do not wake the manager.)\n${projectLines}${botLines}${maintainerLine}`;
   }
 
   private importOnce() {
@@ -213,6 +283,30 @@ export class Core {
 
   private log(line: string) {
     this.options.log?.(line);
+  }
+
+  /** How plugins see a bot (`Workspace.info(for:)`): "main", or its id. */
+  private botInfo(bot: Bot): BotInfo {
+    return { id: bot.id === MAIN_BOT_ID ? "main" : bot.id, name: bot.profile.name, role: bot.profile.role, awake: bot.awake };
+  }
+
+  /** A reply showed: plugins listening hear it; Maintainer's settles the component changes bots asked for. */
+  private replied(bot: Bot, record: ChatRecord) {
+    if (record.text) this.plugins.replied(this.botInfo(bot), record.text);
+    if (bot.id === MAINTAINER_ID) this.maintainer.settle(record);
+  }
+
+  /** Your message through the plugins' beforeSend hooks first; one can change it or stop it (`Workspace.send`). */
+  private async send(botId: string, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" }): Promise<ResultOf<"chat.send">> {
+    const bot = this.bot(botId);
+    const outcome = await this.plugins.beforeSend(this.botInfo(bot), text);
+    if ("stoppedBy" in outcome) {
+      const plugin = this.plugins.registry.plugin(outcome.stoppedBy);
+      const name = plugin ? (plugin.manifest.displayName ?? plugin.manifest.name) : outcome.stoppedBy;
+      const messageId = bot.appNotice(`Plugin "${name}" stopped this message: ${text}`);
+      return { messageId, turnId: null, stoppedBy: outcome.stoppedBy };
+    }
+    return bot.send(outcome.send.slice(0, 100_000) || text, options);
   }
 
   private settingsFile(): Record<string, unknown> | undefined {
@@ -246,7 +340,7 @@ export class Core {
     const settings = this.settings();
     const languages = this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale];
     return botPrompts({
-      profile,
+      profile: { ...profile, instructions: profile.instructions ?? null },
       language: isAppLanguage(settings.language) ? settings.language : preferredLanguage(languages),
       results: isResultPublishing(settings.results) ? settings.results : "artifactUnlessSensitive",
       engine,
@@ -306,7 +400,14 @@ export class Core {
   private async handle(cmd: Command, signal: AbortSignal): Promise<unknown> {
     switch (cmd.type) {
       case "chat.snapshot": return this.snapshot(cmd.botId);
-      case "chat.send": return this.bot(cmd.botId).send(cmd.text, { replyTo: cmd.replyTo, to: cmd.to });
+      case "chat.send": return this.send(cmd.botId, cmd.text, { replyTo: cmd.replyTo, to: cmd.to });
+      case "plugins.list": return this.plugins.view();
+      case "plugins.enable": return this.plugins.setEnabled(cmd.name, cmd.enabled);
+      case "plugins.setting": return this.plugins.setSetting(cmd.name, cmd.key, cmd.value);
+      case "plugins.secret": return this.plugins.setSecret(cmd.name, cmd.key, cmd.value);
+      case "plugins.command": return { result: await this.plugins.command(cmd.id) ?? null };
+      case "plugins.panel": return this.plugins.panel(cmd.name, cmd.panel);
+      case "plugins.call": return { result: await this.plugins.call(cmd.name, cmd.method, cmd.params) ?? null };
       case "heads.set": return this.bot(cmd.botId).setHeads(cmd.engines);
       case "heads.answerWith": return this.bot(cmd.botId).setAnswerWith(cmd.to);
       case "handoff.stop": return this.bot(cmd.botId).stopHandoff(cmd.handoffId);
@@ -367,6 +468,7 @@ export class Core {
       imported: this.imported,
       chat: bot ? { ...bot.snapshot(), ...this.summaries(bot) } : null,
       components: this.componentInfos(),
+      plugins: this.plugins.view(),
     };
   }
 
@@ -375,6 +477,6 @@ export class Core {
     if (this.routineClock) { clearInterval(this.routineClock); this.routineClock = null; }
     if (this.componentClock) { clearInterval(this.componentClock); this.componentClock = null; }
     if (this.pinClock) { clearInterval(this.pinClock); this.pinClock = null; }
-    await Promise.all([...this.bots.values()].map((bot) => bot.shutdown()));
+    await Promise.all([...this.bots.values()].map((bot) => bot.shutdown()).concat(this.plugins.shutdown()));
   }
 }

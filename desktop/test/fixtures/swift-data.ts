@@ -80,5 +80,15 @@ export function writeSwiftFixture(root: string): Fixture {
   write(join(source, "plugins", "ccb-components", ".git", "HEAD"), "ref: refs/heads/main\n");
   write(join(source, "plugins", "weather", "components", "forecast", "template.html"), "<div>sunny</div>");
   write(join(source, "plugins", "weather", "plugin.json"), { name: "weather" });
+  // A plugin with a program part, a secret setting (its value is in 1.x's keychain, but an old
+  // plugins.json may still name the key) and node_modules (not imported); Maintainer's notes.
+  write(join(source, "plugins", "helper", "package.json"), {
+    name: "helper", version: "1.2.0", engines: { ccb: "^2.0.0" },
+    ccb: { host: "dist/host.mjs", contributes: { settings: { greeting: { type: "string", default: "hi", title: "Greeting" }, token: { type: "string", title: "Token", secret: true } } } },
+  });
+  write(join(source, "plugins", "helper", "dist", "host.mjs"), "export function activate(ccb) { ccb.notify('helper loaded'); }\n");
+  write(join(source, "plugins", "helper", "node_modules", "left-pad", "index.js"), "module.exports = 1;\n");
+  write(join(source, "plugins", ".bot", "memory.md"), "# Maintainer\nThe library is tidy.\n");
+  write(join(source, "plugins.json"), { disabled: ["weather"], settings: { helper: { greeting: "hello", token: "should-never-be-here" } }, failures: { helper: { message: "old", fingerprint: "x" } }, installed: {} });
   return { source, projectFolder };
 }

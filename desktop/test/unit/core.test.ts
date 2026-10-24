@@ -24,7 +24,7 @@ describe("core process", () => {
   it("streams a reply as events with gapless seq numbers", async () => {
     const c = core(tempDir("core"));
     const snapshot = await c.call({ type: "chat.snapshot" });
-    expect(snapshot.bots.map((bot: { id: string }) => bot.id)).toEqual([MAIN]);
+    expect(snapshot.bots.map((bot: { id: string }) => bot.id)).toEqual([MAIN, "DEC0DE00-0000-4000-8000-00000000DEC0"]);
     expect(snapshot.chat.messages[0].cards[0].id).toBe("c-counter");
     const { turnId, messageId } = await c.call({ type: "chat.send", botId: MAIN, text: "hello there" });
     const finished = await until(() => c.of("turn.finished")[0], { what: "turn.finished" });
@@ -44,7 +44,7 @@ describe("core process", () => {
 
   it("refuses bad input with an error response; a second send while busy joins the first (1.x steering)", async () => {
     const c = core(tempDir("core"), { FAKE_CLAUDE_MODE: "slow" });
-    c.post({ v: 5, id: "bad", cmd: { type: "shell.run", command: "ls" } });
+    c.post({ v: 6, id: "bad", cmd: { type: "shell.run", command: "ls" } });
     c.post({ v: 9, id: "old", cmd: { type: "chat.snapshot" } });
     c.child.stdin.write("not json\n");
     await until(() => c.responses.get("bad") && c.responses.get("old"));
@@ -113,7 +113,7 @@ describe("core process", () => {
     const { turnId } = await c.call({ type: "chat.send", botId: MAIN, text: "go" });
     const waitId = c.send({ type: "turn.await", botId: MAIN, turnId });
     await sleep(100);
-    c.post({ v: 5, cancel: waitId });
+    c.post({ v: 6, cancel: waitId });
     const response = await until(() => c.responses.get(waitId));
     expect(response).toMatchObject({ ok: false, error: { code: "cancelled" } });
     const before = c.of("turn.delta").length;

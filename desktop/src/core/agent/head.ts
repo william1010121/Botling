@@ -31,6 +31,8 @@ export interface HeadConfig {
    */
   harmless?: boolean;
   harmlessTools?: string[];
+  /** Plugins' Claude parts (`--plugin-dir`); none in harmless mode. */
+  pluginDirs?: string[];
 }
 
 /** claude's arguments for a long-lived head (cf. `ClaudeAgentProcess.arguments`). */
@@ -51,6 +53,7 @@ export function headArguments(config: HeadConfig): string[] {
   // (memory.md, routines), and a live run with no tools but these instructions wrote fake tool calls
   // as text for minutes instead of answering (Phase 2a).
   if (config.systemPrompt && !config.harmless) args.push("--append-system-prompt", config.systemPrompt);
+  if (!config.harmless) for (const dir of config.pluginDirs ?? []) args.push("--plugin-dir", dir);
   if (config.harmless) {
     args.push("--safe-mode", "--strict-mcp-config", "--no-session-persistence", "--tools", (config.harmlessTools ?? []).join(","));
   }

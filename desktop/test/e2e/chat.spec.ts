@@ -74,11 +74,11 @@ test("main refuses what the page may not ask for; the chat frame has no bridge o
     const frame = await chatFrame(page);
     expect(await frame.evaluate(() => [typeof (window as any).botling, typeof (window as any).require, typeof (window as any).process])).toEqual(["undefined", "undefined", "undefined"]);
     const bot = "6A0B0000-0000-4000-8000-000000000002";
-    expect(await post(page, { v: 5, id: "a", cmd: { type: "card.html", botId: bot, messageId: "0B07E11C-0000-4000-8000-00000000C0DE", cardId: "c-counter" } })).toMatchObject({ ok: false, error: { code: "forbidden" } });
-    expect(await post(page, { v: 5, id: "b", cmd: { type: "shell.run", command: "id" } })).toMatchObject({ ok: false, error: { code: "bad_request" } });
+    expect(await post(page, { v: 6, id: "a", cmd: { type: "card.html", botId: bot, messageId: "0B07E11C-0000-4000-8000-00000000C0DE", cardId: "c-counter" } })).toMatchObject({ ok: false, error: { code: "forbidden" } });
+    expect(await post(page, { v: 6, id: "b", cmd: { type: "shell.run", command: "id" } })).toMatchObject({ ok: false, error: { code: "bad_request" } });
     expect(await post(page, { v: 7, id: "c", cmd: { type: "chat.snapshot" } })).toMatchObject({ ok: false, error: { code: "unsupported_version" } });
-    expect(await post(page, { v: 5, id: "d", cmd: { type: "site.open", accountId: "work", url: "file:///etc/passwd" } })).toMatchObject({ ok: false, error: { code: "bad_request" } });
-    expect(await post(page, { v: 5, id: "e", cmd: { type: "chat.snapshot" } })).toMatchObject({ ok: true });
+    expect(await post(page, { v: 6, id: "d", cmd: { type: "site.open", accountId: "work", url: "file:///etc/passwd" } })).toMatchObject({ ok: false, error: { code: "bad_request" } });
+    expect(await post(page, { v: 6, id: "e", cmd: { type: "chat.snapshot" } })).toMatchObject({ ok: true });
     expect((await audit(app)).some((entry) => entry.includes("refused renderer command card.html"))).toBe(true);
   } finally {
     await app.close();

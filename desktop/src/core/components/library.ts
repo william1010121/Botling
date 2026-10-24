@@ -153,6 +153,11 @@ export class ComponentLibrary {
     return { template, version: this.versions.get(name) ?? 0, updated: this.updated.has(name), sizes: this.sizes(name), icon: this.icon(name), title: this.shortTitle(name) };
   }
 
+  /** When its files last changed (`stamp(of:)`): a request to change it is settled once this moves. */
+  stampOf(name: string): string {
+    return `${this.modified.get(name) ?? -1}:${this.aboutModified.get(name) ?? -1}`;
+  }
+
   private mtime(path: string): number {
     try { return statSync(path).mtimeMs; } catch { return -1; }
   }

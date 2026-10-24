@@ -1,11 +1,11 @@
 // Electron main: thin. It owns windows, sessions and protocols, checks every IPC message (who sent
 // it and what it is), and relays the rest to the core process. It runs no agents and keeps no chat.
-import { app, BrowserWindow, ipcMain, protocol, session, net, type WebContents, type Session, type IpcMainEvent } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, safeStorage, session, net, type WebContents, type Session, type IpcMainEvent } from "electron";
 import { join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { CoreClient } from "./core-client";
-import { cardPage, CARD_CSP, COMPONENT_CSP } from "./card-page";
+import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP } from "./card-page";
 import { randomBytes } from "node:crypto";
 import {
   AccountView, MAIN_COMMANDS, PROTOCOL_VERSION, RENDERER_COMMANDS, errorResponse, okResponse, parseInbound,
@@ -21,6 +21,8 @@ app.setPath("userData", join(dataDir, "electron"));
 app.setPath("sessionData", join(dataDir, "electron"));
 app.setPath("crashDumps", join(dataDir, "electron", "crashes"));
 app.setPath("logs", join(dataDir, "electron", "logs"));
+// Tests: safeStorage seals with Chromium's mock keychain instead of the user's login keychain.
+if (process.env.BOTLING_MOCK_KEYCHAIN === "1") app.commandLine.appendSwitch("use-mock-keychain");
 
 const APP_ORIGIN = "app://botling";
 const CARD_PREFIX = "botling-card://card/";
@@ -34,7 +36,7 @@ const CHAT_URL = `${APP_ORIGIN}/chat.html`;
  * anywhere or frame anything but what is listed. */
 const APP_CSP = [
   "default-src 'none'", "script-src 'self'", "style-src 'self'", "img-src 'self' data:", "font-src 'self'",
-  "frame-src 'self'", "connect-src 'none'", "base-uri 'none'", "form-action 'none'", "object-src 'none'",
+  "frame-src 'self' botling-card:", "connect-src 'none'", "base-uri 'none'", "form-action 'none'", "object-src 'none'",
 ].join("; ");
 const CHAT_CSP = [
   "default-src 'none'", "script-src 'self' blob:", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "font-src 'self' data:",
@@ -67,6 +69,11 @@ const core = new CoreClient({
   env: coreEnvironment(),
   onEvent: broadcast,
   audit: note,
+  seal: (op, text) => {
+    // Plugins' secrets: sealed with the OS keychain's key (safeStorage); only the core asks, over its own port.
+    if (!safeStorage.isEncryptionAvailable()) throw new Error("This computer offers no safe storage for secrets.");
+    return op === "seal" ? safeStorage.encryptString(text).toString("base64") : safeStorage.decryptString(Buffer.from(text, "base64"));
+  },
 });
 
 function coreEnvironment(): Record<string, string> {
@@ -189,18 +196,18 @@ ipcMain.on("botling:post", (event, raw: unknown) => {
  * data, the `ccb` runtime), served once from botling-card://page/<token> under COMPONENT_CSP. The
  * frame is still sandboxed (opaque origin) and reaches nothing; only the app page can add one.
  */
-const pages = new Map<string, string>();
+const pages = new Map<string, { html: string; panel: boolean }>();
 const PAGE_LIMIT = 400;
-function addPage(html: string): string {
+function addPage(html: string, panel = false): string {
   const token = randomBytes(18).toString("hex");
-  pages.set(token, html);
+  pages.set(token, { html, panel });
   while (pages.size > PAGE_LIMIT) pages.delete(pages.keys().next().value!);
   return `${PAGE_PREFIX}${token}`;
 }
 
 function handleInMain(cmd: Command): unknown {
   switch (cmd.type) {
-    case "card.page": return { url: addPage(cmd.html) };
+    case "card.page": return { url: addPage(cmd.html, cmd.panel === true) };
     case "accounts.list": return { accounts: accounts() };
     case "site.open": return { windowId: openSite(cmd.accountId, cmd.url) };
     default: throw new Error(`main does not handle ${cmd.type}`);
@@ -284,9 +291,9 @@ function serveApp() {
   protocol.handle("botling-card", async (request) => {
     const url = new URL(request.url);
     if (url.host === "page") {
-      const html = pages.get(url.pathname.slice(1));
-      if (html === undefined) return new Response("Not found", { status: 404 });
-      return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": COMPONENT_CSP, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" } });
+      const page = pages.get(url.pathname.slice(1));
+      if (page === undefined) return new Response("Not found", { status: 404 });
+      return new Response(page.html, { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": page.panel ? PANEL_CSP : COMPONENT_CSP, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" } });
     }
     if (url.host === "image") {
       // Only a picture some component's data named (the core keeps which, by token).
