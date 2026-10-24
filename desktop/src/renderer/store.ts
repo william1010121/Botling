@@ -4,7 +4,7 @@
 // takes a fresh snapshot instead of patching on guesses. Events that arrive while a snapshot is
 // on its way are buffered and replayed if newer than it. Chat events for other bots are not
 // kept (their chats are fetched when shown); `bot.updated` is kept for every bot.
-import type { BotView, Event, EventEnvelope, ImportView, MessageView, ResultOf, RunningView, StepView } from "../contract";
+import type { BotView, Event, EventEnvelope, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
 
 export interface ChatView {
   botId: string;
@@ -12,6 +12,7 @@ export interface ChatView {
   running: RunningView | null;
   /** The running turn's steps so far. */
   live: StepView[];
+  tasks: TaskView[];
 }
 
 export interface WorkspaceView {
@@ -19,6 +20,8 @@ export interface WorkspaceView {
   bots: BotView[];
   imported: ImportView | null;
   chat: ChatView | null;
+  /** The subagent being watched in the chat's place (its own conversation), if any. */
+  subagent: SubagentView | null;
   /** Times the store re-synced from a snapshot (for tests and diagnostics). */
   resyncs: number;
 }
@@ -26,7 +29,7 @@ export interface WorkspaceView {
 type Snapshot = ResultOf<"chat.snapshot">;
 
 export class WorkspaceStore {
-  private view: WorkspaceView = { ready: false, bots: [], imported: null, chat: null, resyncs: 0 };
+  private view: WorkspaceView = { ready: false, bots: [], imported: null, chat: null, subagent: null, resyncs: 0 };
   private epoch: string | null = null;
   private seq = 0;
   private syncing = false;
@@ -51,7 +54,13 @@ export class WorkspaceStore {
   /** Shows another bot's chat (fetched fresh). */
   select(botId: string) {
     this.wanted = botId;
+    if (this.view.subagent) this.set({ ...this.view, subagent: null });
     return this.resync();
+  }
+
+  /** Watches one of the shown bot's subagents (null: back to the chat). */
+  watch(subagent: SubagentView | null) {
+    this.set({ ...this.view, subagent });
   }
 
   get selected(): string | undefined {
@@ -68,7 +77,8 @@ export class WorkspaceStore {
       const snapshot = await this.fetchSnapshot(this.wanted);
       this.epoch = snapshot.epoch;
       this.seq = snapshot.seq;
-      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat: snapshot.chat, resyncs: this.view.resyncs + 1 });
+      const subagent = this.view.subagent && snapshot.chat?.botId === this.view.chat?.botId ? this.view.subagent : null;
+      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat: snapshot.chat, subagent, resyncs: this.view.resyncs + 1 });
     } finally {
       this.syncing = false;
     }
@@ -111,6 +121,12 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
     messages: chat.messages.map((message) => (message.id === id ? change(message) : message)),
   });
   switch (event.type) {
+    case "message.removed":
+      return withChat({ ...chat, messages: chat.messages.filter((message) => message.id !== event.messageId) });
+    case "tasks.updated":
+      return withChat({ ...chat, tasks: event.tasks });
+    case "subagent.updated":
+      return view.subagent?.id === event.subagent.id ? { ...view, subagent: event.subagent } : view;
     case "message.added":
       if (chat.messages.some((message) => message.id === event.message.id)) return view;
       return withChat({ ...chat, messages: [...chat.messages, event.message] });
@@ -134,6 +150,8 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
         cards: message.cards?.map((card) => (card.id === event.cardId ? { ...card, data: event.data === "null" ? null : event.data } : card)),
       })));
     case "card.acted":
+      return view;
+    default:
       return view;
   }
 }

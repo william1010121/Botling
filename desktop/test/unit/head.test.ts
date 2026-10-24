@@ -126,7 +126,7 @@ describe("a bot's head", () => {
     expect((await turn(c, "first")).event.status).toBe("done");
     const { event } = await turn(c, "/crash");
     expect(event).toMatchObject({ status: "failed" });
-    expect(event.text).toBe("partial ");
+    expect(event.text).toBe("partial");
     await until(() => starts(dir).length === 2, { what: "the restart" });
     expect(starts(dir)[1]).toMatchObject({ resume: true, session: starts(dir)[0]!.session });
     expect(c.stderr).toMatch(/exited \(3\) unexpectedly/);
@@ -134,38 +134,61 @@ describe("a bot's head", () => {
     expect(starts(dir)).toHaveLength(2); // The message went to the restarted head.
   });
 
-  it("an idle head goes to sleep; the next message wakes it with the same session", async () => {
+  it("an idle head tidies its notes, then sleeps; the next message wakes a new session, briefed", async () => {
     const dir = tempDir("head");
-    const c = core(dir, { BOTLING_IDLE_MS: "300" });
+    const c = core(dir, { BOTLING_IDLE_MS: "300", FAKE_CLAUDE_INPUT: join(dir, "input.log") });
     await turn(c, "hello");
     const pid = starts(dir)[0]!.pid;
+    await until(() => c.events.some((e) => e.event.type === "bot.updated" && (e.event as any).bot.phase === "tidying"), { what: "the tidy" });
     await until(() => !alive(pid), { what: "the head to sleep" });
     const asleep = (await c.call({ type: "chat.snapshot" })).bots[0];
     expect(asleep).toMatchObject({ phase: "asleep", working: false });
     expect(c.stderr).not.toMatch(/unexpectedly/);
-    expect((await turn(c, "/resume")).event.text).toBe(`session ${starts(dir)[0]!.session} resumed=true`);
+    // The tidy went to claude (and wrote the memory file it names), and nothing of it shows in the chat.
+    const inputs = readFileSync(join(dir, "input.log"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(inputs.at(-1).text).toBe("(App: You have been idle for a while and are about to fall asleep. Update memory.md with whatever in this conversation is worth remembering, keeping the four-section format and under 150 lines. Reply only OK when done.)");
+    expect(readFileSync(join(dir, "main", "memory.md"), "utf8")).toMatch(/Tidied by the fake CLI/);
+    expect((await c.chat()).messages.map((m: { text: string }) => m.text)).not.toContain("OK");
+    // Waking: a new session, whose first message is the wake briefing, the last lines, then the words.
+    const { event } = await turn(c, "/resume");
+    expect(event.text).toMatch(/resumed=false/);
+    expect(starts(dir)[1]!.session).not.toBe(starts(dir)[0]!.session);
+    const woke = JSON.parse(readFileSync(join(dir, "input.log"), "utf8").trim().split("\n").at(-1)!).text as string;
+    expect(woke.startsWith("(App: You were just woken up. Read memory.md before answering; if the file does not exist, treat this as our first meeting.)\n\n(App: The last messages in this chat, oldest first.")).toBe(true);
+    expect(woke).toMatch(/\] User: hello\n\[[^\]]+\] You: You said: hello/);
+    expect(woke).toMatch(/\(App: message_id of this message: [0-9A-F-]{36}\)\n\n\/resume$/);
   });
 
-  it("after a core restart the chat is there and the head resumes its session; a lost session starts anew", async () => {
+  it("after a core restart the chat is there and the bot wakes a new session briefed from the chat", async () => {
     const dir = tempDir("head");
-    const first = core(dir);
+    const first = core(dir, { FAKE_CLAUDE_INPUT: join(dir, "input.log") });
     await turn(first, "remember me");
     await first.kill("SIGTERM");
     const session = starts(dir)[0]!.session;
+    // Quitting tidied first (1.x): the tidy is the last thing the first head read.
+    expect(readFileSync(join(dir, "input.log"), "utf8")).toMatch(/You have been idle for a while/);
 
-    const second = core(dir);
+    const second = core(dir, { FAKE_CLAUDE_INPUT: join(dir, "input.log") });
     const chat = await second.chat();
     expect(chat.messages.map((m: { text: string }) => m.text).slice(-2)).toEqual(["remember me", "You said: remember me"]);
-    expect((await turn(second, "/resume")).event.text).toBe(`session ${session} resumed=true`);
-    await second.kill("SIGTERM");
-
-    // claude no longer has the session (FAKE_CLAUDE_FORGET): the message goes to a new one, once.
-    const third = core(dir, { FAKE_CLAUDE_FORGET: "1" });
-    const { event } = await turn(third, "/resume");
+    const { event } = await turn(second, "/resume");
     expect(event.text).toMatch(/resumed=false/);
     expect(event.text).not.toContain(session);
-    expect(third.stderr).toMatch(/resuming session .* failed/);
-    expect(JSON.parse(readFileSync(join(dir, "main", "head.json"), "utf8")).sessionId).not.toBe(session);
+    const woke = JSON.parse(readFileSync(join(dir, "input.log"), "utf8").trim().split("\n").at(-1)!).text as string;
+    expect(woke).toMatch(/User: remember me/);
+  });
+
+  it("a resume claude no longer has falls back to a new session, briefed, and the message goes once", async () => {
+    const dir = tempDir("head");
+    const c = core(dir, { FAKE_CLAUDE_FORGET: "1" });
+    expect((await turn(c, "first")).event.status).toBe("done");
+    // A crash: the restart resumes, which this claude cannot do; the next message gets a new session.
+    expect((await turn(c, "/crash")).event.status).toBe("failed");
+    const { event } = await turn(c, "/resume");
+    expect(event.text).toMatch(/resumed=false/);
+    const chat = await c.chat();
+    expect(chat.messages.filter((m: { role: string }) => m.role === "divider").length).toBeLessThanOrEqual(1);
+    expect(chat.messages.filter((m: { text: string }) => m.text === "/resume")).toHaveLength(1);
   });
 
   it("an approval left open when the core quits is closed, never answered later", async () => {

@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { BotView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
-import { chatState } from "./payload";
+import { chatState, subagentState } from "./payload";
 import { avatarURL } from "./avatars";
 import type { FrameMessage, ShellMessage } from "./chat-frame/protocol";
 
@@ -68,6 +68,8 @@ function status(bot: BotView): string {
 function statusText(bot: BotView): string {
   if (bot.working && bot.approvals) return "Waiting for your answer";
   if (bot.working) return "Writing…";
+  if (bot.phase === "tidying") return "Tidying its notes…";
+  if (bot.subagents) return `${bot.subagents} subagent${bot.subagents === 1 ? "" : "s"} at work`;
   if (bot.phase === "awake") return "Awake";
   return "Asleep";
 }
@@ -94,6 +96,10 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
   const view = useSyncExternalStore(store.subscribe, store.getView);
   const latest = useRef(view);
   latest.current = view;
+  // The line the next message answers (the page's Reply), per chat.
+  const [replying, setReplying] = useState<{ botId: string; id: string } | null>(null);
+  const replyingRef = useRef(replying);
+  replyingRef.current = replying;
 
   const push = useCallback(() => {
     const target = frame.current?.contentWindow;
@@ -101,12 +107,18 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
     const chat = current.chat;
     const bot = current.bots.find((candidate) => candidate.id === chat?.botId);
     if (!target || !ready.current || !chat || !bot) return;
-    const { state, extras } = chatState(bot, chat);
+    let quoted: { id: string; who: string; preview: string } | null = null;
+    const reply = replyingRef.current;
+    if (reply?.botId === chat.botId) {
+      const line = chat.messages.find((message) => message.id === reply.id);
+      if (line) quoted = { id: line.id, who: line.role === "user" ? "Reply to yourself" : `Reply to ${bot.name}`, preview: (line.text.split("\n").find(Boolean) ?? "").slice(0, 60) };
+    }
+    const { state, extras } = current.subagent ? subagentState(bot, current.subagent) : chatState(bot, chat, new Date(), quoted);
     const message: ShellMessage = { botling: "state", state, extras };
     target.postMessage(message, location.origin);
   }, []);
 
-  useEffect(push, [push, view]);
+  useEffect(push, [push, view, replying]);
 
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
@@ -145,14 +157,44 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
         case "send": {
           if (!chat || typeof action.text !== "string" || !action.text.trim()) return;
           onSent();
-          void client.request({ type: "chat.send", botId: chat.botId, text: action.text }).catch(onError);
+          const reply = replyingRef.current?.botId === chat.botId ? replyingRef.current.id : undefined;
+          setReplying(null);
+          void client.request({ type: "chat.send", botId: chat.botId, text: action.text, ...(reply ? { replyTo: reply } : {}) }).catch(onError);
           return;
         }
         case "choose": {
           if (!chat || typeof action.messageID !== "string" || typeof action.index !== "number") return;
-          void client.request({ type: "chat.choose", botId: chat.botId, messageId: action.messageID, index: action.index }).catch(onError);
+          const notes = typeof action.text === "string" && action.text.trim() ? { text: action.text } : {};
+          void client.request({ type: "chat.choose", botId: chat.botId, messageId: action.messageID, index: action.index, ...notes }).catch(onError);
           return;
         }
+        case "answer": {
+          if (!chat || typeof action.messageID !== "string" || typeof action.text !== "string" || !action.text.trim()) return;
+          void client.request({ type: "chat.answer", botId: chat.botId, messageId: action.messageID, text: action.text }).catch(onError);
+          return;
+        }
+        case "setReaction": {
+          if (!chat || typeof action.messageID !== "string" || typeof action.emoji !== "string" || typeof action.present !== "boolean") return;
+          void client.request({ type: "chat.react", botId: chat.botId, messageId: action.messageID, emoji: action.emoji, present: action.present }).catch(onError);
+          return;
+        }
+        case "reply":
+          if (chat && typeof action.messageID === "string") setReplying({ botId: chat.botId, id: action.messageID });
+          return;
+        case "cancelReply":
+          setReplying(null);
+          return;
+        case "openSubagent": {
+          if (!chat || typeof action.id !== "string") return;
+          const botId = chat.botId;
+          void client.request({ type: "subagent.view", botId, subagentId: action.id })
+            .then((result) => { if (latest.current.chat?.botId === botId) store.watch(result.subagent); })
+            .catch(onError);
+          return;
+        }
+        case "closeSubagent":
+          store.watch(null);
+          return;
         default:
           // Drafts, files, reactions, components, pins… are not in 2.0 yet.
           return;
@@ -160,7 +202,7 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [client, onError, onSent, push]);
+  }, [client, onError, onSent, push, store]);
 
   return <iframe id="chat-frame" ref={frame} src="chat.html" title="Chat" />;
 }

@@ -28,6 +28,24 @@ export const isAppLanguage = (value: unknown): value is AppLanguage => typeof va
 export const isResultPublishing = (value: unknown): value is ResultPublishing =>
   value === "artifactUnlessSensitive" || value === "localOnly" || value === "artifactAlways";
 
+/** `AppLanguage.preferred`: the first of the system's preferred languages the app has, else English. */
+export function preferredLanguage(languages: string[]): AppLanguage {
+  for (const code of languages) {
+    const parts = code.replaceAll("_", "-").toLowerCase().split("-");
+    switch (parts[0]) {
+      case "en": return "en";
+      case "ja": return "ja";
+      case "ko": return "ko";
+      case "zh": {
+        const rest = new Set(parts.slice(1));
+        return rest.has("hant") || (!rest.has("hans") && ["tw", "hk", "mo"].some((region) => rest.has(region))) ? "zh-Hant" : "zh-Hans";
+      }
+      default: continue;
+    }
+  }
+  return "en";
+}
+
 /** `MemorySection`: the four headings of memory.md, in order, and what the prompt adds after each. */
 export const MEMORY_SECTIONS = [
   { heading: "Current status", rule: "3 sentences max" },

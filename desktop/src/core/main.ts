@@ -4,7 +4,8 @@
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { Core } from "./server";
-import { systemPrompt } from "./bot";
+import type { SessionStart } from "./bot";
+import { DEFAULT_ONE_X_PROCESS } from "./store/lock";
 import type { HeadConfig } from "./agent/head";
 import type { BotProfile } from "./store/workspace";
 import type { Outbound } from "../contract";
@@ -12,7 +13,7 @@ import type { Outbound } from "../contract";
 const dataDir = resolve(process.env.BOTLING_DATA_DIR ?? join(process.cwd(), ".data"));
 const number = (value: string | undefined, fallback: number) => (value && Number.isFinite(Number(value)) ? Number(value) : fallback);
 
-function headConfig(profile: BotProfile, session: { sessionId: string; resume: boolean }): HeadConfig {
+function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
   const kind = process.env.BOTLING_AGENT ?? "fake";
   const common = { cwd: profile.folder, sessionId: session.sessionId, resume: session.resume, allowedTools: profile.tools };
   if (kind === "claude") {
@@ -22,7 +23,7 @@ function headConfig(profile: BotProfile, session: { sessionId: string; resume: b
       harmless: process.env.BOTLING_HARMLESS !== "0",
       harmlessTools: (process.env.BOTLING_HARMLESS_TOOLS ?? "").split(",").filter(Boolean),
       model: process.env.BOTLING_MODEL ?? null,
-      systemPrompt: systemPrompt(profile),
+      systemPrompt: session.systemPrompt,
     };
   }
   // The fake CLI is a Node script; under Electron, process.execPath is Electron itself, which runs
@@ -35,7 +36,7 @@ function headConfig(profile: BotProfile, session: { sessionId: string; resume: b
     command: process.execPath,
     prefixArgs: [script],
     env: { ELECTRON_RUN_AS_NODE: "1" },
-    systemPrompt: systemPrompt(profile),
+    systemPrompt: session.systemPrompt,
   };
 }
 
@@ -56,6 +57,14 @@ const core = new Core({
   approvalTimeoutMs: number(process.env.BOTLING_APPROVAL_TIMEOUT_MS, 10 * 60_000),
   idleMs: number(process.env.BOTLING_IDLE_MS, 30 * 60_000),
   interruptGraceMs: number(process.env.BOTLING_INTERRUPT_GRACE_MS, 2_000),
+  tidyTimeoutMs: number(process.env.BOTLING_TIDY_TIMEOUT_MS, 5 * 60_000),
+  quitTidyMs: number(process.env.BOTLING_QUIT_TIDY_MS, 15_000),
+  languages: process.env.BOTLING_LANGUAGES ? process.env.BOTLING_LANGUAGES.split(",").filter(Boolean) : undefined,
+  // 1.x's data folder, to tell whether it has a project open; only when named (packaged: ~/.claudecodebot).
+  oneX: {
+    folder: process.env.BOTLING_1X_DIR || null,
+    process: process.env.BOTLING_1X_PROCESS ? new RegExp(process.env.BOTLING_1X_PROCESS) : DEFAULT_ONE_X_PROCESS,
+  },
 });
 log(`started epoch ${core.epoch} data ${dataDir} agent ${process.env.BOTLING_AGENT ?? "fake"}`);
 

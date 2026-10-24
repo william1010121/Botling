@@ -103,6 +103,11 @@ export class BotStore {
     return Array.isArray(value) ? value : [];
   }
 
+  /** Writes a list file (tasks.json, subagents.json) whole, in 1.x's format. */
+  saveList(name: (typeof CHAT_FILES)[number], list: unknown[]) {
+    writeFileAtomic(this.path(name), JSON.stringify(list));
+  }
+
   loadHead(): HeadState | null {
     try {
       const value = readJSON(this.path("head.json")) as Partial<HeadState> | undefined;

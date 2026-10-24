@@ -2,8 +2,8 @@
 // side builds in ChatPayload.swift. Here the same state is built from the contract's views, so the
 // page runs unchanged. What 2.0 has no data for yet (components, pins, heads, tasks, Catch-up) is
 // left out, which the page treats as "none".
-import type { BotView, CardView, MessageView } from "../contract";
-import type { ChatState, ChoiceView as WebChoice, FileView, MessageView as WebMessage, StepView as WebStep } from "../../../Web/src/types";
+import type { BotView, CardView, MessageView, SubagentView, TaskView } from "../contract";
+import type { ChatState, ChoiceView as WebChoice, FileView, MessageView as WebMessage, StepView as WebStep, TaskCardView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
 import { avatarURL } from "./avatars";
 
@@ -38,21 +38,58 @@ export function stamp(messages: MessageView[], index: number, now: Date): string
 function step(view: NonNullable<MessageView["steps"]>[number]): WebStep {
   return {
     id: view.id, kind: view.kind === "message" ? "text" : view.kind, tool: view.tool, title: view.title,
-    detail: view.detail, output: view.output, failed: view.failed, done: view.done, status: null, count: null,
+    detail: view.detail, output: view.output, failed: view.failed, done: view.done, status: view.status ?? null, count: view.count ?? null,
   };
+}
+
+/** `TaskBook.staleAfter`: a running card with no news this long, nothing of it at work, may be stuck. */
+const STALE_MS = 10 * MINUTE;
+
+/** Each task's chip under the replies that belong to it; its latest reply says how it stands (`ChatPayload.TaskCardChip`). */
+export function taskChips(tasks: TaskView[], messages: MessageView[], working: boolean, now: Date): Map<string, TaskCardView[]> {
+  const chips = new Map<string, TaskCardView[]>();
+  for (const task of tasks) {
+    const mine = new Set(task.messageIds);
+    const latest = messages.findLast((message) => mine.has(message.id) && message.role !== "user")?.id ?? messages.findLast((message) => mine.has(message.id))?.id;
+    const stale = task.state === "running" && !working && !task.atWork && now.getTime() - new Date(task.updatedAt).getTime() >= STALE_MS;
+    const detail = stale ? "May be stuck"
+      : task.state === "running" ? (task.now ? `Now: ${task.now}` : null)
+      : task.state === "waiting" ? `Waiting on you: ${task.blocked ?? task.now ?? "your reply"}`
+      : null;
+    for (const id of task.messageIds) {
+      const chip: TaskCardView = { id: task.id, name: task.name, state: stale ? "stale" : task.state, owner: task.owner, detail: id === latest ? detail : null };
+      chips.set(id, [...(chips.get(id) ?? []), chip]);
+    }
+  }
+  return chips;
+}
+
+/** Reactions as the page draws them: one per emoji, who put it there, and whether one is yours (`ChatPayload`). */
+const PALETTE = ["👍", "❤️", "😂", "🎉", "🤔", "👀"];
+function reactions(message: MessageView): WebMessage["reactions"] {
+  const all = message.reactions ?? [];
+  const shown = PALETTE.flatMap((emoji) => {
+    const matching = all.filter((reaction) => reaction.emoji === emoji);
+    if (!matching.length) return [];
+    const actors = matching.map((reaction) => (reaction.actor === "user" ? "You" : reaction.actor === "head:claude" ? "Claude" : reaction.actor === "head:codex" ? "Codex" : reaction.actor));
+    return [{ emoji, actors, own: matching.some((reaction) => reaction.actor === "user") }];
+  });
+  return shown;
 }
 
 export function placeholder(bot: BotView): string {
   return bot.role === "main" ? "Make a wish, or ask how things are going…" : `Message ${bot.name}…`;
 }
 
-export function chatState(bot: BotView, chat: ChatView, now = new Date()): { state: ChatState; extras: FrameExtras } {
+export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyingTo: ChatState["replyingTo"] = null): { state: ChatState; extras: FrameExtras } {
   const face = avatarURL(bot.avatar);
   const running = chat.running;
   const extras: FrameExtras = { botId: bot.id, running: !!running, cards: {}, states: {} };
   // The running reply shows once it has words; before that the typing bubble shows its steps.
   const shown = chat.messages.filter((message) => !(running && message.id === running.messageId && !message.text && !message.cards?.length));
   const runningShown = !!running && shown.some((message) => message.id === running.messageId);
+  const chips = taskChips(chat.tasks ?? [], chat.messages, !!running, now);
+  const lastYours = shown.findLastIndex((message) => message.role === "user");
   const messages: WebMessage[] = shown.map((message, index) => {
     if (message.cards?.length) extras.cards[message.id] = message.cards;
     if (message.state) extras.states[message.id] = message.state;
@@ -70,7 +107,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date()): { sta
       answer: message.answer ?? null,
       open: !!choices && message.chosen == null && message.answer == null,
       attachments: message.attachments?.map((file): FileView => ({ name: file.name, kind: file.kind, url: file.url })) ?? null,
-      replyTo: null,
+      replyTo: message.replyTo ?? null,
       replyPreview: message.replyPreview ?? null,
       openable: false,
       steps: steps?.length ? steps.map(step) : null,
@@ -78,6 +115,11 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date()): { sta
       interrupted: message.role === "bot" && (message.interrupted || message.state === "stopped" || message.state === "failed") ? true : null,
       sourceAuthor: message.role === "bot" ? bot.name : null,
       sourceEngine: message.role === "bot" ? "claude" : null,
+      reactionEnabled: message.role !== "divider",
+      reactions: reactions(message),
+      taskCards: message.role === "bot" ? chips.get(message.id) ?? null : null,
+      // Replies before your latest line fold their finished subagents away (still in their steps).
+      earlier: index < lastYours && !!steps?.length ? true : null,
     };
   });
   const state: ChatState = {
@@ -87,11 +129,75 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date()): { sta
     working: !!running,
     avatar: avatarURL(bot.avatar, "open"),
     placeholder: placeholder(bot),
-    replyingTo: null,
+    replyingTo,
     pendingFiles: [],
     components: {},
     live: running && !runningShown ? chat.live.map(step) : [],
     slashCommands: [],
+  };
+  return { state, extras };
+}
+
+function clock(iso: string | null): string | null {
+  return iso ? new Date(iso).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }) : null;
+}
+
+/**
+ * A subagent's own conversation, read only (`ChatPayload.make(subagent:)`): its task as a line from
+ * its bot, what it said with the tool calls before each, and its report at the end.
+ */
+export function subagentState(bot: BotView, subagent: SubagentView): { state: ChatState; extras: FrameExtras } {
+  const face = avatarURL(bot.avatar);
+  const extras: FrameExtras = { botId: bot.id, running: false, cards: {}, states: {} };
+  const line = (id: string, role: "user" | "bot" | "error", text: string, steps: WebStep[], time: string | null = null): WebMessage => ({
+    id: `${subagent.id}-${id}`, role, text, stamp: null, avatar: role === "bot" ? face : null, choices: null, chosen: null, answer: null, open: false,
+    attachments: null, replyTo: null, replyPreview: null, openable: false, speaker: role === "user" ? bot.name : null,
+    steps: steps.length ? steps.map((s) => (subagent.status !== "running" && s.kind === "tool" ? { ...s, done: true } : s)) : null, time,
+  });
+  const messages: WebMessage[] = [];
+  if (subagent.prompt) messages.push(line("task", "user", subagent.prompt, [], clock(subagent.startedAt)));
+  let pending: WebStep[] = [];
+  let said = "";
+  for (const view of subagent.steps) {
+    if (view.kind === "text") {
+      messages.push(line(view.id, "bot", view.title, pending));
+      pending = [];
+      said = view.title;
+    } else if (view.kind === "message") {
+      if (pending.length) messages.push(line(`${view.id}-before`, "bot", "", pending));
+      pending = [];
+      messages.push(line(view.id, "user", view.title, []));
+      said = "";
+    } else {
+      pending.push(step(view));
+    }
+  }
+  const running = subagent.status === "running";
+  if (!running) {
+    const result = subagent.result?.trim() ?? "";
+    if (pending.length || (result && result !== said)) {
+      const words = result || (subagent.status === "completed" ? "Finished." : subagent.status === "failed" ? "It failed." : "It was stopped.");
+      messages.push(line("result", subagent.status === "completed" ? "bot" : "error", words, pending));
+    }
+    pending = [];
+  }
+  const state: ChatState = {
+    botID: `${bot.id}/${subagent.id}`,
+    botName: subagent.title,
+    messages,
+    working: running,
+    avatar: avatarURL(bot.avatar, "open"),
+    placeholder: "",
+    replyingTo: null,
+    pendingFiles: [],
+    components: {},
+    live: running ? pending : [],
+    slashCommands: [],
+    subagent: {
+      id: subagent.id, title: subagent.title, owner: subagent.owner, status: subagent.status, type: subagent.type,
+      engine: "claude", model: subagent.model,
+      startedAt: new Date(subagent.startedAt).getTime(), endedAt: subagent.endedAt ? new Date(subagent.endedAt).getTime() : null,
+    },
   };
   return { state, extras };
 }

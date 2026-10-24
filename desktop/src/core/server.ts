@@ -12,17 +12,20 @@ import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
   type Command, type Event, type ImportView, type Outbound, type ResultOf,
 } from "../contract";
-import { Bot } from "./bot";
+import { Bot, type SessionStart } from "./bot";
 import type { HeadConfig } from "./agent/head";
+import { botPrompts, isAppLanguage, isResultPublishing, preferredLanguage, type BotPrompts } from "./prompts";
+import { readJSON } from "./store/bot-store";
+import { DEFAULT_ONE_X_PROCESS, ProjectLock, type OneXCheck } from "./store/lock";
 import { ProcessLedger } from "./process/ledger";
 import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/importer";
 import { MAIN_BOT_ID } from "./store/records";
-import { loadProfiles, type BotProfile } from "./store/workspace";
+import { Layout, loadProfiles, type BotProfile } from "./store/workspace";
 
 export interface CoreOptions {
   dataDir: string;
   /** How to run a bot's head for a session. */
-  headConfig: (profile: BotProfile, session: { sessionId: string; resume: boolean }) => HeadConfig;
+  headConfig: (profile: BotProfile, session: SessionStart) => HeadConfig;
   emit: (message: Outbound) => void;
   log?: (line: string) => void;
   /** A Botling 1.x data folder to import from on the first start (read-only). */
@@ -30,6 +33,13 @@ export interface CoreOptions {
   approvalTimeoutMs?: number;
   idleMs?: number;
   interruptGraceMs?: number;
+  tidyTimeoutMs?: number;
+  /** How long an awake bot may tidy when the app quits (0: not at all). */
+  quitTidyMs?: number;
+  /** The system's preferred languages, best first (for bots' reply language when settings name none). */
+  languages?: string[];
+  /** How to tell that Botling 1.x has a project open (its data folder; null: do not look). */
+  oneX?: OneXCheck;
 }
 
 export class Core {
@@ -49,10 +59,16 @@ export class Core {
     this.importOnce();
     const { profiles, problem } = loadProfiles(options.dataDir);
     if (problem) this.log(`projects: ${problem}`);
+    const oneX: OneXCheck = options.oneX ?? { folder: null, process: DEFAULT_ONE_X_PROCESS };
     for (const profile of profiles) {
       const bot = new Bot({
         profile,
         headConfig: options.headConfig,
+        prompts: () => this.prompts(profile),
+        // A project's manager works in the user's own folder, shared with 1.x: one Botling at a time.
+        lock: profile.role === "manager" && !profile.problem ? new ProjectLock(profile.folder, options.dataDir, oneX) : null,
+        tidyTimeoutMs: options.tidyTimeoutMs,
+        quitTidyMs: options.quitTidyMs,
         ledger: this.ledger,
         emit: (event) => this.event(event),
         log: (line) => this.log(line),
@@ -92,6 +108,27 @@ export class Core {
 
   private log(line: string) {
     this.options.log?.(line);
+  }
+
+  /** settings.json as 1.x writes it (`AppSettings`): only the keys the prompts need. */
+  private settings(): { language: string | undefined; results: string | undefined } {
+    try {
+      const value = readJSON(Layout.settings(this.options.dataDir)) as Record<string, unknown> | undefined;
+      return { language: value?.languageChoice as string | undefined, results: value?.resultPublishingChoice as string | undefined };
+    } catch {
+      return { language: undefined, results: undefined };
+    }
+  }
+
+  /** The bot's instructions (Prompts.swift's), from its profile and the app's settings. */
+  prompts(profile: BotProfile): BotPrompts {
+    const settings = this.settings();
+    const languages = this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale];
+    return botPrompts({
+      profile,
+      language: isAppLanguage(settings.language) ? settings.language : preferredLanguage(languages),
+      results: isResultPublishing(settings.results) ? settings.results : "artifactUnlessSensitive",
+    });
   }
 
   private event(event: Event) {
@@ -141,8 +178,11 @@ export class Core {
   private async handle(cmd: Command, signal: AbortSignal): Promise<unknown> {
     switch (cmd.type) {
       case "chat.snapshot": return this.snapshot(cmd.botId);
-      case "chat.send": return this.bot(cmd.botId).send(cmd.text);
-      case "chat.choose": return this.bot(cmd.botId).choose(cmd.messageId, cmd.index);
+      case "chat.send": return this.bot(cmd.botId).send(cmd.text, { replyTo: cmd.replyTo });
+      case "chat.choose": return this.bot(cmd.botId).choose(cmd.messageId, cmd.index, cmd.text);
+      case "chat.answer": return this.bot(cmd.botId).answer(cmd.messageId, cmd.text);
+      case "chat.react": return this.bot(cmd.botId).react(cmd.messageId, cmd.emoji, cmd.present);
+      case "subagent.view": return this.bot(cmd.botId).subagentView(cmd.subagentId);
       case "chat.read": return this.bot(cmd.botId).read();
       case "turn.stop": return this.bot(cmd.botId).stop(cmd.turnId);
       case "turn.await": return this.bot(cmd.botId).await(cmd.turnId, signal);

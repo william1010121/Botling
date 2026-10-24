@@ -74,6 +74,10 @@ function coreEnvironment(): Record<string, string> {
   // A packaged app imports the user's Botling 1.x folder on its first start (read-only). A
   // development run imports only what BOTLING_IMPORT_FROM names, so tests never see real data.
   if (env.BOTLING_IMPORT_FROM === undefined && app.isPackaged) env.BOTLING_IMPORT_FROM = join(app.getPath("home"), ".claudecodebot");
+  // Where 1.x keeps its projects, to tell whether it has a project open (read-only; same rule).
+  if (env.BOTLING_1X_DIR === undefined && app.isPackaged) env.BOTLING_1X_DIR = join(app.getPath("home"), ".claudecodebot");
+  // The bots reply in the system's language unless settings name one (`AppLanguage.preferred`).
+  try { env.BOTLING_LANGUAGES ??= app.getPreferredSystemLanguages().join(","); } catch { /* Intl's locale then */ }
   return env;
 }
 

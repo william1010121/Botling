@@ -10,8 +10,17 @@ export type StreamItem =
   | { kind: "textBlock" }
   /** A whole assistant message's text (used only when no deltas came). */
   | { kind: "assistantText"; text: string }
-  | { kind: "toolUse"; id: string; tool: string; title: string; detail: string; parent: string | null }
-  | { kind: "toolResult"; id: string; output: string; failed: boolean }
+  | { kind: "toolUse"; id: string; tool: string; title: string; detail: string; parent: string | null; input: Record<string, unknown> }
+  /** What a tool call gave back; `parent`: a subagent's call. `launch`: an Agent call's structured result. */
+  | { kind: "toolResult"; id: string; output: string; failed: boolean; parent: string | null; launch: Launch | null }
+  /** Words a subagent said (its own assistant text). */
+  | { kind: "subagentText"; parent: string; text: string }
+  /** claude started a subagent (`task_started`, local_agent): it may run on in the background. */
+  | { kind: "subagentStarted"; id: string; description: string; type: string | null; prompt: string; background: boolean }
+  /** A subagent ended (`task_notification`): its status and report. */
+  | { kind: "subagentEnded"; id: string; status: string; summary: string | null }
+  /** A notification that is not a report: the subagent waits on its own background work. */
+  | { kind: "subagentWaiting"; id: string }
   /** claude asks to use a tool (`--permission-prompt-tool stdio`). */
   | { kind: "permission"; requestId: string; tool: string; summary: string; input: Record<string, unknown> }
   | { kind: "permissionCancelled"; requestId: string }
@@ -20,6 +29,21 @@ export type StreamItem =
   | { kind: "controlResponse"; requestId: string }
   /** The turn ended. */
   | { kind: "result"; ok: boolean; text: string; error: string; subtype: string };
+
+/** An Agent call's structured result (`LaunchResult`): its agentId, and whether it went on in the background. */
+export interface Launch { agentId: string | null; background: boolean }
+
+function launchOf(value: unknown): Launch | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const object = value as Record<string, unknown>;
+  const text = (key: string) => (typeof object[key] === "string" && object[key] ? (object[key] as string) : null);
+  const agentId = text("agentId");
+  const background = object.status === "async_launched" || object.isAsync === true || text("backgroundTaskId") !== null;
+  return agentId || background ? { agentId, background } : null;
+}
+
+/** `StreamEvent.isStillWaiting`: claude's words for a subagent that has not reported yet. */
+const stillWaiting = (summary: string) => summary.endsWith("is waiting on its own background work");
 
 const LONGEST = 4_000;
 const cut = (text: string, limit = LONGEST) => (text.length > limit ? `${text.slice(0, limit)}…` : text);
@@ -88,7 +112,29 @@ export function parseLine(line: string): StreamItem[] {
   if (!message || typeof message !== "object") return [];
   switch (message.type) {
     case "system":
-      return message.subtype === "init" && typeof message.session_id === "string" ? [{ kind: "init", sessionId: message.session_id }] : [];
+      if (message.subtype === "init") return typeof message.session_id === "string" ? [{ kind: "init", sessionId: message.session_id }] : [];
+      if (message.subtype === "task_started") {
+        // Background shell commands and Monitors start tasks too; only agents are subagents.
+        const type = typeof message.task_type === "string" ? message.task_type : null;
+        if (typeof message.tool_use_id !== "string" || !(type === "local_agent" || (type === null && message.subagent_type != null))) return [];
+        return [{
+          kind: "subagentStarted", id: message.tool_use_id,
+          description: typeof message.description === "string" ? message.description : "",
+          type: typeof message.subagent_type === "string" ? message.subagent_type : null,
+          prompt: typeof message.prompt === "string" ? message.prompt : "",
+          background: message.is_backgrounded === true,
+        }];
+      }
+      if (message.subtype === "task_notification") {
+        const id = typeof message.tool_use_id === "string" ? message.tool_use_id : typeof message.task_id === "string" ? message.task_id : null;
+        if (!id) return [];
+        const status = typeof message.status === "string" ? message.status : "completed";
+        const report = typeof message.handback_report?.text === "string" && message.handback_report.text ? message.handback_report.text : null;
+        const summary = report ?? (typeof message.summary === "string" ? message.summary : null);
+        if (status === "completed" && message.handback == null && summary !== null && stillWaiting(summary)) return [{ kind: "subagentWaiting", id }];
+        return [{ kind: "subagentEnded", id, status, summary }];
+      }
+      return [];
     case "stream_event": {
       // Partial chunks of the main conversation only; a subagent's words are not the reply.
       if (message.parent_tool_use_id) return [];
@@ -107,18 +153,23 @@ export function parseLine(line: string): StreamItem[] {
       for (const block of content) {
         if (block?.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
           const input = block.input && typeof block.input === "object" ? block.input : {};
-          items.push({ kind: "toolUse", id: block.id, tool: block.name, title: activity(block.name, input), detail: detail(block.name, input), parent });
+          items.push({ kind: "toolUse", id: block.id, tool: block.name, title: activity(block.name, input), detail: detail(block.name, input), parent, input });
         }
       }
       const text = content.filter((part) => part?.type === "text").map((part) => String(part.text ?? "")).join("");
       if (text && !parent) items.push({ kind: "assistantText", text });
+      if (text.trim() && parent) items.push({ kind: "subagentText", parent, text });
       return items;
     }
     case "user": {
+      const parent = typeof message.parent_tool_use_id === "string" ? message.parent_tool_use_id : null;
       const content: any[] = Array.isArray(message.message?.content) ? message.message.content : [];
       return content
         .filter((part) => part?.type === "tool_result" && typeof part.tool_use_id === "string")
-        .map((part) => ({ kind: "toolResult" as const, id: part.tool_use_id, output: cut(resultText(part.content)), failed: part.is_error === true }));
+        .map((part) => {
+          const failed = part.is_error === true;
+          return { kind: "toolResult" as const, id: part.tool_use_id, output: cut(resultText(part.content)), failed, parent, launch: failed ? null : launchOf(message.tool_use_result) };
+        });
     }
     case "control_request": {
       const requestId = message.request_id;

@@ -42,18 +42,23 @@ describe("core process", () => {
     expect(saved.at(-1).date).toBeLessThan(2e9);
   });
 
-  it("refuses bad input with an error response, and a second send while busy", async () => {
+  it("refuses bad input with an error response; a second send while busy joins the first (1.x steering)", async () => {
     const c = core(tempDir("core"), { FAKE_CLAUDE_MODE: "slow" });
-    c.post({ v: 2, id: "bad", cmd: { type: "shell.run", command: "ls" } });
+    c.post({ v: 3, id: "bad", cmd: { type: "shell.run", command: "ls" } });
     c.post({ v: 9, id: "old", cmd: { type: "chat.snapshot" } });
     c.child.stdin.write("not json\n");
     await until(() => c.responses.get("bad") && c.responses.get("old"));
     expect(c.responses.get("bad")).toMatchObject({ ok: false, error: { code: "bad_request" } });
     expect(c.responses.get("old")).toMatchObject({ ok: false, error: { code: "unsupported_version" } });
-    const { turnId } = await c.call({ type: "chat.send", botId: MAIN, text: "one" });
-    await expect(c.call({ type: "chat.send", botId: MAIN, text: "two" })).rejects.toThrow(/conflict/);
+    const first = await c.call({ type: "chat.send", botId: MAIN, text: "one" });
+    await until(() => c.of("turn.delta").length >= 2);
+    const second = await c.call({ type: "chat.send", botId: MAIN, text: "two" });
+    expect(second.turnId).not.toBe(first.turnId);
+    // The first turn is cut off (its words so far stay), the second runs.
+    await until(() => c.of("turn.finished").find((e) => (e.event as { turnId: string }).turnId === first.turnId));
+    expect(c.of("turn.finished")[0]!.event).toMatchObject({ status: "stopped" });
     await expect(c.call({ type: "chat.send", botId: "NO-SUCH-BOT", text: "x" })).rejects.toThrow(/not_found/);
-    await c.call({ type: "turn.stop", botId: MAIN, turnId });
+    await c.call({ type: "turn.stop", botId: MAIN, turnId: second.turnId });
   });
 
   it("stop ends the whole tree (even one ignoring SIGTERM) and no event for the turn follows", async () => {
@@ -108,7 +113,7 @@ describe("core process", () => {
     const { turnId } = await c.call({ type: "chat.send", botId: MAIN, text: "go" });
     const waitId = c.send({ type: "turn.await", botId: MAIN, turnId });
     await sleep(100);
-    c.post({ v: 2, cancel: waitId });
+    c.post({ v: 3, cancel: waitId });
     const response = await until(() => c.responses.get(waitId));
     expect(response).toMatchObject({ ok: false, error: { code: "cancelled" } });
     const before = c.of("turn.delta").length;

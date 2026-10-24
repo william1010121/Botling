@@ -11,15 +11,37 @@ describe("stream-json lines", () => {
     expect(parseLine(`{"type":"stream_event","parent_tool_use_id":null,"event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hi"}}}`)).toEqual([{ kind: "delta", text: "Hi" }]);
     expect(parseLine(`{"type":"stream_event","parent_tool_use_id":"toolu_9","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"sub"}}}`)).toEqual([]);
     expect(parseLine(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"/a/b/notes.md"}}]}}`))
-      .toEqual([{ kind: "toolUse", id: "t1", tool: "Read", title: "Read notes.md", detail: "/a/b/notes.md", parent: null }]);
+      .toEqual([{ kind: "toolUse", id: "t1", tool: "Read", title: "Read notes.md", detail: "/a/b/notes.md", parent: null, input: { file_path: "/a/b/notes.md" } }]);
     expect(parseLine(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"ok"}],"is_error":true}]}}`))
-      .toEqual([{ kind: "toolResult", id: "t1", output: "ok", failed: true }]);
+      .toEqual([{ kind: "toolResult", id: "t1", output: "ok", failed: true, parent: null, launch: null }]);
     expect(parseLine(`{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","input":{"command":"rm -rf build","description":"Clean"}}}`))
       .toEqual([{ kind: "permission", requestId: "r1", tool: "Bash", summary: "rm -rf build", input: { command: "rm -rf build", description: "Clean" } }]);
     expect(parseLine(`{"type":"control_request","request_id":"r2","request":{"subtype":"hook_callback"}}`)).toEqual([{ kind: "unsupportedRequest", requestId: "r2", subtype: "hook_callback" }]);
     expect(parseLine(`{"type":"control_cancel_request","request_id":"r1"}`)).toEqual([{ kind: "permissionCancelled", requestId: "r1" }]);
     expect(parseLine(`{"type":"result","subtype":"error_during_execution","is_error":true,"result":""}`)[0]).toMatchObject({ kind: "result", ok: false });
     expect(parseLine("not json")).toEqual([]);
+  });
+
+  it("reads subagents: their own lines, starts, background launches and notifications (StreamEvent.swift)", () => {
+    expect(parseLine(`{"type":"assistant","parent_tool_use_id":"toolu_A","message":{"content":[{"type":"text","text":"Found it."},{"type":"tool_use","id":"t2","name":"Grep","input":{"pattern":"x"}}]}}`))
+      .toEqual([
+        { kind: "toolUse", id: "t2", tool: "Grep", title: "Search x", detail: "x", parent: "toolu_A", input: { pattern: "x" } },
+        { kind: "subagentText", parent: "toolu_A", text: "Found it." },
+      ]);
+    expect(parseLine(`{"type":"user","parent_tool_use_id":"toolu_A","message":{"content":[{"type":"tool_result","tool_use_id":"t2","content":"hit"}]}}`))
+      .toEqual([{ kind: "toolResult", id: "t2", output: "hit", failed: false, parent: "toolu_A", launch: null }]);
+    expect(parseLine(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_A","content":"Async agent launched successfully. agentId: a1"}]},"tool_use_result":{"status":"async_launched","agentId":"a1"}}`))
+      .toEqual([{ kind: "toolResult", id: "toolu_A", output: "Async agent launched successfully. agentId: a1", failed: false, parent: null, launch: { agentId: "a1", background: true } }]);
+    expect(parseLine(`{"type":"system","subtype":"task_started","tool_use_id":"toolu_A","task_type":"local_agent","description":"Research","subagent_type":"general-purpose","prompt":"Go","is_backgrounded":true}`))
+      .toEqual([{ kind: "subagentStarted", id: "toolu_A", description: "Research", type: "general-purpose", prompt: "Go", background: true }]);
+    // A background shell command starts a task too: not a subagent.
+    expect(parseLine(`{"type":"system","subtype":"task_started","tool_use_id":"toolu_B","task_type":"local_bash","is_backgrounded":true}`)).toEqual([]);
+    expect(parseLine(`{"type":"system","subtype":"task_notification","task_id":"k","tool_use_id":"toolu_A","status":"completed","summary":"Done: 3 hits"}`))
+      .toEqual([{ kind: "subagentEnded", id: "toolu_A", status: "completed", summary: "Done: 3 hits" }]);
+    expect(parseLine(`{"type":"system","subtype":"task_notification","task_id":"k","status":"completed","summary":"x","handback_report":{"text":"The full report"}}`))
+      .toEqual([{ kind: "subagentEnded", id: "k", status: "completed", summary: "The full report" }]);
+    expect(parseLine(`{"type":"system","subtype":"task_notification","tool_use_id":"toolu_A","status":"completed","summary":"Agent \\"R\\" is waiting on its own background work"}`))
+      .toEqual([{ kind: "subagentWaiting", id: "toolu_A" }]);
   });
 
   it("shows what will run, not the model's description of it", () => {

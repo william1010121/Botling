@@ -16,8 +16,10 @@ import shared from "../../../Web/src/contract.json";
 /**
  * Bumped on any incompatible change to a command, response or event shape.
  * 2: several bots (every chat command and event names its bot), approvals, steps.
+ * 3: task cards, subagents (step status, their own view), reactions, answers and replies, a
+ *    message can be removed, a bot can be tidying (writing its notes before it sleeps).
  */
-export const PROTOCOL_VERSION = 2 as const;
+export const PROTOCOL_VERSION = 3 as const;
 
 /** The most a card's `ccb.save` keeps, shared with the Swift app (`ComponentState.limit`). */
 export const CARD_SAVE_LIMIT: number = (shared as { saveLimit: number }).saveLimit;
@@ -59,8 +61,52 @@ export const StepView = z.strictObject({
   output: z.string().max(10_000).nullable(),
   failed: z.boolean(),
   done: z.boolean(),
+  /** A subagent's: running, completed, failed or stopped; and its tool calls so far. */
+  status: z.enum(["running", "completed", "failed", "stopped"]).nullable().optional(),
+  count: z.number().int().nonnegative().nullable().optional(),
 });
 export type StepView = z.infer<typeof StepView>;
+
+/** An emoji on a line, and who put it there ("user", "head:claude"). */
+export const ReactionView = z.strictObject({ emoji: z.string().max(16), actor: z.string().max(200) });
+
+/** A task card (1.20's TaskCard): one piece of work, kept current by the bot's <task> lines. */
+export const TaskView = z.strictObject({
+  id,
+  name: z.string().max(400),
+  state: z.enum(["pending", "running", "waiting", "done", "stopped"]),
+  owner: z.enum(["claude", "codex"]).nullable(),
+  now: z.string().max(2_000).nullable(),
+  next: z.string().max(2_000).nullable(),
+  blocked: z.string().max(2_000).nullable(),
+  /** The chat lines that belong to it, oldest first. */
+  messageIds: z.array(id).max(1_000),
+  /** ISO-8601. */
+  updatedAt: z.string(),
+  /** A subagent started for it is still at work. */
+  atWork: z.boolean(),
+});
+export type TaskView = z.infer<typeof TaskView>;
+
+/** A subagent's own conversation, read only. */
+export const SubagentView = z.strictObject({
+  id: z.string().max(200),
+  title: z.string().max(400),
+  /** The bot it works for. */
+  owner: z.string().max(200),
+  status: z.enum(["running", "completed", "failed", "stopped"]),
+  type: z.string().max(200).nullable(),
+  model: z.string().max(200).nullable(),
+  /** The task it was given. */
+  prompt: z.string().max(20_000),
+  steps: z.array(StepView).max(500),
+  /** What it handed back. */
+  result: z.string().max(20_000).nullable(),
+  /** ISO-8601. */
+  startedAt: z.string(),
+  endedAt: z.string().nullable(),
+});
+export type SubagentView = z.infer<typeof SubagentView>;
 
 export const AttachmentView = z.strictObject({ name: z.string().max(400), kind: z.enum(["image", "video", "file"]), url: z.string().max(4_000) });
 
@@ -84,7 +130,9 @@ export const MessageView = z.strictObject({
   /** Cut off before it finished (stopped, the agent went away, the app quit). */
   interrupted: z.boolean().optional(),
   attachments: z.array(AttachmentView).max(50).optional(),
+  replyTo: id.nullable().optional(),
   replyPreview: z.string().max(2_000).nullable().optional(),
+  reactions: z.array(ReactionView).max(60).optional(),
 });
 export type MessageView = z.infer<typeof MessageView>;
 
@@ -97,12 +145,14 @@ export const BotView = z.strictObject({
   /** An avatar shape (`AvatarShape` in the Swift app: circle, square, …). */
   avatar: z.string().max(40),
   folder: z.string().max(4_000),
-  /** asleep: no agent process; starting; awake: its process is running. */
-  phase: z.enum(["asleep", "starting", "awake"]),
+  /** asleep: no agent process; starting; awake: its process is running; tidying: writing its notes before it sleeps. */
+  phase: z.enum(["asleep", "starting", "awake", "tidying"]),
   working: z.boolean(),
   /** Tool approvals waiting for the user. */
   approvals: z.number().int().nonnegative(),
   unread: z.number().int().nonnegative(),
+  /** Its subagents still at work. */
+  subagents: z.number().int().nonnegative(),
   /** Why its chat cannot be used (an unreadable chat file, a missing folder); null when fine. */
   problem: z.string().max(2_000).nullable(),
 });
@@ -130,9 +180,16 @@ const botId = BotId;
 export const Command = z.discriminatedUnion("type", [
   /** Every bot, and (with `botId`) that bot's chat. Main bot when `botId` is left out. */
   z.strictObject({ type: z.literal("chat.snapshot"), botId: botId.optional() }),
-  z.strictObject({ type: z.literal("chat.send"), botId, text: z.string().min(1).max(MESSAGE_TEXT_LIMIT) }),
-  /** Picks a button on a question (a tool approval): the core decides what it means from its action. */
-  z.strictObject({ type: z.literal("chat.choose"), botId, messageId: id, index: z.number().int().nonnegative().max(19) }),
+  /** A message; while a reply is being written it joins or follows that turn (as 1.x steers). `replyTo`: a line it answers. */
+  z.strictObject({ type: z.literal("chat.send"), botId, text: z.string().min(1).max(MESSAGE_TEXT_LIMIT), replyTo: id.optional() }),
+  /** Picks a button on a question (a tool approval): the core decides what it means from its action. `text`: notes with the pick. */
+  z.strictObject({ type: z.literal("chat.choose"), botId, messageId: id, index: z.number().int().nonnegative().max(19), text: z.string().max(MESSAGE_TEXT_LIMIT).optional() }),
+  /** Answers a bot's question in the user's own words instead of a button. */
+  z.strictObject({ type: z.literal("chat.answer"), botId, messageId: id, text: z.string().min(1).max(MESSAGE_TEXT_LIMIT) }),
+  /** The user's own reaction on a line (one of 👍 ❤️ 😂 🎉 🤔 👀). */
+  z.strictObject({ type: z.literal("chat.react"), botId, messageId: id, emoji: z.string().min(1).max(16), present: z.boolean() }),
+  /** A subagent's own conversation (the Agent call's id). */
+  z.strictObject({ type: z.literal("subagent.view"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/) }),
   z.strictObject({ type: z.literal("chat.read"), botId }),
   z.strictObject({ type: z.literal("turn.stop"), botId, turnId: id }),
   /** Resolves when the turn ends. Cancelling the request stops the wait, never the turn. */
@@ -153,7 +210,7 @@ export type CommandType = Command["type"];
 
 /** Commands the renderer may send. `card.html` is for main's protocol handler only. */
 export const RENDERER_COMMANDS = new Set<CommandType>([
-  "chat.snapshot", "chat.send", "chat.choose", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
+  "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.react", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
 export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open"]);
@@ -164,12 +221,16 @@ export interface ChatSnapshot {
   running: RunningView | null;
   /** What the running turn is doing now (before its reply has words). */
   live: StepView[];
+  tasks: TaskView[];
 }
 
 export interface Results {
   "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null };
   "chat.send": { messageId: string; turnId: string };
   "chat.choose": { accepted: boolean };
+  "chat.answer": { accepted: boolean };
+  "chat.react": { changed: boolean };
+  "subagent.view": { subagent: SubagentView };
   "chat.read": { read: true };
   "turn.stop": { stopped: boolean; killed: number[]; forced: boolean };
   "turn.await": { status: z.infer<typeof MessageState> };
@@ -189,6 +250,10 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("message.added"), botId, message: MessageView }),
   /** A message changed as a whole (a question answered, a reply finished with its steps). */
   z.strictObject({ type: z.literal("message.updated"), botId, message: MessageView }),
+  /** A line went (a reply with nothing to show: only <no-reply/> or reactions; a cut-off turn that had said nothing). */
+  z.strictObject({ type: z.literal("message.removed"), botId, messageId: id }),
+  z.strictObject({ type: z.literal("tasks.updated"), botId, tasks: z.array(TaskView).max(100) }),
+  z.strictObject({ type: z.literal("subagent.updated"), botId, subagent: SubagentView }),
   z.strictObject({ type: z.literal("turn.started"), botId, turnId: id, messageId: id }),
   z.strictObject({ type: z.literal("turn.delta"), botId, turnId: id, messageId: id, text: z.string() }),
   /** What the turn is doing now: its steps so far. */

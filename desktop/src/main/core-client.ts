@@ -91,13 +91,14 @@ export class CoreClient {
     this.child?.postMessage({ v: PROTOCOL_VERSION, cancel: id });
   }
 
-  /** Asks the core to stop its work and exit (it ends running agent trees on SIGTERM). */
+  /** Asks the core to stop its work and exit (it tidies idle bots, then ends running agent trees on SIGTERM). */
   stop(): Promise<void> {
     this.quitting = true;
     const child = this.child;
     if (!child) return Promise.resolve();
     return new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(), 4_000);
+      // Awake bots tidy their notes before the core exits (BOTLING_QUIT_TIDY_MS, 15 s at most each, in parallel).
+      const timer = setTimeout(() => resolve(), Number(this.options.env.BOTLING_QUIT_TIDY_MS ?? 15_000) + 5_000);
       child.once("exit", () => { clearTimeout(timer); resolve(); });
       child.kill();
     });
