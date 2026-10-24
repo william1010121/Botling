@@ -33,6 +33,8 @@
 // Work the other head hands over ("(App: Codex, this bot's other head, hands you this …") is answered
 // "Did it: <task>" ("/say …" as the task: exactly that; "/handoff:claude <task>": it hands <task> on); a hand-back ("… finished what you handed
 // over. Its reply: …") "Done: <its reply>".
+// "/slow …" as the handed task: it streams until interrupted (work to pause for the user's message);
+// the app's "(App: Now carry on with what you were doing…" is answered "Carried on: finished the handed work."
 // App notes ("(App: …" paragraphs: the wake briefing, recent lines, reactions) are not the user's
 // words: the reply echoes the rest, and the directive is read from the last paragraph. The tidy
 // note ("(App: You have been idle …") is answered "OK" after writing the memory file it names.
@@ -88,12 +90,16 @@ function words(text) {
   return { all: mine.join("\n\n"), last: mine.at(-1) ?? "" };
 }
 
+/** Handed-over work that streams until it is interrupted ("/slow …" as the task). */
+const SLOW_HANDED = "\u0000slow";
+
 /** What it answers to work the other head handed over, or to its hand-back (null: neither). */
 function conductedReply(prompt) {
   const handed = /\(App: (?:Claude|Codex), this bot's other head, (?:hands you this|asks you to review this|wants your view on this) \(hand-off \d+ of \d+ for the user's latest message\):\n([\s\S]*?)\n\nDo it, then reply/.exec(prompt);
   if (handed) {
     const on = /^\/handoff:(claude|codex) ([\s\S]*)$/.exec(handed[1]);
     if (on) return `Over to you. <handoff to="${on[1]}">${on[2]}</handoff>`;
+    if (handed[1].startsWith("/slow")) return SLOW_HANDED;
     return handed[1].startsWith("/say ") ? handed[1].slice(5) : `Did it: ${handed[1]}`;
   }
   const back = /\(App: (?:Claude|Codex) finished what you handed over\. Its reply:\n([\s\S]*?)\n\nCarry on from there/.exec(prompt);
@@ -243,7 +249,23 @@ async function turn(job) {
     result(text);
     return;
   }
+  // The app asks it to carry on with work it paused for the user's message (1.x's resumeNote).
+  if (prompt.startsWith("(App: Now carry on with what you were doing")) {
+    const text = await stream("Carried on: finished the handed work.");
+    result(text);
+    return;
+  }
   const conducted = conductedReply(prompt);
+  if (conducted === SLOW_HANDED) {
+    current = { interrupted: false, helper: null, ignoreInterrupt: false };
+    out({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+    for (let i = 0; !current.interrupted; i++) {
+      delta(`step${i} `);
+      await sleep(30);
+    }
+    result("", false);
+    return;
+  }
   if (conducted !== null) {
     const text = await stream(conducted);
     out({ type: "assistant", parent_tool_use_id: null, message: { role: "assistant", content: [{ type: "text", text }] } });

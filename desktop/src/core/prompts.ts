@@ -312,6 +312,8 @@ export function isPlainOK(reply: string): boolean {
 
 /** `Bot.pauseNote`: the user wrote while the bot worked on something they did not start. */
 export const PAUSE_NOTE = "(App: I stopped what you were doing to ask you this. Answer me first; you will be told to carry on with it after.)";
+/** `Bot.resumeNote`: the user has been answered; the paused work goes on. */
+export const RESUME_NOTE = "(App: Now carry on with what you were doing before the user's message, where you left off.)";
 /** `Bot.partsNote`: the user added to a message before it was answered; both go as one. */
 export const PARTS_NOTE = "(I sent this in parts before you answered; here is all of it:)\n\n";
 /** `Bot.withoutPartsNote`: a third part joins the first two, not a message that already says "in parts". */

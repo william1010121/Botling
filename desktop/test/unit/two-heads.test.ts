@@ -288,6 +288,50 @@ describe("two heads in one chat", () => {
     expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).heads.answerWith).toBe("claude");
   });
 
+  it("your message pauses claude's handed-over work (1.x's pausing): answered first, then it carries on and the hand-back goes on", async () => {
+    const dir = tempDir("heads");
+    const c = await twoHeads(dir);
+    await c.call({ type: "heads.answerWith", botId: MAIN, to: "codex" });
+    await c.call({ type: "chat.send", botId: MAIN, text: `/say On it. <handoff to="claude">/slow build the parser</handoff>` });
+    // Claude is at work on the handed-over task (it streams until interrupted).
+    await until(async () => (await c.chat()).messages.some((m: any) => m.engine === "claude" && m.text.includes("step1")), { timeout: 10_000 });
+    const { turnId } = await c.call({ type: "chat.send", botId: MAIN, text: "what is the time?", to: "claude" });
+    expect((await finishedFor(c, turnId)).event).toMatchObject({ status: "done", text: "You said: what is the time?" });
+    // It heard the pause note with your words; the handed work's words so far stay, cut off.
+    expect(claudeInputs(dir).find((text) => text.includes("what is the time?"))).toMatch(/^\(App: I stopped what you were doing to ask you this\. Answer me first; you will be told to carry on with it after\.\)\n\nwhat is the time\?/);
+    const cut = (await c.chat()).messages.find((m: any) => m.engine === "claude" && m.text.includes("step1"));
+    expect(cut).toMatchObject({ state: "stopped", interrupted: true });
+    // Then it carries on (1.x's resume note); its reply is the hand-back, which Codex answers.
+    const back = await until(async () => (await c.chat()).messages.find((m: any) => m.engine === "codex" && m.state === "done" && m.text.startsWith("Done: Carried on")), { timeout: 10_000 });
+    expect(back.text).toBe("Done: Carried on: finished the handed work.");
+    expect(claudeInputs(dir).at(-1)).toBe("(App: Now carry on with what you were doing before the user's message, where you left off.)");
+    expect((await c.chat()).heads.handoffs).toMatchObject([{ from: "codex", to: "claude", state: "done" }]);
+    const order = (await c.chat()).messages.filter((m: any) => m.role !== "divider").map((m: any) => [m.role, m.engine ?? null, m.text.replace(/step\d+\s*/g, "").trim()]);
+    expect(order.slice(-5)).toEqual([
+      ["bot", "claude", ""],
+      ["user", null, "what is the time?"],
+      ["bot", "claude", "You said: what is the time?"],
+      ["bot", "claude", "Carried on: finished the handed work."],
+      ["bot", "codex", "Done: Carried on: finished the handed work."],
+    ]);
+  });
+
+  it("your message pauses Codex's handed-over work: it joins the turn (turn/steer), then Codex carries on with the hand-off", async () => {
+    const dir = tempDir("heads");
+    const c = await twoHeads(dir);
+    await c.call({ type: "heads.answerWith", botId: MAIN, to: "claude" });
+    await c.call({ type: "chat.send", botId: MAIN, text: `/say On it. <handoff to="codex">/slow check the tests</handoff>` });
+    await until(() => c.of("turn.steps").some((e) => JSON.stringify(e.event).includes("working on it 1")), { timeout: 10_000 });
+    const { turnId } = await c.call({ type: "chat.send", botId: MAIN, text: "are you there?", to: "codex" });
+    const answered = await until(async () => (await c.chat()).messages.find((m: any) => m.engine === "codex" && m.state === "done" && m.text.startsWith("Answered you:")), { timeout: 10_000 });
+    expect(answered.text).toBe("Answered you: are you there?");
+    expect(codexInputs(dir, "steer").at(-1)).toMatch(/^\(App: I stopped what you were doing to ask you this\. Answer me first; you will be told to carry on with it after\.\)\n\nare you there\?/);
+    expect(turnId).toBeTruthy();
+    const back = await until(async () => (await c.chat()).messages.find((m: any) => m.engine === "claude" && m.state === "done" && m.text.startsWith("Done: Carried on")), { timeout: 10_000 });
+    expect(back.text).toBe("Done: Carried on: finished the handed work.");
+    expect(codexInputs(dir).at(-1)).toContain("(App: Now carry on with what you were doing before the user's message, where you left off.)");
+  });
+
   it("at the hand-off budget a card asks; One more round lets it go on", async () => {
     const dir = tempDir("heads");
     mkdirSync(join(dir, "main"), { recursive: true });

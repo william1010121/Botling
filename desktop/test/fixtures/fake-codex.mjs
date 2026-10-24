@@ -23,7 +23,9 @@
 // to a worker, which writes it; its report turn says OK.
 // Work the other head (Claude) hands over is answered "Did it: <task>" ("/say …": exactly that;
 // "/handoff:claude <task>": it hands <task> on), a
-// hand-back "Done: <its reply>"; "/solo <words>": with two heads, the head that hears the other's
+// hand-back "Done: <its reply>" ("/slow …" as the task: commentary until interrupted or steered, then
+// "Answered you: <the steered words>"; the app's "(App: Now carry on…" note: "Carried on: finished the
+// handed work."); "/solo <words>": with two heads, the head that hears the other's
 // words first says only <no-reply/>.
 // A worker's task: "/slowworker" runs until interrupted; "/failworker" fails; else it reports
 // "Worker did: <first line>" after FAKE_CODEX_WORKER_MS (default 300), or — FAKE_CODEX_WORKER_GATE=<file>
@@ -97,12 +99,16 @@ function words(text) {
   return { all: mine.join("\n\n"), last: mine.at(-1) ?? "" };
 }
 
+/** Handed-over work ("/slow …" as the task) that works until it is interrupted or the user steers in. */
+const SLOW_HANDED = "\u0000slow";
+
 /** What it answers to work the other head handed over, or to its hand-back (null: neither). */
 function conductedReply(prompt) {
   const handed = /\(App: (?:Claude|Codex), this bot's other head, (?:hands you this|asks you to review this|wants your view on this) \(hand-off \d+ of \d+ for the user's latest message\):\n([\s\S]*?)\n\nDo it, then reply/.exec(prompt);
   if (handed) {
     const on = /^\/handoff:(claude|codex) ([\s\S]*)$/.exec(handed[1]);
     if (on) return `Over to you. <handoff to="${on[1]}">${on[2]}</handoff>`;
+    if (handed[1].startsWith("/slow")) return SLOW_HANDED;
     return handed[1].startsWith("/say ") ? handed[1].slice(5) : `Did it: ${handed[1]}`;
   }
   const back = /\(App: (?:Claude|Codex) finished what you handed over\. Its reply:\n([\s\S]*?)\n\nCarry on from there/.exec(prompt);
@@ -119,7 +125,21 @@ async function coordinatorTurn(thread, turn, text) {
     say(thread, turn, receipt?.success ? "Handed the memory update to a worker." : "Could not hand it over.");
     return complete(thread, turn);
   }
+  if (text.includes("(App: Now carry on with what you were doing")) {
+    await sleep(Number(process.env.FAKE_CODEX_TURN_MS ?? 30));
+    say(thread, turn, "Carried on: finished the handed work.");
+    return complete(thread, turn);
+  }
   const conducted = conductedReply(text);
+  if (conducted === SLOW_HANDED) {
+    for (let i = 0; !state.turn?.interrupted && !state.turn?.steers.length; i++) {
+      say(thread, turn, `working on it ${i}`, "commentary");
+      await sleep(40);
+    }
+    if (state.turn?.interrupted) return complete(thread, turn, "interrupted");
+    say(thread, turn, `Answered you: ${state.turn.steers.map((steer) => words(steer).all || steer).join(" | ")}`);
+    return complete(thread, turn);
+  }
   if (conducted !== null) {
     await sleep(Number(process.env.FAKE_CODEX_TURN_MS ?? 30));
     say(thread, turn, conducted);
