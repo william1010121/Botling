@@ -2,60 +2,10 @@
 // over parentPort: requests, responses, events with seq, stop with no late events, cancellation,
 // restart recovery. Uses the fake CLI, so no real claude usage.
 import { afterEach, describe, expect, it } from "vitest";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { createInterface } from "node:readline";
 import { join } from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
-import { alive, desktop, fakeCli, pidsIn, sleep, tempDir, until } from "../helpers";
-import type { EventEnvelope, ResponseEnvelope, Outbound } from "../../src/contract";
-
-const coreScript = join(desktop, "out", "core", "main.cjs");
-
-class CoreHarness {
-  child: ChildProcessWithoutNullStreams;
-  events: (EventEnvelope & { at: number })[] = [];
-  responses = new Map<string, ResponseEnvelope>();
-  stderr = "";
-  private counter = 0;
-
-  constructor(readonly dataDir: string, env: Record<string, string> = {}) {
-    this.child = spawn(process.execPath, [coreScript], {
-      env: { ...process.env, BOTLING_DATA_DIR: dataDir, BOTLING_AGENT: "fake", BOTLING_FAKE_CLI: fakeCli, ...env },
-      stdio: "pipe",
-    });
-    this.child.stderr.on("data", (chunk) => (this.stderr += chunk));
-    createInterface({ input: this.child.stdout }).on("line", (line) => {
-      const message = JSON.parse(line) as Outbound;
-      if ("event" in message) this.events.push({ ...message, at: Date.now() });
-      else this.responses.set(message.id, message);
-    });
-  }
-
-  post(value: unknown) {
-    this.child.stdin.write(JSON.stringify(value) + "\n");
-  }
-
-  send(cmd: unknown, id = `r${++this.counter}`) {
-    this.post({ v: 1, id, cmd });
-    return id;
-  }
-
-  async call(cmd: unknown): Promise<any> {
-    const id = this.send(cmd);
-    const response = await until(() => this.responses.get(id), { what: `response to ${JSON.stringify(cmd)}` });
-    if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`);
-    return response.result;
-  }
-
-  of(type: string) {
-    return this.events.filter((e) => e.event.type === type);
-  }
-
-  kill(signal: NodeJS.Signals = "SIGTERM") {
-    this.child.kill(signal);
-    return new Promise((resolve) => this.child.once("exit", resolve));
-  }
-}
+import { alive, pidsIn, sleep, tempDir, until } from "../helpers";
+import { CoreHarness } from "../core-harness";
 
 const harnesses: CoreHarness[] = [];
 const core = (dataDir: string, env?: Record<string, string>) => {
@@ -66,6 +16,7 @@ const core = (dataDir: string, env?: Record<string, string>) => {
 afterEach(async () => {
   for (const harness of harnesses.splice(0)) if (harness.child.exitCode === null && harness.child.signalCode === null) await harness.kill("SIGKILL");
 });
+
 
 describe("core process", () => {
   it("streams a reply as events with gapless seq numbers", async () => {

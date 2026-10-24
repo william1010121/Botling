@@ -83,6 +83,8 @@ function accounts(): AccountView[] {
 }
 
 const hardened = new WeakSet<Session>();
+/** Account sessions opened this run (only these need their cookies flushed at quit). */
+const openedSessions = new Set<Session>();
 function hardenSession(target: Session) {
   if (hardened.has(target)) return;
   hardened.add(target);
@@ -99,6 +101,7 @@ function openSite(accountId: string, url: string): number {
   if (!account) throw Object.assign(new Error("No such account."), { code: "not_found" });
   const siteSession = session.fromPartition(account.partition);
   hardenSession(siteSession);
+  openedSessions.add(siteSession);
   const window = new BrowserWindow({
     width: 1000, height: 760, title: `${account.name} — ${new URL(url).host}`,
     backgroundColor: "#0E0E10",
@@ -264,7 +267,9 @@ app.on("before-quit", (event) => {
   if (stopping) return;
   stopping = true;
   event.preventDefault();
-  void core.stop().finally(() => app.exit(0));
+  // Cookies are written to disk lazily; make sure each account's are there before exiting.
+  const flushes = [...openedSessions].map((opened) => opened.cookies.flushStore().catch(() => {}));
+  void Promise.all([core.stop(), ...flushes]).finally(() => app.exit(0));
 });
 
 // For tests: which pid the core has.
