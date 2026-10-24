@@ -749,17 +749,31 @@ extension LiveClaudeTests {
         try "The secret word is KUMQUAT.\n".write(to: home.appending(path: "a.txt"), atomically: true, encoding: .utf8)
         let profile = BotProfile(name: "Probe", role: .manager, avatar: "square", workingDirectory: home, memoryPath: ".bot/memory.md", tools: ["Read"])
         let bot = Bot(profile: profile, defaultModel: .haiku, launcher: ClaudeAgentProcess.launcher(executable: executable))
-        bot.promiseCheck = PromiseCheck.checker(classify: PromiseCheck.codexClassifier())
+        defer { bot.stop() }
+        let judgments = PromiseCheckTests.Calls()
+        let check = PromiseCheck.checker(classify: PromiseCheck.codexClassifier())
+        bot.promiseCheck = { end in
+            let result = await check(end)
+            judgments.add("terminalRequired=\(end.terminalRequired) signals=\(end.signals.map { $0.kind.rawValue }.joined(separator: ",")) verdict=\(result.rawValue) reason=\(result.reason)")
+            return result
+        }
         let start = Date()
         bot.send("Your authorized task is to read a.txt and report its contents. For the first reply only, do not use a tool and reply with exactly this sentence: 好的，接下來我會讀 a.txt 確認內容，再回報給你。")
-        await eventually({ bot.messages.contains { $0.role == .bot && $0.text.contains("KUMQUAT") } && !bot.isWorking }, timeout: 180)
-        print(String(format: "took %.1fs", Date().timeIntervalSince(start)))
-        for message in bot.messages { print("[\(message.role)] \(message.text.prefix(300))") }
+        // Bound the whole provider/head probe. Wait for judgment of the terminal evidence,
+        // not merely isWorking=false (which precedes the asynchronous judgment).
+        await eventually({ judgments.messages.contains { $0.contains("terminalRequired=true signals=end verdict=COMPLETE") } }, timeout: 75)
+        print(String(format: "bounded live head took %.1fs", Date().timeIntervalSince(start)))
+        for message in bot.messages { print("[\(message.role)] \(message.text.prefix(400))") }
+        for judgment in judgments.messages { print("live-head-judgment", judgment) }
+        print("live-head-state", "working=\(bot.isWorking)", "phase=\(bot.phase)")
         let replies = bot.messages.filter { $0.role == .bot }
-        #expect(replies.count == 2)
+        // A report-only terminal repair can legitimately produce another reply.
+        #expect(replies.count >= 2)
         #expect(replies.first?.text.contains("a.txt") == true)
         #expect(replies.last?.text.contains("KUMQUAT") == true)
-        bot.stop()
+        #expect(Set(replies.compactMap(\.session)).count == 1)
+        #expect(bot.messages.contains { $0.role == .notice && $0.text.contains("Continuing the authorized task") })
+        #expect(judgments.messages.contains { $0.contains("terminalRequired=true signals=end verdict=COMPLETE") })
     }
 }
 
