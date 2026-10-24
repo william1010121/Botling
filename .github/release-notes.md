@@ -1,31 +1,38 @@
-## What's new in 1.18.0
+## What's new in 1.19.0
 
-- Claude and Codex can work as two heads of the same bot, hand work to each other, and run
-  independent app-managed Codex workers while you keep chatting.
-- A unified input dock brings pinned components, Answer with and a panel for multiple
-  hand-offs together. Native-style settings include engine, model, effort and worker options.
-- Cute character avatars animate and have a saved 32–96 px chat size. Emoji reactions,
-  work status and read heads share the message footer.
-- Web chats gain Grok, multiple Google accounts for Gemini and pinned conversations.
-  Switching provider or account keeps its selected conversation; Gemini submenu positioning
-  and cross-bot reply identities are corrected.
-- App context savings send reaction and component changes after the initial snapshot.
-  Separate saved switches in Settings → Usage apply to both engines.
-- Interrupted replies keep their partial text and steps, and Claude subagent token speed
-  uses the final output count.
+- **Catch-up summaries.** Unread bot replies fold into one Catch-up card with a short summary
+  of what finished, what is still running and what waits for you. Any interval between your
+  messages can be summarized from its last reply, every bullet links back to the messages it
+  came from, and Settings → General → Chat summaries sets thresholds, model and prompt.
+- **One-time routines and Codex scheduling.** Routines can run once or every day in a chosen
+  time zone, and Codex heads can create, pause and cancel them with `app_routines`.
+- **Codex command monitors.** A Codex head can start an approved command, end its turn and be
+  woken when the command exits.
+- **A general Browser** for ordinary websites, with pinned sites, separate accounts and
+  Capture, so the Maintainer can build a tool for one exact website.
+- **Report a problem from any card** sends the card's context and a screenshot to the
+  Maintainer.
+- **Completion verification** can judge each reply and continue unfinished work; it is now
+  off by default and shows its verdict per reply when enabled.
+- Optional one-hour prompt cache for Claude subagents, faster scoped validation for Codex
+  workers, and bots tidying their notes together when you quit.
+- The hand-off chip and its Stop buttons over the input box are removed; hand-off dividers
+  stay in the chat.
+- Fixes for waits on live workers and scheduled retries, decisions handed between heads,
+  workers blocking new hand-offs, summary folding, subagent avatars and the pinned strip.
 
-See the [full changelog](https://github.com/william1010121/Botling/blob/v1.18.0/CHANGELOG.md#1180).
+See the [full changelog](https://github.com/william1010121/Botling/blob/v1.19.0/CHANGELOG.md#1190).
 
 ## Known limitations
 
-- **Stop all** stops all in-flight hand-offs together; individual row stopping is not available.
+- Hand-offs can no longer be stopped from the chat; they end on their own or with the bot.
 - Authenticated Grok replies and sign-in persistence, a second Google account, Gemini's
   nested menu on the real site, live model reactions and interruption recovery still need
   live acceptance. Local fixtures and startup checks do not establish those results.
 
 **Install**
 
-1. On macOS 14 or later (Apple silicon or Intel), download `botling-1.18.0-macOS.zip` below,
+1. On macOS 14 or later (Apple silicon or Intel), download `botling-1.19.0-macOS.zip` below,
    unzip it, and replace the previous app in Applications with **Botling.app**.
 2. The app is not notarized: the first time, right-click it → **Open** → **Open**.
 3. Install and sign in to the CLI for the head you use: [Claude Code](https://docs.claude.com/en/docs/claude-code)

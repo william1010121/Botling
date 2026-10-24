@@ -86,9 +86,9 @@ struct ClaudePromptCompatibilityTests {
       },
       "0-en-true" : {
         "handoff" : "7282be28fe401a5fd334f61213c92b4aa7ded98d6dfc62cda9e4267adfbf6bea",
-        "headsRule" : "d6e3c4ab9849bcc7a2a358fe4a97bfaa88c76b590d62cf3e272597d03e795e31",
+        "headsRule" : "65ebede6f10ee6474c49999c90a12e60b7dc5c5ff66d427711dd620e3efb7b36",
         "resume" : "189c966ded904e46cc5952761b61945dca0ab0c144fc8c059804944eaff48ad3",
-        "system" : "31065682d3ecf43ec84a3f6cb4920b7a9eddb4b126e6de22efda96445be29bb2",
+        "system" : "3c2ac340c56c6d738847959d6ff0a8833a5f34730ebf3fc2819c4caf6a2ed15e",
         "tidy" : "22764c9d3a10d735ae474753bfac7983df08e82043b64ebeb5cb02ca4ba623aa",
         "wake" : "7a4d72b1d04753a92b4e6405b02213eda564fa3bdee623504e650a63018f86a1"
       },
@@ -102,9 +102,9 @@ struct ClaudePromptCompatibilityTests {
       },
       "0-zh-Hant-true" : {
         "handoff" : "7282be28fe401a5fd334f61213c92b4aa7ded98d6dfc62cda9e4267adfbf6bea",
-        "headsRule" : "d6e3c4ab9849bcc7a2a358fe4a97bfaa88c76b590d62cf3e272597d03e795e31",
+        "headsRule" : "65ebede6f10ee6474c49999c90a12e60b7dc5c5ff66d427711dd620e3efb7b36",
         "resume" : "189c966ded904e46cc5952761b61945dca0ab0c144fc8c059804944eaff48ad3",
-        "system" : "6e70d407e9c7d4bd4aa50746db86b7641bb2b6f4e9d22cc230da464a637f08e4",
+        "system" : "3136c69f408805f774559aa02a6fcee44f825f136b1085c9df4cd57210095ab5",
         "tidy" : "22764c9d3a10d735ae474753bfac7983df08e82043b64ebeb5cb02ca4ba623aa",
         "wake" : "7a4d72b1d04753a92b4e6405b02213eda564fa3bdee623504e650a63018f86a1"
       },
@@ -118,9 +118,9 @@ struct ClaudePromptCompatibilityTests {
       },
       "1-en-true" : {
         "handoff" : "a75a0d72f7b216d909a94dd827ae28bd01619b5c941317502e0bed4cf09e5497",
-        "headsRule" : "d6e3c4ab9849bcc7a2a358fe4a97bfaa88c76b590d62cf3e272597d03e795e31",
+        "headsRule" : "65ebede6f10ee6474c49999c90a12e60b7dc5c5ff66d427711dd620e3efb7b36",
         "resume" : "09c9ec7c739ec7342e676d013a19381b6563c0009945712e53a8e794cfcc3a7d",
-        "system" : "c93138fb6309135f89b6d23a476b8d74fd6e2479a3f266f1ac55c2d457a1719a",
+        "system" : "ff088115acd26645d6843f37ea17ad1c5765df7f3eb048e698376ff1b400f5c2",
         "tidy" : "e861a38d593c2e95bef2e482f6217fd5e589615c3d7c3da682fe82cc2775eba5",
         "wake" : "10197a0bed41df72bab812cd17c16464bca122f62713f585817b74ee2a413182"
       },
@@ -134,9 +134,9 @@ struct ClaudePromptCompatibilityTests {
       },
       "1-zh-Hant-true" : {
         "handoff" : "a75a0d72f7b216d909a94dd827ae28bd01619b5c941317502e0bed4cf09e5497",
-        "headsRule" : "d6e3c4ab9849bcc7a2a358fe4a97bfaa88c76b590d62cf3e272597d03e795e31",
+        "headsRule" : "65ebede6f10ee6474c49999c90a12e60b7dc5c5ff66d427711dd620e3efb7b36",
         "resume" : "09c9ec7c739ec7342e676d013a19381b6563c0009945712e53a8e794cfcc3a7d",
-        "system" : "ed563c283535be250fb4524c70bd3875b48b3721bbe8b465730665f30680be20",
+        "system" : "9de755826fbf53b229dca80adf0a1a557923852fe07a7b0932173ecd8caeace3",
         "tidy" : "e861a38d593c2e95bef2e482f6217fd5e589615c3d7c3da682fe82cc2775eba5",
         "wake" : "10197a0bed41df72bab812cd17c16464bca122f62713f585817b74ee2a413182"
       }
