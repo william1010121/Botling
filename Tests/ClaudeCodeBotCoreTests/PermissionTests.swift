@@ -215,7 +215,8 @@ struct PermissionTests {
         bot.permissionTimeout = 0.1
         #expect(!bot.waitingForPermission)
         agent.emit(.permission(request("r1")))
-        await eventually { bot.waitingForPermission }
+        // The 0.1 s timeout can answer before a slow runner observes the open question,
+        // so wait for the outcome rather than the brief waiting state.
         await eventually { agent.answers.count == 1 }
         #expect(agent.answers.first?.1 == false)
         #expect(!bot.waitingForPermission)
