@@ -40,8 +40,11 @@ components you can pin, and change the app itself with plugins. All local, on th
   decide who does what and hand work and reviews to each other.
 - **A team that works while you talk.** Real work goes to background subagents and app-managed
   Codex workers running in parallel, so the bot is never too busy to answer you.
-- **"Done" is checked.** After a reply, a separate judge model checks whether the work it
-  promised was actually finished, and sends the bot back to work when it was not.
+- **"Done" can be checked.** Turn on completion verification and, after a reply, a separate
+  judge model checks whether the work it promised was actually finished, and sends the bot back
+  to work when it was not.
+- **Catch up at a glance.** Unread replies fold into a short summary when you come back, and any
+  stretch between your messages can be summarized, each point linked to the messages it came from.
 - **Answers you can see.** Charts and cards drawn right in the chat, one click from becoming a
   pinned chip or a Board tile.
 - **An app that changes itself.** Plugins hot-reload, and in developer mode the bot works on
@@ -185,13 +188,13 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
   (⌥1 ⌥2 ⌥3, or start it with `@both`, `@claude` or `@codex`), and the choice is saved per bot.
 - **Hand-offs.** A head can hand the other a task, a review or a question with
   `<handoff to="codex" kind="…">`; the reply goes back to the head that asked. Each of your
-  messages allows at most 6 hand-offs (2 reviews, 3 discussion rounds; adjustable). A chip on
-  the input box's status strip shows progress, lists every hand-off under way, and can stop one
-  chain or all of them.
-- **Completion verification.** When a reply ends, a read-only `codex exec` judge looks at it and
-  decides whether the authorized work is done, waiting on you, or should continue; a bot that
-  stopped early is sent back to finish. The verdict sits under the reply as a small disclosure.
-  The judge model is chosen in Settings → Engines and subagents.
+  messages allows at most 6 hand-offs (2 reviews, 3 discussion rounds; adjustable), and each one
+  leaves a divider in the chat.
+- **Completion verification** (off by default). When a reply ends, a read-only `codex exec`
+  judge looks at it and decides whether the authorized work is done, waiting on you or on a
+  dependency, or should continue; a bot that stopped early is sent back to finish. The verdict
+  sits under the reply as a small disclosure. Settings → Engines and subagents → Completion
+  verification turns it on and picks the judge model.
 - **Characters.** In the Cute look (the default), Claude and Codex are drawn as small animated
   characters that blink, type while working and wave when done; Settings → General sets the
   chat avatar size (32–96 px) or switches back to the Original look. Under each message, small
@@ -216,6 +219,16 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
   answer finishes, the app reads the conversation as Markdown into `~/.claudecodebot/web/`, so
   the main bot can search it. LaTeX snippets and live math preview (web-laas) work in their
   input boxes, and **Capture** records a page's traffic so the Maintainer can fix a page reader.
+- **A general Browser.** The globe in the folded left column browses any website, with pinned
+  sites and separate accounts. **Capture** a page to ask the Maintainer for a website tool,
+  which plugins then offer as a button for that site.
+- **Catch-up and interval summaries.** Come back to more than 3 unread bot replies and they fold
+  into a Catch-up card with a 1–5 bullet summary of what finished, what is running and what
+  waits for you; the card opens to every original message. A **Summarize** chip under the last
+  reply of each stretch between your messages does the same on demand, or automatically when
+  you send your next message (off by default). Each point links its sources, opened in a
+  read-only view of the conversation. The summaries are written by a read-only `codex exec`
+  outside the chat; Settings → General → Chat summaries sets thresholds, model and prompt.
 - **A rich chat**: Markdown, LaTeX, tables, images, videos, attachments, replies, group chats,
   result pages as preview cards, and an input box that works with CJK input methods.
 - **Call in any bot with `@name`.** It answers in your chat and keeps the work, with its steps,
@@ -225,7 +238,11 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
 - **Five languages.** Settings → General → Language: English, 繁體中文, 简体中文, 日本語 or 한국어
   (or follow the Mac), switched at once without a restart. Bots reply in it too; what bots write
   and your own data are never translated.
-- **Routines**: a crontab-style `routines.cron` per bot, which bots edit when you ask.
+- **Routines**: one-time or daily jobs in the Routines panel, and the crontab-style
+  `routines.cron` per bot, which bots edit when you ask; Codex heads schedule through the app's
+  own `app_routines` tool.
+- **Report a problem** from any card's ⋯ menu: it goes to the Maintainer with a screenshot of
+  the card.
 - **Usage at a glance**: today's tokens per bot, the Claude and Codex 5-hour and weekly limits,
   a daily budget, per-bot model and effort, and **Doctor** to check your Claude Code and Codex
   installs. Settings look like macOS System Settings, with a searchable sidebar.
@@ -239,7 +256,8 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
 2. Unzip it and drag **Botling.app** to `/Applications`.
 3. The app is ad-hoc signed, not notarized. The first time, right-click it → **Open** → **Open**.
 
-The build is universal (Apple silicon and Intel).
+The build is universal (Apple silicon and Intel). What the changelog lists under **Unreleased**
+is on `main` but not in a release yet; build from source to try it.
 
 ### Requirements
 
@@ -247,7 +265,7 @@ The build is universal (Apple silicon and Intel).
 |---|---|---|
 | macOS | 14 Sonoma or later | required |
 | [Claude Code](https://docs.claude.com/en/docs/claude-code) CLI | **2.1.111** or later, signed in | required: every bot is a `claude` process |
-| [Codex](https://github.com/openai/codex) CLI | **0.99.0** or later, signed in | recommended: Codex heads and workers, and the completion verification judge |
+| [Codex](https://github.com/openai/codex) CLI | **0.99.0** or later, signed in | recommended: Codex heads and workers, the completion verification judge and chat summaries |
 | Node.js | any current LTS | recommended: plugins with a program part |
 | git | | recommended: the plugin library's history |
 

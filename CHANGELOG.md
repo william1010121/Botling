@@ -8,32 +8,85 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
-- **Summarize any reply interval.** Each interval's last bot reply has a footer chip; its
-  inline summary keeps all original messages, links and artifacts. Historical intervals
-  summarize, expand and retry independently. Optional interval automation uses the same
-  card when your next accepted message closes a range above its threshold (off by default).
-
-- **Catch-up summary.** Come back to a chat with more than a few unread messages (3 by
-  default) and they fold into one group behind a short 1–5 bullet summary of what finished,
-  what is still running and what waits for your decision. The summary is written by an
-  isolated, read-only `codex exec` at medium effort, cached per range, and never enters the
-  chat, its archive or the bot's processes; the group expands to every message, and a failed
-  summary shows the error with Retry. Messages now count as read only while the window is
-  focused. Settings → General → Catch-up summary turns it off, sets the threshold and picks
-  the model.
-- **Stop one hand-off.** Each expanded hand-off row now stops its chain by its stable
-  identity, leaving independent hand-offs running; the single hand-off chip does the same. Pending
-  work and return continuations are cancelled, the selected head turn is interrupted, and its
-  app-managed Codex workers are cancelled without stopping unrelated workers. Completed or
-  stale selections are harmless. The panel still offers an explicit **Stop all**.
-- **Turn completion verification off.** Settings → Completion verification has an on/off
-  switch (on by default). Off, no judge runs for either head of any bot, replies get no
-  verification row and nothing is continued automatically; the model picker is dimmed.
+- **Catch-up summary.** Come back to a chat with more than a few unread bot replies (3 by
+  default) and they fold into one Catch-up card behind a short 1–5 bullet summary of what
+  finished, what is still running and what waits for your decision. The summary is written by
+  an isolated, read-only `codex exec` at medium effort (your Codex login), cached per range,
+  and never enters the chat, its archive or the bot's processes; the card expands to every
+  message, and a failed summary shows the error with Retry ("Nothing was lost"). Messages now
+  count as read only while the window is focused. On by default.
+- **Summarize any reply interval.** The last bot reply of each interval between your messages
+  has a **Summarize N replies** chip in its footer; the summary uses the same Catch-up card
+  and keeps every original message, link and artifact. Historical intervals summarize, expand
+  and retry independently. Automatic interval summaries (off by default) write that card when
+  your next message closes an interval with at least the threshold of bot replies.
+- **Summaries cite their sources.** Each bullet links the messages it came from; clicking one
+  opens a read-only viewer of the original conversation with previous/next source navigation,
+  who asked or picked what, and saved cards shown read-only (answer them in the chat).
+- **Chat summaries settings.** Settings → General → Chat summaries turns unread and interval
+  summaries on or off, sets their thresholds (shared default, or adjusted individually), picks
+  the summary model and edits the writing prompt shared by all summaries (blank or **Restore
+  default prompt** goes back to the built-in one; existing summaries stay as written).
+- **Completion verification, judged and shown per reply.** When enabled, a read-only Codex
+  judge (default `gpt-6-luna`, medium effort) decides after each reply of either head whether
+  the authorized work is complete, waits on you, on a dependency or on a scheduled retry, or
+  should continue, and continues an unfinished task. Each checked reply shows a small
+  disclosure in its action row, collapsed by default, with the actual model, verdict and
+  reason. Settings → Engines and subagents → Completion verification has the on/off switch
+  and the verification model (only models that offer medium effort are listed).
+- **One-time routines and Codex scheduling.** The Routines panel creates **Once** or **Every
+  day** jobs with a time zone; Codex heads get an `app_routines` tool (create, list, pause,
+  resume, cancel, with a `request_id` so retries never duplicate a job). Existing
+  `routines.cron` files keep working. Botling checks about every 30 seconds while it runs; no
+  system crontab or daemon is installed. See `docs/routine-scheduling.md`.
+- **App-owned command monitors for Codex.** A Codex head can start an approved command
+  (Allow once card) with `app_monitor_start`, finish its turn, and be woken with
+  `app_monitor_result` when the command exits; `app_monitor_status` and `app_monitor_cancel`
+  check or stop it. Only commands the app started are monitored, and an interrupted command is
+  never replayed.
+- **A general Browser.** A globe icon in the folded left column (the strip of faces) opens
+  ordinary websites, separate from the Web section's AI chat readers: an address bar, back and reload, pinned websites and
+  separate accounts (each with its own sign-in storage). **Capture** saves the current page so
+  you can ask the Maintainer for a website tool ("What data or action should this website tool
+  provide?"); plugins can offer such tools for one exact website (`ccb.browser.registerTool`),
+  which run only when you press them, and click on the page only after you allow tool clicks
+  for that website and account.
 - **Report a problem from a card.** The ⋯ menu of a floating card, an opened pin, a Board tile
   and a card in the chat now has **Report a problem…**: say what's wrong, keep or untick the
   screenshot of the card, and send. It reaches Maintainer the same way a bot's component request
   does, with the card's chat, refresh setting, data time and the screenshot (kept in that bot's
   attachments), and **Sent to Maintainer** confirms it.
+- **Claude subagents can keep their prompt cache for an hour.** Settings → Engines and
+  subagents → Claude subagents has a "Keep subagents' prompt cache for 1 hour" switch, off by
+  default. On, Botling starts `claude` with `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h` (unless
+  the app's environment sets it), so a subagent that pauses more than 5 minutes no longer
+  writes its whole context again; each cache write costs more than with the 5-minute default.
+  It applies when a bot next starts.
+
+### Changed
+
+- **Completion verification is off by default.** New and existing settings without a saved
+  choice start with it off: no judge runs, replies get no verification row and nothing is
+  continued automatically until you turn it on.
+- **Codex workers validate only what they changed.** Hand-offs to app-managed workers carry a
+  bounded validation plan: each worker runs the relevant behavior and regression checks for
+  its change, and the full suite and packaging are left to one integration pass after the
+  changes are combined.
+- **On Codex, the Maintainer's component edits go to the Claude component editor.** A Codex
+  Maintainer hands template edits to the existing ccb-core Claude editor, with its result
+  routed back across wakes and cancellation, instead of being blocked.
+- **Bots tidy their notes together when you quit.** Independent bots write their memory at the
+  same time before the app quits; bots that share one `memory.md` still write one after
+  another.
+- **A fast test loop.** `scripts/test-fast.sh` runs the app tests in serial shards spread by
+  the last run's timings; `scripts/test-all.sh` is the full reference run, as CI.
+
+### Removed
+
+- **The hand-off chip and panel over the input box.** The "Hand-off 1/6" chip, the list of
+  hand-offs under way and their Stop and Stop all buttons are no longer shown in the chat
+  (single-chain stopping, added during 1.19 development, went with them). Hand-off dividers
+  stay in the chat history, and hand-off budgets are unchanged.
 
 ### Fixed
 
@@ -41,7 +94,11 @@ app and publishes it on GitHub Releases.
   just because its running workers have not reported yet: "unfinished but every remaining piece
   is held by a live worker" is a dependency wait. A continue verdict while live workers run is
   checked a second time, and a second dependency-wait answer keeps the head quiet until
-  `app_task_result` wakes it.
+  `app_task_result` wakes it. The judge sees the app's own worker records, not launch
+  instructions, and a worker starting up no longer gets a duplicate follow-up.
+- **Timed waits are not live-worker waits.** A cooldown or scheduled retry ("Waiting for
+  scheduled retry"), including a pending routine, is judged against the app's clock and
+  scheduler entries instead of being treated as a worker dependency or as unfinished work.
 - **Claude subagents count as owners.** A head waiting on its running Agent-tool subagents is
   no longer woken over and over: they are in the judge's live worker snapshot, and their task
   notification is the return path. Stale tracker cards never count.
@@ -50,6 +107,18 @@ app and publishes it on GitHub Releases.
   work to continue.
 - **Loop guard after two.** Two automatic continuations in a row without a new result pause
   the loop ("Automatic continuation paused") instead of three or more.
+- **A new hand-off no longer waits behind an earlier worker.** Background workers keep their
+  own return route to the head that sent them, so a head can take a new hand-off while an
+  earlier app-managed worker is still running.
+- **A decision handed between heads is answered once.** Linked copies of a decision card in
+  both heads resolve together, earlier answers are never rewritten, and notes are kept.
+- **Summaries fold timestamped messages correctly**, and the summary service's unavailable
+  message is translated.
+- **Every subagent row in the chat shows its owning head's avatar**, in single-head bots too.
+- **A floating pin's ⋯ menu closes when ⋯ is clicked again**, including after a data refresh
+  redraws it.
+- **The pinned strip keeps its + on one row** and its size after keyboard focus or pin
+  changes.
 
 ## 1.18.0
 
@@ -73,12 +142,6 @@ app and publishes it on GitHub Releases.
   the Codex head hears about it too. Both heads behave the same. Settings → Usage → App context
   savings has separate, saved switches for reaction and component deltas, both on by default;
   turning one off sends its full context with the next normal message.
-- **Claude subagents can keep their prompt cache for an hour.** Settings → Engines and
-  subagents → Claude subagents has a "Keep subagents' prompt cache for 1 hour" switch, off by
-  default. On, Botling starts `claude` with `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h` (unless
-  the app's environment sets it), so a subagent that pauses more than 5 minutes no longer
-  writes its whole context again; each cache write costs more than with the 5-minute default.
-  It applies when a bot next starts.
 - **Quieter left column.** Bot and group rows no longer show the orange "waiting on you" dot,
   and running subagent rows no longer show a blue dot (the owner head's face is on the row);
   the folded strip drops the orange dot too. Only the unread count (a blue dot when folded)
