@@ -66,8 +66,19 @@ public enum Chibi {
     /// The head as an SVG document. `hat` nil: no bot face on top (seen marks, and the left
     /// column, where the bot's own face is in front).
     public static func svg(_ head: BotEngine, mood: Mood = .normal, hat: Hat? = nil) -> String {
+        svg(head, hat: hat, art: assetData(head, mood: mood))
+    }
+
+    /// Navigation can retain the bot's shape avatar if an optional character asset is
+    /// absent or unreadable, without initializing the required full character pack.
+    public static func svgIfAvailable(_ head: BotEngine, mood: Mood = .normal, hat: Hat? = nil) -> String? {
+        guard let url = findAssetURL(head, mood: mood), let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
+        return svg(head, hat: hat, art: data)
+    }
+
+    private static func svg(_ head: BotEngine, hat: Hat?, art data: Data) -> String {
         var parts: [String] = []
-        let art = assetData(head, mood: mood).base64EncodedString()
+        let art = data.base64EncodedString()
         // Reserve the upper strip for the bot hat without cropping hair or horns.
         let y = hat == nil ? 0 : 18
         let height = hat == nil ? 64 : 46
@@ -86,6 +97,11 @@ public enum Chibi {
 
     /// The archive calls the white-haired character `gpt`; it represents Codex here.
     public static func assetURL(_ head: BotEngine, mood: Mood = .normal) -> URL {
+        // These are required app resources: fail clearly if a packaged build omits them.
+        findAssetURL(head, mood: mood)!
+    }
+
+    private static func findAssetURL(_ head: BotEngine, mood: Mood) -> URL? {
         let character = head == .claude ? "claude" : "gpt"
         let expression: String
         switch mood {
@@ -94,9 +110,8 @@ public enum Chibi {
         case .think: expression = "thinking"
         case .sleep: expression = "sleepy"
         }
-        // These are required app resources: fail clearly if a packaged build omits them.
         return CoreResources.bundle.url(forResource: expression, withExtension: "png",
-                                 subdirectory: "CharacterArt/avatars-static/\(character)")!
+                                 subdirectory: "CharacterArt/avatars-static/\(character)")
     }
 
     private static let art: [BotEngine: [Mood: Data]] = Dictionary(uniqueKeysWithValues:

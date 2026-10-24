@@ -897,21 +897,30 @@ struct SubagentRows: View {
     }
 }
 
-/// Which head (Claude or Codex) started a subagent: in the Cute look its character, small;
-/// otherwise the head's dot, as in Settings → Heads.
+/// A child keeps both its owning head and its parent bot's identity, in either look.
+/// The shape face is also the fallback when the character image is unavailable.
 struct SubagentOwnerMark: View {
     let head: BotEngine
+    let kind: AvatarKind
     @Environment(\.botLook) private var look
 
     var body: some View {
         Group {
-            if look == .cute {
-                ChibiHeadView(head: head, size: 18)
+            if look == .cute, let image = ChibiImages.navigationImage(head, hat: kind) {
+                Image(nsImage: image).resizable().interpolation(.high)
             } else {
-                Circle().fill(head == .claude ? Color(hex: 0xE3895F) : Color(hex: 0x8AB4FF)).frame(width: 7, height: 7)
+                AvatarView(kind: kind, size: 24)
+                    .overlay(alignment: .bottomTrailing) {
+                        Text(head == .claude ? "C" : "X")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundStyle(Theme.text)
+                            .frame(width: 10, height: 10)
+                            .background(Circle().fill(Theme.side))
+                    }
             }
         }
-        .frame(width: 18, height: 18)
+        .frame(width: 24, height: 24)
+        .fixedSize()
         .help(head.displayName)
         .accessibilityHidden(true)
     }
@@ -937,7 +946,7 @@ struct SubagentRow: View {
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.faint)
                     if let owner = bot.subagentOwnerMark(subagent.id) {
-                        SubagentOwnerMark(head: owner)
+                        SubagentOwnerMark(head: owner, kind: bot.avatarKind)
                     }
                     Text(subagent.description.isEmpty ? L("Subagent") : subagent.description)
                         .font(.system(size: 13))
@@ -1037,7 +1046,7 @@ struct SettledList: View {
                 HStack(spacing: 10) {
                     SubagentRows.mark(subagent.mark).frame(width: 10)
                     if let owner = bot.subagentOwnerMark(subagent.id) {
-                        SubagentOwnerMark(head: owner)
+                        SubagentOwnerMark(head: owner, kind: bot.avatarKind)
                     }
                     Text(subagent.description.isEmpty ? L("Subagent") : subagent.description)
                         .font(.system(size: 13))

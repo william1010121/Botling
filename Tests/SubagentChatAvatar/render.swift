@@ -11,6 +11,12 @@ struct SubagentAvatarRender {
         let output = URL(filePath: CommandLine.arguments[1])
         try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         var failures: [String] = []
+        if ProcessInfo.processInfo.environment["CCB_AVATAR_EXPECT_MISSING"] == "1" {
+            for head in BotEngine.allCases {
+                guard Chibi.svgIfAvailable(head) == nil else { fatalError("Missing asset fixture did not shadow \(head)") }
+            }
+            print("PASS both character assets absent; native fallback required")
+        }
         for engine in BotEngine.allCases {
             for twoHeads in [false, true] {
                 let root = output.appending(path: "fixture-\(engine)-\(twoHeads)")
@@ -28,12 +34,19 @@ struct SubagentAvatarRender {
                 }
                 let bot = workspace.mainBot
                 for child in bot.subagents {
+                    for other in bot.subagents where other.id != child.id { bot.unsettleSubagent(other.id) }
                     for look in BotLook.allCases {
                         for selected in [false, true] {
                             if selected { workspace.view(subagent: child.id, of: bot) } else { workspace.select(nil) }
                             for width in [180.0, 240.0] {
                                 let name = "\(engine)-\(twoHeads ? "both" : "solo")-\(child.id)-\(look)-\(selected ? "selected" : "plain")-\(Int(width))"
-                                let row = SubagentRow(subagent: child, bot: bot, workspace: workspace)
+                                for settled in [false, true] {
+                                if settled { bot.settleSubagent(child.id) } else { bot.unsettleSubagent(child.id) }
+                                let name = name + (settled ? "-settled" : "-sidebar")
+                                let row = Group {
+                                    if settled { SettledList(bot: bot, workspace: workspace) }
+                                    else { SubagentRow(subagent: child, bot: bot, workspace: workspace) }
+                                }
                                     .environment(\.botLook, look).frame(width: width, height: 36)
                                     .background(Theme.side).preferredColorScheme(.dark)
                                 let host = NSHostingView(rootView: row)
@@ -51,14 +64,42 @@ struct SubagentAvatarRender {
                                 let scale = Double(rep.pixelsWide) / width
                                 var colored = 0
                                 for y in Int(5 * scale)..<Int(31 * scale) {
-                                    for x in Int(44 * scale)..<Int(72 * scale) {
+                                    for x in Int((settled ? 37 : 44) * scale)..<Int((settled ? 56 : 72) * scale) {
                                         if let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB),
                                            c.alphaComponent > 0.5, c.saturationComponent > 0.3, c.brightnessComponent > 0.3 { colored += 1 }
                                     }
                                 }
                                 if colored < 12 { failures.append("\(name): missing avatar (\(colored) colored pixels)") }
                                 if host.fittingSize.width > width + 0.5 { failures.append("\(name): overflow \(host.fittingSize.width)") }
+                                var background = [Int](repeating: 0, count: rep.samplesPerPixel)
+                                rep.getPixel(&background, atX: Int(5 * scale), y: Int(18 * scale))
+                                let expected = selected ? [38, 38, 44] : settled ? [27, 27, 31] : [20, 20, 23]
+                                if zip(background.prefix(3), expected).contains(where: { abs($0 - $1) > 3 }) {
+                                    failures.append("\(name): wrong selection background \(background)")
+                                }
+                                if !settled {
+                                    var arrowPixels = 0
+                                    for y in Int(8 * scale)..<Int(27 * scale) {
+                                        for x in Int(26 * scale)..<Int(38 * scale) {
+                                            if let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.brightnessComponent > 0.3 { arrowPixels += 1 }
+                                        }
+                                    }
+                                    if arrowPixels < 3 { failures.append("\(name): missing hierarchy arrow") }
+                                }
+                                if !settled && selected && width == 240 && !twoHeads && look == .cute && ProcessInfo.processInfo.environment["CCB_AVATAR_EXPECT_MISSING"] == nil {
+                                    let context = NSHostingView(rootView: ParentChildPreview(subagent: child, bot: bot, workspace: workspace)
+                                        .environment(\.botLook, look).frame(width: width, height: 90).background(Theme.side).preferredColorScheme(.dark))
+                                    context.frame = NSRect(x: 0, y: 0, width: width, height: 90)
+                                    window.setContentSize(context.frame.size)
+                                    window.contentView = context
+                                    context.layoutSubtreeIfNeeded()
+                                    RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+                                    let contextRep = context.bitmapImageRepForCachingDisplay(in: context.bounds)!
+                                    context.cacheDisplay(in: context.bounds, to: contextRep)
+                                    try contextRep.representation(using: .png, properties: [:])!.write(to: output.appending(path: "context-\(engine).png"))
+                                }
                                 print("\(colored >= 12 ? "PASS" : "FAIL") \(name) avatarPixels=\(colored), width=\(host.fittingSize.width)")
+                                }
                             }
                         }
                     }

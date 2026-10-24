@@ -76,6 +76,17 @@ enum ChibiImages {
         return image
     }
 
+    /// A child navigation row can fall back to its bot face when its character is missing.
+    /// Use a separate cache so a fallback never becomes the normal chat's character image.
+    static func navigationImage(_ head: BotEngine, hat: AvatarKind) -> NSImage? {
+        let key = "navigation-\(head.rawValue)-\(hat.rawValue)"
+        if let cached = images[key] { return cached }
+        guard let svg = Chibi.svgIfAvailable(head, hat: hat.hat),
+              let image = NSImage(data: Data(svg.utf8)), image.isValid else { return nil }
+        images[key] = image
+        return image
+    }
+
     /// What the chat page needs for Bot look Cute, with either or both engines enabled.
     static func look(for kind: AvatarKind) -> ChatPayload.HeadLook {
         ChatPayload.HeadLook(

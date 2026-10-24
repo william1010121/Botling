@@ -528,11 +528,10 @@ public final class Bot: ObservableObject, Identifiable {
         return BotEngine.allCases.first { partnerTeams[$0]?.subagent(id) != nil }
     }
 
-    /// The head to mark a subagent's row with: only needed when the row could be either
-    /// head's (two heads, or a team the other head left behind); nil otherwise.
+    /// The head for a subagent navigation avatar, even when only one head is enabled.
+    /// Unknown IDs keep no head rather than borrowing an unrelated identity.
     public func subagentOwnerMark(_ id: String) -> BotEngine? {
-        guard let owner = subagentEngine(id) else { return nil }
-        return heads.hasTwo || owner != engine ? owner : nil
+        subagentEngine(id)
     }
 
     /// The model a subagent runs on, as a name: the one the stream reported or its Agent call

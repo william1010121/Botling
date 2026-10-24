@@ -20,6 +20,16 @@ struct ChibiTests {
         }
     }
 
+    @Test func navigationUsesTheSameHeadArtAndBotHat() {
+        for head in BotEngine.allCases {
+            for mood in Chibi.Mood.allCases {
+                for hat in [nil, hat] {
+                    #expect(Chibi.svgIfAvailable(head, mood: mood, hat: hat) == Chibi.svg(head, mood: mood, hat: hat))
+                }
+            }
+        }
+    }
+
     @Test func everyStatusUsesDistinctBundledTransparentArt() throws {
         for head in BotEngine.allCases {
             var variants = Set<Data>()
