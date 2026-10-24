@@ -1,0 +1,10 @@
+/* What the desktop adds to the reused Web/src chat page (chat.css comes first, unchanged). */
+
+/* Phase 0 cards: a sandboxed frame inside the bubble, as wide as the bubble's text. */
+.card { margin-top: 10px; background: var(--bubble); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; width: min(520px, 100%); }
+.card iframe { display: block; width: 100%; border: 0; background: transparent; }
+
+/* Stop: beside Send's place while a reply is being written (Send hides meanwhile). */
+.composer .send.stop { display: none; background: var(--raised, #2C2C33); color: var(--text); border: 1px solid var(--border, #2E2E35); }
+body.botling-running .composer .send.stop { display: inline-flex; }
+body.botling-running .composer .send:not(.stop) { display: none; }

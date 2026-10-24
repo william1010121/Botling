@@ -36,3 +36,8 @@ export async function until<T>(fn: () => T | Promise<T>, { timeout = 10_000, eve
     await sleep(every);
   }
 }
+
+/** A chat line in the Swift app's chat.json format (dates in seconds since 2001). */
+export function swiftLine(fields: Record<string, unknown> & { id: string; role: string; text: string }): Record<string, unknown> {
+  return { date: (Date.now() - Date.UTC(2001, 0, 1)) / 1000, ...fields };
+}

@@ -5,7 +5,8 @@
 // The HTML is data to the app: it is stored, served only to a card frame, and never run in the
 // app's own page.
 import { randomUUID } from "node:crypto";
-import type { CardView, MessageView } from "../contract";
+import type { CardView } from "../contract";
+import { toSwiftDate, type ChatRecord } from "./store/records";
 
 const fence = /```ccb-card[^\n]*\n([\s\S]*?)```/g;
 
@@ -30,12 +31,14 @@ const counter = `<div class="counter">
   document.getElementById('say').onclick = () => ccb.action('say', 'hello from the card');
 </script>`;
 
-export function welcomeMessages(): MessageView[] {
-  const time = new Date().toISOString();
+/** The welcome line's fixed id, so tests and the welcome card can name it. */
+export const WELCOME_ID = "0B07E11C-0000-4000-8000-00000000C0DE";
+
+export function welcomeMessages(): ChatRecord[] {
   return [
     {
-      id: "m-welcome", role: "notice", time,
-      text: "Botling 2.0 (preview). Messages go to the agent through the core process; Stop ends its whole process tree.",
+      id: WELCOME_ID, role: "notice", date: toSwiftDate(),
+      text: "Botling 2.0 (preview). Messages go to the agent through the core process; Stop ends its turn, and its whole process tree if it does not listen.",
       cards: [{ id: "c-counter", html: counter, data: null }],
     },
   ];

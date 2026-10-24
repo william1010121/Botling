@@ -9,7 +9,7 @@ ipcRenderer.on("botling:message", (_event, message: unknown) => {
 });
 
 contextBridge.exposeInMainWorld("botling", Object.freeze({
-  protocol: 1,
+  protocol: 2,
   platform: process.platform,
   post(envelope: unknown) {
     ipcRenderer.send("botling:post", envelope);

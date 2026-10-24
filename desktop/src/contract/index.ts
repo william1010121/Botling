@@ -13,8 +13,11 @@
 import { z } from "zod";
 import shared from "../../../Web/src/contract.json";
 
-/** Bumped on any incompatible change to a command, response or event shape. */
-export const PROTOCOL_VERSION = 1 as const;
+/**
+ * Bumped on any incompatible change to a command, response or event shape.
+ * 2: several bots (every chat command and event names its bot), approvals, steps.
+ */
+export const PROTOCOL_VERSION = 2 as const;
 
 /** The most a card's `ccb.save` keeps, shared with the Swift app (`ComponentState.limit`). */
 export const CARD_SAVE_LIMIT: number = (shared as { saveLimit: number }).saveLimit;
@@ -22,6 +25,8 @@ export const MESSAGE_TEXT_LIMIT = 100_000;
 
 const id = z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]+$/);
 export const RequestId = id;
+/** A bot: the Swift app's ids (UUIDs, upper case) are kept, so imported chats keep theirs. */
+export const BotId = id;
 
 // ---------------------------------------------------------------------------------------------
 // Shared views
@@ -35,18 +40,85 @@ export const CardView = z.strictObject({
 });
 export type CardView = z.infer<typeof CardView>;
 
+/** A button on a question. `action` is set on a tool approval's buttons: what picking it does. */
+export const ChoiceView = z.strictObject({
+  label: z.string().max(400),
+  detail: z.string().max(400).nullable(),
+  recommended: z.boolean(),
+  action: z.enum(["allowOnce", "alwaysAllow", "deny"]).nullable(),
+});
+export type ChoiceView = z.infer<typeof ChoiceView>;
+
+/** One line of work on the way to a reply: a tool call (or a subagent sent off). */
+export const StepView = z.strictObject({
+  id: z.string().max(200),
+  kind: z.enum(["tool", "text", "subagent", "message"]),
+  tool: z.string().max(200).nullable(),
+  title: z.string().max(2_000),
+  detail: z.string().max(10_000).nullable(),
+  output: z.string().max(10_000).nullable(),
+  failed: z.boolean(),
+  done: z.boolean(),
+});
+export type StepView = z.infer<typeof StepView>;
+
+export const AttachmentView = z.strictObject({ name: z.string().max(400), kind: z.enum(["image", "video", "file"]), url: z.string().max(4_000) });
+
 export const MessageState = z.enum(["streaming", "done", "stopped", "failed"]);
 export const MessageView = z.strictObject({
   id,
-  role: z.enum(["user", "bot", "error", "notice"]),
+  role: z.enum(["user", "bot", "divider", "error", "relay", "notice"]),
   text: z.string().max(MESSAGE_TEXT_LIMIT * 4),
   /** ISO-8601. */
   time: z.string(),
   turnId: id.nullable().optional(),
   state: MessageState.optional(),
   cards: z.array(CardView).max(20).optional(),
+  /** A question: its buttons, which one was picked, or the words it was answered with. */
+  choices: z.array(ChoiceView).max(20).optional(),
+  chosen: z.number().int().nonnegative().nullable().optional(),
+  answer: z.string().max(4_000).nullable().optional(),
+  /** A tool approval: which tool it asks for, and when it counts as "no" if nobody answers (ISO). */
+  approval: z.strictObject({ tool: z.string().max(200), expires: z.string().nullable() }).optional(),
+  steps: z.array(StepView).max(500).optional(),
+  /** Cut off before it finished (stopped, the agent went away, the app quit). */
+  interrupted: z.boolean().optional(),
+  attachments: z.array(AttachmentView).max(50).optional(),
+  replyPreview: z.string().max(2_000).nullable().optional(),
 });
 export type MessageView = z.infer<typeof MessageView>;
+
+/** A bot in the left column. */
+export const BotView = z.strictObject({
+  id: BotId,
+  name: z.string().max(200),
+  /** main: the front desk; manager: works in a project folder; bot: a bot of its own. */
+  role: z.enum(["main", "manager", "bot"]),
+  /** An avatar shape (`AvatarShape` in the Swift app: circle, square, …). */
+  avatar: z.string().max(40),
+  folder: z.string().max(4_000),
+  /** asleep: no agent process; starting; awake: its process is running. */
+  phase: z.enum(["asleep", "starting", "awake"]),
+  working: z.boolean(),
+  /** Tool approvals waiting for the user. */
+  approvals: z.number().int().nonnegative(),
+  unread: z.number().int().nonnegative(),
+  /** Why its chat cannot be used (an unreadable chat file, a missing folder); null when fine. */
+  problem: z.string().max(2_000).nullable(),
+});
+export type BotView = z.infer<typeof BotView>;
+
+export const ImportView = z.strictObject({
+  source: z.string().max(4_000),
+  at: z.string(),
+  bots: z.number().int().nonnegative(),
+  messages: z.number().int().nonnegative(),
+  skipped: z.array(z.string().max(2_000)).max(200),
+});
+export type ImportView = z.infer<typeof ImportView>;
+
+export const RunningView = z.strictObject({ turnId: id, messageId: id });
+export type RunningView = z.infer<typeof RunningView>;
 
 export const AccountView = z.strictObject({ id, name: z.string().max(80), partition: z.string() });
 export type AccountView = z.infer<typeof AccountView>;
@@ -54,19 +126,24 @@ export type AccountView = z.infer<typeof AccountView>;
 // ---------------------------------------------------------------------------------------------
 // Commands. `target` says who answers it: main answers some itself, the rest go to the core.
 
+const botId = BotId;
 export const Command = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("chat.snapshot") }),
-  z.strictObject({ type: z.literal("chat.send"), text: z.string().min(1).max(MESSAGE_TEXT_LIMIT) }),
-  z.strictObject({ type: z.literal("turn.stop"), turnId: id }),
+  /** Every bot, and (with `botId`) that bot's chat. Main bot when `botId` is left out. */
+  z.strictObject({ type: z.literal("chat.snapshot"), botId: botId.optional() }),
+  z.strictObject({ type: z.literal("chat.send"), botId, text: z.string().min(1).max(MESSAGE_TEXT_LIMIT) }),
+  /** Picks a button on a question (a tool approval): the core decides what it means from its action. */
+  z.strictObject({ type: z.literal("chat.choose"), botId, messageId: id, index: z.number().int().nonnegative().max(19) }),
+  z.strictObject({ type: z.literal("chat.read"), botId }),
+  z.strictObject({ type: z.literal("turn.stop"), botId, turnId: id }),
   /** Resolves when the turn ends. Cancelling the request stops the wait, never the turn. */
-  z.strictObject({ type: z.literal("turn.await"), turnId: id }),
-  z.strictObject({ type: z.literal("card.save"), messageId: id, cardId: id, data: z.string().max(CARD_SAVE_LIMIT) }),
+  z.strictObject({ type: z.literal("turn.await"), botId, turnId: id }),
+  z.strictObject({ type: z.literal("card.save"), botId, messageId: id, cardId: id, data: z.string().max(CARD_SAVE_LIMIT) }),
   z.strictObject({
-    type: z.literal("card.action"), messageId: id, cardId: id,
+    type: z.literal("card.action"), botId, messageId: id, cardId: id,
     name: z.string().min(1).max(64).regex(/^[a-z][a-zA-Z0-9.]*$/), value: z.string().max(4_000),
   }),
   /** Main only: the card's HTML for the botling-card: protocol. */
-  z.strictObject({ type: z.literal("card.html"), messageId: id, cardId: id }),
+  z.strictObject({ type: z.literal("card.html"), botId, messageId: id, cardId: id }),
   z.strictObject({ type: z.literal("accounts.list") }),
   /** Main only: opens a website in that account's own persistent session, with no bridge. */
   z.strictObject({ type: z.literal("site.open"), accountId: id, url: z.url({ protocol: /^https?$/ }).max(2_000) }),
@@ -76,14 +153,24 @@ export type CommandType = Command["type"];
 
 /** Commands the renderer may send. `card.html` is for main's protocol handler only. */
 export const RENDERER_COMMANDS = new Set<CommandType>([
-  "chat.snapshot", "chat.send", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
+  "chat.snapshot", "chat.send", "chat.choose", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
 export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open"]);
 
+export interface ChatSnapshot {
+  botId: string;
+  messages: MessageView[];
+  running: RunningView | null;
+  /** What the running turn is doing now (before its reply has words). */
+  live: StepView[];
+}
+
 export interface Results {
-  "chat.snapshot": { epoch: string; seq: number; messages: MessageView[]; running: string | null };
+  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null };
   "chat.send": { messageId: string; turnId: string };
+  "chat.choose": { accepted: boolean };
+  "chat.read": { read: true };
   "turn.stop": { stopped: boolean; killed: number[]; forced: boolean };
   "turn.await": { status: z.infer<typeof MessageState> };
   "card.save": { saved: true };
@@ -95,19 +182,24 @@ export interface Results {
 export type ResultOf<T extends CommandType> = Results[T];
 
 // ---------------------------------------------------------------------------------------------
-// Events (core → main → renderer)
+// Events (core → main → renderer). Every chat event names its bot.
 
 export const Event = z.discriminatedUnion("type", [
-  z.strictObject({ type: z.literal("message.added"), message: MessageView }),
-  z.strictObject({ type: z.literal("turn.started"), turnId: id, messageId: id }),
-  z.strictObject({ type: z.literal("turn.delta"), turnId: id, messageId: id, text: z.string() }),
+  z.strictObject({ type: z.literal("bot.updated"), bot: BotView }),
+  z.strictObject({ type: z.literal("message.added"), botId, message: MessageView }),
+  /** A message changed as a whole (a question answered, a reply finished with its steps). */
+  z.strictObject({ type: z.literal("message.updated"), botId, message: MessageView }),
+  z.strictObject({ type: z.literal("turn.started"), botId, turnId: id, messageId: id }),
+  z.strictObject({ type: z.literal("turn.delta"), botId, turnId: id, messageId: id, text: z.string() }),
+  /** What the turn is doing now: its steps so far. */
+  z.strictObject({ type: z.literal("turn.steps"), botId, turnId: id, messageId: id, steps: z.array(StepView).max(500) }),
   z.strictObject({
-    type: z.literal("turn.finished"), turnId: id, messageId: id,
+    type: z.literal("turn.finished"), botId, turnId: id, messageId: id,
     status: z.enum(["done", "stopped", "failed"]), text: z.string(), error: z.string().optional(),
     cards: z.array(CardView).max(20).optional(),
   }),
-  z.strictObject({ type: z.literal("card.updated"), messageId: id, cardId: id, data: z.string() }),
-  z.strictObject({ type: z.literal("card.acted"), messageId: id, cardId: id, name: z.string(), value: z.string() }),
+  z.strictObject({ type: z.literal("card.updated"), botId, messageId: id, cardId: id, data: z.string() }),
+  z.strictObject({ type: z.literal("card.acted"), botId, messageId: id, cardId: id, name: z.string(), value: z.string() }),
 ]);
 export type Event = z.infer<typeof Event>;
 

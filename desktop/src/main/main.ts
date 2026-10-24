@@ -23,6 +23,20 @@ app.setPath("logs", join(dataDir, "electron", "logs"));
 
 const APP_ORIGIN = "app://botling";
 const CARD_PREFIX = "botling-card://card/";
+/** The reused Web/src chat page, in a frame of the app page. */
+const CHAT_URL = `${APP_ORIGIN}/chat.html`;
+
+/** Each app page's CSP. The chat page draws agent text as markdown (raw HTML off) and KaTeX, which
+ * needs inline styles; it loads the ccb-latex plugin from a blob: module. Neither page can connect
+ * anywhere or frame anything but what is listed. */
+const APP_CSP = [
+  "default-src 'none'", "script-src 'self'", "style-src 'self'", "img-src 'self' data:", "font-src 'self'",
+  "frame-src 'self'", "connect-src 'none'", "base-uri 'none'", "form-action 'none'", "object-src 'none'",
+].join("; ");
+const CHAT_CSP = [
+  "default-src 'none'", "script-src 'self' blob:", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "font-src 'self' data:",
+  "media-src 'self' data: blob:", "frame-src botling-card:", "connect-src 'none'", "base-uri 'none'", "form-action 'none'", "object-src 'none'",
+].join("; ");
 
 /** What the security checks refused or noticed, for tests (read through Playwright's main-process evaluate). */
 const audit: string[] = [];
@@ -57,6 +71,9 @@ function coreEnvironment(): Record<string, string> {
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
   env.BOTLING_DATA_DIR = join(dataDir, "core");
   env.BOTLING_FAKE_CLI ??= join(root, "test", "fixtures", "fake-claude.mjs");
+  // A packaged app imports the user's Botling 1.x folder on its first start (read-only). A
+  // development run imports only what BOTLING_IMPORT_FROM names, so tests never see real data.
+  if (env.BOTLING_IMPORT_FROM === undefined && app.isPackaged) env.BOTLING_IMPORT_FROM = join(app.getPath("home"), ".claudecodebot");
   return env;
 }
 
@@ -189,19 +206,30 @@ app.on("web-contents-created", (_, contents: WebContents) => {
       return;
     }
     if (!isApp) return; // A website's own frames are the website's business.
-    // In the app, a frame may only show a card, and only the app may point it there: a card that
-    // navigates itself (to anything) is refused.
-    const byApp = !details.initiator || details.initiator === contents.mainFrame;
-    if (!details.url.startsWith(CARD_PREFIX) || !byApp) {
+    // In the app, a frame may show the chat page (only as the app page's own child, put there by
+    // it) or a card (put there by the app page or the chat page). A card that navigates itself (to
+    // anything) is refused: it would otherwise take over another card's identity.
+    const mainFrame = contents.mainFrame;
+    const initiator = details.initiator;
+    const chatFrame = (frame: Electron.WebFrameMain | null | undefined) =>
+      !!frame && frame.parent === mainFrame && frame.url.startsWith(CHAT_URL);
+    const parent = details.frame?.parent ?? null;
+    let allowed = false;
+    if (details.url === CHAT_URL || details.url.startsWith(`${CHAT_URL}?`)) {
+      allowed = parent === mainFrame && (!initiator || initiator === mainFrame);
+    } else if (details.url.startsWith(CARD_PREFIX)) {
+      allowed = (!initiator || initiator === mainFrame || chatFrame(initiator)) && (parent === mainFrame || chatFrame(parent));
+    }
+    if (!allowed) {
       details.preventDefault();
-      note(`blocked a frame navigating to ${details.url} (initiator ${details.initiator?.url ?? "none"})`);
+      note(`blocked a frame navigating to ${details.url} (initiator ${initiator?.url ?? "none"})`);
     }
   });
 });
 
 function createWindow() {
   const window = new BrowserWindow({
-    width: 900, height: 820, minWidth: 420, minHeight: 480,
+    width: 1120, height: 820, minWidth: 640, minHeight: 480,
     title: "Botling", backgroundColor: "#0E0E10", show: false,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
@@ -227,19 +255,14 @@ function serveApp() {
     if (!file.startsWith(rendererDir + sep)) return new Response("Not found", { status: 404 });
     const response = await net.fetch(pathToFileURL(file).toString());
     const headers = new Headers(response.headers);
-    if (file.endsWith(".html")) {
-      headers.set("Content-Security-Policy", [
-        "default-src 'none'", "script-src 'self'", "style-src 'self'", "img-src 'self' data:", "font-src 'self'",
-        "frame-src botling-card:", "connect-src 'none'", "base-uri 'none'", "form-action 'none'", "object-src 'none'",
-      ].join("; "));
-    }
+    if (file.endsWith(".html")) headers.set("Content-Security-Policy", file.endsWith(`${sep}chat.html`) ? CHAT_CSP : APP_CSP);
     return new Response(response.body, { status: response.status, headers });
   });
   protocol.handle("botling-card", async (request) => {
     const url = new URL(request.url);
-    const [messageId, cardId] = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
-    if (url.host !== "card" || !messageId || !cardId) return new Response("Not found", { status: 404 });
-    const response = await core.request({ type: "card.html", messageId, cardId });
+    const [botId, messageId, cardId] = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    if (url.host !== "card" || !botId || !messageId || !cardId) return new Response("Not found", { status: 404 });
+    const response = await core.request({ type: "card.html", botId, messageId, cardId });
     if (!response.ok) return new Response("Not found", { status: 404 });
     return new Response(cardPage((response.result as { html: string }).html), {
       headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": CARD_CSP, "X-Content-Type-Options": "nosniff" },

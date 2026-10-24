@@ -7,6 +7,9 @@ import type { EventEnvelope, ResponseEnvelope, Outbound } from "../src/contract"
 
 const coreScript = join(desktop, "out", "core", "main.cjs");
 
+/** The main bot's id (the Swift app's `Workspace.mainBotID`). */
+export const MAIN = "6A0B0000-0000-4000-8000-000000000002";
+
 export class CoreHarness {
   child: ChildProcessWithoutNullStreams;
   events: (EventEnvelope & { at: number })[] = [];
@@ -32,7 +35,7 @@ export class CoreHarness {
   }
 
   send(cmd: unknown, id = `r${++this.counter}`) {
-    this.post({ v: 1, id, cmd });
+    this.post({ v: 2, id, cmd });
     return id;
   }
 
@@ -45,6 +48,11 @@ export class CoreHarness {
 
   of(type: string) {
     return this.events.filter((e) => e.event.type === type);
+  }
+
+  /** The main bot's chat, as a snapshot shows it. */
+  async chat(botId = MAIN): Promise<any> {
+    return (await this.call({ type: "chat.snapshot", botId })).chat;
   }
 
   kill(signal: NodeJS.Signals = "SIGTERM") {

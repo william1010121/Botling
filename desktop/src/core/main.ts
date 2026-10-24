@@ -2,26 +2,27 @@
 // `process.parentPort`; under plain Node (tests, a headless core) it talks JSON lines on stdio,
 // like the existing plugin host.
 import { join, resolve } from "node:path";
-import { mkdirSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { Core } from "./server";
-import type { AgentConfig } from "./agent/runner";
+import { systemPrompt } from "./bot";
+import type { HeadConfig } from "./agent/head";
+import type { BotProfile } from "./store/workspace";
 import type { Outbound } from "../contract";
 
 const dataDir = resolve(process.env.BOTLING_DATA_DIR ?? join(process.cwd(), ".data"));
-const workspace = join(dataDir, "workspace");
-mkdirSync(workspace, { recursive: true });
+const number = (value: string | undefined, fallback: number) => (value && Number.isFinite(Number(value)) ? Number(value) : fallback);
 
-function agentConfig(session: { id: string; resume: boolean }): AgentConfig {
+function headConfig(profile: BotProfile, session: { sessionId: string; resume: boolean }): HeadConfig {
   const kind = process.env.BOTLING_AGENT ?? "fake";
+  const common = { cwd: profile.folder, sessionId: session.sessionId, resume: session.resume, allowedTools: profile.tools };
   if (kind === "claude") {
     return {
+      ...common,
       command: process.env.BOTLING_CLAUDE_PATH ?? "claude",
-      cwd: workspace,
-      sessionId: session.id,
-      resume: session.resume,
       harmless: process.env.BOTLING_HARMLESS !== "0",
-      model: process.env.BOTLING_MODEL,
+      harmlessTools: (process.env.BOTLING_HARMLESS_TOOLS ?? "").split(",").filter(Boolean),
+      model: process.env.BOTLING_MODEL ?? null,
+      systemPrompt: systemPrompt(profile),
     };
   }
   // The fake CLI is a Node script; under Electron, process.execPath is Electron itself, which runs
@@ -30,12 +31,11 @@ function agentConfig(session: { id: string; resume: boolean }): AgentConfig {
   const script = process.env.BOTLING_FAKE_CLI;
   if (!script) throw new Error("BOTLING_AGENT=fake needs BOTLING_FAKE_CLI (path to fake-claude.mjs).");
   return {
+    ...common,
     command: process.execPath,
     prefixArgs: [script],
-    cwd: workspace,
-    env: { ELECTRON_RUN_AS_NODE: "1", FAKE_CLAUDE_MODE: process.env.FAKE_CLAUDE_MODE },
-    sessionId: session.id,
-    resume: session.resume,
+    env: { ELECTRON_RUN_AS_NODE: "1" },
+    systemPrompt: systemPrompt(profile),
   };
 }
 
@@ -47,7 +47,16 @@ const emit: (message: Outbound) => void = parentPort
   : (message) => process.stdout.write(JSON.stringify(message) + "\n");
 const log = (line: string) => process.stderr.write(`[core] ${line}\n`);
 
-const core = new Core({ dataDir, agent: agentConfig, emit, log });
+const core = new Core({
+  dataDir,
+  headConfig,
+  emit,
+  log,
+  importFrom: process.env.BOTLING_IMPORT_FROM || null,
+  approvalTimeoutMs: number(process.env.BOTLING_APPROVAL_TIMEOUT_MS, 10 * 60_000),
+  idleMs: number(process.env.BOTLING_IDLE_MS, 30 * 60_000),
+  interruptGraceMs: number(process.env.BOTLING_INTERRUPT_GRACE_MS, 2_000),
+});
 log(`started epoch ${core.epoch} data ${dataDir} agent ${process.env.BOTLING_AGENT ?? "fake"}`);
 
 if (parentPort) {

@@ -6,6 +6,7 @@
 import { CardMessage } from "../contract";
 
 export interface CardTarget {
+  botId: string;
   messageId: string;
   cardId: string;
   frame: HTMLIFrameElement;
