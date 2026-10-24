@@ -11,7 +11,12 @@ Codex prompts checked string for string against the Swift code. Phase 3a done: t
 1.x (Claude hears the other head mid-turn; a message steers a Codex turn), routines (routines.cron and
 app-owned schedules, Codex's `app_routines`), command monitors, Catch-up and interval summaries, and
 components (the library, `<show>` cards with the full `ccb` API, commands after Allow, pins and the
-Board).** Not yet a replacement for the Swift app (see "Gaps vs the Swift app").
+Board). Phase 3b done: plugins (the library, on/off and settings, secrets sealed with Electron
+safeStorage, the existing Node plugin host as its own untrusted process with hooks, commands and
+routines, plugin panels in sandboxed frames, the import of 1.x's library), Maintainer (component and
+plugin requests, `<install>` asking first, its instructions and the component editor checked against
+the Swift strings), pausing handed-over work for your message as 1.x, and a deterministic hand-off e2e.**
+Not yet a replacement for the Swift app (see "Gaps vs the Swift app").
 It lives beside it: nothing under `Sources/` or `Web/` changed, and the Swift app does not use
 anything here. Web/src is *bundled from source* into the desktop's chat frame (its packages come
 from `desktop/node_modules`), so `cd Web && npm run build` and its output are untouched;
@@ -40,6 +45,9 @@ cd desktop && npm install
 | `npm run test:live:3a` | Phase 3a's real checks: claude hearing a message mid-turn, a monitored command through `codex app-server`'s `command/exec`, a Catch-up summary by `codex exec` (same throwaway `CODEX_HOME`). |
 | `npm run typecheck` | `tsc --noEmit`. |
 
+Since Phase 3b the build also writes `out/host/host.mjs` (Web/host/src/host.ts, bundled as Web/build.mjs
+bundles it for 1.x) and `out/host/check-plugin.cjs` (the plugin check, the command Maintainer runs).
+
 Data goes to `$BOTLING_DATA_DIR`, by default `desktop/.data/` in development (ignored by git) and
 `<appData>/Botling 2` when packaged. The core's part is `<data>/core/`, in the Swift app's layout
 (below); Electron's own profile, partitions and caches are under `<data>/electron/`. Tests use
@@ -66,7 +74,13 @@ main for `dev:fake`), `BOTLING_ROUTINE_TICK_MS` (how often routines are checked,
 `BOTLING_SUMMARY_TIMEOUT_MS` (a Catch-up summary's limit, 60 s), `BOTLING_PLAIN_SHELL=1` (component
 commands run with `/bin/sh -c` instead of 1.x's login shell `zsh -lc`; the tests set it so they never
 read the user's shell files). A real Codex head reads the user's own `~/.codex` (or `CODEX_HOME`) like 1.x; the
-thread's approval policy and sandbox are always said explicitly.
+thread's approval policy and sandbox are always said explicitly. Since Phase 3b: `BOTLING_NODE_PATH`
+(the Node that runs the plugin host; default: the core's own runtime — under Electron, Electron run as
+Node, development only), `BOTLING_GIT_PATH` (git for the plugin library; default: Homebrew's, then
+`/usr/bin/git` only when the developer tools are installed), `BOTLING_MOCK_KEYCHAIN=1` (safeStorage
+uses Chromium's mock keychain: the e2e tests set it, so they never touch the login keychain),
+`BOTLING_TEST_SEAL_KEY` (a headless core — the unit tests — seals secrets with this key instead of
+safeStorage; without it and without Electron, secrets cannot be kept).
 
 A bot gets two heads from bot.json's `heads` key in 1.x's format (`{"engines":["claude","codex"],
 "answerWith":"both"}`, kept by the import), or with the `heads.set` command (there is no Settings page
@@ -84,7 +98,10 @@ not echoed; the tidy note is answered `OK` after writing the memory file it name
 take `/say <text>` (reply exactly that, e.g. a `<handoff>` tag) and `/solo <words>` (with two heads, the
 head that hears the other's words first says only `<no-reply/>`), and answer work the other head
 hands over ("Did it: <task>"; `/handoff:claude <task>` as the task hands it on) and hand-backs
-("Done: <reply>"). Since Phase 3a: `/linger <words>` (says "Thinking it over." before a tool call, takes
+("Done: <reply>"); since Phase 3b handed-over `/slow …` works until interrupted (Codex: until steered,
+then "Answered you: …"), the resume note is answered "Carried on: finished the handed work.", and work
+the app hands over ("(From the main bot) …", Maintainer's jobs) is answered "On it." without echoing its
+tags. `FAKE_CODEX_WORKER_GATE=<file>`: a worker reports only once that file exists. Since Phase 3a: `/linger <words>` (says "Thinking it over." before a tool call, takes
 `FAKE_CLAUDE_LINGER_MS`, then "You said: …", with "(heard mid-turn: N)" when the other head's words
 came meanwhile); the other head's words that arrive while a turn runs are read into it (logged with
 `midTurn: true`), or — `FAKE_CLAUDE_NO_ABSORB=1`, what real claude did for a text-only turn — answered
@@ -135,7 +152,17 @@ three messages; `FAKE_CODEX_EXEC_LOG`, `FAKE_CODEX_EXEC_FAIL=1`, `FAKE_CODEX_EXE
 │ routines.ts (routines.cron + scheduled-routines.json, the 30 s clock) · catchup.ts (summaries)   │
 │ components/ (library, commands after Allow, pins, pictures by token) · agent/monitors.ts         │
 │ ProcessLedger: ends heads a crashed core left · durable/ (atomic files, locks; JobStore spike)  │
+│ plugins/ (registry, sealed secrets, host client) · maintainer.ts (Maintainer's desk, installs)   │
+└──────────────┬───────────────────────────────────────────────────────────────────────────────────┘
+               │ JSON-RPC lines on stdio, every message checked (host-client.ts)
+┌──────────────┴─ plugin host (untrusted): Web/host/src/host.ts unchanged, own process group ─────────┐
+│ every enabled plugin's program part; allow-listed environment (no BOTLING_*, no secrets but each   │
+│ plugin's own, in its spec); may ask only bots.list / routines.add / bots.create (refused: no bots  │
+│ yet) and notify / bots.send (needs "bots"); restarted after 300 ms, the plugin it ran is blamed    │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+Secrets: the core asks main (`{botling:"seal"}` on its port) to seal/open with safeStorage; only sealed
+bytes reach <core>/plugin-secrets.json. Plugin panels: the app page frames the plugin's web part at
+botling-card://page/<token> (sandboxed, PANEL_CSP: inline + blob: scripts, no network).
 ```
 
 Files: `src/contract/` (the typed contract), `src/core/` (core process: `server.ts` routes,
@@ -170,6 +197,15 @@ Files: `src/contract/` (the typed contract), `src/core/` (core process: `server.
 <core>/approved-commands.json   1.x's format: component commands the user allowed, by folder
                             (2.0 does not import 1.x's: it asks again)
 <core>/catchup-summaries.json   1.x's format: ≤ 200 summaries by range (1.x keeps it in ~/.claudecodebot)
+<core>/plugins/             1.x's: the plugin library (a git repo once Maintainer gets work): plugins'
+                            folders, ccb-components, ccb-core (the component editor agent), PLUGINS.md,
+                            and Maintainer's notes (.bot/memory.md)
+<core>/plugins.json         1.x's format: disabled, settings (never a secret one), failures, installed
+<core>/plugin-secrets.json  2.0: plugins' secret settings, sealed by safeStorage (base64), 0600
+<core>/plugin-data/<name>/  1.x's: a program part's storage (ccb.storage)
+<core>/component-editor.json    1.x's: hashes of the editor file the app wrote / you chose to keep
+<core>/install-staging/     1.x's: a fetched plugin until you answer Install / Don't install
+<core>/projects/DEC0DE00-…/     Maintainer's chat files (1.x's fixed id)
 ```
 
 bot.json keys 2.0 now writes too: `heads` and `engine` (1.x's); since Phase 3a `routineRuns` (when
@@ -182,7 +218,13 @@ Formats follow Swift's `JSONEncoder` as 1.x uses it: dates are **seconds since 2
 every key it does not know as it was, and adds its own (`turnID`, `state`, `cards`, `error`), which
 1.x's decoder ignores. Message ids are UUIDs (1.x fails a whole chat.json on one bad id).
 
-### The contract (`src/contract/index.ts`, protocol version 5)
+### The contract (`src/contract/index.ts`, protocol version 6)
+
+Version 6 (Phase 3b) adds: `plugins.list`, `plugins.enable`, `plugins.setting`, `plugins.secret` (a
+value goes in, never comes back), `plugins.command`, `plugins.panel` (a panel's web part and settings),
+`plugins.call` (a panel's `host.call`; the plugin comes from the frame), event `plugins.updated`, the
+snapshot's `plugins`, `card.page.panel`, and `chat.send`'s `stoppedBy` (a plugin's beforeSend stopped the
+message: `turnId` is null, `messageId` the notice).
 
 Version 5 (Phase 3a) adds: `routines.list`, `routines.change` and event `routines.updated`;
 `catchup.retry`, `catchup.interval`, event `catchup.updated` and the snapshot's `catchUp` /
@@ -395,8 +437,8 @@ CCB_DESKTOP_PROMPT_EXPORT=$PWD/desktop/test/fixtures/prompts-golden.json TZ=UTC 
   sleeps or app starts. A crash mid-run still restarts with `--resume` (Phase 1b's choice; 1.x would
   wake a new session) — the session is alive and the briefing would only repeat it.
 - **Steering as 1.x where it is simple**: the merge path is 1.x's (`Bot.merging`). Where 1.x hands the
-  message to claude at once (approval open, subagent at work) or pauses claude's own work for it
-  (`pauseNote`), 2.0 queues it until the turn ends — nothing is lost and no turn is cut that 1.x would
+  message to claude at once (approval open, subagent at work) or ~~pauses claude's own work for it
+  (`pauseNote`)~~ (done in Phase 3b), 2.0 queues it until the turn ends — nothing is lost and no turn is cut that 1.x would
   keep. If the interrupt lands on the merged turn (the first ended on its own just before), it is
   sent again once.
 - **One bubble per reply** stays (Phase 1b): 2.0's reply text has every text block of the turn, so
@@ -472,8 +514,8 @@ only, deleted afterwards.
 ### Decisions (Phase 3a)
 
 - **Two-head timing as 1.x** (the user's call): claude hears the other head mid-turn, written to its
-  stdin; a message to a Codex head at work steers into its turn. Where 1.x pauses handed-over work for
-  your message (`pauseNote`), 2.0 still queues it. The steered reply moves below your new line (1.x
+  stdin; a message to a Codex head at work steers into its turn. ~~Where 1.x pauses handed-over work for
+  your message (`pauseNote`), 2.0 still queues it.~~ (Paused as 1.x since Phase 3b.) The steered reply moves below your new line (1.x
   shows the reply at the end too); your two messages' task cards join (1.x leaves the first as it was).
 - **Routines run only while the app runs** (decided earlier). 2.0 locks scheduled-routines.json with
   its own lock file (`…botling2.lock`), not 1.x's `flock`: the project lock keeps the two apps off one
@@ -482,12 +524,61 @@ only, deleted afterwards.
 - **No auto mode yet**, so a monitored command always asks (Allow once), as 1.x does without it.
 - **Component commands**: 1.x's approvals model (per folder and command, remembered), but 2.0 starts
   with none: 1.x's approved-commands.json is not imported (a trust decision the user makes again).
-- **A bot with no component list that drew none gets the library (up to 20)**: 2.0 has no Maintainer
+- ~~**A bot with no component list that drew none gets the library (up to 20)**~~ (superseded in Phase 3b: as 1.x, with Maintainer): 2.0 has no Maintainer
   to give it any, so without this a fresh bot would only know one line of each.
 - **Components' pictures** go to frames by token (`botling-card://image/<token>`) for paths the data
   names that exist and are images; the frame never sees or asks for a path.
 - **Catch-up** keeps its cache in 2.0's folder; arriving at a chat is opening it in the app (2.0 does
   not yet track window focus as 1.x does).
+
+## Phase 3b: what was built and how it was checked
+
+| Piece | What it does | Evidence |
+| --- | --- | --- |
+| Plugin library (`core/plugins/manifest.ts`, `registry.ts`) | Plugins.swift's `PluginRegistry`: `<core>/plugins/<name>/package.json` read every 1.5 s; the same check (`ccb plugin check` without the browser parts) word for word, npm semver ranges for `engines.ccb`, fingerprints by file date and size, plugins.json in 1.x's format (disabled, settings, failures by fingerprint, installed); a plugin that broke stays off until its files change (said once; Maintainer is asked to fix it); a program part that crashes the host three times in ten minutes, or fails to load, is turned off; a folder that later fails the check is handed to Maintainer | `unit/plugins.test.ts` (the check and the ranges **ported from PluginTests.swift**, on/off and settings, the broken-plugin and crash rules) |
+| Secrets (`core/plugins/secrets.ts`, `main/core-client.ts`) | A setting marked `secret` is sent once (`plugins.secret`) and sealed by **Electron safeStorage** (the OS keychain's key) in main — the core has no safeStorage, so it asks main over its own port; `plugin-secrets.json` (0600) holds only sealed bytes; values are opened once at start and live only in the core's memory; they go to the plugin's own program part (its spec) and, when the setting names an `env`, to bots' processes for MCP servers; a page only learns whether one is set | `unit/plugins.test.ts` (no plain text in the file, reopened after a restart, another key cannot open it), `unit/plugin-host.test.ts` (never in a view, in plugins.json or on a page), `e2e/plugins.spec.ts` (real safeStorage with Chromium's mock keychain) |
+| Plugin host (`core/plugins/host-client.ts`, `index.ts`) | PluginHost.swift's client around **Web/host/src/host.ts unchanged** (bundled to out/host/host.mjs): its own process group, in plugin-data/, an allow-listed environment (no BOTLING_*, FAKE_*, ELECTRON_*), stderr kept to 8 KB; every line it sends is checked (shape, 4 MB at most), hooks time out after 5 s (the message goes as it is), commands and panel calls after 60 s, loading after 30 s; it is restarted 300 ms after it dies and the plugin it was running is blamed. What it may ask: `bots.list`, `routines.add` (routines.cron, kept once), `notify` (the main bot's chat), `bots.send` and `bots.create` (both need the `bots` permission; creating bots is refused for now); browser tools are ignored | `unit/plugins.test.ts` (a host that sends junk, a smuggled key, a 5 MB line; the environment; restart and blame), `unit/plugin-host.test.ts` (**PluginHostTests.swift's cases** with the real host: beforeSend changes and stops, afterReply, onReply, notify, storage, routines.add, a plugin failing to load, commands, a killed host coming back, quitting ends it, permissions) |
+| Hooks in the chat (`core/server.ts`, `bot.ts`) | Your message goes through `beforeSend` first (a plugin can change it or stop it: a notice says so and `chat.send` answers `stoppedBy`); a reply that showed goes through `afterReply` (the shown line is updated) and to `bots.onReply`; enabled plugins' Claude parts go to claude heads as `--plugin-dir` (not in harmless mode) | `unit/plugin-host.test.ts`, `unit/maintainer.test.ts` (Maintainer's head gets `--plugin-dir …/ccb-core/claude`) |
+| Plugins panel and plugin panels (`renderer/Plugins.tsx`, `panel-page.ts`, `main/card-page.ts`) | The rail's **Plugins** button: each plugin on/off, its parts, permissions and source, settings (boolean, enum, text, number; secrets as a password field that never shows the value), its commands, what is broken and why. A plugin's **panel** runs its web part in a sandboxed frame (`botling-card://page/…`, opaque origin, PANEL_CSP: inline and `blob:` scripts, no network, frames, forms or workers) with a small `ccb` (panels, settings, notify, commands, `host.call` to its own program part — the plugin comes from the frame, calls are paced) | `e2e/plugins.spec.ts` (a command's result, a setting, a secret sealed, a panel asking its program part; the panel can reach neither the app's document, storage, bridge nor the network), screenshots `plugins-panel.png`, `plugin-panel-frame.png` (looked at) |
+| Maintainer (`core/maintainer.ts`, `maintainer-text.ts`) | 1.x's built-in bot (fixed id, diamond, last in the left column) working in the plugin library with **1.x's instructions**, the `ccb-core:component-editor` agent and PLUGINS.md, all **equal to the strings the Swift code wrote**; the library's own files as 1.x writes them (ccb-components, ccb-core, the editor following the app unless edited); the library becomes a git repo before Maintainer's first job; Maintainer's check command is 2.0's own check (`out/host/check-plugin.cjs`) | `unit/maintainer.test.ts` (instructions with and without check/shot commands, editor agent on two models, PLUGINS.md, the three manifests, the ask notes — golden export extended), the check command run for real |
+| Requests (`maintainer.ts`, `bot.ts`) | `<component>`: Maintainer gets "X wants a new component …" or "X's request for the component …" with how full the asking bot's list is and an id to decline by; one already in the library goes on the bot's list at once; a new one is given when it lands in the library, a change when its files change after Maintainer's reply; `<give-component>`, `<take-component>`, `<component-declined>` from Maintainer; the asking bot is woken with 1.x's note and the chat says what happened. `<plugin>` goes to Maintainer as "X's request for Botling: …". `<install>` fetches (a folder or a git URL) into install-staging/, checks it and **asks in the main bot's chat** (Install / Don't install, 1.x's question text); only Install copies it into the library, commits it and records where it came from; a question left open by a restart is closed. A bot drawing a library component gets it on its list; a new bot starts with the built-ins (both as 1.x) | `unit/maintainer.test.ts` (each flow through the core), `e2e/plugins.spec.ts` (`install-ask.png`, `maintainer-request.png`, looked at) |
+| Import (`store/importer.ts`) | The plugin library's text files (plugins' manifests, bundled code, Claude parts, components; not node_modules, .git or binary files), Maintainer's chat and notes, plugins.json **without settings a plugin declares secret** (1.x's secrets live in its keychain and are never read), component-editor.json | `unit/importer.test.ts` (the source untouched; a secret key in an old plugins.json does not come over; the value appears in no file) |
+| Pausing for your message (`bot.ts`) | 1.x's `Bot.pausing`: a message while a head works on something you did not start (handed-over work, a routine, a report, claude's own turn), with no approval open and no foreground subagent: its words so far stay cut off, your message goes with 1.x's pause note (claude: interrupt; Codex, handed-over work only: `turn/steer`), and once you are answered the head gets 1.x's resume note on the same hand-off, whose reply still goes back. Stop or a head that dies drops it | `unit/two-heads.test.ts` (both heads) |
+| Hand-off e2e | `heads.spec.ts` raced a 1.5 s worker timer against the card's "running" check; the fake app-server now takes `FAKE_CODEX_WORKER_GATE` and the test opens the gate after it saw the card running; closing skips the quit tidy | ran 14 times under a 12-process CPU load (5 with the final version): all passed |
+
+Tests: unit 239 (vitest), e2e 27 (Playwright/Electron), typecheck, all green; no helper process left
+after a run. Live (Phase 3b, 2 real CLI calls, no Codex): `claude plugin validate --strict` on the
+ccb-core Claude part 2.0 writes (no model call): **passed** (only directory-listing warnings: README,
+license, icon — the same files 1.x writes); one `claude -p` turn (haiku, `--tools ""`, no MCP, no
+saved session, in a throwaway folder) to see the editor agent through `--plugin-dir`: inconclusive —
+with no tools it lists no agent types (not repeated, to stay within the budget).
+
+### Decisions (Phase 3b)
+
+- **The plugin host is untrusted** and runs as a plain Node process beside the core (1.x's script, its
+  protocol unchanged), not inside it: its own process group, an allow-listed environment, every message
+  checked, a short list of requests. It still runs plugins' code with the user's rights (as 1.x: "permissions
+  are only declared, not sandboxed"); all program parts share one host, so a plugin could claim another's
+  name in a request — the checks are about the core's internals, not about plugins from each other.
+- **Third-party web parts do not run in the chat page.** The chat page shares the app page's origin, so a
+  plugin there could reach the app's bridge. Panels run in sandboxed frames instead; a web part's
+  composer, markdown and component hooks (`ccb.composer`, `ccb.messages`, `ccb.components`) do nothing
+  there. ccb-latex stays bundled. Web parts' stylesheets are not loaded.
+- **Secrets are sealed with safeStorage by main**, opened once by the core and kept in memory; a headless
+  core without a test key keeps none. 1.x's keychain items are not read (a secret is entered again).
+- **`bots.send` needs the `bots` permission** (1.x lets any plugin send as the user); `bots.create` is
+  refused until 2.0 can make bots.
+- **Maintainer is always there**, as in 1.x; it is a Claude-head bot by default. Its `<need-folder>`
+  requests get a "not yet" note. The Codex Maintainer's component-editor role stays refused.
+- **Installs ask in the main bot's chat** with 1.x's question; only a folder or a git URL can be
+  fetched for now. Its last line points at the rail's Plugins button (2.0 has no Settings window).
+- **A new bot starts with the built-in components only and gets more from Maintainer** (1.x), replacing
+  Phase 3a's stopgap of giving a fresh bot the whole library.
+- **Pausing as 1.x** (the user's parity question): 1.x's behaviour is safe to copy — it never interrupts
+  a turn waiting on an approval or a foreground subagent, keeps the cut-off words, and resumes the same
+  hand-off with its budget — so 2.0 now does the same instead of queueing.
+- **Afterreply hooks see the shown text** (tags already acted on) and change the line after it showed;
+  1.x holds the reply back until the hook answers (2.0 streams replies as they come).
 
 ## Gaps vs the Swift app (1.x)
 
@@ -497,8 +588,7 @@ Not in 2.0 yet, roughly in order of how much they matter:
   for handed-over work going back to the other head) and task cards' "helps" links; Codex's native
   subagents (off in a coordinator anyway); the component-editor role; auto mode (Codex's reviewer);
   rate limits and token use; images in Codex messages; the model list (`model/list`) and model/effort
-  settings UI, switching a head's model (the handoff/resume prompts are ported, unused); 1.x's
-  pausing of handed-over work for your message (2.0 queues); completion verification (PromiseCheck)
+  settings UI, switching a head's model (the handoff/resume prompts are ported, unused); completion verification (PromiseCheck)
   of either head; drawing the hand-off panel; a one-head bot's `<handoff to="claude">` for publishing
   (a notice says it cannot).
 - **Subagents**: rows in the left column and the right panel's list, SendMessage resumes, background
@@ -506,20 +596,24 @@ Not in 2.0 yet, roughly in order of how much they matter:
 - **Prompts**: the main bot's wake note (project list, inboxes, teams) and the component list are
   not attached (2.0 has neither); inbox delivery; the handoff/resume prompts are ported but unused
   (no model switch yet). Codex-only prompts are not ported.
-- **Requests**: teams, new bots/projects, components, plugins, installs, open questions, @ call-ins
-  (a notice says so).
+- **Requests**: teams, new bots/projects, `<need-folder>`, component specs and suggestions, open
+  questions, @ call-ins (a notice says so). (Components, plugins and installs: done in Phase 3b.)
 - The right panel's Tasks list (chips only), group chats, feedback relays, completion verification
   (`<end>/<block>` are parsed, not judged); claude's own scheduling tools (CronCreate, ScheduleWakeup)
   as background-task chips; 1.x's Settings → Routines page (2.0 has the header's small panel; the
   `addRoutine` UI for a new daily job is missing); Catch-up on window focus (only on opening a chat).
 - **The main bot's world**: its project list and inboxes in the wake note, inbox delivery, teams.
-- **Components and plugins, still missing**: Maintainer (asking for, building and changing components;
-  `<component>` requests get a notice), component specs ("Make into component"), reports, revert and
+- **Components and plugins, still missing**: component specs ("Make into component"), reports, revert and
   version history, the `/` component menu, "Show in all bots" floats (each chat floats its own), "making
   it live" (a Board command handed to Maintainer), SF Symbol icons (emoji icons work), pictures sent
   back with a component's answer (`ccb.pickImage` works, the pictures are not kept yet: no attachments),
-  `ccb.open` of pages (pictures open in the page's lightbox); the plugin host and its plugins other than
-  ccb-latex (bundled) and hooks.
+  `ccb.open` of pages (pictures open in the page's lightbox); third-party web parts in the chat page
+  (composer, markdown and component hooks; only panels run, sandboxed), web parts' styles and fonts,
+  the plugin library's revert/remove and version history in the app, installs from npm or archives,
+  `claude plugin validate` before a Claude part is used, plugins' MCP tools on the allowed list,
+  browser tools (no browser yet), the component editor's model setting (sonnet unless settings.json
+  says), Maintainer reading other folders, component shots, the Codex Maintainer's editor role, and a
+  packaged build's Node for the plugin host (development uses Electron run as Node).
 - **Composer**: attachments (`+` does nothing; dropped files are ignored), drafts across restarts,
   @ mentions. (Steering, replies to a message and reactions are in.)
 - **Main bot's project list and inbox** in its wake note and routines, inbox delivery.
@@ -565,18 +659,19 @@ Not in 2.0 yet, roughly in order of how much they matter:
   script). Since Phase 1b the chat itself is Web/src's page with its own chat.css; the React
   chrome's colours (`src/renderer/styles.css`) are Theme.swift's.
 
-## What's next (proposed, after Phase 3a)
+## What's next (proposed, after Phase 3b)
 
-1. **Plugins host + hooks**: Web/src's plugin loader with a host in the core (`hostCall`), then 1.x's
-   plugins and their hooks; Maintainer on top (component requests, specs, reports).
+1. **Settings UI** (React) on the contract that exists: plugins (move the rail panel there), language,
+   models/effort, auto mode, Catch-up, routines, heads, permissions; the component editor's model.
 2. **Attachments**: a main-owned picker, a protocol serving attachment folders, pictures in answers
    (components' `pickImage` too), images to Codex.
-3. **Settings UI** (React): language, models/effort, auto mode, Catch-up thresholds and model,
-   routines (1.x's page), heads, permissions (allowed commands, always-allowed tools).
+3. **Maintainer, rest**: component specs ("Make into component"), reports, revert/history, component
+   shots, `<need-folder>`, the Codex Maintainer's editor role.
 4. **Main bot's world**: project list + inboxes in its wake note and routines, inbox delivery, teams,
    new bots/projects.
 5. **Browser / web chats** (1.x's web AIs) in account partitions (spike 3's sessions).
-6. **Packaging and updates** (electron-builder, fuses, signing/notarization, an updater), then
+6. **Packaging and updates** (electron-builder, fuses, signing/notarization, an updater; a Node for the
+   plugin host once RunAsNode is off — bundled, or the host as a utilityProcess started by main), then
    **Windows** (spike 4: Job Objects; zsh-less command shells for components and monitors).
 
 ## What was next before Phase 3a (kept for reference)
@@ -652,12 +747,21 @@ tools answer "not yet".
 
 Decided by the user for Phase 3a: two-head timing as 1.x (claude hears the other head mid-turn; a
 message to a busy Codex head steers its turn). Decided by the agent in Phase 3a (the user was away;
-each can be changed): handed-over work is still queued behind your message, not paused; 2.0 asks
+each can be changed): ~~handed-over work is still queued behind your message, not paused~~ (paused as 1.x since Phase 3b); 2.0 asks
 again for component commands 1.x had allowed; a fresh bot gets the library (up to 20) since there is
 no Maintainer; scheduled-routines.json uses 2.0's own lock file; monitors always ask (no auto mode).
+
+Decided by the agent in Phase 3b (the user was away; each can be changed): pausing for your message as
+1.x (it was judged safe to copy); third-party web parts run only as sandboxed panels, not in the chat
+page; `bots.send` needs the `bots` permission; secrets sealed by safeStorage and entered again after the
+import; Maintainer always present with a Claude head; installs only from folders and git URLs for now;
+a new bot starts with the built-in components only (as 1.x).
 
 Still open:
 - One real `claude` call to confirm the approval round trip, and one as a real bot (tools on) to
   see the app prompt's choices/task lines from real claude.
 - Is a 15 s tidy on quit acceptable (1.x waits for it), or should quitting skip it?
 - A Windows 11 machine or VM for spike 4.
+- Plugins' web parts in the chat itself (composer and markdown hooks) need the chat page on an origin
+  of its own (no path to the app's bridge); worth doing before third-party web parts are allowed there.
+- Should `bots.send` without the `bots` permission stay refused (2.0) or be allowed (1.x)?
