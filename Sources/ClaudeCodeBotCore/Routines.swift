@@ -269,6 +269,21 @@ public struct RoutineFile: Sendable {
         }
     }
 
+    /// Checked mutation for app tools; unlike the legacy convenience UI API, errors propagate.
+    func update(id: String, operation: String) throws {
+        let text = try String(contentsOf: url, encoding: .utf8)
+        var found = false
+        let changed = text.components(separatedBy: "\n").compactMap { line -> String? in
+            guard var routine = Routine.parse(line), routine.id == id else { return line }
+            found = true
+            if operation == "cancel" { return nil }
+            routine.enabled = operation == "resume"
+            return routine.line
+        }
+        guard found else { throw ScheduledRoutineStore.Failure("Unknown legacy routine id. Call list to refresh IDs after cron edits.") }
+        try Data(changed.joined(separator: "\n").utf8).write(to: url, options: .atomic)
+    }
+
     private func replace(_ id: String, _ change: (inout Routine) -> Void) {
         write(lines().map { line in
             guard var routine = Routine.parse(line), routine.id == id else { return line }

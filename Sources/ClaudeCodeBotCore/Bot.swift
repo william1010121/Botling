@@ -93,6 +93,9 @@ public final class Bot: ObservableObject, Identifiable {
     @Published public private(set) var routines: [Routine]
     /// What it is doing in the turn under way, and the subagents it sent off (newest last).
     @Published public private(set) var trace: TraceBook
+    @Published public private(set) var scheduledRoutines: [ScheduledRoutine] = []
+    @Published public private(set) var routineError: String?
+    private let scheduledRoutineStore: ScheduledRoutineStore
     private let routineFile: RoutineFile
     private var routineRuns: [String: Date]
 
@@ -433,12 +436,14 @@ public final class Bot: ObservableObject, Identifiable {
         componentList = store?.loadComponentList()
         pins = store?.loadPins() ?? []
         specs = store?.loadSpecs() ?? []
+        scheduledRoutineStore = ScheduledRoutineStore(url: profile.routinesURL.deletingLastPathComponent().appending(path: "scheduled-routines.json"))
         routineFile = RoutineFile(url: profile.routinesURL)
         // The main bot starts with a daily summary; managers with none. Routines saved the old way
         // move into the file.
         routineFile.create(with: store?.legacyRoutineLines() ?? (profile.role == .main ? [RoutineFile.dailySummary] : []))
         routines = routineFile.load()
         routineRuns = store?.loadRoutineRuns() ?? [:]
+        do { scheduledRoutines = try scheduledRoutineStore.load() } catch { routineError = error.localizedDescription }
         // Subagents that ran when the app quit went away with their process.
         // Background shell commands an earlier build took for subagents (no kind, no task) go.
         trace = Self.restoredTrace(from: store)
@@ -1645,7 +1650,8 @@ public final class Bot: ObservableObject, Identifiable {
             codexModel: heads.codexModel,
             codexWorkerInstructions: engine == .codex ? prompts.codexWorkerSystem : nil,
             codexWorkerDefaults: codexWorkerDefaults,
-            subagentModel: subagentModel
+            subagentModel: subagentModel,
+            routinesURL: primary?.profile.routinesURL ?? profile.routinesURL
         ))
         self.process = process
         sessionID = session
@@ -2889,6 +2895,40 @@ public final class Bot: ObservableObject, Identifiable {
     public func reloadRoutines() {
         let loaded = routineFile.load()
         if loaded != routines { routines = loaded }
+        do {
+            let jobs = try scheduledRoutineStore.load()
+            if jobs != scheduledRoutines { scheduledRoutines = jobs }
+            routineError = nil
+        } catch { routineError = error.localizedDescription }
+    }
+
+    @discardableResult
+    public func routineOperation(_ arguments: [String: Any], at now: Date = Date()) -> Bool {
+        do {
+            _ = try scheduledRoutineStore.perform(arguments, now: now)
+            reloadRoutines()
+            return true
+        } catch { routineError = error.localizedDescription; return false }
+    }
+
+    /// A persisted claim wins against cancellation/another scheduler. No dispatch on write failure.
+    public func runScheduled(_ job: ScheduledRoutine, prompt: String, at now: Date) {
+        do {
+            guard let claimed = try scheduledRoutineStore.claim(job.id, now: now) else { return }
+            let clock = now.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+            append(ChatMessage(role: .divider, text: "\(claimed.routine.title) · \(clock)", date: now))
+            turnFromRelay = profile.role == .manager
+            completionAuthorization = prompt
+            completionRequiresTerminalSignal = false
+            completionSuspended = false
+            route(Outgoing(text: prompt))
+            try scheduledRoutineStore.didDispatch(job.id, now: now)
+            reloadRoutines()
+        } catch {
+            let message = error.localizedDescription
+            reloadRoutines()
+            routineError = message
+        }
     }
 
     /// Due when its latest time today has passed and it has not run since. A job seen for the

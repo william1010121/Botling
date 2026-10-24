@@ -145,6 +145,7 @@ struct CodexSession {
         /// What app-managed workers start on; unset values follow `model`/`effort` above.
         var workerDefaults = CodexWorkerDefaults()
         var restoredWorkers: [CodexManagedWorkerRecord] = []
+        var routinesURL: URL?
 
         var workerModel: String? { workerDefaults.model ?? model }
         var workerEffort: EffortLevel? { workerDefaults.effort ?? effort }
@@ -768,6 +769,15 @@ struct CodexSession {
     }
 
     private static let managedTools: [[String: Any]] = [
+        ["type": "function", "name": "app_routines",
+         "description": "Manage this bot's persistent routines directly. Operations: list; create kind=once with at (ISO-8601 seconds and explicit offset/Z), or kind=recurring with cron (5 fields). create requires task and unique request_id (reuse on retries), optional timezone (IANA, defaults to local at creation). Returns saved id/status; use id for pause/resume/cancel. List includes legacy cron IDs. Reschedule by cancel then create with a new request_id. Once jobs overdue while closed run on next app check; recurring catches up only today in its saved timezone. fired means the trigger reached the app router, not proof of agent startup or task completion. delivery_uncertain means a crash may have interrupted dispatch: never auto retry. Cancel stops future dispatch, not active work. App must be running; no OS wakeup. Do not edit app-owned schedule JSON or use shell/cron for this tool.",
+         "inputSchema": ["type": "object", "properties": [
+            "operation": ["type": "string", "enum": ["list", "create", "pause", "resume", "cancel"]],
+            "kind": ["type": "string", "enum": ["once", "recurring"]],
+            "task": ["type": "string"], "request_id": ["type": "string"],
+            "at": ["type": "string"], "cron": ["type": "string"],
+            "timezone": ["type": "string"], "id": ["type": "string"]],
+            "required": ["operation"], "additionalProperties": false]],
         ["type": "function", "name": "app_handoff",
          "description": "Assign one independently accepted deliverable to an app-managed worker. Returns acceptance and task_id immediately, not a completed result. Continue other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn without waiting. The app delivers correlated app_task_result reports in later turns. A new handoff does not resolve the active report.",
          "inputSchema": ["type": "object", "properties": ["instructions": ["type": "string"], "name": ["type": "string"]], "required": ["instructions"], "additionalProperties": false]],
@@ -804,7 +814,16 @@ struct CodexSession {
         let tool = params["tool"] as? String
         var out: [CodexOutput] = []
         let response: [String: Any]
-        if tool == "app_handoff", let instructions = arguments?["instructions"] as? String,
+        if tool == "app_routines" {
+            do {
+                guard let url = config.routinesURL else { throw ScheduledRoutineStore.Failure("Routine storage is unavailable for this session. Open this bot in Botling and retry; do not write cron or schedule state as a workaround.") }
+                let store = ScheduledRoutineStore(url: url.deletingLastPathComponent().appending(path: "scheduled-routines.json"))
+                let payload = try store.perform(arguments ?? [:])
+                response = reply(payload, success: true)
+                out.append(.event(.trace(.toolUse(id: key, tool: "app_routines", title: "Routines: " + (arguments?["operation"] as? String ?? ""), detail: Self.json(arguments), parent: nil))))
+                out.append(.event(.trace(.toolResult(id: key, output: Self.json(payload), failed: false, parent: nil))))
+            } catch { response = reply(["error": error.localizedDescription], success: false) }
+        } else if tool == "app_handoff", let instructions = arguments?["instructions"] as? String,
            !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let id = UUID().uuidString.lowercased()
             let name = (arguments?["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? Self.firstLine(instructions)
@@ -1436,7 +1455,8 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
             model: launch.codexModel,
             workerInstructions: launch.codexWorkerInstructions,
             workerDefaults: launch.codexWorkerDefaults,
-            restoredWorkers: launch.codexWorkerInstructions == nil ? [] : threads.workers(for: launch.sessionID)
+            restoredWorkers: launch.codexWorkerInstructions == nil ? [] : threads.workers(for: launch.sessionID),
+            routinesURL: launch.routinesURL
         )
     }
 

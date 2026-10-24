@@ -183,6 +183,8 @@ public struct AgentLaunch: Equatable, Sendable {
     /// The model its subagents use (`CLAUDE_CODE_SUBAGENT_MODEL`); nil: the same as its own.
     /// An agent whose definition names a model keeps that one.
     public var subagentModel: BotModel? = nil
+    /// App-owned routine tool is scoped to this bot, never a caller-supplied filesystem path.
+    public var routinesURL: URL? = nil
 }
 
 public typealias AgentLauncher = @Sendable (AgentLaunch) throws -> AgentProcess

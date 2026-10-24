@@ -55,7 +55,7 @@ struct CodexManagedWorkerTests {
         let start = response(initialize, [:], &session)
         let params = try #require(start.params("thread/start"))
         #expect((params["environments"] as? [String]) == [])
-        #expect((params["dynamicTools"] as? [[String: Any]])?.count == 3)
+        #expect((params["dynamicTools"] as? [[String: Any]])?.count == 4)
         #expect((params["config"] as? [String: Any])?["features.multi_agent"] as? Bool == false)
         #expect((params["config"] as? [String: Any])?["features.shell_tool"] as? Bool == false)
         _ = response(write(start, "thread/start"), ["thread": ["id": "root"]], &session)

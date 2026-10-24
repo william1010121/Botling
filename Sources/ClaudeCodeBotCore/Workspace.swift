@@ -943,6 +943,9 @@ public final class Workspace: ObservableObject {
             for routine in bot.routines where bot.isDue(routine, at: now) {
                 bot.run(routine, prompt: prompt(for: routine, of: bot), at: now)
             }
+            for job in bot.scheduledRoutines where job.dueTime(at: now) != nil {
+                bot.runScheduled(job, prompt: prompt(for: job.routine, of: bot), at: now)
+            }
         }
     }
 

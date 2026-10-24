@@ -1467,6 +1467,12 @@ struct SettingsPage: View {
                     ForEach(bot.routines) { routine in
                         RoutineRow(bot: bot, routine: routine)
                     }
+                    ForEach(bot.scheduledRoutines) { job in
+                        ScheduledRoutineRow(bot: bot, job: job)
+                    }
+                    if let error = bot.routineError {
+                        Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                    }
                     if adding {
                         AddRoutineForm(bot: bot) { adding = false }
                     } else {
@@ -1820,33 +1826,94 @@ private struct RoutineRow: View {
     }
 }
 
+private struct ScheduledRoutineRow: View {
+    @ObservedObject var bot: Bot
+    let job: ScheduledRoutine
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(job.routine.title).foregroundStyle(Theme.text)
+                    Text(schedule).font(.caption).foregroundStyle(Theme.muted)
+                    Text(status(at: context.date)).font(.caption).foregroundStyle(Theme.muted)
+                }
+                Spacer()
+                if job.state == .pending || job.state == .paused {
+                    Toggle(job.routine.title, isOn: Binding(
+                        get: { job.state == .pending },
+                        set: { bot.routineOperation(["operation": $0 ? "resume" : "pause", "id": job.id]) }
+                    )).labelsHidden().toggleStyle(.switch).tint(Theme.blue)
+                    Button(L("Cancel")) { bot.routineOperation(["operation": "cancel", "id": job.id]) }
+                        .buttonStyle(.plain).foregroundStyle(Theme.muted)
+                }
+            }
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
+            .help(job.task + "\nID: " + job.id)
+        }
+    }
+
+    private var schedule: String {
+        if let at = job.at {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .medium
+            formatter.timeStyle = .short
+            formatter.timeZone = TimeZone(identifier: job.timezone)
+            return L("Once") + " · " + formatter.string(from: at) + " · " + job.timezone
+        }
+        return (job.cron.flatMap(CronSchedule.init)?.description ?? "") + " · " + job.timezone
+    }
+
+    private func status(at now: Date) -> String {
+        switch job.status(at: now) {
+        case "pending": return L("Pending")
+        case "due": return L("Due — runs at the next app check")
+        case "paused": return L("Paused")
+        case "fired": return L("Triggered — see chat for delivery and result")
+        case "cancelled": return L("Cancelled")
+        default: return L("Delivery uncertain — check chat before creating a replacement")
+        }
+    }
+}
+
 private struct AddRoutineForm: View {
     @ObservedObject var bot: Bot
     var done: () -> Void
     @State private var title = ""
     @State private var instruction = ""
-    @State private var time = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date()
+    @State private var time = Date().addingTimeInterval(3600)
+    @State private var once = true
+    @State private var requestID = UUID().uuidString.lowercased()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             TextField(L("Name, e.g. Check progress"), text: $title)
             TextField(L("What to do (one sentence, or @file)"), text: $instruction, axis: .vertical)
                 .lineLimit(1...3)
+            Picker(L("Schedule"), selection: $once) {
+                Text(L("Once")).tag(true)
+                Text(L("Every day")).tag(false)
+            }.pickerStyle(.segmented)
+            Text(TimeZone.current.identifier).font(.caption).foregroundStyle(Theme.muted)
+            DatePicker(once ? L("Once") : L("Every day"), selection: $time,
+                       displayedComponents: once ? [.date, .hourAndMinute] : [.hourAndMinute])
+                .datePickerStyle(.field)
+                .labelsHidden()
             HStack {
-                DatePicker(L("Every day"), selection: $time, displayedComponents: .hourAndMinute)
-                    .datePickerStyle(.field)
-                    .fixedSize()
                 Spacer()
                 Button(L("Cancel"), action: done).buttonStyle(.plain).foregroundStyle(Theme.muted)
                 Button(L("Add")) {
                     let parts = Calendar.current.dateComponents([.hour, .minute], from: time)
-                    bot.addRoutine(
-                        title: title.trimmingCharacters(in: .whitespaces),
-                        instruction: instruction,
-                        hour: parts.hour ?? 9,
-                        minute: parts.minute ?? 0
-                    )
-                    done()
+                    var arguments: [String: Any] = ["operation": "create", "kind": once ? "once" : "recurring",
+                        "task": title.trimmingCharacters(in: .whitespaces) + ": " + instruction.trimmingCharacters(in: .whitespacesAndNewlines),
+                        "timezone": TimeZone.current.identifier, "request_id": requestID]
+                    if once {
+                        let minute = Calendar.current.dateInterval(of: .minute, for: time)?.start ?? time
+                        arguments["at"] = ISO8601DateFormatter().string(from: minute)
+                    }
+                    else { arguments["cron"] = "\(parts.minute ?? 0) \(parts.hour ?? 9) * * *" }
+                    if bot.routineOperation(arguments) { done() }
                 }
                 .disabled(!canAdd)
             }
@@ -1858,7 +1925,7 @@ private struct AddRoutineForm: View {
     }
 
     private var canAdd: Bool {
-        !title.trimmingCharacters(in: .whitespaces).isEmpty && !instruction.trimmingCharacters(in: .whitespaces).isEmpty
+        !title.trimmingCharacters(in: .whitespaces).isEmpty && !instruction.trimmingCharacters(in: .whitespaces).isEmpty && (!once || time > Date())
     }
 }
 
