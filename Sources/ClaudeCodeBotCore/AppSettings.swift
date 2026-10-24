@@ -42,6 +42,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Separate from conversation and worker models; old settings keep the Luna judge.
     public var completionVerificationModelChoice: String?
     public var completionVerificationModel: String { completionVerificationModelChoice ?? PromiseCheck.judgeModel }
+    /// Settings → Completion verification on/off. Nil (older settings) means on.
+    public var completionVerificationOn: Bool?
+    public var completionVerificationEnabled: Bool { completionVerificationOn ?? true }
 
     /// App-managed Codex workers follow `~/.codex/config.toml`. Nil (a settings file from before
     /// it) means on.

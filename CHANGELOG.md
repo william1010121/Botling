@@ -13,6 +13,17 @@ app and publishes it on GitHub Releases.
   work and return continuations are cancelled, the selected head turn is interrupted, and its
   app-managed Codex workers are cancelled without stopping unrelated workers. Completed or
   stale selections are harmless. The panel still offers an explicit **Stop all**.
+- **Turn completion verification off.** Settings → Completion verification has an on/off
+  switch (on by default). Off, no judge runs for either head of any bot, replies get no
+  verification row and nothing is continued automatically; the model picker is dimmed.
+
+### Fixed
+
+- **No wake while live workers own the rest.** The completion judge no longer continues a head
+  just because its running workers have not reported yet: "unfinished but every remaining piece
+  is held by a live worker" is a dependency wait. A continue verdict while live workers run is
+  checked a second time, and a second dependency-wait answer keeps the head quiet until
+  `app_task_result` wakes it.
 
 ## 1.18.0
 

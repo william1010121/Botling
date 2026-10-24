@@ -35,12 +35,22 @@ extension Workspace {
         return true
     }
 
+    /// Off: no judge runs for any head, so no verification row and no automatic continuation.
+    /// Applies from each head's next check; a check already running finishes as it started.
+    public func setCompletionVerificationEnabled(_ enabled: Bool) {
+        guard enabled != settings.completionVerificationEnabled else { return }
+        settings.completionVerificationOn = enabled
+        settings.save(to: settingsURL)
+        for bot in modelSettingsBots { configureCompletionVerification(for: bot) }
+    }
+
     func configureCompletionVerification(for bot: Bot) {
         guard let completionClassifier else { return }
         let model = settings.completionVerificationModel
+        let enabled = settings.completionVerificationEnabled
         for head in [bot, bot.partner].compactMap({ $0 }) {
             head.completionVerificationModel = model
-            head.promiseCheck = PromiseCheck.checker(classify: completionClassifier(model))
+            head.promiseCheck = enabled ? PromiseCheck.checker(classify: completionClassifier(model)) : nil
         }
     }
 }

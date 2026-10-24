@@ -243,9 +243,23 @@ public enum PromiseCheck {
 
     public static func check(_ end: TurnEnd, classify: Classifier) async -> Judgment {
         guard !end.reply.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !end.task.isEmpty else { return .unknown }
-        do { return try await classify(classifierMessage(end)) }
+        let message = classifierMessage(end)
+        let first: Judgment
+        do { first = try await classify(message) }
         catch let error as ClassifierFailure { return Judgment(verdict: .unavailable, reason: error.localizedDescription) }
         catch { return .unavailable }
+        // Live workers that have not reported yet are the judge's most common false wake: it
+        // reads "unfinished" as "act now". A wake needs a second, independent CONTINUE; a
+        // dependency wait from the second judgment keeps the head idle until app_task_result.
+        guard [.continueWork, .continueAnalysis].contains(first.verdict), hasLiveWorkerOwner(end),
+              let second = try? await classify(message), second.verdict == .waitingDependency else { return first }
+        return second
+    }
+
+    /// A complete live snapshot with a running worker and its callback, as `review` requires.
+    static func hasLiveWorkerOwner(_ end: TurnEnd) -> Bool {
+        guard let workers = end.workerDependencies, !end.workerDependenciesTruncated, !packWorkers(workers).omitted else { return false }
+        return workers.contains { $0.state == .running && $0.callback == "app_task_result" }
     }
 
     public static func checker(classify: @escaping Classifier) -> Check {
@@ -328,7 +342,12 @@ public enum PromiseCheck {
         next", "I want to ask the data", "I'll analyze subject/interval errors". A status check or promise \
         is not that analysis. When EITHER GPU idle requires active analysis, another GPU's experiment \
         cannot satisfy the idle GPU obligation. A 30-minute fallback monitor cannot satisfy a 1-minute \
-        idle rule. Do not require GPUs to be filled or invent an experiment merely to keep them busy.
+        idle rule. Do not require GPUs to be filled or invent an experiment merely to keep them busy. \
+        CONTINUE wakes the assistant immediately to act itself; it does not mean "the task is unfinished". \
+        Work a running worker or tracked running dependency owns, and follow-up that can only start after its result \
+        returns (reviewing, accepting or integrating that result, a later sequential stage), cannot be \
+        advanced now. "Not yet reported", "no result yet" or "still running" never justifies CONTINUE; \
+        CONTINUE requires concrete authorized work that NO running dependency owns, and the reason must name it.
         CONTINUE_ANALYSIS: same authorization and remaining-work requirements as CONTINUE, but THIS \
         turn has made substantive NEW analysis (specific reasoning, deductions or hypotheses supported \
         by evidence), compared with the recent conversation. Tools are not required for real thought. \
@@ -344,8 +363,11 @@ public enum PromiseCheck {
         not justify stopping already-authorized independent work. Never authorize a denied action or \
         expand research-only work into implementation.
         CANCELLED: the user explicitly stopped, paused or cancelled this work; do not revive it.
-        WAITING_DEPENDENCY: ALL remaining authorized work is actively owned by a specific related running \
-        dependency with a result/notification return path. Cross-check the tracked evidence; unrelated \
+        WAITING_DEPENDENCY: ALL remaining authorized work is actively owned by one or more specific related \
+        running dependencies with a result/notification return path, except follow-up that needs their \
+        results. Several live workers may jointly own it; their unfinished, unreported results are exactly \
+        this state. A recorded waiting_dependency checkpoint naming a running worker supports it. This is \
+        unfinished work, not completion. Cross-check the tracked evidence; unrelated \
         workers, a worker merely waiting, the existence of a monitor/schedule, and vague assurances are \
         insufficient. With no tracked context, an explicit statement that the exact remaining task is \
         already running and will report back may establish this. Do not duplicate actively owned work.
