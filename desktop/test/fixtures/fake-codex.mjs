@@ -26,10 +26,11 @@
 // hand-back "Done: <its reply>"; "/solo <words>": with two heads, the head that hears the other's
 // words first says only <no-reply/>.
 // A worker's task: "/slowworker" runs until interrupted; "/failworker" fails; else it reports
-// "Worker did: <first line>" after FAKE_CODEX_WORKER_MS (default 300).
+// "Worker did: <first line>" after FAKE_CODEX_WORKER_MS (default 300), or — FAKE_CODEX_WORKER_GATE=<file>
+// — once that file exists (a test opens the gate when it has seen the worker at work).
 // FAKE_CODEX_INPUT: a file it appends {thread, kind, text} to for every turn input and steer.
 // FAKE_CODEX_LOG: a file it appends {pid, args, cwd} to per start.
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -57,6 +58,7 @@ if (process.argv[2] === "exec") {
 const inputLog = process.env.FAKE_CODEX_INPUT;
 if (process.env.FAKE_CODEX_LOG) appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ pid: process.pid, args: process.argv.slice(2), cwd: process.cwd() }) + "\n");
 const workerMs = Number(process.env.FAKE_CODEX_WORKER_MS ?? 300);
+const workerGate = process.env.FAKE_CODEX_WORKER_GATE;
 
 const out = (value) => process.stdout.write(JSON.stringify(value) + "\n");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -211,7 +213,8 @@ async function workerTurn(thread, turn, text) {
     while (!state.turn?.interrupted) await sleep(40);
     return complete(thread, turn, "interrupted");
   }
-  await sleep(workerMs);
+  if (workerGate) while (!existsSync(workerGate) && !state.turn?.interrupted) await sleep(20);
+  else await sleep(workerMs);
   if (state.turn?.interrupted) return complete(thread, turn, "interrupted");
   if (text.includes("/failworker")) return complete(thread, turn, "failed", { message: "The worker hit an error." });
   const steers = state.turn?.steers ?? [];

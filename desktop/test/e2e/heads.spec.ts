@@ -54,7 +54,11 @@ test("Claude and Codex in one chat: both answer, each labelled, with seen marks;
 
 test("a hand-off: the divider, the other head's reply and the hand-back; a Codex worker's card", async () => {
   const dataDir = twoHeads({ answerWith: "claude" });
-  const { app, page, chat } = await launch({ dataDir, env: { FAKE_CODEX_WORKER_MS: "1500" } });
+  // The worker reports only once the test has seen it at work: a 1.5 s timer raced the card's
+  // "running" check under load. Quitting does not tidy (that is not what this checks, and both
+  // heads tidying made closing slow under load).
+  const gate = join(dataDir, "worker-gate");
+  const { app, page, chat } = await launch({ dataDir, env: { FAKE_CODEX_WORKER_GATE: gate, BOTLING_QUIT_TIDY_MS: "0" } });
   try {
     await page.setViewportSize({ width: 1120, height: 780 });
     await say(chat, `/say Made it faster. <handoff to="codex" kind="review">Check the diff</handoff>`);
@@ -68,6 +72,7 @@ test("a hand-off: the divider, the other head's reply and the hand-back; a Codex
     await expect(card).toContainText("Build the parser", { timeout: 10_000 });
     await expect(card).toHaveClass(/running/);
     await shot(page, "codex-worker-running");
+    writeFileSync(gate, "go");
     await expect(chat.locator(".row.bot[data-id]", { hasText: "The worker finished: Worker did: Build the parser" })).toBeVisible({ timeout: 15_000 });
     await shot(page, "codex-worker-report");
   } finally {
