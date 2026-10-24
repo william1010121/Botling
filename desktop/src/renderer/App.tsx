@@ -10,6 +10,7 @@ import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
 import { avatarURL } from "./avatars";
 import type { FrameMessage, ShellMessage } from "./chat-frame/protocol";
+import { PluginsButton } from "./Plugins";
 
 export function App({ client, store }: { client: Client; store: WorkspaceStore }) {
   const view = useSyncExternalStore(store.subscribe, store.getView);
@@ -40,6 +41,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
             />
           ))}
         </nav>
+        <PluginsButton client={client} plugins={view.plugins} />
         {view.imported && (
           <div className="rail-note" title={view.imported.skipped.join("\n")}>
             Imported {view.imported.bots} bot{view.imported.bots === 1 ? "" : "s"} and {view.imported.messages} message{view.imported.messages === 1 ? "" : "s"} from Botling 1.x (read-only).
