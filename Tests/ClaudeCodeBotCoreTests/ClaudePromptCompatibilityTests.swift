@@ -7,6 +7,7 @@ struct ClaudePromptCompatibilityTests {
     /// Frozen against accepted routine/monitor production c9441eee. The intentional routine
     /// passage changes only the eight system strings; the other 40 original digests remain.
     /// Independent pre-routine/accepted-source probes establish this fixture provenance.
+    /// The task-card rule (the `<task …/>` line) changes the four single-head system strings.
     func snapshots() -> [String: [String: String]] {
         let root = URL(filePath: "/tmp/claude-dispatch-compatibility")
         var profiles = [BotProfile.main(home: root), .manager(name: "Probe", avatar: "square", folder: root)]
@@ -80,7 +81,7 @@ struct ClaudePromptCompatibilityTests {
         "handoff" : "7282be28fe401a5fd334f61213c92b4aa7ded98d6dfc62cda9e4267adfbf6bea",
         "headsRule" : "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "resume" : "189c966ded904e46cc5952761b61945dca0ab0c144fc8c059804944eaff48ad3",
-        "system" : "cbbfa9f399f34f181ec41e0c61ee361b3f849f8634a2d47f29da9559f68e35f7",
+        "system" : "c7ccfc6c43232591fb70fe2a7cd5760fcdd34a1eb57d7b2e87fc0169110d2401",
         "tidy" : "22764c9d3a10d735ae474753bfac7983df08e82043b64ebeb5cb02ca4ba623aa",
         "wake" : "7a4d72b1d04753a92b4e6405b02213eda564fa3bdee623504e650a63018f86a1"
       },
@@ -96,7 +97,7 @@ struct ClaudePromptCompatibilityTests {
         "handoff" : "7282be28fe401a5fd334f61213c92b4aa7ded98d6dfc62cda9e4267adfbf6bea",
         "headsRule" : "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "resume" : "189c966ded904e46cc5952761b61945dca0ab0c144fc8c059804944eaff48ad3",
-        "system" : "fa44df6e27bcff3a68ea66e3a682612066acd3d8efa90b585e1f172132e4c52f",
+        "system" : "75c9ab091686c5a72161aa3a4eb48ce3c0ebdef792fcb3ae260bdbbec934ae87",
         "tidy" : "22764c9d3a10d735ae474753bfac7983df08e82043b64ebeb5cb02ca4ba623aa",
         "wake" : "7a4d72b1d04753a92b4e6405b02213eda564fa3bdee623504e650a63018f86a1"
       },
@@ -112,7 +113,7 @@ struct ClaudePromptCompatibilityTests {
         "handoff" : "a75a0d72f7b216d909a94dd827ae28bd01619b5c941317502e0bed4cf09e5497",
         "headsRule" : "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "resume" : "09c9ec7c739ec7342e676d013a19381b6563c0009945712e53a8e794cfcc3a7d",
-        "system" : "1b2425c85dc15420c5c0c1ecea6c9a8039270995b6554616d83572d4c9bba738",
+        "system" : "c408d78f74017418e5041227647e068c353b525fb2171c03d29e3d41df535fb9",
         "tidy" : "e861a38d593c2e95bef2e482f6217fd5e589615c3d7c3da682fe82cc2775eba5",
         "wake" : "10197a0bed41df72bab812cd17c16464bca122f62713f585817b74ee2a413182"
       },
@@ -128,7 +129,7 @@ struct ClaudePromptCompatibilityTests {
         "handoff" : "a75a0d72f7b216d909a94dd827ae28bd01619b5c941317502e0bed4cf09e5497",
         "headsRule" : "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "resume" : "09c9ec7c739ec7342e676d013a19381b6563c0009945712e53a8e794cfcc3a7d",
-        "system" : "e0b9d117ff0a72f44a7a43084afce111213b9789d540991c7760292590bc6226",
+        "system" : "dd11268e54f2b093d5b9cce21464e6960098b91d39aa94af0b00dfb323a59e1a",
         "tidy" : "e861a38d593c2e95bef2e482f6217fd5e589615c3d7c3da682fe82cc2775eba5",
         "wake" : "10197a0bed41df72bab812cd17c16464bca122f62713f585817b74ee2a413182"
       },

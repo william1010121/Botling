@@ -126,7 +126,7 @@ extension Workspace {
             intervalSummaries[chatID]?[key]?.error = L("The summary service is unavailable.")
             return
         }
-        let prompt = CatchUp.prompt(for: messages, language: language, writingPrompt: settings.summaryPrompt) { [weak self] in
+        let prompt = CatchUp.prompt(for: messages, language: language, writingPrompt: settings.summaryPrompt, tasks: chat.tasks(touching: messages)) { [weak self] in
             self?.catchUpName(of: $0, in: chat) ?? chat.name
         }
         let summarize = make(model)
@@ -158,7 +158,8 @@ extension Workspace {
             let counts = Dictionary(grouping: replies, by: { $0.engine?.rawValue ?? "unknown" }).mapValues(\.count)
             return ChatPayload.CatchUpView(key: state.key, ids: source.map { $0.id.uuidString },
                 count: replies.count, state: state.phase.rawValue, bullets: state.bullets, error: state.error,
-                model: state.model, manual: true, automatic: state.automatic, speakerCounts: counts, requestedBy: state.requestedBy)
+                model: state.model, manual: true, automatic: state.automatic, speakerCounts: counts, requestedBy: state.requestedBy,
+                tasks: taskChips(for: source, in: chat))
         }.sorted { lhs, rhs in
             return (positions[lhs.ids.first ?? ""] ?? 0) < (positions[rhs.ids.first ?? ""] ?? 0)
         }
@@ -201,7 +202,7 @@ extension Workspace {
             catchUps[chat.id]?.error = L("The summary service is unavailable.")
             return
         }
-        let prompt = CatchUp.prompt(for: messages, language: language, writingPrompt: settings.summaryPrompt) { [weak self] message in
+        let prompt = CatchUp.prompt(for: messages, language: language, writingPrompt: settings.summaryPrompt, tasks: chat.tasks(touching: messages)) { [weak self] message in
             self?.catchUpName(of: message, in: chat) ?? chat.name
         }
         let summarizer = make(model)
@@ -256,7 +257,30 @@ extension Workspace {
             key: state.key, ids: ids.map(\.uuidString), count: counted.count, heads: heads > 1 ? heads : nil,
             state: state.phase.rawValue, bullets: state.bullets, error: state.error, model: state.model,
             since: counted.first.map { CatchUp.time($0.date) }, until: counted.last.map { CatchUp.time($0.date) },
-            latest: latest, manual: state.manual, requestedBy: state.requestedBy)
+            latest: latest, manual: state.manual, requestedBy: state.requestedBy,
+            tasks: taskChips(for: ids.compactMap { byID[$0] }, in: chat))
+    }
+
+    /// A task chip was pressed (under a reply or a summary's bullet), or a row in the panel: the
+    /// right panel shows that task open; pressed again, it closes. A spec shown there gives way.
+    public func selectTask(_ id: UUID?) {
+        if openSpecID != nil { closeSpec() }
+        selectedTask = id == selectedTask ? nil : id
+    }
+
+    /// The chips of the tasks with lines in a summary's range; nil when there are none.
+    private func taskChips(for source: [ChatMessage], in chat: Bot) -> [ChatPayload.TaskCardChip]? {
+        let chips = chat.tasks(touching: source).map { ChatPayload.TaskCardChip.of($0, in: chat, latest: false, selected: selectedTask, now: Date()) }
+        return chips.isEmpty ? nil : chips
+    }
+
+    /// Every reply of the task is folded into a summary card (the panel says "In the summary").
+    public func isFoldedIntoSummary(_ task: TaskCard, in chat: Bot) -> Bool {
+        let replies = Set(chat.messages.filter { $0.role != .user && task.messageIDs.contains($0.id) }.map(\.id))
+        guard !replies.isEmpty else { return false }
+        var folded = Set(catchUps[chat.id]?.messageIDs ?? [])
+        for state in (intervalSummaries[chat.id] ?? [:]).values { folded.formUnion(state.messageIDs) }
+        return replies.isSubset(of: folded)
     }
 
     // MARK: Settings

@@ -2,6 +2,14 @@ extension L10n {
     /// Words ClaudeCodeBotCore makes for the user to read (names of choices, placeholders, notices). Each row: English, then
     /// [繁體中文 (Taiwan), 简体中文, 日本語, 한국어].
     static let coreStrings: Table = [
+        // Task cards (TaskCards, Bot)
+        "New message": ["新訊息", "新消息", "新しいメッセージ", "새 메시지"],
+        "May be stuck": ["可能卡住", "可能卡住", "止まっているかもしれません", "멈췄을 수 있음"],
+        "Now: {0}": ["現在：{0}", "现在：{0}", "今：{0}", "지금: {0}"],
+        "Waiting on you: {0}": ["等你：{0}", "等你：{0}", "あなた待ち：{0}", "응답 대기: {0}"],
+        "your reply": ["你的回覆", "你的回复", "あなたの返事", "내 답변"],
+        "New task": ["新任務", "新任务", "新しいタスク", "새 작업"],
+        "How is \"{0}\" going? Please report where it stands.": ["「{0}」進行得如何？請回報目前的狀態。", "“{0}”进行得怎么样？请汇报目前的状态。", "「{0}」はどうなっていますか？今の状況を報告してください。", "'{0}'은(는) 어떻게 되고 있나요? 지금 상태를 알려 주세요."],
         // Catch-up summary (CatchUp)
         "Codex was not found.": ["找不到 Codex。", "找不到 Codex。", "Codex が見つかりません。", "Codex를 찾을 수 없습니다."],
         "The model timed out after {0} s.": ["模型在 {0} 秒後逾時。", "模型在 {0} 秒后超时。", "モデルが {0} 秒でタイムアウトしました。", "모델이 {0}초 후 시간 초과되었습니다."],

@@ -82,6 +82,34 @@ public struct ChatPayload: Encodable, Equatable {
         var sourceEngine: String? = nil
         var sourceTime: String? = nil
         var decisionID: String? = nil
+        /// The task cards it belongs to: a chip each under the reply.
+        var taskCards: [TaskCardChip]? = nil
+    }
+
+    /// A task card as the chip under one of its replies (and beside a summary's bullet) shows it.
+    public struct TaskCardChip: Encodable, Equatable {
+        var id: String
+        var name: String
+        /// pending, running, waiting, done, stopped, or stale (running, maybe stuck).
+        var state: String
+        var owner: String?
+        /// On the task's latest reply only: what it does now, or what it waits on.
+        var detail: String?
+        /// The right panel shows this task open.
+        var selected: Bool?
+
+        @MainActor
+        static func of(_ task: TaskCard, in bot: Bot, latest: Bool, selected: UUID?, now: Date) -> TaskCardChip {
+            let stale = bot.isStale(task, at: now)
+            let detail: String? = switch task.state {
+            case _ where stale: L("May be stuck")
+            case .running: task.now.map { L("Now: {0}", $0) }
+            case .waiting: L("Waiting on you: {0}", task.blocked ?? task.now ?? L("your reply"))
+            default: nil
+            }
+            return TaskCardChip(id: task.id.uuidString, name: task.name, state: stale ? "stale" : task.state.rawValue,
+                                owner: task.owner?.rawValue, detail: latest ? detail : nil, selected: selected == task.id ? true : nil)
+        }
     }
 
     public struct SubagentRef: Encodable, Equatable {
@@ -421,6 +449,9 @@ public struct ChatPayload: Encodable, Equatable {
         public var automatic: Bool = false
         public var speakerCounts: [String: Int]? = nil
         public var requestedBy: String? = nil
+        /// The task cards with lines in the range, for the chips beside its bullets and the
+        /// header's count; nil when there are none.
+        public var tasks: [TaskCardChip]? = nil
     }
 
     /// Bot look Cute: the engine characters as image URLs. `avatar`: a head's
@@ -596,6 +627,7 @@ public struct ChatPayload: Encodable, Equatable {
         pins pinning: PinContext? = nil,
         specs: Bool = false,
         openSpec: UUID? = nil,
+        selectedTask: UUID? = nil,
         floating: [FloatingPin]? = nil,
         look: HeadLook? = nil,
         sourceLook: ((UUID) -> HeadLook?)? = nil,
@@ -628,6 +660,16 @@ public struct ChatPayload: Encodable, Equatable {
         let working = group.map { $0.typing != nil } ?? (bot.isWorking || bot.partner?.isWorking == true || guest != nil)
         let lastHead = bot.messages.last(where: { $0.role == .bot })?.engine
         let moodBot = workingBot ?? (lastHead == bot.partner?.engine ? bot.partner : nil) ?? bot
+        // Each task's chip under the replies that belong to it; its latest one says how it stands.
+        var taskChips: [UUID: [TaskCardChip]] = [:]
+        if group == nil {
+            for task in bot.tasks {
+                let latest = task.latestMessage(in: bot.messages)
+                for id in task.messageIDs {
+                    taskChips[id, default: []].append(.of(task, in: bot, latest: id == latest, selected: selectedTask, now: now))
+                }
+            }
+        }
         var messages = bot.messages.enumerated().map { index, message -> Message in
             let sourceName = message.role == .bot ? message.sourceID.map { speaker?($0) ?? "A removed bot" } : nil
             let sourceHead = message.sourceID.flatMap { sourceLooks[$0] }
@@ -699,7 +741,8 @@ public struct ChatPayload: Encodable, Equatable {
                 sourceAuthor: message.role == .bot ? (sourceName ?? (message.sourceID == nil ? bot.name : nil)) : nil,
                 sourceEngine: message.engine?.rawValue,
                 sourceTime: CatchUp.time(message.date),
-                decisionID: message.decisionID?.uuidString
+                decisionID: message.decisionID?.uuidString,
+                taskCards: message.role == .bot ? taskChips[message.id] : nil
             )
         }
         // All the chat's background work goes on its latest message, as one row of counts.

@@ -10,10 +10,10 @@ public struct BotStore: Sendable {
         self.directory = directory
     }
 
-    /// The files that hold a bot's chat as it shows: its lines, its subagents, its pins and its
-    /// specs (its settings, bot.json, are not the chat).
+    /// The files that hold a bot's chat as it shows: its lines, its subagents, its pins, its
+    /// specs and its tasks (its settings, bot.json, are not the chat).
     public enum ChatFile: String, CaseIterable, Sendable {
-        case chat = "chat.json", subagents = "subagents.json", pins = "pins.json", specs = "specs.json"
+        case chat = "chat.json", subagents = "subagents.json", pins = "pins.json", specs = "specs.json", tasks = "tasks.json"
     }
 
     private func url(_ file: ChatFile) -> URL { directory.appending(path: file.rawValue) }
@@ -22,6 +22,7 @@ public struct BotStore: Sendable {
     private var subagentsURL: URL { url(.subagents) }
     private var pinsURL: URL { url(.pins) }
     private var specsURL: URL { url(.specs) }
+    private var tasksURL: URL { url(.tasks) }
 
     /// Whether it has a chat at all.
     public var hasChat: Bool { FileManager.default.fileExists(atPath: chatURL.path) }
@@ -126,6 +127,16 @@ public struct BotStore: Sendable {
 
     public func save(specs: [ComponentSpec]) {
         write(specs, to: specsURL)
+    }
+
+    /// Its task cards (the right panel's Tasks, the chips under replies), oldest first.
+    public func loadTasks() -> [TaskCard] {
+        guard let data = try? Data(contentsOf: tasksURL) else { return [] }
+        return (try? JSONDecoder().decode([TaskCard].self, from: data)) ?? []
+    }
+
+    public func save(tasks: [TaskCard]) {
+        write(tasks, to: tasksURL)
     }
 
     public func loadModel() -> BotModel? {

@@ -64,6 +64,9 @@ public enum ReplyParser {
         public var displays: [ComponentInstance]
         public var completionSignals: [PromiseCheck.Signal] = []
         public var decisionReference: UUID? = nil
+        /// Each `<task …/>` line: the task this reply works on, in the order written (two for a
+        /// message with two pieces of work).
+        public var tasks: [TaskTag] = []
     }
 
     private static let decisionReferenceTag = try! NSRegularExpression(pattern: #"(?m)^ {0,3}<decision-ref\s+id="([0-9A-Fa-f-]{36})"\s*/>[ \t]*$"#)
@@ -112,6 +115,8 @@ public enum ReplyParser {
     )
     private static let screenshotTag = try! NSRegularExpression(pattern: #"<app-screenshot\s*/?>(?:\s*</app-screenshot>)?"#)
     /// `<no-reply/>`: the turn claude started itself has nothing for the user.
+    /// `<task name="…" now="…" state="running"/>`, attributes only (`<tasks>` and the like are not it).
+    private static let taskTag = try! NSRegularExpression(pattern: #"<task((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*/?>(?:[ \t]*</task>)?"#)
     private static let noReplyTag = try! NSRegularExpression(pattern: #"<no-reply\s*/>|<no-reply>\s*</no-reply>"#)
     private static let openQuestionTag = try! NSRegularExpression(
         pattern: #"<open-question\s+from\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:/>|>\s*</open-question>)"#
@@ -234,6 +239,8 @@ public enum ReplyParser {
         requests += projects
         take(buildTag, first: true) { requests.append(.installBuild(path: $0[0].trimmingCharacters(in: .whitespaces), note: $0[1])) }
         take(noReplyTag) { _ in }
+        var tasks: [TaskTag] = []
+        take(taskTag) { tasks.insert(TaskTag(attributes: attributes($0[0])), at: 0) }
         var screenshot = false
         take(screenshotTag) { _ in screenshot = true }
         if screenshot { requests.append(.appScreenshot) }
@@ -303,13 +310,13 @@ public enum ReplyParser {
 
         let (body, places) = placing(text as String, count: displays.count)
         for index in displays.indices { displays[index].at = places[index] }
-        return Parsed(body: body, choices: choices, requests: requests, reactions: reactions, displays: displays, completionSignals: signals, decisionReference: decisionReference)
+        return Parsed(body: body, choices: choices, requests: requests, reactions: reactions, displays: displays, completionSignals: signals, decisionReference: decisionReference, tasks: tasks)
     }
 
     /// Every tag the app acts on, in the order `parseAll` knows them.
     private static var replyTags: [NSRegularExpression] {
         [showTag, requestTag, pluginTag, installTag, projectTag, buildTag, screenshotTag, folderTag,
-         openQuestionTag, listTag, suggestTag, specTag, choicesBlock, decisionReferenceTag]
+         openQuestionTag, listTag, suggestTag, specTag, choicesBlock, decisionReferenceTag, taskTag]
     }
 
     /// Takes the app's tags (`<choices>`, `<show>`, `<plugin>`, …) out of one earlier part of a

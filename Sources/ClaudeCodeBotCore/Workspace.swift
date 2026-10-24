@@ -148,6 +148,8 @@ public final class Workspace: ObservableObject {
     var componentAsks: [ComponentAsk] = []
     /// The component spec shown in the right panel (its chip pressed), if any.
     @Published public internal(set) var openSpecID: UUID?
+    /// The task card the right panel shows open (its chip pressed); nil: the latest running one.
+    @Published public internal(set) var selectedTask: UUID?
     /// The spec workspace spread wide (its expand button), while it shows.
     @Published public internal(set) var specPanelWide = false
     /// Specs being built, by component name: the chat and spec, and the template version the

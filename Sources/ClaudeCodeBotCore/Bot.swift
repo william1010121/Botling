@@ -22,6 +22,9 @@ public final class Bot: ObservableObject, Identifiable {
     @Published public private(set) var rounds: RoundsProgress?
     /// The hand-offs between the heads the panel over the input box lists (see `HandoffRecord`).
     @Published public private(set) var handoffs: [HandoffRecord] = []
+    /// The chat's tasks: one card for each piece of work, kept current by the heads' `<task>`
+    /// lines (see `TaskBook`). Kept by the bot whose chat it is, never by a partner.
+    @Published public private(set) var taskBook = TaskBook()
     /// The other head: a bot of its own (its process, its turns, running at the same time as
     /// this one) whose lines show in this chat. There when the bot has two heads, or when Codex
     /// handed Claude something to publish.
@@ -398,6 +401,21 @@ public final class Bot: ObservableObject, Identifiable {
     private var subagentProgress: [String: Date] = [:]
     /// Quiet spells already reminded about ("" for the bot itself, else a subagent's id).
     private var stallReminded: Set<String> = []
+    /// The user's message this head's turn under way answers, for its task card: when it got
+    /// it, whether it has started on it and used tools. Nil for other turns.
+    private var taskTurn: TaskTurn?
+    private struct TaskTurn {
+        var message: UUID
+        var started: Date
+        var claimed = false
+        var usedTools = false
+    }
+    /// The subagents whose reports the turn under way passes on, and its `<task>` lines.
+    private var taskReporting: [String] = []
+    private var lastTaskTags: [TaskTag] = []
+    /// On the bot whose chat it is: the task each head last worked on (a hand-off it makes
+    /// helps with that one).
+    private var headTask: [BotEngine: UUID] = [:]
 
     public init(
         profile: BotProfile,
@@ -450,6 +468,10 @@ public final class Bot: ObservableObject, Identifiable {
         componentList = store?.loadComponentList()
         pins = store?.loadPins() ?? []
         specs = store?.loadSpecs() ?? []
+        var book = TaskBook(tasks: store?.loadTasks() ?? [])
+        // Cards whose lines all left the chat (past its history limit) go with them.
+        if book.keep(only: Set(loaded.map(\.id))) { store?.save(tasks: book.tasks) }
+        taskBook = book
         scheduledRoutineStore = ScheduledRoutineStore(url: profile.routinesURL.deletingLastPathComponent().appending(path: "scheduled-routines.json"))
         routineFile = RoutineFile(url: profile.routinesURL)
         // The main bot starts with a daily summary; managers with none. Routines saved the old way
@@ -662,6 +684,11 @@ public final class Bot: ObservableObject, Identifiable {
             message.replyPreview = Self.preview(of: quoted)
         }
         append(message)
+        // A card for it at once (it says "received"); the head that takes it on names it.
+        if primary == nil {
+            editTasks { $0.begin(message: message.id, text: text, owner: decisionOwner ?? target.engine ?? (heads.hasTwo ? nil : engine),
+                                 replyingTo: quoted?.id, at: now()) }
+        }
 
         var lines: [String] = []
         if let appNote { lines.append(appNote) }
@@ -705,6 +732,7 @@ public final class Bot: ObservableObject, Identifiable {
             hold.outgoing.images = earlier.images + outgoing.images
             hold.outgoing.about = earlier.about + [earlier.messageID].compactMap { $0 } + outgoing.about
             claimHold = hold
+            if let first = earlier.messageID { editTasks { $0.join(message: first, into: message.id) } }
             deliver(outgoing, to: hold.lead)
             turnFromRelay = false
             return
@@ -726,6 +754,124 @@ public final class Bot: ObservableObject, Identifiable {
         // The lead could not start: nothing will come from it to wait for.
         if let lead, bot(forExisting: lead)?.isWorking != true { releaseClaim() }
         turnFromRelay = false
+    }
+
+    // MARK: Tasks
+
+    /// The chat's task cards, oldest first.
+    public var tasks: [TaskCard] { taskBook.tasks }
+
+    /// The tasks with lines among `messages`, oldest first (for a summary of them).
+    public func tasks(touching messages: [ChatMessage]) -> [TaskCard] {
+        let ids = Set(messages.map(\.id))
+        return taskBook.tasks.filter { $0.messageIDs.contains(where: ids.contains) }
+    }
+
+    /// Changes the task cards and saves them, when something changed.
+    func editTasks(_ change: (inout TaskBook) -> Void) {
+        var book = taskBook
+        change(&book)
+        guard book != taskBook else { return }
+        taskBook = book
+        store?.save(tasks: book.tasks)
+    }
+
+    /// Something of the task is at work: its owner head's turn, or a subagent started for it.
+    public func isAtWork(_ task: TaskCard) -> Bool {
+        if let owner = task.owner, let head = bot(forExisting: owner), head.isWorking { return true }
+        let ids = Set(task.subagentIDs ?? [])
+        return !ids.isEmpty && subagents.contains { ids.contains($0.id) && $0.isRunning }
+    }
+
+    /// Shown as maybe stuck: running, no news for 10 minutes, nothing of it at work.
+    public func isStale(_ task: TaskCard, at date: Date = Date()) -> Bool {
+        task.isStale(at: date, working: isAtWork(task))
+    }
+
+    /// Running and waiting tasks: the count beside the bot's name in the left column.
+    public var openTaskCount: Int {
+        taskBook.tasks.filter { $0.state == .running || $0.state == .waiting }.count
+    }
+
+    /// "Ask it to report": a short message of yours to the task's owner, on the task's card.
+    public func askForReport(on id: UUID) {
+        guard let task = taskBook.task(id) else { return }
+        let target = task.owner.map(AnswerTarget.init) ?? heads.answerWith
+        send(L("How is \"{0}\" going? Please report where it stands.", task.name), files: [],
+             replyingTo: task.latestMessage(in: messages), to: heads.hasTwo ? target : nil)
+    }
+
+    /// This head got `outgoing` as its turn: a message of yours starts its turn on that task.
+    private func noteTaskTurn(_ outgoing: Outgoing) {
+        if outgoing.fromUser, let id = outgoing.messageID {
+            taskTurn = TaskTurn(message: id, started: now())
+            taskReporting = []
+        } else if !isWorking {
+            taskTurn = nil
+        }
+    }
+
+    /// A step of the turn under way: its first one claims the task, a tool keeps it, a
+    /// subagent or worker it starts is linked to it.
+    private func noteTaskStep(_ step: TraceEvent) {
+        guard internalReply == nil, groupCommand == nil else { return }
+        let owner = primary ?? self
+        if var turn = taskTurn {
+            if !turn.claimed {
+                turn.claimed = true
+                owner.editTasks { $0.claim(message: turn.message, by: engine, at: now()) }
+            }
+            if case .toolUse = step, !turn.usedTools {
+                turn.usedTools = true
+                let text = owner.messages.first { $0.id == turn.message }?.text ?? ""
+                owner.editTasks { $0.working(on: turn.message, text: text, by: engine, at: now()) }
+            }
+            taskTurn = turn
+        }
+        if case let .subagentStarted(id, _, _, _, _) = step, let task = owner.taskBook.base(of: currentTaskTurn()) {
+            owner.editTasks { $0.link(subagent: id, to: task.id) }
+        }
+    }
+
+    /// What the turn under way works on, as the task book reads it.
+    private func currentTaskTurn(handoffID: UUID? = nil, asks: Bool = false) -> TaskBook.Turn {
+        let owner = primary ?? self
+        return TaskBook.Turn(
+            head: engine,
+            userMessage: taskTurn?.message,
+            userText: taskTurn.flatMap { turn in owner.messages.first { $0.id == turn.message }?.text },
+            started: taskTurn?.started,
+            usedTools: taskTurn?.usedTools ?? false,
+            handoffID: handoffID ?? turnHandoffID,
+            reporting: taskReporting,
+            asks: asks
+        )
+    }
+
+    /// The turn showed its reply: the cards it belongs to are updated from its `<task>` lines.
+    private func noteTaskReply(_ message: ChatMessage, handoffID: UUID?) {
+        defer {
+            taskTurn = nil
+            taskReporting = []
+            lastTaskTags = []
+        }
+        guard message.role == .bot, groupCommand == nil else { return }
+        let turn = currentTaskTurn(handoffID: handoffID, asks: message.isOpenQuestion)
+        let tags = lastTaskTags
+        let owner = primary ?? self
+        var touched: [UUID] = []
+        owner.editTasks { touched = $0.replied(message.id, turn: turn, tags: tags, at: now()) }
+        if let first = touched.first { owner.headTask[engine] = first }
+    }
+
+    /// Hand-offs the conductor just made help with the task their head was working on.
+    private func noteTaskHandoffs() {
+        let helped = Set(taskBook.tasks.flatMap { $0.helps ?? [] }.map(\.handoffID))
+        for record in conductor.records where !helped.contains(record.id) {
+            guard let task = headTask[record.from] else { continue }
+            let line = record.task.split(whereSeparator: \.isNewline).first.map(String.init) ?? record.task
+            editTasks { $0.help(TaskCard.Help(handoffID: record.id, head: record.to, text: String(line.prefix(120))), on: task) }
+        }
     }
 
     // MARK: Two heads
@@ -1059,6 +1205,7 @@ public final class Bot: ObservableObject, Identifiable {
             }
         }
         if handoffs != conductor.records { handoffs = conductor.records }
+        noteTaskHandoffs()
         let kept = Set(conductor.records.map(\.id))
         handoffDecisions = handoffDecisions.filter { kept.contains($0.key) }
     }
@@ -1549,6 +1696,9 @@ public final class Bot: ObservableObject, Identifiable {
                 // the interrupt stops the turn for it (and leaves background subagents running).
                 // What it said and did so far stays, as a bubble cut off before your new line.
                 keepCutOff(before: outgoing.messageID)
+                if let first = turnInput?.messageID, let second = outgoing.messageID {
+                    (primary ?? self).editTasks { $0.join(message: first, into: second) }
+                }
                 deliver(merged)
                 process?.interrupt()
                 interruptions += 1
@@ -1618,6 +1768,7 @@ public final class Bot: ObservableObject, Identifiable {
         // A turn you started, or one you are adding to; anything else is not yours to add to.
         if !outgoing.contextOnly {
             turnInput = outgoing.fromUser && (!isWorking || turnInput != nil) ? outgoing : nil
+            noteTaskTurn(outgoing)
         }
         if let id = outgoing.handoffID { turnHandoffID = id }
         else if !isWorking { turnHandoffID = nil }
@@ -1703,6 +1854,8 @@ public final class Bot: ObservableObject, Identifiable {
             isWorking = true
             turnInput = outgoing.fromUser ? outgoing : nil
             turnOrigin = outgoing.fromUser ? .user : .app
+            taskTurn = nil
+            noteTaskTurn(outgoing)
             turnConducted = outgoing.conducted
             turnHandoffID = outgoing.handoffID
             pendingAbout = []
@@ -1924,6 +2077,7 @@ public final class Bot: ObservableObject, Identifiable {
         // A hand-off to the other head is the app's, not the chat's.
         let (body, tags) = isError ? (parsed.body, HeadTags()) : HeadTags.parse(parsed.body)
         lastTags = tags
+        lastTaskTags = isError ? [] : parsed.tasks
         var message = ChatMessage(role: isError ? .error : .bot, text: body, choices: parsed.choices)
         if promiseCheck != nil, !parsed.completionSignals.isEmpty { completionSignals[message.id] = parsed.completionSignals }
         if !parsed.displays.isEmpty { message.displays = parsed.displays }
@@ -1935,6 +2089,7 @@ public final class Bot: ObservableObject, Identifiable {
         message.backgroundTasks = trace.takeTasks()
         if append(message) { unreadCount += 1 }
         // It said something after its subagents finished: it has told you.
+        taskReporting += unreported
         unreported.removeAll()
         replyObserver?(message)
         return (message, parsed.requests)
@@ -1973,6 +2128,8 @@ public final class Bot: ObservableObject, Identifiable {
         // Display/relay the reply immediately, but keep its assignment owned until semantic
         // judgment confirms a terminal result. A handoff tag already has its own return path.
         let deferHandback = handed && canCheckCompletion(message) && tags.handoff == nil && pausedWork == nil
+        // Its task card first, so a hand-off in the reply helps with that task.
+        noteTaskReply(message, handoffID: handoffID)
         if sharesChat || tags.handoff != nil { (primary ?? self).headReplied(message, by: engine, tags: tags, handed: handed && !deferHandback, handoffID: handoffID) }
         if held, !queued.isEmpty { Task { [weak self] in await self?.flushQueue() } }
         if promiseCheck == nil, resumePausedWork() { return }
@@ -2622,6 +2779,7 @@ public final class Bot: ObservableObject, Identifiable {
                 backgroundWake = false
             }
         case let .managedWorkerReportStarted(taskID):
+            taskReporting.append(taskID)
             if let id = managedTaskHandoffs.removeValue(forKey: taskID),
                managedHandbackIDs.remove(id) != nil {
                 turnConducted = true
@@ -2648,6 +2806,7 @@ public final class Bot: ObservableObject, Identifiable {
             if sharesChat, case let .text(words, nil) = step, internalReply == nil {
                 (primary ?? self).headWords(words, by: engine)
             }
+            noteTaskStep(step)
             if case let .toolUse(id, tool, _, detail, parent) = step {
                 if toolCalls[id] == nil { toolCallOrder.append(id) }
                 toolCalls[id] = (tool, detail, parent)
@@ -2806,6 +2965,9 @@ public final class Bot: ObservableObject, Identifiable {
                 let handoffID = turnHandoffID
                 let handed = takeHandback()
                 lastTags = HeadTags()
+                taskTurn = nil
+                taskReporting = []
+                lastTaskTags = []
                 let deferHandback = handed && canCheckCompletion(silentMessage) && pausedWork == nil
                 let owner = primary ?? self
                 owner.conduct(owner.conductor.replied(engine, "", tags: HeadTags(), handed: handed && !deferHandback, handoffID: handoffID))
