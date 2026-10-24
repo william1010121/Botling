@@ -82,6 +82,23 @@ export function keep(file: string, folder: string, date = new Date()): { path: s
   }
 }
 
+/** Writes a picture a page handed over (`{name, base64}`) to the incoming folder; null when empty. */
+export function writeIncoming(dir: string, name: string, base64: string): string | null {
+  const data = Buffer.from(base64, "base64");
+  if (!data.length) return null;
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${randomUUID().slice(0, 6).toUpperCase()}-${safeName(name)}`);
+  writeFileSync(path, data, { mode: 0o600 });
+  return path;
+}
+
+/** How an answer of only pictures shows (`Bot.answerLabel`). */
+export function answerLabel(text: string, files: number): string {
+  const words = text.trim();
+  if (words || !files) return words;
+  return files === 1 ? "(picture)" : `(${files} pictures)`;
+}
+
 export interface PendingFile { id: string; name: string; path: string; kind: AttachmentKind; incoming: boolean }
 
 /** A name a pasted file may keep: no folders, no leading dots, no control characters. */

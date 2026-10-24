@@ -256,8 +256,13 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
           return;
         }
         case "answer": {
-          if (!chat || typeof action.messageID !== "string" || typeof action.text !== "string" || !action.text.trim()) return;
-          void client.request({ type: "chat.answer", botId: chat.botId, messageId: action.messageID, text: action.text }).catch(onError);
+          // A component's answer may bring pictures (`{name, base64}`), kept as attachments by the core.
+          const images = Array.isArray(action.images) ? (action.images as unknown[]).flatMap((entry) => {
+            const image = entry as { name?: unknown; base64?: unknown };
+            return typeof image?.name === "string" && typeof image.base64 === "string" && image.base64 ? [{ name: image.name.slice(0, 255) || "picture.png", base64: image.base64 }] : [];
+          }).slice(0, 10) : [];
+          if (!chat || typeof action.messageID !== "string" || typeof action.text !== "string" || (!action.text.trim() && !images.length)) return;
+          void client.request({ type: "chat.answer", botId: chat.botId, messageId: action.messageID, text: action.text, ...(images.length ? { images } : {}) }).catch(onError);
           return;
         }
         case "setReaction": {

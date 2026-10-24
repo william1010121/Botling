@@ -8,7 +8,8 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { PendingFiles, servedType } from "./attachments";
+import { rmSync } from "node:fs";
+import { PendingFiles, servedType, writeIncoming } from "./attachments";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
   type Command, type Event, type ImportView, type Outbound, type ResultOf,
@@ -451,7 +452,11 @@ export class Core {
       case "handoff.stop": return this.bot(cmd.botId).stopHandoff(cmd.handoffId);
       case "rounds.stop": return this.bot(cmd.botId).stopRounds();
       case "chat.choose": return this.bot(cmd.botId).choose(cmd.messageId, cmd.index, cmd.text);
-      case "chat.answer": return this.bot(cmd.botId).answer(cmd.messageId, cmd.text);
+      case "chat.answer": {
+        // A component's pictures: written to incoming/, kept by the bot with the answer, then removed.
+        const files = (cmd.images ?? []).flatMap((image) => writeIncoming(join(this.options.dataDir, "incoming"), image.name, image.base64) ?? []);
+        try { return this.bot(cmd.botId).answer(cmd.messageId, cmd.text, files); } finally { for (const file of files) rmSync(file, { force: true }); }
+      }
       case "chat.react": return this.bot(cmd.botId).react(cmd.messageId, cmd.emoji, cmd.present);
       case "subagent.view": return this.bot(cmd.botId).subagentView(cmd.subagentId);
       case "chat.read": {

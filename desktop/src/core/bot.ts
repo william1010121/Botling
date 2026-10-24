@@ -53,7 +53,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePathOf } from "node:path";
 import { fileURLToPath } from "node:url";
-import { attachmentList, attachmentsFolder, imageMediaType, keep } from "./attachments";
+import { answerLabel, attachmentList, attachmentsFolder, imageMediaType, keep } from "./attachments";
 import {
   ContractError, type RoutineView, type BotView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
   type StepView, type SubagentView, type TaskView,
@@ -2969,21 +2969,22 @@ export class Bot {
   }
 
   /** `Bot.answer`: the user answered a question in their own words instead of a button. */
-  answer(messageId: string, text: string): ResultOf<"chat.answer"> {
-    const resolved = this.resolveDecision(messageId, null, text);
+  answer(messageId: string, text: string, files: string[] = []): ResultOf<"chat.answer"> {
+    const resolved = this.resolveDecision(messageId, null, answerLabel(text, files.length));
     if (resolved !== null) return { accepted: resolved };
-    if (this.partner?.records.some((candidate) => candidate.id === messageId)) return this.partner.answer(messageId, text);
+    if (this.partner?.records.some((candidate) => candidate.id === messageId)) return this.partner.answer(messageId, text, files);
     const words = text.trim();
     const record = this.records.find((candidate) => candidate.id === messageId);
-    // A component's answer on a line with no question: your words go to the bot as a message (1.x).
+    // A component's answer on a line with no question: your words (and its pictures) go to the bot as a message (1.x).
     if (!record?.choices?.length && record?.displays?.length) {
-      if (!words) return { accepted: false };
+      if (!words && !files.length) return { accepted: false };
       this.refuseIfClosed();
-      this.send(words);
+      this.send(words, { files });
       return { accepted: true };
     }
     if (!record?.choices?.length) throw new ContractError("not_found", "No such question.");
-    if (!words || !isOpenQuestion(record)) return { accepted: false };
+    const shown = answerLabel(words, files.length);
+    if (!shown || !isOpenQuestion(record)) return { accepted: false };
     if (record.permissionTool) {
       // Words instead of a button: not allowed, and claude hears why.
       const approval = this.approvals.get(messageId);
@@ -2997,9 +2998,9 @@ export class Bot {
       return { accepted: true };
     }
     this.refuseIfClosed();
-    record.answer = words;
+    record.answer = shown;
     this.changed(record);
-    this.send(words, { replyTo: messageId, ...(this.sharesChat ? { to: this.engine } : {}) });
+    this.send(words, { replyTo: messageId, files, ...(this.sharesChat ? { to: this.engine } : {}) });
     return { accepted: true };
   }
 

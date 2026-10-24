@@ -398,7 +398,8 @@ export const Command = z.discriminatedUnion("type", [
   /** Picks a button on a question (a tool approval): the core decides what it means from its action. `text`: notes with the pick. */
   z.strictObject({ type: z.literal("chat.choose"), botId, messageId: id, index: z.number().int().nonnegative().max(19), text: z.string().max(MESSAGE_TEXT_LIMIT).optional() }),
   /** Answers a bot's question in the user's own words instead of a button. */
-  z.strictObject({ type: z.literal("chat.answer"), botId, messageId: id, text: z.string().min(1).max(MESSAGE_TEXT_LIMIT) }),
+  /** `images`: pictures a component sent with its answer (`{text, images}`), as `{name, base64}`; they go along as attachments. */
+  z.strictObject({ type: z.literal("chat.answer"), botId, messageId: id, text: z.string().max(MESSAGE_TEXT_LIMIT), images: z.array(z.strictObject({ name: z.string().min(1).max(255), base64: z.string().min(1).max(FILE_DATA_LIMIT) })).max(10).optional() }),
   /** The user's own reaction on a line (one of 👍 ❤️ 😂 🎉 🤔 👀). */
   z.strictObject({ type: z.literal("chat.react"), botId, messageId: id, emoji: z.string().min(1).max(16), present: z.boolean() }),
   /** A subagent's own conversation (the Agent call's id). */
