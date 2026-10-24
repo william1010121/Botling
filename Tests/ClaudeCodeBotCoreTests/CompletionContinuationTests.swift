@@ -199,6 +199,7 @@ extension CompletionContinuationTests {
         await eventually { fake.agents.count == 1 }
         let agent = fake.agents[0]
         agent.emit(.managedWorkPending(true))
+        agent.completionWorkerDependencies = [.init(id: "gpu2", run: 1, task: "GPU2 experiment", state: .running, callback: "app_task_result")]
         agent.emit(.trace(.subagentStarted(id: "gpu2", description: "GPU2 only", type: "codex-worker", prompt: "GPU2 experiment", background: true)))
         agent.reply(Self.idleReply)
         await eventually { agent.sent.count == 2 }

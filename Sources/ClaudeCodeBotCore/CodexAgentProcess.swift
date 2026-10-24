@@ -729,6 +729,22 @@ struct CodexSession {
 
     private var hasManagedWork: Bool { workers.values.contains(where: \.active) || !workerResults.isEmpty }
 
+    /// Execution/queued callbacks in THIS live runtime. Persisted wasActive flags and UI
+    /// trace cards cannot establish liveness. A result already being processed is not a wait.
+    var completionWorkerDependencies: [PromiseCheck.WorkerDependency] {
+        guard !stopped else { return [] }
+        let running = workers.values.filter { $0.active && !$0.cancelled }.map {
+            PromiseCheck.WorkerDependency(id: $0.id, run: $0.run, task: $0.instructions,
+                state: .running, callback: "app_task_result")
+        }
+        let queued = workerResults.compactMap { result -> PromiseCheck.WorkerDependency? in
+            guard let worker = workers[result.task], !worker.active, worker.run == result.run else { return nil }
+            return .init(id: worker.id, run: worker.run, task: worker.instructions,
+                state: .reportQueued, callback: "app_task_result", outcome: result.status)
+        }
+        return running.sorted { $0.id < $1.id } + queued.sorted { $0.id < $1.id }
+    }
+
     private mutating func pendingChanged() -> [CodexOutput] {
         let pending = hasManagedWork
         guard pending != managedPending else { return [] }
@@ -930,6 +946,9 @@ struct CodexSession {
     private mutating func messageWorker(_ task: String, text: String) -> [CodexOutput] {
         guard let worker = workers[task], !stopped else { return [] }
         if worker.active {
+            // Include scope corrections/stops sent during this run in the judge's ownership
+            // evidence too, after they leave the transient steer queue.
+            workers[task]?.instructions += "\nFollow-up: " + text
             if let turnID = worker.turnID {
                 return [workerSteer(task, text: text, turnID: turnID, run: worker.run)]
             }
@@ -1379,6 +1398,10 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
     private let threads: CodexThreads
     private let managedMode: Bool
     private let failure = Failure()
+
+    public var completionWorkerDependencies: [PromiseCheck.WorkerDependency]? {
+        lock.withLock { managedMode ? (closed ? [] : session.completionWorkerDependencies) : nil }
+    }
 
     public static func launcher(executable: URL, threads: CodexThreads = .shared) -> AgentLauncher {
         { launch in try CodexAgentProcess(launch, executable: executable, threads: threads) }

@@ -1864,17 +1864,12 @@ public final class Bot: ObservableObject, Identifiable {
     /// semantically rather than letting an unrelated worker/monitor suppress the entire check.
     private func checkPromise(in message: ChatMessage, handed: Bool, handoffID: UUID?) {
         guard canCheckCompletion(message), let promiseCheck, let source = process else { return }
+        let workers = source.completionWorkerDependencies
         let tasks = messages.flatMap { $0.backgroundTasks ?? [] }.filter { $0.holdsBotAwake(now: now()) }
-        var dependencies = trace.subagents.filter(\.isRunning).map {
-            "Subagent \($0.id): \($0.description); task: \($0.prompt); result returns via task notification"
+        var dependencies = trace.subagents.filter { $0.isRunning && $0.type != "codex-worker" }.map {
+            "Subagent \($0.id); status: running; result returns via task notification; \($0.description); task: \($0.prompt)"
         }
         dependencies += tasks.map { "\($0.kind.rawValue) \($0.id): \($0.title); \($0.detail ?? ""); returns by notification/scheduled wake" }
-        if managedWorkPending {
-            dependencies.append("App-managed workers/reports pending; only their recorded tasks are owned, not all remaining work")
-            dependencies += trace.subagents.filter { !$0.isRunning }.suffix(12).map {
-                "Worker \($0.id): \($0.description); task: \($0.prompt); status: \($0.status.rawValue); report queued by the app"
-            }
-        }
         dependencies += (primary ?? self).conductor.records.filter { $0.isActive && $0.from == engine }.map {
             "Handoff \($0.id) to \($0.to.rawValue), state \($0.state.rawValue): \($0.task); result returns via conductor"
         }
@@ -1883,11 +1878,12 @@ public final class Bot: ObservableObject, Identifiable {
         let authorization = messages.filter { $0.role == .user || $0.role == .relay }.suffix(6)
             .map { "[\($0.role)] \($0.text)" }.joined(separator: "\n")
         let recent = messages.suffix(10).map { "[\($0.role)] \($0.text)" }.joined(separator: "\n")
-        let end = PromiseCheck.TurnEnd(reply: message.text, workPending: !dependencies.isEmpty,
+        var end = PromiseCheck.TurnEnd(reply: message.text, workPending: !dependencies.isEmpty || managedWorkPending || workers?.isEmpty == false,
             task: pausedCompletionContext.map { $0.task + "\nCurrent user interruption: " + completionAuthorization } ?? completionAuthorization, conversation: authorization + "\nRecent conversation:\n" + recent,
             dependencies: dependencies, actions: actions,
             memory: profile.keepsMemory ? ((try? String(contentsOf: profile.memoryURL, encoding: .utf8)) ?? "") : "",
             terminalRequired: completionRequiresTerminalSignal, signals: completionSignals.removeValue(forKey: message.id) ?? [])
+        end.workerDependencies = workers
         // A new tool ID or another promise alone is not progress. Repeated identical checks
         // cannot sustain an endless self-wake loop. Genuine new results allow ongoing research.
         let evidence = steps.filter { $0.done && !$0.failed && $0.output?.isEmpty == false }.map {
@@ -1919,6 +1915,14 @@ public final class Bot: ObservableObject, Identifiable {
                 return
             }
             completionTask = nil
+            // A worker may finish, fail, stop, or receive a scope change during inference.
+            // Rejudge against the current runtime instead of acting on an obsolete snapshot.
+            if source.completionWorkerDependencies != workers {
+                interruptCompletionVerification()
+                completionSignals[message.id] = end.signals
+                checkPromise(in: message, handed: handed, handoffID: handoffID)
+                return
+            }
             if let handoffID, !(primary ?? self).conductor.records.contains(where: { $0.id == handoffID && $0.isActive }) {
                 interruptCompletionVerification()
                 completionAssignment = nil
