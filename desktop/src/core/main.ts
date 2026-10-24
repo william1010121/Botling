@@ -52,6 +52,7 @@ function codexConfig(profile: BotProfile, session: SessionStartCodex, threads: C
     cwd: profile.folder, sessionId: session.sessionId, resume: session.resume, threads,
     instructions: session.systemPrompt, workerInstructions: session.workerInstructions,
     model: process.env.BOTLING_CODEX_MODEL || session.codexModel, effort: process.env.BOTLING_CODEX_EFFORT || null,
+    routinesFile: session.routinesFile,
   };
   if (kind === "claude") return { ...common, command: process.env.BOTLING_CODEX_PATH ?? "codex" };
   const script = process.env.BOTLING_FAKE_CODEX;
@@ -80,6 +81,7 @@ const core = new Core({
   interruptGraceMs: number(process.env.BOTLING_INTERRUPT_GRACE_MS, 2_000),
   tidyTimeoutMs: number(process.env.BOTLING_TIDY_TIMEOUT_MS, 5 * 60_000),
   quitTidyMs: number(process.env.BOTLING_QUIT_TIDY_MS, 15_000),
+  routineTickMs: number(process.env.BOTLING_ROUTINE_TICK_MS, 30_000),
   languages: process.env.BOTLING_LANGUAGES ? process.env.BOTLING_LANGUAGES.split(",").filter(Boolean) : undefined,
   // 1.x's data folder, to tell whether it has a project open; only when named (packaged: ~/.claudecodebot).
   oneX: {

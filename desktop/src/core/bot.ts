@@ -46,9 +46,9 @@
 //     with decision=…, and a pick on any copy of it is applied once, by the head that asked.
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
-  ContractError, type BotView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
+  ContractError, type RoutineView, type BotView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
   type StepView, type SubagentView, type TaskView,
 } from "../contract";
 import { ClaudeHead, type HeadConfig, type HeadExit } from "./agent/head";
@@ -68,10 +68,14 @@ import { isPlainOK, PARTS_NOTE, profilePaths, withoutPartsNote, type BotPrompts 
 import { masked, parseReply, saysNoReply, saysNothing, unsupportedRequest } from "./reply";
 import { SubagentBook, readSubagent, SUBAGENT_TOOLS, toolCount, type SubagentRecord } from "./subagents";
 import { readTaskCard, TaskBook, type TaskCard } from "./tasks";
+import {
+  CronSchedule, DAILY_SUMMARY, RoutineFile, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
+  routineStatus, routineTitle, scheduledRoutine, type Routine, type ScheduledRoutine,
+} from "./routines";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
 import type { ProjectLock } from "./store/lock";
 import {
-  HISTORY_LIMIT, isOpenQuestion, newId, swiftDateISO, toSwiftDate, type ChatRecord, type ChoiceRecord, type StepRecord,
+  HISTORY_LIMIT, fromSwiftDate as fromSwiftDateMs, isOpenQuestion, newId, swiftDateISO, toSwiftDate, type ChatRecord, type ChoiceRecord, type StepRecord,
 } from "./store/records";
 import type { BotProfile } from "./store/workspace";
 
@@ -88,6 +92,8 @@ export interface SessionStartCodex extends SessionStart {
   /** What app-managed workers are told. */
   workerInstructions: string;
   codexModel: string | null;
+  /** The bot's scheduled-routines.json, for `app_routines`. */
+  routinesFile: string | null;
 }
 
 export interface BotOptions {
@@ -121,6 +127,8 @@ export interface BotOptions {
   welcome?: boolean;
   /** A project bot's hold on its project folder (null: it needs none). */
   lock?: ProjectLock | null;
+  /** The main bot's routines get the project list (`Workspace.projectBriefing`). */
+  projectBriefing?: () => string;
 }
 
 type Origin = "user" | "app" | "background" | "tidy";
@@ -170,6 +178,8 @@ interface Turn {
 }
 
 interface Approval {
+  /** A monitored command's Allow once card: it outlives the turn that asked (Codex ends its turn at once). */
+  lasting: boolean;
   requestId: string;
   tool: string;
   input: Record<string, unknown>;
@@ -252,6 +262,11 @@ export class Bot {
   private contextSent = new Set<string>();
   /** Our turn that claude has not begun yet, set aside while it answers the other head's words first. */
   private deferred: Turn | null = null;
+  /** Its routines (the primary's): routines.cron, the app-owned schedules, when each cron job last ran. */
+  private routineFile: RoutineFile | null = null;
+  private scheduledStore: ScheduledRoutineStore | null = null;
+  private routineRuns: Record<string, number> = {};
+  private routineError: string | null = null;
 
   constructor(private options: BotOptions) {
     const primary = options.primary;
@@ -280,6 +295,7 @@ export class Bot {
     if (!primary) {
       this.checkLock();
       if (hasTwo(this.headsSettings)) this.makePartner();
+      this.setUpRoutines();
     }
   }
 
@@ -1226,7 +1242,7 @@ export class Bot {
     let head: AgentHead;
     if (this.engine === "codex") {
       if (!this.options.codexConfig) throw new Error("Codex is not available here.");
-      const config = this.options.codexConfig(this.profile, { ...start, workerInstructions: prompts.codexWorkerSystem, codexModel: this.heads.codexModel });
+      const config = this.options.codexConfig(this.profile, { ...start, workerInstructions: prompts.codexWorkerSystem, codexModel: this.heads.codexModel, routinesFile: this.routineStorePath });
       head = new CodexHead(config, { onItem: (item) => this.onItem(head, item), onExit: (exit) => this.onExit(head, exit) });
     } else {
       const config = this.options.headConfig(this.profile, start);
@@ -1281,6 +1297,8 @@ export class Bot {
       if (!item.pending && !this.turn && !this.queue.length) this.scheduleIdle();
       return;
     }
+    if (item.kind === "monitorEnded") return this.monitorEnded(item.id, item.output, item.failed);
+    if (item.kind === "routinesChanged") return this.routinesEdited();
     if (item.kind === "backgroundTurn") {
       // A Codex worker's report: the app's own turn on the coordinator, which claude-style turns start on their first line.
       if (!this.turn && !this.ignoreResults) this.backgroundTurn(head);
@@ -1403,6 +1421,23 @@ export class Bot {
     }
   }
 
+  /** A monitored command ended: its step, in the reply of the turn that started it, is done. */
+  private monitorEnded(id: string, output: string, failed: boolean) {
+    const mark = (steps: StepRecord[] | undefined) => {
+      const step = steps?.findLast((candidate) => candidate.id === id);
+      if (!step) return false;
+      step.done = true;
+      step.failed = failed;
+      step.output = output.slice(0, 10_000);
+      return true;
+    };
+    if (this.turn && mark(this.turn.steps)) { this.emitSteps(this.turn); return; }
+    for (let i = this.records.length - 1; i >= Math.max(0, this.records.length - 80); i--) {
+      const record = this.records[i]!;
+      if (mark(record.steps)) { this.changed(record); return; }
+    }
+  }
+
   /** The turn's first words or tool claim its task card; a tool makes it real work. */
   private noteWork(turn: Turn, tool: boolean) {
     if (turn.origin !== "user" || !turn.userId) return;
@@ -1511,7 +1546,7 @@ export class Bot {
       turn.onReply?.(status === "done" ? turn.reply.text : "");
       this.finished.set(turn.id, status);
       turn.resolve(status);
-      for (const id of [...this.approvals.keys()]) this.settle(id, NO_LONGER_NEEDED, true);
+      this.settleTurnApprovals();
       return; // sleep() goes on from here.
     }
     const raw = turn.reply.text;
@@ -1613,7 +1648,7 @@ export class Bot {
 
   /** claude waits on nothing once its turn ended: no approval stays open. */
   private afterTurn() {
-    for (const id of [...this.approvals.keys()]) this.settle(id, NO_LONGER_NEEDED, true);
+    this.settleTurnApprovals();
     this.updated();
   }
 
@@ -1716,7 +1751,7 @@ export class Bot {
     if (record) this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
     this.finished.set(turnId, "stopped");
     turn.resolve("stopped");
-    for (const id of [...this.approvals.keys()]) this.settle(id, NO_LONGER_NEEDED, true);
+    this.settleTurnApprovals();
     this.updated();
     // A message this head led for both: the other head gets it now.
     if (this.sharesChat) this.headStopped(this.engine);
@@ -1894,6 +1929,150 @@ export class Bot {
   }
 
   // ------------------------------------------------------------------------------------------
+  // Routines (Routines.swift, ScheduledRoutines.swift; the clock is the core's, `Core.checkRoutines`)
+
+  /** routines.cron (made with the old bot.json routines, or the main bot's daily summary) and scheduled-routines.json beside it. */
+  private setUpRoutines() {
+    const file = join(this.profile.folder, this.paths.routines);
+    this.routineFile = new RoutineFile(file);
+    this.scheduledStore = new ScheduledRoutineStore(join(dirname(file), "scheduled-routines.json"));
+    const settings = this.store.loadSettings();
+    this.routineRuns = fromRoutineRuns(settings.routineRuns);
+    // Only where this bot may write: a project another Botling has stays as it is.
+    if (!this.readOnly && !this.lockProblem && !this.profile.problem) {
+      try {
+        this.routineFile.create(legacyRoutineLines(settings.routines) ?? (this.profile.role === "main" ? [DAILY_SUMMARY] : []));
+      } catch (error) {
+        this.log(`routines.cron could not be made: ${(error as Error).message}`);
+      }
+    }
+  }
+
+  /** The store Codex's `app_routines` uses (null for a partner: its primary's). */
+  get routineStorePath(): string | null {
+    return (this.owner.scheduledStore ?? null)?.file ?? null;
+  }
+
+  private loadRoutines(): { jobs: Routine[]; scheduled: ScheduledRoutine[] } {
+    const jobs = this.routineFile?.load() ?? [];
+    let scheduled: ScheduledRoutine[] = [];
+    try {
+      scheduled = this.scheduledStore?.load() ?? [];
+      this.routineError = null;
+    } catch (error) {
+      this.routineError = (error as Error).message;
+    }
+    return { jobs, scheduled };
+  }
+
+  /** What the app shows of its routines. */
+  routinesView(now = Date.now()): ResultOf<"routines.list"> {
+    if (this.options.primary) return this.options.primary.routinesView(now);
+    const { jobs, scheduled } = this.loadRoutines();
+    const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
+    const views: RoutineView[] = scheduled.slice(-150).map((job) => {
+      const schedule = job.kind === "once" ? iso(fromSwiftDateMs(job.at ?? 0))! : CronSchedule.parse(job.cron ?? "")?.description ?? job.cron ?? "";
+      const status = routineStatus(job, now);
+      let next: number | null = null;
+      if (job.state === "pending") {
+        if (job.kind === "once") next = fromSwiftDateMs(job.at ?? 0);
+        else next = dueTime(job, now) ?? CronSchedule.parse(job.cron ?? "")?.nextTime(now, job.timezone) ?? null;
+      }
+      return { id: job.id, kind: job.kind, task: clip(job.task, 2_000) ?? "", title: clip(routineTitle(job.task), 400) ?? "", schedule: clip(schedule, 400) ?? "", timezone: job.timezone.slice(0, 100), status, next: iso(next) };
+    });
+    for (const job of jobs.slice(0, 50)) {
+      views.push({
+        id: `cron:${job.id}`.slice(0, 2_200), kind: "legacy", task: clip(job.task, 2_000) ?? "", title: clip(routineTitle(job.task), 400) ?? "",
+        schedule: clip(job.schedule.description, 400) ?? "", timezone: "system_local", status: job.enabled ? "enabled" : "paused",
+        next: job.enabled ? iso(job.schedule.nextTime(now, null)) : null,
+      });
+    }
+    return { routines: views, error: this.routineError?.slice(0, 2_000) ?? null };
+  }
+
+  private routinesChanged() {
+    this.options.emit({ type: "routines.updated", botId: this.id, ...this.routinesView() });
+  }
+
+  /** The app's own change to a routine (`app_routines`' operations); errors are the store's, as Codex sees them. */
+  changeRoutine(args: Record<string, unknown>): ResultOf<"routines.change"> {
+    if (this.options.primary) return this.options.primary.changeRoutine(args);
+    if (!this.scheduledStore || this.readOnly || this.lockProblem) throw new ContractError("conflict", this.lockProblem ?? this.problem ?? "This bot's routines cannot be changed here.");
+    try {
+      this.scheduledStore.perform(args);
+    } catch (error) {
+      throw new ContractError("bad_request", (error as Error).message);
+    }
+    this.routinesChanged();
+    return this.routinesView();
+  }
+
+  /** Codex changed its routines through `app_routines`: the app's view follows. */
+  routinesEdited() {
+    this.owner.routinesChanged();
+  }
+
+  /** `isDue`: its latest time today has passed and it has not run since; a job seen for the first time starts from now. */
+  private isDue(job: Routine, now: number): boolean {
+    if (!job.enabled) return false;
+    const last = this.routineRuns[job.id];
+    if (last === undefined) {
+      this.routineRuns[job.id] = toSwiftDate(now);
+      this.saveRoutineRuns();
+      return false;
+    }
+    const time = job.schedule.lastTimeToday(now, null);
+    return time !== null && last < toSwiftDate(time);
+  }
+
+  private saveRoutineRuns() {
+    if (!this.readOnly) this.store.saveSetting("routineRuns", this.routineRuns);
+  }
+
+  /**
+   * The core's clock (every 30 s, as `Workspace.checkRoutines`): routines.cron jobs that are due run;
+   * app-owned schedules are claimed (written before dispatch) and run. Nothing runs while the bot is
+   * read-only here or its folder is gone.
+   */
+  checkRoutines(now = Date.now()) {
+    if (this.options.primary || this.shuttingDown || this.readOnly || this.problem || this.profile.problem || !this.routineFile) return;
+    if (this.options.lock && !this.checkLock()) return;
+    const before = this.routineError;
+    const { jobs, scheduled } = this.loadRoutines();
+    let ran = false;
+    for (const job of jobs) {
+      if (!this.isDue(job, now)) continue;
+      this.routineRuns[job.id] = toSwiftDate(now);
+      this.saveRoutineRuns();
+      this.dispatchRoutine(job, now);
+      ran = true;
+    }
+    for (const job of scheduled) {
+      if (dueTime(job, now) === null) continue;
+      try {
+        const claimed = this.scheduledStore!.claim(job.id, now);
+        if (!claimed) continue;
+        this.dispatchRoutine(scheduledRoutine(claimed), now);
+        this.scheduledStore!.didDispatch(job.id, now);
+      } catch (error) {
+        this.routineError = (error as Error).message;
+        this.log(`routine ${job.id}: ${this.routineError}`);
+      }
+      ran = true;
+    }
+    if (this.routineError && this.routineError !== before) this.notice(`Routines: ${this.routineError}`);
+    if (ran || this.routineError !== before) this.routinesChanged();
+  }
+
+  /** A divider with its time, then its prompt as a message nobody typed, to this bot's (first) head (`Bot.run`). */
+  private dispatchRoutine(job: Routine, now: number) {
+    this.add({ id: newId(), role: "divider", text: routineDivider(job, now), date: toSwiftDate(now) });
+    const prompt = routinePrompt(job, this.profile.role, () => this.options.projectBriefing?.() ?? "");
+    this.log(`routine "${routineTitle(job.task)}" runs`);
+    this.deliverTo(this.engine, prompt, null, { origin: "app" });
+  }
+
+  // ------------------------------------------------------------------------------------------
   // Approvals
 
   private ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn) {
@@ -1912,10 +2091,15 @@ export class Bot {
     const record: ChatRecord = { id: newId(), role: "bot", text: permissionText(item.tool, item.summary), date: toSwiftDate(), choices, permissionTool: item.tool, engine: this.engine };
     const expires = Date.now() + this.options.approvalTimeoutMs;
     const timer = setTimeout(() => this.expire(record.id), this.options.approvalTimeoutMs);
-    this.approvals.set(record.id, { requestId: item.requestId, tool: item.tool, input: item.input, head, timer, expires });
+    this.approvals.set(record.id, { lasting: item.requestId.startsWith("monitor:"), requestId: item.requestId, tool: item.tool, input: item.input, head, timer, expires });
     this.add(record);
     this.log(`asks to use ${item.tool}`);
     this.updated();
+  }
+
+  /** The turn ended (or stopped): its questions go; a monitored command's Allow once card stays. */
+  private settleTurnApprovals() {
+    for (const [id, approval] of [...this.approvals]) if (!approval.lasting) this.settle(id, NO_LONGER_NEEDED, true);
   }
 
   /** Nobody answered in time: it counts as not allowed. */

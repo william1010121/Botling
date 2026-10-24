@@ -261,13 +261,16 @@ describe("Codex head: app-managed workers", () => {
     expect(new Out(session.receive(JSON.stringify({ id: 5, result: {} }))).params("turn/start")).toMatchObject({ threadId: "w1", input: [{ type: "text", text: "Carry on" }] });
   });
 
-  it("stop cancels workers (no report); routines and monitors say 2.0 cannot do them; others' calls are refused", () => {
+  it("stop cancels workers (no report); routines need their file, a monitor its owning turn; others' calls are refused", () => {
     const session = new CodexSession(config());
     ready(session);
     session.send("go");
     session.receive(JSON.stringify({ id: 3, result: { turn: { id: "t1" } } }));
-    expect(receipt(new Out(session.receive(toolCall("app_routines", { operation: "list" }))))).toEqual({ error: expect.stringContaining("Botling 2.0 cannot do this yet") });
-    expect(receipt(new Out(session.receive(toolCall("app_monitor_start", { command: "ls" }))))).toEqual({ error: expect.stringContaining("Botling 2.0 cannot do this yet") });
+    expect(receipt(new Out(session.receive(toolCall("app_routines", { operation: "list" }))))).toEqual({ error: expect.stringContaining("Routine storage is unavailable for this session") });
+    const monitor = new Out(session.receive(toolCall("app_monitor_start", { command: "ls" })));
+    expect(receipt(monitor)).toMatchObject({ command: "ls", status: "awaitingApproval", wake: "none", cwd: "/tmp/bot" });
+    expect(monitor.of("permission")).toMatchObject([{ tool: "Monitored command", requestId: `monitor:${receipt(monitor).monitor_id}` }]);
+    expect(receipt(new Out(session.receive(toolCall("app_monitor_start", { command: "ls" }, "not-this-turn"))))).toEqual({ error: "A monitor must be created by the current owning Codex turn." });
     expect(receipt(new Out(session.receive(toolCall("app_handoff", { instructions: "x", role: "component-editor" }))))).toEqual({ error: expect.stringContaining("component-editor") });
     const handed = new Out(session.receive(toolCall("app_handoff", { instructions: "Slow job" })));
     const task = receipt(handed).task_id;
@@ -279,6 +282,8 @@ describe("Codex head: app-managed workers", () => {
     const stopped = new Out(session.stop());
     expect(stopped.params("turn/interrupt")).toEqual({ threadId: "w1", turnId: "wt1" });
     expect(stopped.of("subagentEnded")).toEqual([{ kind: "subagentEnded", id: task, status: "killed", summary: "Stopped by the app." }]);
+    // Its monitors too: the card goes, nothing will run or wake.
+    expect(stopped.of("permissionCancelled")).toEqual([{ kind: "permissionCancelled", requestId: `monitor:${receipt(monitor).monitor_id}` }]);
     expect(replay(session, [note("turn/completed", { threadId: "w1", turn: { id: "wt1", status: "interrupted" } })]).all).toEqual([]);
   });
 
@@ -322,5 +327,47 @@ describe("codex-threads (1.x's layout)", () => {
     mkdirSync(join(dir, "x"), { recursive: true });
     writeFileSync(join(dir, "codex-threads", "bad.workers.json"), "{");
     expect(threads.workers("bad")).toEqual([]);
+  });
+});
+
+describe("Codex head: command monitors after a restart (CommandMonitor.reconcile)", () => {
+  const monitor = (change: Record<string, unknown>) => ({ id: "m1", owner: "6A0B0000-0000-4000-8000-0000000000AA", command: "make test", cwd: "/tmp/bot", state: "running", stdout: "", stderr: "", detail: "", wake: "none", createdAt: 1, ...change }) as any;
+  const ready = (session: CodexSession) => {
+    session.start();
+    return replay(session, [JSON.stringify({ id: 1, result: {} }), JSON.stringify({ id: 2, result: { thread: { id: "th-1" } } })]);
+  };
+
+  it("a command that was running is reported interrupted, never run again", () => {
+    const session = new CodexSession(config({ ownerSession: "6a0b0000-0000-4000-8000-0000000000aa", restoredMonitors: [monitor({})] }));
+    expect(session.monitorRecords[0]).toMatchObject({ state: "interrupted", wake: "pending" });
+    expect(session.monitorRecords[0].detail).toMatch(/the command was not rerun/);
+    const out = ready(session);
+    expect(out.methods).not.toContain("command/exec");
+    const start = out.params("turn/start");
+    expect(start.toolOutput.name).toBe("app_monitor_result");
+    expect(JSON.parse(start.toolOutput.output)).toMatchObject({ monitor_id: "m1", status: "interrupted", exit_code: null, wake: "dispatching" });
+    expect(out.of("backgroundTurn")).toHaveLength(1);
+  });
+
+  it("one awaiting approval is not started; one cancelling is cancelled with its wake suppressed; a wake mid-dispatch becomes uncertain", () => {
+    const session = new CodexSession(config({
+      ownerSession: "6A0B0000-0000-4000-8000-0000000000AA",
+      restoredMonitors: [monitor({ id: "a", state: "awaitingApproval" }), monitor({ id: "b", state: "cancelling" }), monitor({ id: "c", state: "succeeded", exitCode: 0, wake: "dispatching" }), monitor({ id: "d", owner: "someone-else" })],
+    }));
+    const records = session.monitorRecords;
+    expect(records.map((r) => [r.id, r.state, r.wake])).toEqual([["a", "interrupted", "pending"], ["b", "cancelled", "suppressed"], ["c", "succeeded", "uncertain"]]);
+    expect(records[0]!.detail).toBe("Restarted while awaiting approval. The command was not started; no rerun was performed.");
+    expect(records[2]!.detail).toMatch(/No duplicate wake was sent\.$/);
+  });
+
+  it("app_monitor_start outside the owning turn is refused; status and cancel answer for its monitors", () => {
+    const session = new CodexSession(config({ ownerSession: "6A0B0000-0000-4000-8000-0000000000AA" }));
+    ready(session);
+    const call = (tool: string, args: unknown, extra: Record<string, unknown> = {}) =>
+      replay(session, [JSON.stringify({ id: 99, method: "item/tool/call", params: { threadId: "th-1", tool, arguments: args, ...extra } })]);
+    const refused = call("app_monitor_start", { command: "ls" });
+    expect(JSON.parse(refused.writes[0].result.contentItems[0].text)).toEqual({ error: "A monitor must be created by the current owning Codex turn." });
+    const status = replay(session, [JSON.stringify({ id: 100, method: "item/tool/call", params: { threadId: "th-1", tool: "app_monitor_status", arguments: {} } })]);
+    expect(JSON.parse(status.writes[0].result.contentItems[0].text)).toEqual({ monitors: [] });
   });
 });

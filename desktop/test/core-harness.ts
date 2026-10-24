@@ -35,7 +35,7 @@ export class CoreHarness {
   }
 
   send(cmd: unknown, id = `r${++this.counter}`) {
-    this.post({ v: 4, id, cmd });
+    this.post({ v: 5, id, cmd });
     return id;
   }
 

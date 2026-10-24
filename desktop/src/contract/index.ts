@@ -20,8 +20,10 @@ import shared from "../../../Web/src/contract.json";
  *    message can be removed, a bot can be tidying (writing its notes before it sleeps).
  * 4: Codex heads and bots with two heads (who said a line, who it was for and has seen it, the
  *    composer's Both/Claude/Codex, hand-offs and their rounds), several turns at once.
+ * 5: routines (routines.cron and app-owned schedules), catch-up summaries, components (`<show>`
+ *    displays, the component library, pins and the Board) and their commands' approvals.
  */
-export const PROTOCOL_VERSION = 4 as const;
+export const PROTOCOL_VERSION = 5 as const;
 
 /** The most a card's `ccb.save` keeps, shared with the Swift app (`ComponentState.limit`). */
 export const CARD_SAVE_LIMIT: number = (shared as { saveLimit: number }).saveLimit;
@@ -212,6 +214,23 @@ export type RunningView = z.infer<typeof RunningView>;
 /** A turn under way, with its head (two heads can work at once) and its steps so far. */
 export interface RunView { turnId: string; messageId: string; head: "claude" | "codex"; live: StepView[] }
 
+/** A routine: a routines.cron line ("legacy", system time) or an app-owned schedule (once / recurring in a zone). */
+export const RoutineView = z.strictObject({
+  /** "cron:<line>" for a routines.cron job; the saved id otherwise. */
+  id: z.string().min(1).max(2_200),
+  kind: z.enum(["once", "recurring", "legacy"]),
+  task: z.string().max(2_000),
+  title: z.string().max(400),
+  /** "Every day 08:15", the cron fields, or (once) its time as ISO-8601. */
+  schedule: z.string().max(400),
+  timezone: z.string().max(100),
+  /** pending, due, paused, fired, cancelled, delivery_uncertain; enabled/paused for routines.cron. */
+  status: z.string().max(40),
+  /** When it next runs (ISO-8601), if it will. */
+  next: z.string().nullable(),
+});
+export type RoutineView = z.infer<typeof RoutineView>;
+
 export const AccountView = z.strictObject({ id, name: z.string().max(80), partition: z.string() });
 export type AccountView = z.infer<typeof AccountView>;
 
@@ -251,6 +270,14 @@ export const Command = z.discriminatedUnion("type", [
   }),
   /** Main only: the card's HTML for the botling-card: protocol. */
   z.strictObject({ type: z.literal("card.html"), botId, messageId: id, cardId: id }),
+  /** The bot's routines (routines.cron and scheduled-routines.json), and why they cannot be read, if so. */
+  z.strictObject({ type: z.literal("routines.list"), botId }),
+  /** Creates (once with `at`, recurring with `cron` in `timezone`), pauses, resumes or cancels one (`app_routines`' operations). */
+  z.strictObject({
+    type: z.literal("routines.change"), botId, operation: z.enum(["create", "pause", "resume", "cancel"]),
+    id: z.string().min(1).max(2_200).optional(), kind: z.enum(["once", "recurring"]).optional(), task: z.string().min(1).max(2_000).optional(),
+    at: z.string().max(64).optional(), cron: z.string().max(200).optional(), timezone: z.string().max(100).optional(), requestId: id.optional(),
+  }),
   z.strictObject({ type: z.literal("accounts.list") }),
   /** Main only: opens a website in that account's own persistent session, with no bridge. */
   z.strictObject({ type: z.literal("site.open"), accountId: id, url: z.url({ protocol: /^https?$/ }).max(2_000) }),
@@ -261,7 +288,7 @@ export type CommandType = Command["type"];
 /** Commands the renderer may send. `card.html` is for main's protocol handler only. */
 export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.react", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
-  "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop",
+  "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
 export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open"]);
@@ -296,6 +323,8 @@ export interface Results {
   "card.save": { saved: true };
   "card.action": { accepted: true };
   "card.html": { html: string };
+  "routines.list": { routines: RoutineView[]; error: string | null };
+  "routines.change": { routines: RoutineView[]; error: string | null };
   "accounts.list": { accounts: AccountView[] };
   "site.open": { windowId: number };
 }
@@ -326,6 +355,8 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("card.acted"), botId, messageId: id, cardId: id, name: z.string(), value: z.string() }),
   /** A bot with two heads: who new messages go to, the rounds line and the hand-offs changed (null: one head now). */
   z.strictObject({ type: z.literal("heads.updated"), botId, heads: HeadsView.nullable() }),
+  /** Its routines changed (one ran, the bot or the app edited them). */
+  z.strictObject({ type: z.literal("routines.updated"), botId, routines: z.array(RoutineView).max(200), error: z.string().max(2_000).nullable() }),
 ]);
 export type Event = z.infer<typeof Event>;
 

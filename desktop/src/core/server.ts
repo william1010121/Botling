@@ -46,6 +46,8 @@ export interface CoreOptions {
   languages?: string[];
   /** How to tell that Botling 1.x has a project open (its data folder; null: do not look). */
   oneX?: OneXCheck;
+  /** How often routines are checked (1.x: every 30 s); 0: never (tests drive `checkRoutines`). */
+  routineTickMs?: number;
 }
 
 export class Core {
@@ -56,6 +58,7 @@ export class Core {
   private inflight = new Map<string, AbortController>();
   private readonly ledger: ProcessLedger;
   private imported: ImportView | null = null;
+  private routineClock: NodeJS.Timeout | null = null;
 
   constructor(private options: CoreOptions) {
     mkdirSync(options.dataDir, { recursive: true });
@@ -86,10 +89,39 @@ export class Core {
         idleMs: options.idleMs ?? 30 * 60_000,
         interruptGraceMs: options.interruptGraceMs ?? 2_000,
         welcome: profile.id === MAIN_BOT_ID && !this.imported,
+        projectBriefing: profile.role === "main" ? () => this.projectBriefing(profiles) : undefined,
       });
       this.bots.set(profile.id, bot);
       this.order.push(profile.id);
     }
+    // Checking a wall-clock time every 30 s (rather than sleeping until it) survives the computer
+    // sleeping; a time missed while the app was closed runs once later that day (1.x).
+    const tick = options.routineTickMs ?? 30_000;
+    if (tick > 0) {
+      setTimeout(() => this.checkRoutines(), 0);
+      this.routineClock = setInterval(() => this.checkRoutines(), tick);
+      this.routineClock.unref?.();
+    }
+  }
+
+  /** Every bot's routines that are due run now (`Workspace.checkRoutines`). */
+  checkRoutines(now = Date.now()) {
+    for (const bot of this.bots.values()) {
+      try { bot.checkRoutines(now); } catch (error) { this.log(`routines of ${bot.profile.name}: ${(error as Error).message}`); }
+    }
+  }
+
+  /**
+   * What the main bot's routines are told about the projects (`Workspace.projectBriefing`), without
+   * what 2.0 does not have yet: inboxes (nothing delivers them), Maintainer and teams.
+   */
+  private projectBriefing(profiles: BotProfile[]): string {
+    const memory = (profile: BotProfile) => join(profile.folder, profile.memoryPath);
+    const projects = profiles.filter((profile) => profile.role === "manager");
+    const own = profiles.filter((profile) => profile.role === "bot");
+    const projectLines = projects.length ? projects.map((profile) => `- ${profile.name} (folder ${profile.folder}): memory file ${memory(profile)}`).join("\n") : "(No projects yet.)";
+    const botLines = own.length ? "\n(App: Bots of their own, which you check the same way.)\n" + own.map((profile) => `- ${profile.name} (${(profile.job ?? "").split("\n")[0]}): memory file ${memory(profile)}`).join("\n") : "";
+    return `(App: Project list. To check progress, read the memory file and do not wake the manager.)\n${projectLines}${botLines}`;
   }
 
   private importOnce() {
@@ -205,6 +237,11 @@ export class Core {
       case "card.save": return this.bot(cmd.botId).cardSave(cmd.messageId, cmd.cardId, cmd.data);
       case "card.action": return this.bot(cmd.botId).cardAction(cmd.messageId, cmd.cardId, cmd.name, cmd.value);
       case "card.html": return { html: this.bot(cmd.botId).card(cmd.messageId, cmd.cardId).html } satisfies ResultOf<"card.html">;
+      case "routines.list": return this.bot(cmd.botId).routinesView();
+      case "routines.change": {
+        const { type: _type, botId: _bot, requestId, ...rest } = cmd;
+        return this.bot(cmd.botId).changeRoutine({ ...rest, ...(requestId ? { request_id: requestId } : {}) });
+      }
       default: throw new ContractError("not_found", `The core does not handle ${cmd.type}.`);
     }
   }
@@ -223,6 +260,7 @@ export class Core {
 
   /** Ends every turn and head (with their trees) and writes everything out; for quitting. */
   async shutdown() {
+    if (this.routineClock) { clearInterval(this.routineClock); this.routineClock = null; }
     await Promise.all([...this.bots.values()].map((bot) => bot.shutdown()));
   }
 }

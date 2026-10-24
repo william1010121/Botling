@@ -14,6 +14,10 @@
 //   /tool <command> — asks to run <command>; says whether it was allowed
 //   /worker <task>  — hands <task> to an app-managed worker (app_handoff) and ends its turn
 //   /choices        — asks with a <choices> block
+//   /monitor <cmd>  — asks the app to run <cmd> as a monitored command (app_monitor_start) and ends its turn;
+//                     the app's app_monitor_result wakes it: "Monitor <status>, exit <code>: <stdout>"
+//   /routine <json> — calls app_routines with <json> as its arguments; says the result
+// command/exec runs the command for real (in its cwd, through the shell it names); command/exec/terminate ends it.
 // A report turn (an app_task_result tool output) records a checkpoint and says what the worker
 // reported ("…/nocheckpoint" in the report: it records none). The tidy note hands the memory file
 // to a worker, which writes it; its report turn says OK.
@@ -28,6 +32,7 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
 const inputLog = process.env.FAKE_CODEX_INPUT;
@@ -43,6 +48,7 @@ let coordinatorSeen = false;
 let nextServerId = 0;
 const waiting = new Map(); // server request id → resolve
 let closed = false;
+const execs = new Map(); // processId → child
 
 const notify = (method, params) => out({ method, params });
 const item = (thread, turn, phase, value) => notify(`item/${phase}`, { threadId: thread, turnId: turn, item: value });
@@ -106,7 +112,7 @@ async function coordinatorTurn(thread, turn, text) {
     say(thread, turn, peer ? "<no-reply/>" : `I take it: ${said.last.slice(solo[0].length)}`);
     return complete(thread, turn);
   }
-  const match = /^\/(say|slow|tool|worker|choices)\b\s*/.exec(said.last);
+  const match = /^\/(say|slow|tool|worker|choices|monitor|routine)\b\s*/.exec(said.last);
   const directive = match?.[1] ?? null;
   const rest = match ? said.last.slice(match[0].length) : said.all;
   if (directive === "slow") {
@@ -126,6 +132,19 @@ async function coordinatorTurn(thread, turn, text) {
     const allowed = answer?.decision === "accept";
     item(thread, turn, "completed", { type: "commandExecution", id, command: `/bin/zsh -lc '${command}'`, commandActions: [{ type: "unknown", command }], status: allowed ? "completed" : "declined", exitCode: allowed ? 0 : null, aggregatedOutput: allowed ? `ran: ${command}` : null });
     say(thread, turn, allowed ? `Allowed: ran ${command}` : "Denied: not run.");
+    return complete(thread, turn);
+  }
+  if (directive === "monitor") {
+    const receipt = await ask("item/tool/call", { threadId: thread, turnId: turn, callId: `call_${randomUUID().slice(0, 8)}`, tool: "app_monitor_start", arguments: { command: rest || "echo hi" } });
+    const payload = JSON.parse(receipt?.contentItems?.[0]?.text ?? "{}");
+    say(thread, turn, receipt?.success ? `Watching it (${payload.status}).` : `Could not: ${payload.error}`);
+    return complete(thread, turn);
+  }
+  if (directive === "routine") {
+    let args = {};
+    try { args = JSON.parse(rest); } catch { /* none */ }
+    const receipt = await ask("item/tool/call", { threadId: thread, turnId: turn, callId: `call_${randomUUID().slice(0, 8)}`, tool: "app_routines", arguments: args });
+    say(thread, turn, `${receipt?.success ? "Routines" : "Routines failed"}: ${receipt?.contentItems?.[0]?.text ?? ""}`);
     return complete(thread, turn);
   }
   if (directive === "worker") {
@@ -191,6 +210,17 @@ function startTurn(rpcId, params) {
   out({ id: rpcId, result: { turn: { id: turn, status: "inProgress", items: [] } } });
   notify("turn/started", { threadId: thread, turn: { id: turn, status: "inProgress", items: [] } });
   const text = (params.input ?? []).filter((part) => part?.type === "text").map((part) => part.text).join("\n");
+  if (params.toolOutput?.name === "app_monitor_result") {
+    log(thread, "monitor-result", params.toolOutput.output);
+    void (async () => {
+      let result = {};
+      try { result = JSON.parse(params.toolOutput.output); } catch { /* not JSON */ }
+      await sleep(20);
+      say(thread, turn, `Monitor ${result.status}, exit ${result.exit_code}: ${String(result.stdout ?? "").trim()}`);
+      complete(thread, turn);
+    })();
+    return;
+  }
   if (params.toolOutput) {
     void reportTurn(thread, turn, params.toolOutput.output);
     return;
@@ -243,6 +273,26 @@ lines.on("line", (line) => {
       log(params.threadId, "steer", text);
       return out({ id, result: { turnId: state.turn.id } });
     }
+    case "command/exec": {
+      // Runs it for real, as app-server does (without its sandbox: tests run harmless commands).
+      log("", "exec", JSON.stringify({ command: params.command, cwd: params.cwd, sandboxPolicy: params.sandboxPolicy, processId: params.processId, outputBytesCap: params.outputBytesCap }));
+      const [file, ...rest] = params.command ?? [];
+      const child = spawn(file, rest, { cwd: params.cwd, stdio: ["ignore", "pipe", "pipe"] });
+      execs.set(params.processId, child);
+      let stdout = "", stderr = "";
+      child.stdout.on("data", (chunk) => { stdout += chunk; });
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      child.on("error", (error) => { execs.delete(params.processId); out({ id, error: { code: -32000, message: error.message } }); });
+      child.on("close", (code, signal) => {
+        execs.delete(params.processId);
+        out({ id, result: { exitCode: code ?? (signal ? 137 : null), stdout: stdout.slice(0, params.outputBytesCap ?? 8192), stderr: stderr.slice(0, params.outputBytesCap ?? 8192) } });
+      });
+      return;
+    }
+    case "command/exec/terminate": {
+      execs.get(params.processId)?.kill("SIGTERM");
+      return out({ id, result: {} });
+    }
     case "turn/interrupt": {
       const state = threads.get(params.threadId);
       if (state?.turn?.id === params.turnId) {
@@ -255,5 +305,5 @@ lines.on("line", (line) => {
       return out({ id, error: { code: -32601, message: `fake codex does not know ${method}` } });
   }
 });
-lines.on("close", () => { closed = true; setTimeout(() => process.exit(0), 50); });
+lines.on("close", () => { closed = true; for (const child of execs.values()) child.kill("SIGKILL"); setTimeout(() => process.exit(0), 50); });
 void closed;

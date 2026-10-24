@@ -5,20 +5,20 @@ const bot = "6A0B0000-0000-4000-8000-000000000002";
 
 describe("contract", () => {
   it("accepts a well-formed request and cancel", () => {
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "chat.send", botId: bot, text: "hi" } }).ok).toBe(true);
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "chat.snapshot" } }).ok).toBe(true);
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "chat.choose", botId: bot, messageId: "m", index: 0 } }).ok).toBe(true);
-    expect(parseInbound({ v: 4, cancel: "r1" }).ok).toBe(true);
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "chat.send", botId: bot, text: "hi" } }).ok).toBe(true);
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "chat.snapshot" } }).ok).toBe(true);
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "chat.choose", botId: bot, messageId: "m", index: 0 } }).ok).toBe(true);
+    expect(parseInbound({ v: 5, cancel: "r1" }).ok).toBe(true);
   });
 
   it("takes the two-head commands (v4) and refuses heads it does not know", () => {
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "chat.send", botId: bot, text: "hi", to: "codex" } }).ok).toBe(true);
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "chat.send", botId: bot, text: "hi", to: "gemini" } }).ok).toBe(false);
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "heads.set", botId: bot, engines: ["claude", "codex"] } }).ok).toBe(true);
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "heads.set", botId: bot, engines: [] } }).ok).toBe(false);
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "heads.answerWith", botId: bot, to: "both" } }).ok).toBe(true);
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "handoff.stop", botId: bot, handoffId: "H-1" } }).ok).toBe(true);
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "rounds.stop", botId: bot } }).ok).toBe(true);
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "chat.send", botId: bot, text: "hi", to: "codex" } }).ok).toBe(true);
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "chat.send", botId: bot, text: "hi", to: "gemini" } }).ok).toBe(false);
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "heads.set", botId: bot, engines: ["claude", "codex"] } }).ok).toBe(true);
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "heads.set", botId: bot, engines: [] } }).ok).toBe(false);
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "heads.answerWith", botId: bot, to: "both" } }).ok).toBe(true);
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "handoff.stop", botId: bot, handoffId: "H-1" } }).ok).toBe(true);
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "rounds.stop", botId: bot } }).ok).toBe(true);
     expect(parseInbound({ v: 3, id: "r1", cmd: { type: "chat.snapshot" } })).toMatchObject({ ok: false, error: { code: "unsupported_version" } });
   });
 
@@ -28,27 +28,27 @@ describe("contract", () => {
   });
 
   it("refuses unknown commands, unknown fields, missing bots and bad ids", () => {
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "shell.run", command: "rm -rf /" } })).toMatchObject({ ok: false, error: { code: "bad_request" } });
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "chat.snapshot", botId: bot, extra: 1 } })).toMatchObject({ ok: false, error: { code: "bad_request" } });
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "chat.send", text: "no bot" } })).toMatchObject({ ok: false, error: { code: "bad_request" } });
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "chat.send", botId: "../main", text: "x" } })).toMatchObject({ ok: false, error: { code: "bad_request" } });
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "chat.choose", botId: bot, messageId: "m", index: -1 } })).toMatchObject({ ok: false });
-    expect(parseInbound({ v: 4, id: "../etc", cmd: { type: "chat.snapshot" } })).toMatchObject({ ok: false, id: null });
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "shell.run", command: "rm -rf /" } })).toMatchObject({ ok: false, error: { code: "bad_request" } });
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "chat.snapshot", botId: bot, extra: 1 } })).toMatchObject({ ok: false, error: { code: "bad_request" } });
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "chat.send", text: "no bot" } })).toMatchObject({ ok: false, error: { code: "bad_request" } });
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "chat.send", botId: "../main", text: "x" } })).toMatchObject({ ok: false, error: { code: "bad_request" } });
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "chat.choose", botId: bot, messageId: "m", index: -1 } })).toMatchObject({ ok: false });
+    expect(parseInbound({ v: 5, id: "../etc", cmd: { type: "chat.snapshot" } })).toMatchObject({ ok: false, id: null });
     expect(parseInbound(null).ok).toBe(false);
     expect(parseInbound("text").ok).toBe(false);
   });
 
   it("bounds sizes", () => {
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "chat.send", botId: bot, text: "" } }).ok).toBe(false);
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "chat.send", botId: bot, text: "" } }).ok).toBe(false);
     const big = "x".repeat(CARD_SAVE_LIMIT + 1);
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "card.save", botId: bot, messageId: "m", cardId: "c", data: big } }).ok).toBe(false);
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "card.save", botId: bot, messageId: "m", cardId: "c", data: big } }).ok).toBe(false);
     expect(CARD_SAVE_LIMIT).toBe(262144); // Shared with the Swift app through Web/src/contract.json.
   });
 
   it("only lets sites open over http(s)", () => {
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "site.open", accountId: "work", url: "https://example.com" } }).ok).toBe(true);
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "site.open", accountId: "work", url: "file:///etc/passwd" } }).ok).toBe(false);
-    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "site.open", accountId: "work", url: "javascript:alert(1)" } }).ok).toBe(false);
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "site.open", accountId: "work", url: "https://example.com" } }).ok).toBe(true);
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "site.open", accountId: "work", url: "file:///etc/passwd" } }).ok).toBe(false);
+    expect(parseInbound({ v: 5, id: "r1", cmd: { type: "site.open", accountId: "work", url: "javascript:alert(1)" } }).ok).toBe(false);
   });
 
   it("card messages are strict: no smuggled ids", () => {

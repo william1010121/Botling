@@ -18,8 +18,11 @@
 // - The reply is the turn's last agent message that is not commentary; commentary is a step.
 // - `interrupt` stops the turn (`turn/interrupt`).
 //
-// Not ported (2.0 gaps, see desktop/README.md): app_routines and app_monitor_* (answered with an
-// error saying 2.0 cannot do them yet), the component-editor role, Codex's reviewer (auto mode),
+// - `app_routines` changes this bot's routines (routines.ts's ScheduledRoutineStore, the same file the
+//   app's clock reads); `app_monitor_*` run one command after an Allow once card and wake the
+//   coordinator when it ends (`app_monitor_result`, monitors.ts), never replaying one after a restart.
+//
+// Not ported (2.0 gaps, see desktop/README.md): the component-editor role, Codex's reviewer (auto mode),
 // Codex's own native subagents (off in a coordinator anyway), rate limits and token usage,
 // images in messages.
 import { randomUUID } from "node:crypto";
@@ -31,6 +34,9 @@ import { childEnvironment } from "./runner";
 import { activity, type StreamItem } from "./stream";
 import type { HeadExit, HeadHandlers } from "./head";
 import tools from "./codex-tools.json";
+import { RoutineError, ScheduledRoutineStore } from "../routines";
+import { bounded, isActive as monitorActive, loadMonitors, MONITOR_OUTPUT_LIMIT, monitorPayload, monitorSummary, reconcile, saveMonitors, type CommandMonitor } from "./monitors";
+import { toSwiftDate } from "../store/records";
 
 /** What a Codex head gives the bot besides claude's items. */
 export type CodexItem =
@@ -40,7 +46,11 @@ export type CodexItem =
   /** The app started a turn on the coordinator by itself (a worker's report). */
   | { kind: "backgroundTurn"; taskId: string | null }
   /** Workers at work or reports waiting: the bot must not sleep. */
-  | { kind: "managedPending"; pending: boolean };
+  | { kind: "managedPending"; pending: boolean }
+  /** A monitored command ended: its step (from an earlier turn) is done. */
+  | { kind: "monitorEnded"; id: string; output: string; failed: boolean }
+  /** `app_routines` changed the bot's routines. */
+  | { kind: "routinesChanged" };
 
 export type CodexOutput =
   | { kind: "write"; value: Record<string, unknown> }
@@ -78,6 +88,11 @@ export interface CodexConfig {
   /** "low" … "xhigh". */
   effort: string | null;
   restoredWorkers: WorkerRecord[];
+  /** scheduled-routines.json for `app_routines` (null: none here). */
+  routinesFile?: string | null;
+  /** The bot session that owns its monitors. */
+  ownerSession?: string;
+  restoredMonitors?: CommandMonitor[];
 }
 
 type Call =
@@ -87,7 +102,8 @@ type Call =
   | { kind: "steer"; input: Input }
   | { kind: "workerThread"; task: string }
   | { kind: "workerTurn"; task: string; run: number }
-  | { kind: "workerSteer"; task: string; run: number; text: string };
+  | { kind: "workerSteer"; task: string; run: number; text: string }
+  | { kind: "monitorCommand"; id: string };
 
 interface Input { text: string; token: string }
 interface Turn { id: string | null; waitingSteers: Input[]; interruptAsked: boolean; interruptSent: boolean; said: { text: string; phase: string | null }[] }
@@ -116,7 +132,8 @@ export const MANAGED_TOOLS = tools as Record<string, unknown>[];
 /** Changing the tools needs a new coordinator thread (tools are fixed when a thread starts). */
 export const MANAGED_TOOL_SIGNATURE = JSON.stringify(MANAGED_TOOLS);
 
-const NOT_YET = "Botling 2.0 cannot do this yet (routines and monitors are not ported). Tell the user in one sentence; do not try another way.";
+/** The shell a monitored command runs in (1.x: zsh on macOS). */
+const shell = (command: string): string[] => (process.platform === "win32" ? ["cmd.exe", "/d", "/s", "/c", command] : process.platform === "darwin" ? ["/bin/zsh", "-c", command] : ["/bin/sh", "-c", command]);
 
 /** `CodexSession.handbackFallback`: worker evidence kept, fenced so its tags are not the app's. */
 export function handbackFallback(result: Pick<Result, "name" | "task" | "status" | "report">, reason: string): string {
@@ -161,8 +178,14 @@ export class CodexSession {
   private active: Result | null = null;
   private toolReplies = new Map<string, Record<string, unknown>>();
   private pending = false;
+  private monitors = new Map<string, CommandMonitor>();
+  private activeMonitor: string | null = null;
 
   constructor(readonly config: CodexConfig) {
+    for (const record of config.restoredMonitors ?? []) {
+      if (config.ownerSession && record.owner.toLowerCase() !== config.ownerSession.toLowerCase()) continue;
+      this.monitors.set(record.id, reconcile(record));
+    }
     for (const record of config.restoredWorkers) {
       this.workers.set(record.id, {
         id: record.id, name: record.name, instructions: record.instructions, ownershipInstructions: record.ownershipInstructions, role: record.role,
@@ -219,6 +242,7 @@ export class CodexSession {
   }
 
   answer(requestId: string, allow: boolean, why?: string): CodexOutput[] {
+    if (requestId.startsWith("monitor:")) return this.approveMonitor(requestId.slice(8), allow);
     const approval = this.approvals.get(requestId);
     if (!approval) return [];
     this.approvals.delete(requestId);
@@ -243,9 +267,10 @@ export class CodexSession {
 
   /** The app stops: workers are cancelled (an interrupt of the coordinator alone leaves them). */
   stop(): CodexOutput[] {
+    const monitors = this.cancelMonitors();
     this.stopped = true;
     this.inbox = [];
-    return this.cancelWorkers();
+    return [...this.cancelWorkers(), ...monitors];
   }
 
   // ------------------------------------------------------------------------------------------
@@ -289,12 +314,18 @@ export class CodexSession {
         worker.loaded = true;
         return this.startWorkerTurn(call.task, worker.instructions);
       }
+      case "monitorCommand":
+        return this.completeMonitor(call.id, result, error);
       case "turn": {
+        const monitor = this.activeMonitor ? this.monitors.get(this.activeMonitor) : undefined;
+        if (monitor) monitor.wake = error ? "uncertain" : "delivered";
         if (error) {
           // The turn never started: its message gets an error reply, and the next goes.
           this.turn = null;
-          const text = this.active ? handbackFallback(this.active, message(error)) : message(error);
+          const text = monitor ? `Monitor callback could not start: ${json(monitorPayload(monitor))}\n${message(error)}`
+            : this.active ? handbackFallback(this.active, message(error)) : message(error);
           this.active = null;
+          this.activeMonitor = null;
           return [this.result(false, text), ...this.next()];
         }
         const id = result?.turn?.id;
@@ -461,20 +492,25 @@ export class CodexSession {
     this.turn = null;
     const handback = this.active;
     this.active = null;
+    const monitor = this.activeMonitor ? this.monitors.get(this.activeMonitor) ?? null : null;
+    this.activeMonitor = null;
     const out: CodexOutput[] = [];
     const final = current.said.findLast((said) => said.phase !== "commentary")?.text.trim() ?? "";
     switch (finished.status) {
       case "interrupted":
         // Stopped by the app (`interrupt`): an error result the bot does not show.
-        out.push(this.result(false, handback ? handbackFallback(handback, "The summary turn was interrupted.") : current.interruptAsked ? "" : "Codex stopped this turn."));
+        out.push(this.result(false, monitor ? `Monitor continuation was interrupted: ${json(monitorPayload(monitor))}`
+          : handback ? handbackFallback(handback, "The summary turn was interrupted.") : current.interruptAsked ? "" : "Codex stopped this turn."));
         break;
       case "failed": {
         const reason = typeof finished.error?.message === "string" ? finished.error.message : "Codex failed.";
-        out.push(this.result(false, handback ? handbackFallback(handback, reason) : reason));
+        out.push(this.result(false, monitor ? `Monitor continuation failed: ${json(monitorPayload(monitor))}\n${reason}` : handback ? handbackFallback(handback, reason) : reason));
         break;
       }
       default:
-        if (handback && !final) {
+        if (monitor && !reply(current.said)) {
+          out.push(this.result(true, `Monitor result: ${json(monitorPayload(monitor))}`));
+        } else if (handback && !final) {
           out.push(this.result(false, handbackFallback(handback, "The summary ended without a final answer.")));
         } else if (handback && !handback.reconciled && !this.stopped) {
           if (handback.reconciliationAttempt === 0) {
@@ -499,6 +535,17 @@ export class CodexSession {
   private next(): CodexOutput[] {
     if (this.turn) return [];
     if (this.inbox.length) return this.startTurn(this.inbox.shift()!);
+    const waking = [...this.monitors.values()].sort((a, b) => (a.id < b.id ? -1 : 1)).find((monitor) => monitor.wake === "pending");
+    if (waking && this.threadId && !this.stopped) {
+      this.activeMonitor = waking.id;
+      waking.wake = "dispatching";
+      this.turn = { id: null, waitingSteers: [], interruptAsked: false, interruptSent: false, said: [] };
+      const params: Record<string, unknown> = {
+        threadId: this.threadId, input: [], toolOutput: { name: "app_monitor_result", namespace: null, output: JSON.stringify(monitorPayload(waking), null, 2) }, environments: [],
+      };
+      if (this.config.effort) params.effort = this.config.effort;
+      return [this.item({ kind: "backgroundTurn", taskId: null }), this.request("turn/start", params, { kind: "turn" }), ...this.pendingChanged()];
+    }
     if (this.results.length && this.threadId && !this.stopped) {
       const result = this.results.shift()!;
       this.active = result;
@@ -549,7 +596,120 @@ export class CodexSession {
   }
 
   get hasManagedWork(): boolean {
-    return [...this.workers.values()].some((worker) => worker.active) || this.results.length > 0;
+    return [...this.workers.values()].some((worker) => worker.active) || this.results.length > 0
+      || [...this.monitors.values()].some((monitor) => monitorActive(monitor) || monitor.wake === "pending");
+  }
+
+  /** For codex-threads/<session>.monitors.json, by id. */
+  get monitorRecords(): CommandMonitor[] {
+    return [...this.monitors.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map((monitor) => ({ ...monitor }));
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // Command monitors and routines
+
+  private monitorTool(tool: string, args: any): { payload: unknown; success: boolean; out: CodexOutput[] } {
+    const command = typeof args.command === "string" ? args.command : null;
+    if (tool === "app_monitor_start" && command !== null && command.trim() && Buffer.byteLength(command) <= 16_384 && !command.includes("\0")) {
+      // Keep every unacknowledged report; prune only settled history.
+      if (this.monitors.size >= 128) {
+        const oldest = [...this.monitors.values()].filter((m) => !monitorActive(m) && (m.wake === "delivered" || m.wake === "suppressed")).sort((a, b) => a.createdAt - b.createdAt)[0];
+        if (oldest) this.monitors.delete(oldest.id);
+      }
+      if (this.monitors.size >= 128 || [...this.monitors.values()].filter(monitorActive).length >= 16) {
+        return { payload: { error: "Monitor limit reached; cancel active monitors or resolve pending results." }, success: false, out: [] };
+      }
+      const id = randomUUID().toLowerCase();
+      const record: CommandMonitor = { id, owner: (this.config.ownerSession ?? "").toUpperCase(), command, cwd: this.config.cwd, state: "awaitingApproval", stdout: "", stderr: "", detail: "", wake: "none", createdAt: toSwiftDate() };
+      this.monitors.set(id, record);
+      return {
+        payload: monitorPayload(record), success: true, out: [
+          this.item({ kind: "toolUse", id, tool: "Monitor", title: `Monitor ${firstLine(command)}`, detail: command, parent: null, input: { command } }),
+          this.item({ kind: "permission", requestId: `monitor:${id}`, tool: "Monitored command", summary: `${command}\n\nWorking directory: ${record.cwd}\nWorkspace sandbox; network disabled. Completion wakes this Codex bot once.`, input: {} }),
+          ...this.pendingChanged(),
+        ],
+      };
+    }
+    const monitorId = typeof args.monitor_id === "string" ? args.monitor_id : null;
+    if (tool === "app_monitor_status") {
+      if (monitorId !== null) {
+        const record = this.monitors.get(monitorId);
+        return record ? { payload: monitorPayload(record), success: true, out: [] } : { payload: { error: "Unknown monitor_id for this owner." }, success: false, out: [] };
+      }
+      return { payload: { monitors: this.monitorRecords.map(monitorSummary) }, success: true, out: [] };
+    }
+    if (tool === "app_monitor_cancel" && monitorId !== null && this.monitors.has(monitorId)) {
+      const out = this.cancelMonitors(new Set([monitorId]));
+      return { payload: monitorPayload(this.monitors.get(monitorId)!), success: true, out };
+    }
+    return { payload: { error: "Invalid monitor arguments. Use command (nonempty, at most 16384 bytes), or an owned monitor_id." }, success: false, out: [] };
+  }
+
+  private approveMonitor(id: string, allow: boolean): CodexOutput[] {
+    const record = this.monitors.get(id);
+    if (this.stopped || !record || record.state !== "awaitingApproval") return [];
+    if (!allow) return this.cancelMonitors(new Set([id]));
+    record.state = "running";
+    // Standalone command/exec does not inherit the thread's sandbox: it is said explicitly, so the
+    // user's own full-access or network settings never take over.
+    return [
+      this.request("command/exec", {
+        command: shell(record.command), cwd: record.cwd, processId: id, disableTimeout: true, outputBytesCap: MONITOR_OUTPUT_LIMIT,
+        sandboxPolicy: { type: "workspaceWrite", writableRoots: [this.config.cwd], networkAccess: false },
+      }, { kind: "monitorCommand", id }),
+      ...this.pendingChanged(),
+    ];
+  }
+
+  private completeMonitor(id: string, result: any, error: any): CodexOutput[] {
+    const record = this.monitors.get(id);
+    if (!record || (record.state !== "running" && record.state !== "cancelling") || this.stopped) return [];
+    const exit = typeof result?.exitCode === "number" ? result.exitCode : null;
+    if (exit === null) delete record.exitCode; else record.exitCode = exit;
+    record.stdout = bounded(typeof result?.stdout === "string" ? result.stdout : "");
+    record.stderr = bounded(typeof result?.stderr === "string" ? result.stderr : "");
+    const cancelled = record.state === "cancelling";
+    record.state = cancelled ? "cancelled" : !error && exit === 0 ? "succeeded" : "failed";
+    record.detail = error ? bounded(message(error)) : exit === null ? "No exit status was returned." : "";
+    record.endedAt = toSwiftDate();
+    record.wake = cancelled ? "suppressed" : "pending";
+    const out: CodexOutput[] = [this.item({ kind: "monitorEnded", id, output: json(monitorPayload(record)), failed: record.state !== "succeeded" })];
+    if (!this.turn) out.push(...this.next());
+    out.push(...this.pendingChanged());
+    return out;
+  }
+
+  /** Cancels monitors (all, or `ids`) and suppresses their wake; a running one is asked to end (`command/exec/terminate`). */
+  cancelMonitors(ids?: Set<string>): CodexOutput[] {
+    const out: CodexOutput[] = [];
+    for (const record of this.monitorRecords) {
+      if (ids && !ids.has(record.id)) continue;
+      const monitor = this.monitors.get(record.id)!;
+      if (!monitorActive(monitor) && monitor.wake !== "pending") continue;
+      monitor.wake = "suppressed";
+      if (!monitorActive(monitor) || monitor.state === "cancelling") continue;
+      const running = monitor.state === "running";
+      monitor.state = running ? "cancelling" : "cancelled";
+      if (running) delete monitor.endedAt; else monitor.endedAt = toSwiftDate();
+      monitor.detail = "Cancellation requested; completion wake suppressed. Side effects may have occurred. Termination is unconfirmed until a terminal result arrives.";
+      if (running) {
+        out.push(this.request("command/exec/terminate", { processId: monitor.id }, { kind: "other" }));
+      } else {
+        out.push(this.item({ kind: "permissionCancelled", requestId: `monitor:${monitor.id}` }));
+        out.push(this.item({ kind: "monitorEnded", id: monitor.id, output: "Monitor cancelled before execution; wake suppressed.", failed: true }));
+      }
+    }
+    return [...out, ...this.pendingChanged()];
+  }
+
+  /** `app_routines`: this bot's schedules, through the same store as the app's clock. */
+  private routinesTool(args: Record<string, unknown>): { payload: unknown; success: boolean } {
+    if (!this.config.routinesFile) return { payload: { error: "Routine storage is unavailable for this session. Open this bot in Botling and retry; do not write cron or schedule state as a workaround." }, success: false };
+    try {
+      return { payload: new ScheduledRoutineStore(this.config.routinesFile).perform(args), success: true };
+    } catch (error) {
+      return { payload: { error: error instanceof RoutineError ? error.message : `Routine storage failed: ${(error as Error).message}` }, success: false };
+    }
   }
 
   /** Workers at work now (for the bot's view and tests). */
@@ -580,8 +740,22 @@ export class CodexSession {
     if (!args || typeof args !== "object") args = {};
     const out: CodexOutput[] = [];
     let response: Record<string, unknown>;
-    if (tool === "app_routines" || tool?.startsWith("app_monitor_")) {
-      response = reply({ error: NOT_YET }, false);
+    if (tool === "app_routines") {
+      const handled = this.routinesTool(args);
+      response = reply(handled.payload, handled.success);
+      if (handled.success) {
+        out.push(
+          this.item({ kind: "toolUse", id, tool: "app_routines", title: `Routines: ${typeof args.operation === "string" ? args.operation : ""}`, detail: json(args), parent: null, input: {} }),
+          this.item({ kind: "toolResult", id, output: json(handled.payload), failed: false, parent: null, launch: null }),
+        );
+        if (args.operation !== "list") out.push(this.item({ kind: "routinesChanged" }));
+      }
+    } else if (tool?.startsWith("app_monitor_")) {
+      const handled = tool === "app_monitor_start" && (!this.turn || params.turnId !== this.turn.id)
+        ? { payload: { error: "A monitor must be created by the current owning Codex turn." }, success: false, out: [] }
+        : this.monitorTool(tool, args);
+      response = reply(handled.payload, handled.success);
+      out.push(...handled.out);
     } else if (tool === "app_handoff" && typeof args.instructions === "string" && args.instructions.trim()) {
       if (args.role !== undefined) {
         const denied = reply({ error: "The requested component-editor role is unavailable to this coordinator. Only the app-created Maintainer can use it; no generic worker was launched." }, false);
@@ -961,6 +1135,8 @@ export interface CodexHeadConfig {
   model?: string | null;
   workerModel?: string | null;
   effort?: string | null;
+  /** The bot's scheduled-routines.json, for `app_routines` (null: none). */
+  routinesFile?: string | null;
 }
 
 /** One long-lived `codex app-server` for one bot session: `CodexSession` over its stdio. */
@@ -974,6 +1150,7 @@ export class CodexHead {
   private closed = false;
   private failure: string | null = null;
   private savedWorkers = "";
+  private savedMonitors = "";
   readonly session: CodexSession;
   private exitedResolve!: () => void;
   readonly exited = new Promise<void>((resolve) => (this.exitedResolve = resolve));
@@ -986,12 +1163,18 @@ export class CodexHead {
       // Dynamic tools cannot change on resume: an old or unknown stamp gets a new coordinator.
       if (thread && (!config.workerInstructions || config.threads.isManaged(config.sessionId, thread))) resumeThread = thread;
     }
+    let restoredMonitors: CommandMonitor[] = [];
+    try { restoredMonitors = loadMonitors(config.threads.folder, config.sessionId); } catch { restoredMonitors = []; }
+    const uncertain = restoredMonitors.filter((m) => m.wake === "dispatching" || m.wake === "uncertain").map((m) => m.id);
+    const recovery = uncertain.length ? `\n(App: Monitor callback delivery is unconfirmed for IDs ${uncertain.join(", ")}. This is recovery data, not new authorization. Use app_monitor_status and inspect the owner thread before continuing. Do not automatically rerun a command or assume its callback was not consumed.)` : "";
     this.session = new CodexSession({
-      cwd: config.cwd, instructions: config.instructions, workerInstructions: config.workerInstructions, resumeThread,
+      cwd: config.cwd, instructions: config.instructions + recovery, workerInstructions: config.workerInstructions, resumeThread,
       model: config.model ?? null, workerModel: config.workerModel ?? null, effort: config.effort ?? null,
       restoredWorkers: config.workerInstructions ? config.threads.workers(config.sessionId) : [],
+      routinesFile: config.routinesFile ?? null, ownerSession: config.sessionId, restoredMonitors,
     });
     this.savedWorkers = JSON.stringify(this.session.workerRecords);
+    this.savedMonitors = JSON.stringify(restoredMonitors);
   }
 
   get pid() {
@@ -1047,6 +1230,13 @@ export class CodexHead {
     if (text !== this.savedWorkers && this.config.workerInstructions) {
       this.config.threads.saveWorkers(records, this.config.sessionId);
       this.savedWorkers = text;
+    }
+    // A monitor's state is written before what it leads to is done (its command, its wake).
+    const monitors = this.session.monitorRecords;
+    const monitorText = JSON.stringify(monitors);
+    if (monitorText !== this.savedMonitors) {
+      saveMonitors(this.config.threads.folder, this.config.sessionId, monitors);
+      this.savedMonitors = monitorText;
     }
     for (const output of outputs) {
       switch (output.kind) {
