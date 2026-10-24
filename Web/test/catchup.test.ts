@@ -126,7 +126,7 @@ it("offers a manual trigger without a group, disables it for empty/loading and h
   const button = () => document.querySelector<HTMLButtonElement>(".composer-tools .catchup-button")!;
   window.ccb.setState(state(null));
   expect(button().textContent).toBe("Summarize");
-  expect(button().title).toContain("latest 20 replies");
+  expect(button().title).toContain("between your last two messages");
   button().click();
   expect(sent.at(-1)).toEqual({ type: "catchUpManual", botID: "catchup-bot" });
   window.ccb.setState(state(null, { messages: [] }));
@@ -150,4 +150,28 @@ it("deduplicates only equal targets and preserves literal punctuation and escape
     { url: "https://example.org/a?q=1#two", labels: ["Other"] },
     { url: "file:///tmp/report.", labels: [] },
   ]);
+});
+
+it("leaves user boundaries and open replies visible and takes links only from the closed interval", () => {
+  const before = line("a", "user");
+  before.text = "[boundary](https://example.org/boundary)";
+  const inside = line("b");
+  inside.text = `${"long ".repeat(3000)} [inside](file:///tmp/inside.html)`;
+  inside.artifacts = [{ title: "Result", url: "https://claude.ai/public/artifacts/interval", host: "claude.ai" }];
+  const closing = line("c", "user");
+  const open = line("d");
+  open.text = "[outside](https://example.org/outside)";
+  window.ccb.setState(state(view({ ids: ["b"], count: 1, manual: true }), { messages: [before, inside, closing, open] }));
+  expect(document.querySelector('[data-id="a"]')?.classList.contains("catchup-folded")).toBe(false);
+  expect(document.querySelector('[data-id="c"]')?.classList.contains("catchup-folded")).toBe(false);
+  expect(document.querySelector('[data-id="d"]')?.classList.contains("catchup-folded")).toBe(false);
+  expect([...document.querySelectorAll<HTMLElement>(".catchup-links [data-url]")].map(e => e.dataset.url)).toEqual([
+    "file:///tmp/inside.html", "https://claude.ai/public/artifacts/interval"
+  ]);
+  const button = () => document.querySelector<HTMLButtonElement>(".composer-tools .catchup-button")!;
+  window.ccb.setState(state(null, { messages: [inside, before, closing, open] }));
+  expect(button().disabled).toBe(true); // Empty closed interval, despite older and open replies.
+  expect(button().textContent).toBe("No messages to summarize");
+  window.ccb.setState(state(null, { messages: [inside] }));
+  expect(button().disabled).toBe(true); // No user boundary.
 });

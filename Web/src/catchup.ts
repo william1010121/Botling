@@ -42,7 +42,11 @@ export class CatchUpGroup {
   /** Places the group for `state`; `element` finds a message's drawn row. */
   update(state: ChatState, element: (id: string) => HTMLElement | null): void {
     this.botID = state.botID;
-    const empty = !state.messages.some((m) => m.role !== "divider");
+    const users = state.messages.flatMap((m, i) => m.role === "user" ? [i] : []);
+    const lastUser = users.at(-1);
+    const start = users.length > 1 ? users.at(-2)! + 1 : lastUser === undefined ? 0 : lastUser + 1;
+    const end = users.length > 1 ? lastUser : state.messages.length;
+    const empty = lastUser === undefined || !state.messages.slice(start, end).some((m) => m.role !== "divider");
     const loading = state.catchUp?.state === "loading";
     this.trigger.hidden = !!state.subagent;
     this.trigger.disabled = empty || loading;

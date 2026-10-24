@@ -18,8 +18,11 @@ extension Workspace {
     func arrive(at chat: Bot) {
         guard isViewing(chat) else { return }
         let unread = chat.unreadCount
-        if settings.catchUpEnabled, unread > settings.catchUpThreshold {
-            startCatchUp(for: chat, unread: unread)
+        if settings.catchUpEnabled {
+            let source = CatchUp.unreadMessages(in: chat.messages, unread: unread)
+            if CatchUp.replyCount(in: source) > settings.catchUpThreshold {
+                startCatchUp(for: chat, unread: unread)
+            }
         }
         chat.markRead()
     }
@@ -48,13 +51,28 @@ extension Workspace {
         beginCatchUp(for: chat, messages: messages)
     }
 
-    /// Explicit action: unread tail if available, otherwise the latest 20 counted replies
-    /// and intervening messages. Independent of the automatic setting and threshold.
+    /// Explicit action: latest closed user interval, or open interval with one user boundary.
+    /// No unread/recent-replies fallback; the button is independent of automatic settings.
     public func manuallyCatchUp(in chat: Bot) {
         guard catchUps[chat.id]?.phase != .loading else { return }
-        let messages = CatchUp.unreadMessages(in: chat.messages, unread: chat.unreadCount > 0 ? chat.unreadCount : 20)
-        let source = messages.isEmpty ? chat.messages.filter { $0.role != .divider } : messages
-        guard !source.isEmpty else { return }
+        let source = CatchUp.intervalMessages(in: chat.messages)
+        guard !source.isEmpty else {
+            catchUps[chat.id] = nil
+            return
+        }
+        beginCatchUp(for: chat, messages: source, manual: true)
+    }
+
+    /// Called only after a message has actually been persisted in this visible transcript.
+    func summarizeClosedInterval(in chat: Bot, after message: ChatMessage) {
+        guard message.role == .user, chat.messages.last?.id == message.id,
+              settings.intervalSummaryEnabled,
+              intervalSummaryClosures[chat.id] != message.id,
+              chat.messages.dropLast().contains(where: { $0.role == .user }) else { return }
+        intervalSummaryClosures[chat.id] = message.id
+        let source = CatchUp.intervalMessages(in: chat.messages)
+        guard CatchUp.replyCount(in: source) > settings.intervalSummaryThreshold else { return }
+        // `manual` selects the neutral range UI (no unread labels), shared with the button.
         beginCatchUp(for: chat, messages: source, manual: true)
     }
 
@@ -136,7 +154,7 @@ extension Workspace {
         let ids = state.messageIDs.filter(present.contains)
         guard !ids.isEmpty else { return nil }
         let byID = Dictionary(chat.messages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let counted = ids.compactMap { byID[$0] }.filter { CatchUp.counts($0.role) }
+        let counted = ids.compactMap { byID[$0] }.filter { $0.role == .bot }
         let heads = Set(counted.compactMap(\.engine)).count
         let latest = counted.last.map { message in
             let who = message.engine?.displayName ?? catchUpName(of: message, in: chat)
@@ -162,6 +180,27 @@ extension Workspace {
         let threshold = CatchUp.clampedThreshold(threshold)
         guard threshold != settings.catchUpThresholdChoice else { return }
         settings.catchUpThresholdChoice = threshold
+        settings.summaryThresholdsCustomizedChoice = true
+        settings.save(to: settingsURL)
+    }
+
+    public func setIntervalSummaryEnabled(_ enabled: Bool) {
+        settings.intervalSummaryEnabledChoice = enabled
+        settings.save(to: settingsURL)
+    }
+
+    public func setIntervalSummaryThreshold(_ threshold: Int) {
+        settings.intervalSummaryThresholdChoice = CatchUp.clampedThreshold(threshold)
+        settings.summaryThresholdsCustomizedChoice = true
+        settings.save(to: settingsURL)
+    }
+
+    public func setSummaryThresholdsCustomized(_ customized: Bool) {
+        settings.summaryThresholdsCustomizedChoice = customized
+        if !customized {
+            settings.catchUpThresholdChoice = nil
+            settings.intervalSummaryThresholdChoice = nil
+        }
         settings.save(to: settingsURL)
     }
 

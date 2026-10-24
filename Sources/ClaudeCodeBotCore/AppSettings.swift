@@ -61,6 +61,17 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var catchUpThreshold: Int { CatchUp.clampedThreshold(catchUpThresholdChoice ?? CatchUp.defaultThreshold) }
     public var catchUpModel: String { catchUpModelChoice ?? PromiseCheck.judgeModel }
 
+    /// Separate automation for intervals closed by a new persisted user message; opt-in.
+    public var intervalSummaryEnabledChoice: Bool?
+    public var intervalSummaryThresholdChoice: Int?
+    public var summaryThresholdsCustomizedChoice: Bool?
+    public var intervalSummaryEnabled: Bool { intervalSummaryEnabledChoice ?? false }
+    public var intervalSummaryThreshold: Int { CatchUp.clampedThreshold(intervalSummaryThresholdChoice ?? CatchUp.defaultThreshold) }
+    /// Older non-default unread choices stay visible instead of being silently reset.
+    public var summaryThresholdsCustomized: Bool {
+        summaryThresholdsCustomizedChoice ?? (catchUpThreshold != CatchUp.defaultThreshold || intervalSummaryThreshold != CatchUp.defaultThreshold)
+    }
+
     /// App-managed Codex workers follow `~/.codex/config.toml`. Nil (a settings file from before
     /// it) means on.
     public var codexWorkersFollow: Bool?

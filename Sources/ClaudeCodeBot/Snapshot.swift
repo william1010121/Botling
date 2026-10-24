@@ -66,6 +66,30 @@ enum Snapshot {
         guard let path = ProcessInfo.processInfo.environment["CCB_SNAPSHOT"] else { return false }
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-snapshot-\(UUID().uuidString)")
         let now = Date()
+        // Isolated summary fixture using the production selector, cache, payload and renderer.
+        if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "interval-summary" {
+            let store = BotStore(directory: Workspace.Layout.mainBot(in: root))
+            let report = root.appending(path: "sample-report.html")
+            try? "<!doctype html><meta charset=\"utf-8\"><h1>Sample interval result</h1>".write(to: report, atomically: true, encoding: .utf8)
+            let first = ChatMessage(role: .user, text: "Review the summary interval. (SAMPLE DATA)", date: now.addingTimeInterval(-300))
+            var claude = ChatMessage(role: .bot, text: "Completed the source review. [Local report](\(report.absoluteString))", date: now.addingTimeInterval(-240))
+            claude.engine = .claude
+            var codex = ChatMessage(role: .bot, text: "Checked the regression tests. [Artifact](https://claude.ai/public/artifacts/sample-interval)", date: now.addingTimeInterval(-180))
+            codex.engine = .codex
+            let notice = ChatMessage(role: .notice, text: String(repeating: "Sample source context. ", count: 150) + " [Source beyond model limit](https://example.org/retained-source)", date: now.addingTimeInterval(-120))
+            let closing = ChatMessage(role: .user, text: "Next message closes the interval. Keep both of my messages visible.", date: now.addingTimeInterval(-60))
+            store.save(messages: [first, claude, codex, notice, closing])
+            draw(root: root, to: path) { workspace in
+                let source = CatchUp.intervalMessages(in: workspace.mainBot.messages)
+                let key = "\(source.first!.id.uuidString)-\(source.last!.id.uuidString)-\(workspace.language.rawValue)"
+                let entry: [String: Any] = [key: ["bullets": ["Source review and regression checks finished.", "All three links remain available, including the source beyond the model input limit."], "model": workspace.settings.catchUpModel, "date": Date().timeIntervalSinceReferenceDate]]
+                if let data = try? JSONSerialization.data(withJSONObject: entry) {
+                    try? data.write(to: root.appending(path: "catchup-summaries.json"))
+                }
+                workspace.manuallyCatchUp(in: workspace.mainBot)
+            }
+            return true
+        }
         // Integrated feature fixture: saved sample messages only; no model or live chat access.
         if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "reactions" {
             let store = BotStore(directory: Workspace.Layout.mainBot(in: root))
@@ -322,7 +346,7 @@ enum Snapshot {
         let json = if let watched = subagent {
             ChatPayload.make(subagent: watched, of: workspace.mainBot, components: workspace.components, avatar: AvatarImages.dataURL(.circle, eyes: .open), chatAvatarSize: workspace.settings.chatAvatarSizeChoice).json()
         } else {
-            ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, pins: pins ? workspace.pinContext(for: workspace.mainBot, board: board) : nil, specs: pins, look: look == .cute ? ChibiImages.look(for: .circle) : nil, chatAvatarSize: workspace.settings.chatAvatarSizeChoice) { projectID in
+            ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, pins: pins ? workspace.pinContext(for: workspace.mainBot, board: board) : nil, specs: pins, look: look == .cute ? ChibiImages.look(for: .circle) : nil, chatAvatarSize: workspace.settings.chatAvatarSizeChoice, catchUp: workspace.catchUpView(for: workspace.mainBot)) { projectID in
                 AvatarImages.dataURL(projectID == nil ? .circle : .triangle, eyes: .open)
             }.json()
         }
@@ -662,6 +686,16 @@ enum Snapshot {
         if let value = ProcessInfo.processInfo.environment["CCB_SETTINGS_COMPONENT_CHANGES"] {
             workspace.setComponentChangesOnly(value != "0")
         }
+        // Summary-only settings fixture, still the actual production SwiftUI section.
+        let summary = ProcessInfo.processInfo.environment["CCB_SETTINGS_SUMMARY"]
+        if summary == "individual" {
+            workspace.setSummaryThresholdsCustomized(true)
+            workspace.setCatchUpThreshold(7)
+            workspace.setIntervalSummaryThreshold(5)
+            workspace.setIntervalSummaryEnabled(true)
+        } else if summary == "off" {
+            workspace.setCatchUpEnabled(false)
+        }
         let navigator = SettingsNavigator()
         // CCB_SETTINGS_SECTION=plugins draws another section.
         navigator.section = ProcessInfo.processInfo.environment["CCB_SETTINGS_SECTION"].flatMap(SettingsSection.init(rawValue:)) ?? .doctor
@@ -670,16 +704,18 @@ enum Snapshot {
             if ProcessInfo.processInfo.environment["CCB_SETTINGS_LATEST"] == "0" {
                 workspace.doctor = DoctorModel(doctor: Doctor(latest: { _ in nil }))
             }
-            if navigator.section == .doctor { await workspace.doctor.run(includeLatest: true) }
+            if navigator.section == .doctor, summary == nil { await workspace.doctor.run(includeLatest: true) }
             let narrow = ProcessInfo.processInfo.environment["CCB_SETTINGS_SAVINGS_NARROW"] == "1"
-            let frame = NSRect(x: 0, y: 0, width: narrow ? 360 : SettingsWindow.size.width, height: ProcessInfo.processInfo.environment["CCB_SETTINGS_HEIGHT"].flatMap(Double.init) ?? SettingsWindow.size.height)
+            let frame = NSRect(x: 0, y: 0, width: ProcessInfo.processInfo.environment["CCB_SETTINGS_SUMMARY_WIDTH"].flatMap(Double.init) ?? (narrow ? 360 : SettingsWindow.size.width), height: ProcessInfo.processInfo.environment["CCB_SETTINGS_HEIGHT"].flatMap(Double.init) ?? SettingsWindow.size.height)
             let window = HeadlessRun.offscreenWindow(frame)
             // `CCB_SETTINGS_APPEARANCE=light`: drawn in light mode (the window follows either).
             let light = ProcessInfo.processInfo.environment["CCB_SETTINGS_APPEARANCE"] == "light"
             window.appearance = NSAppearance(named: light ? .aqua : .darkAqua)
-            let content: AnyView = narrow
-                ? AnyView(Form { PromptSavingsSection(workspace: workspace) }.formStyle(.grouped))
-                : AnyView(SettingsWindow(workspace: workspace, navigator: navigator, height: frame.height))
+            let content: AnyView = summary != nil
+                ? AnyView(Form { CatchUpSection(workspace: workspace) }.formStyle(.grouped))
+                : narrow
+                    ? AnyView(Form { PromptSavingsSection(workspace: workspace) }.formStyle(.grouped))
+                    : AnyView(SettingsWindow(workspace: workspace, navigator: navigator, height: frame.height))
             let host = NSHostingView(rootView: content
                 .frame(width: frame.width, height: frame.height)
                 .preferredColorScheme(light ? .light : .dark))
@@ -1417,13 +1453,44 @@ enum Snapshot {
             if let script = ProcessInfo.processInfo.environment["CCB_SNAPSHOT_JS"], !script.isEmpty {
                 view.evaluateJavaScript("setTimeout(() => { \(script) }, 600)")
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [path] in
-                view.takeSnapshot(with: nil) { image, _ in
-                    if let tiff = image?.tiffRepresentation,
-                       let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
-                        try? png.write(to: URL(filePath: path))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [path, json] in
+                let capture = {
+                    view.takeSnapshot(with: nil) { image, _ in
+                        if let tiff = image?.tiffRepresentation,
+                           let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                            try? png.write(to: URL(filePath: path))
+                        }
+                        exit(0)
                     }
-                    exit(0)
+                }
+                guard ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "interval-summary",
+                      let data = json.data(using: .utf8),
+                      let state = try? JSONSerialization.jsonObject(with: data) else { capture(); return }
+                Task { @MainActor in
+                    do {
+                        let value = try await view.callAsyncJavaScript("""
+                // Inactive animation/editor layers intentionally have no src; they are not media.
+                const unassignedImages = [...document.images].filter(img => !img.getAttribute('src')).map(img => img.className);
+                const assignedImages = [...document.images].filter(img => img.getAttribute('src'));
+                await Promise.all(assignedImages.map(img => img.decode().catch(() => {})));
+                const images = assignedImages.map(img => ({ complete: img.complete, width: img.naturalWidth }));
+                const boundaries = state.messages.filter(m => m.role === 'user').map(m => {
+                  const row = document.querySelector(`[data-id="${m.id}"]`);
+                  return { id: m.id, visible: !!row && !row.classList.contains('catchup-folded') };
+                });
+                const links = [...document.querySelectorAll('.catchup-links [data-url]')].map(a => a.dataset.url);
+                const overflow = document.documentElement.scrollWidth > innerWidth;
+                const passed = state.catchUp?.state === 'ready' && state.catchUp.ids.length === 3 &&
+                  boundaries.length === 2 && boundaries.every(b => b.visible) && links.length === 3 &&
+                  images.every(img => img.complete && img.width > 0) && !overflow;
+                return { passed, boundaries, links, images, unassignedImages, overflow, sourceIDs: state.catchUp?.ids };
+                """, arguments: ["state": state], in: nil, contentWorld: .page)
+                        guard let evidence = value as? [String: Any],
+                              let data = try? JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys]) else { exit(1) }
+                        try? data.write(to: URL(filePath: path + ".json"))
+                        guard evidence["passed"] as? Bool == true else { exit(1) }
+                        capture()
+                    } catch { exit(1) }
                 }
             }
         }

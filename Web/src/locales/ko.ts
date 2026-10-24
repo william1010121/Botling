@@ -399,7 +399,7 @@ export const ko: Dictionary = {
   "catchup.manual": "요약하기",
   "catchup.running": "요약 중…",
   "catchup.empty": "요약할 메시지가 없습니다",
-  "catchup.manualHint": "읽지 않은 메시지를 요약합니다. 없으면 최근 답변 20개를 요약합니다.",
+  "catchup.manualHint": "내 최근 두 메시지 사이를 요약합니다. 하나뿐이면 그 이후를 요약합니다. 빈 구간은 요약하지 않습니다.",
   "catchup.manualRange": "요약 범위 · 메시지 {n}개",
   "catchup.messages": "메시지 {n}개",
   "catchup.links": "링크 및 결과물",

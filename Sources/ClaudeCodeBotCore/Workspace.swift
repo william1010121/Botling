@@ -175,6 +175,7 @@ public final class Workspace: ObservableObject {
     /// Each chat's folded unread messages and their summary, by bot id. UI only, not saved.
     @Published public internal(set) var catchUps: [UUID: CatchUpState] = [:]
     var catchUpTasks: [UUID: Task<Void, Never>] = [:]
+    var intervalSummaryClosures: [UUID: UUID] = [:]
     lazy var catchUpCache = CatchUpCache(url: root.appending(path: CatchUpCache.fileName))
     /// The window is key and the app active: only then does looking at a chat read it.
     public internal(set) var windowFocused = true
@@ -1581,6 +1582,7 @@ public final class Workspace: ObservableObject {
     func countComponents(of bot: Bot) {
         bot.onNewMessage = { [weak self, weak bot] message in
             guard let self, let bot else { return }
+            summarizeClosedInterval(in: bot, after: message)
             let names = ComponentUsage.components(in: message, previews: components.names.contains(PagePreview.component))
             guard !names.isEmpty else { return }
             let writer = message.sourceID.flatMap { self.member($0) } ?? bot

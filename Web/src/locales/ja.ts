@@ -399,7 +399,7 @@ export const ja: Dictionary = {
   "catchup.manual": "要約する",
   "catchup.running": "要約中…",
   "catchup.empty": "要約するメッセージはありません",
-  "catchup.manualHint": "未読を要約します。未読がない場合は直近20件の返信を要約します。",
+  "catchup.manualHint": "自分の直近2つのメッセージ間を要約します。1つだけならその後が対象です。空の区間は要約しません。",
   "catchup.manualRange": "要約範囲 · {n} 件",
   "catchup.messages": "{n} 件",
   "catchup.links": "リンクと成果物",

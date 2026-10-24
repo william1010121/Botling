@@ -399,7 +399,7 @@ export const zhHant: Dictionary = {
   "catchup.manual": "產生摘要",
   "catchup.running": "摘要產生中…",
   "catchup.empty": "目前沒有可摘要的訊息",
-  "catchup.manualHint": "摘要未讀訊息；沒有未讀時，摘要最近 20 則回覆。",
+  "catchup.manualHint": "摘要最近兩次發言之間的內容；若只發言過一次，則摘要那之後的內容。空白區間沒有可摘要的訊息。",
   "catchup.manualRange": "摘要範圍 · {n} 則訊息",
   "catchup.messages": "{n} 則訊息",
   "catchup.links": "連結與產出",

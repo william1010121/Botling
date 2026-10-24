@@ -399,7 +399,7 @@ export const zhHans: Dictionary = {
   "catchup.manual": "生成摘要",
   "catchup.running": "正在生成摘要…",
   "catchup.empty": "暂无可摘要的消息",
-  "catchup.manualHint": "摘要未读消息；没有未读时，摘要最近 20 条回复。",
+  "catchup.manualHint": "摘要最近两次发言之间的内容；若只发言过一次，则摘要那之后的内容。空白区间没有可摘要的消息。",
   "catchup.manualRange": "摘要范围 · {n} 条消息",
   "catchup.messages": "{n} 条消息",
   "catchup.links": "链接与产出",

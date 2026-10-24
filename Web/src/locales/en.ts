@@ -401,7 +401,7 @@ export const en = {
   "catchup.manual": "Summarize",
   "catchup.running": "Summarizing…",
   "catchup.empty": "No messages to summarize",
-  "catchup.manualHint": "Summarize unread messages, or the latest 20 replies when there are no unread messages.",
+  "catchup.manualHint": "Summarize between your last two messages, or since your only message. Empty intervals have nothing to summarize.",
   "catchup.manualRange": "Summary · {n} messages",
   "catchup.messages": "{n} messages",
   "catchup.links": "Links & artifacts",
