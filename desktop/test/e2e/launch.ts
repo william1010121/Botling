@@ -1,27 +1,48 @@
-import { _electron as electron, type ElectronApplication, type Page } from "@playwright/test";
+import { _electron as electron, type ElectronApplication, type Frame, type FrameLocator, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { desktop, tempDir } from "../helpers";
+import { desktop, tempDir, until } from "../helpers";
 
-export interface Launched { app: ElectronApplication; page: Page; dataDir: string }
+export interface Launched { app: ElectronApplication; page: Page; chat: FrameLocator; dataDir: string }
 
-export async function launch(options: { dataDir?: string; env?: Record<string, string>; chat?: unknown } = {}): Promise<Launched> {
+/** The main bot's id (the Swift app's `Workspace.mainBotID`). */
+export const MAIN = "6A0B0000-0000-4000-8000-000000000002";
+
+export async function launch(options: { dataDir?: string; env?: Record<string, string>; chat?: unknown[]; importFrom?: string } = {}): Promise<Launched> {
   const dataDir = options.dataDir ?? tempDir("e2e");
   if (options.chat) {
-    mkdirSync(join(dataDir, "core"), { recursive: true });
-    writeFileSync(join(dataDir, "core", "chat.json"), JSON.stringify(options.chat, null, 2));
+    // The main bot's chat, in the Swift app's chat.json format.
+    mkdirSync(join(dataDir, "core", "main"), { recursive: true });
+    writeFileSync(join(dataDir, "core", "main", "chat.json"), JSON.stringify(options.chat));
   }
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
   Object.assign(env, {
     BOTLING_DATA_DIR: dataDir, BOTLING_AGENT: "fake", BOTLING_HIDDEN: "1", BOTLING_QUIET: "1", BOTLING_QUIT_ON_CLOSE: "1",
+    ...(options.importFrom ? { BOTLING_IMPORT_FROM: options.importFrom } : {}),
     ...options.env,
   });
   delete env.ELECTRON_RUN_AS_NODE;
+  if (!options.importFrom) delete env.BOTLING_IMPORT_FROM;
   const app = await electron.launch({ args: [desktop], env, cwd: desktop });
   const page = await app.firstWindow();
-  await page.waitForSelector('#messages[data-ready="1"]');
-  return { app, page, dataDir };
+  await page.waitForSelector('.shell[data-ready="1"]');
+  const chat = page.frameLocator("#chat-frame");
+  await chat.locator(".composer").waitFor();
+  return { app, page, chat, dataDir };
+}
+
+/** The chat frame itself (for evaluate). */
+export function chatFrame(page: Page): Promise<Frame> {
+  return until(() => page.frames().find((frame) => frame.url().endsWith("/chat.html")) ?? null, { what: "the chat frame" });
+}
+
+/** Types a message in the chat page's input box and sends it with Return. */
+export async function say(chat: FrameLocator, text: string) {
+  const box = chat.getByRole("textbox", { name: "Message" });
+  await box.click();
+  await box.fill(text);
+  await box.press("Enter");
 }
 
 /** Posts a raw envelope through the preload bridge and returns the response with that id. */

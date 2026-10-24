@@ -62,8 +62,8 @@ export class CardBroker {
   }
 
   private onMessage = (event: MessageEvent) => {
-    // Not from a card frame at all (the app itself, a devtools extension, …): not ours to handle.
-    if (event.source === this.target) return;
+    // Not from a card frame at all (this page itself, or the page it sits in): not ours to handle.
+    if (event.source === this.target || (this.target.parent !== this.target && event.source === this.target.parent)) return;
     let sender: CardTarget | null = null;
     for (const target of this.targets) if (target.frame.contentWindow && target.frame.contentWindow === event.source) sender = target;
     if (!sender) {

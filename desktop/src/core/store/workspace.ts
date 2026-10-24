@@ -9,7 +9,7 @@
 //   <root>/settings.json         app settings (AppSettings)
 //   <root>/import.json           2.0 only: what the first-launch import brought over
 import { existsSync, mkdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readJSON } from "./bot-store";
 import { MAIN_BOT_ID, MAINTAINER_ID, isProjectRecord, type ProjectRecord } from "./records";
@@ -56,7 +56,7 @@ export function projectProfile(root: string, project: ProjectRecord): BotProfile
   let folder: string;
   let problem: string | null = null;
   try {
-    folder = project.folder.startsWith("file:") ? fileURLToPath(project.folder) : project.folder;
+    folder = resolve(project.folder.startsWith("file:") ? fileURLToPath(project.folder) : project.folder);
   } catch {
     folder = project.folder;
     problem = `Its folder (${project.folder}) is not a path on this computer.`;

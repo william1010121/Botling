@@ -3,7 +3,11 @@
     "target": "ES2023",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "jsx": "react-jsx",
     "strict": true,
     "noUncheckedIndexedAccess": false,
@@ -11,7 +15,33 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "markdown-it": [
+        "./node_modules/@types/markdown-it/index.d.mts",
+        "./node_modules/markdown-it"
+      ],
+      "markdown-it/*": [
+        "./node_modules/@types/markdown-it/*",
+        "./node_modules/markdown-it/*"
+      ],
+      "@codemirror/*": [
+        "./node_modules/@codemirror/*"
+      ],
+      "katex": [
+        "./node_modules/katex"
+      ],
+      "katex/*": [
+        "./node_modules/katex/*"
+      ]
+    }
   },
-  "include": ["src", "test", "*.ts"]
+  "include": [
+    "src",
+    "test",
+    "*.ts"
+  ],
+  "//": "Web/src is type-checked here too (the chat frame bundles it); its packages resolve from desktop/node_modules."
 }

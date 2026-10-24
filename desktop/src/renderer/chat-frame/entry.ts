@@ -54,8 +54,26 @@ function cardElement(botId: string, messageId: string, cardId: string): DrawnCar
   return drawn;
 }
 
+let lastExtras: FrameExtras | null = null;
+let decorateQueued = false;
+/**
+ * The page redraws rows by itself too (a plugin loading, the language changing): whenever its
+ * list of rows changes, the cards and states go back on.
+ */
+function watchRows() {
+  const list = document.getElementById("messages");
+  if (!list) return;
+  new MutationObserver(() => {
+    if (decorateQueued || !lastExtras) return;
+    decorateQueued = true;
+    queueMicrotask(() => { decorateQueued = false; if (lastExtras) decorate(lastExtras); });
+  }).observe(list, { childList: true });
+}
+watchRows();
+
 /** Puts each message's cards in its bubble, and its turn state on its row. */
 function decorate(extras: FrameExtras) {
+  lastExtras = extras;
   const list = document.getElementById("messages");
   if (!list) return;
   document.body.classList.toggle("botling-running", extras.running);
