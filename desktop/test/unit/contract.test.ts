@@ -11,6 +11,17 @@ describe("contract", () => {
     expect(parseInbound({ v: 4, cancel: "r1" }).ok).toBe(true);
   });
 
+  it("takes the two-head commands (v4) and refuses heads it does not know", () => {
+    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "chat.send", botId: bot, text: "hi", to: "codex" } }).ok).toBe(true);
+    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "chat.send", botId: bot, text: "hi", to: "gemini" } }).ok).toBe(false);
+    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "heads.set", botId: bot, engines: ["claude", "codex"] } }).ok).toBe(true);
+    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "heads.set", botId: bot, engines: [] } }).ok).toBe(false);
+    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "heads.answerWith", botId: bot, to: "both" } }).ok).toBe(true);
+    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "handoff.stop", botId: bot, handoffId: "H-1" } }).ok).toBe(true);
+    expect(parseInbound({ v: 4, id: "r1", cmd: { type: "rounds.stop", botId: bot } }).ok).toBe(true);
+    expect(parseInbound({ v: 3, id: "r1", cmd: { type: "chat.snapshot" } })).toMatchObject({ ok: false, error: { code: "unsupported_version" } });
+  });
+
   it("refuses another protocol version with its own code", () => {
     expect(parseInbound({ v: 1, id: "r1", cmd: { type: "chat.snapshot" } })).toMatchObject({ ok: false, id: "r1", error: { code: "unsupported_version" } });
     expect(parseInbound({ v: 2, id: "r1", cmd: { type: "chat.snapshot" } })).toMatchObject({ ok: false, error: { code: "unsupported_version" } });

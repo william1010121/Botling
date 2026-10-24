@@ -314,7 +314,6 @@ export class Bot {
     this.partner = new Bot({ ...this.options, primary: this, engine: other, lock: null, welcome: false });
     // The shared chat holds the partner's lines too: the same records, so a change shows in both.
     const mine = new Map(this.records.map((record, index) => [record.id, index]));
-    let changed = false;
     for (const record of this.partner.records) {
       const at = mine.get(record.id);
       if (at !== undefined) {
@@ -326,7 +325,6 @@ export class Bot {
         this.records[at] = record;
       }
     }
-    if (changed) this.persist();
   }
 
   get id() {
@@ -1628,6 +1626,8 @@ export class Bot {
     turn.resolve("stopped");
     for (const id of [...this.approvals.keys()]) this.settle(id, NO_LONGER_NEEDED, true);
     this.updated();
+    // A message this head led for both: the other head gets it now.
+    if (this.sharesChat) this.headStopped(this.engine);
     const head = turn.head;
     if (!head || !head.running || !turn.sent) { this.next(); return { stopped: true, killed: [], forced: false }; }
     if (quitting) {

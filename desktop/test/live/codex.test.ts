@@ -60,7 +60,7 @@ describe.skipIf(!live)("real codex app-server", () => {
     await c.call({ type: "chat.send", botId: MAIN, text: "Say hi in at most five words. Do not use any tools or workers." });
     const done = await until(async () => {
       const finished = c.of("turn.finished").map((e) => e.event as { messageId: string; status: string; text: string });
-      return finished.length >= 2 && finished;
+      return finished.length >= 2 ? finished : null;
     }, { timeout: 240_000, what: "both heads to finish" });
     const chat = await c.chat();
     const claude = chat.messages.find((m: any) => m.role === "bot" && m.engine === "claude");
