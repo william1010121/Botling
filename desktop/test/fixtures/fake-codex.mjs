@@ -17,6 +17,10 @@
 // A report turn (an app_task_result tool output) records a checkpoint and says what the worker
 // reported ("…/nocheckpoint" in the report: it records none). The tidy note hands the memory file
 // to a worker, which writes it; its report turn says OK.
+// Work the other head (Claude) hands over is answered "Did it: <task>" ("/say …": exactly that;
+// "/handoff:claude <task>": it hands <task> on), a
+// hand-back "Done: <its reply>"; "/solo <words>": with two heads, the head that hears the other's
+// words first says only <no-reply/>.
 // A worker's task: "/slowworker" runs until interrupted; "/failworker" fails; else it reports
 // "Worker did: <first line>" after FAKE_CODEX_WORKER_MS (default 300).
 // FAKE_CODEX_INPUT: a file it appends {thread, kind, text} to for every turn input and steer.
@@ -66,6 +70,20 @@ function words(text) {
   return { all: mine.join("\n\n"), last: mine.at(-1) ?? "" };
 }
 
+/** What it answers to work the other head handed over, or to its hand-back (null: neither). */
+function conductedReply(prompt) {
+  const handed = /\(App: (?:Claude|Codex), this bot's other head, (?:hands you this|asks you to review this|wants your view on this) \(hand-off \d+ of \d+ for the user's latest message\):\n([\s\S]*?)\n\nDo it, then reply/.exec(prompt);
+  if (handed) {
+    const on = /^\/handoff:(claude|codex) ([\s\S]*)$/.exec(handed[1]);
+    if (on) return `Over to you. <handoff to="${on[1]}">${on[2]}</handoff>`;
+    return handed[1].startsWith("/say ") ? handed[1].slice(5) : `Did it: ${handed[1]}`;
+  }
+  const back = /\(App: (?:Claude|Codex) finished what you handed over\. Its reply:\n([\s\S]*?)\n\nCarry on from there/.exec(prompt);
+  if (back) return back[1].startsWith("/say ") ? back[1].slice(5) : `Done: ${back[1]}`;
+  if (/finished what you handed over without a user-facing reply|The user went with your version/.test(prompt)) return "<no-reply/>";
+  return null;
+}
+
 async function coordinatorTurn(thread, turn, text) {
   const state = threads.get(thread);
   if (text.startsWith("(App: You have been idle")) {
@@ -74,7 +92,20 @@ async function coordinatorTurn(thread, turn, text) {
     say(thread, turn, receipt?.success ? "Handed the memory update to a worker." : "Could not hand it over.");
     return complete(thread, turn);
   }
+  const conducted = conductedReply(text);
+  if (conducted !== null) {
+    await sleep(Number(process.env.FAKE_CODEX_TURN_MS ?? 30));
+    say(thread, turn, conducted);
+    return complete(thread, turn);
+  }
   const said = words(text);
+  const solo = /^\/solo\b\s*/.exec(said.last);
+  if (solo) {
+    await sleep(Number(process.env.FAKE_CODEX_TURN_MS ?? 30));
+    const peer = /this bot's other head, replied in this chat|working on this too, says:/.test(text);
+    say(thread, turn, peer ? "<no-reply/>" : `I take it: ${said.last.slice(solo[0].length)}`);
+    return complete(thread, turn);
+  }
   const match = /^\/(say|slow|tool|worker|choices)\b\s*/.exec(said.last);
   const directive = match?.[1] ?? null;
   const rest = match ? said.last.slice(match[0].length) : said.all;

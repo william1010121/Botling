@@ -20,6 +20,12 @@
 //   agent    — (long-lived) sends a subagent (Agent tool) that reads a file and reports back, then says so
 //   bgagent  — (long-lived) sends one to the background; it reports a moment later, and claude starts
 //              a turn of its own to say so ("/bgagent:silent": that turn says only <no-reply/>)
+//   say      — "/say <text>": replies exactly <text> (a hand-off tag, say)
+//   solo     — "/solo <words>": with two heads, the head that hears the other's words first says only
+//              <no-reply/>; the one that reads it first takes it ("I take it: <words>")
+// Work the other head hands over ("(App: Codex, this bot's other head, hands you this …") is answered
+// "Did it: <task>" ("/say …" as the task: exactly that; "/handoff:claude <task>": it hands <task> on); a hand-back ("… finished what you handed
+// over. Its reply: …") "Done: <its reply>".
 // App notes ("(App: …" paragraphs: the wake briefing, recent lines, reactions) are not the user's
 // words: the reply echoes the rest, and the directive is read from the last paragraph. The tidy
 // note ("(App: You have been idle …") is answered "OK" after writing the memory file it names.
@@ -73,6 +79,20 @@ function directive(prompt) {
 function words(text) {
   const mine = text.split("\n\n").filter((part) => !part.startsWith("(App: ") && !part.startsWith("(I sent this in parts") && !part.startsWith("(Replying to "));
   return { all: mine.join("\n\n"), last: mine.at(-1) ?? "" };
+}
+
+/** What it answers to work the other head handed over, or to its hand-back (null: neither). */
+function conductedReply(prompt) {
+  const handed = /\(App: (?:Claude|Codex), this bot's other head, (?:hands you this|asks you to review this|wants your view on this) \(hand-off \d+ of \d+ for the user's latest message\):\n([\s\S]*?)\n\nDo it, then reply/.exec(prompt);
+  if (handed) {
+    const on = /^\/handoff:(claude|codex) ([\s\S]*)$/.exec(handed[1]);
+    if (on) return `Over to you. <handoff to="${on[1]}">${on[2]}</handoff>`;
+    return handed[1].startsWith("/say ") ? handed[1].slice(5) : `Did it: ${handed[1]}`;
+  }
+  const back = /\(App: (?:Claude|Codex) finished what you handed over\. Its reply:\n([\s\S]*?)\n\nCarry on from there/.exec(prompt);
+  if (back) return back[1].startsWith("/say ") ? back[1].slice(5) : `Done: ${back[1]}`;
+  if (/finished what you handed over without a user-facing reply|The user went with your version/.test(prompt)) return "<no-reply/>";
+  return null;
 }
 
 let initSent = false;
@@ -205,7 +225,27 @@ async function turn(job) {
     result(text);
     return;
   }
+  const conducted = conductedReply(prompt);
+  if (conducted !== null) {
+    const text = await stream(conducted);
+    out({ type: "assistant", parent_tool_use_id: null, message: { role: "assistant", content: [{ type: "text", text }] } });
+    result(text);
+    return;
+  }
   const said = words(prompt);
+  const solo = /^\/solo\b\s*/.exec(said.last);
+  if (solo) {
+    const peer = /this bot's other head, replied in this chat|working on this too, says:/.test(prompt);
+    const text = await stream(peer ? "<no-reply/>" : `I take it: ${said.last.slice(solo[0].length)}`);
+    result(text);
+    return;
+  }
+  const say = /^\/say\s+/.exec(said.last);
+  if (say) {
+    const text = await stream(said.last.slice(say[0].length));
+    result(text);
+    return;
+  }
   const { mode, tool } = directive(said.last);
   const rest = said.last === said.all ? directive(said.all).rest : said.all;
   current = { interrupted: false, helper: null, ignoreInterrupt: mode === "stubborn" };
