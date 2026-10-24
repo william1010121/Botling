@@ -170,6 +170,14 @@ public final class Workspace: ObservableObject {
     public let web: WebShelf
     private let makeBot: BotFactory
     let completionClassifier: ((String) -> PromiseCheck.Classifier)?
+    /// Writes catch-up summaries with a model (the app sets it); nil: unread messages are not grouped.
+    public var catchUpSummarizer: ((String) -> CatchUp.Summarizer)?
+    /// Each chat's folded unread messages and their summary, by bot id. UI only, not saved.
+    @Published public internal(set) var catchUps: [UUID: CatchUpState] = [:]
+    var catchUpTasks: [UUID: Task<Void, Never>] = [:]
+    lazy var catchUpCache = CatchUpCache(url: root.appending(path: CatchUpCache.fileName))
+    /// The window is key and the app active: only then does looking at a chat read it.
+    public internal(set) var windowFocused = true
     /// Botling's own settings: developer mode, auto-approve, ignored items.
     @Published public internal(set) var settings: AppSettings
     /// The right panel folded (or opened) for a while by a view such as a Board, not saved;
@@ -264,7 +272,7 @@ public final class Workspace: ObservableObject {
             guard let self else { return }
             deliverInboxes()
             refreshWaiting()
-            if selection == nil { mainBot.markRead() }
+            readIfViewing(mainBot)
         }
         mainBot.onRequests = { [weak self] requests in self?.handle(requests, from: nil) }
         mainBot.onSpend = { [weak self] amount in self?.record(amount, by: "Main bot") }
@@ -567,11 +575,13 @@ public final class Workspace: ObservableObject {
     }
 
     public func select(_ projectID: UUID?) {
+        // What you were looking at was read up to now.
+        readIfViewing(selectedBot)
         selection = projectID
         viewingSubagent = nil
         web.showing(WebSite.site(selection: projectID))
         // A web site (Gemini) is no chat: the main bot behind it stays unread.
-        if WebSite.site(selection: projectID) == nil { selectedBot.markRead() }
+        arrive(at: selectedBot)
     }
 
     /// Shows what `bot`'s subagent did, like a conversation; nil goes back to the bot's chat.
@@ -2004,7 +2014,7 @@ public final class Workspace: ObservableObject {
     @discardableResult
     func tell(_ chat: Bot, _ text: String, choices: [Choice]? = nil, sourceID: UUID? = nil, sourceMessageID: UUID? = nil) -> UUID {
         chat.notice(text, choices: choices, sourceID: sourceID, sourceMessageID: sourceMessageID)
-        if selectedBot === chat { chat.markRead() }
+        readIfViewing(chat)
         return chat.messages.last?.id ?? UUID()
     }
 
@@ -2229,7 +2239,7 @@ public final class Workspace: ObservableObject {
                 }
             }
             refreshWaiting()
-            if selection == project.id { bot?.markRead() }
+            if let bot { readIfViewing(bot) }
         }
         // Asked during a group turn, its question (may it use a tool?) shows in that group too.
         bot.onQuestion = { [weak self] message in

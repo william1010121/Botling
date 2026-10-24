@@ -8,6 +8,7 @@ import { SpecPanel } from "./spec";
 import { fillSubagentBar, subagentLiveElement, subagentMessageElement } from "./subagent";
 import { PinArea } from "./pins";
 import { HandoffDock } from "./handoffs";
+import { CatchUpGroup, onCatchUpToggle } from "./catchup";
 import { FloatLayer } from "./float";
 import { handleMediaClicks } from "./lightbox";
 import { PluginHost, type PluginSpec } from "./plugins";
@@ -41,6 +42,8 @@ class Chat {
   private readonly handoffs: HandoffDock;
   /** Pins floated in a corner of this chat (and other bots' shown in all bots), over the chat and the Board. */
   private readonly floats: FloatLayer;
+  /** Unread messages folded on your return, with their summary. */
+  private readonly catchUp = new CatchUpGroup();
   /**
    * Each message drawn: its element, and the key it was drawn from. `message` and `mark` are what
    * the key was made of, so an update that hands back the same message object (`patchState`)
@@ -88,6 +91,9 @@ class Chat {
       redraw: () => this.redraw(),
     });
     composer.onKey = (event) => this.plugins.handleKey(event);
+    onCatchUpToggle(() => {
+      if (this.last) this.catchUp.update(this.last, (id) => this.drawn.get(id)?.element ?? null);
+    });
     this.followBottom();
     this.handleClicks();
     this.handleDrops();
@@ -192,13 +198,17 @@ class Chat {
         entry = { key, element, message, mark };
         this.drawn.set(message.id, entry);
       }
-      const expected: Element | null = previous ? previous.nextElementSibling : this.list.firstElementChild;
+      let expected: Element | null = previous ? previous.nextElementSibling : this.list.firstElementChild;
+      // The catch-up card and end row sit between messages: step over them.
+      while (expected && expected !== entry.element && expected.classList.contains("catchup-extra")) expected = expected.nextElementSibling;
       if (expected !== entry.element) {
         if (previous) previous.after(entry.element);
         else this.list.prepend(entry.element);
       }
       previous = entry.element;
     }
+
+    this.catchUp.update(state, (id) => this.drawn.get(id)?.element ?? null);
 
     if (state.working && !state.subagent && this.typing?.dataset.avatar === state.avatar) {
       updateTypingElement(this.typing, state.live ?? []);

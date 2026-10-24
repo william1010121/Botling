@@ -119,6 +119,7 @@ struct ChatSurface: NSViewRepresentable {
                 workspace.settings.botLook == .cute ? ChibiImages.look(for: workspace.avatar(for: id) ?? .ghost) : nil
             },
             chatAvatarSize: workspace.settings.chatAvatarSizeChoice,
+            catchUp: workspace.catchUpView(for: bot),
             avatar: { projectID in
                 if let projectID, let kind = workspace.avatar(for: projectID) {
                     return AvatarImages.dataURL(kind, eyes: .open)
@@ -157,6 +158,7 @@ struct ChatSurface: NSViewRepresentable {
                 let names: [Notification.Name] = [
                     NSWindow.didChangeOcclusionStateNotification, NSWindow.didMiniaturizeNotification,
                     NSWindow.didDeminiaturizeNotification, NSApplication.didHideNotification, NSApplication.didUnhideNotification,
+                    NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
                 ]
                 windowObservers = names.map { name in
                     center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -174,6 +176,13 @@ struct ChatSurface: NSViewRepresentable {
             let shown = window.map {
                 RefreshSight.windowShows(occlusionVisible: $0.occlusionState.contains(.visible), miniaturized: $0.isMiniaturized, appHidden: NSApp.isHidden)
             } ?? false
+            // Catch-up: messages count as read only while you can see them (app active, window shown).
+            // Not during a view update (push runs in one): it may publish.
+            let focused = shown && NSApp.isActive
+            if surface.workspace.windowFocused != focused {
+                let workspace = surface.workspace
+                Task { @MainActor in workspace.setWindowFocused(focused) }
+            }
             guard shown != windowShown else { return }
             windowShown = shown
             view.evaluateJavaScript("ccb.setWindowVisible(\(shown))")
@@ -292,6 +301,9 @@ struct ChatSurface: NSViewRepresentable {
                 bot.stopHandoff(handoffID)
             case "stopRounds":
                 bot.stopRounds()
+            case "catchUpRetry":
+                guard id("botID") == bot.id else { return }
+                workspace.retryCatchUp(in: bot)
             case "openURL":
                 if let text = body["url"] as? String, let url = URL(string: text) {
                     let label = (body["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? url.lastPathComponent

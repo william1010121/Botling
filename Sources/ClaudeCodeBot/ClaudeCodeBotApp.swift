@@ -355,6 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let bot = Bot(profile: profile, idleInterval: idle, launcher: launcher, store: store)
             return bot
         }
+        workspace.catchUpSummarizer = { CatchUp.codexSummarizer(model: $0) }
         workspace.applyLanguage()
         return workspace
     }

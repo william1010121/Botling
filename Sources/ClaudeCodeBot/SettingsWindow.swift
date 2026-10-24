@@ -375,7 +375,7 @@ struct SettingsWindow: View {
 }
 
 /// The explanation under a group, as System Settings words it.
-private struct Footnote: View {
+struct Footnote: View {
     let text: String
     init(_ text: String) { self.text = text }
 
@@ -428,6 +428,7 @@ private struct GeneralPage: View {
         LanguageSection(workspace: workspace)
         BotLookSection(workspace: workspace)
         ChatAvatarSizeSection(workspace: workspace)
+        CatchUpSection(workspace: workspace)
         Section {
             Picker(L("Remind after no new step for"), selection: Binding(
                 get: { workspace.settings.stallReminder },

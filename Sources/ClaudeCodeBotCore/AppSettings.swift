@@ -46,6 +46,15 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var completionVerificationOn: Bool?
     public var completionVerificationEnabled: Bool { completionVerificationOn ?? true }
 
+    /// Catch-up summary (Settings → General). Nil (a settings file from before it) means on,
+    /// more than `CatchUp.defaultThreshold` unread, and the completion judge's model.
+    public var catchUpEnabledChoice: Bool?
+    public var catchUpThresholdChoice: Int?
+    public var catchUpModelChoice: String?
+    public var catchUpEnabled: Bool { catchUpEnabledChoice ?? true }
+    public var catchUpThreshold: Int { CatchUp.clampedThreshold(catchUpThresholdChoice ?? CatchUp.defaultThreshold) }
+    public var catchUpModel: String { catchUpModelChoice ?? PromiseCheck.judgeModel }
+
     /// App-managed Codex workers follow `~/.codex/config.toml`. Nil (a settings file from before
     /// it) means on.
     public var codexWorkersFollow: Bool?

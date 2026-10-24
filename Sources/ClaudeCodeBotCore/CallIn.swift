@@ -112,7 +112,7 @@ extension Workspace {
             case let .reply(text, steps):
                 let hostName = everyMember.first { $0.bot === chat }?.name ?? chat.name
                 // You named it, so its tags act as they would in its own chat.
-                _ = await postGuestReply(text, steps: steps, from: member, bot: bot, into: chat, seen: selectedBot === chat,
+                _ = await postGuestReply(text, steps: steps, from: member, bot: bot, into: chat, seen: isViewing(chat),
                                          policy: .init(passes: false, tagsAct: true)) { [hostName] line in
                     bot.keepCallIn(asked: L("Called into {0}'s chat with @: {1}", hostName, asked), at: askedAt, reply: line)
                 }

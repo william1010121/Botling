@@ -7,6 +7,17 @@ extension L10n {
         "Chat avatars": ["聊天頭像", "聊天头像", "チャットのアバター", "채팅 아바타"],
         "Use default size": ["使用預設大小", "使用默认大小", "既定のサイズを使う", "기본 크기 사용"],
         "Applies immediately to message avatars in every chat. Sidebar icons and small engine heads keep their size. Default: 48 px, or 40 px in narrow chats.": ["立即套用到所有聊天的訊息頭像。側欄圖示與引擎小頭像維持原大小。預設為 48 px，窄視窗為 40 px。", "立即应用到所有聊天的消息头像。侧栏图标与引擎小头像保持原大小。默认为 48 px，窄窗口为 40 px。", "すべてのチャットのメッセージにすぐ反映されます。サイドバーと小さなエンジンアイコンのサイズは変わりません。既定は48 px、狭いチャットでは40 pxです。", "모든 채팅의 메시지 아바타에 즉시 적용됩니다. 사이드바 아이콘과 작은 엔진 아이콘은 원래 크기를 유지합니다. 기본값은 48 px, 좁은 채팅에서는 40 px입니다."],
+        // Catch-up summary
+        "Catch-up summary": ["未讀摘要", "未读摘要", "未読のまとめ", "읽지 않은 메시지 요약"],
+        "Summarize unread messages": ["摘要未讀訊息", "摘要未读消息", "未読メッセージを要約", "읽지 않은 메시지 요약하기"],
+        "Fold unread messages into one group when you come back": ["回來時把未讀訊息收成一組", "回来时把未读消息收成一组", "戻ったときに未読メッセージを1つにまとめます", "돌아왔을 때 읽지 않은 메시지를 한 묶음으로 접습니다"],
+        "Unread threshold": ["未讀門檻", "未读阈值", "未読のしきい値", "읽지 않음 기준"],
+        "Collapse when more than this many messages are unread": ["未讀訊息超過這個數量時收合", "未读消息超过这个数量时收起", "未読がこの数を超えたら折りたたみます", "읽지 않은 메시지가 이 수보다 많으면 접습니다"],
+        "Summary model": ["摘要模型", "摘要模型", "要約モデル", "요약 모델"],
+        "Current summary model: {0}": ["目前摘要模型：{0}", "当前摘要模型：{0}", "現在の要約モデル：{0}", "현재 요약 모델: {0}"],
+        "When you return to a chat with more than {0} unread messages, they fold into one group with a 3–5 bullet summary on top. Changes apply the next time you open a chat.": ["回到未讀超過 {0} 則的聊天時，這些訊息會收成一組，上方附 3–5 點摘要。變更於下次開啟聊天時生效。", "回到未读超过 {0} 条的聊天时，这些消息会收成一组，上方附 3–5 点摘要。更改于下次打开聊天时生效。", "未読が {0} 件を超えるチャットに戻ると、それらを1つにまとめ、上に3〜5項目の要約を表示します。変更は次にチャットを開いたときに適用されます。", "읽지 않은 메시지가 {0}개보다 많은 채팅으로 돌아오면 한 묶음으로 접고 위에 3–5개 항목의 요약을 보여 줍니다. 변경은 다음에 채팅을 열 때 적용됩니다."],
+        "Catch-up summary is off. Unread messages appear one by one, as before.": ["未讀摘要已關閉。未讀訊息照舊逐則顯示。", "未读摘要已关闭。未读消息照旧逐条显示。", "未読のまとめはオフです。未読メッセージはこれまでどおり1件ずつ表示されます。", "읽지 않은 메시지 요약이 꺼져 있습니다. 메시지는 전처럼 하나씩 표시됩니다."],
+        "The summary model reads only the unread messages in that chat, using your Codex login with medium effort. Collapsed messages are never deleted: click the group to see every message, and search and replies still reach them. If the model fails, the group shows the error and stays expandable.": ["摘要模型只讀該聊天的未讀訊息，使用你的 Codex 登入，推理強度為 medium。收合的訊息不會刪除：點開群組即可看到每一則，搜尋與回覆也照樣找得到。模型失敗時，群組會顯示錯誤，仍可展開。", "摘要模型只读该聊天的未读消息，使用你的 Codex 登录，推理强度为 medium。收起的消息不会删除：点开分组即可看到每一条，搜索与回复也照样找得到。模型失败时，分组会显示错误，仍可展开。", "要約モデルはそのチャットの未読メッセージだけを、Codex のログインで medium の深さで読みます。折りたたんだメッセージは削除されません。グループを開けばすべて見られ、検索や返信も届きます。モデルが失敗した場合はエラーを表示し、展開もできます。", "요약 모델은 Codex 로그인으로 medium 강도에서 그 채팅의 읽지 않은 메시지만 읽습니다. 접힌 메시지는 삭제되지 않습니다. 묶음을 열면 모든 메시지를 볼 수 있고 검색과 답장도 그대로 닿습니다. 모델이 실패하면 묶음에 오류가 표시되며 계속 펼칠 수 있습니다."],
         // Sections
         "General": ["一般", "常规", "一般", "일반"],
         "Usage": ["用量", "用量", "使用量", "사용량"],

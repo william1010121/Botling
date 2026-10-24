@@ -1383,3 +1383,67 @@ body.spec-mode .float-layer { display: none; }
 .verification-heading { color: var(--text); }
 .verification-model { font-size: 11px; }
 .verification-reason { margin-top: 3px; white-space: pre-wrap; }
+
+/* Catch-up summary: unread messages folded on your return (catchup.ts). */
+.row.catchup-folded { display: none; }
+.catchup-head { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
+.catchup-divider { display: flex; align-items: center; gap: 10px; color: var(--link); font-size: 12px; font-weight: 600; }
+.catchup-divider .line, .catchup-end .line { flex: 1; height: 1px; }
+.catchup-divider .line { background: var(--blue); opacity: 0.55; }
+.catchup-card { position: relative; }
+.catchup-card.stacked { padding-bottom: 16px; }
+.catchup-card.stacked::before, .catchup-card.stacked::after {
+  content: ""; position: absolute; height: 30px; border: 1px solid var(--line); border-top: none;
+}
+.catchup-card.stacked::after { left: 28px; right: 28px; bottom: 0; border-radius: 0 0 16px 16px; background: #111114; }
+.catchup-card.stacked::before { left: 14px; right: 14px; bottom: 8px; border-radius: 0 0 17px 17px; background: #141418; z-index: 1; }
+.catchup-card-body {
+  position: relative; z-index: 2; display: flex; flex-direction: column; gap: 10px;
+  padding: 14px 18px; border: 1px solid var(--border); border-radius: 18px; background: var(--notice);
+}
+.catchup-top { display: flex; align-items: center; gap: 8px; font-size: 13px; min-width: 0; }
+.catchup-icon { flex: none; color: var(--link); }
+.catchup-icon.error { color: var(--error); }
+.catchup-title { font-weight: 600; color: var(--text); }
+.catchup-meta { color: var(--muted); white-space: nowrap; }
+.catchup-space { flex: 1; }
+.catchup-range { font-size: 12px; color: var(--faint); white-space: nowrap; }
+.catchup-bullets { margin: 0; padding: 0 0 0 2px; list-style: none; display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
+.catchup-bullets li { display: flex; gap: 10px; }
+.catchup-bullets .dot { flex: none; width: 5px; height: 5px; margin-top: 11px; border-radius: 50%; background: var(--muted); }
+.catchup-bullets li.decision .dot { background: var(--orange-text); }
+.catchup-bullets strong { font-weight: 600; }
+.catchup-bullets code { font: 13px ui-monospace, "SF Mono", Menlo, monospace; background: var(--code); padding: 1px 5px; border-radius: 5px; }
+.catchup-loading { display: flex; flex-direction: column; gap: 12px; padding: 4px 0 2px; }
+.catchup-writing { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.catchup-spinner { width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--blue); border-radius: 50%; animation: spin 0.9s linear infinite; }
+.catchup-skeleton { display: flex; flex-direction: column; gap: 12px; animation: catchup-pulse 1.6s ease-in-out infinite; }
+.catchup-skeleton div { height: 10px; border-radius: 5px; background: #26262C; }
+@keyframes catchup-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+.catchup-error { display: flex; flex-direction: column; gap: 4px; }
+.catchup-error-title { color: var(--error); font-weight: 600; font-size: 14px; }
+.catchup-error-detail { font-size: 13px; color: var(--muted); }
+.catchup-foot { display: flex; align-items: center; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line); min-width: 0; }
+.catchup-faces { display: flex; flex: none; }
+.catchup-faces img { width: 22px; height: 22px; border-radius: 50%; background: var(--notice); object-fit: cover; }
+.catchup-faces img + img { margin-left: -6px; }
+.catchup-latest { flex: 1; min-width: 0; font-size: 13px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.catchup-button {
+  flex: none; height: 32px; padding: 0 12px; border: none; border-radius: 8px; background: var(--chip); color: var(--text);
+  font: inherit; font-size: 13px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+}
+.catchup-button:hover { background: #33333B; }
+.catchup-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.catchup-button.outline { background: transparent; border: 1px solid var(--border); }
+.catchup-button.outline:hover { background: #33333B; }
+.catchup-button.small { height: 26px; padding: 0 10px; font-size: 12px; color: var(--muted); gap: 4px; }
+.catchup-by { font-size: 12px; color: var(--faint); }
+.catchup-end { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-size: 12px; color: var(--faint); }
+.catchup-end .line { background: var(--border); }
+@media (max-width: 480px) {
+  .catchup-range { display: none; }
+  .catchup-card-body { padding: 12px 14px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .catchup-spinner, .catchup-skeleton { animation: none; }
+}

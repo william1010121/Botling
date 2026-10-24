@@ -389,6 +389,28 @@ public struct ChatPayload: Encodable, Equatable {
     /// Cute character animations, shared once per state rather than embedded in every message.
     var animatedHeads: [ChibiAnimation.Head]? = nil
     var avatarMood: String? = nil
+    /// Unread messages folded on your return, with their summary; nil when there is no group.
+    var catchUp: CatchUpView? = nil
+
+    /// The page's catch-up group: which messages it folds and what the summary says.
+    public struct CatchUpView: Encodable, Equatable {
+        /// The range and language summarized: the page remembers expanding by it.
+        public var key: String
+        public var ids: [String]
+        /// The unread replies in it (dividers not counted).
+        public var count: Int
+        /// How many heads wrote them, when more than one.
+        public var heads: Int?
+        /// "loading", "ready" or "failed".
+        public var state: String
+        public var bullets: [String]
+        public var error: String?
+        public var model: String
+        /// When the first and the last of them came ("18:04"), and who said the last and its first line.
+        public var since: String? = nil
+        public var until: String? = nil
+        public var latest: String? = nil
+    }
 
     /// Bot look Cute: the engine characters as image URLs. `avatar`: a head's
     /// character wearing the bot's face, for its replies; `mark`: its tiny head for seen marks.
@@ -567,6 +589,7 @@ public struct ChatPayload: Encodable, Equatable {
         look: HeadLook? = nil,
         sourceLook: ((UUID) -> HeadLook?)? = nil,
         chatAvatarSize: Int? = nil,
+        catchUp: CatchUpView? = nil,
         avatar: (_ projectID: UUID?) -> String
     ) -> ChatPayload {
         // Each guest wears its own bot's hat. Never infer an old reply's engine from settings.
@@ -738,7 +761,8 @@ public struct ChatPayload: Encodable, Equatable {
             seenHeads: look.map { look in Dictionary(uniqueKeysWithValues: bot.heads.engines.map { (markLetter($0), look.mark($0)) }) },
             animatedHeads: animations.isEmpty ? nil : animations,
             avatarMood: look != nil || !sourceLooks.isEmpty
-                ? Chibi.mood(asleep: moodBot.phase == .asleep, working: moodBot.isWorking, waiting: moodBot.waitingForPermission).rawValue : nil
+                ? Chibi.mood(asleep: moodBot.phase == .asleep, working: moodBot.isWorking, waiting: moodBot.waitingForPermission).rawValue : nil,
+            catchUp: catchUp
         )
     }
 

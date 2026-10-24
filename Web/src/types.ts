@@ -19,6 +19,22 @@ export interface FileView {
   url: string;
 }
 
+/** A chat's unread messages folded into one group, with a summary on top. */
+export interface CatchUpView {
+  /** The range and language summarized: expanding is remembered by it. */
+  key: string;
+  ids: string[];
+  count: number;
+  heads?: number | null;
+  state: "loading" | "ready" | "failed";
+  bullets: string[];
+  error?: string | null;
+  model: string;
+  since?: string | null;
+  until?: string | null;
+  latest?: string | null;
+}
+
 export interface MessageView {
   id: string;
   reactionEnabled?: boolean | null;
@@ -421,6 +437,8 @@ export interface ChatState {
   seenHeads?: Record<string, string> | null;
   animatedHeads?: AnimatedHead[] | null;
   avatarMood?: "normal" | "work" | "think" | "sleep" | null;
+  /** Unread messages folded on your return, with their summary (`catchup.ts`). */
+  catchUp?: CatchUpView | null;
 }
 
 export interface CharacterClip {
@@ -493,6 +511,7 @@ export type Action =
   | { type: "reply"; messageID: string }
   | { type: "cancelReply" }
   | { type: "stopRounds" }
+  | { type: "catchUpRetry"; botID: string }
   | { type: "stopHandoff"; botID: string; handoffID: string }
   | { type: "openURL"; url: string; label: string }
   | { type: "openExternal"; url: string }

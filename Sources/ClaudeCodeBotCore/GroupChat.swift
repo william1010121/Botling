@@ -265,7 +265,7 @@ extension Workspace {
             case let .reply(text, steps):
                 // Tags act only for the main bot (the front desk) and for bots you named: a bot
                 // that chimed in on its own does not get to start teams, bots or installs.
-                let posted = await postGuestReply(text, steps: steps, from: member, bot: bot, into: chat, seen: selection == id,
+                let posted = await postGuestReply(text, steps: steps, from: member, bot: bot, into: chat, seen: isViewing(chat),
                                                   policy: .init(passes: true, tagsAct: addressed || member.id == Self.mainBotID))
                 if let posted { said.append(posted) }
             }

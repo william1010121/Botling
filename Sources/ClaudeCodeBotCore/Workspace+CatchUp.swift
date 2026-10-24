@@ -1,0 +1,158 @@
+import Foundation
+
+extension Workspace {
+    // MARK: Reading
+
+    /// You are looking at `chat`: it is selected (not a web site), and the window is focused.
+    func isViewing(_ chat: Bot) -> Bool {
+        windowFocused && selectedBot === chat && WebSite.site(selection: selection) == nil
+    }
+
+    /// A line arrived in `chat`: read at once if you are looking at it.
+    func readIfViewing(_ chat: Bot) {
+        if isViewing(chat) { chat.markRead() }
+    }
+
+    /// You came back to `chat` (selected it, or returned to the window): more than k unread
+    /// messages fold into a group with a summary, then the chat is read.
+    func arrive(at chat: Bot) {
+        guard isViewing(chat) else { return }
+        let unread = chat.unreadCount
+        if settings.catchUpEnabled, unread > settings.catchUpThreshold {
+            startCatchUp(for: chat, unread: unread)
+        }
+        chat.markRead()
+    }
+
+    /// The app tells when its window gains or loses focus (key window of the active app, shown).
+    public func setWindowFocused(_ focused: Bool) {
+        guard focused != windowFocused else { return }
+        if focused {
+            windowFocused = true
+            arrive(at: selectedBot)
+        } else {
+            // What you were looking at was read up to now.
+            readIfViewing(selectedBot)
+            windowFocused = false
+        }
+    }
+
+    // MARK: Summaries
+
+    /// Groups the last `unread` messages of `chat` and summarizes them, once per range: a range
+    /// already summarized (this run or an earlier one) is shown at once.
+    public func startCatchUp(for chat: Bot, unread: Int) {
+        guard catchUpSummarizer != nil else { return }
+        let messages = CatchUp.unreadMessages(in: chat.messages, unread: unread)
+        guard !messages.isEmpty else { return }
+        let key = CatchUp.key(messages, language: language)
+        if let current = catchUps[chat.id], current.key == key, current.phase != .failed { return }
+        let model = settings.catchUpModel
+        var state = CatchUpState(key: key, messageIDs: messages.map(\.id), phase: .loading, model: model)
+        if let cached = catchUpCache[key] {
+            state.phase = .ready
+            state.bullets = cached.bullets
+            state.model = cached.model
+            catchUps[chat.id] = state
+            return
+        }
+        catchUps[chat.id] = state
+        summarize(chat, messages: messages, key: key, model: model)
+    }
+
+    /// The page's Retry on a failed summary.
+    public func retryCatchUp(in chat: Bot) {
+        guard var state = catchUps[chat.id], state.phase == .failed else { return }
+        let ids = Set(state.messageIDs)
+        let messages = chat.messages.filter { ids.contains($0.id) }
+        guard !messages.isEmpty else { return }
+        state.phase = .loading
+        state.error = nil
+        state.model = settings.catchUpModel
+        catchUps[chat.id] = state
+        summarize(chat, messages: messages, key: state.key, model: state.model)
+    }
+
+    private func summarize(_ chat: Bot, messages: [ChatMessage], key: String, model: String) {
+        guard let make = catchUpSummarizer else { return }
+        let prompt = CatchUp.prompt(for: messages, language: language) { [weak self] message in
+            self?.catchUpName(of: message, in: chat) ?? chat.name
+        }
+        let summarizer = make(model)
+        let chatID = chat.id
+        catchUpTasks[chatID]?.cancel()
+        catchUpTasks[chatID] = Task { @MainActor [weak self] in
+            let result: Result<[String], Error>
+            do { result = .success(try await summarizer(prompt)) } catch { result = .failure(error) }
+            guard let self, !Task.isCancelled, var state = catchUps[chatID], state.key == key else { return }
+            switch result {
+            case let .success(bullets):
+                state.phase = .ready
+                state.bullets = bullets
+                catchUpCache.store(bullets, model: model, for: key)
+            case let .failure(error):
+                state.phase = .failed
+                state.error = error.localizedDescription
+            }
+            catchUps[chatID] = state
+            catchUpTasks[chatID] = nil
+        }
+    }
+
+    /// Who said a message, as the summary model is told it.
+    func catchUpName(of message: ChatMessage, in chat: Bot) -> String {
+        switch message.role {
+        case .bot:
+            let name = message.sourceID.flatMap { speakerName(for: $0) } ?? chat.name
+            return message.engine.map { "\(name) · \($0.displayName)" } ?? name
+        case .error: return "Error"
+        case .relay: return "Handed over"
+        default: return "Botling"
+        }
+    }
+
+    /// What the page draws for `chat`'s group; nil when there is none (or its messages are gone).
+    public func catchUpView(for chat: Bot) -> ChatPayload.CatchUpView? {
+        guard let state = catchUps[chat.id] else { return nil }
+        let present = Set(chat.messages.map(\.id))
+        let ids = state.messageIDs.filter(present.contains)
+        guard !ids.isEmpty else { return nil }
+        let byID = Dictionary(chat.messages.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let counted = ids.compactMap { byID[$0] }.filter { CatchUp.counts($0.role) }
+        let heads = Set(counted.compactMap(\.engine)).count
+        let latest = counted.last.map { message in
+            let who = message.engine?.displayName ?? catchUpName(of: message, in: chat)
+            let line = message.text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+            return "\(who): \(line.prefix(160))"
+        }
+        return ChatPayload.CatchUpView(
+            key: state.key, ids: ids.map(\.uuidString), count: counted.count, heads: heads > 1 ? heads : nil,
+            state: state.phase.rawValue, bullets: state.bullets, error: state.error, model: state.model,
+            since: counted.first.map { CatchUp.time($0.date) }, until: counted.last.map { CatchUp.time($0.date) },
+            latest: latest)
+    }
+
+    // MARK: Settings
+
+    public func setCatchUpEnabled(_ enabled: Bool) {
+        guard enabled != settings.catchUpEnabled else { return }
+        settings.catchUpEnabledChoice = enabled
+        settings.save(to: settingsURL)
+    }
+
+    public func setCatchUpThreshold(_ threshold: Int) {
+        let threshold = CatchUp.clampedThreshold(threshold)
+        guard threshold != settings.catchUpThresholdChoice else { return }
+        settings.catchUpThresholdChoice = threshold
+        settings.save(to: settingsURL)
+    }
+
+    /// Only models that offer medium effort, as for completion verification.
+    @discardableResult
+    public func setCatchUpModel(_ model: CodexModel) -> Bool {
+        guard model.supportsCompletionVerification else { return false }
+        settings.catchUpModelChoice = model.id
+        settings.save(to: settingsURL)
+        return true
+    }
+}
