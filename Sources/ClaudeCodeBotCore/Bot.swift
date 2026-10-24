@@ -1652,6 +1652,7 @@ public final class Bot: ObservableObject, Identifiable {
             effort: effort,
             codexModel: heads.codexModel,
             codexWorkerInstructions: engine == .codex ? prompts.codexWorkerSystem : nil,
+            componentEditorEnabled: profile.componentEditorEnabled,
             codexWorkerDefaults: codexWorkerDefaults,
             subagentModel: subagentModel,
             subagentHourCache: subagentHourCache?() ?? false,
@@ -2467,7 +2468,8 @@ public final class Bot: ObservableObject, Identifiable {
             if tokens.total > 0 { onTokens?(tokens) }
         case let .trace(step):
             if engine == .codex, turnConducted,
-               case let .subagentStarted(id, _, type, _, _) = step, type == "codex-worker" {
+               case let .subagentStarted(id, _, type, _, _) = step,
+               ["codex-worker", "ccb-core:component-editor"].contains(type) {
                 if let handoffID = turnHandoffID { managedTaskHandoffs[id] = handoffID }
             }
             if sharesChat, case let .text(words, nil) = step, internalReply == nil {

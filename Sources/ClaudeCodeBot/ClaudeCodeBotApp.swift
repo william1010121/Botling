@@ -339,7 +339,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let launcher: AgentLauncher = { launch in
             if launch.engine == .codex {
                 guard let executable = CodexCLI.locateNewest() else { throw AppError.codexNotFound }
-                return try CodexAgentProcess.launcher(executable: executable)(launch)
+                return try CodexAgentProcess.launcher(executable: executable, componentEditorLauncher: { editor in
+                    guard let claude = locator.locate() else { throw AppError.claudeNotFound }
+                    return try ClaudeAgentProcess.launcher(executable: claude)(editor)
+                })(launch)
             }
             guard let executable = locator.locate() else { throw AppError.claudeNotFound }
             return try ClaudeAgentProcess.launcher(executable: executable)(launch)

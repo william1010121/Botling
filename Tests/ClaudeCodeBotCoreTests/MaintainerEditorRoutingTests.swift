@@ -23,7 +23,15 @@ struct MaintainerEditorRoutingTests {
         let h = CodexManagedWorkerTests()
         let initialize = CodexSessionTests.Out(session.start()).writes[0]
         let start = h.response(initialize, [:], &session)
-        _ = h.response(h.write(start, "thread/start"), ["thread": ["id": "root"]], &session)
+        let coordinator = h.write(start, "thread/start")
+        let params = try #require(coordinator["params"] as? [String: Any])
+        let tools = try #require(params["dynamicTools"] as? [[String: Any]])
+        let handoff = try #require(tools.first { $0["name"] as? String == "app_handoff" })
+        let schema = try #require(handoff["inputSchema"] as? [String: Any])
+        let properties = try #require(schema["properties"] as? [String: Any])
+        let role = try #require(properties["role"] as? [String: Any])
+        #expect(role["enum"] as? [String] == ["component-editor"])
+        _ = h.response(coordinator, ["thread": ["id": "root"]], &session)
         h.rootTurn(&session)
         let out = h.tool(100, arguments: ["instructions": "Authorized component change: inspect the supplied screenshot, change token-speed in an isolated worktree, test and return evidence. No release.",
                                          "name": "token-speed", "role": "component-editor"], &session)
@@ -32,6 +40,17 @@ struct MaintainerEditorRoutingTests {
             return nil
         }
         #expect(types == ["ccb-core:component-editor"])
+        guard case let .start(_, _, editor, _) = try #require(out.editors.first) else {
+            Issue.record("Missing concrete Claude editor launch")
+            return
+        }
+        #expect(editor.engine == .claude)
+        #expect(editor.model == .haiku)
+        #expect(editor.systemPrompt.contains(ComponentPrompts.system))
+        #expect(!editor.systemPrompt.contains(boundary))
+        #expect(editor.systemPrompt.contains("Do not delegate"))
+        #expect(editor.restrictedTools == ["Read", "Write", "Edit", "Bash"])
+
         // A component editor must use its configured Claude role, never a generic Codex thread.
         #expect(!out.writes.contains { $0["method"] as? String == "thread/start" })
     }

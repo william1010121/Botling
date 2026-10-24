@@ -14,6 +14,7 @@ struct CodexSessionTests {
         var threads: [String] = []
         var closed = false
         var failed: String?
+        var editors: [ComponentEditorAction] = []
 
         init(_ outputs: [CodexOutput]) {
             for output in outputs {
@@ -23,6 +24,7 @@ struct CodexSessionTests {
                 case let .thread(id): threads.append(id)
                 case .close: closed = true
                 case let .failed(message): failed = message
+                case let .componentEditor(action): editors.append(action)
                 }
             }
         }

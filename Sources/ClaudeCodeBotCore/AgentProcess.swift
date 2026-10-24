@@ -151,6 +151,8 @@ public struct AgentLaunch: Equatable, Sendable {
     public var workingDirectory: URL
     public var systemPrompt: String
     public var tools: [String] = ["Read", "Write", "Edit"]
+    /// An existing role may restrict available built-ins, as its Claude agent tools field does.
+    public var restrictedTools: [String]? = nil
     /// Folders outside `workingDirectory` it may read and edit (`--add-dir`).
     public var extraDirectories: [URL] = []
     /// Claude Code plugins it loads: skills, agents, MCP servers (`--plugin-dir`).
@@ -178,6 +180,8 @@ public struct AgentLaunch: Equatable, Sendable {
     public var codexModel: String? = nil
     /// Instructions for app-managed Codex worker sessions, separate from the coordinator's.
     public var codexWorkerInstructions: String? = nil
+    /// App-owned Maintainer capability; never inferred from a task name or prompt.
+    public var componentEditorEnabled = false
     /// What those worker sessions start on; unset values follow `codexModel`/`effort`.
     public var codexWorkerDefaults = CodexWorkerDefaults()
     /// The model its subagents use (`CLAUDE_CODE_SUBAGENT_MODEL`); nil: the same as its own.
@@ -226,6 +230,7 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
             "--allowedTools", (launch.tools + (launch.pluginDirectories.isEmpty || launch.tools.contains("Skill") ? [] : ["Skill"]) + launch.pluginTools).joined(separator: ","),
             "--append-system-prompt", launch.systemPrompt
         ]
+        if let tools = launch.restrictedTools { arguments += ["--tools", tools.joined(separator: ",")] }
         if launch.forkSession {
             arguments.append("--fork-session")
         }

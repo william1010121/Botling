@@ -211,6 +211,9 @@ struct BotPrompts {
             """
         }
         if engine == .codex { system += "\n" + Self.codexNote + "\n" + Self.codexLocalReportRule(folder: artifacts) }
+        if engine == .codex, profile.componentEditorEnabled {
+            system += "\n" + ComponentEditorRoute.coordinatorRule
+        }
         if heads?.hasTwo == true { system += "\n" + headsRule }
         if engine == .codex { system += "\n" + Self.codexDelegationPolicy }
         if engine == .codex {

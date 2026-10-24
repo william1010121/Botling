@@ -18,6 +18,8 @@ struct CodexManagedWorkerRecord: Codable, Equatable {
     var reconciliationAttempt: Int?
     /// Judge ownership evidence can include steers; never replay it as a launch prompt.
     var ownershipInstructions: String?
+    /// Nil in legacy records and ordinary tasks; explicit editor roles survive follow-ups.
+    var role: String?
 }
 
 /// Which Codex thread each bot session is: `codex app-server` names its threads itself, while a
@@ -106,6 +108,7 @@ enum CodexOutput {
     case close
     /// It could not start or resume: end the process; the message goes in its exit's stderr.
     case failed(String)
+    case componentEditor(ComponentEditorAction)
 }
 
 /// One bot session over `codex app-server`'s JSON-RPC (stdio, one JSON object a line), with no
@@ -142,6 +145,7 @@ struct CodexSession {
         /// The Codex model (`model/list`'s id); nil: Codex's own default.
         var model: String?
         var workerInstructions: String?
+        var componentEditor: ComponentEditorRoute?
         /// What app-managed workers start on; unset values follow `model`/`effort` above.
         var workerDefaults = CodexWorkerDefaults()
         var restoredWorkers: [CodexManagedWorkerRecord] = []
@@ -226,6 +230,8 @@ struct CodexSession {
     private var toolReplies: [String: [String: Any]] = [:]
     private var managedPending = false
     private var stopped = false
+    private var editorApprovals: [String: (task: String, run: Int, request: PermissionRequest)] = [:]
+    private var editorCost = 0.0
     private var monitors: [String: CommandMonitor] = [:]
     private var activeMonitor: String?
 
@@ -297,6 +303,10 @@ struct CodexSession {
     }
 
     mutating func answer(_ requestID: String, allow: Bool, message: String? = nil) -> [CodexOutput] {
+        if let approval = editorApprovals.removeValue(forKey: requestID) {
+            guard let worker = workers[approval.task], worker.active, !worker.cancelled, worker.run == approval.run else { return [] }
+            return [.componentEditor(.answer(task: approval.task, request: approval.request, allow: allow, message: message))]
+        }
         if requestID.hasPrefix("monitor:" ) { return approveMonitor(String(requestID.dropFirst(8)), allow: allow) }
         guard let approval = approvals.removeValue(forKey: requestID) else { return [] }
         let result: [String: Any] = switch approval.kind {
@@ -702,6 +712,8 @@ struct CodexSession {
         var name: String
         var instructions: String
         var ownershipInstructions: String?
+        var role: String?
+        var reportedCost = 0.0
         var thread: String?
         var turnID: String?
         var run = 1
@@ -722,6 +734,7 @@ struct CodexSession {
         init(record: CodexManagedWorkerRecord) {
             id = record.id; name = record.name; instructions = record.instructions
             ownershipInstructions = record.ownershipInstructions
+            role = record.role
             thread = record.thread; run = record.run; active = false
             runtime = record.runtime
             tokens = record.tokens ?? TokenUsage()
@@ -765,7 +778,7 @@ struct CodexSession {
             return CodexManagedWorkerRecord(id: worker.id, name: worker.name, instructions: worker.instructions,
                 thread: worker.thread, run: worker.run, wasActive: worker.active, reportPending: result != nil,
                 report: result?.report, status: result?.status, turn: result?.turn, tokens: worker.tokens, runtime: worker.runtime,
-                reconciliationAttempt: result?.reconciliationAttempt, ownershipInstructions: worker.ownershipInstructions)
+                reconciliationAttempt: result?.reconciliationAttempt, ownershipInstructions: worker.ownershipInstructions, role: worker.role)
         }.sorted { $0.id < $1.id }
     }
 
@@ -832,7 +845,8 @@ struct CodexSession {
          "inputSchema": ["type": "object", "properties": ["monitor_id": ["type": "string"]], "required": ["monitor_id"], "additionalProperties": false]],
         ["type": "function", "name": "app_handoff",
          "description": "Assign one independently accepted deliverable to an app-managed worker. Returns acceptance and task_id immediately, not a completed result. Continue other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn without waiting. The app delivers correlated app_task_result reports in later turns. A new handoff does not resolve the active report.",
-         "inputSchema": ["type": "object", "properties": ["instructions": ["type": "string"], "name": ["type": "string"]], "required": ["instructions"], "additionalProperties": false]],
+         "inputSchema": ["type": "object", "properties": ["instructions": ["type": "string"], "name": ["type": "string"],
+            "role": ["type": "string", "enum": ["component-editor"], "description": "Only for the plugin-library Maintainer: launch its existing Claude ccb-core component editor on its configured model. No new folders, tools, authorization or settings. Omit for ordinary work."]], "required": ["instructions"], "additionalProperties": false]],
         ["type": "function", "name": "app_send_message",
          "description": "Send a follow-up within the same worker task/session; never append a new independent deliverable. Busy workers receive steering; idle workers start a new turn. Returns acceptance, not the completed result. Continue other eligible dispatches and required report decisions before ending the dispatch phase. Only continuation of the active report task_id resolves that report.",
          "inputSchema": ["type": "object", "properties": ["task_id": ["type": "string"], "message": ["type": "string"]], "required": ["task_id", "message"], "additionalProperties": false]],
@@ -886,13 +900,25 @@ struct CodexSession {
             response = reply(handled.payload, success: handled.success)
         } else if tool == "app_handoff", let instructions = arguments?["instructions"] as? String,
            !instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let role = arguments?["role"] as? String
+            if arguments?["role"] != nil {
+                guard role == "component-editor", config.componentEditor?.launch != nil else {
+                    let reason: String
+                    if case let .unavailable(why) = config.componentEditor { reason = why }
+                    else { reason = "The requested component-editor role is unavailable to this coordinator. Only the app-created Maintainer can use it; no generic worker was launched." }
+                    let denied = reply(["error": reason], success: false)
+                    toolReplies[key] = denied
+                    return [.write(denied)]
+                }
+            }
             let id = UUID().uuidString.lowercased()
             let name = (arguments?["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? Self.firstLine(instructions)
             workers[id] = ManagedWorker(id: id, name: name, instructions: instructions)
+            workers[id]?.role = role
             out += [.event(.trace(.toolUse(id: id, tool: "Agent", title: "Delegate " + name, detail: instructions, parent: nil))),
-                    .event(.trace(.subagentStarted(id: id, description: name, type: "codex-worker", prompt: instructions, background: true))),
+                    .event(.trace(.subagentStarted(id: id, description: name, type: role == "component-editor" ? "ccb-core:component-editor" : "codex-worker", prompt: instructions, background: true))),
                     .event(.trace(.subagentNamed(id: id, name: name)))]
-            out.append(startWorkerThread(id))
+            out += startWorkerThread(id)
             // Acceptance of a separate deliverable is not a disposition of the active report.
             // A related downstream task must be linked by an explicit dependency checkpoint.
             response = reply(["task_id": id, "status": "accepted",
@@ -934,8 +960,89 @@ struct CodexSession {
         return out
     }
 
-    private mutating func startWorkerThread(_ task: String) -> CodexOutput {
+    // MARK: Existing Claude component-editor endpoint
+
+    mutating func componentEditorStarted(_ task: String, run: Int, model: BotModel) -> [CodexOutput] {
+        guard let worker = workers[task], worker.active, !worker.cancelled, worker.run == run, !stopped else {
+            // A cancelled launch may notify after an explicit follow-up started a new run.
+            // Its transport generation already owns cleanup; never stop the replacement.
+            return []
+        }
+        workers[task]?.reportedCost = 0
+        let runtime = WorkerRuntimeInfo(engine: .claude)
+        workers[task]?.runtime = runtime
+        return [.event(.trace(.launchResult(id: task, result: LaunchResult(agentID: worker.thread), parent: nil))),
+                .event(.trace(.subagentModel(id: task, model: model.rawValue))),
+                .event(.trace(.subagentRuntime(id: task, runtime: runtime)))]
+    }
+
+    mutating func componentEditorLaunchFailed(_ task: String, run: Int, fresh: Bool, reason: String) -> [CodexOutput] {
+        guard let worker = workers[task], worker.active, !worker.cancelled, worker.run == run, !stopped else { return [] }
+        if fresh { workers[task]?.thread = nil }
+        return failWorker(task, report: "Could not launch the existing Claude component-editor: " + reason)
+    }
+
+    private mutating func clearEditorApprovals(_ task: String) -> [CodexOutput] {
+        let ids = editorApprovals.filter { $0.value.task == task }.map(\.key)
+        for id in ids { editorApprovals.removeValue(forKey: id) }
+        return ids.map { .event(.permissionCancelled($0)) }
+    }
+
+    mutating func componentEditorEvent(_ task: String, run: Int, event: AgentEvent) -> [CodexOutput] {
+        guard let worker = workers[task], worker.role == "component-editor", worker.run == run,
+              !worker.cancelled, !stopped else { return [] }
+        // Claude emits usage alongside its result, sometimes after the reply. Do not drop it
+        // just because the turn has ended, or treat each child's cumulative cost as the bot's.
+        if case let .usage(total, tokens) = event {
+            editorCost += max(0, total - worker.reportedCost)
+            workers[task]?.reportedCost = max(total, worker.reportedCost)
+            return [.event(.usage(totalCost: editorCost, tokens: tokens))]
+        }
+        guard worker.active else { return [] }
+        switch event {
+        case let .trace(trace): return [.event(.trace(Self.under(task, trace)))]
+        case let .earlyReply(text): return [.event(.trace(.text(text, parent: task)))]
+        case let .permission(request):
+            let id = "component-editor:\(task):\(request.id)"
+            editorApprovals[id] = (task, run, request)
+            var card = request; card.id = id
+            return [.event(.permission(card))]
+        case let .permissionCancelled(original):
+            let id = "component-editor:\(task):\(original)"
+            editorApprovals.removeValue(forKey: id)
+            return [.event(.permissionCancelled(id))]
+        case .permissionDenied, .rateLimits, .connectionTrouble:
+            return [.event(event)]
+        case .connectionLost:
+            return [.event(.connectionLost(parent: task))]
+        case let .reply(text, isError):
+            let report = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let failed = isError || report.isEmpty
+            let evidence = report.isEmpty ? "Component-editor ended without an evidence report." : report
+            workers[task]?.active = false
+            workerResults.append(ManagedResult(task: task, name: worker.name, thread: worker.thread,
+                turn: nil, run: run, status: failed ? "failed" : "completed", report: evidence))
+            var out = clearEditorApprovals(task)
+            out.append(.event(.trace(.subagentEnded(id: task, status: failed ? "failed" : "completed", summary: evidence))))
+            if turn == nil { out += next() }
+            return out + pendingChanged()
+        case let .exited(status, stderr):
+            return clearEditorApprovals(task) + failWorker(task, report: "Claude component-editor exited before its result (status \(status)): \(stderr)")
+        default: return []
+        }
+    }
+
+    private mutating func startWorkerThread(_ task: String) -> [CodexOutput] {
         let worker = workers[task]!
+        if worker.role == "component-editor" {
+            guard var launch = config.componentEditor?.launch else {
+                return failWorker(task, report: "The existing component-editor definition is unavailable; no generic worker was substituted.")
+            }
+            launch.resume = worker.thread != nil
+            launch.sessionID = worker.thread.flatMap(UUID.init(uuidString:)) ?? UUID()
+            workers[task]?.thread = launch.sessionID.uuidString.lowercased()
+            return [.componentEditor(.start(task: task, run: worker.run, launch: launch, text: worker.instructions))]
+        }
         var overrides: [String: Any] = ["features.multi_agent": false, "agents.enabled": false]
         if !config.writableRoots.isEmpty {
             overrides["sandbox_workspace_write"] = ["writable_roots": config.writableRoots.map(\.path)]
@@ -950,9 +1057,9 @@ struct CodexSession {
         if let tier = config.workerDefaults.serviceTier { params["serviceTier"] = tier }
         if let thread = worker.thread {
             params["threadId"] = thread; params["excludeTurns"] = true
-            return request("thread/resume", params, as: .workerThread(task))
+            return [request("thread/resume", params, as: .workerThread(task))]
         }
-        return request("thread/start", params, as: .workerThread(task))
+        return [request("thread/start", params, as: .workerThread(task))]
     }
 
     private mutating func workerThreadReady(_ task: String, result: [String: Any]?, error: [String: Any]?) -> [CodexOutput] {
@@ -1029,10 +1136,23 @@ struct CodexSession {
 
     private mutating func messageWorker(_ task: String, text: String) -> [CodexOutput] {
         guard let worker = workers[task], !stopped else { return [] }
+        if worker.role == "component-editor", config.componentEditor?.launch == nil {
+            // Capability loss is a concrete failed continuation, never a role change.
+            if !worker.active {
+                workerResults.removeAll { $0.task == task }
+                workers[task]?.run += 1
+                workers[task]?.instructions = text
+                workers[task]?.ownershipInstructions = nil
+            }
+            workers[task]?.active = true
+            workers[task]?.cancelled = false
+            return failWorker(task, report: "Cannot resume component-editor: its existing definition is unavailable. No generic worker was substituted.")
+        }
         if worker.active {
             // Retain scope corrections after the steer queue drains without changing the
             // launch prompt: a pre-launch follow-up must still be delivered only as a steer.
             workers[task]?.ownershipInstructions = (worker.ownershipInstructions ?? worker.instructions) + "\nFollow-up: " + text
+            if worker.role == "component-editor" { return [.componentEditor(.send(task: task, text: text))] }
             if let turnID = worker.turnID {
                 return [workerSteer(task, text: text, turnID: turnID, run: worker.run)]
             }
@@ -1046,9 +1166,10 @@ struct CodexSession {
         workers[task]?.instructions = text
         workers[task]?.ownershipInstructions = nil
         workers[task]?.turnID = nil
-        var out: [CodexOutput] = [.event(.trace(.subagentStarted(id: task, description: worker.name, type: "codex-worker", prompt: text, background: true)))]
-        if worker.loaded { out += startWorkerTurn(task, text: text) }
-        else { out.append(startWorkerThread(task)) }
+        var out: [CodexOutput] = [.event(.trace(.subagentStarted(id: task, description: worker.name, type: worker.role == "component-editor" ? "ccb-core:component-editor" : "codex-worker", prompt: text, background: true)))]
+        if worker.role == "component-editor" { out += startWorkerThread(task) }
+        else if worker.loaded { out += startWorkerTurn(task, text: text) }
+        else { out += startWorkerThread(task) }
         out += pendingChanged()
         return out
     }
@@ -1163,7 +1284,10 @@ struct CodexSession {
             workers[task]?.active = false
             workers[task]?.cancelled = true
             workers[task]?.messages = []
-            if let thread = worker.thread, let turn = worker.turnID {
+            if worker.role == "component-editor" {
+                out += clearEditorApprovals(task)
+                out.append(.componentEditor(.stop(task: task)))
+            } else if let thread = worker.thread, let turn = worker.turnID {
                 out.append(request("turn/interrupt", ["threadId": thread, "turnId": turn], as: .interrupt))
             }
             let used = worker.tokens - worker.tokensAtRunStart
@@ -1581,13 +1705,20 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
     private let threads: CodexThreads
     private let managedMode: Bool
     private let failure = Failure()
+    private let componentEditorLauncher: AgentLauncher?
+    private struct EditorProcess {
+        var process: AgentProcess
+        var run: Int
+        var generation: UUID
+    }
+    private var componentEditors: [String: EditorProcess] = [:]
 
     public var completionWorkerDependencies: [PromiseCheck.WorkerDependency]? {
         lock.withLock { managedMode ? (closed ? [] : session.completionWorkerDependencies) : nil }
     }
 
-    public static func launcher(executable: URL, threads: CodexThreads = .shared) -> AgentLauncher {
-        { launch in try CodexAgentProcess(launch, executable: executable, threads: threads) }
+    public static func launcher(executable: URL, threads: CodexThreads = .shared, componentEditorLauncher: AgentLauncher? = nil) -> AgentLauncher {
+        { launch in try CodexAgentProcess(launch, executable: executable, threads: threads, componentEditorLauncher: componentEditorLauncher) }
     }
 
     /// What the session starts with, from what the bot asks for: Claude's tools, plugins and
@@ -1617,6 +1748,7 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
             resumeThread: resume,
             model: launch.codexModel,
             workerInstructions: launch.codexWorkerInstructions,
+            componentEditor: ComponentEditorRoute.load(for: launch),
             workerDefaults: launch.codexWorkerDefaults,
             restoredWorkers: launch.codexWorkerInstructions == nil ? [] : threads.workers(for: launch.sessionID),
             routinesURL: launch.routinesURL,
@@ -1625,8 +1757,9 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
         )
     }
 
-    init(_ launch: AgentLaunch, executable: URL, threads: CodexThreads) throws {
+    init(_ launch: AgentLaunch, executable: URL, threads: CodexThreads, componentEditorLauncher: AgentLauncher? = nil) throws {
         BrokenPipes.ignore()
+        self.componentEditorLauncher = componentEditorLauncher
         session = CodexSession(config: try Self.config(for: launch, threads: threads))
         sessionID = launch.sessionID
         self.threads = threads
@@ -1669,7 +1802,8 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
             stderrTail.append(data)
         }
         let failure = self.failure
-        process.terminationHandler = { process in
+        process.terminationHandler = { [weak self] process in
+            self?.stopComponentEditors()
             ChildProcessLedger.shared?.forget(process.processIdentifier)
             DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
                 output.fileHandleForReading.readabilityHandler = nil
@@ -1728,6 +1862,8 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
                     if managedMode { threads.markManaged(id, for: sessionID) }
                 case .close:
                     closeInput()
+                case let .componentEditor(action):
+                    performComponentEditor(action)
                 case let .failed(message):
                     failure.message = message
                     closeInput()
@@ -1737,9 +1873,62 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
         }
     }
 
+    /// Called under the transport lock. Child events return asynchronously through run(), so
+    /// they use the same persistence, ownership, cancellation and result reconciliation path.
+    private func performComponentEditor(_ action: ComponentEditorAction) {
+        switch action {
+        case let .start(task, run, launch, text):
+            if var existing = componentEditors[task] {
+                existing.run = run
+                componentEditors[task] = existing
+                existing.process.send(text)
+                return
+            }
+            do {
+                guard let componentEditorLauncher else {
+                    throw NSError(domain: "ComponentEditor", code: 1, userInfo: [NSLocalizedDescriptionKey: "The app's Claude component-editor launcher is unavailable. No generic worker was substituted."])
+                }
+                let child = try componentEditorLauncher(launch)
+                let generation = UUID()
+                componentEditors[task] = EditorProcess(process: child, run: run, generation: generation)
+                Task { [weak self, child] in
+                    self?.run { $0.componentEditorStarted(task, run: run, model: launch.model) }
+                    for await event in child.events {
+                        guard let self else { break }
+                        self.run { session in
+                            guard let current = self.componentEditors[task], current.generation == generation else { return [] }
+                            let outputs = session.componentEditorEvent(task, run: current.run, event: event)
+                            if case .exited = event { self.componentEditors.removeValue(forKey: task) }
+                            return outputs
+                        }
+                    }
+                }
+                child.send(text)
+            } catch {
+                let reason = error.localizedDescription
+                Task { [weak self] in
+                    self?.run { $0.componentEditorLaunchFailed(task, run: run, fresh: !launch.resume, reason: reason) }
+                }
+            }
+        case let .send(task, text): componentEditors[task]?.process.send(text)
+        case let .stop(task): componentEditors.removeValue(forKey: task)?.process.stop()
+        case let .answer(task, request, allow, message):
+            componentEditors[task]?.process.answer(request, allow: allow, message: message)
+        }
+    }
+
+    private func stopComponentEditors() {
+        lock.withLock {
+            for child in componentEditors.values { child.process.stop() }
+            componentEditors.removeAll()
+        }
+    }
+
     private func closeInput() {
         guard !closed else { return }
         closed = true
+        for child in componentEditors.values { child.process.stop() }
+        componentEditors.removeAll()
         try? stdin.close()
     }
 
@@ -1764,6 +1953,7 @@ public final class CodexAgentProcess: AgentProcess, @unchecked Sendable {
     }
 
     public func allow(rules: [String]) {
+        lock.withLock { for child in componentEditors.values { child.process.allow(rules: rules) } }
         run { $0.allow(rules: rules) }
     }
 

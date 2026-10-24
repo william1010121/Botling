@@ -175,7 +175,7 @@ public struct ChatPayload: Encodable, Equatable {
         var owner: String
         var status: String
         var type: String?
-        /// The head whose trace/store owns it: "claude" or "codex", for its badge.
+        /// Its reported execution backend, otherwise the head owning the trace/store, for its badge.
         var engine: String = "claude"
         /// Its model when known ("Sonnet"): what its Agent call asked for, else its bot's
         /// subagent model.
@@ -989,7 +989,7 @@ public struct ChatPayload: Encodable, Equatable {
                 owner: bot.name,
                 status: subagent.status.rawValue,
                 type: subagent.type,
-                engine: (bot.subagentEngine(subagent.id) ?? bot.engine).rawValue,
+                engine: (subagent.runtime?.engine ?? bot.subagentEngine(subagent.id) ?? bot.engine).rawValue,
                 model: bot.subagentModelName(subagent),
                 runtime: subagent.runtime,
                 outputTokens: subagent.reportedOutputTokens,

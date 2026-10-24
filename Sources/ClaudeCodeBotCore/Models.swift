@@ -339,6 +339,8 @@ public struct BotProfile: Equatable, Sendable {
     public var job: String?
     /// Tools it does not get at all, not even by asking.
     public var disallowedTools: [String] = []
+    /// Only the app-created plugin-library Maintainer may launch its existing component editor.
+    public var componentEditorEnabled = false
     /// It reads and writes memory.md (wakes reading it, tidies it before sleeping). Without it
     /// every turn starts fresh.
     public var keepsMemory = true
@@ -436,7 +438,7 @@ public struct BotProfile: Equatable, Sendable {
 
     /// Maintainer: the manager of the plugin library.
     public static func maintainer(folder: URL, instructions: String) -> BotProfile {
-        BotProfile(
+        var profile = BotProfile(
             name: "Maintainer",
             role: .manager,
             avatar: AvatarShape.maintainer.rawValue,
@@ -445,6 +447,8 @@ public struct BotProfile: Equatable, Sendable {
             tools: toolbox + ["Bash"],
             instructions: instructions
         )
+        profile.componentEditorEnabled = true
+        return profile
     }
 }
 

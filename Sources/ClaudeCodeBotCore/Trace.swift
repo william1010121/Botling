@@ -180,10 +180,13 @@ extension Settleable {
 /// a null service tier: absence is not evidence that Fast mode is off. This describes
 /// session settings, not guaranteed per-request processing/billing tier.
 public struct WorkerRuntimeInfo: Codable, Equatable, Sendable {
+    /// The backend actually launched when it differs from the owning coordinator head.
+    public var engine: BotEngine?
     public var reasoningEffort: String?
     public var serviceTier: String?
 
-    public init(reasoningEffort: String? = nil, serviceTier: String? = nil) {
+    public init(reasoningEffort: String? = nil, serviceTier: String? = nil, engine: BotEngine? = nil) {
+        self.engine = engine
         self.reasoningEffort = reasoningEffort
         self.serviceTier = serviceTier
     }
