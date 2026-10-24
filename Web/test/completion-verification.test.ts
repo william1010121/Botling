@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
+import { sent } from "../src/bridge";
 import { completionVerificationElement, messageElement } from "../src/messages";
 import { setLanguage } from "../src/i18n";
 import type { MessageView } from "../src/types";
@@ -9,6 +10,48 @@ const message = (completionVerification?: MessageView["completionVerification"])
   replyTo: null, replyPreview: null, openable: false, completionVerification,
 });
 describe("actual completion verification", () => {
+  it.each([undefined, "botling · Codex"])("places a thumbs-only passed disclosure with reply actions (%s)", (speaker) => {
+    setLanguage("en");
+    const row = messageElement({ ...message({ model: "actual-model", state: "judged", verdict: "COMPLETE", reason: "Checks passed" }),
+      speaker, reactionEnabled: true, tasks: [{ id: "work", name: "Work", kind: "command", status: "completed", label: "Work" }],
+      seen: [{ name: "Codex", mark: "X", seen: true }],
+    }, {});
+    const footer = row.querySelector(".message-footer")!;
+    const card = footer.querySelector<HTMLDetailsElement>(".completion-verification")!;
+    expect(card, "verification belongs to the same footer as reactions/read heads").not.toBeNull();
+    expect(footer.querySelector(".task-summary")).not.toBeNull();
+    expect(footer.querySelector(".reactions")).not.toBeNull();
+    expect(footer.querySelector(".seen-marks")).not.toBeNull();
+    expect(row.querySelectorAll(".completion-verification")).toHaveLength(1);
+    const summary = card.querySelector("summary")!;
+    expect(summary.textContent).toBe("👍");
+    expect(summary.getAttribute("aria-label")).toBe("Completion verification · Completed");
+    expect(summary.title).toBe("Completion verification · Completed");
+    expect(card.open).toBe(false);
+    const before = sent.length;
+    summary.click();
+    expect(card.open).toBe(true);
+    expect(card.querySelector(".verification-details")?.textContent).toContain("Completion verification · Completed");
+    expect(card.querySelector(".verification-model")?.textContent).toBe("actual-model · medium");
+    expect(card.querySelector(".verification-reason")?.textContent).toBe("Checks passed");
+    expect(sent.length).toBe(before); // Viewing verification must not post a reaction.
+  });
+  it("shows only a thumb for a genuine passed verdict", () => {
+    const card = completionVerificationElement({ model: "actual", state: "judged", verdict: "COMPLETE" });
+    expect(card.querySelector("summary")?.textContent).toBe("👍");
+  });
+  it("creates an action footer even without reactions, tasks, or read heads", () => {
+    const row = messageElement(message({ model: "actual", state: "checking" }), {});
+    expect(row.querySelector(".message-footer > .completion-verification")).not.toBeNull();
+  });
+  it.each([
+    { state: "checking", verdict: "COMPLETE" }, { state: "interrupted", verdict: "COMPLETE" },
+    { state: "judged", verdict: null }, { state: "judged", verdict: "UNKNOWN" },
+    { state: "judged", verdict: "UNAVAILABLE" }, { state: "judged", verdict: "CONTINUE" },
+    { state: "judged", verdict: "COMPLETE", continuationPaused: true },
+  ] as const)("never shows a success thumb for unfinished or unknown records: %j", (record) => {
+    expect(completionVerificationElement({ model: "actual", ...record }).querySelector("summary")?.textContent).not.toContain("👍");
+  });
   it("attaches checking status to the reply; legacy replies have no fabricated status", () => {
     setLanguage("en");
     expect(messageElement(message(), {}).querySelector(".completion-verification")).toBeNull();
@@ -38,7 +81,7 @@ describe("actual completion verification", () => {
     const summary = details.querySelector("summary")!;
     expect(summary).not.toBeNull();
     expect(details.open).toBe(false);
-    expect(summary.textContent).toContain("Completion verification · ");
+    expect(summary.getAttribute("aria-label")).toContain("Completion verification · ");
     expect(summary.textContent).not.toContain("gpt-6-luna");
     expect(summary.textContent).not.toContain("Worker report pending");
     summary.click();
