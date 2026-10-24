@@ -2022,6 +2022,27 @@ public final class Bot: ObservableObject, Identifiable {
             return .init(id: PromiseCheck.wakeupID("routine:" + routine.id), task: routine.task,
                 fireAt: fireAt, callback: "app_routine")
         }
+        // A failed reload retains the UI cache; it cannot certify a pending wakeup.
+        // Claimed (delivery_uncertain), paused, fired and cancelled jobs have no pending return path.
+        if owner.routineError == nil {
+            wakeups += owner.scheduledRoutines.compactMap { job -> PromiseCheck.ScheduledWakeup? in
+                guard job.state == .pending else { return nil }
+                let fireAt: Date?
+                switch job.kind {
+                case .once:
+                    fireAt = job.at // Keep overdue one-shots due, even across days/restarts.
+                case .recurring:
+                    guard let zone = TimeZone(identifier: job.timezone), let cron = job.cron,
+                          let schedule = CronSchedule(cron) else { return nil }
+                    var calendar = Calendar(identifier: .gregorian)
+                    calendar.timeZone = zone
+                    let baseline = max(job.baseline, job.lastClaim ?? job.baseline)
+                    fireAt = job.dueTime(at: date) ?? schedule.nextTime(after: max(date, baseline), calendar: calendar)
+                }
+                guard let fireAt else { return nil }
+                return .init(id: job.id, task: job.task, fireAt: fireAt, callback: "app_routine")
+            }
+        }
         wakeups += messages.flatMap { $0.backgroundTasks ?? [] }.compactMap { task in
             guard task.isRunning, task.kind.isScheduled, task.holdsBotAwake(now: date) else { return nil }
             let next = task.kind == .cron && task.recurring != false
