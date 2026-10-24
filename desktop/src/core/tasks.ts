@@ -1,0 +1,297 @@
+// A chat's task cards, ported from the Swift `TaskBook` / `TaskCard` (TaskCards.swift), kept in
+// tasks.json in 1.20's format: one card per piece of work, opened when the user sends a message,
+// named and kept current by the head's hidden `<task …/>` lines, settled when its turn ends.
+// Pure bookkeeping: the bot says what happened, the book updates its cards. 2.0 has one head
+// (claude), so `owner` is always "claude" here; a card 1.x wrote for "codex" is kept as it is.
+//
+// Dates are Swift dates (seconds since 2001), ids upper-case UUIDs; keys 2.0 does not know are
+// kept on each card.
+import { characterCount, characterPrefix } from "./briefing";
+import { newId } from "./store/records";
+import type { TaskState, TaskTag } from "./reply";
+
+export type Head = "claude" | "codex";
+
+export interface TaskHelp { handoffID: string; head: Head; text: string }
+
+export interface TaskCard {
+  id: string;
+  name: string;
+  owner?: Head;
+  state: TaskState;
+  now?: string;
+  next?: string;
+  blocked?: string;
+  createdAt: number;
+  updatedAt: number;
+  messageIDs: string[];
+  startedByMessageID?: string;
+  kept: boolean;
+  helps?: TaskHelp[];
+  subagentIDs?: string[];
+  stateFromTag?: TaskState;
+  [key: string]: unknown;
+}
+
+const STATES = new Set<TaskState>(["pending", "running", "waiting", "done", "stopped"]);
+export const isActive = (state: TaskState) => state === "pending" || state === "running" || state === "waiting";
+
+/** `TaskBook.quickAnswer`: seconds within which a turn with no tools and no tag was a quick answer. */
+export const QUICK_ANSWER = 20;
+/** `TaskBook.staleAfter`: a running card with no news this long, nothing of it at work, may be stuck. */
+export const STALE_AFTER = 10 * 60;
+const LIMIT = 100;
+const NAME_LENGTH = 40;
+
+/** A card as 1.20 decodes it (`TaskCard.init(from:)`): a state it does not know reads as running. */
+export function readTaskCard(value: unknown): TaskCard | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.id !== "string" || typeof raw.name !== "string" || typeof raw.createdAt !== "number") return null;
+  const card: TaskCard = {
+    ...raw,
+    id: raw.id,
+    name: raw.name,
+    state: STATES.has(raw.state as TaskState) ? (raw.state as TaskState) : "running",
+    createdAt: raw.createdAt,
+    updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : raw.createdAt,
+    messageIDs: Array.isArray(raw.messageIDs) ? raw.messageIDs.filter((id): id is string => typeof id === "string") : [],
+    kept: raw.kept === true,
+  };
+  if (raw.owner !== "claude" && raw.owner !== "codex") delete card.owner;
+  if (raw.stateFromTag !== undefined && !STATES.has(raw.stateFromTag as TaskState)) delete card.stateFromTag;
+  return card;
+}
+
+/** `TaskBook.Turn`: what a finished turn was about. */
+export interface TaskTurn {
+  head: Head;
+  /** The user's message the turn answered; null for background reports. */
+  userMessage?: string | null;
+  userText?: string | null;
+  /** When the head got the message (Swift date). */
+  started?: number | null;
+  usedTools?: boolean;
+  handoffID?: string | null;
+  reporting?: string[];
+  /** The reply asks the user something (a choices block). */
+  asks?: boolean;
+  handsOff?: boolean;
+  runningSubagents?: Set<string>;
+  runningHandoffs?: Set<string>;
+}
+
+const key = (name: string) => name.trim().toLowerCase();
+
+/** What a provisional card is called: the start of the user's message. */
+export function provisionalName(text: string): string {
+  // Swift's `split(whereSeparator: \.isNewline).first`: the first line that is not empty.
+  const line = (text.split(/[\n\r\u000B\u000C\u0085\u2028\u2029]+/).find((part) => part.length > 0) ?? "").replace(/^[ \t]+|[ \t]+$/g, "");
+  if (!line) return "New message";
+  return characterCount(line) > NAME_LENGTH ? `${characterPrefix(line, NAME_LENGTH)}…` : line;
+}
+
+export class TaskBook {
+  constructor(public tasks: TaskCard[] = []) {}
+
+  task(id: string) { return this.tasks.find((card) => card.id === id); }
+  /** The task a chat line belongs to (the newest, when it belongs to two). */
+  containing(message: string) { return this.tasks.findLast((card) => card.messageIDs.includes(message)); }
+  named(name: string) { const wanted = key(name); return this.tasks.findLast((card) => key(card.name) === wanted); }
+  private index(id: string) { const at = this.tasks.findIndex((card) => card.id === id); return at >= 0 ? at : null; }
+
+  /** You sent `message`: a provisional card, or a reply to a task's line carries that task on. */
+  begin(message: string, text: string, owner: Head | null, at: number, replyingTo?: string | null): string {
+    if (replyingTo) {
+      const existing = this.containing(replyingTo);
+      if (existing) {
+        existing.messageIDs.push(message);
+        if (existing.state !== "done" && existing.state !== "stopped") existing.state = existing.owner ? "running" : "pending";
+        existing.updatedAt = at;
+        return existing.id;
+      }
+    }
+    const card: TaskCard = { id: newId(), name: provisionalName(text), state: "pending", createdAt: at, updatedAt: at, messageIDs: [message], startedByMessageID: message, kept: false };
+    if (owner) card.owner = owner;
+    this.tasks.push(card);
+    this.trim();
+    return card.id;
+  }
+
+  /** `head` started on the user's message: it owns the card unless another head does, and the card runs. */
+  claim(message: string, head: Head, at: number): boolean {
+    const card = this.containing(message);
+    if (!card) return false;
+    let changed = false;
+    if (!card.owner) { card.owner = head; changed = true; }
+    if (card.state === "pending" && card.owner === head) { card.state = "running"; card.updatedAt = at; changed = true; }
+    return changed;
+  }
+
+  /** A head used a tool for the user's message: the card is real work and stays. */
+  working(message: string, text: string, head: Head, at: number): string {
+    const card = this.containing(message);
+    if (card) { card.kept = true; return card.id; }
+    const id = this.begin(message, text, head, at);
+    const made = this.task(id);
+    if (made) { made.kept = true; made.state = "running"; }
+    return id;
+  }
+
+  /** You sent `later` before a head answered `earlier`, and both go as one message. */
+  join(earlier: string, later: string) {
+    const first = this.containing(earlier);
+    const second = this.containing(later);
+    if (!first || !second || first.id === second.id || second.startedByMessageID !== later) return;
+    const from = this.index(second.id);
+    if (from !== null) this.merge(from, first.id);
+  }
+
+  link(subagent: string, taskId: string) {
+    const card = this.task(taskId);
+    if (!card || card.subagentIDs?.includes(subagent)) return;
+    card.subagentIDs = [...(card.subagentIDs ?? []), subagent];
+    card.kept = true;
+  }
+
+  /** The card a turn works on: the user's message's, its hand-off's, or the reported subagents'. */
+  base(turn: TaskTurn): TaskCard | undefined {
+    if (turn.userMessage) return this.containing(turn.userMessage);
+    if (turn.handoffID) {
+      const card = this.tasks.findLast((candidate) => candidate.helps?.some((help) => help.handoffID === turn.handoffID));
+      if (card) return card;
+    }
+    const reporting = new Set(turn.reporting ?? []);
+    if (!reporting.size) return undefined;
+    return this.tasks.findLast((card) => (card.subagentIDs ?? []).some((id) => reporting.has(id)));
+  }
+
+  /** A head's reply `message` ended its turn, with its `<task>` lines. Returns the cards it belongs to. */
+  replied(message: string, turn: TaskTurn, tags: TaskTag[], at: number): string[] {
+    const quick = !!turn.userMessage && !turn.usedTools && (turn.started != null ? at - turn.started < QUICK_ANSWER : true);
+    let base = this.base(turn);
+    if (!tags.length) {
+      if (!base && turn.userMessage && !quick) {
+        const id = this.working(turn.userMessage, turn.userText ?? "", turn.head, at);
+        base = this.task(id);
+      }
+      if (!base) return [];
+      const at_ = this.index(base.id)!;
+      if (quick && !base.kept && (base.state === "pending" || base.state === "running") && !base.subagentIDs?.length) {
+        this.tasks.splice(at_, 1);
+        return [];
+      }
+      this.touch(base, message, turn.head, !!turn.asks, at);
+      if (!quick) base.kept = true;
+      this.settle(base.id, turn, at);
+      return [base.id];
+    }
+    const touched: string[] = [];
+    tags.forEach((tag, number) => {
+      let target: TaskCard | undefined;
+      const earlier = tag.continues ? this.named(tag.continues) : undefined;
+      if (tag.continues && earlier && earlier.id !== base?.id) {
+        // It carries on an earlier task: this message, and what its own card had, join it.
+        if (number === 0 && turn.userMessage && base && base.startedByMessageID === turn.userMessage) {
+          const from = this.index(base.id);
+          if (from !== null) this.merge(from, earlier.id);
+          base = undefined;
+        }
+        target = this.task(earlier.id);
+      } else if (number === 0 && base) {
+        target = base;
+      } else {
+        const name = tag.name ?? tag.continues;
+        if (name) target = this.named(name);
+      }
+      if (!target) {
+        const name = tag.name ?? tag.continues ?? (turn.userText != null ? provisionalName(turn.userText) : "New task");
+        const card: TaskCard = { id: newId(), name, owner: turn.head, state: "running", createdAt: at, updatedAt: at, messageIDs: [], kept: false };
+        if (turn.userMessage) card.startedByMessageID = turn.userMessage;
+        if (number === 0 && turn.userMessage) card.messageIDs = [turn.userMessage];
+        this.tasks.push(card);
+        target = card;
+      }
+      this.apply(tag, target, turn.head, message, !!turn.asks, at);
+      touched.push(target.id);
+    });
+    for (const id of touched) this.settle(id, turn, at);
+    this.trim();
+    return touched;
+  }
+
+  private touch(card: TaskCard, message: string, head: Head, asks: boolean, at: number) {
+    if (!card.messageIDs.includes(message)) card.messageIDs.push(message);
+    if (!card.owner) card.owner = head;
+    if (card.owner !== head) return;
+    if (asks && isActive(card.state)) card.state = "waiting";
+    else if (card.state === "pending" || card.state === "waiting") card.state = "running";
+    card.updatedAt = at;
+  }
+
+  private apply(tag: TaskTag, card: TaskCard, head: Head, message: string, asks: boolean, at: number) {
+    if (!card.messageIDs.includes(message)) card.messageIDs.push(message);
+    card.kept = true;
+    if (!card.owner) card.owner = head;
+    if (card.owner !== head) return;
+    if (tag.name) card.name = tag.name;
+    for (const field of ["now", "next", "blocked"] as const) {
+      const value = tag[field];
+      if (value === undefined) continue;
+      if (value) card[field] = value;
+      else delete card[field];
+    }
+    card.state = tag.state ?? (asks ? "waiting" : "running");
+    if (tag.state) card.stateFromTag = tag.state;
+    card.updatedAt = at;
+  }
+
+  /** The owner's turn is over: a card it left running without saying so, with nothing of it at work, is done. */
+  private settle(id: string, turn: TaskTurn, at: number) {
+    const card = this.task(id);
+    if (!card || card.owner !== turn.head || card.state !== "running" || card.stateFromTag === "running" || turn.handsOff) return;
+    if (card.subagentIDs?.some((sub) => turn.runningSubagents?.has(sub))) return;
+    if (card.helps?.some((help) => turn.runningHandoffs?.has(help.handoffID))) return;
+    card.state = "done";
+    card.updatedAt = at;
+  }
+
+  private merge(from: number, into: string) {
+    const [card] = this.tasks.splice(from, 1);
+    const target = this.task(into);
+    if (!card || !target) return;
+    for (const message of card.messageIDs) if (!target.messageIDs.includes(message)) target.messageIDs.push(message);
+    for (const help of card.helps ?? []) {
+      if (!target.helps?.some((h) => h.handoffID === help.handoffID)) target.helps = [...(target.helps ?? []), help];
+    }
+    for (const subagent of card.subagentIDs ?? []) this.link(subagent, into);
+  }
+
+  set(id: string, state: TaskState, at: number) {
+    const card = this.task(id);
+    if (!card) return;
+    card.state = state;
+    card.updatedAt = at;
+  }
+
+  /** Lines gone from the chat leave their cards; cards with none of their lines left go. */
+  keepOnly(present: Set<string>): boolean {
+    const before = JSON.stringify(this.tasks);
+    for (const card of this.tasks) card.messageIDs = card.messageIDs.filter((id) => present.has(id));
+    this.tasks = this.tasks.filter((card) => card.messageIDs.length > 0);
+    return JSON.stringify(this.tasks) !== before;
+  }
+
+  private trim() {
+    while (this.tasks.length > LIMIT) {
+      const at = this.tasks.findIndex((card) => !isActive(card.state));
+      this.tasks.splice(at >= 0 ? at : 0, 1);
+    }
+  }
+}
+
+/** `TaskCard.latestMessage`: its latest line that is not the user's (else its latest at all). */
+export function latestMessage(card: TaskCard, order: { id: string; role: string }[]): string | null {
+  const mine = new Set(card.messageIDs);
+  return order.findLast((message) => mine.has(message.id) && message.role !== "user")?.id ?? order.findLast((message) => mine.has(message.id))?.id ?? null;
+}

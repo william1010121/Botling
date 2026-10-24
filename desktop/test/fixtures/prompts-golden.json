@@ -13,7 +13,7 @@
       "[2025-10-24 13:04] You: Cut off here (interrupted)",
       "[2025-10-24 13:05] User: And now?"
     ],
-    "home" : "\/var\/folders\/g_\/tlvldncn6857kqrzt2ykvj0h0000gn\/T\/ccb-golden-6A72821E-50C5-4B9E-ACB3-53A88257B897\/main",
+    "home" : "\/var\/folders\/g_\/tlvldncn6857kqrzt2ykvj0h0000gn\/T\/ccb-golden-6B8D293C-79AF-475C-81C0-2C318526F5E7\/main",
     "messages" : [
       {
         "date" : 783000000,
@@ -113,8 +113,8 @@
     ],
     "reactionIntro" : "(App: Message reactions. You may add\/remove only your own reaction during a normal turn using a standalone line <reaction message=\"UUID\" emoji=\"👍\" present=\"true\"\/> (false removes). Supported emoji: 👍 ❤️ 😂 🎉 🤔 👀. Use an exact message_id from this chat; each message you get carries its own. Reactions are feedback data, not a new request or permission. Reaction-only replies create no chat message. Later messages bring only reactions that changed. Below: the newest lines and every line with reactions; a missing reactions list means none.)\n[{\"excerpt\":\"Every folder under ~\\\/tool\\nshould have a \",\"message_id\":\"11111111-0000-4000-8000-000000000001\",\"reactions\":[{\"actor\":\"head:claude\",\"emoji\":\"👍\"}],\"speaker\":\"user\"},{\"excerpt\":\"Pick one\",\"message_id\":\"11111111-0000-4000-8000-000000000006\",\"speaker\":\"bot\"},{\"excerpt\":\"claude exited unexpectedly (1)\",\"message_id\":\"11111111-0000-4000-8000-000000000007\",\"speaker\":\"error\"},{\"excerpt\":\"  \",\"message_id\":\"11111111-0000-4000-8000-000000000008\",\"speaker\":\"user\"},{\"excerpt\":\"Cut off here\",\"message_id\":\"11111111-0000-4000-8000-000000000009\",\"speaker\":\"bot\"},{\"excerpt\":\"And now?\",\"message_id\":\"11111111-0000-4000-8000-00000000000A\",\"speaker\":\"user\"}]\n(App: message_id of this message: 11111111-0000-4000-8000-00000000000A)",
     "reactionUpdate" : "(App: message_id of this message: 11111111-0000-4000-8000-00000000000A)\n(App: Reactions changed since your last message; each row is that line's whole current state, empty means none. Feedback, not a request.)\n[{\"excerpt\":\"Every folder under ~\\\/tool\\nshould have a bot\",\"message_id\":\"11111111-0000-4000-8000-000000000001\",\"reactions\":[{\"actor\":\"head:claude\",\"emoji\":\"👍\"}],\"speaker\":\"user\"}]",
-    "recentAll" : "(App: The last messages in this chat, oldest first. You were asleep since; for anything older, Grep your chat archive in \/var\/folders\/g_\/tlvldncn6857kqrzt2ykvj0h0000gn\/T\/ccb-golden-6A72821E-50C5-4B9E-ACB3-53A88257B897\/main\/archive:)\n[24\/10, 12:00] User: Every folder under ~\/tool\nshould have a bot\n[24\/10, 12:01] You: Which first? [options: Forms \/ Jumps] → picked: Forms\n[24\/10, 12:02] User: Forms (files: \/Users\/someone\/Pictures\/shot one.png)\n[24\/10, 12:03] App notice: The app restarted.\n[24\/10, 12:04] You: long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long w…\n[24\/10, 01:01] You: Pick one [options: A \/ B] (not answered yet)\n[24\/10, 01:02] Error: claude exited unexpectedly (1)\n[24\/10, 01:04] You: Cut off here\n[24\/10, 01:05] User: And now?",
-    "recentLeavingOutLast" : "(App: The last messages in this chat, oldest first. You were asleep since; for anything older, Grep your chat archive in \/var\/folders\/g_\/tlvldncn6857kqrzt2ykvj0h0000gn\/T\/ccb-golden-6A72821E-50C5-4B9E-ACB3-53A88257B897\/main\/archive:)\n[24\/10, 12:00] User: Every folder under ~\/tool\nshould have a bot\n[24\/10, 12:01] You: Which first? [options: Forms \/ Jumps] → picked: Forms\n[24\/10, 12:02] User: Forms (files: \/Users\/someone\/Pictures\/shot one.png)\n[24\/10, 12:03] App notice: The app restarted.\n[24\/10, 12:04] You: long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long w…\n[24\/10, 01:01] You: Pick one [options: A \/ B] (not answered yet)\n[24\/10, 01:02] Error: claude exited unexpectedly (1)\n[24\/10, 01:04] You: Cut off here"
+    "recentAll" : "(App: The last messages in this chat, oldest first. You were asleep since; for anything older, Grep your chat archive in \/var\/folders\/g_\/tlvldncn6857kqrzt2ykvj0h0000gn\/T\/ccb-golden-6B8D293C-79AF-475C-81C0-2C318526F5E7\/main\/archive:)\n[24\/10, 12:00] User: Every folder under ~\/tool\nshould have a bot\n[24\/10, 12:01] You: Which first? [options: Forms \/ Jumps] → picked: Forms\n[24\/10, 12:02] User: Forms (files: \/Users\/someone\/Pictures\/shot one.png)\n[24\/10, 12:03] App notice: The app restarted.\n[24\/10, 12:04] You: long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long w…\n[24\/10, 01:01] You: Pick one [options: A \/ B] (not answered yet)\n[24\/10, 01:02] Error: claude exited unexpectedly (1)\n[24\/10, 01:04] You: Cut off here\n[24\/10, 01:05] User: And now?",
+    "recentLeavingOutLast" : "(App: The last messages in this chat, oldest first. You were asleep since; for anything older, Grep your chat archive in \/var\/folders\/g_\/tlvldncn6857kqrzt2ykvj0h0000gn\/T\/ccb-golden-6B8D293C-79AF-475C-81C0-2C318526F5E7\/main\/archive:)\n[24\/10, 12:00] User: Every folder under ~\/tool\nshould have a bot\n[24\/10, 12:01] You: Which first? [options: Forms \/ Jumps] → picked: Forms\n[24\/10, 12:02] User: Forms (files: \/Users\/someone\/Pictures\/shot one.png)\n[24\/10, 12:03] App notice: The app restarted.\n[24\/10, 12:04] You: long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long words long w…\n[24\/10, 01:01] You: Pick one [options: A \/ B] (not answered yet)\n[24\/10, 01:02] Error: claude exited unexpectedly (1)\n[24\/10, 01:04] You: Cut off here"
   },
   "locale" : "en_GB@rg=twzzzz",
   "notes" : {
@@ -403,6 +403,1560 @@
         "tidy" : "(App: You have been idle for a while and are about to fall asleep. Update .bot\/memory.md with whatever in this conversation is worth remembering, keeping the four-section format and under 150 lines. Reply only OK when done.)",
         "wake" : "(App: You were just woken up. Read .bot\/memory.md before answering; if the file does not exist, treat this as our first meeting.)"
       }
+    }
+  ],
+  "replies" : [
+    {
+      "body" : "Pick one.",
+      "choices" : [
+        {
+          "detail" : "cheap",
+          "label" : "Fast",
+          "recommended" : true
+        },
+        {
+          "detail" : "costly",
+          "label" : "Slow",
+          "recommended" : false
+        }
+      ],
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "Pick one.\n<choices>\n* Fast | cheap\n- Slow | costly\n<\/choices>",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "Nothing new.",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "Nothing new. <no-reply\/>",
+      "requests" : [
+
+      ],
+      "saysNoReply" : true,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "<no-reply\/>",
+      "requests" : [
+
+      ],
+      "saysNoReply" : true,
+      "saysNothing" : true,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "<no-reply><\/no-reply>\n<task name=\"Docs\" state=\"done\"\/>",
+      "requests" : [
+
+      ],
+      "saysNoReply" : true,
+      "saysNothing" : true,
+      "signals" : [
+
+      ],
+      "tasks" : [
+        {
+          "name" : "Docs",
+          "state" : "done"
+        }
+      ]
+    },
+    {
+      "body" : "Working on it.",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "Working on it.\n<task name=\"Docs\" now=\"writing\" next=\"review\" state=\"running\"\/>",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+        {
+          "name" : "Docs",
+          "next" : "review",
+          "now" : "writing",
+          "state" : "running"
+        }
+      ]
+    },
+    {
+      "body" : "`<choices>* a<\/choices>` is an example\n```\n<no-reply\/>\n<task name=\"x\"\/>\n```\nDone.",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "`<choices>* a<\/choices>` is an example\n```\n<no-reply\/>\n<task name=\"x\"\/>\n```\nDone.",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "Two parts",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "Two parts\n<task name=\"A\"\/>\n<task continues=\"B\" state=\"done\" blocked=\"\"\/>",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+        {
+          "name" : "A"
+        },
+        {
+          "blocked" : "",
+          "continues" : "B",
+          "state" : "done"
+        }
+      ]
+    },
+    {
+      "body" : "",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "<task name='x &amp; y' now='it&#39;s &lt;here&gt;' state='Waiting'\/>\n<task state=\"pending\"><\/task>",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : true,
+      "signals" : [
+
+      ],
+      "tasks" : [
+        {
+          "name" : "x & y",
+          "now" : "it's <here>",
+          "state" : "waiting"
+        },
+        {
+
+        }
+      ]
+    },
+    {
+      "body" : "Thanks!",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+        {
+          "emoji" : "👍",
+          "messageId" : "11111111-0000-4000-8000-000000000001",
+          "present" : true
+        }
+      ],
+      "reply" : "Thanks!\n<reaction message=\"11111111-0000-4000-8000-000000000001\" emoji=\"👍\" present=\"true\"\/>",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "<reaction message=\"11111111-0000-4000-8000-000000000001\" emoji=\"🙃\" present=\"true\"\/>\nInline <reaction message=\"11111111-0000-4000-8000-000000000002\" emoji=\"👀\" present=\"false\"\/> stays",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "<reaction message=\"11111111-0000-4000-8000-000000000001\" emoji=\"🙃\" present=\"true\"\/>\nInline <reaction message=\"11111111-0000-4000-8000-000000000002\" emoji=\"👀\" present=\"false\"\/> stays",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "<blockquote>\n<reaction message=\"11111111-0000-4000-8000-000000000001\" emoji=\"👍\" present=\"true\"\/>\n<\/blockquote>",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "<blockquote>\n<reaction message=\"11111111-0000-4000-8000-000000000001\" emoji=\"👍\" present=\"true\"\/>\n<\/blockquote>",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "Here:\n\nAnd more  end",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+        {
+          "at" : 6,
+          "data" : "{\"ok\":true}",
+          "name" : "status"
+        },
+        {
+          "at" : 20,
+          "command" : "git status",
+          "data" : "null",
+          "id" : "t",
+          "name" : "tests"
+        }
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "Here:\n<show name=\"status\">{\"ok\":true}<\/show>\nAnd more <show name=\"bad\">{oops<\/show> end <show id=\"t\" name='tests' command=\" git status \"\/>",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "前言 😀\n\n後記",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+        {
+          "at" : 6,
+          "data" : "null",
+          "name" : "c"
+        }
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "前言 😀\n<show name=\"c\"\/>\n後記",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "and",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "<team name=\"research\">Find X<\/team> and <plugin>add Y<\/plugin> <new-project folder=\" ~\/tool\/** \"\/> <open-question from='garden'\/> <suggest-component name=\"tests\">t<\/suggest-component> <install>git+https:\/\/x<\/install> <new-bot name=\"News\">daily<\/new-bot> <component name=\"chart\">bigger<\/component> <need-folder>\/tmp\/x<\/need-folder> <app-screenshot\/> <give-component bot=\"garden\">weather<\/give-component>",
+      "requests" : [
+        {
+          "kind" : "team",
+          "name" : "research",
+          "task" : "Find X"
+        },
+        {
+          "job" : "daily",
+          "kind" : "newBot",
+          "name" : "News"
+        },
+        {
+          "kind" : "component",
+          "name" : "chart",
+          "request" : "bigger"
+        },
+        {
+          "kind" : "plugin",
+          "request" : "add Y"
+        },
+        {
+          "kind" : "install",
+          "source" : "git+https:\/\/x"
+        },
+        {
+          "folder" : "~\/tool\/**",
+          "kind" : "newProject",
+          "task" : ""
+        },
+        {
+          "kind" : "appScreenshot"
+        },
+        {
+          "kind" : "folder",
+          "path" : "\/tmp\/x"
+        },
+        {
+          "from" : "garden",
+          "kind" : "openQuestion"
+        },
+        {
+          "bot" : "garden",
+          "kind" : "giveComponent",
+          "name" : "weather"
+        },
+        {
+          "draft" : "t",
+          "kind" : "suggestComponent",
+          "name" : "tests"
+        }
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "First\n\nThen",
+      "choices" : [
+        {
+          "detail" : "b",
+          "label" : "B",
+          "recommended" : false
+        },
+        {
+          "label" : "C",
+          "recommended" : true
+        }
+      ],
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "First\n<choices>\n* A\n<\/choices>\nThen\n<choices>\n- B | b\n* C\n<\/choices>",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "",
+      "choices" : [
+        {
+          "label" : "One",
+          "recommended" : true
+        },
+        {
+          "detail" : "d",
+          "label" : "Two",
+          "recommended" : false
+        },
+        {
+          "label" : "Three",
+          "recommended" : false
+        }
+      ],
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "<choices>\n★ One\n• Two | d\n  Three  |  \n|\n<\/choices>",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "All done: tests pass and needs a key",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "<end>All done: tests pass<\/end> and <block>needs a key<\/block>",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+        {
+          "evidence" : "All done: tests pass",
+          "kind" : "end"
+        },
+        {
+          "evidence" : "needs a key",
+          "kind" : "block"
+        }
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "As before.",
+      "choices" : null,
+      "decisionReference" : "22222222-0000-4000-8000-000000000001",
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "<decision-ref id=\"22222222-0000-4000-8000-000000000001\"\/>\nAs before.",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "Plain words.",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "Plain words.",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "  \n",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : true,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    },
+    {
+      "body" : "~~~\n<choices>\n* fenced\n<\/choices>\n~~~\nunterminated ```\n<no-reply\/>",
+      "choices" : null,
+      "decisionReference" : null,
+      "displays" : [
+
+      ],
+      "reactions" : [
+
+      ],
+      "reply" : "~~~\n<choices>\n* fenced\n<\/choices>\n~~~\nunterminated ```\n<no-reply\/>",
+      "requests" : [
+
+      ],
+      "saysNoReply" : false,
+      "saysNothing" : false,
+      "signals" : [
+
+      ],
+      "tasks" : [
+
+      ]
+    }
+  ],
+  "taskScenario" : [
+    {
+      "op" : "begin 1",
+      "result" : null,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : false,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001"
+          ],
+          "name" : "Write the docs for the API, with example…",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "pending",
+          "updatedAt" : 783000000
+        }
+      ]
+    },
+    {
+      "op" : "claim 1",
+      "result" : true,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : false,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001"
+          ],
+          "name" : "Write the docs for the API, with example…",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "running",
+          "updatedAt" : 783000001
+        }
+      ]
+    },
+    {
+      "op" : "working 1",
+      "result" : null,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001"
+          ],
+          "name" : "Write the docs for the API, with example…",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "running",
+          "updatedAt" : 783000001
+        }
+      ]
+    },
+    {
+      "op" : "replied 101",
+      "result" : 1,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001",
+            "33333333-0000-4000-8000-000000000101"
+          ],
+          "name" : "Docs",
+          "now" : "writing",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "running",
+          "stateFromTag" : "running",
+          "updatedAt" : 783000030
+        }
+      ]
+    },
+    {
+      "op" : "begin 2",
+      "result" : null,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001",
+            "33333333-0000-4000-8000-000000000101"
+          ],
+          "name" : "Docs",
+          "now" : "writing",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "running",
+          "stateFromTag" : "running",
+          "updatedAt" : 783000030
+        },
+        {
+          "createdAt" : 783000040,
+          "id" : "C0740376-05D5-4423-AFF5-B2C810EC61B4",
+          "kept" : false,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000002"
+          ],
+          "name" : "thanks",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000002",
+          "state" : "pending",
+          "updatedAt" : 783000040
+        }
+      ]
+    },
+    {
+      "op" : "replied 102 quick",
+      "result" : 0,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001",
+            "33333333-0000-4000-8000-000000000101"
+          ],
+          "name" : "Docs",
+          "now" : "writing",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "running",
+          "stateFromTag" : "running",
+          "updatedAt" : 783000030
+        }
+      ]
+    },
+    {
+      "op" : "begin 3",
+      "result" : null,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001",
+            "33333333-0000-4000-8000-000000000101"
+          ],
+          "name" : "Docs",
+          "now" : "writing",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "running",
+          "stateFromTag" : "running",
+          "updatedAt" : 783000030
+        },
+        {
+          "createdAt" : 783000050,
+          "id" : "244A4717-46EA-4AD0-9A0E-FCDCADBD6B09",
+          "kept" : false,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000003"
+          ],
+          "name" : "A long question",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000003",
+          "state" : "pending",
+          "updatedAt" : 783000050
+        }
+      ]
+    },
+    {
+      "op" : "replied 103 slow",
+      "result" : 1,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001",
+            "33333333-0000-4000-8000-000000000101"
+          ],
+          "name" : "Docs",
+          "now" : "writing",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "running",
+          "stateFromTag" : "running",
+          "updatedAt" : 783000030
+        },
+        {
+          "createdAt" : 783000050,
+          "id" : "244A4717-46EA-4AD0-9A0E-FCDCADBD6B09",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000003",
+            "33333333-0000-4000-8000-000000000103"
+          ],
+          "name" : "A long question",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000003",
+          "state" : "done",
+          "updatedAt" : 783000100
+        }
+      ]
+    },
+    {
+      "op" : "begin 4",
+      "result" : null,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001",
+            "33333333-0000-4000-8000-000000000101"
+          ],
+          "name" : "Docs",
+          "now" : "writing",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "running",
+          "stateFromTag" : "running",
+          "updatedAt" : 783000030
+        },
+        {
+          "createdAt" : 783000050,
+          "id" : "244A4717-46EA-4AD0-9A0E-FCDCADBD6B09",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000003",
+            "33333333-0000-4000-8000-000000000103"
+          ],
+          "name" : "A long question",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000003",
+          "state" : "done",
+          "updatedAt" : 783000100
+        },
+        {
+          "createdAt" : 783000200,
+          "id" : "68B74EA3-6E7B-4D30-A312-569D6B192CAF",
+          "kept" : false,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000004"
+          ],
+          "name" : "follow up on docs",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000004",
+          "state" : "pending",
+          "updatedAt" : 783000200
+        }
+      ]
+    },
+    {
+      "op" : "replied 104 continues",
+      "result" : 1,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001",
+            "33333333-0000-4000-8000-000000000101",
+            "33333333-0000-4000-8000-000000000004",
+            "33333333-0000-4000-8000-000000000104"
+          ],
+          "name" : "Docs",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "done",
+          "stateFromTag" : "done",
+          "updatedAt" : 783000230
+        },
+        {
+          "createdAt" : 783000050,
+          "id" : "244A4717-46EA-4AD0-9A0E-FCDCADBD6B09",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000003",
+            "33333333-0000-4000-8000-000000000103"
+          ],
+          "name" : "A long question",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000003",
+          "state" : "done",
+          "updatedAt" : 783000100
+        }
+      ]
+    },
+    {
+      "op" : "begin 5 replying",
+      "result" : null,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001",
+            "33333333-0000-4000-8000-000000000101",
+            "33333333-0000-4000-8000-000000000004",
+            "33333333-0000-4000-8000-000000000104",
+            "33333333-0000-4000-8000-000000000005"
+          ],
+          "name" : "Docs",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "done",
+          "stateFromTag" : "done",
+          "updatedAt" : 783000300
+        },
+        {
+          "createdAt" : 783000050,
+          "id" : "244A4717-46EA-4AD0-9A0E-FCDCADBD6B09",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000003",
+            "33333333-0000-4000-8000-000000000103"
+          ],
+          "name" : "A long question",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000003",
+          "state" : "done",
+          "updatedAt" : 783000100
+        }
+      ]
+    },
+    {
+      "op" : "join 6 7",
+      "result" : null,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001",
+            "33333333-0000-4000-8000-000000000101",
+            "33333333-0000-4000-8000-000000000004",
+            "33333333-0000-4000-8000-000000000104",
+            "33333333-0000-4000-8000-000000000005"
+          ],
+          "name" : "Docs",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "done",
+          "stateFromTag" : "done",
+          "updatedAt" : 783000300
+        },
+        {
+          "createdAt" : 783000050,
+          "id" : "244A4717-46EA-4AD0-9A0E-FCDCADBD6B09",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000003",
+            "33333333-0000-4000-8000-000000000103"
+          ],
+          "name" : "A long question",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000003",
+          "state" : "done",
+          "updatedAt" : 783000100
+        },
+        {
+          "createdAt" : 783000400,
+          "id" : "08DC3AC5-D46A-4C13-93B6-7DFF4A8A449C",
+          "kept" : false,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000006",
+            "33333333-0000-4000-8000-000000000007"
+          ],
+          "name" : "part one",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000006",
+          "state" : "pending",
+          "updatedAt" : 783000400
+        }
+      ]
+    },
+    {
+      "op" : "replied 108 asks",
+      "result" : 1,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001",
+            "33333333-0000-4000-8000-000000000101",
+            "33333333-0000-4000-8000-000000000004",
+            "33333333-0000-4000-8000-000000000104",
+            "33333333-0000-4000-8000-000000000005"
+          ],
+          "name" : "Docs",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "done",
+          "stateFromTag" : "done",
+          "updatedAt" : 783000300
+        },
+        {
+          "createdAt" : 783000050,
+          "id" : "244A4717-46EA-4AD0-9A0E-FCDCADBD6B09",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000003",
+            "33333333-0000-4000-8000-000000000103"
+          ],
+          "name" : "A long question",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000003",
+          "state" : "done",
+          "updatedAt" : 783000100
+        },
+        {
+          "createdAt" : 783000400,
+          "id" : "08DC3AC5-D46A-4C13-93B6-7DFF4A8A449C",
+          "kept" : false,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000006",
+            "33333333-0000-4000-8000-000000000007"
+          ],
+          "name" : "part one",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000006",
+          "state" : "pending",
+          "updatedAt" : 783000400
+        },
+        {
+          "createdAt" : 783000500,
+          "id" : "D9467FB6-DF17-4751-BA6D-460A80733D4E",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000008",
+            "33333333-0000-4000-8000-000000000108"
+          ],
+          "name" : "decide something",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000008",
+          "state" : "waiting",
+          "updatedAt" : 783000530
+        }
+      ]
+    },
+    {
+      "op" : "link 9",
+      "result" : null,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001",
+            "33333333-0000-4000-8000-000000000101",
+            "33333333-0000-4000-8000-000000000004",
+            "33333333-0000-4000-8000-000000000104",
+            "33333333-0000-4000-8000-000000000005"
+          ],
+          "name" : "Docs",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "done",
+          "stateFromTag" : "done",
+          "updatedAt" : 783000300
+        },
+        {
+          "createdAt" : 783000050,
+          "id" : "244A4717-46EA-4AD0-9A0E-FCDCADBD6B09",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000003",
+            "33333333-0000-4000-8000-000000000103"
+          ],
+          "name" : "A long question",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000003",
+          "state" : "done",
+          "updatedAt" : 783000100
+        },
+        {
+          "createdAt" : 783000400,
+          "id" : "08DC3AC5-D46A-4C13-93B6-7DFF4A8A449C",
+          "kept" : false,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000006",
+            "33333333-0000-4000-8000-000000000007"
+          ],
+          "name" : "part one",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000006",
+          "state" : "pending",
+          "updatedAt" : 783000400
+        },
+        {
+          "createdAt" : 783000500,
+          "id" : "D9467FB6-DF17-4751-BA6D-460A80733D4E",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000008",
+            "33333333-0000-4000-8000-000000000108"
+          ],
+          "name" : "decide something",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000008",
+          "state" : "waiting",
+          "updatedAt" : 783000530
+        },
+        {
+          "createdAt" : 783000600,
+          "id" : "710F4334-84FC-4A8E-833C-3B06E6B81C46",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000009"
+          ],
+          "name" : "research",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000009",
+          "state" : "pending",
+          "subagentIDs" : [
+            "toolu_x"
+          ],
+          "updatedAt" : 783000600
+        }
+      ]
+    },
+    {
+      "op" : "replied 109 running sub",
+      "result" : 1,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001",
+            "33333333-0000-4000-8000-000000000101",
+            "33333333-0000-4000-8000-000000000004",
+            "33333333-0000-4000-8000-000000000104",
+            "33333333-0000-4000-8000-000000000005"
+          ],
+          "name" : "Docs",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "done",
+          "stateFromTag" : "done",
+          "updatedAt" : 783000300
+        },
+        {
+          "createdAt" : 783000050,
+          "id" : "244A4717-46EA-4AD0-9A0E-FCDCADBD6B09",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000003",
+            "33333333-0000-4000-8000-000000000103"
+          ],
+          "name" : "A long question",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000003",
+          "state" : "done",
+          "updatedAt" : 783000100
+        },
+        {
+          "createdAt" : 783000400,
+          "id" : "08DC3AC5-D46A-4C13-93B6-7DFF4A8A449C",
+          "kept" : false,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000006",
+            "33333333-0000-4000-8000-000000000007"
+          ],
+          "name" : "part one",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000006",
+          "state" : "pending",
+          "updatedAt" : 783000400
+        },
+        {
+          "createdAt" : 783000500,
+          "id" : "D9467FB6-DF17-4751-BA6D-460A80733D4E",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000008",
+            "33333333-0000-4000-8000-000000000108"
+          ],
+          "name" : "decide something",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000008",
+          "state" : "waiting",
+          "updatedAt" : 783000530
+        },
+        {
+          "createdAt" : 783000600,
+          "id" : "710F4334-84FC-4A8E-833C-3B06E6B81C46",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000009",
+            "33333333-0000-4000-8000-000000000109"
+          ],
+          "name" : "research",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000009",
+          "state" : "running",
+          "subagentIDs" : [
+            "toolu_x"
+          ],
+          "updatedAt" : 783000610
+        }
+      ]
+    },
+    {
+      "op" : "replied 110 report",
+      "result" : 1,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001",
+            "33333333-0000-4000-8000-000000000101",
+            "33333333-0000-4000-8000-000000000004",
+            "33333333-0000-4000-8000-000000000104",
+            "33333333-0000-4000-8000-000000000005"
+          ],
+          "name" : "Docs",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "done",
+          "stateFromTag" : "done",
+          "updatedAt" : 783000300
+        },
+        {
+          "createdAt" : 783000050,
+          "id" : "244A4717-46EA-4AD0-9A0E-FCDCADBD6B09",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000003",
+            "33333333-0000-4000-8000-000000000103"
+          ],
+          "name" : "A long question",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000003",
+          "state" : "done",
+          "updatedAt" : 783000100
+        },
+        {
+          "createdAt" : 783000400,
+          "id" : "08DC3AC5-D46A-4C13-93B6-7DFF4A8A449C",
+          "kept" : false,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000006",
+            "33333333-0000-4000-8000-000000000007"
+          ],
+          "name" : "part one",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000006",
+          "state" : "pending",
+          "updatedAt" : 783000400
+        },
+        {
+          "createdAt" : 783000500,
+          "id" : "D9467FB6-DF17-4751-BA6D-460A80733D4E",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000008",
+            "33333333-0000-4000-8000-000000000108"
+          ],
+          "name" : "decide something",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000008",
+          "state" : "waiting",
+          "updatedAt" : 783000530
+        },
+        {
+          "createdAt" : 783000600,
+          "id" : "710F4334-84FC-4A8E-833C-3B06E6B81C46",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000009",
+            "33333333-0000-4000-8000-000000000109",
+            "33333333-0000-4000-8000-000000000110"
+          ],
+          "name" : "research",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000009",
+          "state" : "done",
+          "subagentIDs" : [
+            "toolu_x"
+          ],
+          "updatedAt" : 783000900
+        }
+      ]
+    },
+    {
+      "op" : "replied 111 two tags",
+      "result" : 2,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001",
+            "33333333-0000-4000-8000-000000000101",
+            "33333333-0000-4000-8000-000000000004",
+            "33333333-0000-4000-8000-000000000104",
+            "33333333-0000-4000-8000-000000000005"
+          ],
+          "name" : "Docs",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "done",
+          "stateFromTag" : "done",
+          "updatedAt" : 783000300
+        },
+        {
+          "createdAt" : 783000050,
+          "id" : "244A4717-46EA-4AD0-9A0E-FCDCADBD6B09",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000003",
+            "33333333-0000-4000-8000-000000000103"
+          ],
+          "name" : "A long question",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000003",
+          "state" : "done",
+          "updatedAt" : 783000100
+        },
+        {
+          "createdAt" : 783000400,
+          "id" : "08DC3AC5-D46A-4C13-93B6-7DFF4A8A449C",
+          "kept" : false,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000006",
+            "33333333-0000-4000-8000-000000000007"
+          ],
+          "name" : "part one",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000006",
+          "state" : "pending",
+          "updatedAt" : 783000400
+        },
+        {
+          "createdAt" : 783000500,
+          "id" : "D9467FB6-DF17-4751-BA6D-460A80733D4E",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000008",
+            "33333333-0000-4000-8000-000000000108"
+          ],
+          "name" : "decide something",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000008",
+          "state" : "waiting",
+          "updatedAt" : 783000530
+        },
+        {
+          "createdAt" : 783000600,
+          "id" : "710F4334-84FC-4A8E-833C-3B06E6B81C46",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000009",
+            "33333333-0000-4000-8000-000000000109",
+            "33333333-0000-4000-8000-000000000110"
+          ],
+          "name" : "research",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000009",
+          "state" : "done",
+          "subagentIDs" : [
+            "toolu_x"
+          ],
+          "updatedAt" : 783000900
+        },
+        {
+          "createdAt" : 783001000,
+          "id" : "7C9D12B5-67E0-43CD-A509-4787C81042D2",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000011",
+            "33333333-0000-4000-8000-000000000111"
+          ],
+          "name" : "One",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000011",
+          "state" : "running",
+          "stateFromTag" : "running",
+          "updatedAt" : 783001010
+        },
+        {
+          "createdAt" : 783001010,
+          "id" : "3E4C833C-721B-484F-80A3-74893A1B90E3",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000111"
+          ],
+          "name" : "Two",
+          "next" : "later",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000011",
+          "state" : "done",
+          "updatedAt" : 783001010
+        }
+      ]
+    },
+    {
+      "op" : "replied 112 bg new",
+      "result" : 1,
+      "tasks" : [
+        {
+          "createdAt" : 783000000,
+          "id" : "8F3F6CB4-F8FA-420A-BB28-5997E860D091",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000001",
+            "33333333-0000-4000-8000-000000000101",
+            "33333333-0000-4000-8000-000000000004",
+            "33333333-0000-4000-8000-000000000104",
+            "33333333-0000-4000-8000-000000000005"
+          ],
+          "name" : "Docs",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000001",
+          "state" : "done",
+          "stateFromTag" : "done",
+          "updatedAt" : 783000300
+        },
+        {
+          "createdAt" : 783000050,
+          "id" : "244A4717-46EA-4AD0-9A0E-FCDCADBD6B09",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000003",
+            "33333333-0000-4000-8000-000000000103"
+          ],
+          "name" : "A long question",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000003",
+          "state" : "done",
+          "updatedAt" : 783000100
+        },
+        {
+          "createdAt" : 783000400,
+          "id" : "08DC3AC5-D46A-4C13-93B6-7DFF4A8A449C",
+          "kept" : false,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000006",
+            "33333333-0000-4000-8000-000000000007"
+          ],
+          "name" : "part one",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000006",
+          "state" : "pending",
+          "updatedAt" : 783000400
+        },
+        {
+          "createdAt" : 783000500,
+          "id" : "D9467FB6-DF17-4751-BA6D-460A80733D4E",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000008",
+            "33333333-0000-4000-8000-000000000108"
+          ],
+          "name" : "decide something",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000008",
+          "state" : "waiting",
+          "updatedAt" : 783000530
+        },
+        {
+          "createdAt" : 783000600,
+          "id" : "710F4334-84FC-4A8E-833C-3B06E6B81C46",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000009",
+            "33333333-0000-4000-8000-000000000109",
+            "33333333-0000-4000-8000-000000000110"
+          ],
+          "name" : "research",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000009",
+          "state" : "done",
+          "subagentIDs" : [
+            "toolu_x"
+          ],
+          "updatedAt" : 783000900
+        },
+        {
+          "createdAt" : 783001000,
+          "id" : "7C9D12B5-67E0-43CD-A509-4787C81042D2",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000011",
+            "33333333-0000-4000-8000-000000000111"
+          ],
+          "name" : "One",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000011",
+          "state" : "running",
+          "stateFromTag" : "running",
+          "updatedAt" : 783001010
+        },
+        {
+          "createdAt" : 783001010,
+          "id" : "3E4C833C-721B-484F-80A3-74893A1B90E3",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000111"
+          ],
+          "name" : "Two",
+          "next" : "later",
+          "owner" : "claude",
+          "startedByMessageID" : "33333333-0000-4000-8000-000000000011",
+          "state" : "done",
+          "updatedAt" : 783001010
+        },
+        {
+          "createdAt" : 783001100,
+          "id" : "E20022FD-D88A-4072-BBA6-B5C74C03302C",
+          "kept" : true,
+          "messageIDs" : [
+            "33333333-0000-4000-8000-000000000112"
+          ],
+          "name" : "Background",
+          "owner" : "claude",
+          "state" : "done",
+          "updatedAt" : 783001100
+        }
+      ]
     }
   ],
   "timeZone" : "GMT"
