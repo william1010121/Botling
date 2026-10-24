@@ -12,6 +12,7 @@ export const ko: Dictionary = {
   "verification.user": "사용자 결정 대기",
   "verification.cancelled": "취소됨",
   "verification.dependency": "의존 작업 대기",
+  "verification.timer": "예정된 재확인 대기",
   "verification.unknown": "확인 불가",
   "verification.unavailable": "검증 사용 불가",
   "verification.paused": "새 결과나 실질적인 분석이 없어 자동 계속을 일시 중지했습니다. 작업은 아직 완료되지 않았습니다.",

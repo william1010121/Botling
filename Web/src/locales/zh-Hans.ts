@@ -12,6 +12,7 @@ export const zhHans: Dictionary = {
   "verification.user": "等待你决定",
   "verification.cancelled": "已取消",
   "verification.dependency": "等待依赖工作",
+  "verification.timer": "等待预定复验",
   "verification.unknown": "无法确认",
   "verification.unavailable": "验证不可用",
   "verification.paused": "自动继续已暂停：多次回合没有新结果或实质分析，工作仍未完成。",

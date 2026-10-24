@@ -92,7 +92,7 @@ export function completionVerificationElement(record: NonNullable<MessageView["c
     CONTINUE: "verification.continue", CONTINUE_ANALYSIS: "verification.analysis",
     COMPLETE: "verification.complete", NEEDS_TERMINAL_SIGNAL: "verification.evidence",
     WAITING_USER: "verification.user", CANCELLED: "verification.cancelled",
-    WAITING_DEPENDENCY: "verification.dependency", UNKNOWN: "verification.unknown",
+    WAITING_DEPENDENCY: "verification.dependency", WAITING_TIMER: "verification.timer", UNKNOWN: "verification.unknown",
     UNAVAILABLE: "verification.unavailable",
   } as const;
   const label = record.state === "checking" ? t("verification.checking")

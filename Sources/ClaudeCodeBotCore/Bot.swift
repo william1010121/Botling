@@ -1871,7 +1871,9 @@ public final class Bot: ObservableObject, Identifiable {
     private func checkPromise(in message: ChatMessage, handed: Bool, handoffID: UUID?) {
         guard canCheckCompletion(message), let promiseCheck, let source = process else { return }
         let workers = source.completionWorkerDependencies
-        let tasks = messages.flatMap { $0.backgroundTasks ?? [] }.filter { $0.holdsBotAwake(now: now()) }
+        let evaluatedAt = now()
+        let wakeups = completionScheduledWakeups(at: evaluatedAt)
+        let tasks = messages.flatMap { $0.backgroundTasks ?? [] }.filter { !$0.kind.isScheduled && $0.holdsBotAwake(now: evaluatedAt) }
         var dependencies = trace.subagents.filter { $0.isRunning && $0.type != "codex-worker" }.map {
             "Subagent \($0.id); status: running; result returns via task notification; \($0.description); task: \($0.prompt)"
         }
@@ -1884,12 +1886,15 @@ public final class Bot: ObservableObject, Identifiable {
         let authorization = messages.filter { $0.role == .user || $0.role == .relay }.suffix(6)
             .map { "[\($0.role)] \($0.text)" }.joined(separator: "\n")
         let recent = messages.suffix(10).map { "[\($0.role)] \($0.text)" }.joined(separator: "\n")
-        var end = PromiseCheck.TurnEnd(reply: message.text, workPending: !dependencies.isEmpty || managedWorkPending || workers?.isEmpty == false,
+        var end = PromiseCheck.TurnEnd(reply: message.text, workPending: !dependencies.isEmpty || !wakeups.isEmpty || managedWorkPending || workers?.isEmpty == false,
             task: pausedCompletionContext.map { $0.task + "\nCurrent user interruption: " + completionAuthorization } ?? completionAuthorization, conversation: authorization + "\nRecent conversation:\n" + recent,
             dependencies: dependencies, actions: actions,
             memory: profile.keepsMemory ? ((try? String(contentsOf: profile.memoryURL, encoding: .utf8)) ?? "") : "",
             terminalRequired: completionRequiresTerminalSignal, signals: completionSignals.removeValue(forKey: message.id) ?? [])
         end.workerDependencies = workers
+        end.evaluatedAt = evaluatedAt.ISO8601Format()
+        end.timeZone = Calendar.current.timeZone.identifier
+        end.scheduledWakeups = wakeups
         // A new tool ID or another promise alone is not progress. Repeated identical checks
         // cannot sustain an endless self-wake loop. Genuine new results allow ongoing research.
         let evidence = steps.filter { $0.done && !$0.failed && $0.output?.isEmpty == false }.map {
@@ -1923,7 +1928,12 @@ public final class Bot: ObservableObject, Identifiable {
             completionTask = nil
             // A worker may finish, fail, stop, or receive a scope change during inference.
             // Rejudge against the current runtime instead of acting on an obsolete snapshot.
-            if source.completionWorkerDependencies != workers {
+            let reviewedAt = now()
+            let timerExpired = judgment.verdict == .waitingTimer && wakeups.contains {
+                $0.id == judgment.wakeupID && ($0.date.map { $0 <= reviewedAt } ?? true)
+                    && ($0.date.map { $0 > evaluatedAt } ?? false)
+            }
+            if source.completionWorkerDependencies != workers || completionScheduledWakeups(at: reviewedAt) != wakeups || timerExpired {
                 interruptCompletionVerification()
                 completionSignals[message.id] = end.signals
                 checkPromise(in: message, handed: handed, handoffID: handoffID)
@@ -1983,8 +1993,10 @@ public final class Bot: ObservableObject, Identifiable {
                     owner.conduct(owner.conductor.replied(engine, message.text, tags: HeadTags(), handed: true, handoffID: handoffID))
                 }
                 afterTurn()
-            case .waitingDependency:
+            case .waitingDependency, .waitingTimer:
                 // Keep the return route for the actual dependency report. Do not duplicate it.
+                // A clock wait is unfinished work too; the existing scheduler owns its wake.
+                if verdict == .waitingTimer { completionNoProgress = 0 }
                 if handed { turnConducted = true; turnHandoffID = handoffID }
                 completionAssignment = nil
                 afterTurn()
@@ -1993,6 +2005,32 @@ public final class Bot: ObservableObject, Identifiable {
                 afterTurn()
             }
         }
+    }
+
+    /// Describe the existing scheduler only. Reading a saved routine never creates a worker
+    /// or establishes why the task must wait; that still needs semantic blocker evidence.
+    private func completionScheduledWakeups(at date: Date) -> [PromiseCheck.ScheduledWakeup] {
+        let owner = primary ?? self
+        owner.reloadRoutines()
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: date).addingTimeInterval(-1)
+        var wakeups = owner.routines.filter(\.enabled).compactMap { routine -> PromiseCheck.ScheduledWakeup? in
+            // Use the scheduler's saved last-run baseline, including an overdue wake today.
+            // Advancing the clock past a deadline must not silently roll that wake to next year.
+            let baseline = max(owner.routineRuns[routine.id] ?? date, today)
+            guard let fireAt = routine.schedule.nextTime(after: baseline, calendar: calendar) else { return nil }
+            return .init(id: PromiseCheck.wakeupID("routine:" + routine.id), task: routine.task,
+                fireAt: fireAt, callback: "app_routine")
+        }
+        wakeups += messages.flatMap { $0.backgroundTasks ?? [] }.compactMap { task in
+            guard task.isRunning, task.kind.isScheduled, task.holdsBotAwake(now: date) else { return nil }
+            let next = task.kind == .cron && task.recurring != false
+                ? task.schedule.flatMap { CronSchedule($0)?.nextTime(after: date) } : task.fireAt
+            guard let fireAt = next else { return nil }
+            return .init(id: PromiseCheck.wakeupID("session:" + task.id), task: task.title + "\n" + (task.detail ?? ""),
+                fireAt: fireAt, callback: "session_wakeup")
+        }
+        return wakeups.sorted { $0.id < $1.id }
     }
 
     // MARK: Group chat

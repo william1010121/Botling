@@ -12,6 +12,7 @@ export const zhHant: Dictionary = {
   "verification.user": "等待你決定",
   "verification.cancelled": "已取消",
   "verification.dependency": "等待相依工作",
+  "verification.timer": "等待排定復驗",
   "verification.unknown": "無法確認",
   "verification.unavailable": "驗證無法使用",
   "verification.paused": "自動續跑已暫停：多次回合沒有新結果或實質分析，工作仍未完成。",

@@ -72,7 +72,7 @@ export interface MessageView {
   completionVerification?: {
     model: string;
     state: "checking" | "judged" | "interrupted";
-    verdict?: "CONTINUE" | "CONTINUE_ANALYSIS" | "COMPLETE" | "NEEDS_TERMINAL_SIGNAL" | "WAITING_USER" | "CANCELLED" | "WAITING_DEPENDENCY" | "UNKNOWN" | "UNAVAILABLE" | null;
+    verdict?: "CONTINUE" | "CONTINUE_ANALYSIS" | "COMPLETE" | "NEEDS_TERMINAL_SIGNAL" | "WAITING_USER" | "CANCELLED" | "WAITING_DEPENDENCY" | "WAITING_TIMER" | "UNKNOWN" | "UNAVAILABLE" | null;
     reason?: string | null;
     continuationPaused?: boolean | null;
   } | null;

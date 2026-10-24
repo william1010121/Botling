@@ -13,6 +13,7 @@ export const en = {
   "verification.user": "Waiting on you",
   "verification.cancelled": "Cancelled",
   "verification.dependency": "Waiting on dependency",
+  "verification.timer": "Waiting for scheduled retry",
   "verification.unknown": "Uncertain",
   "verification.unavailable": "Unavailable",
   "verification.paused": "Automatic continuation paused: repeated turns produced no new results or substantive analysis. Work remains unfinished.",

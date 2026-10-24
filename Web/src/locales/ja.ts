@@ -12,6 +12,7 @@ export const ja: Dictionary = {
   "verification.user": "あなたの判断待ち",
   "verification.cancelled": "キャンセル済み",
   "verification.dependency": "依存作業待ち",
+  "verification.timer": "再確認の予定時刻待ち",
   "verification.unknown": "確認できません",
   "verification.unavailable": "検証できません",
   "verification.paused": "新しい結果や実質的な分析がないため自動継続を一時停止しました。作業は未完了です。",

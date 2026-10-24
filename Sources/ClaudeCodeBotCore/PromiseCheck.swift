@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Shared semantic completion judgment for both heads. Pending work is evidence to assess,
@@ -12,6 +13,8 @@ public enum PromiseCheck {
         case waitingUser = "WAITING_USER"
         case cancelled = "CANCELLED"
         case waitingDependency = "WAITING_DEPENDENCY"
+        /// Authorized work is unfinished, but an evidenced external backoff awaits a clock.
+        case waitingTimer = "WAITING_TIMER"
         case unknown = "UNKNOWN"
         /// Transport/parser failure is not evidence that authorized work is complete.
         case unavailable = "UNAVAILABLE"
@@ -20,7 +23,10 @@ public enum PromiseCheck {
     public struct Judgment: Equatable, Sendable, Codable {
         public var verdict: Verdict
         public var reason: String
-        public init(verdict: Verdict, reason: String) { self.verdict = verdict; self.reason = reason }
+        public var wakeupID: String?
+        public init(verdict: Verdict, reason: String, wakeupID: String? = nil) {
+            self.verdict = verdict; self.reason = reason; self.wakeupID = wakeupID
+        }
         public var rawValue: String { verdict.rawValue }
         // Convenient deterministic judgments for tests/injected checkers. Provider replies must
         // include a nonempty reason; these do not bypass runtime scope or protocol checks.
@@ -72,6 +78,11 @@ public enum PromiseCheck {
         public var evidenceTruncated: Bool
         public var workerDependencies: [WorkerDependency]? = nil
         public var workerDependenciesTruncated = false
+        /// App-supplied wall clock and actual scheduler entries, not model claims in history.
+        public var evaluatedAt: String? = nil
+        public var timeZone: String? = nil
+        public var scheduledWakeups: [ScheduledWakeup]? = nil
+        public var scheduledWakeupsTruncated = false
 
         public init(reply: String, workPending: Bool, task: String = "", conversation: String = "",
                     dependencies: [String] = [], actions: [String] = [], memory: String = "", terminalRequired: Bool = false, signals: [Signal] = [], evidenceTruncated: Bool = false) {
@@ -88,6 +99,26 @@ public enum PromiseCheck {
         }
     }
 
+    public struct ScheduledWakeup: Equatable, Sendable, Codable {
+        public var id: String
+        public var task: String
+        public var fireAt: String
+        public var callback: String
+        public var taskTruncated = false
+        /// Derived from the App clock when packing; nil only without a valid clock/date.
+        public var isDue: Bool? = nil
+
+        public init(id: String, task: String, fireAt: Date, callback: String) {
+            self.id = id; self.task = task; self.fireAt = fireAt.ISO8601Format(); self.callback = callback
+        }
+        var date: Date? { try? Date(fireAt, strategy: .iso8601) }
+    }
+
+    /// Routine ids contain their entire instruction. Keep the correlation key small and stable.
+    static func wakeupID(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
     public typealias Check = @Sendable (TurnEnd) async -> Judgment
     public typealias Classifier = @Sendable (String) async throws -> Judgment
     public static let classifierTimeout: TimeInterval = 15
@@ -99,6 +130,11 @@ public enum PromiseCheck {
         Follow your established head/worker ownership policy. Respect explicit stop/cancel, research-only scope, permissions and user decision boundaries. \
         Do not invent extra work or repeat a denied action. If a real dependency owns ALL remaining work \
         and will return its result, explain exactly what it owns and what will wake you. \
+        A retained worker task_id is an assignment/resume route, not proof it is running. \
+        For a real timed external wait, report the observed failure or restriction, the justified \
+        not-before time, the saved wakeup and why no independent authorized work can advance. \
+        A precautionary cooldown after an observed failure need not prove a specific service limit; \
+        do not claim that unverified cause or retry early merely to satisfy this check. \
         From THIS FIRST wake onward, the terminal protocol is mandatory for this same task: \
         if you genuinely finish, end with <end>concrete completion evidence against the authorized objective</end>; \
         if genuinely blocked, end with <block>the specific missing permission, input or dependency, why no \
@@ -134,10 +170,36 @@ public enum PromiseCheck {
         return (packed, omitted)
     }
 
+    private static func packWakeups(_ wakeups: [ScheduledWakeup]) -> (records: [ScheduledWakeup], omitted: Bool) {
+        var records: [ScheduledWakeup] = []
+        var omitted = false
+        for var wakeup in wakeups {
+            if wakeup.task.count > 1200 {
+                wakeup.task = String(wakeup.task.prefix(800)) + "\n…\n" + String(wakeup.task.suffix(400))
+                wakeup.taskTruncated = true
+            }
+            if let data = try? JSONEncoder().encode(records + [wakeup]), data.count <= 8_000 {
+                records.append(wakeup)
+            } else { omitted = true }
+        }
+        return (records, omitted)
+    }
+
+    private static func clockedWakeups(_ end: TurnEnd) -> [ScheduledWakeup]? {
+        guard let clock = end.evaluatedAt.flatMap({ try? Date($0, strategy: .iso8601) }) else { return end.scheduledWakeups }
+        return end.scheduledWakeups?.map { wakeup in
+            var timed = wakeup
+            timed.isDue = wakeup.date.map { $0 <= clock }
+            return timed
+        }
+    }
+
     /// Keep the authorization separate from the recent transcript so a long autonomous run
     /// cannot push it out of the judge's context. Bound each field, including tool output.
     static func classifierMessage(_ end: TurnEnd) -> String {
-        var bounded = end
+        var supplied = end
+        supplied.scheduledWakeups = clockedWakeups(end)
+        var bounded = supplied
         bounded.reply = String(end.reply.suffix(6000))
         bounded.task = String(end.task.prefix(6000)) + (end.task.count > 6000 ? "\n…\n" + String(end.task.suffix(6000)) : "")
         bounded.conversation = String(end.conversation.suffix(12000))
@@ -154,7 +216,12 @@ public enum PromiseCheck {
             bounded.workerDependencies = packed.records
             bounded.workerDependenciesTruncated = end.workerDependenciesTruncated || packed.omitted
         }
-        bounded.evidenceTruncated = end.evidenceTruncated || bounded != end
+        if let wakeups = supplied.scheduledWakeups {
+            let packed = packWakeups(wakeups)
+            bounded.scheduledWakeups = packed.records
+            bounded.scheduledWakeupsTruncated = end.scheduledWakeupsTruncated || packed.omitted
+        }
+        bounded.evidenceTruncated = end.evidenceTruncated || bounded != supplied
         var data = (try? encoder.encode(bounded)) ?? Data()
         // macOS argv is byte-limited. Character limits alone exceed it for CJK evidence.
         // Keep valid structured data, authorization edges and the latest conversation, rather
@@ -189,6 +256,16 @@ public enum PromiseCheck {
     /// conservative UNKNOWN then asks the original head for evidence only; it must neither
     /// silently settle nor invent new actions. Provider failures remain visibly unavailable.
     public static func review(_ judgment: Judgment, for end: TurnEnd) -> Judgment {
+        if judgment.verdict == .waitingTimer {
+            guard let time = end.evaluatedAt.flatMap({ try? Date($0, strategy: .iso8601) }),
+                  let wakeups = end.scheduledWakeups, !end.scheduledWakeupsTruncated,
+                  !packWakeups(clockedWakeups(end) ?? wakeups).omitted,
+                  let wakeup = wakeups.first(where: { $0.id == judgment.wakeupID }),
+                  ["app_routine", "session_wakeup"].contains(wakeup.callback),
+                  let deadline = wakeup.date, deadline > time else {
+                return Judgment(verdict: .unknown, reason: "No verified future scheduler wakeup supports timed waiting.")
+            }
+        }
         if judgment.verdict == .waitingDependency, let workers = end.workerDependencies,
            end.dependencies.isEmpty,
            end.workerDependenciesTruncated || packWorkers(workers).omitted || !workers.contains(where: { $0.state == .running && ["app_task_result", "app_monitor_result"].contains($0.callback ?? "") }) {
@@ -224,10 +301,23 @@ public enum PromiseCheck {
         Intact id/run/state/callback facts remain valid when verbose evidence is truncated. \
         Waiting for a running worker does not require its finished result. Still compare its \
         owned task to ALL remaining authorized work: any independent outstanding work must continue. \
+        evaluatedAt and timeZone are the App's current wall clock and scheduler time zone. \
+        scheduledWakeups lists actual enabled app routines/session wakeups with absolute fireAt \
+        times and callback paths; they are clocks, never running workers. A retained task_id after \
+        a worker exits is only a possible resume route. Empty workerDependencies does NOT refute \
+        a genuine external cooldown. Cross-check the current clock, wakeup, actions and blocker \
+        evidence separately. A schedule alone proves neither a blocker nor objective completion. \
+        Each wakeup's isDue is calculated by the App from this clock, including equality at the \
+        deadline. isDue=true means the retry/check time HAS ARRIVED: that entry cannot justify \
+        WAITING_TIMER, even if old replies still say "not yet" or "cooling down". If the next \
+        authorized check can now advance, return CONTINUE; do not demand a completed result \
+        before allowing that check. isDue=false only proves the wake is in the future, never \
+        that a blocker exists. Do not override this clock state with arithmetic or old claims. \
         If evidenceTruncated is true, missing text cannot establish \
         permissions or completion; only continue a specific action explicitly authorized by visible evidence. Do not invent tasks or treat an optional suggestion as authorized.
 
-        Return exactly one JSON object with keys "verdict" and "reason", with no Markdown. \
+        Return exactly one JSON object with keys "verdict", "reason", and "wakeupID", with no Markdown. \
+        wakeupID is the exact scheduledWakeups id for WAITING_TIMER, otherwise null. \
         reason must be a short, concrete explanation grounded in this evidence (same language as \
         the user's request), at most 240 characters. Identify the unperformed authorized action, \
         actual completion evidence, actual missing input/permission, or the specific dependency and \
@@ -259,6 +349,19 @@ public enum PromiseCheck {
         workers, a worker merely waiting, the existence of a monitor/schedule, and vague assurances are \
         insufficient. With no tracked context, an explicit statement that the exact remaining task is \
         already running and will report back may establish this. Do not duplicate actively owned work.
+        WAITING_TIMER: ALL remaining authorized progress is prevented until a justified future \
+        retry/check time by an observed external failure, restriction or explicit not-before \
+        instruction within the existing authorization. There must be a matching actual \
+        scheduledWakeups entry, fireAt later than evaluatedAt, a concrete return path, and no \
+        independent authorized work that can advance now. An observed nonpersistent write or \
+        transient failure can justify precautionary backoff without a proven 429/rate-limit cause. \
+        Do not require another failed write, a new status poll, or a running worker to prove that \
+        the clock has not reached an evidenced cooldown deadline. Do not invent a service-limit \
+        diagnosis. An arbitrary saved schedule, a vague promise to wait, an expired retry time, \
+        or unrelated monitor is insufficient: CONTINUE if authorized work can advance now, \
+        UNKNOWN if the actual blocker or return path cannot be established. Include the observed \
+        blocker and next wakeup time in reason. This is unfinished timed waiting, never COMPLETE \
+        or WAITING_USER, and never an assertion that an idle worker is executing.
         NEEDS_TERMINAL_SIGNAL: terminalRequired is true, the work is genuinely complete or blocked, \
         but the appropriate nonempty end/block evidence is missing or invalid. Repair the report only.
         UNKNOWN: evidence is insufficient to establish authorization or what remains.
@@ -274,7 +377,9 @@ public enum PromiseCheck {
         genuinely blocked; this asks for a report repair without more work or a blocked operation. \
         If substantive authorized work remains, return CONTINUE instead. Explicit user cancellation and actual permission boundaries still stop work. \
         WAITING_DEPENDENCY is a continuing owned task, not completion; preserve its return path and \
-        never duplicate its work. When terminalRequired is false, ordinary finished chats need no marker.
+        never duplicate its work. WAITING_TIMER likewise preserves the scheduled return path and \
+        needs no end/block marker; do not force report repair or immediate retries during it. \
+        When terminalRequired is false, ordinary finished chats need no marker.
 
         A workPending flag alone NEVER determines the answer. Respect the latest user scope and stops \
         over older authorization. Only CONTINUE or CONTINUE_ANALYSIS permits an automatic continuation. The reason must explain the decision; no extra text outside JSON.
@@ -284,7 +389,7 @@ public enum PromiseCheck {
     /// A separate saved selection may override it without changing conversation/worker models.
     public static let judgeModel = "gpt-6-luna"
     static let judgmentSchema = """
-        {"type":"object","properties":{"verdict":{"type":"string","enum":["CONTINUE","CONTINUE_ANALYSIS","COMPLETE","NEEDS_TERMINAL_SIGNAL","WAITING_USER","CANCELLED","WAITING_DEPENDENCY","UNKNOWN"]},"reason":{"type":"string"}},"required":["verdict","reason"],"additionalProperties":false}
+        {"type":"object","properties":{"verdict":{"type":"string","enum":["CONTINUE","CONTINUE_ANALYSIS","COMPLETE","NEEDS_TERMINAL_SIGNAL","WAITING_USER","CANCELLED","WAITING_DEPENDENCY","WAITING_TIMER","UNKNOWN"]},"reason":{"type":"string"},"wakeupID":{"type":["string","null"]}},"required":["verdict","reason","wakeupID"],"additionalProperties":false}
         """
 
     /// Existing Codex login, an ephemeral read-only classification process, medium reasoning.

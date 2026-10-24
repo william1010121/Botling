@@ -47,7 +47,7 @@ describe("actual completion verification", () => {
   it.each([
     { state: "checking", verdict: "COMPLETE" }, { state: "interrupted", verdict: "COMPLETE" },
     { state: "judged", verdict: null }, { state: "judged", verdict: "UNKNOWN" },
-    { state: "judged", verdict: "UNAVAILABLE" }, { state: "judged", verdict: "CONTINUE" },
+    { state: "judged", verdict: "UNAVAILABLE" }, { state: "judged", verdict: "WAITING_TIMER" }, { state: "judged", verdict: "CONTINUE" },
     { state: "judged", verdict: "COMPLETE", continuationPaused: true },
   ] as const)("never shows a success thumb for unfinished or unknown records: %j", (record) => {
     expect(completionVerificationElement({ model: "actual", ...record }).querySelector<HTMLButtonElement>(".verification-toggle")?.textContent).not.toContain("👍");
@@ -60,7 +60,7 @@ describe("actual completion verification", () => {
     expect(row.textContent).toContain("gpt-6-luna · medium");
     expect(row.querySelector('[role="status"]')).not.toBeNull();
   });
-  it.each(["CONTINUE", "CONTINUE_ANALYSIS", "COMPLETE", "NEEDS_TERMINAL_SIGNAL", "WAITING_USER", "CANCELLED", "WAITING_DEPENDENCY", "UNKNOWN", "UNAVAILABLE"] as const)("renders %s and the real reason safely", (verdict) => {
+  it.each(["CONTINUE", "CONTINUE_ANALYSIS", "COMPLETE", "NEEDS_TERMINAL_SIGNAL", "WAITING_USER", "CANCELLED", "WAITING_DEPENDENCY", "WAITING_TIMER", "UNKNOWN", "UNAVAILABLE"] as const)("renders %s and the real reason safely", (verdict) => {
     setLanguage("en");
     const reason = '<img src=x onerror="alert(1)"> Real evidence';
     const card = completionVerificationElement({ model: "actual-model", state: "judged", verdict, reason });
