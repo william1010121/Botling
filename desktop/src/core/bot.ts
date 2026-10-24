@@ -44,7 +44,7 @@ import {
 import { extractCards, welcomeMessages } from "./cards";
 import type { ProcessLedger } from "./process/ledger";
 import { isPlainOK, PARTS_NOTE, profilePaths, withoutPartsNote, type BotPrompts } from "./prompts";
-import { parseReply, saysNoReply, saysNothing, unsupportedRequest } from "./reply";
+import { masked, parseReply, saysNoReply, saysNothing, unsupportedRequest } from "./reply";
 import { SubagentBook, readSubagent, SUBAGENT_TOOLS, toolCount, type SubagentRecord } from "./subagents";
 import { readTaskCard, TaskBook, type TaskCard } from "./tasks";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
@@ -1352,18 +1352,20 @@ const ATTRIBUTE_TAGS = new Set(["task", "reaction", "decision-ref", "open-questi
  * a tag still being written held back (from its `<` on), so no raw tag flashes in the bubble.
  */
 export function streamingText(raw: string): string {
+  // Tags in code are examples: they are looked for outside code only (code that is not closed yet counts as code).
+  const outside = masked(raw);
   let cut = -1;
   for (const name of BLOCK_TAGS) {
     const opener = new RegExp(`<${name}(?=[\\s/>]|$)`, "g");
     let open = -1;
-    for (const match of raw.matchAll(opener)) open = match.index!;
+    for (const match of outside.matchAll(opener)) open = match.index!;
     if (open < 0) continue;
-    const rest = raw.slice(open);
+    const rest = outside.slice(open);
     const closed = rest.includes(`</${name}>`) || /^<[^>]*\/>/.test(rest) || (ATTRIBUTE_TAGS.has(name) && /^<[^>]*>/.test(rest));
     if (!closed && (cut < 0 || open < cut)) cut = open;
   }
   // A `<` at the very end may be the start of a tag.
-  const tail = /<[a-z/-]*$/i.exec(raw);
+  const tail = /<[a-z/-]*$/i.exec(outside);
   if (tail && (cut < 0 || tail.index < cut)) cut = tail.index;
   return parseReply(cut >= 0 ? raw.slice(0, cut) : raw).body;
 }

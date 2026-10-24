@@ -88,7 +88,7 @@ export function attributes(text: string): Record<string, string> {
 }
 
 /** The text with every code character replaced by a space (same length). */
-function masked(text: string): string {
+export function masked(text: string): string {
   return text.replace(codeRegion(), (match) => " ".repeat(match.length));
 }
 
