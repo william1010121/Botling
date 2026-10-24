@@ -81,6 +81,9 @@ import WebKit
         guard noPins["controlsVisible"] as? Bool == true, noPins["overflow"] as? Bool == false else { throw NSError(domain: "No pins failed", code: 3) }
         try await shot("strip-320-no-pin-capability")
         var checks = [String: Any]()
+        _ = try await js("var empty = handoffStripFixture(0, 'none'); delete empty.pins; ccb.setState(empty); true")
+        guard try await js("getComputedStyle(document.querySelector('.dock-row')).display") as? String == "none" else { throw NSError(domain: "Empty status row is not hidden", code: 13) }
+        checks["emptyRowHidden"] = true
         // A focused Stop survives unrelated pin refresh; Enter and Space invoke exactly the existing action.
         for (mode, type) in [("task", "stopHandoff"), ("rounds", "stopRounds")] {
             for (code, chars) in [(UInt16(36), "\r"), (UInt16(49), " ")] {
@@ -91,6 +94,8 @@ import WebKit
                 let stops = actions.filter { ($0["type"] as? String)?.hasPrefix("stop") == true }
                 guard stops.count == 1, stops.first?["type"] as? String == type else { throw NSError(domain: "Keyboard activation failed: \(mode) \(code) \(actions)", code: 5) }
                 if mode == "task" { guard stops.first?["handoffID"] as? String == "H0" else { throw NSError(domain: "Wrong handoff stopped", code: 6) } }
+                let layout = try await js("({...handoffStripMeasure(),scrollX})") as! [String: Any]
+                guard layout["controlsVisible"] as? Bool == true, layout["overflow"] as? Bool == false, layout["scrollX"] as? Int == 0 else { throw NSError(domain: "Post-activation overflow: \(layout)", code: 12) }
                 checks["\(mode)-\(code)"] = stops
             }
         }
@@ -98,6 +103,11 @@ import WebKit
         try await key(48, "\t")
         guard try await js("document.activeElement.matches('.handoff-stop')") as? Bool == true else { throw NSError(domain: "Tab cannot reach Stop: \(try await js("document.activeElement.outerHTML"))", code: 7) }
         checks["tabToStop"] = true
+        checks["focusedLayout"] = try await js("({...handoffStripMeasure(),scrollX,scrollY,viewport:visualViewport.width,offset:visualViewport.offsetLeft,html:document.documentElement.getBoundingClientRect().toJSON(),body:document.body.getBoundingClientRect().toJSON(),elements:[...document.querySelectorAll('.dock-row,.pin-dock,.pin-chip-list,.handoff-chip,.handoff-toggle,.handoff-stop')].map(el=>({class:el.className,rect:el.getBoundingClientRect().toJSON(),scrollWidth:el.scrollWidth,scrollLeft:el.scrollLeft,flex:getComputedStyle(el).flex,min:getComputedStyle(el).minWidth,max:getComputedStyle(el).maxWidth}))})")
+
+        try JSONSerialization.data(withJSONObject: checks, options: [.prettyPrinted, .sortedKeys]).write(to: output.appending(path: "focused-layout.json"))
+        let focusedLayout = checks["focusedLayout"] as! [String: Any]
+        guard focusedLayout["controlsVisible"] as? Bool == true, focusedLayout["overflow"] as? Bool == false, focusedLayout["scrollX"] as? Int == 0 else { throw NSError(domain: "Focused controls clipped/overflowed: \(focusedLayout)", code: 11) }
         try await shot("strip-320-stop-focused")
         _ = try await js("document.querySelector('[data-id=P11]').focus(); true")
         let pin = try await js("pinDockFocusMeasure()") as! [String: Any]
@@ -108,6 +118,13 @@ import WebKit
         _ = try await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'})); document.querySelector('.pin-chip.add').click(); true")
         guard try await js("document.querySelectorAll('.pin-picker-row').length") as? Int == 1 else { throw NSError(domain: "Add picker failed", code: 10) }
         checks["pinSheetAndPicker"] = true
+        _ = try await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'})); ccb.setState(handoffStripFixture(12, 'many')); document.querySelector('.handoff-toggle').focus(); true")
+        try await key(36, "\r")
+        guard try await js("!document.querySelector('.handoff-panel').hidden") as? Bool == true else { throw NSError(domain: "Keyboard cannot open multiple handoffs", code: 14) }
+        _ = try await js("document.querySelector('.handoff-stop-all').focus(); true")
+        actions.removeAll(); try await key(49, " ")
+        guard actions.filter({ $0["type"] as? String == "stopRounds" }).count == 1 else { throw NSError(domain: "Multiple-handoff Stop all inaccessible", code: 15) }
+        checks["multipleHandoffKeyboardStopAll"] = true
         try JSONSerialization.data(withJSONObject: checks, options: [.prettyPrinted, .sortedKeys]).write(to: output.appending(path: "interaction.json"))
         print("PASS: \(results.count) production WKWebView layouts; no overflow/clipped controls; Enter/Space Stop actions, Tab, focus refresh, pin focus/sheet and add picker")
     }

@@ -753,7 +753,6 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
 .dock-row > .pin-dock:not([hidden]) + .handoff-chip {
   flex: 0 0 auto; max-width: calc(100% - 76px); border-radius: 0 var(--control-radius) var(--control-radius) 0;
 }
-.dock-row:has(> .handoff-chip:not([hidden])) > .pin-dock:has(> .pin-chip-list:empty) { flex: none; min-width: 0; }
 .dock-row:has(> .handoff-chip:not([hidden])) .pin-chip:not(.add) { max-width: min(132px, 100%); }
 @container status-strip (max-width: 430px) {
   /* The numeric progress remains; the decorative bars give narrow pins enough room. */
