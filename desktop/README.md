@@ -2,7 +2,9 @@
 
 Status: **Phase 0 spikes done on macOS; Phase 1b done: several bots with 1.x-compatible storage, a
 read-only 1.x import, a long-lived claude head per bot with approvals, and a React shell hosting the
-reused Web/src chat page.** Not yet a replacement for the Swift app (see "Gaps vs the Swift app").
+reused Web/src chat page. Phase 2a done: 1.x's generated instructions (checked string for string
+against the Swift code), sleep/wake/tidy as 1.x, steering a running reply, the reply tags (choices,
+no-reply, task cards, reactions), Agent-tool subagents, the chat archive and a project lock.** Not yet a replacement for the Swift app (see "Gaps vs the Swift app").
 It lives beside it: nothing under `Sources/` or `Web/` changed, and the Swift app does not use
 anything here. Web/src is *bundled from source* into the desktop's chat frame (its packages come
 from `desktop/node_modules`), so `cd Web && npm run build` and its output are untouched;
@@ -39,7 +41,12 @@ run imports only what `BOTLING_IMPORT_FROM=/path/to/a/1.x/folder` names, so `npm
 tests never read the real folder. Try it on a copy: `BOTLING_IMPORT_FROM=… BOTLING_DATA_DIR=.tmp/try npm run dev:fake`.
 
 Other knobs (all optional): `BOTLING_APPROVAL_TIMEOUT_MS` (default 10 min, as 1.x),
-`BOTLING_IDLE_MS` (a head sleeps after 30 min idle), `BOTLING_INTERRUPT_GRACE_MS` (how long Stop
+`BOTLING_IDLE_MS` (a head tidies and sleeps after 30 min idle), `BOTLING_TIDY_TIMEOUT_MS` (the tidy
+turn's limit, 5 min), `BOTLING_QUIT_TIDY_MS` (how long an awake bot may tidy when the app quits, 15 s;
+0: no tidy), `BOTLING_1X_DIR` (1.x's data folder, to see whether 1.x has a project open; packaged
+builds use `~/.claudecodebot`, development runs only what this names), `BOTLING_1X_PROCESS` (a regex
+for 1.x's command line, default `…/Contents/MacOS/botling`), `BOTLING_LANGUAGES` (system languages,
+set by main, for the reply language when settings.json names none), `BOTLING_INTERRUPT_GRACE_MS` (how long Stop
 waits for claude before ending the tree, 2 s), `BOTLING_HARMLESS=0` (real tools, CLAUDE.md, MCP and
 saved sessions in `npm run dev`), `BOTLING_HARMLESS_TOOLS=Bash` (tools that exist in harmless mode),
 `BOTLING_MODEL`, `BOTLING_CLAUDE_PATH`.
@@ -47,7 +54,12 @@ saved sessions in `npm run dev`), `BOTLING_HARMLESS_TOOLS=Bash` (tools that exis
 In the fake CLI (`npm run dev:fake`) a message can start with a directive: `/tool ls -la` (asks to run
 it: try Allow once / Don't allow), `/tool:WebFetch https://x` (a tool that can be "always" allowed),
 `/slow` (streams until Stop), `/stubborn` (ignores Stop and SIGTERM: the tree is killed), `/card`,
-`/crash`, `/resume` (says which session it runs and whether it was resumed).
+`/crash`, `/resume` (says which session it runs and whether it was resumed), `/choices`, `/task`,
+`/team` (a request 2.0 cannot do), `/react <message id>`, `/agent` (a subagent that reads a file and
+reports), `/bgagent` and `/bgagent:silent` (a background subagent that reports later in claude's own
+turn, which says something or only `<no-reply/>`). App notes in a message (`(App: …` paragraphs) are
+not echoed; the tidy note is answered `OK` after writing the memory file it names.
+`FAKE_CLAUDE_INPUT=<file>` logs every message the fake reads (what claude would see).
 
 ## Architecture as built
 
@@ -71,7 +83,9 @@ it: try Allow once / Don't allow), `/tool:WebFetch https://x` (a tool that can b
 └──────────────── utilityProcess (parentPort) — same code runs on stdio under plain Node ──────────┘
 ┌──────────────── core (trusted) ──────────────────────────────────────────────────────────────────┐
 │ Core: validates again, routes by bot · first start: read-only import of a 1.x folder            │
-│ Bot (bot.ts), one per bot: chat.json/bot.json in 1.x's format · one turn at a time · approvals   │
+│ Bot (bot.ts), one per bot: chat.json/bot.json/tasks.json/subagents.json in 1.x's format ·       │
+│   one turn at a time (steered) · approvals · reply tags (reply.ts) · tasks.ts · subagents.ts ·    │
+│   prompts.ts + briefing.ts (Prompts.swift, wake/tidy, archive) · store/lock.ts (project lock)     │
 │   ClaudeHead (agent/head.ts): one long-lived `claude -p --input-format stream-json` per bot,     │
 │   own process group, --session-id then --resume, --permission-prompt-tool stdio; stream.ts parses│
 │ ProcessLedger: ends heads a crashed core left · JobStore (Phase 0, not wired yet)               │
@@ -231,15 +245,15 @@ nothing from it is committed.
   the user's project folder**, as in 1.x, so its `.bot/memory.md` is shared with 1.x — running both
   apps on the same project at once is not supported. Bots of their own move into 2.0's folder, so
   1.x's copy is never written.
-- **Sessions resume across sleeps and restarts** (`head.json`), unlike 1.x, which starts a fresh
+- ~~**Sessions resume across sleeps and restarts**~~ (superseded in Phase 2a: a new session per wake, as 1.x) (`head.json`), unlike 1.x, which starts a fresh
   session on each wake and briefs it from memory.md. Cheaper to build now; the memory briefing and
   tidy-before-sleep are a gap (below).
 - **Stop** keeps Phase 0's guarantees (gate first, nothing after, tree ended if needed) but asks
   claude first (`interrupt`), so the session and the head survive a normal Stop. A plain interrupt
   also ends background tasks — what Stop should do. (1.x has no Stop button; it steers with
   `interrupt` + `send_now` when you write again.)
-- **One turn at a time per bot**: a message while a reply is written is refused (`conflict`), as in
-  Phase 0. Steering a running turn (1.x) is a gap.
+- ~~**One turn at a time per bot**: a message while a reply is written is refused~~ (superseded in
+  Phase 2a: it steers the reply, see below).
 - **The chat page runs in a same-origin frame**, not mounted into the React page: its CSS and DOM
   assume they own `body`, and it needs inline styles for KaTeX (`style-src 'unsafe-inline'`) and a
   `blob:` module for its plugin loader, which the app page's CSP does not allow. It has no bridge;
@@ -261,24 +275,83 @@ nothing from it is committed.
   long-lived mode with directives (`/tool`, `/slow`, `/stubborn`, `/crash`, `/resume`, …) and
   `FAKE_CLAUDE_FORGET` for a lost session.
 
+## Phase 2a: what was built and how it was checked
+
+| Piece | What it does | Evidence |
+| --- | --- | --- |
+| Generated instructions (`core/prompts.ts`) | Prompts.swift for a Claude head: system prompt (main, manager, bot of its own; language and results rule from settings.json, else the system language), headsRule, wake, tidy, handoff, resume; the app leads and notes | `unit/prompts.test.ts`: **13 configurations × 6 strings equal, character for character**, to strings the Swift code wrote (`test/fixtures/prompts-golden.json`), and the **48 SHA-256 digests** ClaudePromptCompatibilityTests freezes (read from the Swift test file at test time) |
+| Wake briefing, archive, reactions (`core/briefing.ts`) | `Bot.recentChat` (last 20 lines, 600 characters, options and picks, files), `Bot.archiveEntry` + a markdown file a month in the bot's `archive/` (a chat from before is archived once), `ReactionContext.intro/update` | Same golden file: equal for the same messages (the stamp follows the locale: checked with en-GB, 12-hour, as the Swift run had) |
+| Reply tags (`core/reply.ts`) | ReplyParser: code is masked; `<choices>` (last block wins), `<no-reply/>`, `<task …/>`, standalone `<reaction …/>`, `<show>` (kept in 1.x's `displays`, not drawn yet), decision refs, `<end>/<block>`, every request tag | `unit/reply.test.ts`: **21 replies parsed exactly as Swift parsed them** (body, choices, tasks, reactions, displays, requests, signals, saysNoReply, saysNothing) |
+| Task cards (`core/tasks.ts`) | TaskBook: a card per message, claimed by the first words, kept by a tool, named/moved by `<task>` lines, `continues=`, joins, quick answers dropped, settled when the turn ends; tasks.json in 1.20's format; chips under replies ("Now: …", "Waiting on you: …", "May be stuck") | `unit/reply.test.ts`: an 18-step scenario gives **the same cards** as Swift's TaskBook; `unit/lifecycle.test.ts`; `e2e/phase2a.spec.ts`; screenshot `task-chip.png` |
+| Acting on tags (`core/bot.ts`) | Choices are buttons; a pick (or typed answer) goes back as the user's message *replying to the question* (1.x's "(Replying to …)" line); `<no-reply/>` hides claude's own turns; a silent turn after a finished subagent is asked once to report (`Bot.reportNote`), then the app says it; reaction-only replies show no line; other requests are taken out and a notice says 2.0 cannot do them yet; tags never flash while streaming | `unit/lifecycle.test.ts` (choices, answer, task, team notice, reactions, no-reply + report), `e2e/phase2a.spec.ts`, screenshot `choices.png` |
+| Sleep/wake/tidy | After `idleMs` with nothing under way (no turn, approval, waiting message, running subagent) the tidy turn runs (hidden, approvals refused), then stdin is closed; the next message starts a **new session** whose first message is wake line + recent lines + reactions intro + the words (1.x's order). The app starting is a wake; quitting tidies awake idle bots (bounded) | `unit/head.test.ts` (tidy text sent, memory file written, new session, exact briefing), `e2e/phase2a.spec.ts` (header "Tidying its notes…", screenshot `tidying.png`) |
+| Steering | A message during a user's reply with no approval open and no subagent at work: the reply so far stays as a cut-off bubble, the two parts go as one (`(I sent this in parts…)`), then `interrupt` (message first, as 1.x); otherwise it waits and goes when the turn ends | `unit/lifecycle.test.ts`, `unit/core.test.ts`, `e2e/phase2a.spec.ts` (`steering.png`), **live**: real claude cut the counting turn and answered both parts in one reply |
+| Subagents (`core/subagents.ts`, `agent/stream.ts`) | TraceBook's rules: Agent/Task calls, `task_started`, lines with `parent_tool_use_id`, structured launch results, `task_notification` (hand-back report, "still waiting"); subagents.json in 1.x's format (40 ended kept); steps carry status and tool count; `subagent.view` + the page's own subagent view (back button); a background one keeps the bot awake; claude's own reporting turn is shown | `unit/stream.test.ts`, `unit/lifecycle.test.ts`, `e2e/phase2a.spec.ts`, screenshots `subagent-running.png`, `subagent-view.png` |
+| Project lock (`core/store/lock.ts`) | A manager takes `<project>/.bot/botling.lock` (pid, start time, host); a live holder elsewhere — or a running 1.x whose projects.json lists the folder — leaves the bot read-only with a banner; a dead holder's lock is taken over; tried again on each send | `unit/lifecycle.test.ts` (two cores, stale lock, a 1.x stand-in process), `e2e/phase2a.spec.ts` (`locked-project.png`) |
+| Contract v3 | `chat.answer`, `chat.react`, `subagent.view`, `chat.send.replyTo`, `chat.choose.text`; events `message.removed`, `tasks.updated`, `subagent.updated`; `tidying` phase; step status/count; message reactions/replyTo | `unit/contract.test.ts`, the rest |
+
+Tests: unit 109 (vitest), e2e 19 (Playwright/Electron), all green. Live (real `claude` 2.1.310,
+harmless mode): 3 calls this phase — steering passed; the "choices" check twice: claude, given the app
+prompt but **no tools** (harmless), wrote fake `<invoke>` tool calls as text for minutes (stopped by
+the test). Harmless mode now leaves the app prompt out again; that check runs only with
+`BOTLING_LIVE_REAL_BOT=1` (real tools), not run.
+
+### How the golden strings are made
+
+`Tests/ClaudeCodeBotCoreTests/DesktopPromptGoldenExport.swift` (a Swift test that runs only when
+asked) writes them. After changing Prompts.swift, ReplyParser.swift, TaskCards.swift or the briefing
+code, in this worktree:
+
+```sh
+CCB_DESKTOP_PROMPT_EXPORT=$PWD/desktop/test/fixtures/prompts-golden.json TZ=UTC \
+  swift test --scratch-path /Volumes/My-SSD/botling-work/swift-build --filter DesktopPromptGoldenExport
+```
+
+### Decisions (Phase 2a)
+
+- **Sleep/wake as 1.x** (the user's call): a new session per wake, primed by the wake briefing
+  (which tells claude to read memory.md — 1.x's Claude path; the file is not inlined), the tidy turn
+  before sleeping and before quitting. head.json is still written but no longer resumed across
+  sleeps or app starts. A crash mid-run still restarts with `--resume` (Phase 1b's choice; 1.x would
+  wake a new session) — the session is alive and the briefing would only repeat it.
+- **Steering as 1.x where it is simple**: the merge path is 1.x's (`Bot.merging`). Where 1.x hands the
+  message to claude at once (approval open, subagent at work) or pauses claude's own work for it
+  (`pauseNote`), 2.0 queues it until the turn ends — nothing is lost and no turn is cut that 1.x would
+  keep. If the interrupt lands on the merged turn (the first ended on its own just before), it is
+  sent again once.
+- **One bubble per reply** stays (Phase 1b): 2.0's reply text has every text block of the turn, so
+  1.x's "lift tags written before a tool call" is not needed.
+- **Unsupported requests are visible**: rather than silently dropping `<team>`, `<new-bot>`, … a
+  notice says nothing happened.
+- **Project lock**: 1.x code is not changed, so 1.x is detected (running app + its projects.json).
+  A project bot's chat files stay in 2.0's folder; only `.bot/` (memory, archive) is shared. The
+  archive of a project bot is the project's `.bot/archive/` as in 1.x, so both apps' lines can land
+  in it (not at the same time).
+- **No app prompt in harmless mode** (see the live finding above).
+- **Language**: settings.json `languageChoice`, else the system's preferred languages
+  (`AppLanguage.preferred`), else English — as 1.x.
+
 ## Gaps vs the Swift app (1.x)
 
 Not in 2.0 yet, roughly in order of how much they matter:
 
 - **Codex head and two-head bots** (CodexAgentProcess, hand-offs, rounds, Answer with), and
   **app-managed workers**.
-- **Subagents**: their steps, rows in the left column, their own view; `subagents.json` is imported
-  and kept but not shown or updated. Background tasks (`backgroundTasks` chips).
-- **Prompts and memory**: 2.0 sends a short system prompt (who it is, where memory.md is). 1.x's
-  Prompts.swift (wake briefing with recent chat, tidy-before-sleep, inbox delivery, project briefing
-  for the main bot, results rule, choices rule, component rules) is not ported. No chat archive.
-- **Routines** (routines.cron, ScheduledRoutines → `JobStore`), Catch-up generation (the button is
-  hidden), task cards (`tasks.json` kept, not shown), group chats and @ call-ins, feedback relays.
+- **Subagents**: rows in the left column and the right panel's list, SendMessage resumes, background
+  commands/Monitors (`backgroundTasks` chips), the interrupted-work note on wake, token speed.
+- **Prompts**: the main bot's wake note (project list, inboxes, teams) and the component list are
+  not attached (2.0 has neither); inbox delivery; the handoff/resume prompts are ported but unused
+  (no model switch yet). Codex-only prompts are not ported.
+- **Requests**: teams, new bots/projects, components, plugins, installs, open questions, @ call-ins
+  (a notice says so).
+- **Routines** (routines.cron, ScheduledRoutines → `JobStore`), **Catch-up** generation (the button is
+  hidden), the right panel's Tasks list (chips only), group chats, feedback relays, completion
+  verification (`<end>/<block>` are parsed, not judged).
 - **Components and plugins**: the component library, `<show>` displays (imported `displays` are not
   drawn), pins/Board/floating cards, specs, Maintainer, the plugin host and its plugins other than
   ccb-latex (bundled), `/` commands.
-- **Composer**: steering while a reply runs, attachments (`+` does nothing; dropped files are
-  ignored), replies to a message, drafts across restarts, reactions, @ mentions.
+- **Composer**: attachments (`+` does nothing; dropped files are ignored), drafts across restarts,
+  @ mentions. (Steering, replies to a message and reactions are in.)
 - **Settings** (model, effort, auto mode, language — the page is in English; `settings.json` is
   imported and kept), spending and rate limits, Doctor, updates.
 - **Browser / web AIs, community share, release planner, screenshots of components.**
@@ -321,14 +394,14 @@ Not in 2.0 yet, roughly in order of how much they matter:
 
 ## What's next (proposed)
 
-1. **Run the live approval test once** (`npm run test:live -- -t "asks before"`, one real call).
-2. **Prompts and memory**: port the wake briefing (memory.md + recent chat), tidy-before-sleep and
-   inbox delivery from Prompts.swift/Bot.swift; decide fresh-session-per-wake (1.x) vs resume.
-3. **Subagents and background tasks**: parse `task_started`/`task_notification` and
-   `parent_tool_use_id` into Subagent records (subagents.json), rows under the bot, their view.
-4. **Steering**: a message during a turn → `send` + `interrupt {send_now}` as 1.x does.
-5. **Composer parity**: attachments (a main-owned file picker + a protocol serving attachment
-   folders), replies, drafts, reactions.
+1. **Live checks still open**: the approval round trip (`npm run test:live -- -t "asks before"`) and
+   the app prompt as a real bot (`BOTLING_LIVE_REAL_BOT=1 … -t "choices block"`, in a throwaway folder).
+2. **Main bot's world**: project list + inboxes in its wake note, inbox delivery, then teams,
+   new bots/projects (the requests that now only get a notice).
+3. **Background work**: commands and Monitors as chips, subagent rows in the left column, the
+   right panel (Tasks, Subagents) in React.
+4. **Composer parity**: attachments (a main-owned file picker + a protocol serving attachment
+   folders), drafts.
 6. **Settings** (React): model, effort, language (pass `lang` to the page), auto mode; then the
    right panel (tasks, subagents) in React.
 7. **Codex head** (app-server JSON-RPC) behind the same Bot/head interface; then workers.
@@ -374,10 +447,11 @@ backend; Linux experimental; routines run only while the app runs; 2.0 has its o
 imports `~/.claudecodebot` read-only on first launch; the chat view reuses Web/src first, React
 for the chrome.
 
+Decided by the user for Phase 2a: fresh session per wake with the 1.x briefing and tidy; project
+bots keep using the project's `.bot/memory.md` with a lock; sending during a reply steers it.
+
 Still open:
-- One real `claude` call to confirm the approval round trip (the fake CLI and 1.x's identical
-  protocol code cover it, but 2.0's has not seen a real `can_use_tool` yet).
-- Fresh session per wake (1.x, with a memory briefing) or resume the last one (2.0 now)?
-- Should a 2.0 project manager work in the project folder (shared `.bot/memory.md` with 1.x, as
-  now) or keep its notes in 2.0's folder while both apps exist?
+- One real `claude` call to confirm the approval round trip, and one as a real bot (tools on) to
+  see the app prompt's choices/task lines from real claude.
+- Is a 15 s tidy on quit acceptable (1.x waits for it), or should quitting skip it?
 - A Windows 11 machine or VM for spike 4.
