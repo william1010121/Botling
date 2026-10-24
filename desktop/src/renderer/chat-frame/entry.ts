@@ -136,6 +136,8 @@ window.addEventListener("message", (event: MessageEvent) => {
     window.ccb.setState(message.state);
     addStop();
     decorate(message.extras);
+  } else if (message.botling === "answerWithSaved") {
+    window.ccb.answerWithSaved({ botID: message.botID, requestID: message.requestID, chosen: message.chosen });
   } else if (message.botling === "response") {
     const entry = waiting.get(message.id);
     if (!entry) return;

@@ -4,15 +4,22 @@
 // takes a fresh snapshot instead of patching on guesses. Events that arrive while a snapshot is
 // on its way are buffered and replayed if newer than it. Chat events for other bots are not
 // kept (their chats are fetched when shown); `bot.updated` is kept for every bot.
-import type { BotView, Event, EventEnvelope, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
+import type { BotView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
+
+/** A turn under way and its steps so far (with two heads, two can run at once). */
+export interface RunState { turnId: string; messageId: string; live: StepView[] }
 
 export interface ChatView {
   botId: string;
   messages: MessageView[];
+  /** The turn the typing bubble shows (the first of `runs`). */
   running: RunningView | null;
   /** The running turn's steps so far. */
   live: StepView[];
   tasks: TaskView[];
+  runs?: RunState[];
+  /** A bot with two heads: who new messages go to, the rounds line, the hand-offs. */
+  heads?: HeadsView | null;
 }
 
 export interface WorkspaceView {
@@ -78,7 +85,8 @@ export class WorkspaceStore {
       this.epoch = snapshot.epoch;
       this.seq = snapshot.seq;
       const subagent = this.view.subagent && snapshot.chat?.botId === this.view.chat?.botId ? this.view.subagent : null;
-      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat: snapshot.chat, subagent, resyncs: this.view.resyncs + 1 });
+      const chat = snapshot.chat ? { ...snapshot.chat, runs: (snapshot.chat.runs ?? []).map((run) => ({ turnId: run.turnId, messageId: run.messageId, live: run.live })) } : null;
+      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1 });
     } finally {
       this.syncing = false;
     }
@@ -133,17 +141,27 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
     case "message.updated":
       if (!chat.messages.some((message) => message.id === event.message.id)) return withChat({ ...chat, messages: [...chat.messages, event.message] });
       return withChat(update(event.message.id, () => event.message));
-    case "turn.started":
-      return withChat({ ...chat, running: { turnId: event.turnId, messageId: event.messageId }, live: [] });
+    case "turn.started": {
+      const runs = [...(chat.runs ?? []).filter((run) => run.turnId !== event.turnId), { turnId: event.turnId, messageId: event.messageId, live: [] }];
+      return withChat({ ...chat, runs, ...(chat.running ? {} : { running: { turnId: event.turnId, messageId: event.messageId }, live: [] }) });
+    }
     case "turn.delta":
       return withChat(update(event.messageId, (message) => ({ ...message, text: message.text + event.text })));
-    case "turn.steps":
-      if (chat.running?.turnId !== event.turnId) return view;
-      return withChat({ ...chat, live: event.steps });
+    case "turn.steps": {
+      const runs = (chat.runs ?? []).map((run) => (run.turnId === event.turnId ? { ...run, live: event.steps } : run));
+      if (chat.running?.turnId !== event.turnId) return withChat({ ...chat, runs });
+      return withChat({ ...chat, runs, live: event.steps });
+    }
     case "turn.finished": {
       const next = update(event.messageId, (message) => ({ ...message, text: event.text, state: event.status, ...(event.cards ? { cards: event.cards } : {}) }));
-      return withChat({ ...next, ...(chat.running?.turnId === event.turnId ? { running: null, live: [] } : {}) });
+      const runs = (chat.runs ?? []).filter((run) => run.turnId !== event.turnId);
+      if (chat.running?.turnId !== event.turnId) return withChat({ ...next, runs });
+      // The other head's turn, if one runs, is the one shown now.
+      const other = runs[0];
+      return withChat({ ...next, runs, running: other ? { turnId: other.turnId, messageId: other.messageId } : null, live: other?.live ?? [] });
     }
+    case "heads.updated":
+      return withChat({ ...chat, heads: event.heads });
     case "card.updated":
       return withChat(update(event.messageId, (message) => ({
         ...message,

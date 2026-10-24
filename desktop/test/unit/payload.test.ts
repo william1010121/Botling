@@ -46,4 +46,35 @@ describe("chat state for the Web/src page", () => {
     expect(stamp(messages, 2, now)).toBe("Today 9:00 AM");
     expect(stamp([messages[3]!], 0, now)).toBe("Yesterday 9:00 AM");
   });
+
+  it("two heads: who said each line, whom a line was for, seen marks, the switch, the rounds line and hand-offs (ChatPayload's)", () => {
+    const two: BotView = { ...bot, heads: ["claude", "codex"] };
+    const messages: MessageView[] = [
+      { id: "u1", role: "user", text: "Just you", time: at(0), to: "codex", seenBy: ["codex"] },
+      { id: "r1", role: "bot", text: "On it", time: at(1), engine: "codex", seenBy: ["codex"] },
+      { id: "r2", role: "bot", text: "Seen", time: at(2), engine: "claude", seenBy: ["claude", "codex"], decisionId: "D1" },
+      { id: "r3", role: "bot", text: "Running", time: at(3), engine: "codex", state: "streaming" },
+    ];
+    const heads = {
+      engines: ["claude", "codex"] as ("claude" | "codex")[], answerWith: "both" as const, handoffsOn: true,
+      rounds: { kind: "review" as const, round: 1, limit: 2, text: "Review round 1 of 2" },
+      handoffs: [{ id: "H1", from: "claude" as const, to: "codex" as const, kind: "review" as const, task: "Check it", origin: null, round: 1, limit: 2, state: "running" as const, lines: [{ who: "claude" as const, text: "Check it" }] }],
+    };
+    const runs = [{ turnId: "t3", messageId: "r3", live: [] }, { turnId: "t4", messageId: "r4", live: [] }];
+    const { state, extras } = chatState(two, { botId: "B", messages, running: { turnId: "t3", messageId: "r3" }, live: [], tasks: [], runs, heads });
+    expect(state.answerWith).toEqual({ options: [{ id: "both", label: "Both" }, { id: "claude", label: "Claude" }, { id: "codex", label: "Codex" }], chosen: "both" });
+    expect(state.rounds).toEqual({ text: "Review round 1 of 2", stop: "Stop now", kind: "review", round: 1, limit: 2 });
+    expect(state.handoffs).toEqual([{ id: "H1", from: "claude", to: "codex", fromName: "Claude", toName: "Codex", kind: "review", task: "Check it", origin: null, round: 1, limit: 2, state: "running", lines: [{ who: "claude", name: "Claude", text: "Check it" }] }]);
+    expect(state.messages.map((m) => [m.id, m.speaker, m.sourceEngine])).toEqual([["u1", "to Codex", null], ["r1", "blog · Codex", "codex"], ["r2", "blog · Claude", "claude"], ["r3", "blog · Codex", "codex"]]);
+    expect(state.messages[0]!.seen).toEqual([{ mark: "C", name: "Claude", seen: false, recipient: false }, { mark: "X", name: "Codex", seen: true, recipient: true }]);
+    expect(state.messages[2]!.seen).toEqual([{ mark: "C", name: "Claude", seen: true }, { mark: "X", name: "Codex", seen: true }]);
+    expect(state.messages[2]!.decisionID).toBe("D1");
+    expect(state.working).toBe(true);
+    expect(extras.running).toBe(true);
+    // One head: none of it.
+    const one = chatState(bot, { botId: "B", messages, running: null, live: [], tasks: [] }).state;
+    expect(one.answerWith).toBeUndefined();
+    expect(one.messages[1]!.speaker).toBeNull();
+    expect(one.messages[1]!.seen).toBeNull();
+  });
 });

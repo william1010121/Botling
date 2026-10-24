@@ -68,3 +68,9 @@ button { font: inherit; color: inherit; }
 
 .banner { max-width: 640px; margin: 0 auto; padding: 6px 24px; font-size: 12.5px; color: var(--error); }
 .banner.bottom { position: absolute; left: 0; right: 0; bottom: 92px; text-align: center; pointer-events: none; }
+
+/* Which heads a bot has (1.x's `engineNames`), beside its name. */
+.chat-heads { font-size: 12px; color: var(--muted, #8b8f98); padding: 1px 8px; border: 1px solid currentColor; border-radius: 999px; opacity: 0.8; }
+.rounds-bar { max-width: 640px; margin: 0 auto; padding: 4px 24px; font-size: 12.5px; color: var(--muted); display: flex; gap: 10px; align-items: center; }
+.rounds-bar button { background: none; border: 1px solid var(--line); color: var(--text); border-radius: 999px; padding: 1px 10px; font-size: 12px; cursor: pointer; }
+.rounds-bar button:hover { background: var(--hover); }

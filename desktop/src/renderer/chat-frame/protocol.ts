@@ -18,4 +18,6 @@ export type FrameMessage =
 /** Shell → frame. */
 export type ShellMessage =
   | { botling: "state"; state: ChatState; extras: FrameExtras }
-  | { botling: "response"; id: number; ok: boolean; error?: string };
+  | { botling: "response"; id: number; ok: boolean; error?: string }
+  /** The composer's Both/Claude/Codex pick was saved (`ccb.answerWithSaved`). */
+  | { botling: "answerWithSaved"; botID: string; requestID: number; chosen: string };

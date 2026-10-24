@@ -49,9 +49,20 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
       <section className="chat-pane">
         <header className="chat-header drag">
           {bot && <span className="chat-title">{bot.name}</span>}
+          {bot && (bot.heads.length > 1 || bot.heads[0] === "codex") && (
+            <span className="chat-heads" data-heads={bot.heads.join(" ")}>{bot.heads.map((head) => (head === "codex" ? "Codex" : "Claude")).join(" & ")}</span>
+          )}
           {bot && <span className="chat-status" data-status={status(bot)}>{statusText(bot)}</span>}
         </header>
         {bot?.problem && <div className="banner" role="alert">{bot.problem}</div>}
+        {bot && chat?.heads?.rounds && (
+          // The rounds line over the input box (1.x: "Review round 1 of 2 · Stop now"). The chat page
+          // in this checkout gets the same data (`rounds`, `handoffs`) but does not draw it.
+          <div className="rounds-bar" role="status">
+            <span>{chat.heads.rounds.text}</span>
+            <button type="button" onClick={() => void client.request({ type: "rounds.stop", botId: bot.id }).catch(fail)}>Stop now</button>
+          </div>
+        )}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} />
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
@@ -128,7 +139,9 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
       if (!message || typeof message !== "object") return;
       const chat = latest.current.chat;
       if (message.botling === "stop") {
-        if (chat?.running) void client.request({ type: "turn.stop", botId: chat.botId, turnId: chat.running.turnId }).catch(onError);
+        // Every turn under way (with two heads, both may work).
+        const runs = chat?.runs?.length ? chat.runs : chat?.running ? [chat.running] : [];
+        for (const run of runs) void client.request({ type: "turn.stop", botId: chat!.botId, turnId: run.turnId }).catch(onError);
         return;
       }
       if (message.botling === "request") {
@@ -159,9 +172,28 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
           onSent();
           const reply = replyingRef.current?.botId === chat.botId ? replyingRef.current.id : undefined;
           setReplying(null);
-          void client.request({ type: "chat.send", botId: chat.botId, text: action.text, ...(reply ? { replyTo: reply } : {}) }).catch(onError);
+          const to = action.to === "both" || action.to === "claude" || action.to === "codex" ? { to: action.to as "both" | "claude" | "codex" } : {};
+          void client.request({ type: "chat.send", botId: chat.botId, text: action.text, ...(reply ? { replyTo: reply } : {}), ...to }).catch(onError);
           return;
         }
+        case "setAnswerWith": {
+          if (!chat || (action.to !== "both" && action.to !== "claude" && action.to !== "codex") || typeof action.requestID !== "number") return;
+          const botId = chat.botId;
+          const requestID = action.requestID;
+          void client.request({ type: "heads.answerWith", botId, to: action.to })
+            .then((result) => {
+              const saved: ShellMessage = { botling: "answerWithSaved", botID: botId, requestID, chosen: result.answerWith };
+              frame.current?.contentWindow?.postMessage(saved, location.origin);
+            })
+            .catch(onError);
+          return;
+        }
+        case "stopRounds":
+          if (chat) void client.request({ type: "rounds.stop", botId: chat.botId }).catch(onError);
+          return;
+        case "stopHandoff":
+          if (chat && typeof action.handoffID === "string") void client.request({ type: "handoff.stop", botId: chat.botId, handoffId: action.handoffID }).catch(onError);
+          return;
         case "choose": {
           if (!chat || typeof action.messageID !== "string" || typeof action.index !== "number") return;
           const notes = typeof action.text === "string" && action.text.trim() ? { text: action.text } : {};

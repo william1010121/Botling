@@ -2,8 +2,8 @@
 // side builds in ChatPayload.swift. Here the same state is built from the contract's views, so the
 // page runs unchanged. What 2.0 has no data for yet (components, pins, heads, tasks, Catch-up) is
 // left out, which the page treats as "none".
-import type { BotView, CardView, MessageView, SubagentView, TaskView } from "../contract";
-import type { ChatState, ChoiceView as WebChoice, FileView, MessageView as WebMessage, StepView as WebStep, TaskCardView } from "../../../Web/src/types";
+import type { BotView, CardView, HeadsView, MessageView, SubagentView, TaskView } from "../contract";
+import type { ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
 import { avatarURL } from "./avatars";
 
@@ -81,21 +81,43 @@ export function placeholder(bot: BotView): string {
   return bot.role === "main" ? "Make a wish, or ask how things are going…" : `Message ${bot.name}…`;
 }
 
+const headName = (engine: string) => (engine === "codex" ? "Codex" : "Claude");
+/** `ChatPayload.markLetter`. */
+const markLetter = (engine: string) => (engine === "claude" ? "C" : "X");
+
+/** The two-head parts of the page (`ChatPayload.AnswerWith`, `Rounds`, `Handoff`). */
+export function headsParts(heads: HeadsView | null | undefined): Pick<ChatState, "answerWith" | "rounds" | "handoffs"> {
+  if (!heads || heads.engines.length < 2) return {};
+  return {
+    answerWith: { options: [{ id: "both", label: "Both" }, ...heads.engines.map((engine) => ({ id: engine, label: headName(engine) }))], chosen: heads.answerWith },
+    rounds: heads.rounds ? { text: heads.rounds.text, stop: "Stop now", kind: heads.rounds.kind, round: heads.rounds.round, limit: heads.rounds.limit } : null,
+    handoffs: heads.handoffs.length ? heads.handoffs.map((record): HandoffView => ({
+      id: record.id, from: record.from, to: record.to, fromName: headName(record.from), toName: headName(record.to), kind: record.kind,
+      task: record.task, origin: record.origin, round: record.round, limit: record.limit, state: record.state,
+      lines: record.lines.map((line) => ({ who: line.who, name: headName(line.who), text: line.text })),
+    })) : null,
+  };
+}
+
 export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyingTo: ChatState["replyingTo"] = null): { state: ChatState; extras: FrameExtras } {
   const face = avatarURL(bot.avatar);
   const running = chat.running;
-  const extras: FrameExtras = { botId: bot.id, running: !!running, cards: {}, states: {} };
-  // The running reply shows once it has words; before that the typing bubble shows its steps.
-  const shown = chat.messages.filter((message) => !(running && message.id === running.messageId && !message.text && !message.cards?.length));
+  const runs = chat.runs?.length ? chat.runs : running ? [{ ...running, live: chat.live }] : [];
+  const two = (chat.heads?.engines.length ?? bot.heads?.length ?? 1) > 1;
+  const engines = chat.heads?.engines ?? bot.heads ?? ["claude"];
+  const extras: FrameExtras = { botId: bot.id, running: runs.length > 0, cards: {}, states: {} };
+  // A running reply shows once it has words; before that the typing bubble shows its steps.
+  const runningIds = new Set(runs.map((run) => run.messageId));
+  const shown = chat.messages.filter((message) => !(runningIds.has(message.id) && !message.text && !message.cards?.length));
   const runningShown = !!running && shown.some((message) => message.id === running.messageId);
   const chips = taskChips(chat.tasks ?? [], chat.messages, !!running, now);
   const lastYours = shown.findLastIndex((message) => message.role === "user");
   const messages: WebMessage[] = shown.map((message, index) => {
     if (message.cards?.length) extras.cards[message.id] = message.cards;
     if (message.state) extras.states[message.id] = message.state;
-    const isRunning = running?.messageId === message.id;
+    const run = runs.find((candidate) => candidate.messageId === message.id);
     const choices: WebChoice[] | null = message.choices?.map((choice) => ({ label: choice.label, detail: choice.detail, recommended: choice.recommended, action: choice.action })) ?? null;
-    const steps = isRunning ? chat.live : message.steps;
+    const steps = run ? run.live : message.steps;
     return {
       id: message.id,
       role: message.role,
@@ -114,7 +136,14 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       // Stopped or cut off: its words so far stay, and it says so.
       interrupted: message.role === "bot" && (message.interrupted || message.state === "stopped" || message.state === "failed") ? true : null,
       sourceAuthor: message.role === "bot" ? bot.name : null,
-      sourceEngine: message.role === "bot" ? "claude" : null,
+      sourceEngine: message.role === "bot" ? message.engine ?? "claude" : null,
+      // With two heads: which head said a reply ("garden · Codex"), and who your line was for (`headLabel`).
+      speaker: two ? (message.role === "bot" && message.engine ? `${bot.name} · ${headName(message.engine)}` : message.role === "user" && message.to ? `to ${headName(message.to)}` : null) : null,
+      seen: two && (message.role === "user" || message.role === "bot") ? engines.map((engine) => ({
+        mark: markLetter(engine), name: headName(engine), seen: !!message.seenBy?.includes(engine),
+        ...(message.role === "user" ? { recipient: !message.to || message.to === engine } : {}),
+      })) : null,
+      decisionID: message.decisionId ?? null,
       reactionEnabled: message.role !== "divider",
       reactions: reactions(message),
       taskCards: message.role === "bot" ? chips.get(message.id) ?? null : null,
@@ -126,7 +155,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     botID: bot.id,
     botName: bot.name,
     messages,
-    working: !!running,
+    working: runs.length > 0,
     avatar: avatarURL(bot.avatar, "open"),
     placeholder: placeholder(bot),
     replyingTo,
@@ -134,6 +163,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     components: {},
     live: running && !runningShown ? chat.live.map(step) : [],
     slashCommands: [],
+    ...headsParts(chat.heads),
   };
   return { state, extras };
 }
@@ -195,7 +225,7 @@ export function subagentState(bot: BotView, subagent: SubagentView): { state: Ch
     slashCommands: [],
     subagent: {
       id: subagent.id, title: subagent.title, owner: subagent.owner, status: subagent.status, type: subagent.type,
-      engine: "claude", model: subagent.model,
+      engine: subagent.type === "codex-worker" ? "codex" : "claude", model: subagent.model,
       startedAt: new Date(subagent.startedAt).getTime(), endedAt: subagent.endedAt ? new Date(subagent.endedAt).getTime() : null,
     },
   };
