@@ -12,8 +12,10 @@ import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
   type Command, type Event, type ImportView, type Outbound, type ResultOf,
 } from "../contract";
-import { Bot, type SessionStart } from "./bot";
+import { Bot, type SessionStart, type SessionStartCodex } from "./bot";
 import type { HeadConfig } from "./agent/head";
+import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
+import type { Engine, Heads } from "./heads";
 import { botPrompts, isAppLanguage, isResultPublishing, preferredLanguage, type BotPrompts } from "./prompts";
 import { readJSON } from "./store/bot-store";
 import { DEFAULT_ONE_X_PROCESS, ProjectLock, type OneXCheck } from "./store/lock";
@@ -26,6 +28,10 @@ export interface CoreOptions {
   dataDir: string;
   /** How to run a bot's head for a session. */
   headConfig: (profile: BotProfile, session: SessionStart) => HeadConfig;
+  /** How to run a Codex head (threads: <data>/codex-threads); null when Codex is not available. */
+  codexConfig?: ((profile: BotProfile, session: SessionStartCodex, threads: CodexThreads) => CodexHeadConfig) | null;
+  /** How long the second head waits for the lead's first words (1.x: 20 s). */
+  claimWaitMs?: number;
   emit: (message: Outbound) => void;
   log?: (line: string) => void;
   /** A Botling 1.x data folder to import from on the first start (read-only). */
@@ -60,11 +66,15 @@ export class Core {
     const { profiles, problem } = loadProfiles(options.dataDir);
     if (problem) this.log(`projects: ${problem}`);
     const oneX: OneXCheck = options.oneX ?? { folder: null, process: DEFAULT_ONE_X_PROCESS };
+    const threads = new CodexThreads(join(options.dataDir, "codex-threads"));
+    const codexConfig = options.codexConfig;
     for (const profile of profiles) {
       const bot = new Bot({
         profile,
         headConfig: options.headConfig,
-        prompts: () => this.prompts(profile),
+        codexConfig: codexConfig ? (p, session) => codexConfig(p, session, threads) : null,
+        claimWaitMs: options.claimWaitMs,
+        prompts: (engine, heads) => this.prompts(profile, engine, heads),
         // A project's manager works in the user's own folder, shared with 1.x: one Botling at a time.
         lock: profile.role === "manager" && !profile.problem ? new ProjectLock(profile.folder, options.dataDir, oneX) : null,
         tidyTimeoutMs: options.tidyTimeoutMs,
@@ -121,13 +131,15 @@ export class Core {
   }
 
   /** The bot's instructions (Prompts.swift's), from its profile and the app's settings. */
-  prompts(profile: BotProfile): BotPrompts {
+  prompts(profile: BotProfile, engine: Engine = "claude", heads: Heads | null = null): BotPrompts {
     const settings = this.settings();
     const languages = this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale];
     return botPrompts({
       profile,
       language: isAppLanguage(settings.language) ? settings.language : preferredLanguage(languages),
       results: isResultPublishing(settings.results) ? settings.results : "artifactUnlessSensitive",
+      engine,
+      heads: heads && heads.engines.length > 1 ? { handoffs: heads.handoffs, limits: heads.limits } : null,
     });
   }
 
@@ -178,7 +190,11 @@ export class Core {
   private async handle(cmd: Command, signal: AbortSignal): Promise<unknown> {
     switch (cmd.type) {
       case "chat.snapshot": return this.snapshot(cmd.botId);
-      case "chat.send": return this.bot(cmd.botId).send(cmd.text, { replyTo: cmd.replyTo });
+      case "chat.send": return this.bot(cmd.botId).send(cmd.text, { replyTo: cmd.replyTo, to: cmd.to });
+      case "heads.set": return this.bot(cmd.botId).setHeads(cmd.engines);
+      case "heads.answerWith": return this.bot(cmd.botId).setAnswerWith(cmd.to);
+      case "handoff.stop": return this.bot(cmd.botId).stopHandoff(cmd.handoffId);
+      case "rounds.stop": return this.bot(cmd.botId).stopRounds();
       case "chat.choose": return this.bot(cmd.botId).choose(cmd.messageId, cmd.index, cmd.text);
       case "chat.answer": return this.bot(cmd.botId).answer(cmd.messageId, cmd.text);
       case "chat.react": return this.bot(cmd.botId).react(cmd.messageId, cmd.emoji, cmd.present);

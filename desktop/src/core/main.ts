@@ -4,9 +4,10 @@
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { Core } from "./server";
-import type { SessionStart } from "./bot";
+import type { SessionStart, SessionStartCodex } from "./bot";
 import { DEFAULT_ONE_X_PROCESS } from "./store/lock";
 import type { HeadConfig } from "./agent/head";
+import type { CodexHeadConfig, CodexThreads } from "./agent/codex";
 import type { BotProfile } from "./store/workspace";
 import type { Outbound } from "../contract";
 
@@ -40,6 +41,24 @@ function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
   };
 }
 
+/**
+ * A Codex head: the real `codex app-server` (BOTLING_CODEX_PATH, else `codex`), or with the fake
+ * agent the fake app-server (BOTLING_FAKE_CODEX). Codex reads its own ~/.codex (or CODEX_HOME, which
+ * passes through); the app's thread settings (approval, sandbox) are said explicitly either way.
+ */
+function codexConfig(profile: BotProfile, session: SessionStartCodex, threads: CodexThreads): CodexHeadConfig {
+  const kind = process.env.BOTLING_AGENT ?? "fake";
+  const common = {
+    cwd: profile.folder, sessionId: session.sessionId, resume: session.resume, threads,
+    instructions: session.systemPrompt, workerInstructions: session.workerInstructions,
+    model: process.env.BOTLING_CODEX_MODEL || session.codexModel, effort: process.env.BOTLING_CODEX_EFFORT || null,
+  };
+  if (kind === "claude") return { ...common, command: process.env.BOTLING_CODEX_PATH ?? "codex" };
+  const script = process.env.BOTLING_FAKE_CODEX;
+  if (!script) throw new Error("BOTLING_AGENT=fake needs BOTLING_FAKE_CODEX (path to fake-codex.mjs) for a Codex head.");
+  return { ...common, command: process.execPath, prefixArgs: [script], env: { ELECTRON_RUN_AS_NODE: "1" } };
+}
+
 type ParentPort = { postMessage(message: unknown): void; on(event: "message", fn: (event: { data: unknown }) => void): void };
 const parentPort = (process as unknown as { parentPort?: ParentPort }).parentPort;
 
@@ -51,6 +70,8 @@ const log = (line: string) => process.stderr.write(`[core] ${line}\n`);
 const core = new Core({
   dataDir,
   headConfig,
+  codexConfig,
+  claimWaitMs: number(process.env.BOTLING_CLAIM_WAIT_MS, 20_000),
   emit,
   log,
   importFrom: process.env.BOTLING_IMPORT_FROM || null,

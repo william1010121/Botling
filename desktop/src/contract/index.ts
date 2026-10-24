@@ -18,8 +18,10 @@ import shared from "../../../Web/src/contract.json";
  * 2: several bots (every chat command and event names its bot), approvals, steps.
  * 3: task cards, subagents (step status, their own view), reactions, answers and replies, a
  *    message can be removed, a bot can be tidying (writing its notes before it sleeps).
+ * 4: Codex heads and bots with two heads (who said a line, who it was for and has seen it, the
+ *    composer's Both/Claude/Codex, hand-offs and their rounds), several turns at once.
  */
-export const PROTOCOL_VERSION = 3 as const;
+export const PROTOCOL_VERSION = 4 as const;
 
 /** The most a card's `ccb.save` keeps, shared with the Swift app (`ComponentState.limit`). */
 export const CARD_SAVE_LIMIT: number = (shared as { saveLimit: number }).saveLimit;
@@ -108,6 +110,9 @@ export const SubagentView = z.strictObject({
 });
 export type SubagentView = z.infer<typeof SubagentView>;
 
+export const Engine = z.enum(["claude", "codex"]);
+export const AnswerTarget = z.enum(["claude", "codex", "both"]);
+
 export const AttachmentView = z.strictObject({ name: z.string().max(400), kind: z.enum(["image", "video", "file"]), url: z.string().max(4_000) });
 
 export const MessageState = z.enum(["streaming", "done", "stopped", "failed"]);
@@ -133,6 +138,14 @@ export const MessageView = z.strictObject({
   replyTo: id.nullable().optional(),
   replyPreview: z.string().max(2_000).nullable().optional(),
   reactions: z.array(ReactionView).max(60).optional(),
+  /** Which head said it (a bot line). */
+  engine: Engine.optional(),
+  /** A user line for one head only. */
+  to: Engine.optional(),
+  /** With two heads: the heads this line has reached. */
+  seenBy: z.array(Engine).max(2).optional(),
+  /** A question shared between the heads: its source question's id. */
+  decisionId: id.optional(),
 });
 export type MessageView = z.infer<typeof MessageView>;
 
@@ -155,8 +168,35 @@ export const BotView = z.strictObject({
   subagents: z.number().int().nonnegative(),
   /** Why its chat cannot be used (an unreadable chat file, a missing folder); null when fine. */
   problem: z.string().max(2_000).nullable(),
+  /** Its heads, Claude first: one, or Claude and Codex in one chat. */
+  heads: z.array(Engine).min(1).max(2),
 });
 export type BotView = z.infer<typeof BotView>;
+
+/** A hand-off between the heads, as the panel over the input box lists it. */
+export const HandoffView = z.strictObject({
+  id,
+  from: Engine,
+  to: Engine,
+  kind: z.enum(["task", "review", "discuss"]),
+  task: z.string().max(400),
+  origin: z.string().max(400).nullable(),
+  round: z.number().int().nonnegative(),
+  limit: z.number().int().nonnegative(),
+  state: z.enum(["running", "waiting", "done", "stopped"]),
+  lines: z.array(z.strictObject({ who: Engine, text: z.string().max(2_000) })).max(20),
+});
+export type HandoffView = z.infer<typeof HandoffView>;
+
+/** A bot with two heads: who new messages go to, where the hand-offs for your latest message stand. */
+export const HeadsView = z.strictObject({
+  engines: z.array(Engine).min(1).max(2),
+  answerWith: AnswerTarget,
+  handoffsOn: z.boolean(),
+  rounds: z.strictObject({ kind: z.enum(["discussion", "review", "handoff"]), round: z.number().int().nonnegative(), limit: z.number().int().nonnegative(), text: z.string().max(200) }).nullable(),
+  handoffs: z.array(HandoffView).max(12),
+});
+export type HeadsView = z.infer<typeof HeadsView>;
 
 export const ImportView = z.strictObject({
   source: z.string().max(4_000),
@@ -169,6 +209,8 @@ export type ImportView = z.infer<typeof ImportView>;
 
 export const RunningView = z.strictObject({ turnId: id, messageId: id });
 export type RunningView = z.infer<typeof RunningView>;
+/** A turn under way, with its head (two heads can work at once) and its steps so far. */
+export interface RunView { turnId: string; messageId: string; head: "claude" | "codex"; live: StepView[] }
 
 export const AccountView = z.strictObject({ id, name: z.string().max(80), partition: z.string() });
 export type AccountView = z.infer<typeof AccountView>;
@@ -181,7 +223,15 @@ export const Command = z.discriminatedUnion("type", [
   /** Every bot, and (with `botId`) that bot's chat. Main bot when `botId` is left out. */
   z.strictObject({ type: z.literal("chat.snapshot"), botId: botId.optional() }),
   /** A message; while a reply is being written it joins or follows that turn (as 1.x steers). `replyTo`: a line it answers. */
-  z.strictObject({ type: z.literal("chat.send"), botId, text: z.string().min(1).max(MESSAGE_TEXT_LIMIT), replyTo: id.optional() }),
+  z.strictObject({ type: z.literal("chat.send"), botId, text: z.string().min(1).max(MESSAGE_TEXT_LIMIT), replyTo: id.optional(), to: AnswerTarget.optional() }),
+  /** One head or two (Claude, Codex). The bot's first head stays. */
+  z.strictObject({ type: z.literal("heads.set"), botId, engines: z.array(Engine).min(1).max(2) }),
+  /** Who new messages go to (the composer's Both / Claude / Codex). */
+  z.strictObject({ type: z.literal("heads.answerWith"), botId, to: AnswerTarget }),
+  /** Stops one hand-off's chain. */
+  z.strictObject({ type: z.literal("handoff.stop"), botId, handoffId: id }),
+  /** "Stop now" on the rounds line: no more hand-offs for the latest message. */
+  z.strictObject({ type: z.literal("rounds.stop"), botId }),
   /** Picks a button on a question (a tool approval): the core decides what it means from its action. `text`: notes with the pick. */
   z.strictObject({ type: z.literal("chat.choose"), botId, messageId: id, index: z.number().int().nonnegative().max(19), text: z.string().max(MESSAGE_TEXT_LIMIT).optional() }),
   /** Answers a bot's question in the user's own words instead of a button. */
@@ -211,6 +261,7 @@ export type CommandType = Command["type"];
 /** Commands the renderer may send. `card.html` is for main's protocol handler only. */
 export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.react", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
+  "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
 export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open"]);
@@ -222,11 +273,19 @@ export interface ChatSnapshot {
   /** What the running turn is doing now (before its reply has words). */
   live: StepView[];
   tasks: TaskView[];
+  /** Every turn under way (with two heads, both may work at once). */
+  runs: RunView[];
+  /** A bot with two heads; null with one. */
+  heads: HeadsView | null;
 }
 
 export interface Results {
   "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null };
   "chat.send": { messageId: string; turnId: string };
+  "heads.set": { engines: ("claude" | "codex")[] };
+  "heads.answerWith": { answerWith: "claude" | "codex" | "both" };
+  "handoff.stop": { stopped: boolean };
+  "rounds.stop": { stopped: boolean };
   "chat.choose": { accepted: boolean };
   "chat.answer": { accepted: boolean };
   "chat.react": { changed: boolean };
@@ -265,6 +324,8 @@ export const Event = z.discriminatedUnion("type", [
   }),
   z.strictObject({ type: z.literal("card.updated"), botId, messageId: id, cardId: id, data: z.string() }),
   z.strictObject({ type: z.literal("card.acted"), botId, messageId: id, cardId: id, name: z.string(), value: z.string() }),
+  /** A bot with two heads: who new messages go to, the rounds line and the hand-offs changed (null: one head now). */
+  z.strictObject({ type: z.literal("heads.updated"), botId, heads: HeadsView.nullable() }),
 ]);
 export type Event = z.infer<typeof Event>;
 

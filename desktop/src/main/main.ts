@@ -71,6 +71,7 @@ function coreEnvironment(): Record<string, string> {
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
   env.BOTLING_DATA_DIR = join(dataDir, "core");
   env.BOTLING_FAKE_CLI ??= join(root, "test", "fixtures", "fake-claude.mjs");
+  env.BOTLING_FAKE_CODEX ??= join(root, "test", "fixtures", "fake-codex.mjs");
   // A packaged app imports the user's Botling 1.x folder on its first start (read-only). A
   // development run imports only what BOTLING_IMPORT_FROM names, so tests never see real data.
   if (env.BOTLING_IMPORT_FROM === undefined && app.isPackaged) env.BOTLING_IMPORT_FROM = join(app.getPath("home"), ".claudecodebot");

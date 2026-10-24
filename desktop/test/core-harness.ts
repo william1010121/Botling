@@ -2,7 +2,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
-import { desktop, fakeCli, until } from "./helpers";
+import { desktop, fakeCli, fakeCodex, until } from "./helpers";
 import type { EventEnvelope, ResponseEnvelope, Outbound } from "../src/contract";
 
 const coreScript = join(desktop, "out", "core", "main.cjs");
@@ -19,7 +19,7 @@ export class CoreHarness {
 
   constructor(readonly dataDir: string, env: Record<string, string> = {}) {
     this.child = spawn(process.execPath, [coreScript], {
-      env: { ...process.env, BOTLING_DATA_DIR: dataDir, BOTLING_AGENT: "fake", BOTLING_FAKE_CLI: fakeCli, ...env },
+      env: { ...process.env, BOTLING_DATA_DIR: dataDir, BOTLING_AGENT: "fake", BOTLING_FAKE_CLI: fakeCli, BOTLING_FAKE_CODEX: fakeCodex, ...env },
       stdio: "pipe",
     });
     this.child.stderr.on("data", (chunk) => (this.stderr += chunk));
@@ -35,7 +35,7 @@ export class CoreHarness {
   }
 
   send(cmd: unknown, id = `r${++this.counter}`) {
-    this.post({ v: 3, id, cmd });
+    this.post({ v: 4, id, cmd });
     return id;
   }
 

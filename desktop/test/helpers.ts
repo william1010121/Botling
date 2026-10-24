@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 
 export const desktop = resolve(__dirname, "..");
 export const fakeCli = join(desktop, "test", "fixtures", "fake-claude.mjs");
+export const fakeCodex = join(desktop, "test", "fixtures", "fake-codex.mjs");
 
 /** A fresh temp folder inside desktop/.tmp (never the system temp, never ~). */
 export function tempDir(name: string): string {

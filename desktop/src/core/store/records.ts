@@ -74,6 +74,12 @@ export interface ChatRecord {
   engine?: string;
   session?: string;
   reactions?: ReactionRecord[];
+  /** A user line for one head only (`AnswerTarget`: "claude", "codex"); absent: both. */
+  to?: string;
+  /** In a bot with two heads: the heads this line has reached. */
+  seenBy?: string[];
+  /** A question shared between the heads: its stable id (the source question's id). */
+  decisionID?: string;
   // ---- 2.0 only (1.x ignores these) ----
   turnID?: string;
   state?: "streaming" | "done" | "stopped" | "failed";

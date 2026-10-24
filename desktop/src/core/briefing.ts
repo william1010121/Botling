@@ -90,7 +90,15 @@ export const RECENT_LINES = 20;
 export const RECENT_LINE_LENGTH = 600;
 
 /** `Bot.recentChat(leavingOut:)`: the chat's last lines for a bot that just woke up; empty in a new chat. */
-export function recentChat(records: ChatRecord[], options: Clock & { archive: string; leavingOut?: string | null }): string {
+/** `Bot.speaker(_:head:)`: who said a line as `head` (the head being told) reads it, in a bot with two heads. */
+export function headSpeaker(record: ChatRecord, head: "claude" | "codex"): string {
+  const name = (engine: string) => (engine === "claude" ? "Claude" : engine === "codex" ? "Codex" : engine);
+  if (record.role === "bot") return record.engine && record.engine !== head && (record.engine === "claude" || record.engine === "codex") ? name(record.engine) : speaker("bot");
+  if (record.role === "user") return record.to && record.to !== "both" && (record.to === "claude" || record.to === "codex") ? `User (to ${name(record.to)} only)` : speaker("user");
+  return speaker(record.role);
+}
+
+export function recentChat(records: ChatRecord[], options: Clock & { archive: string; leavingOut?: string | null; head?: "claude" | "codex" | null }): string {
   const lines = records.filter((record) => record.id !== options.leavingOut).slice(-RECENT_LINES).flatMap((record) => {
     let text = trimmed(record.text);
     if (characterCount(text) > RECENT_LINE_LENGTH) text = `${characterPrefix(text, RECENT_LINE_LENGTH)}…`;
@@ -100,7 +108,7 @@ export function recentChat(records: ChatRecord[], options: Clock & { archive: st
       text += ` [options: ${record.choices.map((choice) => choice.label).join(" / ")}]${picked != null ? ` → picked: ${picked}` : " (not answered yet)"}`;
     }
     if (!text) return [];
-    return [`[${shortStamp(record.date, options)}] ${speaker(record.role)}: ${text}`];
+    return [`[${shortStamp(record.date, options)}] ${options.head ? headSpeaker(record, options.head) : speaker(record.role)}: ${text}`];
   });
   if (!lines.length) return "";
   return `(App: The last messages in this chat, oldest first. You were asleep since; for anything older, Grep your chat archive in ${options.archive}:)\n${lines.join("\n")}`;

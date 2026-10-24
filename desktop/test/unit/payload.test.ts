@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { chatState, stamp } from "../../src/renderer/payload";
 import type { BotView, MessageView } from "../../src/contract";
 
-const bot: BotView = { id: "B", name: "blog", role: "manager", avatar: "square", folder: "/w", phase: "awake", working: true, approvals: 1, unread: 0, subagents: 0, problem: null };
+const bot: BotView = { id: "B", name: "blog", role: "manager", avatar: "square", folder: "/w", phase: "awake", working: true, approvals: 1, unread: 0, subagents: 0, problem: null, heads: ["claude"] };
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 25, 8, minute)).toISOString();
 
 describe("chat state for the Web/src page", () => {
