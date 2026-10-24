@@ -49,6 +49,27 @@ struct CodexDelegationTests {
         #expect(!worker.contains(BotPrompts.codexDelegationPolicy))
     }
 
+    @Test func dispatchAndWorkerPromptsBoundDevelopmentValidation() {
+        let root = URL(filePath: "/tmp/delegation-prompt")
+        for profile in [BotProfile.main(home: root), .manager(name: "Probe", avatar: "square", folder: root)] {
+            let prompts = BotPrompts(profile: profile, engine: .codex)
+            #expect(prompts.system.contains("Include a bounded validation plan in each handoff"))
+            #expect(prompts.system.contains("do not assign every worker a full suite or package build"))
+            #expect(prompts.codexWorkerSystem.contains("Do not run a full suite or package build during development"))
+            for instructions in [prompts.system, prompts.codexWorkerSystem] {
+                #expect(instructions.contains("relevant, meaningful behavior/regression checks"))
+                #expect(instructions.contains("one separately authorized cumulative integration pass"))
+                #expect(instructions.contains("integration conflicts, new failures, or specific unresolved concerns"))
+                #expect(instructions.contains("unless they protect a real contract") || instructions.contains("unless those protect a real contract"))
+                #expect(instructions.contains("Preserve essential permission, safety, and authorization checks"))
+            }
+            #expect(prompts.codexWorkerSystem.contains("never imply unrun checks passed"))
+            #expect(prompts.codexWorkerSystem.contains("Do not reserve routine validation for the coordinator"))
+            #expect(prompts.codexWorkerSystem.contains("For research/design-only work, deliver findings and stop"))
+            #expect(prompts.system.contains("implementation_authorized=false"))
+        }
+    }
+
     @Test func codexMaintenanceUsesSnapshotsAndWaitsForDurableMemoryEvidence() {
         let root = URL(filePath: "/tmp/delegation-prompt")
         let profile = BotProfile.manager(name: "Probe", avatar: "square", folder: root)
