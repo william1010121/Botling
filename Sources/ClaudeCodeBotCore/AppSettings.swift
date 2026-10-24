@@ -57,6 +57,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var catchUpEnabledChoice: Bool?
     public var catchUpThresholdChoice: Int?
     public var catchUpModelChoice: String?
+    /// Writing preferences only; shared by unread, manual and automatic interval summaries.
+    public var summaryPromptChoice: String?
+    public var summaryPrompt: String { CatchUp.effectiveWritingPrompt(summaryPromptChoice) }
     public var catchUpEnabled: Bool { catchUpEnabledChoice ?? true }
     public var catchUpThreshold: Int { CatchUp.clampedThreshold(catchUpThresholdChoice ?? CatchUp.defaultThreshold) }
     public var catchUpModel: String { catchUpModelChoice ?? PromiseCheck.judgeModel }

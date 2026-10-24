@@ -124,7 +124,7 @@ extension Workspace {
             intervalSummaries[chatID]?[key]?.error = L("The summary service is unavailable.")
             return
         }
-        let prompt = CatchUp.prompt(for: messages, language: language) { [weak self] in
+        let prompt = CatchUp.prompt(for: messages, language: language, writingPrompt: settings.summaryPrompt) { [weak self] in
             self?.catchUpName(of: $0, in: chat) ?? chat.name
         }
         let summarize = make(model)
@@ -197,7 +197,7 @@ extension Workspace {
             catchUps[chat.id]?.error = L("The summary service is unavailable.")
             return
         }
-        let prompt = CatchUp.prompt(for: messages, language: language) { [weak self] message in
+        let prompt = CatchUp.prompt(for: messages, language: language, writingPrompt: settings.summaryPrompt) { [weak self] message in
             self?.catchUpName(of: message, in: chat) ?? chat.name
         }
         let summarizer = make(model)
@@ -255,6 +255,13 @@ extension Workspace {
     }
 
     // MARK: Settings
+
+    /// Existing cached/in-flight summaries stay as written, as with a summary model change.
+    /// New generations and retries use the latest saved writing preferences.
+    public func setSummaryPrompt(_ prompt: String?) {
+        settings.summaryPromptChoice = prompt
+        settings.save(to: settingsURL)
+    }
 
     public func setCatchUpEnabled(_ enabled: Bool) {
         guard enabled != settings.catchUpEnabled else { return }

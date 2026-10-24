@@ -705,6 +705,9 @@ enum Snapshot {
         }
         // Summary-only settings fixture, still the actual production SwiftUI section.
         let summary = ProcessInfo.processInfo.environment["CCB_SETTINGS_SUMMARY"]
+        if let prompt = ProcessInfo.processInfo.environment["CCB_SETTINGS_SUMMARY_PROMPT"] {
+            workspace.setSummaryPrompt(prompt)
+        }
         if summary == "individual" {
             workspace.setSummaryThresholdsCustomized(true)
             workspace.setCatchUpThreshold(7)

@@ -49,6 +49,27 @@ struct CatchUpSection: View {
             .disabled(available.isEmpty)
             Text(L("Current summary model: {0}", settings.catchUpModel))
                 .font(.system(size: 12)).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text(L("Summary prompt"))
+                    Spacer()
+                    Text(settings.summaryPrompt == CatchUp.defaultWritingPrompt ? L("Default") : L("Custom"))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button(L("Restore default prompt")) { workspace.setSummaryPrompt(nil) }
+                        .disabled(settings.summaryPromptChoice == nil)
+                }
+                TextEditor(text: Binding(
+                    get: { settings.summaryPromptChoice ?? CatchUp.defaultWritingPrompt },
+                    set: { workspace.setSummaryPrompt($0) }
+                ))
+                .font(.system(size: 12))
+                .frame(height: 110)
+                .padding(4)
+                .background(RoundedRectangle(cornerRadius: 5).fill(Color(nsColor: .textBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.secondary.opacity(0.3)))
+                .accessibilityLabel(L("Summary prompt"))
+                Footnote(L("Writing instructions for manual, automatic interval and unread summaries. Saved automatically; blank uses the default. Existing summaries stay as written. New summaries and retries use this prompt, within the 1–5 bullet format and selected app language."))
+            }
         } header: {
             Text(L("Chat summaries"))
         } footer: {
