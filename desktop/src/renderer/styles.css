@@ -1,0 +1,101 @@
+/* Botling 2.0 chat. Tokens and rules are copied from Web/src/chat.css (the Swift app's chat) so the
+   React view looks the same; change them there first. */
+:root {
+  --ground: #0E0E10;
+  --bubble: #1B1B1F;
+  --user-bubble: #2B2B31;
+  --notice: #16161A;
+  --line: #232327;
+  --text: #EDEDF0;
+  --muted: #A0A0A8;
+  --faint: #8E8E96;
+  --chip: #2A2A31;
+  --blue: #4C8DFF;
+  --link: #8DB5FF;
+  --green: #4CC38A;
+  --orange-line: #6B4A1F;
+  --orange-text: #F7C27F;
+  --error: #FF8A80;
+  --code: #111114;
+  --control-h: 32px;
+  --control-radius: 10px;
+  --border: #2E2E35;
+  --raised: #2C2C33;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--ground); color: var(--text); }
+body {
+  font: 15px/1.65 -apple-system, "PingFang TC", "Noto Sans TC", "Segoe UI", sans-serif;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; }
+#root { height: 100%; display: flex; flex-direction: column; }
+
+/* Room for the macOS traffic lights over the hidden title bar; draggable like a title bar. */
+.titlebar { height: 28px; flex-shrink: 0; -webkit-app-region: drag; }
+
+#scroller { flex: 1; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; }
+#scroller::-webkit-scrollbar { display: none; }
+#messages {
+  max-width: 640px;
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 24px 24px 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 14px;
+}
+@media (width < 480px) {
+  #messages { padding-left: 16px; padding-right: 16px; }
+  #composer-slot { padding-left: 16px; padding-right: 16px; }
+}
+
+.row { display: flex; align-items: flex-start; gap: 10px; border-radius: 18px; }
+.row.user { justify-content: flex-end; align-items: center; }
+.row.bot, .row.notice, .row.error { justify-content: flex-start; }
+
+.bubble { padding: 12px 16px; border-radius: 18px; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.bot-bubble { background: var(--bubble); max-width: 520px; }
+.notice-bubble { background: var(--notice); border: 1px solid var(--line); max-width: 520px; color: var(--muted); }
+.error-bubble { background: var(--notice); border: 1px solid var(--line); max-width: 520px; color: var(--error); }
+.user-body { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 460px; min-width: 0; }
+.user-bubble { background: var(--user-bubble); padding: 10px 16px; }
+.bot-column { display: flex; flex-direction: column; gap: 8px; min-width: 0; max-width: 520px; flex: 0 1 auto; }
+.state-line { font-size: 12px; color: var(--faint); padding-left: 4px; }
+
+.dots { display: flex; gap: 5px; padding: 16px; }
+.dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
+.dots span:nth-child(2) { animation-delay: 0.2s; }
+.dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .dots span { animation: none; } }
+
+/* A card: a sandboxed frame inside a bubble-colored box. */
+.card { background: var(--bubble); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; width: min(520px, 100%); }
+.card iframe { display: block; width: 100%; border: 0; background: transparent; }
+
+#composer-slot { max-width: 640px; width: 100%; margin: 0 auto; padding: 8px 24px 24px; }
+.composer { background: var(--bubble); border: 1px solid var(--border); border-radius: 16px; }
+.composer-row { display: flex; padding: 12px 14px 6px; }
+.composer-tools { display: flex; align-items: center; gap: 8px; padding: 0 8px 8px; flex-wrap: wrap; }
+.composer-gap { flex: 1; }
+.composer-hint { font-size: 11.5px; color: var(--faint); padding-left: 6px; }
+.editor {
+  flex: 1; min-width: 0; padding: 2px 0; border: 0; outline: none; resize: none; background: transparent;
+  color: var(--text); font: inherit; line-height: 1.55; max-height: 160px; caret-color: var(--text);
+}
+.editor::placeholder { color: var(--faint); }
+.send {
+  width: var(--control-h); height: var(--control-h); flex-shrink: 0; border-radius: var(--control-radius);
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  background: var(--text); color: var(--ground); border: none;
+}
+.send:disabled { background: var(--muted); cursor: default; }
+.send svg { width: 16px; height: 16px; }
+.send.stop { background: var(--raised); color: var(--text); border: 1px solid var(--border); }
+
+.banner { max-width: 640px; margin: 0 auto; padding: 6px 24px 0; font-size: 12.5px; color: var(--error); }
