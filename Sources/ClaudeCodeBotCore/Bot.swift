@@ -323,10 +323,9 @@ public final class Bot: ObservableObject, Identifiable {
     /// Includes completed worker reports waiting behind a user/group turn, after their card
     /// stopped running but before the app has started their report turn.
     private var managedWorkPending = false
-    /// A cross-head assignment stays owned by this head until its actual worker report.
-    private var managedHandbackPending = false
-    private var managedHandbackTasks: Set<String> = []
-    private var managedHandbackID: UUID?
+    /// Background workers retain their own cross-head return routes while this head can
+    /// receive independent assignments. A waiting worker does not occupy a coordinator turn.
+    private var managedHandbackIDs: Set<UUID> = []
     private var managedTaskHandoffs: [String: UUID] = [:]
     /// Subagents that finished (a result or a failure, not "still waiting") since the bot last
     /// showed a reply: what they did has not reached the user yet.
@@ -1060,11 +1059,7 @@ public final class Bot: ObservableObject, Identifiable {
         }
         let tasks = Set(managedTaskHandoffs.compactMap { $0.value == id ? $0.key : nil })
         for task in tasks { managedTaskHandoffs[task] = nil }
-        managedHandbackTasks.subtract(tasks)
-        if managedHandbackID == id {
-            managedHandbackID = nil
-            managedHandbackPending = false
-        }
+        managedHandbackIDs.remove(id)
         if !tasks.isEmpty { process?.cancelTasks(tasks) }
         if turnHandoffID == id, isWorking {
             // Assigned turns are serialized, so this interrupt cannot stop a peer's turn.
@@ -1103,13 +1098,9 @@ public final class Bot: ObservableObject, Identifiable {
         partner?.completionSuspended = true
         partner?.completionRequiresTerminalSignal = false
         conduct(conductor.stop())
-        managedHandbackPending = false
-        managedHandbackTasks.removeAll()
-        managedHandbackID = nil
+        managedHandbackIDs.removeAll()
         managedTaskHandoffs.removeAll()
-        partner?.managedHandbackPending = false
-        partner?.managedHandbackTasks.removeAll()
-        partner?.managedHandbackID = nil
+        partner?.managedHandbackIDs.removeAll()
         partner?.managedTaskHandoffs.removeAll()
     }
 
@@ -1357,7 +1348,7 @@ public final class Bot: ObservableObject, Identifiable {
         }
         // Keep independently stoppable work separate, including its return continuation.
         // Peer context and the user's intervening question still reach the current turn.
-        if cancellingHandoff || (outgoing.handoffID != nil && (isWorking || managedHandbackPending)) {
+        if cancellingHandoff || (outgoing.handoffID != nil && isWorking) {
             queued.append(outgoing)
             return
         }
@@ -1820,9 +1811,8 @@ public final class Bot: ObservableObject, Identifiable {
         turnConducted = false
         let id = turnHandoffID
         turnHandoffID = nil
-        if engine == .codex, handed, !managedHandbackTasks.isEmpty {
-            managedHandbackPending = true
-            managedHandbackID = id
+        if engine == .codex, handed, let id, managedTaskHandoffs.values.contains(id) {
+            managedHandbackIDs.insert(id)
             return false
         }
         return handed
@@ -2458,11 +2448,10 @@ public final class Bot: ObservableObject, Identifiable {
                 backgroundWake = false
             }
         case let .managedWorkerReportStarted(taskID):
-            if managedHandbackTasks.remove(taskID) != nil, managedHandbackPending {
+            if let id = managedTaskHandoffs.removeValue(forKey: taskID),
+               managedHandbackIDs.remove(id) != nil {
                 turnConducted = true
-                turnHandoffID = managedHandbackID
-                managedHandbackID = nil
-                managedHandbackPending = false
+                turnHandoffID = id
             }
         case let .managedWorkPending(pending):
             managedWorkPending = pending
@@ -2479,7 +2468,6 @@ public final class Bot: ObservableObject, Identifiable {
         case let .trace(step):
             if engine == .codex, turnConducted,
                case let .subagentStarted(id, _, type, _, _) = step, type == "codex-worker" {
-                managedHandbackTasks.insert(id)
                 if let handoffID = turnHandoffID { managedTaskHandoffs[id] = handoffID }
             }
             if sharesChat, case let .text(words, nil) = step, internalReply == nil {
@@ -2694,10 +2682,8 @@ public final class Bot: ObservableObject, Identifiable {
             turnOrigin = nil
             backgroundWake = false
             managedWorkPending = false
-            managedHandbackPending = false
-            managedHandbackTasks.removeAll()
+            managedHandbackIDs.removeAll()
             managedTaskHandoffs.removeAll()
-            managedHandbackID = nil
             unreported.removeAll()
             reportAsked.removeAll()
             pausedOrigin = nil
@@ -3182,8 +3168,8 @@ public final class Bot: ObservableObject, Identifiable {
         process = nil
         running?.stop()
         managedWorkPending = false
-        managedHandbackPending = false
-        managedHandbackTasks.removeAll()
+        managedHandbackIDs.removeAll()
+        managedTaskHandoffs.removeAll()
         if trace.stopRunning() { store?.save(subagents: trace.subagents) }
         if messages.stopBackgroundTasks(as: .stopped, at: now()) { store?.save(messages: messages) }
         dropPermissionAsks()
