@@ -15,11 +15,32 @@ import { processTreeAdapter, type ManagedProcess } from "../process/tree";
 import type { HostSpec } from "./registry";
 
 export interface HostCommand {
-  /** Node, or Electron run as Node (development). */
+  /** Node, or Electron run as Node (development). Unused when `launch` is given. */
   command: string;
   prefixArgs?: string[];
   env?: Record<string, string>;
+  /**
+   * Starts the host some other way: under Electron, main runs it as a utility process (so a packaged
+   * build needs no Node of its own) and hands the core a message port to it (core/plugins/utility-host.ts).
+   */
+  launch?: HostLauncher;
 }
+
+/** What the host client needs of a running host, however it was started. */
+export interface HostProcess {
+  pid: number;
+  /** Writes one protocol line (with its newline). */
+  write(line: string): void;
+  /** Ends it (and, for a Node child, its process group) and resolves once it is gone. */
+  terminate(graceMs: number): Promise<unknown>;
+}
+export interface HostHandlers {
+  data(chunk: string): void;
+  stderr(chunk: string): void;
+  exit(code: number | null, signal: string | null): void;
+  error(error: Error): void;
+}
+export type HostLauncher = (script: string, cwd: string, env: Record<string, string>, handlers: HostHandlers) => HostProcess;
 
 export interface HostTiming { hook: number; call: number; load: number; ready: number; restartDelay: number }
 export const DEFAULT_TIMING: HostTiming = { hook: 5_000, call: 60_000, load: 30_000, ready: 5_000, restartDelay: 300 };
@@ -58,7 +79,7 @@ export class PluginHostClient {
   onRegistered: () => void = () => {};
 
   private specs: HostSpec[] = [];
-  private process: ManagedProcess | null = null;
+  private process: HostProcess | null = null;
   private buffer = "";
   private stderr = "";
   private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
@@ -91,7 +112,7 @@ export class PluginHostClient {
     this.stopping = true;
     if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null; }
     const process = this.process;
-    if (process) void process.terminate({ graceMs: 1_000 });
+    if (process) void process.terminate(1_000);
   }
 
   /** Ends it and waits (quitting). */
@@ -101,7 +122,7 @@ export class PluginHostClient {
     const process = this.process;
     if (!process) return;
     try { await this.request("shutdown", {}, null, 1_000); } catch { /* it goes anyway */ }
-    await process.terminate({ graceMs: 1_000 });
+    await process.terminate(1_000);
   }
 
   async waitUntilReady(timeout = this.timing.ready): Promise<boolean> {
@@ -187,33 +208,54 @@ export class PluginHostClient {
     this.problem = null;
     this.stopping = false;
     mkdirSync(this.cwd, { recursive: true });
-    let child: ManagedProcess;
+    let child: HostProcess;
+    const handlers: HostHandlers = {
+      data: (chunk) => { if (this.process === child) this.read(chunk); },
+      stderr: (chunk) => { this.stderr = (this.stderr + chunk).slice(-8_000); },
+      exit: (code, signal) => this.exited(child, code, signal),
+      error: (error) => { this.problem = `The plugin host failed: ${error.message}`; },
+    };
     try {
-      child = processTreeAdapter().spawn(this.node.command, [...(this.node.prefixArgs ?? []), this.script], { cwd: this.cwd, env: this.environment() });
+      child = this.node.launch
+        ? this.node.launch(this.script, this.cwd, this.environment(), handlers)
+        : this.spawnNode(this.node, handlers);
     } catch (error) {
       this.problem = `The plugin host failed to start: ${(error as Error).message}`;
       return;
     }
     if (child.pid < 0) {
       this.problem = "The plugin host failed to start.";
-      child.child.on("error", () => {});
       return;
     }
     this.process = child;
     this.buffer = "";
-    this.onPid(child.pid, true);
-    this.log(`plugin host started pid ${child.pid}`);
-    child.child.stdout.setEncoding("utf8");
-    child.child.stdout.on("data", (chunk: string) => this.read(chunk));
-    child.child.stderr.setEncoding("utf8");
-    child.child.stderr.on("data", (chunk: string) => { this.stderr = (this.stderr + chunk).slice(-8_000); });
-    child.child.stdin.on("error", () => {});
-    child.child.on("error", (error) => { this.problem = `The plugin host failed: ${error.message}`; });
-    child.child.on("exit", (code, signal) => this.exited(child, code, signal));
+    if (!this.node.launch) this.onPid(child.pid, true);
+    this.log(`plugin host started pid ${child.pid}${this.node.launch ? " (utility process)" : ""}`);
   }
 
-  private exited(child: ManagedProcess, code: number | null, signal: NodeJS.Signals | null) {
-    this.onPid(child.pid, false);
+  /** The host as a Node child in its own process group (headless cores, BOTLING_NODE_PATH). */
+  private spawnNode(node: HostCommand, handlers: HostHandlers): HostProcess {
+    const managed: ManagedProcess = processTreeAdapter().spawn(node.command, [...(node.prefixArgs ?? []), this.script], { cwd: this.cwd, env: this.environment() });
+    if (managed.pid < 0) {
+      managed.child.on("error", () => {});
+      return { pid: -1, write: () => {}, terminate: async () => {} };
+    }
+    managed.child.stdout.setEncoding("utf8");
+    managed.child.stdout.on("data", (chunk: string) => handlers.data(chunk));
+    managed.child.stderr.setEncoding("utf8");
+    managed.child.stderr.on("data", (chunk: string) => handlers.stderr(chunk));
+    managed.child.stdin.on("error", () => {});
+    managed.child.on("error", (error) => handlers.error(error));
+    managed.child.on("exit", (code, signal) => handlers.exit(code, signal));
+    return {
+      pid: managed.pid,
+      write: (line) => { const stdin = managed.child.stdin; if (!stdin.destroyed) stdin.write(line); },
+      terminate: (graceMs) => managed.terminate({ graceMs }),
+    };
+  }
+
+  private exited(child: HostProcess, code: number | null, signal: string | null) {
+    if (!this.node?.launch) this.onPid(child.pid, false);
     if (child !== this.process) return;
     const blamed = new Set(this.blame.values());
     this.process = null;
@@ -233,9 +275,7 @@ export class PluginHostClient {
   }
 
   private write(message: HostMessage) {
-    const stdin = this.process?.child.stdin;
-    if (!stdin || stdin.destroyed) return;
-    stdin.write(JSON.stringify(message) + "\n");
+    this.process?.write(JSON.stringify(message) + "\n");
   }
 
   private read(chunk: string) {

@@ -13,6 +13,7 @@ import type { Outbound } from "../contract";
 import { codexSummarizer } from "./catchup";
 import { PortSealer, testSealer, type Sealer } from "./plugins/secrets";
 import type { HostCommand } from "./plugins/host-client";
+import { UtilityHostLauncher, type PortLike } from "./plugins/utility-host";
 
 const dataDir = resolve(process.env.BOTLING_DATA_DIR ?? join(process.cwd(), ".data"));
 const number = (value: string | undefined, fallback: number) => (value && Number.isFinite(Number(value)) ? Number(value) : fallback);
@@ -67,7 +68,7 @@ function codexConfig(profile: BotProfile, session: SessionStartCodex, threads: C
   return { ...common, command: process.execPath, prefixArgs: [script], env: { ELECTRON_RUN_AS_NODE: "1" } };
 }
 
-type ParentPort = { postMessage(message: unknown): void; on(event: "message", fn: (event: { data: unknown }) => void): void };
+type ParentPort = { postMessage(message: unknown): void; on(event: "message", fn: (event: { data: unknown; ports?: PortLike[] }) => void): void };
 const parentPort = (process as unknown as { parentPort?: ParentPort }).parentPort;
 
 const emit: (message: Outbound) => void = parentPort
@@ -88,8 +89,13 @@ function summarizer() {
  * Node for the plugin host: BOTLING_NODE_PATH, else the Node this core runs on — under Electron that is
  * Electron itself run as Node (development; packaged builds turn that fuse off, see the README's gaps).
  */
+const utilityHost = parentPort && process.versions.electron && !process.env.BOTLING_NODE_PATH && process.env.BOTLING_PLUGIN_HOST !== "node"
+  ? new UtilityHostLauncher(parentPort) : null;
+
 function hostNode(): HostCommand | null {
   if (process.env.BOTLING_NODE_PATH) return { command: process.env.BOTLING_NODE_PATH };
+  // Under Electron (development and packaged): main runs the host as a utility process.
+  if (utilityHost) return { command: "", launch: utilityHost.launch };
   if (process.versions.electron) return { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: "1" } };
   return { command: process.execPath };
 }
@@ -101,7 +107,10 @@ const hostScript = join(__dirname, "..", "host", "host.mjs");
 const checkScript = join(__dirname, "..", "host", "check-plugin.cjs");
 const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
 const node = hostNode();
-const checkCommand = node ? `${node.env?.ELECTRON_RUN_AS_NODE ? "ELECTRON_RUN_AS_NODE=1 " : ""}${quote(node.command)} ${quote(checkScript)}` : null;
+// The plugin check Maintainer runs is a shell command, so it needs a Node it can name (Electron as Node in development).
+const checkNode: HostCommand | null = process.env.BOTLING_NODE_PATH ? { command: process.env.BOTLING_NODE_PATH }
+  : process.versions.electron ? { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: "1" } } : { command: process.execPath };
+const checkCommand = checkNode ? `${checkNode.env?.ELECTRON_RUN_AS_NODE ? "ELECTRON_RUN_AS_NODE=1 " : ""}${quote(checkNode.command)} ${quote(checkScript)}` : null;
 
 const core = new Core({
   dataDir,
@@ -135,6 +144,7 @@ if (parentPort) {
     // Main's answer to a seal/open request (safeStorage), never a contract message.
     const data = event.data as { botling?: unknown } | null;
     if (data && typeof data === "object" && data.botling === "sealed") portSealer?.answer(data as Parameters<PortSealer["answer"]>[0]);
+    else if (data && typeof data === "object" && typeof data.botling === "string" && data.botling.startsWith("host")) utilityHost?.receive(data, event.ports ?? []);
     else core.receive(event.data);
   });
 } else {

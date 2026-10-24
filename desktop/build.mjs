@@ -33,6 +33,8 @@ await Promise.all([
   // The plugin host: Web/host/src/host.ts unchanged, bundled as Web/build.mjs bundles it for 1.x
   // (its own process, started by the core; see src/core/plugins/host-client.ts).
   build({ entryPoints: [join(web, "host/src/host.ts")], bundle: true, platform: "node", format: "esm", target: "node20", legalComments: "eof", outfile: join(out, "host/host.mjs") }),
+  // The same host in an Electron utility process (main starts it; it talks over a MessagePort).
+  build({ entryPoints: [join(here, "src/host/utility.ts")], bundle: true, platform: "node", format: "esm", target: "node20", legalComments: "eof", outfile: join(out, "host/host-utility.mjs") }),
   // `ccb plugin check` for Maintainer (the checks the registry runs), as a small command.
   build({ ...node, entryPoints: [join(here, "src/core/plugins/check-cli.ts")], outfile: join(out, "host/check-plugin.cjs") }),
   build({

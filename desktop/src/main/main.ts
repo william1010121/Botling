@@ -66,6 +66,7 @@ const appContents = new Set<number>();
 
 const core = new CoreClient({
   script: join(root, "out", "core", "main.cjs"),
+  hostScript: join(root, "out", "host", "host-utility.mjs"),
   env: coreEnvironment(),
   onEvent: broadcast,
   audit: note,
@@ -345,4 +346,5 @@ app.on("before-quit", (event) => {
 
 // For tests: which pid the core has.
 (globalThis as unknown as { __botlingCorePid: () => number | undefined }).__botlingCorePid = () => core.pid;
+(globalThis as unknown as { __botlingHostPids: () => number[] }).__botlingHostPids = () => core.hostPids;
 void PROTOCOL_VERSION;

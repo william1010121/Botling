@@ -1,7 +1,7 @@
 // Main's side of the core process: start it, route answers to whoever asked, pass events on, and
 // restart it if it dies. Requests that were waiting when it died fail with `core_unavailable`; the
 // renderer sees a new epoch and takes a fresh snapshot. Nothing is re-sent automatically.
-import { utilityProcess, type UtilityProcess } from "electron";
+import { MessageChannelMain, utilityProcess, type UtilityProcess } from "electron";
 import {
   EventEnvelope, PROTOCOL_VERSION, ResponseEnvelope, describeIssues,
   type Command, type EventEnvelope as EventEnvelopeT, type ResponseEnvelope as ResponseEnvelopeT, type ResultOf, type CommandType,
@@ -14,6 +14,8 @@ export interface CoreClientOptions {
   audit: (entry: string) => void;
   /** Seals or opens a plugin secret (safeStorage); throws when it cannot. */
   seal?: (op: "seal" | "open", text: string) => string;
+  /** The plugin host's utility-process entry (out/host/host-utility.mjs); main never runs another file for it. */
+  hostScript?: string;
 }
 
 interface Pending { resolve: (response: ResponseEnvelopeT) => void }
@@ -25,8 +27,68 @@ export class CoreClient {
   private restarts = 0;
   private quitting = false;
   pid: number | undefined;
+  /** Plugin hosts main runs for the core (utility processes), by the core's id for each. */
+  private hosts = new Map<number, UtilityProcess>();
 
   constructor(private options: CoreClientOptions) {}
+
+  /** Pids of the plugin hosts running now (for tests). */
+  get hostPids(): number[] { return [...this.hosts.values()].map((host) => host.pid ?? -1); }
+
+  /**
+   * The core asks main to start or end its plugin host (core/plugins/utility-host.ts). Main forks
+   * only its own host script, with the folder and the allow-listed environment the core gives, and
+   * hands the core one end of a MessageChannel; the host gets the other.
+   */
+  private host(raw: { op?: unknown; id?: unknown; cwd?: unknown; env?: unknown; graceMs?: unknown }) {
+    const child = this.child;
+    if (!child || typeof raw.id !== "number") return;
+    const id = raw.id;
+    if (raw.op === "kill") {
+      const host = this.hosts.get(id);
+      if (!host) { child.postMessage({ botling: "hostExit", id, code: null }); return; }
+      host.kill();
+      const grace = typeof raw.graceMs === "number" ? Math.min(Math.max(raw.graceMs, 0), 10_000) : 1_000;
+      setTimeout(() => { if (this.hosts.get(id) === host && host.pid) { try { process.kill(host.pid, "SIGKILL"); } catch { /* gone */ } } }, grace).unref();
+      return;
+    }
+    if (raw.op !== "start" || !this.options.hostScript) {
+      child.postMessage({ botling: "hostFailed", id, error: "Main cannot start a plugin host." });
+      return;
+    }
+    const env: Record<string, string> = {};
+    if (raw.env && typeof raw.env === "object") {
+      for (const [key, value] of Object.entries(raw.env as Record<string, unknown>)) if (typeof value === "string" && !key.startsWith("ELECTRON_")) env[key] = value;
+    }
+    let host: UtilityProcess;
+    try {
+      host = utilityProcess.fork(this.options.hostScript, [], {
+        serviceName: "Botling Plugin Host", stdio: "pipe", env, ...(typeof raw.cwd === "string" ? { cwd: raw.cwd } : {}),
+      });
+    } catch (error) {
+      child.postMessage({ botling: "hostFailed", id, error: String((error as Error)?.message ?? error).slice(0, 500) });
+      return;
+    }
+    this.hosts.set(id, host);
+    host.stdout?.on("data", () => {});
+    host.stderr?.on("data", (chunk) => process.stderr.write(`[plugin host] ${chunk}`));
+    host.once("spawn", () => {
+      const { port1, port2 } = new MessageChannelMain();
+      host.postMessage({ botling: "port" }, [port1]);
+      if (this.child === child) child.postMessage({ botling: "hostStarted", id, pid: host.pid ?? 0 }, [port2]);
+      else host.kill();
+    });
+    host.once("exit", (code) => {
+      if (this.hosts.get(id) === host) this.hosts.delete(id);
+      if (this.child === child) child.postMessage({ botling: "hostExit", id, code });
+    });
+  }
+
+  /** Ends every plugin host (the core went away, or the app quits). */
+  private endHosts() {
+    for (const host of this.hosts.values()) host.kill();
+    this.hosts.clear();
+  }
 
   start() {
     const child = utilityProcess.fork(this.options.script, [], {
@@ -42,6 +104,7 @@ export class CoreClient {
     child.on("exit", (code) => {
       if (this.child !== child) return;
       this.child = null;
+      this.endHosts();
       for (const [id, pending] of this.pending) {
         pending.resolve({ v: PROTOCOL_VERSION, id, ok: false, error: { code: "core_unavailable", message: "The core process stopped." } });
       }
@@ -55,6 +118,10 @@ export class CoreClient {
 
   private receive(message: unknown) {
     const raw = message as { botling?: unknown; id?: unknown; op?: unknown; text?: unknown } | null;
+    if (raw && typeof raw === "object" && raw.botling === "host") {
+      this.host(raw as Parameters<CoreClient["host"]>[0]);
+      return;
+    }
     if (raw && typeof raw === "object" && raw.botling === "seal") {
       // The core asks main to seal or open a plugin secret (it has no safeStorage of its own).
       const reply = (answer: Record<string, unknown>) => this.child?.postMessage({ botling: "sealed", id: raw.id, ...answer });
@@ -116,7 +183,7 @@ export class CoreClient {
     return new Promise((resolve) => {
       // Awake bots tidy their notes before the core exits (BOTLING_QUIT_TIDY_MS, 15 s at most each, in parallel).
       const timer = setTimeout(() => resolve(), Number(this.options.env.BOTLING_QUIT_TIDY_MS ?? 15_000) + 5_000);
-      child.once("exit", () => { clearTimeout(timer); resolve(); });
+      child.once("exit", () => { clearTimeout(timer); this.endHosts(); resolve(); });
       child.kill();
     });
   }

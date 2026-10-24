@@ -73,6 +73,10 @@ test("the Plugins panel: on/off, a setting, a sealed secret, a command; a panel 
     await expect(item.getByRole("button", { name: "Count" })).toBeEnabled({ timeout: 15_000 });
     await item.getByRole("button", { name: "Count" }).click();
     await expect(panel.locator(".plugins-result")).toHaveText("Count: 42");
+    // The program part runs in a utility process main started (no Node of its own needed).
+    const hosts = await app.evaluate(() => (globalThis as any).__botlingHostPids());
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0]).toBeGreaterThan(0);
     // A secret: sent once, sealed, never shown back.
     await item.getByLabel("API token").fill("tok-very-secret");
     await item.locator('[data-setting="token"]').getByRole("button", { name: "Save" }).click();
@@ -103,6 +107,8 @@ test("the Plugins panel: on/off, a setting, a sealed secret, a command; a panel 
     await item.getByLabel("Panel pal on").click();
     await expect(item).toHaveAttribute("data-enabled", "0");
     await expect(item.getByRole("button", { name: "Count" })).toBeDisabled();
+    // With no program part to run, the host's utility process is gone.
+    await expect.poll(() => app.evaluate(() => (globalThis as any).__botlingHostPids().length)).toBe(0);
     expect(JSON.parse(readFileSync(join(core, "plugins.json"), "utf8")).disabled).toEqual(["panelpal"]);
   } finally {
     await app.close();
