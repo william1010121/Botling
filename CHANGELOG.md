@@ -4,6 +4,30 @@ Botling uses [semantic versioning](https://semver.org): a new feature bumps the 
 version, a fix alone bumps the patch. Each release is a `v<version>` tag; pushing it builds the
 app and publishes it on GitHub Releases.
 
+## Unreleased 1.20.0-dev
+
+### Added
+
+- **Task cards.** Every piece of work in a chat gets a card: your message opens a provisional
+  one, the head that starts on it owns it, follow-ups join it, two pieces of work in one
+  message split into two cards, and quick answers leave none. Heads keep a card current with a
+  hidden `<task name now next blocked state/>` status line (names, follow-ups via `continues`,
+  running / waiting / done / stopped); only the owner changes its state. A card the owner never
+  marked running is done when its turn ends with nothing of it still at work; one marked
+  running with no news for 10 minutes shows **May be stuck** with **Ask it to report**. The
+  right panel's **Tasks** section (in place of Now) lists open cards with now/next/blocked,
+  helping hand-offs and subagents and **Jump to chat**; waiting and finished cards show under
+  Waiting on you and Just done. Each reply of a task carries a chip, Catch-up bullets carry
+  chips for the tasks they name, and the left rail shows each bot's running-task count. Cards
+  are kept per bot in `tasks.json`.
+- **A bot's own @ calls the bot it names.** A line of a bot's reply that starts with `@` and
+  another bot's exact name now calls that bot into the chat through the same call-in route as
+  your @: it answers there from its own main session (one head), told it is a fellow bot's
+  question, not your request or a new permission, and its answer's tags do not act. One bot
+  per reply, never itself; each reply is delivered once, across restarts
+  (`bot-mentions.json`); at most three calls per chat per message of yours. An @ in prose, in a
+  quote or in code stays text.
+
 ## 1.19.0
 
 ### Added
