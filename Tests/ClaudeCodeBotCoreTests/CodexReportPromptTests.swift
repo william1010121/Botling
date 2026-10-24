@@ -40,12 +40,14 @@ struct CodexReportPromptTests {
 
     @Test func allDeliveredClaudePromptsMatchRoutineAwareBaseline() throws {
         #expect(claudeSnapshots().count == 288)
-        // Updated again for eb6abdf (linked decision cards across heads) and edd6e79 (scoped
+        // Updated for 1.20's task cards (the `<task …/>` line) and bot-to-bot @ delivery (a line
+        // starting with @ and another bot's name), both intentional prompt lines.
+        // Before: updated for eb6abdf (linked decision cards across heads) and edd6e79 (scoped
         // worker validation), both intentional prompt changes merged after the last baseline.
         // Earlier: updated for be8bf867's intentional routine instructions. Restoring only that passage
         // reproduces the original d2b2d8c digest; the other 240 prompt fields are unchanged.
         // SHA-256 of sorted-key JSON containing all 288 complete prompt strings.
-        #expect(try claudeDigest() == "54d780e8d9d6c600d9af5846b280db2eb63602db15d3cc8014a344bcb1220a64")
+        #expect(try claudeDigest() == "e99705c828fc558bb40633e637335349c67df072a908fbd0c1ddbea8629240b8")
     }
 
     private func expectReportRules(_ instructions: String, folder: String) {
