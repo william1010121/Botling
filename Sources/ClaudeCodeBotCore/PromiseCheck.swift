@@ -48,7 +48,8 @@ public enum PromiseCheck {
         public init(kind: Kind, evidence: String) { self.kind = kind; self.evidence = evidence }
     }
 
-    /// A snapshot from the live app-server, never reconstructed from saved UI cards.
+    /// A snapshot from the live app-server (or the head's own trace of running Claude Agent-tool
+    /// subagents), never reconstructed from saved UI cards.
     public struct WorkerDependency: Equatable, Sendable, Codable {
         public enum State: String, Sendable, Codable { case running, reportQueued }
         public var id: String
@@ -83,6 +84,9 @@ public enum PromiseCheck {
         public var timeZone: String? = nil
         public var scheduledWakeups: [ScheduledWakeup]? = nil
         public var scheduledWakeupsTruncated = false
+        /// Earlier tasks this head reported finished with evidence the judge accepted as complete
+        /// (e.g. a merged commit). They are context, never work to revive.
+        public var completed: [String]? = nil
 
         public init(reply: String, workPending: Bool, task: String = "", conversation: String = "",
                     dependencies: [String] = [], actions: [String] = [], memory: String = "", terminalRequired: Bool = false, signals: [Signal] = [], evidenceTruncated: Bool = false) {
@@ -204,6 +208,7 @@ public enum PromiseCheck {
         bounded.task = String(end.task.prefix(6000)) + (end.task.count > 6000 ? "\n…\n" + String(end.task.suffix(6000)) : "")
         bounded.conversation = String(end.conversation.suffix(12000))
         bounded.memory = String(end.memory.prefix(6000))
+        bounded.completed = end.completed.map { $0.suffix(4).map { String($0.prefix(1600)) } }
         bounded.signals = end.signals.prefix(4).map { Signal(kind: $0.kind, evidence: String($0.evidence.prefix(4000))) }
         bounded.dependencies = end.dependencies.suffix(24).map { String($0.prefix(1200)) }
         bounded.actions = end.actions.suffix(12).map { String($0.prefix(1600)) }
@@ -256,10 +261,15 @@ public enum PromiseCheck {
         return second
     }
 
+    /// Return paths of a running worker: an app-managed Codex worker, or a Claude subagent whose
+    /// task notification starts the head's next turn.
+    static let workerCallbacks: Set<String> = ["app_task_result", subagentCallback]
+    public static let subagentCallback = "task_notification"
+
     /// A complete live snapshot with a running worker and its callback, as `review` requires.
     static func hasLiveWorkerOwner(_ end: TurnEnd) -> Bool {
         guard let workers = end.workerDependencies, !end.workerDependenciesTruncated, !packWorkers(workers).omitted else { return false }
-        return workers.contains { $0.state == .running && $0.callback == "app_task_result" }
+        return workers.contains { $0.state == .running && workerCallbacks.contains($0.callback ?? "") }
     }
 
     public static func checker(classify: @escaping Classifier) -> Check {
@@ -282,7 +292,7 @@ public enum PromiseCheck {
         }
         if judgment.verdict == .waitingDependency, let workers = end.workerDependencies,
            end.dependencies.isEmpty,
-           end.workerDependenciesTruncated || packWorkers(workers).omitted || !workers.contains(where: { $0.state == .running && ["app_task_result", "app_monitor_result"].contains($0.callback ?? "") }) {
+           end.workerDependenciesTruncated || packWorkers(workers).omitted || !workers.contains(where: { $0.state == .running && (workerCallbacks.contains($0.callback ?? "") || $0.callback == "app_monitor_result") }) {
             return Judgment(verdict: .unknown, reason: "No complete live worker snapshot with a running owner and callback supports dependency waiting.")
         }
         guard end.terminalRequired else { return judgment }
@@ -307,7 +317,8 @@ public enum PromiseCheck {
         authorization phase, explicit stops, and actual completion criteria. Inspect actions/results and \
         tracked dependency descriptions. workerDependencies, when present, is the authoritative \
         live app-worker snapshot, separate from verbose history or saved UI cards. A running \
-        worker has state running and callback app_task_result; a live app-owned command has callback app_monitor_result. reportQueued means execution ended \
+        worker has state running and callback app_task_result; a running Claude subagent (Agent tool) is a worker too, \
+        with callback task_notification: its result wakes the assistant automatically. A live app-owned command has callback app_monitor_result. reportQueued means execution ended \
         and its completed/failed/interrupted result is queued, not that the worker is still running. \
         An empty snapshot establishes that no app-managed worker or monitored command is running. Do not infer a live \
         worker or a callback from a reply or old card against this snapshot. taskTruncated marks \
@@ -328,7 +339,10 @@ public enum PromiseCheck {
         before allowing that check. isDue=false only proves the wake is in the future, never \
         that a blocker exists. Do not override this clock state with arithmetic or old claims. \
         If evidenceTruncated is true, missing text cannot establish \
-        permissions or completion; only continue a specific action explicitly authorized by visible evidence. Do not invent tasks or treat an optional suggestion as authorized.
+        permissions or completion; only continue a specific action explicitly authorized by visible evidence. Do not invent tasks or treat an optional suggestion as authorized. \
+        completed, when present, lists earlier tasks already reported finished with accepted evidence \
+        (for example a merged commit). Never CONTINUE, revive or redo them because older messages or \
+        the recent conversation still mention them; judge only work authorized after them.
 
         Return exactly one JSON object with keys "verdict", "reason", and "wakeupID", with no Markdown. \
         wakeupID is the exact scheduledWakeups id for WAITING_TIMER, otherwise null. \

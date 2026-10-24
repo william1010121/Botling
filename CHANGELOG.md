@@ -24,6 +24,14 @@ app and publishes it on GitHub Releases.
   is held by a live worker" is a dependency wait. A continue verdict while live workers run is
   checked a second time, and a second dependency-wait answer keeps the head quiet until
   `app_task_result` wakes it.
+- **Claude subagents count as owners.** A head waiting on its running Agent-tool subagents is
+  no longer woken over and over: they are in the judge's live worker snapshot, and their task
+  notification is the return path. Stale tracker cards never count.
+- **Finished tasks stay finished.** Once a task is judged complete with reported evidence (a
+  merged commit), later checks no longer treat it, or the older message that asked for it, as
+  work to continue.
+- **Loop guard after two.** Two automatic continuations in a row without a new result pause
+  the loop ("Automatic continuation paused") instead of three or more.
 
 ## 1.18.0
 

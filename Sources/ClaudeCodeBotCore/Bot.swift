@@ -342,7 +342,14 @@ public final class Bot: ObservableObject, Identifiable {
     private var completionRequiresTerminalSignal = false
     private var completionSuspended = false
     private var completionSignals: [UUID: [PromiseCheck.Signal]] = [:]
+    /// Consecutive automatic continuations whose turns brought no new result or analysis.
     private var completionNoProgress = 0
+    /// The running turn was started by an automatic continuation, not by new input.
+    private var completionContinuing = false
+    /// Tasks judged complete with their reported evidence, and the last instruction they covered:
+    /// the judge must not revive them from older messages that still name them.
+    private var completedTasks: [String] = []
+    private var completedThrough: UUID?
     private var completionEvidence: [String] = []
     private var completionReplies: [String] = []
     private var pausedCompletionContext: (task: String, terminalRequired: Bool)?
@@ -1330,6 +1337,7 @@ public final class Bot: ObservableObject, Identifiable {
             }
             invalidateCompletion()
             completionNoProgress = 0
+            completionContinuing = false
             completionEvidence.removeAll()
             completionReplies.removeAll()
             if outgoing.fromUser, completionRequiresTerminalSignal {
@@ -1870,28 +1878,36 @@ public final class Bot: ObservableObject, Identifiable {
     /// semantically rather than letting an unrelated worker/monitor suppress the entire check.
     private func checkPromise(in message: ChatMessage, handed: Bool, handoffID: UUID?) {
         guard canCheckCompletion(message), let promiseCheck, let source = process else { return }
+        let continued = completionContinuing
+        completionContinuing = false
         let workers = source.completionWorkerDependencies
+        // Running Agent-tool subagents own work exactly like app-managed workers: their task
+        // notification wakes this head. The judge sees them in the same live snapshot.
+        let subagentOwners = completionSubagentOwners()
+        let judgedWorkers = subagentOwners.isEmpty ? workers : (workers ?? []) + subagentOwners
         let evaluatedAt = now()
         let wakeups = completionScheduledWakeups(at: evaluatedAt)
         let tasks = messages.flatMap { $0.backgroundTasks ?? [] }.filter { !$0.kind.isScheduled && $0.holdsBotAwake(now: evaluatedAt) }
-        var dependencies = trace.subagents.filter { $0.isRunning && $0.type != "codex-worker" }.map {
-            "Subagent \($0.id); status: running; result returns via task notification; \($0.description); task: \($0.prompt)"
-        }
-        dependencies += tasks.map { "\($0.kind.rawValue) \($0.id): \($0.title); \($0.detail ?? ""); returns by notification/scheduled wake" }
+        var dependencies = tasks.map { "\($0.kind.rawValue) \($0.id): \($0.title); \($0.detail ?? ""); returns by notification/scheduled wake" }
         dependencies += (primary ?? self).conductor.records.filter { $0.isActive && $0.from == engine }.map {
             "Handoff \($0.id) to \($0.to.rawValue), state \($0.state.rawValue): \($0.task); result returns via conductor"
         }
         let steps = (message.steps ?? []).filter { $0.kind != .text }
         let actions = steps.map { "\($0.tool ?? $0.kind.rawValue): \($0.title); input: \($0.detail ?? ""); done: \($0.done); failed: \($0.failed); output: \($0.output ?? "")" }
-        let authorization = messages.filter { $0.role == .user || $0.role == .relay }.suffix(6)
+        // Instructions up to a task already judged complete are history, not authorization.
+        let instructions = messages.filter { $0.role == .user || $0.role == .relay }
+        let lastInstruction = instructions.last?.id
+        let open = completedThrough.flatMap { id in instructions.firstIndex { $0.id == id } }.map { Array(instructions[($0 + 1)...]) } ?? instructions
+        let authorization = open.suffix(6)
             .map { "[\($0.role)] \($0.text)" }.joined(separator: "\n")
         let recent = messages.suffix(10).map { "[\($0.role)] \($0.text)" }.joined(separator: "\n")
-        var end = PromiseCheck.TurnEnd(reply: message.text, workPending: !dependencies.isEmpty || !wakeups.isEmpty || managedWorkPending || workers?.isEmpty == false,
+        var end = PromiseCheck.TurnEnd(reply: message.text, workPending: !dependencies.isEmpty || !wakeups.isEmpty || managedWorkPending || judgedWorkers?.isEmpty == false,
             task: pausedCompletionContext.map { $0.task + "\nCurrent user interruption: " + completionAuthorization } ?? completionAuthorization, conversation: authorization + "\nRecent conversation:\n" + recent,
             dependencies: dependencies, actions: actions,
             memory: profile.keepsMemory ? ((try? String(contentsOf: profile.memoryURL, encoding: .utf8)) ?? "") : "",
             terminalRequired: completionRequiresTerminalSignal, signals: completionSignals.removeValue(forKey: message.id) ?? [])
-        end.workerDependencies = workers
+        end.workerDependencies = judgedWorkers
+        end.completed = completedTasks.isEmpty ? nil : completedTasks
         end.evaluatedAt = evaluatedAt.ISO8601Format()
         end.timeZone = Calendar.current.timeZone.identifier
         end.scheduledWakeups = wakeups
@@ -1933,7 +1949,7 @@ public final class Bot: ObservableObject, Identifiable {
                 $0.id == judgment.wakeupID && ($0.date.map { $0 <= reviewedAt } ?? true)
                     && ($0.date.map { $0 > evaluatedAt } ?? false)
             }
-            if source.completionWorkerDependencies != workers || completionScheduledWakeups(at: reviewedAt) != wakeups || timerExpired {
+            if source.completionWorkerDependencies != workers || completionSubagentOwners() != subagentOwners || completionScheduledWakeups(at: reviewedAt) != wakeups || timerExpired {
                 interruptCompletionVerification()
                 completionSignals[message.id] = end.signals
                 checkPromise(in: message, handed: handed, handoffID: handoffID)
@@ -1953,8 +1969,10 @@ public final class Bot: ObservableObject, Identifiable {
                 verdict: verdict, reason: reason), on: message.id)
             switch verdict {
             case .continueWork, .continueAnalysis, .needsTerminalSignal:
-                completionNoProgress = progressed || (verdict == .continueAnalysis && freshReply) ? 0 : completionNoProgress + 1
-                guard completionNoProgress <= 2 else {
+                // Only an automatic continuation that brought nothing new counts; two in a row pause.
+                if progressed || (verdict == .continueAnalysis && freshReply) { completionNoProgress = 0 }
+                else if continued { completionNoProgress += 1 }
+                guard completionNoProgress < 2 else {
                     setCompletionVerification(.init(model: verificationModel, state: .judged,
                         verdict: verdict, reason: reason, continuationPaused: true), on: message.id)
                     append(ChatMessage(role: .notice, text: "Automatic continuation paused: repeated turns produced no new results or substantive analysis. Authorized work remains unfinished; the last reply is not completion."))
@@ -1967,6 +1985,7 @@ public final class Bot: ObservableObject, Identifiable {
                 let reportOnly = verdict == .needsTerminalSignal
                 append(ChatMessage(role: .notice, text: (reportOnly ? "Checking terminal evidence: " : "Continuing the authorized task: ") + reason))
                 let instruction = reportOnly ? PromiseCheck.terminalFollowUp : PromiseCheck.followUp
+                completionContinuing = true
                 if resumePausedWork(note: instruction) {
                     completionRequiresTerminalSignal = true
                     return
@@ -1978,6 +1997,13 @@ public final class Bot: ObservableObject, Identifiable {
                 completionAssignment = nil
                 completionNoProgress = 0
                 if verdict != .waitingUser { completionRequiresTerminalSignal = false }
+                if verdict == .complete, pausedCompletionContext == nil, pausedWork == nil {
+                    // Its completion evidence is reported: later checks must not resurrect it.
+                    let evidence = end.signals.first { $0.kind == .end }?.evidence ?? (reason.isEmpty ? end.reply : reason)
+                    completedTasks = Array((completedTasks + ["Task: " + String(end.task.prefix(600)) + "\nReported complete: " + String(evidence.prefix(800))]).suffix(4))
+                    completedThrough = lastInstruction
+                    completionAuthorization = ""
+                }
                 if verdict == .cancelled {
                     let cancelledID = pausedHandoffID
                     pausedWork = nil
@@ -2004,6 +2030,14 @@ public final class Bot: ObservableObject, Identifiable {
                 append(ChatMessage(role: .notice, text: "Completion could not be established (\(verdict.rawValue)): " + reason + " The last reply was delivered; this is not a completed-work verdict."))
                 afterTurn()
             }
+        }
+    }
+
+    /// This head's running Claude Agent-tool subagents (Codex workers are reported by the process).
+    private func completionSubagentOwners() -> [PromiseCheck.WorkerDependency] {
+        trace.subagents.filter { $0.isRunning && $0.type != "codex-worker" }.map {
+            .init(id: $0.agentID ?? $0.id, run: 1, task: [$0.name, $0.description, $0.prompt].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n"),
+                  state: .running, callback: PromiseCheck.subagentCallback)
         }
     }
 

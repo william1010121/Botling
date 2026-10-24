@@ -32,7 +32,8 @@ struct CompletionContinuationTests {
         agent.reply(Self.idleReply)
         await eventually { !bot.isWorking || agent.sent.count == 2 }
         try await Task.sleep(for: .milliseconds(200))
-        #expect(calls.messages.count == 1, "Pending GPU2/monitor must still reach semantic judgment")
+        // The running GPU2 subagent is a live owner, so a CONTINUE is confirmed by a second judgment.
+        #expect(calls.messages.count == 2, "Pending GPU2/monitor must still reach semantic judgment")
         #expect(agent.sent.count == 2, "Idle GPU3 analysis must continue in the same session")
         #expect(bot.messages.contains { $0.text == Self.idleReply }, "Preserve delivered report")
         bot.stop()
@@ -127,14 +128,15 @@ extension CompletionContinuationTests {
         bot.send(Self.authorization)
         await eventually { fake.agents.count == 1 }
         let agent = fake.agents[0]
-        for n in 1...4 {
+        // The first turn's SSH output is new; the two continuations repeating it are not.
+        for n in 1...3 {
             agent.emit(.trace(.toolUse(id: "ssh-\(n)", tool: "Bash", title: "Check GPU", detail: "same SSH status", parent: nil)))
             agent.emit(.trace(.toolResult(id: "ssh-\(n)", output: "GPU3 idle", failed: false, parent: nil)))
             agent.reply(Self.idleReply)
-            if n < 4 { await eventually { agent.sent.count == n + 1 } }
+            if n < 3 { await eventually { agent.sent.count == n + 1 } }
         }
         await eventually { bot.messages.last?.text.contains("remains unfinished") == true }
-        #expect(agent.sent.count == 4)
+        #expect(agent.sent.count == 3)
     }
 
     @Test(arguments: ["user", "stop-all", "remove", "background", "permission"])
@@ -429,12 +431,12 @@ extension CompletionContinuationTests {
         bot.send(Self.authorization)
         await eventually { fake.agents.count == 1 }
         let agent = fake.agents[0]
-        for n in 1...4 {
+        for n in 1...3 {
             agent.reply(Self.idleReply)
-            if n < 4 { await eventually { agent.sent.count == n + 1 } }
+            if n < 3 { await eventually { agent.sent.count == n + 1 } }
         }
         await eventually { bot.messages.last?.text.contains("remains unfinished") == true }
-        #expect(agent.sent.count == 4)
+        #expect(agent.sent.count == 3)
     }
 
     @Test(arguments: [false, true])
