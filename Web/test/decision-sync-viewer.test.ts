@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { sent } from '../src/bridge';
 import { componentPage } from '../src/components';
 import { setLanguage } from '../src/i18n';
@@ -10,8 +10,8 @@ import type { ChatState, MessageView } from '../src/types';
 const option = (id:string,label:string) => ({id,label,detail:null,recommended:false});
 const message = (id:string,extra:Partial<MessageView>):MessageView => ({id,role:'bot',text:'Design approval',stamp:null,avatar:null,choices:[option('yes','Implement'),option('no','Revise')],chosen:null,answer:null,open:true,attachments:null,replyTo:null,replyPreview:null,openable:false,...extra});
 let viewer:SummaryViewer;
-beforeEach(()=>{setLanguage('en');document.body.innerHTML='';sent.length=0;viewer=new SummaryViewer();});
-afterEach(()=>{viewer.close();document.body.innerHTML='';});
+beforeEach(()=>{vi.useFakeTimers();setLanguage('en');document.body.innerHTML='';sent.length=0;viewer=new SummaryViewer();});
+afterEach(()=>{viewer.close();vi.clearAllTimers();vi.useRealTimers();document.body.innerHTML='';});
 
 it('preserves distinct live card identities and read-only original snapshots for one shared decision',()=>{
   const a=message('claude-view',{decisionID:'claude-view',chosen:0,answer:'Only reviewed scope',open:false,sourceEngine:'claude',sourceAuthor:'Garden'});
@@ -23,7 +23,7 @@ it('preserves distinct live card identities and read-only original snapshots for
   const revealed:string[]=[];
   viewer.open('owner',state,{key:'range',ids:[a.id,b.id,c.id],count:3,state:'ready',bullets:['Reviewed design'],model:'test'},id=>live.get(id)??null,id=>revealed.push(id));
   expect([...document.querySelectorAll<HTMLElement>('.source-message')].map(n=>n.dataset.sourceId)).toEqual([a.id,b.id,c.id]);
-  expect([...document.querySelectorAll('.source-picked')].map(n=>n.textContent)).toEqual(['Implement','Implement']);
+  expect([...document.querySelectorAll('.source-picked')].map(n=>n.textContent)).toEqual(['✓ Implement','✓ Implement']);
   expect([...document.querySelectorAll('.source-note')].filter(n=>n.textContent?.includes('Only reviewed scope'))).toHaveLength(2);
   expect(document.querySelectorAll('dialog .source-answer-in-chat')).toHaveLength(1);
   expect(document.querySelector('dialog .choice')).toBeNull();
