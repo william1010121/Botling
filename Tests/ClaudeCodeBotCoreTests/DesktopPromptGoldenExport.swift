@@ -49,6 +49,39 @@ struct DesktopPromptGoldenExport {
         add("standalone-en", news, profileInfo: newsInfo)
         add("standalone-zh-Hant-dual", news, profileInfo: newsInfo, language: .traditionalChinese, dual: true)
 
+        // Phase 2b: the same profiles with a Codex head (a Codex-only bot, and Codex beside Claude),
+        // with the instructions app-managed Codex workers get.
+        var codexPrompts: [[String: Any]] = []
+        func addCodex(_ name: String, _ profile: BotProfile, profileInfo: [String: Any], language: AppLanguage = .english,
+                      results: ResultPublishing = .artifactUnlessSensitive, dual: Bool = false) {
+            let heads: HeadsSettings? = dual ? .init(engines: [.claude, .codex]) : nil
+            let p = BotPrompts(profile: profile, results: results, language: language, engine: .codex, heads: heads)
+            codexPrompts.append([
+                "name": name,
+                "input": ["profile": profileInfo, "language": language.rawValue, "results": results.rawValue, "dual": dual],
+                "output": ["system": p.system, "headsRule": p.headsRule, "wake": p.wake, "tidy": p.tidy, "handoff": p.handoff,
+                           "resume": p.resume, "codexWorkerSystem": p.codexWorkerSystem],
+            ])
+        }
+        for (index, (profile, info)) in [(main, mainInfo), (probe, probeInfo)].enumerated() {
+            for language in [AppLanguage.english, .traditionalChinese] {
+                for dual in [false, true] {
+                    addCodex("codex-\(index)-\(language.rawValue)-\(dual)", profile, profileInfo: info, language: language, dual: dual)
+                }
+            }
+        }
+        addCodex("codex-manager-plain-ja-local", plain, profileInfo: plainInfo, language: .japanese, results: .localOnly)
+        addCodex("codex-standalone-en", news, profileInfo: newsInfo)
+        addCodex("codex-standalone-zh-Hant-dual", news, profileInfo: newsInfo, language: .traditionalChinese, dual: true)
+        let fewer = HeadsSettings(engines: [.claude, .codex], answerWith: .both, limits: RoundLimits(discussion: 1, review: 4, handoffs: 9), handoffs: true)
+        let noHandoffs = HeadsSettings(engines: [.claude, .codex], answerWith: .both, limits: RoundLimits(), handoffs: false)
+        let headsRules: [String: Any] = [
+            "claude-limits-1-4-9": BotPrompts.headsRule(engine: .claude, heads: fewer),
+            "codex-limits-1-4-9": BotPrompts.headsRule(engine: .codex, heads: fewer),
+            "claude-off": BotPrompts.headsRule(engine: .claude, heads: noHandoffs),
+            "codex-off": BotPrompts.headsRule(engine: .codex, heads: noHandoffs),
+        ]
+
         // The wake briefing's recent lines, an archive entry each, and the reactions intro.
         let home = FileManager.default.temporaryDirectory.appending(path: "ccb-golden-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: home) }
@@ -145,6 +178,9 @@ struct DesktopPromptGoldenExport {
             "timeZone": TimeZone.current.identifier,
             "locale": Locale.current.identifier,
             "prompts": prompts,
+            "codexPrompts": codexPrompts,
+            "headsRules": headsRules,
+            "heads": Self.headsExport(),
             "briefing": briefing,
             "notes": notes,
         ]
@@ -174,6 +210,95 @@ struct DesktopPromptGoldenExport {
         "  \n",
         "~~~\n<choices>\n* fenced\n</choices>\n~~~\nunterminated ```\n<no-reply/>",
     ]
+
+    /// Two-head pieces: HeadTags.parse, the notes one head gets about the other, the conductor's
+    /// notes, and a run of Conductor calls with what each asked for (budgets 6 / 2 / 3).
+    @MainActor
+    static func headsExport() -> [String: Any] {
+        let samples = [
+            "Done.\n<handoff to=\"codex\" kind=\"review\">Check the diff in src/a.ts</handoff>",
+            "<handoff to=\"Claude\">Publish /tmp/r.html</handoff> trailing",
+            "<handoff to=\"codex\" kind=\"weird\" decision=\"22222222-0000-4000-8000-000000000001\">\n  two\n  lines \n</handoff>",
+            "<handoff to=\"gemini\">x</handoff>",
+            "<handoff to=\"codex\">   </handoff>",
+            "First <handoff to=\"codex\" kind=\"discuss\">a</handoff> second <handoff to=\"claude\">b</handoff>",
+            "No tag here.",
+        ]
+        let tags = samples.map { sample -> [String: Any] in
+            let parsed = HeadTags.parse(sample)
+            var row: [String: Any] = ["text": sample, "body": parsed.body]
+            if let h = parsed.tags.handoff {
+                row["handoff"] = ["to": h.to.rawValue, "kind": h.kind.rawValue, "task": h.task, "decision": h.decisionID?.uuidString ?? NSNull()] as [String: Any]
+            }
+            return row
+        }
+        var reply = ChatMessage(role: .bot, text: "I fixed the parser.")
+        reply.steps = [Step(id: "1", kind: .tool, title: "Edit parser.ts"), Step(id: "2", kind: .text, title: "thinking"), Step(id: "3", kind: .tool, title: "Run npm test")]
+        let notes: [String: Any] = [
+            "wordsNote": Bot.wordsNote(.codex, "I take the tests."),
+            "saidNote": Bot.saidNote(.claude, reply),
+            "saidNotePlain": Bot.saidNote(.codex, ChatMessage(role: .bot, text: "Nothing to add.")),
+            "forOtherNote": Bot.forOtherNote(.codex, said: "Only you, please"),
+            "handed": Conductor.handed(from: .claude, handoff: .init(to: .codex, kind: .review, task: "Check it"), count: 2, limit: 6),
+            "handedTask": Conductor.handed(from: .codex, handoff: .init(to: .claude, kind: .task, task: "Publish it"), count: 1, limit: 6),
+            "handedDiscuss": Conductor.handed(from: .claude, handoff: .init(to: .codex, kind: .discuss, task: "Which?"), count: 3, limit: 6),
+            "handBack": Conductor.handBack(from: .codex, reply: "Looks fine."),
+            "handBackEmpty": Conductor.handBack(from: .codex, reply: ""),
+            "limitReached": Conductor.limitReached(other: .codex),
+            "wentWith": Conductor.wentWith,
+            "asNote": Bot.asNote("- Do this. "),
+        ]
+        func row(_ action: ConductorAction) -> [String: Any] {
+            switch action {
+            case let .ask(head, text, id): ["ask": head.rawValue, "text": text, "handoff": id != nil]
+            case let .line(text): ["line": text]
+            case let .card(text, choices): ["card": text, "choices": choices.map(\.label)]
+            case let .progress(p): ["progress": p.map { ["kind": $0.kind.rawValue, "round": $0.round, "limit": $0.limit, "shown": $0.shown] as [String: Any] } ?? NSNull()]
+            }
+        }
+        var steps: [[String: Any]] = []
+        func run(_ name: String, settings: HeadsSettings, _ calls: [(BotEngine, String, String?, Bool)]) {
+            var conductor = Conductor(settings: settings)
+            var out: [[String: Any]] = []
+            _ = conductor.userMessage("Make the parser faster\nplease")
+            var pending: [BotEngine: [UUID]] = [:]
+            for (head, text, tag, handed) in calls {
+                let parsed = HeadTags.parse(text + (tag ?? ""))
+                let id = handed ? pending[head]?.removeLast() : nil
+                let actions = conductor.replied(head, parsed.body, tags: parsed.tags, handed: handed, handoffID: id)
+                for case let .ask(to, _, hid?) in actions { pending[to, default: []].append(hid) }
+                out.append(["head": head.rawValue, "text": parsed.body, "handed": handed, "actions": actions.map(row),
+                            "records": conductor.records.map { ["from": $0.from.rawValue, "to": $0.to.rawValue, "kind": $0.kind.rawValue, "round": $0.round, "limit": $0.limit, "state": $0.state.rawValue, "lines": $0.lines.count] as [String: Any] }])
+            }
+            steps.append(["name": name, "settings": ["discussion": settings.limits.discussion, "review": settings.limits.review, "handoffs": settings.limits.handoffs, "atLimit": settings.limits.atLimit.rawValue], "calls": out])
+        }
+        let both = HeadsSettings(engines: [.claude, .codex])
+        let review = "<handoff to=\"codex\" kind=\"review\">Review it</handoff>"
+        let reviewBack = "<handoff to=\"claude\" kind=\"review\">Fix the nit</handoff>"
+        run("review-limit-2", settings: both, [
+            (.claude, "Made it faster.", review, false), (.codex, "One nit.", reviewBack, true),
+            (.claude, "Fixed.", review, true), (.codex, "Good now.", nil, true), (.claude, "Done, both agree.", nil, true),
+        ])
+        let discuss = "<handoff to=\"codex\" kind=\"discuss\">A or B?</handoff>"
+        let discussBack = "<handoff to=\"claude\" kind=\"discuss\">B, why A?</handoff>"
+        run("discuss-limit-3", settings: both, [
+            (.claude, "A.", discuss, false), (.codex, "B.", discussBack, true), (.claude, "Still A.", discuss, true),
+            (.codex, "Still B.", discussBack, true), (.claude, "A!", discuss, true),
+        ])
+        let task = "<handoff to=\"codex\">Do part 2</handoff>"
+        let taskBack = "<handoff to=\"claude\">Do part 3</handoff>"
+        run("task-limit-6", settings: both, [
+            (.claude, "1", task, false), (.codex, "2", taskBack, true), (.claude, "3", task, true), (.codex, "4", taskBack, true),
+            (.claude, "5", task, true), (.codex, "6", taskBack, true), (.claude, "7", task, true),
+        ])
+        let doers = HeadsSettings(engines: [.claude, .codex], answerWith: .both, limits: RoundLimits(discussion: 3, review: 1, handoffs: 6, atLimit: .useDoers), handoffs: true)
+        run("review-limit-1-doers", settings: doers, [
+            (.claude, "Made it.", review, false), (.codex, "Nit.", reviewBack, true),
+        ])
+        var off = HeadsSettings(engines: [.claude, .codex]); off.handoffs = false
+        run("handoffs-off", settings: off, [(.claude, "Made it.", review, false)])
+        return ["tags": tags, "notes": notes, "conductor": steps]
+    }
 
     static func tagRow(_ tag: TaskTag) -> [String: Any] {
         var row: [String: Any] = [:]

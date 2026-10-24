@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { botPrompts, DEFAULT_HEADS, isPlainOK, PAUSE_NOTE, RELAY_PREFIX, TIDY_LEAD, WAKE_LEAD, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
+import { botPrompts, DEFAULT_HEADS, headsRule, isPlainOK, PAUSE_NOTE, RELAY_PREFIX, TIDY_LEAD, WAKE_LEAD, type AppLanguage, type ResultPublishing } from "../../src/core/prompts";
 import { archiveEntry, reactionIntro, reactionUpdate, recentChat, reportNote, seenReactions } from "../../src/core/briefing";
 import type { ChatRecord } from "../../src/core/store/records";
 import { desktop } from "../helpers";
@@ -21,7 +21,7 @@ interface GoldenPrompt {
   output: Record<string, string>;
 }
 
-function promptsFor(input: GoldenPrompt["input"]) {
+function promptsFor(input: GoldenPrompt["input"], engine: "claude" | "codex" = "claude") {
   const { profile } = input;
   return botPrompts({
     profile: {
@@ -32,6 +32,7 @@ function promptsFor(input: GoldenPrompt["input"]) {
     language: input.language,
     results: input.results,
     heads: input.dual ? DEFAULT_HEADS : null,
+    engine,
   });
 }
 
@@ -48,6 +49,24 @@ describe("prompts: the Swift app's strings", () => {
       }
     });
   }
+
+  for (const entry of golden.codexPrompts as GoldenPrompt[]) {
+    it(`matches ${entry.name} (a Codex head)`, () => {
+      const ours = promptsFor(entry.input, "codex");
+      for (const key of ["system", "headsRule", "wake", "tidy", "handoff", "resume", "codexWorkerSystem"] as const) {
+        expect(ours[key], `${entry.name}.${key}`).toBe(entry.output[key]);
+      }
+    });
+  }
+
+  it("writes each head's rule about the other as Swift does (limits, hand-offs off)", () => {
+    const limits = { handoffs: true, limits: { discussion: 1, review: 4, handoffs: 9 } };
+    const off = { handoffs: false, limits: DEFAULT_HEADS.limits };
+    expect(headsRule(limits, "claude")).toBe(golden.headsRules["claude-limits-1-4-9"]);
+    expect(headsRule(limits, "codex")).toBe(golden.headsRules["codex-limits-1-4-9"]);
+    expect(headsRule(off, "claude")).toBe(golden.headsRules["claude-off"]);
+    expect(headsRule(off, "codex")).toBe(golden.headsRules["codex-off"]);
+  });
 
   it("matches the digests ClaudePromptCompatibilityTests freezes", () => {
     const swift = readFileSync(join(desktop, "..", "Tests", "ClaudeCodeBotCoreTests", "ClaudePromptCompatibilityTests.swift"), "utf8");
