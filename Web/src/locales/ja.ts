@@ -2,6 +2,15 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Japanese (keys as in `en.ts`). */
 export const ja: Dictionary = {
+  "interval.summarize": "{n} 件の返信を要約",
+  "interval.originals": "{n} 件の返信{heads} · 原文を開く",
+  "interval.heads": "（{heads}）",
+  "interval.separator": "、",
+  "interval.unknown": "不明なエンジン",
+  "interval.attribution": "Summary",
+  "interval.autoAttribution": "Summary · 自動",
+  "interval.autoHeader": "次のメッセージ送信時に自動要約 · {n} 件の返信、しきい値超過",
+
   "verification.title": "完了検証",
   "verification.checking": "検証中…",
   "verification.interrupted": "中断・判定なし",

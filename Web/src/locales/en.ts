@@ -3,6 +3,15 @@
 export type Word = string | readonly [one: string, other: string];
 
 export const en = {
+  "interval.summarize": ["Summarize {n} reply", "Summarize {n} replies"],
+  "interval.originals": "{n} replies{heads} · Open originals",
+  "interval.heads": " ({heads})",
+  "interval.separator": ", ",
+  "interval.unknown": "Unknown head",
+  "interval.attribution": "Summary",
+  "interval.autoAttribution": "Summary · Auto",
+  "interval.autoHeader": "Settled when you sent your next message · {n} replies, above threshold",
+
   "verification.title": "Completion verification",
   "verification.checking": "Checking…",
   "verification.interrupted": "Interrupted; no verdict",

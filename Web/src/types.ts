@@ -24,6 +24,8 @@ export interface CatchUpView {
   /** The range and language summarized: expanding is remembered by it. */
   key: string;
   manual?: boolean;
+  automatic?: boolean;
+  speakerCounts?: Record<string, number> | null;
   ids: string[];
   count: number;
   heads?: number | null;
@@ -440,6 +442,7 @@ export interface ChatState {
   avatarMood?: "normal" | "work" | "think" | "sleep" | null;
   /** Unread messages folded on your return, with their summary (`catchup.ts`). */
   catchUp?: CatchUpView | null;
+  intervalSummaries?: CatchUpView[];
 }
 
 export interface CharacterClip {
@@ -512,8 +515,8 @@ export type Action =
   | { type: "reply"; messageID: string }
   | { type: "cancelReply" }
   | { type: "stopRounds" }
-  | { type: "catchUpRetry"; botID: string }
-  | { type: "catchUpManual"; botID: string }
+  | { type: "catchUpRetry"; botID: string; key?: string }
+  | { type: "catchUpManual"; botID: string; userMessageID: string }
   | { type: "stopHandoff"; botID: string; handoffID: string }
   | { type: "openURL"; url: string; label: string }
   | { type: "openExternal"; url: string }

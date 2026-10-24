@@ -163,3 +163,45 @@ it("leaves user boundaries and open replies visible and takes links only from th
   window.ccb.setState(state(null, { messages: [inside] }));
   expect(document.querySelector(".interval-summary-trigger")).toBeNull();
 });
+
+it("keeps historical cards, links, retry targets and expansion independent in every phase", () => {
+  const old = line("old");
+  old.text = `${"context ".repeat(4000)} [Report](file:///tmp/exact.html) [Same](file:///tmp/exact.html)`;
+  old.artifacts = [{ title: "Artifact", url: "https://claude.ai/public/artifacts/old", host: "claude.ai" }];
+  const messages = [line("u1", "user"), old, line("metadata", "notice"), line("u2", "user"), line("new"), line("u3", "user")];
+  const older = view({ key: "older", ids: ["old", "metadata"], count: 1, manual: true, speakerCounts: { codex: 1 } });
+  const newer = view({ key: "newer", ids: ["new"], count: 1, manual: true, automatic: true, speakerCounts: { unknown: 1 } });
+  const draw = (phase: CatchUpView["state"], extra: Partial<ChatState> = {}) => window.ccb.setState(state(null, {
+    messages, intervalSummaries: [{ ...older, state: phase }, newer], lang: "zh-Hant", ...extra,
+  }));
+  draw("loading");
+  const heads = () => [...document.querySelectorAll<HTMLElement>(".interval-summary-head")];
+  const sourceURLs = () => [...heads()[0].querySelectorAll<HTMLElement>(".catchup-links [data-url]")].map(a => a.dataset.url);
+  expect(heads()).toHaveLength(2);
+  expect(sourceURLs()).toEqual(["file:///tmp/exact.html", "https://claude.ai/public/artifacts/old"]);
+  expect(heads()[0].querySelector(".speaker")?.textContent).toBe("botling · Summary");
+  expect(heads()[1].querySelector(".speaker")?.textContent).toBe("botling · Summary · 自動");
+  expect(heads()[0].querySelector(".interval-originals")?.textContent).toBe("›1 則回覆（Codex ×1） · 點開看原文");
+  expect(heads()[1].textContent).toContain("未知來源 ×1");
+  expect(heads()[1].textContent).toContain("你送出下一則時自動結算 · 1 則回覆，超過門檻");
+  heads()[0].querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
+  expect(document.querySelector('[data-id="old"]')?.classList.contains("catchup-folded")).toBe(false);
+  expect(document.querySelector('[data-id="metadata"]')?.classList.contains("catchup-folded")).toBe(false);
+  expect(document.querySelector('[data-id="new"]')?.classList.contains("catchup-folded")).toBe(true);
+  draw("failed");
+  expect(sourceURLs()).toHaveLength(2);
+  expect(heads()[0].querySelector('[data-action="toggle"]')?.getAttribute("aria-expanded")).toBe("true");
+  heads()[0].querySelector<HTMLButtonElement>('[data-action="retry"]')!.click();
+  expect(sent.at(-1)).toEqual({ type: "catchUpRetry", botID: "catchup-bot", key: "older" });
+  draw("ready");
+  expect(sourceURLs()).toHaveLength(2);
+  expect(messages.filter(m => m.role === "user").every(m => !document.querySelector(`[data-id="${m.id}"]`)?.classList.contains("catchup-folded"))).toBe(true);
+  // Re-render, change language, and switch chat: expansion belongs to the exact chat/range.
+  draw("ready", { lang: "en" });
+  expect(heads()[0].querySelector('[data-action="toggle"]')?.getAttribute("aria-expanded")).toBe("true");
+  draw("ready", { botID: "different-chat" });
+  expect(heads()[0].querySelector('[data-action="toggle"]')?.getAttribute("aria-expanded")).toBe("false");
+  window.ccb.setState(state(null, { messages: [], subagent: { id: "sub" } as ChatState["subagent"] }));
+  expect(heads()).toHaveLength(0);
+  expect(document.querySelector(".interval-summary-trigger")).toBeNull();
+});

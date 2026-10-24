@@ -8,6 +8,11 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Summarize any reply interval.** Each interval's last bot reply has a footer chip; its
+  inline summary keeps all original messages, links and artifacts. Historical intervals
+  summarize, expand and retry independently. Optional interval automation uses the same
+  card when your next accepted message closes a range above its threshold (off by default).
+
 - **Catch-up summary.** Come back to a chat with more than a few unread messages (3 by
   default) and they fold into one group behind a short 1–5 bullet summary of what finished,
   what is still running and what waits for your decision. The summary is written by an

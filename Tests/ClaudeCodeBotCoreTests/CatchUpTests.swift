@@ -51,7 +51,7 @@ struct CatchUpTests {
     /// Waits for the summary task the workspace started.
     private func settle(_ workspace: Workspace, _ chat: Bot) async {
         for _ in 0..<200 {
-            if workspace.catchUps[chat.id]?.phase != .loading { return }
+            if workspace.catchUps[chat.id]?.phase != .loading && !(workspace.intervalSummaries[chat.id]?.values.contains { $0.phase == .loading } ?? false) { return }
             try? await Task.sleep(for: .milliseconds(5))
         }
     }
@@ -503,19 +503,19 @@ struct CatchUpTests {
         chat.post(closing, unread: false)
         let before = chat.messages
         await settle(workspace, chat)
-        #expect(workspace.catchUps[chat.id]?.messageIDs == source.map(\.id))
-        #expect(workspace.catchUpView(for: chat)?.heads == 2)
+        #expect(workspace.intervalSummaryViews(for: chat).first?.ids == source.map { $0.id.uuidString })
+        #expect(workspace.intervalSummaryViews(for: chat).first?.speakerCounts == ["claude": 2, "codex": 2])
         #expect(fake.prompts.count == 1)
         workspace.summarizeClosedInterval(in: chat, after: closing)
-        workspace.manuallyCatchUp(in: chat) // Reuses the exact same interval/cache.
+        workspace.summarizeInterval(in: chat, after: chat.messages.first!.id) // Reuses the exact same interval/cache.
         await settle(workspace, chat)
         #expect(fake.prompts.count == 1)
         #expect(chat.messages == before)
         #expect(!chat.isWorking)
         let again = makeWorkspace(root)
         again.catchUpSummarizer = fake.summarizer
-        again.manuallyCatchUp(in: again.mainBot)
-        #expect(again.catchUps[again.mainBot.id]?.phase == .ready)
+        again.summarizeInterval(in: again.mainBot, after: again.mainBot.messages.first!.id)
+        #expect(again.intervalSummaryViews(for: again.mainBot).first?.state == "ready")
         #expect(fake.prompts.count == 1)
     }
 
@@ -580,7 +580,7 @@ struct CatchUpTests {
         chat.post(ChatMessage(role: .user, text: "next"), unread: false)
         await settle(workspace, chat)
         #expect(fake.prompts.count == 1)
-        #expect(workspace.catchUps[chat.id]?.messageIDs.count == 4)
+        #expect(workspace.intervalSummaryViews(for: chat).first?.ids.count == 4)
         #expect(!chat.isWorking)
     }
 
@@ -604,7 +604,73 @@ struct CatchUpTests {
         await settle(workspace, chat)
         #expect(chat.messages.filter { $0.role == .user }.count == 2)
         #expect(fake.prompts.count == 1)
-        #expect(workspace.catchUps[chat.id]?.messageIDs.count == 5)
+        #expect(workspace.intervalSummaryViews(for: chat).first?.ids.count == 5)
+    }
+
+    @Test func historicalIntervalsRunIndependentlyAndRetryFrozenSources() async throws {
+        let root = tempRoot("historical-targets")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = makeWorkspace(root)
+        workspace.setCatchUpEnabled(false)
+        let chat = workspace.mainBot
+        let first = ChatMessage(role: .user, text: "old boundary")
+        var old = ChatMessage(role: .bot, text: "OLD [old](file:///tmp/old.html)")
+        old.engine = .codex
+        let second = ChatMessage(role: .user, text: "new boundary")
+        let latest = ChatMessage(role: .bot, text: "NEW unknown head")
+        for message in [first, old, second, latest] { chat.post(message, unread: false) }
+        workspace.catchUpSummarizer = { _ in { prompt in
+            try await Task.sleep(for: .milliseconds(prompt.contains("OLD") ? 40 : 5))
+            return [prompt.contains("OLD") ? "old result" : "new result"]
+        } }
+        workspace.summarizeInterval(in: chat, after: first.id)
+        workspace.summarizeInterval(in: chat, after: second.id)
+        #expect(workspace.intervalSummaries[chat.id]?.count == 2)
+        await settle(workspace, chat)
+        let views = workspace.intervalSummaryViews(for: chat)
+        #expect(views.map(\.bullets) == [["old result"], ["new result"]])
+        #expect(views.map(\.ids) == [[old.id.uuidString], [latest.id.uuidString]])
+        #expect(views.last?.speakerCounts == ["unknown": 1])
+        #expect(workspace.catchUps[chat.id] == nil)
+        // A failed older range retries its frozen IDs while the latest continues to grow.
+        let key = try #require(views.first?.key)
+        workspace.intervalSummaries[chat.id]?[key]?.phase = .failed
+        chat.post(ChatMessage(role: .bot, text: "NEW later source"), unread: false)
+        workspace.retryIntervalSummary(in: chat, key: key)
+        await settle(workspace, chat)
+        #expect(workspace.intervalSummaryViews(for: chat).first?.ids == [old.id.uuidString])
+        #expect(workspace.intervalSummaryViews(for: chat).first?.bullets == ["old result"])
+        workspace.summarizeInterval(in: chat, after: second.id)
+        await settle(workspace, chat)
+        #expect(workspace.intervalSummaryViews(for: chat).count == 2)
+        #expect(workspace.intervalSummaryViews(for: chat).last?.count == 2)
+        #expect(chat.messages.filter { $0.role == .user }.count == 2)
+    }
+
+    @Test func manualOpenIntervalBecomesAutomaticWithoutReplacingUnreadState() async throws {
+        let root = tempRoot("manual-auto-unread")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = makeWorkspace(root)
+        let fake = FakeSummaries()
+        workspace.catchUpSummarizer = fake.summarizer
+        workspace.setCatchUpEnabled(false)
+        workspace.setIntervalSummaryEnabled(true)
+        workspace.setIntervalSummaryThreshold(1)
+        let chat = workspace.mainBot
+        let user = ChatMessage(role: .user, text: "source boundary")
+        for message in [user, ChatMessage(role: .bot, text: "one"), ChatMessage(role: .bot, text: "two")] { chat.post(message, unread: false) }
+        workspace.startCatchUp(for: chat, unread: 2)
+        workspace.summarizeInterval(in: chat, after: user.id)
+        await settle(workspace, chat)
+        let unread = workspace.catchUps[chat.id]
+        let calls = fake.prompts.count
+        #expect(workspace.intervalSummaryViews(for: chat).first?.automatic == false)
+        chat.post(ChatMessage(role: .user, text: "accepted next message"), unread: false)
+        await settle(workspace, chat)
+        #expect(workspace.intervalSummaryViews(for: chat).count == 1)
+        #expect(workspace.intervalSummaryViews(for: chat).first?.automatic == true)
+        #expect(workspace.catchUps[chat.id] == unread)
+        #expect(fake.prompts.count == calls)
     }
 
 }

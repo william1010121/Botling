@@ -52,6 +52,13 @@ public enum CatchUp {
         return source.contains(where: { $0.role != .divider }) ? source : []
     }
 
+    /// Exact interval following a persisted user boundary, including non-reply source metadata.
+    public static func intervalMessages(in messages: [ChatMessage], after userID: UUID) -> [ChatMessage] {
+        guard let start = messages.firstIndex(where: { $0.id == userID && $0.role == .user }) else { return [] }
+        let tail = messages.dropFirst(start + 1)
+        return Array(tail.prefix(while: { $0.role != .user }))
+    }
+
     /// Top-level replies from any speaker/head; nested tools and workers are not messages.
     public static func replyCount(in messages: [ChatMessage]) -> Int {
         messages.filter { $0.role == .bot }.count
@@ -172,6 +179,7 @@ public struct CatchUpState: Equatable, Sendable {
     public var model: String
     /// Neutral range presentation for the button and interval automation (no unread labels).
     public var manual: Bool = false
+    public var automatic: Bool = false
 }
 
 /// Summaries already written, so a range is summarized once, even over relaunches.

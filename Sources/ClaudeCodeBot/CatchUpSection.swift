@@ -53,7 +53,7 @@ struct CatchUpSection: View {
             Text(L("Chat summaries"))
         } footer: {
             VStack(alignment: .leading, spacing: 6) {
-                Footnote(L("Summarize beside Send uses the messages between your last two messages. With only one message from you, it uses the replies since then."))
+                Footnote(L("Summarize in a reply footer summarizes that interval between your messages. Open the summary to read every original reply."))
                 Footnote(L("Only bot replies count toward thresholds. Summaries keep every source message, link and artifact; expand the group to read the originals. Your messages and conversation history stay unchanged."))
             }
         }

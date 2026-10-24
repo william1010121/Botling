@@ -2,6 +2,15 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Traditional Chinese, as used in Taiwan (keys as in `en.ts`). */
 export const zhHant: Dictionary = {
+  "interval.summarize": "Summarize {n} 則回覆",
+  "interval.originals": "{n} 則回覆{heads} · 點開看原文",
+  "interval.heads": "（{heads}）",
+  "interval.separator": "、",
+  "interval.unknown": "未知來源",
+  "interval.attribution": "Summary",
+  "interval.autoAttribution": "Summary · 自動",
+  "interval.autoHeader": "你送出下一則時自動結算 · {n} 則回覆，超過門檻",
+
   "verification.title": "完成驗證",
   "verification.checking": "驗證中…",
   "verification.interrupted": "已中斷；未有判定",

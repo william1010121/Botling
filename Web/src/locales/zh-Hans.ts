@@ -2,6 +2,15 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Simplified Chinese (keys as in `en.ts`). */
 export const zhHans: Dictionary = {
+  "interval.summarize": "Summarize {n} 条回复",
+  "interval.originals": "{n} 条回复{heads} · 展开查看原文",
+  "interval.heads": "（{heads}）",
+  "interval.separator": "、",
+  "interval.unknown": "未知来源",
+  "interval.attribution": "Summary",
+  "interval.autoAttribution": "Summary · 自动",
+  "interval.autoHeader": "你发送下一条时自动结算 · {n} 条回复，超过阈值",
+
   "verification.title": "完成验证",
   "verification.checking": "验证中…",
   "verification.interrupted": "已中断；没有判定",

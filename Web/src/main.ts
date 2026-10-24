@@ -8,7 +8,7 @@ import { SpecPanel } from "./spec";
 import { fillSubagentBar, subagentLiveElement, subagentMessageElement } from "./subagent";
 import { PinArea } from "./pins";
 import { HandoffDock } from "./handoffs";
-import { CatchUpGroup, onCatchUpToggle } from "./catchup";
+import { IntervalSummaries, onCatchUpToggle } from "./catchup";
 import { FloatLayer } from "./float";
 import { handleMediaClicks } from "./lightbox";
 import { PluginHost, type PluginSpec } from "./plugins";
@@ -43,7 +43,7 @@ class Chat {
   /** Pins floated in a corner of this chat (and other bots' shown in all bots), over the chat and the Board. */
   private readonly floats: FloatLayer;
   /** Unread messages folded on your return, with their summary. */
-  private readonly catchUp = new CatchUpGroup();
+  private readonly catchUp = new IntervalSummaries();
   /**
    * Each message drawn: its element, and the key it was drawn from. `message` and `mark` are what
    * the key was made of, so an update that hands back the same message object (`patchState`)
@@ -75,7 +75,6 @@ class Chat {
     this.scroller = document.getElementById("scroller")!;
     this.list = document.getElementById("messages")!;
     this.composer = new Composer(document.getElementById("composer-slot")!);
-    this.composer.root.querySelector(".composer-tools")!.insertBefore(this.catchUp.trigger, this.composer.root.querySelector(".send"));
     this.pins = new PinArea(slot("pin-area", "div"), slot("board", "section"));
     this.handoffs = new HandoffDock(this.pins.row);
     this.floats = new FloatLayer(document.body);

@@ -120,6 +120,7 @@ struct ChatSurface: NSViewRepresentable {
             },
             chatAvatarSize: workspace.settings.chatAvatarSizeChoice,
             catchUp: workspace.catchUpView(for: bot),
+            intervalSummaries: workspace.intervalSummaryViews(for: bot),
             avatar: { projectID in
                 if let projectID, let kind = workspace.avatar(for: projectID) {
                     return AvatarImages.dataURL(kind, eyes: .open)
@@ -303,10 +304,12 @@ struct ChatSurface: NSViewRepresentable {
                 bot.stopRounds()
             case "catchUpManual":
                 guard id("botID") == bot.id, workspace.viewingSubagent == nil else { return }
-                workspace.manuallyCatchUp(in: bot)
+                guard let userID = id("userMessageID") else { return }
+                workspace.summarizeInterval(in: bot, after: userID)
             case "catchUpRetry":
                 guard id("botID") == bot.id else { return }
-                workspace.retryCatchUp(in: bot)
+                if let key = body["key"] as? String { workspace.retryIntervalSummary(in: bot, key: key) }
+                else { workspace.retryCatchUp(in: bot) }
             case "openURL":
                 if let text = body["url"] as? String, let url = URL(string: text) {
                     let label = (body["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? url.lastPathComponent

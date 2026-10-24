@@ -391,6 +391,7 @@ public struct ChatPayload: Encodable, Equatable {
     var avatarMood: String? = nil
     /// Unread messages folded on your return, with their summary; nil when there is no group.
     var catchUp: CatchUpView? = nil
+    var intervalSummaries: [CatchUpView] = []
 
     /// The page's catch-up group: which messages it folds and what the summary says.
     public struct CatchUpView: Encodable, Equatable {
@@ -411,6 +412,8 @@ public struct ChatPayload: Encodable, Equatable {
         public var until: String? = nil
         public var latest: String? = nil
         public var manual: Bool = false
+        public var automatic: Bool = false
+        public var speakerCounts: [String: Int]? = nil
     }
 
     /// Bot look Cute: the engine characters as image URLs. `avatar`: a head's
@@ -591,6 +594,7 @@ public struct ChatPayload: Encodable, Equatable {
         sourceLook: ((UUID) -> HeadLook?)? = nil,
         chatAvatarSize: Int? = nil,
         catchUp: CatchUpView? = nil,
+        intervalSummaries: [CatchUpView] = [],
         avatar: (_ projectID: UUID?) -> String
     ) -> ChatPayload {
         // Each guest wears its own bot's hat. Never infer an old reply's engine from settings.
@@ -763,7 +767,8 @@ public struct ChatPayload: Encodable, Equatable {
             animatedHeads: animations.isEmpty ? nil : animations,
             avatarMood: look != nil || !sourceLooks.isEmpty
                 ? Chibi.mood(asleep: moodBot.phase == .asleep, working: moodBot.isWorking, waiting: moodBot.waitingForPermission).rawValue : nil,
-            catchUp: catchUp
+            catchUp: catchUp,
+            intervalSummaries: intervalSummaries
         )
     }
 

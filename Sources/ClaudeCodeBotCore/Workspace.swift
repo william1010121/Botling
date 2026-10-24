@@ -174,6 +174,8 @@ public final class Workspace: ObservableObject {
     public var catchUpSummarizer: ((String) -> CatchUp.Summarizer)?
     /// Each chat's folded unread messages and their summary, by bot id. UI only, not saved.
     @Published public internal(set) var catchUps: [UUID: CatchUpState] = [:]
+    @Published public internal(set) var intervalSummaries: [UUID: [String: CatchUpState]] = [:]
+    var intervalSummaryTasks: [UUID: [String: Task<Void, Never>]] = [:]
     var catchUpTasks: [UUID: Task<Void, Never>] = [:]
     var intervalSummaryClosures: [UUID: UUID] = [:]
     lazy var catchUpCache = CatchUpCache(url: root.appending(path: CatchUpCache.fileName))

@@ -72,8 +72,94 @@ extension Workspace {
         intervalSummaryClosures[chat.id] = message.id
         let source = CatchUp.intervalMessages(in: chat.messages)
         guard CatchUp.replyCount(in: source) > settings.intervalSummaryThreshold else { return }
-        // `manual` selects the neutral range UI (no unread labels), shared with the button.
-        beginCatchUp(for: chat, messages: source, manual: true)
+        beginIntervalSummary(in: chat, messages: source, automatic: true)
+    }
+
+    /// The footer supplies a user message UUID, never a latest-only fallback.
+    public func summarizeInterval(in chat: Bot, after userID: UUID) {
+        let source = CatchUp.intervalMessages(in: chat.messages, after: userID)
+        guard CatchUp.replyCount(in: source) > 0 else { return }
+        beginIntervalSummary(in: chat, messages: source)
+    }
+
+    private func beginIntervalSummary(in chat: Bot, messages: [ChatMessage], automatic: Bool = false) {
+        let key = CatchUp.key(messages, language: language)
+        if let state = intervalSummaries[chat.id]?[key], state.phase != .failed {
+            if automatic { intervalSummaries[chat.id]?[key]?.automatic = true }
+            return
+        }
+        // A growing open interval replaces its own earlier range, never overlaps it.
+        for (oldKey, old) in intervalSummaries[chat.id] ?? [:] where oldKey != key && old.messageIDs.first == messages.first?.id {
+            intervalSummaryTasks[chat.id]?[oldKey]?.cancel()
+            intervalSummaryTasks[chat.id]?[oldKey] = nil
+            intervalSummaries[chat.id]?[oldKey] = nil
+        }
+        var state = CatchUpState(key: key, messageIDs: messages.map(\.id), phase: .loading,
+                                 model: settings.catchUpModel, manual: true, automatic: automatic)
+        if let cached = catchUpCache[key] {
+            state.phase = .ready
+            state.bullets = cached.bullets
+            state.model = cached.model
+        }
+        intervalSummaries[chat.id, default: [:]][key] = state
+        if state.phase == .loading { runIntervalSummary(in: chat, messages: messages, state: state) }
+    }
+
+    public func retryIntervalSummary(in chat: Bot, key: String) {
+        guard var state = intervalSummaries[chat.id]?[key], state.phase == .failed else { return }
+        let ids = Set(state.messageIDs)
+        let source = chat.messages.filter { ids.contains($0.id) }
+        guard !source.isEmpty else { return }
+        state.phase = .loading
+        state.error = nil
+        state.model = settings.catchUpModel
+        intervalSummaries[chat.id]?[key] = state
+        runIntervalSummary(in: chat, messages: source, state: state)
+    }
+
+    private func runIntervalSummary(in chat: Bot, messages: [ChatMessage], state: CatchUpState) {
+        let chatID = chat.id, key = state.key, model = state.model
+        guard let make = catchUpSummarizer else {
+            intervalSummaries[chatID]?[key]?.phase = .failed
+            intervalSummaries[chatID]?[key]?.error = L("The summary service is unavailable.")
+            return
+        }
+        let prompt = CatchUp.prompt(for: messages, language: language) { [weak self] in
+            self?.catchUpName(of: $0, in: chat) ?? chat.name
+        }
+        let summarize = make(model)
+        intervalSummaryTasks[chatID, default: [:]][key] = Task { @MainActor [weak self] in
+            let result: Result<[String], Error>
+            do { result = .success(try await summarize(prompt)) } catch { result = .failure(error) }
+            guard let self, !Task.isCancelled, var current = intervalSummaries[chatID]?[key] else { return }
+            switch result {
+            case let .success(bullets):
+                current.phase = .ready
+                current.bullets = bullets
+                catchUpCache.store(bullets, model: model, for: key)
+            case let .failure(error):
+                current.phase = .failed
+                current.error = error.localizedDescription
+            }
+            intervalSummaries[chatID]?[key] = current
+            intervalSummaryTasks[chatID]?[key] = nil
+        }
+    }
+
+    public func intervalSummaryViews(for chat: Bot) -> [ChatPayload.CatchUpView] {
+        let positions = Dictionary(chat.messages.enumerated().map { ($1.id.uuidString, $0) }, uniquingKeysWith: { first, _ in first })
+        return (intervalSummaries[chat.id] ?? [:]).values.compactMap { state in
+            let ids = Set(state.messageIDs)
+            let source = chat.messages.filter { ids.contains($0.id) }
+            guard !source.isEmpty else { return nil }
+            let replies = source.filter { $0.role == .bot }
+            let counts = Dictionary(grouping: replies, by: { $0.engine?.rawValue ?? "unknown" }).mapValues(\.count)
+            return ChatPayload.CatchUpView(key: state.key, ids: source.map { $0.id.uuidString },
+                count: replies.count, state: state.phase.rawValue, bullets: state.bullets, error: state.error,
+                model: state.model, manual: true, automatic: state.automatic, speakerCounts: counts)
+        }.sorted { lhs, rhs in
+            return (positions[lhs.ids.first ?? ""] ?? 0) < (positions[rhs.ids.first ?? ""] ?? 0)
+        }
     }
 
     private func beginCatchUp(for chat: Bot, messages: [ChatMessage], manual: Bool = false) {

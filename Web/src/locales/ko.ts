@@ -2,6 +2,15 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Korean (keys as in `en.ts`). */
 export const ko: Dictionary = {
+  "interval.summarize": "답장 {n}개 요약",
+  "interval.originals": "답장 {n}개{heads} · 원문 보기",
+  "interval.heads": " ({heads})",
+  "interval.separator": ", ",
+  "interval.unknown": "알 수 없는 엔진",
+  "interval.attribution": "Summary",
+  "interval.autoAttribution": "Summary · 자동",
+  "interval.autoHeader": "다음 메시지를 보낼 때 자동 요약 · 답장 {n}개, 기준 초과",
+
   "verification.title": "완료 검증",
   "verification.checking": "검증 중…",
   "verification.interrupted": "중단됨; 판정 없음",

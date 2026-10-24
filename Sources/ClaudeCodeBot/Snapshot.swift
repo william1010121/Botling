@@ -76,17 +76,34 @@ enum Snapshot {
             claude.engine = .claude
             var codex = ChatMessage(role: .bot, text: "Checked the regression tests. [Artifact](https://claude.ai/public/artifacts/sample-interval)", date: now.addingTimeInterval(-180))
             codex.engine = .codex
-            let notice = ChatMessage(role: .notice, text: String(repeating: "Sample source context. ", count: 150) + " [Source beyond model limit](https://example.org/retained-source)", date: now.addingTimeInterval(-120))
+            let notice = ChatMessage(role: .notice, text: "All interval sources are kept. [Source](https://example.org/retained-source)", date: now.addingTimeInterval(-120))
             let closing = ChatMessage(role: .user, text: "Next message closes the interval. Keep both of my messages visible.", date: now.addingTimeInterval(-60))
-            store.save(messages: [first, claude, codex, notice, closing])
+            let mode = ProcessInfo.processInfo.environment["CCB_INTERVAL_PRESENTATION"] ?? "manual"
+            store.save(messages: [first, claude, codex, notice] + (mode == "auto" ? [] : [closing]))
             draw(root: root, to: path) { workspace in
-                let source = CatchUp.intervalMessages(in: workspace.mainBot.messages)
+                workspace.setLanguage(.traditionalChinese)
+                let source = [claude, codex, notice]
                 let key = "\(source.first!.id.uuidString)-\(source.last!.id.uuidString)-\(workspace.language.rawValue)"
-                let entry: [String: Any] = [key: ["bullets": ["Source review and regression checks finished.", "All three links remain available, including the source beyond the model input limit."], "model": workspace.settings.catchUpModel, "date": Date().timeIntervalSinceReferenceDate]]
-                if let data = try? JSONSerialization.data(withJSONObject: entry) {
+                let entry: [String: Any] = [key: ["bullets": ["已完成來源檢查與回歸測試。", "保留區間內全部三個連結；點開即可閱讀原文。"], "model": workspace.settings.catchUpModel, "date": Date().timeIntervalSinceReferenceDate]]
+                if mode == "manual" || mode == "auto", let data = try? JSONSerialization.data(withJSONObject: entry) {
                     try? data.write(to: root.appending(path: "catchup-summaries.json"))
                 }
-                workspace.manuallyCatchUp(in: workspace.mainBot)
+                if mode == "auto" {
+                    workspace.setIntervalSummaryEnabled(true)
+                    workspace.setIntervalSummaryThreshold(1)
+                    workspace.mainBot.post(closing, unread: false)
+                } else if mode != "chips" {
+                    if mode == "loading" {
+                        workspace.catchUpSummarizer = { _ in { _ in
+                            try await Task.sleep(for: .seconds(60))
+                            return ["Sample only"]
+                        } }
+                    }
+                    workspace.summarizeInterval(in: workspace.mainBot, after: first.id)
+                }
+                var open = ChatMessage(role: .bot, text: "新的回覆區間仍可獨立摘要。（SAMPLE DATA）", date: now)
+                open.engine = .codex
+                workspace.mainBot.post(open, unread: false)
             }
             return true
         }
@@ -346,7 +363,7 @@ enum Snapshot {
         let json = if let watched = subagent {
             ChatPayload.make(subagent: watched, of: workspace.mainBot, components: workspace.components, avatar: AvatarImages.dataURL(.circle, eyes: .open), chatAvatarSize: workspace.settings.chatAvatarSizeChoice).json()
         } else {
-            ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, pins: pins ? workspace.pinContext(for: workspace.mainBot, board: board) : nil, specs: pins, look: look == .cute ? ChibiImages.look(for: .circle) : nil, chatAvatarSize: workspace.settings.chatAvatarSizeChoice, catchUp: workspace.catchUpView(for: workspace.mainBot)) { projectID in
+            ChatPayload.make(bot: workspace.mainBot, components: workspace.components, pending: [], replyingTo: nil, pins: pins ? workspace.pinContext(for: workspace.mainBot, board: board) : nil, specs: pins, look: look == .cute ? ChibiImages.look(for: .circle) : nil, chatAvatarSize: workspace.settings.chatAvatarSizeChoice, catchUp: workspace.catchUpView(for: workspace.mainBot), intervalSummaries: workspace.intervalSummaryViews(for: workspace.mainBot)) { projectID in
                 AvatarImages.dataURL(projectID == nil ? .circle : .triangle, eyes: .open)
             }.json()
         }
@@ -841,6 +858,22 @@ enum Snapshot {
             }
             print("PASS: isolated workspace loaded old own-project label as lowercase botling before sidebar rendering")
         }
+        let intervalSample = ProcessInfo.processInfo.environment["CCB_WINDOW_INTERVAL_SUMMARY"] != nil
+        if intervalSample {
+            workspace.setLanguage(.traditionalChinese)
+            let first = ChatMessage(role: .user, text: "區間摘要驗收（SAMPLE DATA，沒有呼叫真實模型）")
+            var claude = ChatMessage(role: .bot, text: "已檢查來源。[來源](https://example.org/sample-source)")
+            claude.engine = .claude
+            var codex = ChatMessage(role: .bot, text: "已完成回歸測試。[成果](https://claude.ai/public/artifacts/sample)")
+            codex.engine = .codex
+            for message in [first, claude, codex] { workspace.mainBot.post(message, unread: false) }
+            let key = "\(claude.id.uuidString)-\(codex.id.uuidString)-\(workspace.language.rawValue)"
+            let entry: [String: Any] = [key: ["bullets": ["來源與測試檢查完成；所有連結保留。"], "model": workspace.settings.catchUpModel, "date": Date().timeIntervalSinceReferenceDate]]
+            if let data = try? JSONSerialization.data(withJSONObject: entry) { try? data.write(to: root.appending(path: "catchup-summaries.json")) }
+            // The WKWebView clicks the first footer below; production ChatSurface handles it.
+            workspace.mainBot.post(ChatMessage(role: .user, text: "這是下一則訊息，舊區間可以獨立摘要。"), unread: false)
+            workspace.mainBot.post(ChatMessage(role: .bot, text: "新的區間仍保留自己的 Summarize。（SAMPLE DATA）"), unread: false)
+        }
         workspace.refreshWaiting()
         if teamSample { workspace.view(subagent: "sample-codex", of: workspace.mainBot) }
         // `CCB_WINDOW_WEB=gemini` (or `chatgpt`, `claude`): that web site picked, with sample
@@ -862,7 +895,7 @@ enum Snapshot {
             // `CCB_WINDOW_CAPTURE=recording` (or `saved`): its capture card, with sample captures.
             if let mode = ProcessInfo.processInfo.environment["CCB_WINDOW_CAPTURE"] { WebCaptureRun.sample(mode, on: site, in: workspace) }
         }
-        let size = CGSize(width: 1280, height: 820)
+        let size = CGSize(width: ProcessInfo.processInfo.environment["CCB_WINDOW_WIDTH"].flatMap(Double.init) ?? 1280, height: 820)
         let content = RootView(workspace: workspace, settings: SettingsNavigator())
             .frame(minWidth: 980, minHeight: 620)
             .overlay(alignment: .bottomLeading) {
@@ -887,7 +920,47 @@ enum Snapshot {
         host.frame = frame
         window.contentView = host
         self.window = window
+        func chatView(_ node: NSView) -> WKWebView? {
+            if let web = node as? WKWebView { return web }
+            return node.subviews.lazy.compactMap { chatView($0) }.first
+        }
+        if intervalSample {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                chatView(host)?.evaluateJavaScript("document.querySelector('.interval-summary-trigger')?.click()")
+            }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            if intervalSample {
+                Task { @MainActor in
+                    guard let web = chatView(host) else { exit(1) }
+                    do {
+                        let value = try await web.callAsyncJavaScript("""
+                        const assigned = [...document.images].filter(img => img.getAttribute('src'));
+                        await Promise.all(assigned.map(img => img.decode().catch(() => {})));
+                        const images = assigned.map(img => ({ complete: img.complete, width: img.naturalWidth }));
+                        const card = document.querySelector('.interval-summary-head');
+                        const chips = [...document.querySelectorAll('.interval-summary-trigger')];
+                        const links = [...(card?.querySelectorAll('[data-url]') ?? [])].map(a => a.dataset.url);
+                        const users = [...document.querySelectorAll('.row.user')];
+                        const passed = !!card && links.length === 2 && chips.length === 1 &&
+                          users.length === 2 && users.every(r => !r.classList.contains('catchup-folded')) &&
+                          card.querySelector('.interval-originals')?.textContent.includes('Codex ×1、Claude ×1') &&
+                          !document.querySelector('.composer-tools .catchup-button') &&
+                          images.every(img => img.complete && img.width > 0) && document.documentElement.scrollWidth <= innerWidth;
+                        return { passed, fixture: 'SAMPLE DATA; production SwiftUI/ChatSurface bridge, cached model fixture',
+                          links, images, attribution: card?.querySelector('.speaker')?.textContent, chipCount: chips.length, width: innerWidth };
+                        """, arguments: [:], in: nil, contentWorld: .page)
+                        guard let evidence = value as? [String: Any], let data = try? JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys]) else { exit(1) }
+                        try? data.write(to: URL(filePath: path + ".json"))
+                        guard evidence["passed"] as? Bool == true,
+                              let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { exit(1) }
+                        host.cacheDisplay(in: host.bounds, to: rep)
+                        try? rep.representation(using: .png, properties: [:])?.write(to: URL(filePath: path))
+                        exit(0)
+                    } catch { exit(1) }
+                }
+                return
+            }
             let bounds = CGRect(origin: .zero, size: size)
             let off = columns.filter { !bounds.insetBy(dx: -0.5, dy: -0.5).contains($0.value) || $0.value.minY != 0 }
             for (name, column) in columns.sorted(by: { $0.key < $1.key }) {
@@ -1480,10 +1553,33 @@ enum Snapshot {
                 });
                 const links = [...document.querySelectorAll('.catchup-links [data-url]')].map(a => a.dataset.url);
                 const overflow = document.documentElement.scrollWidth > innerWidth;
-                const passed = state.catchUp?.state === 'ready' && state.catchUp.ids.length === 3 &&
-                  boundaries.length === 2 && boundaries.every(b => b.visible) && links.length === 3 &&
+                const summary = state.intervalSummaries?.[0];
+                const probe = document.createElement('span');
+                probe.style.backgroundColor = 'var(--chip)';
+                document.body.append(probe);
+                const chipBackground = getComputedStyle(probe).backgroundColor;
+                probe.remove();
+                const chips = [...document.querySelectorAll('.interval-summary-trigger')].map(b => ({
+                  text: b.textContent, height: b.getBoundingClientRect().height,
+                  message: b.closest('.row')?.dataset.id,
+                  inFooter: !!b.closest('.message-footer'),
+                  chipBackground: getComputedStyle(b).backgroundColor === chipBackground
+                }));
+                const card = document.querySelector('.interval-summary-head');
+                const expanded = card?.querySelector('[data-action="toggle"]')?.getAttribute('aria-expanded') === 'true';
+                const originals = (summary?.ids ?? []).map(id => {
+                  const row = document.querySelector(`[data-id="${id}"]`);
+                  return { id, visible: !!row && !row.classList.contains('catchup-folded') };
+                });
+                const passed = boundaries.length === 2 && boundaries.every(b => b.visible) &&
+                  (summary ? summary.ids.length === 3 && summary.count === 2 && links.length === 3 && chips.length === 1 : links.length === 0 && chips.length === 2) &&
+                  chips.every(b => b.height === 30 && b.inFooter && b.chipBackground) &&
+                  originals.every(row => row.visible === !!expanded) &&
+                  !document.querySelector('.composer-tools .catchup-button') &&
                   images.every(img => img.complete && img.width > 0) && !overflow;
-                return { passed, boundaries, links, images, unassignedImages, overflow, sourceIDs: state.catchUp?.ids };
+                return { passed, fixture: 'SAMPLE DATA, no live model', boundaries, links, chips, originals, expanded,
+                  attribution: card?.querySelector('.speaker')?.textContent, phase: summary?.state,
+                  images, unassignedImages, overflow, sourceIDs: summary?.ids };
                 """, arguments: ["state": state], in: nil, contentWorld: .page)
                         guard let evidence = value as? [String: Any],
                               let data = try? JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys]) else { exit(1) }

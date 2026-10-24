@@ -16,7 +16,7 @@ extension L10n {
         "Use default thresholds": ["使用預設門檻", "使用默认阈值", "既定のしきい値を使う", "기본 기준 사용"],
         "Both thresholds: more than {0} bot replies": ["兩項門檻：Bot 回覆超過 {0} 則", "两项阈值：Bot 回复超过 {0} 条", "両方のしきい値：ボット返信が {0} 件を超えたとき", "두 기준: 봇 답장이 {0}개를 넘을 때"],
         "More than {0} bot replies": ["Bot 回覆超過 {0} 則", "Bot 回复超过 {0} 条", "ボット返信が {0} 件を超えたとき", "봇 답장이 {0}개를 넘을 때"],
-        "Summarize beside Send uses the messages between your last two messages. With only one message from you, it uses the replies since then.": ["「傳送」旁的「摘要」會整理你最近兩次發言之間的訊息。若你只發言過一次，則整理那之後的回覆。", "「发送」旁的「摘要」会整理你最近两次发言之间的消息。若你只发言过一次，则整理那之后的回复。", "送信の横の要約は、自分の直近2つのメッセージ間を対象にします。自分のメッセージが1つだけなら、その後の返信を対象にします。", "보내기 옆의 요약은 내 최근 두 메시지 사이의 내용을 요약합니다. 내 메시지가 하나뿐이면 그 이후의 답장을 요약합니다."],
+        "Summarize in a reply footer summarizes that interval between your messages. Open the summary to read every original reply.": ["回覆尾端的 Summarize 會整理該次發言之後的回覆區間。展開摘要即可閱讀所有原文。", "回复尾部的 Summarize 会整理该次发言之后的回复区间。展开摘要即可阅读所有原文。", "返信の下の要約は、その発言後の区間を対象にします。展開すると元の返信をすべて読めます。", "답장 아래 요약은 해당 발언 이후 구간을 요약합니다. 펼치면 모든 원문을 볼 수 있습니다."],
         "Only bot replies count toward thresholds. Summaries keep every source message, link and artifact; expand the group to read the originals. Your messages and conversation history stay unchanged.": ["門檻只計算 Bot 回覆。摘要保留區間內所有原始訊息、連結與成果；展開即可閱讀原文。你的發言與對話紀錄維持原樣。", "阈值只计算 Bot 回复。摘要保留区间内所有原始消息、链接与成果；展开即可阅读原文。你的发言与对话记录保持原样。", "しきい値はボットの返信だけを数えます。元のメッセージ、リンク、成果物はすべて保持され、展開して読めます。自分のメッセージと会話履歴は変わりません。", "기준에는 봇 답장만 셉니다. 모든 원문 메시지, 링크와 결과물은 보존되며 펼쳐서 읽을 수 있습니다. 내 메시지와 대화 기록은 바뀌지 않습니다."],
         // Catch-up summary
         "Catch-up summary": ["未讀摘要", "未读摘要", "未読のまとめ", "읽지 않은 메시지 요약"],
