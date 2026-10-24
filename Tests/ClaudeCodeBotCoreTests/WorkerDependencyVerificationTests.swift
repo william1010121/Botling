@@ -203,3 +203,47 @@ extension WorkerDependencyVerificationTests {
         #expect(bot.messages.last(where: { $0.role == .bot })?.completionVerification?.verdict == .continueWork)
     }
 }
+
+extension WorkerDependencyVerificationTests {
+    @Test(arguments: ["before-thread-response", "before-turn-response", "running"])
+    func followupIsDeliveredExactlyOnceWithoutMutatingLaunchInstructions(_ timing: String) throws {
+        let h = CodexManagedWorkerTests()
+        var (session, _) = h.ready()
+        h.rootTurn(&session)
+        let original = "Original catalog research"
+        let followup = "Count only the seven synthetic alpha records."
+        let handoff = h.tool(100, arguments: ["instructions": original, "name": "catalog"], &session)
+        let task = try #require(session.completionWorkerDependencies.first?.id)
+        var writes: [[String: Any]] = []
+        func sendFollowup(_ session: inout CodexSession) {
+            writes += h.tool(101, name: "app_send_message", arguments: ["task_id": task, "message": followup], &session).writes
+        }
+        if timing == "before-thread-response" { sendFollowup(&session) }
+        let threadReady = h.response(h.write(handoff, "thread/start"), ["thread": ["id": "worker"]], &session)
+        writes += threadReady.writes
+        if timing == "before-turn-response" { sendFollowup(&session) }
+        let turnReady = h.response(h.write(threadReady, "turn/start"), ["turn": ["id": "worker-1"]], &session)
+        writes += turnReady.writes
+        if timing == "running" { sendFollowup(&session) }
+        let starts = writes.filter { $0["method"] as? String == "turn/start" }
+        let steers = writes.filter { $0["method"] as? String == "turn/steer" }
+        func input(_ write: [String: Any]) -> String {
+            let params = write["params"] as? [String: Any]
+            return (params?["input"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }.joined(separator: "\n")
+        }
+        #expect(starts.count == 1)
+        #expect(starts.first.map(input) == original)
+        #expect(steers.count == 1)
+        #expect(steers.first.map(input) == followup)
+        #expect((starts + steers).map(input).joined(separator: "\n").components(separatedBy: followup).count - 1 == 1)
+        #expect((steers.first?["params"] as? [String: Any])?["expectedTurnId"] as? String == "worker-1")
+        #expect(session.managedWorkerRecords.first?.instructions == original)
+        let evidence = try #require(session.completionWorkerDependencies.first?.task)
+        #expect(evidence.contains(original))
+        #expect(evidence.components(separatedBy: followup).count - 1 == 1)
+        #expect(h.tool(101, name: "app_send_message", arguments: ["task_id": task, "message": followup], &session).methods.isEmpty)
+        #expect(session.completionWorkerDependencies.first?.task == evidence)
+        _ = h.response(try #require(steers.first), [:], &session)
+        #expect(session.completionWorkerDependencies.first?.task == evidence)
+    }
+}
