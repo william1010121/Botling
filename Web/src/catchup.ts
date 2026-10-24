@@ -1,6 +1,7 @@
 import { post } from "./bridge";
 import { t } from "./i18n";
 import type { CatchUpView, ChatState } from "./types";
+import { sourceLinks, clickableSourceURL, type SourceLink } from "./catchup-links";
 import { escapeHTML } from "./util";
 
 /**
@@ -12,6 +13,7 @@ import { escapeHTML } from "./util";
 export class CatchUpGroup {
   /** The unread divider and the summary card, before the first folded message. */
   readonly head: HTMLElement;
+  readonly trigger: HTMLButtonElement;
   /** "End of unread", after the last one, while expanded. */
   readonly end: HTMLElement;
   /** Ranges you expanded, by `CatchUpView.key`. */
@@ -22,6 +24,12 @@ export class CatchUpGroup {
   private botID = "";
 
   constructor() {
+    this.trigger = document.createElement("button");
+    this.trigger.type = "button";
+    this.trigger.className = "catchup-button small";
+    this.trigger.addEventListener("click", () => {
+      if (!this.trigger.disabled) post({ type: "catchUpManual", botID: this.botID });
+    });
     this.head = document.createElement("div");
     this.head.className = "catchup-extra catchup-head";
     this.end = document.createElement("div");
@@ -33,6 +41,13 @@ export class CatchUpGroup {
 
   /** Places the group for `state`; `element` finds a message's drawn row. */
   update(state: ChatState, element: (id: string) => HTMLElement | null): void {
+    this.botID = state.botID;
+    const empty = !state.messages.some((m) => m.role !== "divider");
+    const loading = state.catchUp?.state === "loading";
+    this.trigger.hidden = !!state.subagent;
+    this.trigger.disabled = empty || loading;
+    this.trigger.textContent = t(loading ? "catchup.running" : empty ? "catchup.empty" : "catchup.manual");
+    this.trigger.title = t("catchup.manualHint");
     const view = state.subagent ? null : state.catchUp ?? null;
     const rows = view ? view.ids.map(element).filter((row): row is HTMLElement => !!row) : [];
     if (!view || rows.length === 0) {
@@ -40,16 +55,16 @@ export class CatchUpGroup {
       return;
     }
     this.view = view;
-    this.botID = state.botID;
     const open = this.expanded.has(view.key);
     const avatars = [...new Set(state.messages.filter((m) => view.ids.includes(m.id) && m.avatar).map((m) => m.avatar!))].slice(0, 3);
-    const drawKey = JSON.stringify([view, open, avatars, state.lang]);
+    const links = sourceLinks(state.messages.filter((m) => view.ids.includes(m.id)));
+    const drawKey = JSON.stringify([view, open, avatars, links, state.lang]);
     if (drawKey !== this.drawnKey) {
       const focused = this.head.contains(document.activeElement) || this.end.contains(document.activeElement)
         ? (document.activeElement as HTMLElement).dataset.action : undefined;
       this.drawnKey = drawKey;
-      this.head.innerHTML = headHTML(view, open, avatars);
-      this.end.innerHTML = endHTML();
+      this.head.innerHTML = headHTML(view, open, avatars, links);
+      this.end.innerHTML = endHTML(view.manual);
       if (focused) (this.head.querySelector<HTMLElement>(`[data-action="${focused}"]`) ?? this.end.querySelector<HTMLElement>(`[data-action="${focused}"]`))?.focus({ preventScroll: true });
     }
     this.head.classList.toggle("open", open);
@@ -122,10 +137,10 @@ export function bulletHTML(bullet: string): string {
     : `<li><span class="dot" aria-hidden="true"></span><span>${body}</span></li>`;
 }
 
-function headHTML(view: CatchUpView, open: boolean, avatars: string[]): string {
-  const n = view.count;
-  const divider = view.since ? t("catchup.divider", { n, since: view.since }) : t("catchup.dividerNoTime", { n });
-  const meta = [t("catchup.count", { n }), view.heads ? t("catchup.heads", { n: view.heads }) : null].filter(Boolean).join(" · ");
+function headHTML(view: CatchUpView, open: boolean, avatars: string[], links: SourceLink[]): string {
+  const n = view.manual ? view.ids.length : view.count;
+  const divider = view.manual ? t("catchup.manualRange", { n }) : view.since ? t("catchup.divider", { n, since: view.since }) : t("catchup.dividerNoTime", { n });
+  const meta = [t(view.manual ? "catchup.messages" : "catchup.count", { n }), view.heads ? t("catchup.heads", { n: view.heads }) : null].filter(Boolean).join(" · ");
   const range = view.since && view.until ? (view.since === view.until ? view.since : `${view.since} – ${view.until}`) : "";
   let body = "";
   if (view.state === "ready") {
@@ -137,13 +152,17 @@ function headHTML(view: CatchUpView, open: boolean, avatars: string[]): string {
     body = `<div class="catchup-error" role="alert"><div class="catchup-error-title">${escapeHTML(t("catchup.failed"))}</div>`
       + `<div class="catchup-error-detail">${escapeHTML([view.error, t("catchup.nothingLost", { n })].filter(Boolean).join(" "))}</div></div>`;
   }
-  const footer = open ? t("catchup.showing", { n }) : view.latest ? t("catchup.latest", { line: view.latest }) : "";
+  const footer = open ? t(view.manual ? "catchup.showingMessages" : "catchup.showing", { n }) : view.latest ? t("catchup.latest", { line: view.latest }) : "";
   const faces = avatars.map((src) => `<img src="${escapeHTML(src)}" alt="">`).join("");
   return `<div class="catchup-divider"><div class="line"></div><div>${escapeHTML(divider)}</div><div class="line"></div></div>`
     + `<section class="catchup-card${open ? "" : " stacked"}" aria-label="${escapeHTML(t("catchup.label"))}">`
     + `<div class="catchup-card-body">`
-    + `<div class="catchup-top">${view.state === "failed" ? alert : sparkle}<span class="catchup-title">${escapeHTML(t("catchup.title"))}</span><span class="catchup-meta">${escapeHTML(meta)}</span><span class="catchup-space"></span><span class="catchup-range">${escapeHTML(range)}</span></div>`
+    + `<div class="catchup-top">${view.state === "failed" ? alert : sparkle}<span class="catchup-title">${escapeHTML(t(view.manual ? "catchup.manualTitle" : "catchup.title"))}</span><span class="catchup-meta">${escapeHTML(meta)}</span><span class="catchup-space"></span><span class="catchup-range">${escapeHTML(range)}</span></div>`
     + body
+    + (links.length ? `<div class="catchup-links"><strong>${escapeHTML(t("catchup.links"))}</strong><ul>${links.map(({ url, labels }) => {
+      const label = labels.length ? labels.join(" · ") : url;
+      return `<li>${clickableSourceURL(url) ? `<a class="chip" href="#" data-url="${escapeHTML(url)}" data-label="${escapeHTML(label)}" title="${escapeHTML(url)}">${escapeHTML(label)}</a>` : `<span>${escapeHTML(label)} — ${escapeHTML(url)}</span>`}</li>`;
+    }).join("")}</ul></div>` : "")
     + `<div class="catchup-foot"><div class="catchup-faces" aria-hidden="true">${faces}</div><div class="catchup-latest">${escapeHTML(footer)}</div>`
     + (view.state === "failed" ? `<button type="button" class="catchup-button outline" data-action="retry">${retry}${escapeHTML(t("catchup.retry"))}</button>` : "")
     + `<button type="button" class="catchup-button" data-action="toggle" aria-expanded="${open}">${escapeHTML(open ? t("catchup.hide") : t("catchup.show", { n }))}${open ? up : down}</button></div>`
@@ -151,7 +170,7 @@ function headHTML(view: CatchUpView, open: boolean, avatars: string[]): string {
     + `</div></section>`;
 }
 
-function endHTML(): string {
-  return `<div class="line"></div>${check}<span>${escapeHTML(t("catchup.end"))}</span>`
+function endHTML(manual = false): string {
+  return `<div class="line"></div>${check}<span>${escapeHTML(t(manual ? "catchup.rangeEnd" : "catchup.end"))}</span>`
     + `<button type="button" class="catchup-button outline small" data-action="collapse">${escapeHTML(t("catchup.collapse"))}${up}</button><div class="line"></div>`;
 }

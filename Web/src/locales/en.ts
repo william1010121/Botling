@@ -397,6 +397,16 @@ export const en = {
   "catchup.decide": "Waiting for your decision:",
   "catchup.end": "End of unread · you’re caught up",
   "catchup.collapse": "Collapse",
+  "catchup.manualTitle": "Summary",
+  "catchup.manual": "Summarize",
+  "catchup.running": "Summarizing…",
+  "catchup.empty": "No messages to summarize",
+  "catchup.manualHint": "Summarize unread messages, or the latest 20 replies when there are no unread messages.",
+  "catchup.manualRange": "Summary · {n} messages",
+  "catchup.messages": "{n} messages",
+  "catchup.links": "Links & artifacts",
+  "catchup.showingMessages": "Showing all {n} messages below",
+  "catchup.rangeEnd": "End of summary range",
 } as const satisfies Record<string, Word>;
 
 export type Key = keyof typeof en;

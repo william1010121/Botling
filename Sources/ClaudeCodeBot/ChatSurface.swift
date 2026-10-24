@@ -301,6 +301,9 @@ struct ChatSurface: NSViewRepresentable {
                 bot.stopHandoff(handoffID)
             case "stopRounds":
                 bot.stopRounds()
+            case "catchUpManual":
+                guard id("botID") == bot.id, workspace.viewingSubagent == nil else { return }
+                workspace.manuallyCatchUp(in: bot)
             case "catchUpRetry":
                 guard id("botID") == bot.id else { return }
                 workspace.retryCatchUp(in: bot)

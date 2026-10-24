@@ -90,3 +90,64 @@ describe("catch-up summary", () => {
       "<li><span class=\"dot\" aria-hidden=\"true\"></span><span>&lt;b&gt;x&lt;/b&gt; <code>code</code> deadbeef 1234567 <code>abc1234</code></span></li>");
   });
 });
+
+it("preserves all mixed source targets beyond model limits in loading/ready/failed cards and opens them", async () => {
+  const { sourceLinks } = await import("../src/catchup-links");
+  const source = line("b");
+  source.text = `${"long prose ".repeat(1500)}
+[Report](<file:///tmp/final report.html>) [Alternate report](<file:///tmp/final report.html>)
+[Site](https://example.org/a_(b)?x=1&y=2) <https://example.org/auto>
+![Image](file:///tmp/picture.png) ![Video](file:///tmp/movie.mp4)
+[Reference][ref] Bare: https://example.org/plain.
+\`file:///tmp/code.pdf\`
+
+[ref]: https://example.org/reference "Reference title"
+
+[Unsafe](javascript:alert%281%29)
+`;
+  source.attachments = [{ name: "Attached", url: "file:///tmp/attached.zip", kind: "file" }];
+  source.artifacts = [{ title: "Artifact", url: "https://claude.ai/public/artifacts/abc", host: "claude.ai" }];
+  const expected = ["file:///tmp/final%20report.html", "https://example.org/a_(b)?x=1&y=2", "https://example.org/auto", "file:///tmp/picture.png", "file:///tmp/movie.mp4", "https://example.org/reference", "https://example.org/plain", "file:///tmp/code.pdf", "javascript:alert%281%29", "file:///tmp/attached.zip", "https://claude.ai/public/artifacts/abc"];
+  expect(sourceLinks([source]).map((link) => link.url)).toEqual(expected);
+  expect(sourceLinks([source])[0].labels).toEqual(["Report", "Alternate report"]);
+  for (const phase of ["loading", "ready", "failed"] as const) {
+    window.ccb.setState(state(view({ state: phase, bullets: ["Model omitted every reference"] }), { messages: [line("a"), source, line("c"), line("d"), line("e")] }));
+    const links = [...document.querySelectorAll<HTMLAnchorElement>(".catchup-links a")];
+    expect(links.map((link) => link.dataset.url)).toEqual(expected.filter((url) => !url.startsWith("javascript:")));
+    expect(links[0].textContent).toBe("Report · Alternate report");
+    expect(document.querySelector(".catchup-links")?.textContent).toContain("Unsafe");
+    expect(document.querySelector(".catchup-links script")).toBeNull();
+  }
+  document.querySelector<HTMLAnchorElement>('.catchup-links [data-url="file:///tmp/final%20report.html"]')!.click();
+  expect(sent.at(-1)).toEqual({ type: "openURL", url: "file:///tmp/final%20report.html", label: "Report · Alternate report" });
+});
+
+it("offers a manual trigger without a group, disables it for empty/loading and hides it for subagents", () => {
+  const button = () => document.querySelector<HTMLButtonElement>(".composer-tools .catchup-button")!;
+  window.ccb.setState(state(null));
+  expect(button().textContent).toBe("Summarize");
+  expect(button().title).toContain("latest 20 replies");
+  button().click();
+  expect(sent.at(-1)).toEqual({ type: "catchUpManual", botID: "catchup-bot" });
+  window.ccb.setState(state(null, { messages: [] }));
+  expect(button().disabled).toBe(true);
+  expect(button().textContent).toBe("No messages to summarize");
+  window.ccb.setState(state(view({ state: "loading", manual: true })));
+  expect(button().disabled).toBe(true);
+  expect(button().textContent).toBe("Summarizing…");
+  expect(document.querySelector(".catchup-divider")?.textContent).toBe("Summary · 4 messages");
+  window.ccb.setState(state(null, { subagent: { id: "x" } as ChatState["subagent"] }));
+  expect(button().hidden).toBe(true);
+});
+
+
+it("deduplicates only equal targets and preserves literal punctuation and escaped captions", async () => {
+  const { sourceLinks } = await import("../src/catchup-links");
+  const source = line("literal");
+  source.text = '[A & B](https://example.org/a?q=1#one) [Other](https://example.org/a?q=1#two) [Again](https://example.org/a?q=1#one) `file:///tmp/report.`';
+  expect(sourceLinks([source])).toEqual([
+    { url: "https://example.org/a?q=1#one", labels: ["A & B", "Again"] },
+    { url: "https://example.org/a?q=1#two", labels: ["Other"] },
+    { url: "file:///tmp/report.", labels: [] },
+  ]);
+});

@@ -327,4 +327,74 @@ struct CatchUpTests {
         #expect(chat.unreadCount == 0)
         #expect(workspace.catchUps[chat.id]?.messageIDs.count == 4)
     }
+
+    @Test func manualSummaryIgnoresAutomaticSettingAndThresholdAndUsesRecentTwentyReplies() async throws {
+        let root = tempRoot("manual")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = makeWorkspace(root)
+        let fake = FakeSummaries()
+        workspace.catchUpSummarizer = fake.summarizer
+        workspace.setCatchUpEnabled(false)
+        workspace.setCatchUpThreshold(50)
+        let chat = workspace.mainBot
+        workspace.manuallyCatchUp(in: chat)
+        #expect(workspace.catchUps[chat.id] == nil)
+        for index in 1...24 { chat.post(ChatMessage(role: .bot, text: "reply \(index)"), unread: false) }
+        chat.post(ChatMessage(role: .user, text: "latest question"), unread: false)
+        let before = chat.messages
+        workspace.manuallyCatchUp(in: chat)
+        let loading = try #require(workspace.catchUps[chat.id])
+        #expect(loading.phase == .loading)
+        #expect(loading.manual)
+        #expect(loading.messageIDs == before.suffix(21).map(\.id))
+        workspace.manuallyCatchUp(in: chat) // A double-click cannot launch another call.
+        await settle(workspace, chat)
+        #expect(fake.prompts.count == 1)
+        #expect(workspace.catchUpView(for: chat)?.manual == true)
+        #expect(workspace.catchUps[chat.id]?.phase == .ready)
+        #expect(chat.messages == before)
+        #expect(!chat.isWorking)
+    }
+
+    @Test func manualSummaryUsesSingleUnreadReplyAndRetriesItsFrozenRange() async throws {
+        let root = tempRoot("manual-unread")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = makeWorkspace(root)
+        let fake = FakeSummaries()
+        fake.failure = SummaryDown()
+        workspace.catchUpSummarizer = fake.summarizer
+        let chat = workspace.mainBot
+        chat.post(ChatMessage(role: .bot, text: "read"), unread: false)
+        chat.post(ChatMessage(role: .bot, text: "unread"))
+        workspace.manuallyCatchUp(in: chat)
+        await settle(workspace, chat)
+        let failed = try #require(workspace.catchUps[chat.id])
+        #expect(failed.phase == .failed)
+        #expect(failed.messageIDs == [chat.messages.last!.id])
+        #expect(chat.unreadCount == 1)
+        chat.post(ChatMessage(role: .bot, text: "later"))
+        fake.failure = nil
+        workspace.retryCatchUp(in: chat)
+        await settle(workspace, chat)
+        #expect(workspace.catchUps[chat.id]?.phase == .ready)
+        #expect(workspace.catchUps[chat.id]?.messageIDs == failed.messageIDs)
+        #expect(!fake.prompts.last!.contains("later"))
+    }
+
+    @Test func manualUnavailableServiceFailsClearlyAndUserOnlyChatCanBeSummarized() async throws {
+        let root = tempRoot("manual-unavailable")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = makeWorkspace(root)
+        let chat = workspace.mainBot
+        chat.post(ChatMessage(role: .user, text: "question"), unread: false)
+        workspace.manuallyCatchUp(in: chat)
+        #expect(workspace.catchUps[chat.id]?.phase == .failed)
+        #expect(workspace.catchUps[chat.id]?.error?.isEmpty == false)
+        let fake = FakeSummaries()
+        workspace.catchUpSummarizer = fake.summarizer
+        workspace.retryCatchUp(in: chat)
+        await settle(workspace, chat)
+        #expect(workspace.catchUps[chat.id]?.phase == .ready)
+        #expect(fake.prompts.first?.contains("question") == true)
+    }
 }

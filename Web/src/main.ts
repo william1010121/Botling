@@ -75,6 +75,7 @@ class Chat {
     this.scroller = document.getElementById("scroller")!;
     this.list = document.getElementById("messages")!;
     this.composer = new Composer(document.getElementById("composer-slot")!);
+    this.composer.root.querySelector(".composer-tools")!.insertBefore(this.catchUp.trigger, this.composer.root.querySelector(".send"));
     this.pins = new PinArea(slot("pin-area", "div"), slot("board", "section"));
     this.handoffs = new HandoffDock(this.pins.row);
     this.floats = new FloatLayer(document.body);

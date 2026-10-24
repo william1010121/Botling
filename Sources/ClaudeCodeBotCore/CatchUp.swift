@@ -153,6 +153,7 @@ public struct CatchUpState: Equatable, Sendable {
     public var bullets: [String] = []
     public var error: String?
     public var model: String
+    public var manual: Bool = false
 }
 
 /// Summaries already written, so a range is summarized once, even over relaunches.

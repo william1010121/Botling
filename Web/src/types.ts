@@ -23,6 +23,7 @@ export interface FileView {
 export interface CatchUpView {
   /** The range and language summarized: expanding is remembered by it. */
   key: string;
+  manual?: boolean;
   ids: string[];
   count: number;
   heads?: number | null;
@@ -512,6 +513,7 @@ export type Action =
   | { type: "cancelReply" }
   | { type: "stopRounds" }
   | { type: "catchUpRetry"; botID: string }
+  | { type: "catchUpManual"; botID: string }
   | { type: "stopHandoff"; botID: string; handoffID: string }
   | { type: "openURL"; url: string; label: string }
   | { type: "openExternal"; url: string }

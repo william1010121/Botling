@@ -410,6 +410,7 @@ public struct ChatPayload: Encodable, Equatable {
         public var since: String? = nil
         public var until: String? = nil
         public var latest: String? = nil
+        public var manual: Bool = false
     }
 
     /// Bot look Cute: the engine characters as image URLs. `avatar`: a head's

@@ -1447,3 +1447,10 @@ body.spec-mode .float-layer { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .catchup-spinner, .catchup-skeleton { animation: none; }
 }
+
+.catchup-links { overflow-wrap: anywhere; font-size: 13px; }
+.catchup-links ul { margin: 6px 0 0; padding-left: 18px; }
+.catchup-links li + li { margin-top: 6px; }
+.catchup-button:disabled { opacity: .55; cursor: default; }
+
+.catchup-button[hidden] { display: none; }

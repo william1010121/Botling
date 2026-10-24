@@ -45,10 +45,24 @@ extension Workspace {
         guard catchUpSummarizer != nil else { return }
         let messages = CatchUp.unreadMessages(in: chat.messages, unread: unread)
         guard !messages.isEmpty else { return }
+        beginCatchUp(for: chat, messages: messages)
+    }
+
+    /// Explicit action: unread tail if available, otherwise the latest 20 counted replies
+    /// and intervening messages. Independent of the automatic setting and threshold.
+    public func manuallyCatchUp(in chat: Bot) {
+        guard catchUps[chat.id]?.phase != .loading else { return }
+        let messages = CatchUp.unreadMessages(in: chat.messages, unread: chat.unreadCount > 0 ? chat.unreadCount : 20)
+        let source = messages.isEmpty ? chat.messages.filter { $0.role != .divider } : messages
+        guard !source.isEmpty else { return }
+        beginCatchUp(for: chat, messages: source, manual: true)
+    }
+
+    private func beginCatchUp(for chat: Bot, messages: [ChatMessage], manual: Bool = false) {
         let key = CatchUp.key(messages, language: language)
-        if let current = catchUps[chat.id], current.key == key, current.phase != .failed { return }
+        if let current = catchUps[chat.id], current.key == key, current.phase != .failed, current.manual == manual { return }
         let model = settings.catchUpModel
-        var state = CatchUpState(key: key, messageIDs: messages.map(\.id), phase: .loading, model: model)
+        var state = CatchUpState(key: key, messageIDs: messages.map(\.id), phase: .loading, model: model, manual: manual)
         if let cached = catchUpCache[key] {
             state.phase = .ready
             state.bullets = cached.bullets
@@ -74,7 +88,11 @@ extension Workspace {
     }
 
     private func summarize(_ chat: Bot, messages: [ChatMessage], key: String, model: String) {
-        guard let make = catchUpSummarizer else { return }
+        guard let make = catchUpSummarizer else {
+            catchUps[chat.id]?.phase = .failed
+            catchUps[chat.id]?.error = L("The summary service is unavailable.")
+            return
+        }
         let prompt = CatchUp.prompt(for: messages, language: language) { [weak self] message in
             self?.catchUpName(of: message, in: chat) ?? chat.name
         }
@@ -129,7 +147,7 @@ extension Workspace {
             key: state.key, ids: ids.map(\.uuidString), count: counted.count, heads: heads > 1 ? heads : nil,
             state: state.phase.rawValue, bullets: state.bullets, error: state.error, model: state.model,
             since: counted.first.map { CatchUp.time($0.date) }, until: counted.last.map { CatchUp.time($0.date) },
-            latest: latest)
+            latest: latest, manual: state.manual)
     }
 
     // MARK: Settings
