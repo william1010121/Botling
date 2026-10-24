@@ -56,7 +56,7 @@ import { fileURLToPath } from "node:url";
 import { answerLabel, attachmentList, attachmentsFolder, imageMediaType, keep } from "./attachments";
 import {
   ContractError, type RoutineView, type BotView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
-  type StepView, type SubagentView, type TaskView,
+  type StepView, type SubagentView, type TaskView, type BotSettingsView,
 } from "../contract";
 import { ClaudeHead, type HeadConfig, type HeadExit } from "./agent/head";
 import { CodexHead, type CodexHeadConfig, type CodexItem } from "./agent/codex";
@@ -102,6 +102,13 @@ export interface SessionStart {
   /** Plugins' Claude parts (`--plugin-dir`), and the environment their MCP servers need. */
   pluginDirs?: string[];
   pluginEnv?: Record<string, string>;
+  /** The bot's model and effort (bot.json; null: the default), its subagents' model, their 1-hour cache. */
+  model?: string | null;
+  effort?: string | null;
+  subagentModel?: string | null;
+  subagentHourCache?: boolean;
+  /** Codex workers' model, effort and Fast mode when the app sets them (null: ~/.codex/config.toml's). */
+  codexWorkers?: { model: string | null; effort: string | null; fast: boolean | null } | null;
 }
 
 export interface SessionStartCodex extends SessionStart {
@@ -155,6 +162,8 @@ export interface BotOptions {
   replied?: (bot: Bot, record: ChatRecord) => void;
   /** Plugins' Claude parts (`--plugin-dir`) and the secrets their MCP servers read, for a new claude head. */
   plugins?: () => { dirs: string[]; env: Record<string, string> };
+  /** What settings.json says for new heads (the subagents' model and cache, Codex workers). */
+  launch?: () => { subagentModel: string | null; subagentHourCache: boolean; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null };
 }
 
 type Origin = "user" | "app" | "background" | "tidy";
@@ -1096,6 +1105,42 @@ export class Bot {
     return { engines: settings.engines };
   }
 
+  /** Its own choices in bot.json (1.x's `model`, `effort`, `subagentModel`). */
+  private choices(): { model: string | null; effort: string | null; subagentModel: string | null } {
+    const settings = this.store.loadSettings();
+    const pick = (value: unknown, list: readonly string[]) => (typeof value === "string" && list.includes(value) ? value : null);
+    return {
+      model: pick(settings.model, ["haiku", "sonnet", "opus"]),
+      effort: pick(settings.effort, ["low", "medium", "high", "xhigh", "max"]),
+      subagentModel: pick(settings.subagentModel, ["haiku", "sonnet", "opus"]),
+    };
+  }
+
+  /** What the bot's settings page shows. */
+  settingsView(): BotSettingsView {
+    const owner = this.owner;
+    const choices = owner.choices();
+    return {
+      botId: owner.id, engines: [...owner.headsSettings.engines] as ("claude" | "codex")[],
+      model: choices.model as BotSettingsView["model"], effort: choices.effort as BotSettingsView["effort"],
+      subagentModel: choices.subagentModel as BotSettingsView["subagentModel"], codexModel: owner.headsSettings.codexModel ?? null,
+    };
+  }
+
+  /** Changes its own choices; a head already running keeps its own until it next wakes. */
+  configure(change: { model?: string | null; effort?: string | null; subagentModel?: string | null; codexModel?: string | null }): BotSettingsView {
+    const owner = this.owner;
+    if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
+    for (const key of ["model", "effort", "subagentModel"] as const) {
+      if (change[key] !== undefined) owner.store.saveSetting(key, change[key] ?? undefined);
+    }
+    if (change.codexModel !== undefined) {
+      owner.headsSettings.codexModel = change.codexModel ?? null;
+      owner.saveHeads();
+    }
+    return owner.settingsView();
+  }
+
   private saveHeads() {
     if (!this.readOnly) {
       this.store.saveSetting("heads", headsJSON(this.headsSettings));
@@ -1500,7 +1545,13 @@ export class Bot {
     const resume = this.session.started && !this.briefing;
     const prompts = this.prompts();
     const plugins = this.options.plugins?.() ?? { dirs: [], env: {} };
-    const start = { sessionId: this.session.sessionId, resume, systemPrompt: prompts.system, pluginDirs: plugins.dirs, pluginEnv: plugins.env };
+    const choices = this.owner.choices();
+    const launch = this.options.launch?.() ?? { subagentModel: null, subagentHourCache: false, codexWorkers: null };
+    const start: SessionStart = {
+      sessionId: this.session.sessionId, resume, systemPrompt: prompts.system, pluginDirs: plugins.dirs, pluginEnv: plugins.env,
+      model: choices.model, effort: choices.effort, subagentModel: choices.subagentModel ?? launch.subagentModel,
+      subagentHourCache: launch.subagentHourCache, codexWorkers: launch.codexWorkers,
+    };
     let head: AgentHead;
     if (this.engine === "codex") {
       if (!this.options.codexConfig) throw new Error("Codex is not available here.");

@@ -5,7 +5,7 @@
 import type { BotView, CardView, CatchUpView, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, SubagentView, TaskView } from "../contract";
 import type { ComponentInfo, DisplayView as WebDisplay, PinSize, PinView as WebPin, CatchUpView as WebCatchUp, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
-import { avatarURL } from "./avatars";
+import { avatarURL, faceURL, type Look } from "./avatars";
 
 /** What the chat frame needs besides the page's own state: Phase 0 cards and turn states. */
 export interface FrameExtras {
@@ -150,9 +150,14 @@ export function componentInfos(components: Record<string, ComponentInfoView>): R
   } satisfies ComponentInfo]));
 }
 
+/** What the app's settings change in the page: its language, the avatars' size and look. */
+export interface PageLook { lang?: string | null; chatAvatarSize?: number | null; look?: Look }
+
 export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyingTo: ChatState["replyingTo"] = null,
-  { components = {}, board = false }: { components?: Record<string, ComponentInfoView>; board?: boolean } = {}): { state: ChatState; extras: FrameExtras } {
+  { components = {}, board = false, lang = null, chatAvatarSize = null, look = "original" }: { components?: Record<string, ComponentInfoView>; board?: boolean } & PageLook = {}): { state: ChatState; extras: FrameExtras } {
   const face = avatarURL(bot.avatar);
+  // Cute: each reply shows the character of the head that wrote it, with the bot's face as its hat.
+  const faceOf = (engine: string | null | undefined) => (look === "cute" ? faceURL(bot, "cute", { engine: engine ?? bot.heads?.[0] }) : face);
   const running = chat.running;
   const runs = chat.runs?.length ? chat.runs : running ? [{ ...running, live: chat.live }] : [];
   const two = (chat.heads?.engines.length ?? bot.heads?.length ?? 1) > 1;
@@ -175,7 +180,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       role: message.role,
       text: message.role === "bot" && message.state === "failed" && !message.text ? "(The reply did not finish.)" : message.text,
       stamp: stamp(shown, index, now),
-      avatar: message.role === "bot" || message.role === "notice" ? face : null,
+      avatar: message.role === "bot" ? faceOf(message.engine) : message.role === "notice" ? faceOf(null) : null,
       choices,
       chosen: message.chosen ?? null,
       answer: message.answer ?? null,
@@ -209,8 +214,10 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     botName: bot.name,
     messages,
     working: runs.length > 0,
-    avatar: avatarURL(bot.avatar, "open"),
+    avatar: look === "cute" ? faceURL(bot, "cute", { working: runs.length > 0, waiting: bot.approvals > 0 }) : avatarURL(bot.avatar, "open"),
     placeholder: placeholder(bot),
+    ...(lang ? { lang } : {}),
+    ...(chatAvatarSize ? { chatAvatarSize } : {}),
     replyingTo,
     pendingFiles: (chat.pendingFiles ?? []).map((file) => ({ id: file.id, name: file.name, kind: file.kind, url: attachmentURL(bot.id, `pending:${file.id}`) })),
     components: componentInfos(components),

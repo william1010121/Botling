@@ -70,19 +70,65 @@ function eyesSVG(shape: string, eyes: Eyes): string {
 
 const cache = new Map<string, string>();
 
-/** An avatar as an SVG data URL. Unknown shapes draw as the main bot's circle. */
-export function avatarURL(shape: string, eyes: Eyes = "open"): string {
-  const key = `${shape}/${eyes}`;
-  const cached = cache.get(key);
-  if (cached) return cached;
+/** The shape's own SVG (its body and eyes in a -4…104 box). */
+function shapeSVG(shape: string, eyes: Eyes, mask = "bite"): string {
   const known = COLORS[shape] ? shape : "circle";
   const color = COLORS[known]!;
   // A same-coloured stroke rounds the polygons' corners, as in the Swift app.
   // The moon is a circle with a bite out of it (a mask, so the stroke is bitten too).
   const moon = known === "moon";
-  const defs = moon ? `<defs><mask id="bite"><rect x="-4" y="-4" width="108" height="108" fill="#fff"/><circle cx="76" cy="32" r="30" fill="#000"/></mask></defs>` : "";
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 -4 108 108">${defs}<g fill="${color}" stroke="${color}" stroke-width="${moon ? 0 : 8}" stroke-linejoin="round"${moon ? ' mask="url(#bite)"' : ""}>${body(known)}</g>${eyesSVG(known, eyes)}</svg>`;
+  const defs = moon ? `<defs><mask id="${mask}"><rect x="-4" y="-4" width="108" height="108" fill="#fff"/><circle cx="76" cy="32" r="30" fill="#000"/></mask></defs>` : "";
+  return `${defs}<g fill="${color}" stroke="${color}" stroke-width="${moon ? 0 : 8}" stroke-linejoin="round"${moon ? ` mask="url(#${mask})"` : ""}>${body(known)}</g>${eyesSVG(known, eyes)}`;
+}
+
+/** An avatar as an SVG data URL. Unknown shapes draw as the main bot's circle. */
+export function avatarURL(shape: string, eyes: Eyes = "open"): string {
+  const key = `${shape}/${eyes}`;
+  const cached = cache.get(key);
+  if (cached) return cached;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 -4 108 108">${shapeSVG(shape, eyes)}</svg>`;
   const url = `data:image/svg+xml;base64,${btoa(svg)}`;
   cache.set(key, url);
   return url;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Bot look "Cute" (Chibi.swift): the head's character (Claude's, or Codex's — the archive's `gpt`)
+// in the mood of the moment, wearing the bot's own face as a hat so bots stay apart. The pictures
+// are 1.x's CharacterArt/avatars-static, bundled in at build time.
+
+declare const __CHARACTERS__: Record<string, Record<string, string>>;
+export type Look = "original" | "cute";
+export type Mood = "normal" | "work" | "think" | "sleep";
+const EXPRESSION: Record<Mood, string> = { normal: "idle", work: "working", think: "thinking", sleep: "sleepy" };
+
+/** `Chibi.mood(asleep:working:waiting:)`. */
+export function mood(asleep: boolean, working: boolean, waiting: boolean): Mood {
+  if (asleep) return "sleep";
+  if (waiting) return "think";
+  if (working) return "work";
+  return "normal";
+}
+
+/** The character of a head with the bot's face as a hat (null `shape`: no hat), as an SVG data URL. */
+export function characterURL(engine: string, moodNow: Mood = "normal", shape: string | null = null): string {
+  const key = `chibi/${engine}/${moodNow}/${shape ?? ""}`;
+  const cached = cache.get(key);
+  if (cached) return cached;
+  const art = (typeof __CHARACTERS__ === "object" ? __CHARACTERS__ : {})[engine === "codex" ? "gpt" : "claude"]?.[EXPRESSION[moodNow]];
+  if (!art) return avatarURL(shape ?? "circle", moodNow === "sleep" ? "closed" : "open");
+  // Room at the top for the hat without cropping hair (as Chibi.svg: y 18, height 46).
+  const y = shape ? 18 : 0;
+  const height = shape ? 46 : 64;
+  const hat = shape ? `<svg x="22.5" y="1.5" width="19" height="19" viewBox="-4 -4 108 108">${shapeSVG(shape, moodNow === "sleep" ? "closed" : "open", "hatbite")}</svg>` : "";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><image x="0" y="${y}" width="64" height="${height}" preserveAspectRatio="xMidYMax meet" href="data:image/png;base64,${art}"/>${hat}</svg>`;
+  const url = `data:image/svg+xml;base64,${btoa(svg)}`;
+  cache.set(key, url);
+  return url;
+}
+
+/** A bot's face in the look the settings name. */
+export function faceURL(bot: { avatar: string; heads?: string[] }, look: Look, state: { asleep?: boolean; working?: boolean; waiting?: boolean; engine?: string } = {}): string {
+  if (look !== "cute") return avatarURL(bot.avatar, state.asleep ? "closed" : "open");
+  return characterURL(state.engine ?? bot.heads?.[0] ?? "claude", mood(!!state.asleep, !!state.working, !!state.waiting), bot.avatar);
 }

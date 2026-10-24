@@ -10,9 +10,11 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { PendingFiles, servedType, writeIncoming } from "./attachments";
+import { applySetting, launchSettings, readSettings, settingsView, writeSettings } from "./settings";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
   type Command, type Event, type ImportView, type Outbound, type ResultOf,
+  type SettingsChange, type SettingsView,
 } from "../contract";
 import { Bot, type SessionStart, type SessionStartCodex } from "./bot";
 import type { HeadConfig } from "./agent/head";
@@ -118,7 +120,8 @@ export class Core {
     const loaded = loadProfiles(options.dataDir);
     if (loaded.problem) this.log(`projects: ${loaded.problem}`);
     // Maintainer (1.x's built-in project): the plugin library is its folder, with the app's files in it.
-    const editorModel = this.settingsFile()?.componentEditor;
+    // 1.x's key is componentEditorModel (2.0 before Phase 4a read componentEditor: both are honoured).
+    const editorModel = this.settingsFile()?.componentEditorModel ?? this.settingsFile()?.componentEditor;
     const { editedEditor } = prepareLibrary(options.dataDir, typeof editorModel === "string" && ["sonnet", "opus", "haiku"].includes(editorModel) ? editorModel : "sonnet");
     if (editedEditor) this.log("ccb-core/claude/agents/component-editor.md was edited by hand; it is left as it is");
     const profiles = [...loaded.profiles, maintainerProfile(options.dataDir, maintainerInstructions(join(options.dataDir, "plugins"), options.checkCommand ?? null, null))];
@@ -149,6 +152,7 @@ export class Core {
         replyFilter: (): ((text: string) => Promise<string>) | null => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
         replied: (bot, record) => this.replied(bot, record),
         plugins: () => ({ dirs: this.plugins.registry.claudeDirectories(), env: this.plugins.registry.secretEnvironment() }),
+        launch: () => launchSettings(readSettings(Layout.settings(this.options.dataDir))),
       });
       this.bots.set(profile.id, bot);
       this.order.push(profile.id);
@@ -439,6 +443,13 @@ export class Core {
       case "plugins.panel": return this.plugins.panel(cmd.name, cmd.panel);
       case "plugins.call": return { result: await this.plugins.call(cmd.name, cmd.method, cmd.params) ?? null };
       case "plugins.web": return { specs: this.plugins.webSpecs() };
+      case "settings.get": return this.settingsNow();
+      case "settings.set": return this.changeSetting(cmd.change);
+      case "bot.settings": return this.bot(cmd.botId).settingsView();
+      case "bot.configure": {
+        const { type: _type, botId, ...change } = cmd;
+        return this.bot(botId).configure(change);
+      }
       case "files.add": this.bot(cmd.botId); return { files: this.pending.addPaths(cmd.botId, cmd.paths) };
       case "files.data": this.bot(cmd.botId); return { files: this.pending.addData(cmd.botId, cmd.name, cmd.base64) };
       case "files.remove": return { files: this.pending.remove(cmd.botId, cmd.id) };
@@ -512,7 +523,22 @@ export class Core {
       chat: bot ? { ...bot.snapshot(), ...this.summaries(bot), pendingFiles: this.pending.views(bot.id) } : null,
       components: this.componentInfos(),
       plugins: this.plugins.view(),
+      settings: this.settingsNow(),
     };
+  }
+
+  private settingsNow(): SettingsView {
+    return settingsView(readSettings(Layout.settings(this.options.dataDir)), this.language());
+  }
+
+  /** One change on the Settings page: saved in settings.json (other keys kept), then told to every window. */
+  private changeSetting(change: SettingsChange): SettingsView {
+    const file = Layout.settings(this.options.dataDir);
+    const next = applySetting(readSettings(file), change);
+    writeSettings(file, next);
+    const view = settingsView(next, this.language());
+    this.event({ type: "settings.updated", settings: view });
+    return view;
   }
 
   /** Ends every turn and head (with their trees) and writes everything out; for quitting. */

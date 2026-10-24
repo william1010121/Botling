@@ -138,3 +138,51 @@ test("attachments: picked files and a pasted picture go with the message, kept i
     await app.close();
   }
 });
+
+test("Settings: language, bot look and avatar size reach the chat page; a summary setting and this bot's model are saved", async () => {
+  const dataDir = tempDir("e2e-4a-settings");
+  const { app, page, chat } = await launch({ dataDir });
+  try {
+    await page.setViewportSize({ width: 1120, height: 820 });
+    await page.getByRole("button", { name: "Settings" }).click();
+    const sheet = page.getByRole("dialog", { name: "Settings" });
+    await expect(sheet.getByRole("heading", { name: "General" })).toBeVisible();
+    // 1.x's default look is Cute: the rail shows characters; Original brings the shapes back.
+    const avatar = page.locator(".bot-row").first().locator("img");
+    const cute = await avatar.getAttribute("src");
+    await sheet.getByRole("radiogroup", { name: "Bot look" }).getByRole("radio", { name: "Original" }).click();
+    await expect.poll(() => avatar.getAttribute("src")).not.toBe(cute);
+    await sheet.getByLabel("Chat avatar size").fill("80");
+    await expect.poll(() => chat.locator("html").evaluate((element) => getComputedStyle(element).getPropertyValue("--chat-avatar-size").trim())).toBe("80px");
+    // (Switches show what the core saved: they change once it answers.)
+    await sheet.getByRole("switch", { name: "Summarize between your messages" }).click();
+    await expect(sheet.getByRole("switch", { name: "Summarize between your messages" })).toBeChecked();
+    await shot(page, "settings-general");
+    await sheet.getByLabel("App language").selectOption("ja");
+    // The page's own words follow (its input box is no longer called "Message").
+    await expect(chat.getByRole("textbox", { name: "Message" })).toHaveCount(0);
+    const settings = JSON.parse(readFileSync(join(dataDir, "core", "settings.json"), "utf8"));
+    expect(settings).toMatchObject({ botLookChoice: "original", chatAvatarSizeChoice: 80, intervalSummaryEnabledChoice: true, languageChoice: "ja" });
+    await sheet.getByLabel("App language").selectOption("");
+    await expect(chat.getByRole("textbox", { name: "Message" })).toHaveCount(1);
+    // Engines and subagents; this bot.
+    await sheet.getByRole("button", { name: /Engines and subagents/ }).click();
+    await sheet.getByRole("switch", { name: "Follow Codex config file" }).click();
+    await expect(sheet.getByRole("switch", { name: "Follow Codex config file" })).not.toBeChecked();
+    await sheet.getByRole("radiogroup", { name: "Workers' reasoning effort" }).getByRole("radio", { name: "High", exact: true }).click();
+    await shot(page, "settings-engines");
+    await sheet.getByRole("button", { name: "This bot" }).click();
+    await sheet.getByRole("radiogroup", { name: "Claude's model" }).getByRole("radio", { name: "Opus" }).click();
+    await expect(sheet.getByRole("radiogroup", { name: "Claude's model" }).getByRole("radio", { name: "Opus" })).toHaveAttribute("aria-checked", "true");
+    expect(JSON.parse(readFileSync(join(dataDir, "core", "main", "bot.json"), "utf8")).model).toBe("opus");
+    expect(JSON.parse(readFileSync(join(dataDir, "core", "settings.json"), "utf8"))).toMatchObject({ codexWorkersFollow: false, codexWorkerChoice: { effort: "high" } });
+    await shot(page, "settings-bot");
+    // The plugin library is a section too; Done closes.
+    await sheet.getByRole("button", { name: "Plugins" }).click();
+    await expect(sheet.getByRole("region", { name: "Plugins" })).toBeVisible();
+    await sheet.getByRole("button", { name: "Done" }).click();
+    await expect(sheet).toHaveCount(0);
+  } finally {
+    await app.close();
+  }
+});

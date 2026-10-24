@@ -4,7 +4,7 @@
 // takes a fresh snapshot instead of patching on guesses. Events that arrive while a snapshot is
 // on its way are buffered and replayed if newer than it. Chat events for other bots are not
 // kept (their chats are fetched when shown); `bot.updated` is kept for every bot.
-import type { PendingFileView, PluginsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
+import type { PendingFileView, PluginsView, SettingsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
 
 /** A turn under way and its steps so far (with two heads, two can run at once). */
 export interface RunState { turnId: string; messageId: string; live: StepView[] }
@@ -46,12 +46,14 @@ export interface WorkspaceView {
   board: boolean;
   /** The plugin library, once asked for (`plugins.list`) or changed (`plugins.updated`). */
   plugins: PluginsView | null;
+  /** The app's settings (language, avatar size, look…). */
+  settings: SettingsView | null;
 }
 
 type Snapshot = ResultOf<"chat.snapshot">;
 
 export class WorkspaceStore {
-  private view: WorkspaceView = { ready: false, bots: [], imported: null, chat: null, subagent: null, resyncs: 0, components: {}, board: false, plugins: null };
+  private view: WorkspaceView = { ready: false, bots: [], imported: null, chat: null, subagent: null, resyncs: 0, components: {}, board: false, plugins: null, settings: null };
   private epoch: string | null = null;
   private seq = 0;
   private syncing = false;
@@ -107,7 +109,7 @@ export class WorkspaceStore {
       const subagent = this.view.subagent && snapshot.chat?.botId === this.view.chat?.botId ? this.view.subagent : null;
       const chat = snapshot.chat ? { ...snapshot.chat, runs: (snapshot.chat.runs ?? []).map((run) => ({ turnId: run.turnId, messageId: run.messageId, live: run.live })) } : null;
       const board = this.view.board && chat?.botId === this.view.chat?.botId;
-      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board, plugins: snapshot.plugins ?? null });
+      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board, plugins: snapshot.plugins ?? null, settings: snapshot.settings ?? this.view.settings });
     } finally {
       this.syncing = false;
     }
@@ -138,6 +140,7 @@ export class WorkspaceStore {
 export function apply(view: WorkspaceView, event: Event): WorkspaceView {
   if (event.type === "components.updated") return { ...view, components: event.components };
   if (event.type === "plugins.updated") return { ...view, plugins: event.plugins };
+  if (event.type === "settings.updated") return { ...view, settings: event.settings };
   if (event.type === "bot.updated") {
     const bots = view.bots.some((bot) => bot.id === event.bot.id)
       ? view.bots.map((bot) => (bot.id === event.bot.id ? event.bot : bot))

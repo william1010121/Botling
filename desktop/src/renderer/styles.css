@@ -136,3 +136,45 @@ button { font: inherit; color: inherit; }
 .plugins-problem { color: var(--error); margin: 2px 0 6px; }
 .plugins-result { color: var(--green); margin: 2px 0 6px; }
 .plugins-empty { color: var(--faint); margin: 2px 0; }
+
+/* Settings (SettingsWindow.swift): a sheet with the sections on the left, 1.x's 900×640. */
+.rail-settings { padding: 0 10px 8px; }
+.settings-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; }
+.settings { width: min(900px, calc(100vw - 32px)); height: min(640px, calc(100vh - 32px)); display: flex; background: var(--ground); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55); }
+.settings-side { width: 220px; flex-shrink: 0; background: var(--side); border-right: 1px solid var(--line); padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; }
+.settings-search { margin-bottom: 10px; background: var(--ground); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; font-size: 13px; }
+.settings-tab { text-align: left; background: none; border: 0; border-radius: 8px; padding: 6px 10px; font-size: 13px; color: var(--muted); cursor: pointer; display: flex; align-items: center; gap: 8px; }
+.settings-tab:hover { background: var(--hover); color: var(--text); }
+.settings-tab.on { background: var(--selected); color: var(--text); }
+.settings-new { font-size: 10px; background: var(--blue); color: #fff; border-radius: 999px; padding: 0 6px; }
+.settings-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.settings-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px 8px; border-bottom: 1px solid var(--line); }
+.settings-header h2 { font-size: 16px; margin: 0; }
+.settings-done { background: var(--blue); color: #fff; border: 0; border-radius: 8px; padding: 3px 14px; font-size: 13px; cursor: pointer; }
+.settings-body { flex: 1; overflow-y: auto; padding: 8px 20px 20px; }
+.settings-problem { color: var(--error); margin: 8px 20px 0; font-size: 13px; }
+.settings-group { margin-top: 14px; }
+.settings-group h3 { font-size: 12px; font-weight: 600; color: var(--muted); margin: 0 0 6px 4px; }
+.settings-card { background: var(--side); border: 1px solid var(--line); border-radius: 10px; padding: 4px 12px; }
+.settings-note { color: var(--faint); font-size: 12px; margin: 4px 4px 0; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.settings-row:last-child { border-bottom: 0; }
+.settings-hint { color: var(--faint); font-size: 11.5px; margin-top: 2px; }
+.settings-control { display: flex; align-items: center; gap: 8px; }
+.settings-control select, .settings-control input[type="text"], .settings-control input[type="number"], .settings-prompt textarea {
+  background: var(--ground); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; font-size: 12.5px;
+}
+.settings-control input[type="text"] { width: 200px; }
+.settings-control input[type="number"] { width: 70px; }
+.settings-control button, .settings-actions button { background: var(--chip); border: 0; border-radius: 8px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+.settings-actions { padding: 6px 0; }
+.settings-actions button:disabled { opacity: 0.5; cursor: default; }
+.settings-prompt { padding: 8px 0; font-size: 13px; }
+.settings-prompt textarea { width: 100%; margin-top: 6px; resize: vertical; font: inherit; font-size: 12.5px; }
+.settings-tag { font-size: 11px; color: var(--muted); background: var(--chip); border-radius: 6px; padding: 0 6px; margin-left: 6px; }
+.settings-preview { display: flex; gap: 12px; padding: 8px 0; align-items: flex-end; }
+.segmented { display: inline-flex; background: var(--ground); border: 1px solid var(--line); border-radius: 8px; padding: 2px; gap: 2px; flex-wrap: wrap; }
+.segmented button { background: none; border: 0; border-radius: 6px; padding: 2px 9px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.segmented button.on { background: var(--selected); color: var(--text); }
+.segmented button:disabled { opacity: 0.5; cursor: default; }
+.plugins-list ul { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; }

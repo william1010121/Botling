@@ -6,7 +6,7 @@
 // from desktop/node_modules at the versions Web/package.json pins, so Web/ needs no install and its
 // own build output (Sources/ClaudeCodeBot/Resources) is never touched.
 import { build } from "esbuild";
-import { cpSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +24,16 @@ const latex = await build({
   minify: true, legalComments: "eof", write: false, nodePaths,
 });
 const latexSource = latex.outputFiles[0].text;
+// Bot look "Cute": 1.x's character pictures (Sources/ClaudeCodeBotCore/Resources/CharacterArt), read
+// only, bundled into the app page as base64 (about 200 KB).
+const art = join(here, "..", "Sources", "ClaudeCodeBotCore", "Resources", "CharacterArt", "avatars-static");
+const characters = {};
+for (const character of ["claude", "gpt"]) {
+  characters[character] = {};
+  for (const expression of ["idle", "working", "thinking", "sleepy"]) {
+    try { characters[character][expression] = readFileSync(join(art, character, `${expression}.png`)).toString("base64"); } catch { /* the original look then */ }
+  }
+}
 
 const node = { bundle: true, platform: "node", format: "cjs", target: "node22", sourcemap: "linked", legalComments: "eof" };
 await Promise.all([
@@ -40,7 +50,7 @@ await Promise.all([
   build({
     entryPoints: [join(here, "src/renderer/main.tsx")], bundle: true, format: "iife", target: "chrome130",
     outfile: join(out, "renderer/renderer.js"), jsx: "automatic", minify: !watch, sourcemap: "linked", legalComments: "eof",
-    define: { "process.env.NODE_ENV": JSON.stringify(watch ? "development" : "production") },
+    define: { "process.env.NODE_ENV": JSON.stringify(watch ? "development" : "production"), __CHARACTERS__: JSON.stringify(characters) },
   }),
   build({
     entryPoints: [join(here, "src/renderer/chat-frame/entry.ts")], bundle: true, format: "iife", target: "chrome130",

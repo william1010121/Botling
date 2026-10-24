@@ -23,6 +23,8 @@ export interface HeadConfig {
   /** Go on with `sessionId` (`--resume`) instead of starting it (`--session-id`). */
   resume: boolean;
   model?: string | null;
+  /** How hard it thinks (`--effort`); null: the model's default. */
+  effort?: string | null;
   /** Tools it uses without asking (`--allowedTools`); anything else is asked about. */
   allowedTools: string[];
   /** Appended to claude's system prompt. */
@@ -51,6 +53,7 @@ export function headArguments(config: HeadConfig): string[] {
   const allowed = config.harmless ? [] : config.allowedTools;
   if (allowed.length) args.push("--allowedTools", allowed.join(","));
   if (config.model) args.push("--model", config.model);
+  if (config.effort) args.push("--effort", config.effort);
   // The app's own instructions (Prompts.swift's). Not in harmless mode: they rely on Read/Write/Edit
   // (memory.md, routines), and a live run with no tools but these instructions wrote fake tool calls
   // as text for minutes instead of answering (Phase 2a).

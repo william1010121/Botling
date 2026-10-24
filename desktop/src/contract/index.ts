@@ -353,6 +353,71 @@ export const PluginView = z.strictObject({
   panels: z.array(z.strictObject({ id: z.string().max(100), title: z.string().max(200) })).max(20),
 });
 export type PluginView = z.infer<typeof PluginView>;
+// ---------------------------------------------------------------------------------------------
+// Settings (settings.json, 1.x's AppSettings keys; per-bot choices in bot.json)
+
+const BotModel = z.enum(["haiku", "sonnet", "opus"]);
+const Effort = z.enum(["low", "medium", "high", "xhigh", "max"]);
+const ModelId = z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:\/-]+$/);
+export const SettingsView = z.strictObject({
+  language: z.enum(["en", "zh-Hant", "zh-Hans", "ja", "ko"]).nullable(),
+  /** The language in effect: the chosen one, else the system's (`AppLanguage.preferred`). */
+  effectiveLanguage: z.enum(["en", "zh-Hant", "zh-Hans", "ja", "ko"]),
+  botLook: z.enum(["original", "cute"]),
+  chatAvatarSize: z.number().int().min(32).max(96).nullable(),
+  catchUpEnabled: z.boolean(),
+  intervalSummaryEnabled: z.boolean(),
+  thresholdsCustomized: z.boolean(),
+  catchUpThreshold: z.number().int().min(1).max(50),
+  intervalSummaryThreshold: z.number().int().min(1).max(50),
+  catchUpModel: z.string().max(200),
+  summaryPrompt: z.string().max(20_000).nullable(),
+  defaultSummaryPrompt: z.string().max(2_000),
+  completionVerification: z.boolean(),
+  completionVerificationModel: z.string().max(200),
+  subagentModel: BotModel.nullable(),
+  subagentHourCache: z.boolean(),
+  codexWorkersFollow: z.boolean(),
+  codexWorkers: z.strictObject({ model: z.string().max(200).nullable(), effort: Effort.nullable(), fast: z.boolean().nullable() }),
+  componentEditorModel: BotModel,
+  resultPublishing: z.enum(["artifactUnlessSensitive", "localOnly", "artifactAlways"]),
+  stallReminderMinutes: z.number().int().min(0).max(10_000),
+});
+export type SettingsView = z.infer<typeof SettingsView>;
+/** One change on the Settings page (null: back to the default). */
+export const SettingsChange = z.discriminatedUnion("key", [
+  z.strictObject({ key: z.literal("language"), value: z.enum(["en", "zh-Hant", "zh-Hans", "ja", "ko"]).nullable() }),
+  z.strictObject({ key: z.literal("botLook"), value: z.enum(["original", "cute"]) }),
+  z.strictObject({ key: z.literal("chatAvatarSize"), value: z.number().int().min(32).max(96).nullable() }),
+  z.strictObject({ key: z.literal("catchUpEnabled"), value: z.boolean() }),
+  z.strictObject({ key: z.literal("intervalSummaryEnabled"), value: z.boolean() }),
+  z.strictObject({ key: z.literal("thresholdsCustomized"), value: z.boolean() }),
+  z.strictObject({ key: z.literal("catchUpThreshold"), value: z.number().int().min(1).max(50) }),
+  z.strictObject({ key: z.literal("intervalSummaryThreshold"), value: z.number().int().min(1).max(50) }),
+  z.strictObject({ key: z.literal("catchUpModel"), value: ModelId.nullable() }),
+  z.strictObject({ key: z.literal("summaryPrompt"), value: z.string().max(20_000).nullable() }),
+  z.strictObject({ key: z.literal("completionVerification"), value: z.boolean() }),
+  z.strictObject({ key: z.literal("completionVerificationModel"), value: ModelId.nullable() }),
+  z.strictObject({ key: z.literal("subagentModel"), value: BotModel.nullable() }),
+  z.strictObject({ key: z.literal("subagentHourCache"), value: z.boolean() }),
+  z.strictObject({ key: z.literal("codexWorkersFollow"), value: z.boolean() }),
+  z.strictObject({ key: z.literal("codexWorkers"), value: z.strictObject({ model: ModelId.nullable(), effort: Effort.nullable(), fast: z.boolean().nullable() }) }),
+  z.strictObject({ key: z.literal("componentEditorModel"), value: BotModel }),
+  z.strictObject({ key: z.literal("resultPublishing"), value: z.enum(["artifactUnlessSensitive", "localOnly", "artifactAlways"]) }),
+  z.strictObject({ key: z.literal("stallReminderMinutes"), value: z.number().int().min(0).max(1_440) }),
+]);
+export type SettingsChange = z.infer<typeof SettingsChange>;
+/** A bot's own choices (bot.json): its heads, its model and effort, its subagents' model, Codex's model. */
+export const BotSettingsView = z.strictObject({
+  botId: id,
+  engines: z.array(z.enum(["claude", "codex"])).min(1).max(2),
+  model: BotModel.nullable(),
+  effort: Effort.nullable(),
+  subagentModel: BotModel.nullable(),
+  codexModel: z.string().max(200).nullable(),
+});
+export type BotSettingsView = z.infer<typeof BotSettingsView>;
+
 /** A plugin's web part for the chat page (1.x's `WebPluginSpec`). */
 export const WebPluginSpecView = z.strictObject({
   name: z.string().max(214), version: z.string().max(100), source: z.string().max(5_000_000),
@@ -482,6 +547,16 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("plugins.panel"), name: PluginName, panel: z.string().min(1).max(100) }),
   /** A panel's `ccb.host.call(method, params)` to its own plugin's program part (the plugin comes from the frame). */
   z.strictObject({ type: z.literal("plugins.call"), name: PluginName, method: z.string().min(1).max(200), params: z.unknown() }),
+  /** The app's settings (settings.json), with every default filled in. */
+  z.strictObject({ type: z.literal("settings.get") }),
+  z.strictObject({ type: z.literal("settings.set"), change: SettingsChange }),
+  /** A bot's own choices (bot.json). */
+  z.strictObject({ type: z.literal("bot.settings"), botId }),
+  /** Changes a bot's model, effort, subagents' model or Codex model (null: the default); a running head keeps its own until it next wakes. */
+  z.strictObject({
+    type: z.literal("bot.configure"), botId, model: BotModel.nullable().optional(), effort: Effort.nullable().optional(),
+    subagentModel: BotModel.nullable().optional(), codexModel: ModelId.nullable().optional(),
+  }),
   /** Every enabled plugin's web part, for the chat page. */
   z.strictObject({ type: z.literal("plugins.web") }),
   /** The chat page loaded a plugin's web part (kept as the one to fall back to). */
@@ -509,6 +584,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.detail", "component.save", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
+  "settings.get", "settings.set", "bot.settings", "bot.configure",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
 export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick"]);
@@ -536,7 +612,7 @@ export interface ChatSnapshot {
 }
 
 export interface Results {
-  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView };
+  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView };
   /** `stoppedBy`: a plugin's beforeSend hook stopped it (`messageId` is the notice saying so, `turnId` null). */
   "chat.send": { messageId: string; turnId: string | null; stoppedBy?: string };
   "heads.set": { engines: ("claude" | "codex")[] };
@@ -573,6 +649,10 @@ export interface Results {
   "plugins.panel": { title: string; source: string; settings: Record<string, boolean | number | string | null> };
   "plugins.call": { result: unknown };
   "plugins.web": { specs: WebPluginSpecView[] };
+  "settings.get": SettingsView;
+  "settings.set": SettingsView;
+  "bot.settings": BotSettingsView;
+  "bot.configure": BotSettingsView;
   "plugins.loaded": Record<string, never>;
   "plugins.failed": Record<string, never>;
   "plugins.notice": Record<string, never>;
@@ -622,6 +702,8 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("catchup.updated"), botId, catchUp: CatchUpView.nullable(), intervalSummaries: z.array(CatchUpView).max(200) }),
   /** The plugin library changed (a plugin added, edited, turned off, broken; the host started or stopped). */
   z.strictObject({ type: z.literal("plugins.updated"), plugins: PluginsView }),
+  /** The app's settings changed. */
+  z.strictObject({ type: z.literal("settings.updated"), settings: SettingsView }),
   /** The files waiting in a bot's input box changed. */
   z.strictObject({ type: z.literal("files.updated"), botId, files: z.array(PendingFileView).max(50) }),
   /** Its routines changed (one ran, the bot or the app edited them). */

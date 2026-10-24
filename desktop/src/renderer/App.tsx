@@ -8,13 +8,21 @@ import type { BotView, ResultOf } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
-import { avatarURL } from "./avatars";
+import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { PluginsButton } from "./Plugins";
+import { SettingsSheet } from "./Settings";
 
 export function App({ client, store }: { client: Client; store: WorkspaceStore }) {
   const view = useSyncExternalStore(store.subscribe, store.getView);
   const [error, setError] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // ⌘, (Ctrl+, elsewhere) opens Settings, as in 1.x.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "," && (event.metaKey || event.ctrlKey)) { event.preventDefault(); setSettingsOpen(true); } };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const chat = view.chat;
   const bot = useMemo(() => view.bots.find((candidate) => candidate.id === chat?.botId) ?? null, [view.bots, chat?.botId]);
 
@@ -36,12 +44,16 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
             <BotRow
               key={candidate.id}
               bot={candidate}
+              look={view.settings?.botLook ?? "original"}
               selected={candidate.id === chat?.botId}
               onSelect={() => { setError(null); void store.select(candidate.id); }}
             />
           ))}
         </nav>
         <PluginsButton client={client} plugins={view.plugins} />
+        <div className="rail-settings">
+          <button type="button" className={`rail-button${settingsOpen ? " on" : ""}`} onClick={() => setSettingsOpen(true)}>Settings</button>
+        </div>
         {view.imported && (
           <div className="rail-note" title={view.imported.skipped.join("\n")}>
             Imported {view.imported.bots} bot{view.imported.bots === 1 ? "" : "s"} and {view.imported.messages} message{view.imported.messages === 1 ? "" : "s"} from Botling 1.x (read-only).
@@ -76,6 +88,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} />
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
+      {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} plugins={view.plugins} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }
@@ -95,12 +108,12 @@ function statusText(bot: BotView): string {
   return "Asleep";
 }
 
-function BotRow({ bot, selected, onSelect }: { bot: BotView; selected: boolean; onSelect: () => void }) {
+function BotRow({ bot, selected, onSelect, look }: { bot: BotView; selected: boolean; onSelect: () => void; look: "original" | "cute" }) {
   const asleep = bot.phase === "asleep" && !bot.working;
   const label = [bot.name, statusText(bot), bot.approvals ? `${bot.approvals} waiting on you` : null, bot.unread && !selected ? `${bot.unread} unread` : null].filter(Boolean).join(", ");
   return (
     <button className={`bot-row${selected ? " selected" : ""}${asleep ? " asleep" : ""}`} data-bot={bot.id} aria-current={selected ? "page" : undefined} aria-label={label} onClick={onSelect}>
-      <img className="bot-avatar" src={avatarURL(bot.avatar, asleep ? "closed" : "open")} alt="" />
+      <img className="bot-avatar" src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
       <span className={`bot-name${bot.role === "main" ? " main" : ""}`}>{bot.name}</span>
       <span className="bot-gap" />
       {bot.working && <span className="bot-dot working" aria-hidden="true" />}
@@ -134,7 +147,10 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
       const line = chat.messages.find((message) => message.id === reply.id);
       if (line) quoted = { id: line.id, who: line.role === "user" ? "Reply to yourself" : `Reply to ${bot.name}`, preview: (line.text.split("\n").find(Boolean) ?? "").slice(0, 60) };
     }
-    const { state, extras } = current.subagent ? subagentState(bot, current.subagent) : chatState(bot, chat, new Date(), quoted, { components: current.components, board: current.board });
+    const { state, extras } = current.subagent ? subagentState(bot, current.subagent) : chatState(bot, chat, new Date(), quoted, {
+      components: current.components, board: current.board, look: current.settings?.botLook ?? "original",
+      lang: current.settings?.effectiveLanguage ?? null, chatAvatarSize: current.settings?.chatAvatarSize ?? null,
+    });
     const message: ShellMessage = { botling: "state", state, extras };
     target.postMessage(message, CHAT_ORIGIN);
   }, []);

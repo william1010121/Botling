@@ -209,3 +209,61 @@ describe("plugins' web parts in the chat page", () => {
     expect((await c.call({ type: "plugins.list" })).plugins.find((plugin: any) => plugin.name === "glow")).toMatchObject({ enabled: false, failure: "it threw" });
   });
 });
+
+describe("settings (AppSettings.swift's keys)", () => {
+  it("reads 1.x's keys with their defaults, keeps keys it does not know, and writes changes as 1.x's setters", async () => {
+    const { settingsView, applySetting, launchSettings } = await import("../../src/core/settings");
+    const empty = settingsView({});
+    expect(empty).toMatchObject({
+      language: null, effectiveLanguage: "en", botLook: "cute", chatAvatarSize: null, catchUpEnabled: true, intervalSummaryEnabled: false,
+      thresholdsCustomized: false, catchUpThreshold: 3, intervalSummaryThreshold: 3, catchUpModel: "gpt-6-luna", summaryPrompt: null,
+      completionVerification: false, completionVerificationModel: "gpt-6-luna", subagentModel: null, subagentHourCache: false,
+      codexWorkersFollow: true, codexWorkers: { model: null, effort: null, fast: null }, componentEditorModel: "sonnet",
+      resultPublishing: "artifactUnlessSensitive", stallReminderMinutes: 15,
+    });
+    // A bad value falls back to its own default only; a threshold not 3 counts as customized.
+    expect(settingsView({ languageChoice: "xx", botLookChoice: "original", catchUpThresholdChoice: 99, codexWorkerChoice: { model: "m", effort: "turbo", fast: true } }, "ja"))
+      .toMatchObject({ language: null, effectiveLanguage: "ja", botLook: "original", catchUpThreshold: 50, thresholdsCustomized: true, codexWorkers: { model: "m", effort: null, fast: true } });
+    let raw: Record<string, unknown> = { dailyBudget: 3, languageChoice: "en" };
+    raw = applySetting(raw, { key: "catchUpThreshold", value: 7 });
+    expect(raw).toEqual({ dailyBudget: 3, languageChoice: "en", catchUpThresholdChoice: 7, summaryThresholdsCustomizedChoice: true });
+    raw = applySetting(raw, { key: "thresholdsCustomized", value: false });
+    expect(raw).toEqual({ dailyBudget: 3, languageChoice: "en", summaryThresholdsCustomizedChoice: false });
+    raw = applySetting(raw, { key: "language", value: null });
+    expect(raw.languageChoice).toBeUndefined();
+    raw = applySetting(raw, { key: "summaryPrompt", value: "   " });
+    expect(raw.summaryPromptChoice).toBeUndefined();
+    raw = applySetting(raw, { key: "codexWorkers", value: { model: "gpt-x", effort: "high", fast: null } });
+    expect(raw.codexWorkerChoice).toEqual({ model: "gpt-x", effort: "high" });
+    expect(launchSettings(raw).codexWorkers).toBeNull();
+    raw = applySetting(raw, { key: "codexWorkersFollow", value: false });
+    expect(launchSettings(raw).codexWorkers).toEqual({ model: "gpt-x", effort: "high", fast: null });
+  });
+
+  it("through the core: settings.set saves and tells; a bot's model, effort and the subagents' choices reach a new claude head", async () => {
+    const dir = tempDir("settings-core");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ languageChoice: "ja", someFutureKey: { kept: true } }));
+    const args = join(dir, "claude-args.log");
+    const c = core(dir, { FAKE_CLAUDE_ARGS: args, BOTLING_LANGUAGES: "en-US" });
+    expect((await c.call({ type: "chat.snapshot", botId: MAIN })).settings).toMatchObject({ language: "ja", effectiveLanguage: "ja" });
+    const view = await c.call({ type: "settings.set", change: { key: "subagentModel", value: "haiku" } });
+    expect(view.subagentModel).toBe("haiku");
+    await c.call({ type: "settings.set", change: { key: "subagentHourCache", value: true } });
+    await c.call({ type: "settings.set", change: { key: "language", value: null } });
+    expect(c.of("settings.updated").at(-1)!.event).toMatchObject({ settings: { language: null, effectiveLanguage: "en", subagentHourCache: true } });
+    expect(JSON.parse(readFileSync(join(dir, "settings.json"), "utf8"))).toEqual({ someFutureKey: { kept: true }, subagentModelDefault: "haiku", subagentHourCacheChoice: true });
+    expect(await c.call({ type: "bot.configure", botId: MAIN, model: "opus", effort: "high" })).toMatchObject({ botId: MAIN, engines: ["claude"], model: "opus", effort: "high", subagentModel: null, codexModel: null });
+    expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8"))).toMatchObject({ model: "opus", effort: "high" });
+    const { turnId } = await c.call({ type: "chat.send", botId: MAIN, text: "hi" });
+    await until(() => c.of("turn.finished").find((e) => (e.event as any).turnId === turnId));
+    const started = logged(args).at(-1);
+    expect(started.args.join(" ")).toContain("--model opus");
+    expect(started.args.join(" ")).toContain("--effort high");
+    expect(started).toMatchObject({ subagentModel: "haiku", subagentCache: "1h" });
+    // Back to the defaults: no flags.
+    expect(await c.call({ type: "bot.configure", botId: MAIN, model: null, effort: null })).toMatchObject({ model: null, effort: null });
+    expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).model).toBeUndefined();
+    await expect(c.call({ type: "settings.set", change: { key: "chatAvatarSize", value: 200 } })).rejects.toThrow("bad_request");
+  });
+});

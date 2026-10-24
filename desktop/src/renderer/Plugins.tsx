@@ -23,16 +23,18 @@ export function PluginsButton({ client, plugins }: { client: Client; plugins: Pl
   );
 }
 
-function PluginsPanel({ client, plugins, onPanel, onClose }: { client: Client; plugins: PluginsView | null; onPanel: (panel: { plugin: string; id: string; title: string }) => void; onClose: () => void }) {
+export function PluginsPanel({ client, plugins, onPanel, onClose, embedded = false }: { client: Client; plugins: PluginsView | null; onPanel: (panel: { plugin: string; id: string; title: string }) => void; onClose: () => void; embedded?: boolean }) {
   const [problem, setProblem] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const run = (promise: Promise<unknown>) => { setProblem(null); void promise.catch((failure) => setProblem(why(failure))); };
   return (
-    <div className="plugins-panel" role="dialog" aria-label="Plugins">
-      <div className="plugins-head">
-        <span>Plugins</span>
-        <button type="button" className="plugins-close" aria-label="Close" onClick={onClose}>×</button>
-      </div>
+    <div className={embedded ? "plugins-list" : "plugins-panel"} role={embedded ? "region" : "dialog"} aria-label="Plugins">
+      {!embedded && (
+        <div className="plugins-head">
+          <span>Plugins</span>
+          <button type="button" className="plugins-close" aria-label="Close" onClick={onClose}>×</button>
+        </div>
+      )}
       {plugins?.host.problem && <p className="plugins-problem">{plugins.host.problem}</p>}
       {plugins?.secretsProblem && <p className="plugins-problem">{plugins.secretsProblem}</p>}
       {problem && <p className="plugins-problem" role="alert">{problem}</p>}
@@ -124,7 +126,7 @@ function SecretField({ setting, onSecret }: { setting: PluginView["settings"][nu
 }
 
 /** A plugin's panel: its web part in a sandboxed frame; its `host.call`s go to its own program part. */
-function PanelFrame({ client, plugin, panel, title, onClose }: { client: Client; plugin: string; panel: string; title: string; onClose: () => void }) {
+export function PanelFrame({ client, plugin, panel, title, onClose }: { client: Client; plugin: string; panel: string; title: string; onClose: () => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);

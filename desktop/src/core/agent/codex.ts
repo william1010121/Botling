@@ -87,6 +87,9 @@ export interface CodexConfig {
   workerModel: string | null;
   /** "low" … "xhigh". */
   effort: string | null;
+  /** Workers' own effort and Fast mode (settings' Codex workers; null: as the coordinator / config.toml). */
+  workerEffort?: string | null;
+  workerFast?: boolean | null;
   restoredWorkers: WorkerRecord[];
   /** scheduled-routines.json for `app_routines` (null: none here). */
   routinesFile?: string | null;
@@ -812,6 +815,8 @@ export class CodexSession {
     };
     const model = this.config.workerModel ?? this.config.model;
     if (model) params.model = model;
+    // Fast mode: the priority service tier (`CodexWorkerDefaults.fast`).
+    if (typeof this.config.workerFast === "boolean") params.serviceTier = this.config.workerFast ? "priority" : "default";
     if (worker.thread) {
       params.threadId = worker.thread;
       params.excludeTurns = true;
@@ -838,7 +843,8 @@ export class CodexSession {
     worker.turnId = null;
     worker.said = [];
     const params: Record<string, unknown> = { threadId: worker.thread, input: [{ type: "text", text }] };
-    if (this.config.effort) params.effort = this.config.effort;
+    const effort = this.config.workerEffort ?? this.config.effort;
+    if (effort) params.effort = effort;
     return [this.request("turn/start", params, { kind: "workerTurn", task, run: worker.run })];
   }
 
@@ -1136,6 +1142,8 @@ export interface CodexHeadConfig {
   model?: string | null;
   workerModel?: string | null;
   effort?: string | null;
+  workerEffort?: string | null;
+  workerFast?: boolean | null;
   /** The bot's scheduled-routines.json, for `app_routines` (null: none). */
   routinesFile?: string | null;
 }
@@ -1171,6 +1179,7 @@ export class CodexHead {
     this.session = new CodexSession({
       cwd: config.cwd, instructions: config.instructions + recovery, workerInstructions: config.workerInstructions, resumeThread,
       model: config.model ?? null, workerModel: config.workerModel ?? null, effort: config.effort ?? null,
+      workerEffort: config.workerEffort ?? null, workerFast: config.workerFast ?? null,
       restoredWorkers: config.workerInstructions ? config.threads.workers(config.sessionId) : [],
       routinesFile: config.routinesFile ?? null, ownerSession: config.sessionId, restoredMonitors,
     });

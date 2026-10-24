@@ -58,6 +58,14 @@ const pidsFile = process.env.FAKE_CLAUDE_PIDS;
 const note = (pid) => { if (pidsFile) appendFileSync(pidsFile, `${pid}\n`); };
 note(process.pid);
 const inputLog = process.env.FAKE_CLAUDE_INPUT;
+// FAKE_CLAUDE_ARGS: a file it appends how it was started to (its arguments and the settings' variables).
+if (process.env.FAKE_CLAUDE_ARGS) {
+  appendFileSync(process.env.FAKE_CLAUDE_ARGS, JSON.stringify({
+    args: process.argv.slice(2),
+    subagentModel: process.env.CLAUDE_CODE_SUBAGENT_MODEL ?? null,
+    subagentCache: process.env.CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL ?? null,
+  }) + "\n");
+}
 if (process.env.FAKE_CLAUDE_LOG) appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ pid: process.pid, args, resume: !!resumed, session, cwd: process.cwd() }) + "\n");
 
 if (resumed && process.env.FAKE_CLAUDE_FORGET === "1") {

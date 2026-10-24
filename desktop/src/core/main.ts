@@ -20,10 +20,17 @@ const number = (value: string | undefined, fallback: number) => (value && Number
 
 function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
   const kind = process.env.BOTLING_AGENT ?? "fake";
+  // The subagents' model and their 1-hour prompt cache (AgentProcess.swift's `launchEnvironment`); one the
+  // app's own environment sets is left as it is.
+  const env: Record<string, string> = { ...(session.pluginEnv ?? {}) };
+  if (session.subagentModel) env.CLAUDE_CODE_SUBAGENT_MODEL = session.subagentModel;
+  if (session.subagentHourCache && !process.env.CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL) env.CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL = "1h";
   const common = {
     cwd: profile.folder, sessionId: session.sessionId, resume: session.resume, allowedTools: profile.tools,
     // Plugins' Claude parts (Maintainer's component editor among them) and their MCP servers' secrets.
-    pluginDirs: session.pluginDirs ?? [], ...(session.pluginEnv && Object.keys(session.pluginEnv).length ? { env: session.pluginEnv } : {}),
+    pluginDirs: session.pluginDirs ?? [], ...(Object.keys(env).length ? { env } : {}),
+    model: process.env.BOTLING_MODEL ?? session.model ?? null,
+    effort: session.effort ?? null,
   };
   if (kind === "claude") {
     return {
@@ -31,7 +38,6 @@ function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
       command: process.env.BOTLING_CLAUDE_PATH ?? "claude",
       harmless: process.env.BOTLING_HARMLESS !== "0",
       harmlessTools: (process.env.BOTLING_HARMLESS_TOOLS ?? "").split(",").filter(Boolean),
-      model: process.env.BOTLING_MODEL ?? null,
       systemPrompt: session.systemPrompt,
     };
   }
@@ -59,7 +65,12 @@ function codexConfig(profile: BotProfile, session: SessionStartCodex, threads: C
   const common = {
     cwd: profile.folder, sessionId: session.sessionId, resume: session.resume, threads,
     instructions: session.systemPrompt, workerInstructions: session.workerInstructions,
-    model: process.env.BOTLING_CODEX_MODEL || session.codexModel, effort: process.env.BOTLING_CODEX_EFFORT || null,
+    model: process.env.BOTLING_CODEX_MODEL || session.codexModel,
+    // Codex's efforts go up to xhigh: Max is its highest (`CodexSession.effort`).
+    effort: process.env.BOTLING_CODEX_EFFORT || (session.effort === "max" ? "xhigh" : session.effort) || null,
+    workerModel: session.codexWorkers?.model ?? null,
+    workerEffort: session.codexWorkers?.effort === "max" ? "xhigh" : session.codexWorkers?.effort ?? null,
+    workerFast: session.codexWorkers?.fast ?? null,
     routinesFile: session.routinesFile,
   };
   if (kind === "claude") return { ...common, command: process.env.BOTLING_CODEX_PATH ?? "codex" };
