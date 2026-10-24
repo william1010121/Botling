@@ -84,6 +84,30 @@ describe("the chat page", () => {
     expect(size()).toBe("");
   });
 
+  it("keeps each head's verification disclosure and keyboard focus through live verdict updates", () => {
+    const head = (id: string, speaker: string, state: "checking" | "judged" | "interrupted", reason?: string) => message(id, "Reply", {
+      speaker, completionVerification: { model: "gpt-6-luna", state, verdict: state === "judged" ? "WAITING_DEPENDENCY" : null, reason },
+    });
+    window.ccb.setState({ ...base(), components: {}, messages: [head("claude", "botling · Claude", "checking"), head("codex", "botling · Codex", "checking")] } as ChatState);
+    const card = (id: string) => document.querySelector<HTMLDetailsElement>(`[data-id="${id}"] .completion-verification`)!;
+    expect(card("claude").open).toBe(false);
+    expect(card("codex").open).toBe(false);
+    card("claude").querySelector("summary")!.click();
+    card("claude").querySelector("summary")!.focus();
+    window.ccb.patchState({ order: ["claude", "codex"], changed: [head("claude", "botling · Claude", "judged", "Actual dependency"), head("codex", "botling · Codex", "interrupted")] });
+    expect(card("claude").open).toBe(true);
+    expect(card("claude").querySelector(".verification-reason")?.textContent).toBe("Actual dependency");
+    expect(document.activeElement).toBe(card("claude").querySelector("summary"));
+    expect(card("codex").open).toBe(false);
+    expect(card("codex").querySelector("summary")?.textContent).toContain("Interrupted; no verdict");
+    card("claude").querySelector("summary")!.click();
+    window.ccb.patchState({ order: ["claude", "codex"], changed: [head("claude", "botling · Claude", "judged", "Updated dependency")] });
+    expect(card("claude").open).toBe(false);
+    expect(card("claude").textContent).toContain("Updated dependency");
+    window.ccb.setState({ ...base({ botID: "other-chat" }), components: {}, messages: [head("claude", "botling · Claude", "checking")] } as ChatState);
+    expect(card("claude").open).toBe(false);
+  });
+
   it("redraws only what a patch changed, and asks for everything when it cannot apply one", () => {
     const a = message("a", "first"), b = message("b", "second");
     window.ccb.patchState({ base: base(), components, order: ["a", "b"], changed: [a, b] });

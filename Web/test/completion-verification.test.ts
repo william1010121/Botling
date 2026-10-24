@@ -27,6 +27,24 @@ describe("actual completion verification", () => {
     expect(card.textContent).toContain("actual-model");
     if (verdict !== "COMPLETE") expect(card.querySelector(".verification-title")?.textContent).not.toContain("Completed");
   });
+  it.each(["checking", "interrupted", "judged"] as const)("starts %s collapsed with a native keyboard disclosure", (state) => {
+    setLanguage("en");
+    const card = completionVerificationElement({ model: "gpt-6-luna", state, verdict: "WAITING_DEPENDENCY", reason: "Worker report pending" });
+    expect(card.tagName).toBe("DETAILS");
+    const details = card as HTMLDetailsElement;
+    const summary = details.querySelector("summary")!;
+    expect(summary).not.toBeNull();
+    expect(details.open).toBe(false);
+    expect(summary.textContent).toContain("Completion verification · ");
+    expect(summary.textContent).not.toContain("gpt-6-luna");
+    expect(summary.textContent).not.toContain("Worker report pending");
+    summary.click();
+    expect(details.open).toBe(true);
+    expect(details.querySelector(".verification-model")?.textContent).toBe("gpt-6-luna · medium");
+    if (state === "judged") expect(details.querySelector(".verification-reason")?.textContent).toBe("Worker report pending");
+    summary.click();
+    expect(details.open).toBe(false);
+  });
   it("shows interrupted and bounded-wake pause as unfinished", () => {
     setLanguage("zh-Hant");
     expect(completionVerificationElement({ model: "actual", state: "interrupted" }).textContent).toContain("已中斷；未有判定");
