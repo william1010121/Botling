@@ -48,9 +48,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// Separate from conversation and worker models; old settings keep the Luna judge.
     public var completionVerificationModelChoice: String?
     public var completionVerificationModel: String { completionVerificationModelChoice ?? PromiseCheck.judgeModel }
-    /// Settings → Completion verification on/off. Nil (older settings) means on.
+    /// Settings → Completion verification on/off. Nil (new or older settings) means off.
     public var completionVerificationOn: Bool?
-    public var completionVerificationEnabled: Bool { completionVerificationOn ?? true }
+    public var completionVerificationEnabled: Bool { completionVerificationOn ?? false }
 
     /// Catch-up summary (Settings → General). Nil (a settings file from before it) means on,
     /// more than `CatchUp.defaultThreshold` unread, and the completion judge's model.

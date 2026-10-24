@@ -93,7 +93,8 @@ struct WorkerOwnedWaitTests {
 /// Settings → Completion verification can be turned off.
 @MainActor
 struct CompletionVerificationToggleTests {
-    @Test func offMeansNoJudgeNoRowNoWakeForBothHeadsAndSurvivesReload() async throws {
+    @Test(arguments: [false, true])
+    func offMeansNoJudgeNoRowNoWakeForBothHeadsAndSurvivesReload(explicitlyToggleOff: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-verifier-off-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
         let calls = PromiseCheckTests.Calls()
@@ -105,14 +106,18 @@ struct CompletionVerificationToggleTests {
                 Bot(profile: profile, launcher: fake.launcher, store: store)
             }
         }
-        #expect(try JSONDecoder().decode(AppSettings.self, from: Data(#"{"developerMode":false}"#.utf8)).completionVerificationEnabled)
+        #expect(try !JSONDecoder().decode(AppSettings.self, from: Data(#"{"developerMode":false}"#.utf8)).completionVerificationEnabled)
         let fake = FakeLauncher()
         let workspace = open(fake)
         defer { workspace.modelSettingsBots.forEach { $0.stop() } }
-        #expect(workspace.settings.completionVerificationEnabled)
+        #expect(!workspace.settings.completionVerificationEnabled)
         let bot = workspace.mainBot
         await bot.setHeads([.claude, .codex])
-        workspace.setCompletionVerificationEnabled(false)
+        if explicitlyToggleOff {
+            workspace.setCompletionVerificationEnabled(true)
+            #expect(bot.promiseCheck != nil)
+            workspace.setCompletionVerificationEnabled(false)
+        }
         #expect(bot.promiseCheck == nil)
         for engine in [BotEngine.claude, .codex] {
             let before = (engine == .claude ? bot : bot.partner)?.messages.filter { $0.role == .bot }.count ?? 0

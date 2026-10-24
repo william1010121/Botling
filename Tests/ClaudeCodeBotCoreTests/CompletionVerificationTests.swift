@@ -14,6 +14,28 @@ struct CompletionVerificationTests {
         .init(id: id, name: id, isDefault: false, supportedReasoningEfforts: efforts)
     }
 
+    @Test func absentPreferenceDefaultsOffAndExplicitChoicesSurviveRoundTrip() throws {
+        let fresh = AppSettings()
+        #expect(fresh.completionVerificationOn == nil)
+        #expect(!fresh.completionVerificationEnabled)
+        #expect(!AppSettings.load(from: FileManager.default.temporaryDirectory.appending(path: "missing-settings-\(UUID()).json")).completionVerificationEnabled)
+        let generated = try JSONEncoder().encode(fresh)
+        #expect(try !JSONDecoder().decode(AppSettings.self, from: generated).completionVerificationEnabled)
+        for (json, choice) in [
+            (#"{"developerMode":false}"#, nil as Bool?),
+            (#"{"developerMode":false,"completionVerificationOn":null}"#, nil),
+            (#"{"developerMode":false,"completionVerificationOn":true}"#, true),
+            (#"{"developerMode":false,"completionVerificationOn":false}"#, false)
+        ] {
+            let settings = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
+            #expect(settings.completionVerificationOn == choice)
+            #expect(settings.completionVerificationEnabled == (choice ?? false))
+            let reloaded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+            #expect(reloaded.completionVerificationOn == choice)
+            #expect(reloaded.completionVerificationEnabled == (choice ?? false))
+        }
+    }
+
     @Test func catalogueAndLegacySettings() throws {
         let line = #"{"id":2,"result":{"data":[{"id":"available","supportedReasoningEfforts":[{"reasoningEffort":"medium"}]},{"id":"low-only","supportedReasoningEfforts":[{"reasoningEffort":"low"}]},{"id":"unknown"},{"id":"hidden","hidden":true,"supportedReasoningEfforts":[{"reasoningEffort":"medium"}]}]}}"#
         #expect(try #require(CodexModels.parse(line)).filter(\.supportsCompletionVerification).map(\.id) == ["available"])
@@ -44,6 +66,7 @@ struct CompletionVerificationTests {
         let factory: (String) -> PromiseCheck.Classifier = { PromiseCheck.codexClassifier(executable: executable, model: $0, timeout: 3) }
         let fake = FakeLauncher(), workspace = open(root.appending(path: "data"), fake, classify: factory)
         defer { workspace.modelSettingsBots.forEach { $0.stop() } }
+        workspace.setCompletionVerificationEnabled(true)
         let bot = workspace.mainBot
         await bot.setHeads([.claude, .codex])
         #expect(!workspace.setCompletionVerificationModel(model("unsupported", efforts: ["high"])))
@@ -63,6 +86,8 @@ struct CompletionVerificationTests {
         #expect(bot.partner?.completionVerificationModel == "fixture-beta")
         let reloaded = open(root.appending(path: "data"), FakeLauncher(), classify: factory)
         defer { reloaded.modelSettingsBots.forEach { $0.stop() } }
+        #expect(reloaded.settings.completionVerificationOn == true)
+        #expect(reloaded.settings.completionVerificationEnabled)
         #expect(reloaded.settings.completionVerificationModel == "fixture-beta")
         let project = reloaded.addProject(folder: root.appending(path: "project"), select: false)
         let newBot = try #require(reloaded.bot(for: project))
@@ -90,6 +115,7 @@ struct CompletionVerificationTests {
             for await _ in gate.stream { break }
             return .init(verdict: .complete, reason: selected)
         } }
+        workspace.setCompletionVerificationEnabled(true)
         let bot = workspace.mainBot
         defer { gate.continuation.finish(); bot.stop() }
         bot.send("Complete this")
