@@ -13,7 +13,8 @@
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "node build.mjs && vitest run test/unit",
     "test:e2e": "node build.mjs && playwright test",
-    "test:live": "node build.mjs && BOTLING_LIVE_CLAUDE=1 vitest run test/live"
+    "test:live": "node build.mjs && BOTLING_LIVE_CLAUDE=1 vitest run test/live",
+    "test:live:codex": "node build.mjs && BOTLING_LIVE_CODEX=1 vitest run test/live/codex.test.ts"
   },
   "dependencies": {
     "@codemirror/commands": "6.9.0",
