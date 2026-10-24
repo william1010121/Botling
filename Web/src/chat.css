@@ -1355,21 +1355,18 @@ body.spec-mode .float-layer { display: none; }
 .reaction-message-column .choice { min-width:0; flex-wrap:wrap; }
 .reaction-message-column .choice .detail { white-space:normal; }
 
-/* The app's actual completion check, attached to the reply it evaluated. */
-.completion-verification { margin-top: 8px; padding: 0 10px; border-left: 2px solid var(--muted); background: #ffffff05; border-radius: 4px; font-size: 12px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
-.completion-verification > summary { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 5px 0; cursor: pointer; list-style: none; }
-.completion-verification > summary::-webkit-details-marker { display: none; }
-.completion-verification > summary::before { content: "›"; flex: 0 0 auto; font-size: 16px; line-height: 1; }
-.completion-verification[open] > summary::before { transform: rotate(90deg); }
-.completion-verification > summary:focus-visible { outline: 2px solid #4c8dff; outline-offset: 2px; border-radius: 2px; }
-.verification-title { display: flex; flex: 1; color: var(--text); font-weight: 500; min-width: 0; white-space: pre; }
-.verification-name, .verification-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.verification-name { flex: 0 4 auto; }
-.verification-status { flex: 0 1 auto; }
-.completion-verification[open] .verification-title { display: block; white-space: normal; }
-.completion-verification[open] .verification-name, .completion-verification[open] .verification-status { overflow: visible; }
-.verification-details { padding: 0 0 7px 12px; }
+/* Verification disclosure in the reply's action row; its content wraps below every action. */
+.message-footer > .completion-verification { display: contents; }
+.completion-verification > .verification-toggle { font: inherit; border: 0; background: transparent; display: inline-flex; flex: 1 1 0; align-items: center; gap: 4px; min-width: 0; max-width: max-content; min-height: 26px; box-sizing: border-box; padding: 3px 5px; border-radius: 6px; color: var(--muted); font-size: 12px; line-height: 1.5; cursor: pointer; list-style: none; }
+.completion-verification > .verification-toggle::before { content: "›"; flex: 0 0 auto; font-size: 14px; line-height: 1; }
+.completion-verification.open > .verification-toggle::before { transform: rotate(90deg); }
+.completion-verification.verification-passed > .verification-toggle::before { content: none; }
+.completion-verification.verification-passed > .verification-toggle { flex: 0 0 auto; font-size: 14px; }
+.completion-verification > .verification-toggle:hover, .completion-verification.open > .verification-toggle { background: #ffffff08; }
+.completion-verification > .verification-toggle:focus-visible { outline: 2px solid #4c8dff; outline-offset: 2px; }
+.verification-title, .verification-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.verification-details { order: 2; flex-basis: 100%; min-width: 0; box-sizing: border-box; padding: 4px 8px; border-left: 2px solid var(--line); color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.verification-details[hidden] { display: none; }
+.verification-heading { color: var(--text); }
 .verification-model { font-size: 11px; }
 .verification-reason { margin-top: 3px; white-space: pre-wrap; }
-.completion-verification[data-verdict="COMPLETE"] { border-left-color: #7baa8c; }
-.completion-verification[data-verdict="UNAVAILABLE"], .completion-verification[data-verdict="UNKNOWN"] { border-left-color: #b89d66; }

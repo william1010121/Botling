@@ -20,25 +20,62 @@ import WebKit
         view.navigationDelegate = self
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { loaded = true }
+    func captureRows(_ name: String) async throws {
+        let rect = try await view.evaluateJavaScript("(()=>{const rows=[...document.querySelectorAll('.row')].map(n=>n.getBoundingClientRect());const x=Math.min(...rows.map(r=>r.x)),y=Math.min(...rows.map(r=>r.y));return {x,y,width:Math.max(...rows.map(r=>r.right))-x,height:Math.max(...rows.map(r=>r.bottom))-y}})()") as! [String:Double]
+        let config=WKSnapshotConfiguration()
+        config.rect=CGRect(x:rect["x"]!,y:rect["y"]!,width:rect["width"]!,height:rect["height"]!)
+        let shot=try await view.takeSnapshot(configuration:config)
+        try NSBitmapImageRep(data:shot.tiffRepresentation!)!.representation(using:.png,properties:[:])!.write(to:output.appending(path:name+".png"))
+    }
     func run() async throws {
         view.loadFileURL(repo.appending(path: "Sources/ClaudeCodeBot/Resources/web/chat.html"), allowingReadAccessTo: repo)
         for _ in 0..<200 where !loaded { try await Task.sleep(for: .milliseconds(50)) }
         guard loaded else { throw NSError(domain: "Chat did not load", code: 1) }
         let fixture = try String(contentsOf: repo.appending(path: "Tests/CompletionVerificationPreview/fixture.js"), encoding: .utf8)
+        let assets = repo.appending(path: "Sources/ClaudeCodeBotCore/Resources/CharacterArt/animation-posters/avatars")
+        var heads = [String:String]()
+        for (mark, name) in [("C", "claude"), ("X", "gpt")] {
+            heads[mark] = "data:image/png;base64," + (try Data(contentsOf:assets.appending(path:"\(name)/idle.png"))).base64EncodedString()
+        }
+        let headJSON = String(data:try JSONSerialization.data(withJSONObject:heads),encoding:.utf8)!
+        if CommandLine.arguments.contains("--baseline") {
+            for width in [900,320] {
+                view.setFrameSize(NSSize(width:width,height:760)); window.setContentSize(view.frame.size)
+                _ = try await view.evaluateJavaScript(fixture + "\nverificationFixture.seenHeads=\(headJSON);verificationFixture.messages.forEach((m,i)=>m.avatar=verificationFixture.seenHeads[i ? 'X' : 'C']);ccb.setState({...verificationFixture,botID:'baseline-\(width)'});true")
+                try await Task.sleep(for:.milliseconds(150))
+                try await captureRows("rows-before-\(width)")
+                let shot=try await view.takeSnapshot(configuration:nil)
+                try NSBitmapImageRep(data:shot.tiffRepresentation!)!.representation(using:.png,properties:[:])!.write(to:output.appending(path:"before-\(width).png"))
+            }
+            print("Captured baseline production bundle at 900/320px")
+            return
+        }
         var results = [[String: Any]]()
         for width in [900, 360, 320] {
             view.setFrameSize(NSSize(width: width, height: 760)); window.setContentSize(view.frame.size)
-            _ = try await view.evaluateJavaScript(fixture + "\nccb.setState({...verificationFixture,botID:'preview-\(width)'});true")
+            _ = try await view.evaluateJavaScript(fixture + "\nverificationFixture.seenHeads=\(headJSON);verificationFixture.messages.forEach((m,i)=>m.avatar=verificationFixture.seenHeads[i ? 'X' : 'C']);ccb.setState({...verificationFixture,botID:'preview-\(width)'});true")
             for expanded in [false, true] {
-                if expanded { _ = try await view.evaluateJavaScript("document.querySelectorAll('.completion-verification > summary').forEach(s=>s.click()); true") }
+                view.setFrameSize(NSSize(width: width, height: expanded ? 1100 : 760)); window.setContentSize(view.frame.size)
+                if expanded { _ = try await view.evaluateJavaScript("document.querySelectorAll('.completion-verification > .verification-toggle').forEach(s=>s.click()); true") }
                 try await Task.sleep(for: .milliseconds(150))
                 var result = try await view.evaluateJavaScript("verificationMeasure()") as! [String: Any]
                 let cards = result["cards"] as! [[String: Any]]
                 guard result["overflow"] as? Bool == false, cards.count == 2,
-                      cards.allSatisfy({ $0["open"] as? Bool == expanded && ($0["summary"] as? String)?.contains("gpt-6-luna") == false && ($0["model"] as? String) == "gpt-6-luna · medium" }),
-                      cards.allSatisfy({ expanded ? ($0["height"] as! Double) > ($0["summaryHeight"] as! Double) + 20 : ($0["height"] as! Double) <= ($0["summaryHeight"] as! Double) + 2 }) else {
-                    throw NSError(domain: "Disclosure layout failed: \(result)", code: 2)
+                      cards[0]["summary"] as? String == "👍",
+                      cards.allSatisfy({ $0["open"] as? Bool == expanded && $0["inFooter"] as? Bool == true && $0["model"] as? String == "gpt-6-luna · medium" }) else {
+                    throw NSError(domain: "Disclosure state failed: \(result)", code: 2)
                 }
+                for card in cards {
+                    let summary = card["summaryRect"] as! [String:Double]
+                    let details = card["detailsRect"] as! [String:Double]
+                    let actions = card["actions"] as! [[String:Double]]
+                    guard summary["height"]! <= 30,
+                          actions.allSatisfy({ abs(($0["y"]! + $0["height"]!/2) - (summary["y"]! + summary["height"]!/2)) < 2 }),
+                          expanded ? details["y"]! >= actions.map({$0["bottom"]!}).max()! : details["height"]! == 0 else {
+                        throw NSError(domain: "Action row layout failed: \(card)", code: 4)
+                    }
+                }
+                if !expanded { try await captureRows("rows-after-\(width)") }
                 let name = "\(expanded ? "expanded" : "collapsed")-\(width)"
                 result["name"] = name; results.append(result)
                 let shot = try await view.takeSnapshot(configuration: nil)
@@ -47,16 +84,34 @@ import WebKit
             }
         }
         _ = try await view.evaluateJavaScript("""
-        document.querySelector('.completion-verification summary').focus();
+        document.querySelector('.completion-verification .verification-toggle').focus();
         ccb.patchState({order:['claude','codex'],changed:[{...verificationFixture.messages[0],completionVerification:{model:'actual-updated-model',state:'interrupted'}}]}); true
         """)
-        let live = try await view.evaluateJavaScript("({open:document.querySelector('.completion-verification').open,focus:document.activeElement===document.querySelector('.completion-verification summary'),text:document.querySelector('.completion-verification').textContent})") as! [String: Any]
+        let live = try await view.evaluateJavaScript("({open:document.querySelector('.completion-verification').classList.contains('open'),focus:document.activeElement===document.querySelector('.completion-verification .verification-toggle'),text:document.querySelector('.completion-verification').textContent})") as! [String: Any]
         guard live["open"] as? Bool == true, live["focus"] as? Bool == true,
               (live["text"] as? String)?.contains("Interrupted; no verdict") == true,
               (live["text"] as? String)?.contains("actual-updated-model") == true else { throw NSError(domain: "Live update failed: \(live)", code: 3) }
         results.append(live)
+        let liveShot=try await view.takeSnapshot(configuration:nil)
+        try NSBitmapImageRep(data:liveShot.tiffRepresentation!)!.representation(using:.png,properties:[:])!.write(to:output.appending(path:"live-interrupted-320.png"))
+        view.setFrameSize(NSSize(width:360,height:1100));window.setContentSize(view.frame.size)
+        _ = try await view.evaluateJavaScript("""
+        window.statusRecords=[{state:'checking'}, {state:'judged',verdict:'UNAVAILABLE'}, {state:'judged',verdict:'CONTINUE',continuationPaused:true}, {state:'interrupted',verdict:'COMPLETE'}, {state:'judged',verdict:'UNKNOWN'}];
+        ccb.setState({...verificationFixture,botID:'status-matrix',messages:statusRecords.map((r,i)=>({...verificationFixture.messages[0],id:'status-'+i,text:'Verification state '+(i+1),completionVerification:{model:'actual-state-model',reason:'Actual state reason',...r}}))});true
+        """)
+        try await Task.sleep(for:.milliseconds(150))
+        let status = try await view.evaluateJavaScript("verificationMeasure()") as! [String:Any]
+        let statusCards=status["cards"] as! [[String:Any]]
+        guard statusCards.count==5, status["overflow"] as? Bool == false,
+              Set(statusCards.compactMap({$0["summary"] as? String})).count==5,
+              statusCards.allSatisfy({$0["summary"] as? String != "👍" && $0["open"] as? Bool == false}) else {
+            throw NSError(domain:"Non-success statuses failed: \(status)",code:5)
+        }
+        results.append(status)
+        let statusShot=try await view.takeSnapshot(configuration:nil)
+        try NSBitmapImageRep(data:statusShot.tiffRepresentation!)!.representation(using:.png,properties:[:])!.write(to:output.appending(path:"states-360.png"))
         try JSONSerialization.data(withJSONObject: results, options: [.prettyPrinted, .sortedKeys]).write(to: output.appending(path: "webkit-results.json"))
-        print("PASS: 6 WKWebView screenshots; both heads; 900/360/320px; default one-line, click expansion, no overflow; live interruption/model/focus preserved")
+        print("PASS: 6 WKWebView screenshots; both heads; 900/360/320px; thumbs-only success aligned with tasks/reactions/heads; default collapse, click expansion below row, no overflow; live interruption/model/focus preserved")
     }
 }
 @main struct Main {

@@ -89,23 +89,49 @@ describe("the chat page", () => {
       speaker, completionVerification: { model: "gpt-6-luna", state, verdict: state === "judged" ? "WAITING_DEPENDENCY" : null, reason },
     });
     window.ccb.setState({ ...base(), components: {}, messages: [head("claude", "botling · Claude", "checking"), head("codex", "botling · Codex", "checking")] } as ChatState);
-    const card = (id: string) => document.querySelector<HTMLDetailsElement>(`[data-id="${id}"] .completion-verification`)!;
-    expect(card("claude").open).toBe(false);
-    expect(card("codex").open).toBe(false);
-    card("claude").querySelector("summary")!.click();
-    card("claude").querySelector("summary")!.focus();
+    const card = (id: string) => document.querySelector<HTMLElement>(`[data-id="${id}"] .completion-verification`)!;
+    expect(card("claude").classList.contains("open")).toBe(false);
+    expect(card("codex").classList.contains("open")).toBe(false);
+    card("claude").querySelector<HTMLButtonElement>(".verification-toggle")!.click();
+    card("claude").querySelector<HTMLButtonElement>(".verification-toggle")!.focus();
     window.ccb.patchState({ order: ["claude", "codex"], changed: [head("claude", "botling · Claude", "judged", "Actual dependency"), head("codex", "botling · Codex", "interrupted")] });
-    expect(card("claude").open).toBe(true);
+    expect(card("claude").classList.contains("open")).toBe(true);
     expect(card("claude").querySelector(".verification-reason")?.textContent).toBe("Actual dependency");
-    expect(document.activeElement).toBe(card("claude").querySelector("summary"));
-    expect(card("codex").open).toBe(false);
-    expect(card("codex").querySelector("summary")?.textContent).toContain("Interrupted; no verdict");
-    card("claude").querySelector("summary")!.click();
+    expect(document.activeElement).toBe(card("claude").querySelector<HTMLButtonElement>(".verification-toggle"));
+    expect(card("codex").classList.contains("open")).toBe(false);
+    expect(card("codex").querySelector<HTMLButtonElement>(".verification-toggle")?.textContent).toContain("Interrupted; no verdict");
+    card("claude").querySelector<HTMLButtonElement>(".verification-toggle")!.click();
     window.ccb.patchState({ order: ["claude", "codex"], changed: [head("claude", "botling · Claude", "judged", "Updated dependency")] });
-    expect(card("claude").open).toBe(false);
+    expect(card("claude").classList.contains("open")).toBe(false);
     expect(card("claude").textContent).toContain("Updated dependency");
     window.ccb.setState({ ...base({ botID: "other-chat" }), components: {}, messages: [head("claude", "botling · Claude", "checking")] } as ChatState);
-    expect(card("claude").open).toBe(false);
+    expect(card("claude").classList.contains("open")).toBe(false);
+  });
+
+  it("updates the action-row thumb and real details without losing per-reply state or focus", () => {
+    const reply = (id: string, record: NonNullable<MessageView["completionVerification"]>) => message(id, "Reply", {
+      reactionEnabled: true, completionVerification: record,
+    });
+    const checking = { model: "initial-model", state: "checking" } as const;
+    window.ccb.setState({ ...base(), components: {}, messages: [reply("pass", checking), reply("other", checking)] } as ChatState);
+    const card = (id: string) => document.querySelector<HTMLElement>(`[data-id="${id}"] .message-footer > .completion-verification`)!;
+    const summary = (id: string) => card(id).querySelector<HTMLButtonElement>(".verification-toggle")!;
+    summary("pass").click();
+    summary("pass").focus();
+    window.ccb.patchState({ order: ["pass", "other"], changed: [reply("pass", { model: "actual-judge", state: "judged", verdict: "COMPLETE", reason: "Verified output" })] });
+    expect(summary("pass").textContent).toBe("👍");
+    expect(summary("pass").getAttribute("aria-label")).toContain("Completed");
+    expect(card("pass").classList.contains("open")).toBe(true);
+    expect(document.activeElement).toBe(summary("pass"));
+    expect(card("pass").querySelector(".verification-model")?.textContent).toBe("actual-judge · medium");
+    expect(card("pass").textContent).toContain("Verified output");
+    expect(card("other").classList.contains("open")).toBe(false);
+    expect(summary("other").textContent).toBe("Checking…");
+    window.ccb.patchState({ order: ["pass", "other"], changed: [reply("pass", { model: "interrupted-judge", state: "interrupted", verdict: "COMPLETE" })] });
+    expect(summary("pass").textContent).toBe("Interrupted; no verdict");
+    expect(card("pass").classList.contains("open")).toBe(true);
+    expect(document.activeElement).toBe(summary("pass"));
+    expect(sent.filter((action) => action.type === "setReaction")).toHaveLength(0);
   });
 
   it("redraws only what a patch changed, and asks for everything when it cannot apply one", () => {

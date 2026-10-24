@@ -179,15 +179,15 @@ class Chat {
         if (animateArrivals) animateSeenArrivals(element, entry?.element);
         if (entry) {
           // A live verdict update keeps the disclosure choice and keyboard position.
-          const oldVerification = entry.element.querySelector<HTMLDetailsElement>(".completion-verification");
-          const newVerification = element.querySelector<HTMLDetailsElement>(".completion-verification");
-          const verificationFocused = !!oldVerification && document.activeElement === oldVerification.querySelector("summary");
-          if (oldVerification && newVerification) newVerification.open = oldVerification.open;
+          const oldVerification = entry.element.querySelector<HTMLElement>(".completion-verification > .verification-toggle");
+          const newVerification = element.querySelector<HTMLElement>(".completion-verification > .verification-toggle");
+          const verificationFocused = !!oldVerification && document.activeElement === oldVerification;
+          if (oldVerification?.getAttribute("aria-expanded") === "true") newVerification?.click();
           // Components that did not change keep their frames, so they do not load again.
           const kept = keepFrames(entry.element, element);
           if (kept === element) entry.element.replaceWith(element);
           element = kept;
-          if (verificationFocused) element.querySelector<HTMLElement>(".completion-verification > summary")?.focus({ preventScroll: true });
+          if (verificationFocused) element.querySelector<HTMLElement>(".completion-verification > .verification-toggle")?.focus({ preventScroll: true });
         }
         entry = { key, element, message, mark };
         this.drawn.set(message.id, entry);

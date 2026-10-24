@@ -45,7 +45,7 @@ export function messageElement(message: MessageView, components: Record<string, 
 
   drawRole(row, message, components);
   const tasks = row.querySelector<HTMLElement>(".task-chips");
-  if (tasks || message.reactionEnabled || message.seen?.length) {
+  if (tasks || message.reactionEnabled || message.seen?.length || message.completionVerification) {
     let holder = row.querySelector<HTMLElement>(".user-body, .speaker-column, .bot-column");
     if (!holder) {
       const body = row.querySelector<HTMLElement>(".bot-bubble, .notice-bubble, .relay-column, .relay:not(.row), .error-text");
@@ -61,14 +61,11 @@ export function messageElement(message: MessageView, components: Record<string, 
       const footer = document.createElement("div");
       footer.className = "message-footer";
       if (tasks) footer.append(tasks);
+      if (message.completionVerification) footer.append(completionVerificationElement(message.completionVerification));
       if (message.reactionEnabled) footer.append(reactionBar(message));
       if (message.seen?.length) footer.append(seenMarks(message.seen));
       holder.append(footer);
     }
-  }
-  if (message.completionVerification) {
-    const holder = row.querySelector(".bot-column, .speaker-column");
-    holder?.append(completionVerificationElement(message.completionVerification));
   }
   for (const { plugin, handler } of extensions.afterRender) {
     extensions.guard(plugin, () => handler(row, { id: message.id, role: message.role, text: message.text }));
@@ -76,13 +73,18 @@ export function messageElement(message: MessageView, components: Record<string, 
   return row;
 }
 
+let verificationID = 0;
+
 /** App-owned verdict on this reply; all provider text is inserted as text, never HTML. */
 export function completionVerificationElement(record: NonNullable<MessageView["completionVerification"]>): HTMLElement {
-  const card = document.createElement("details");
+  const card = document.createElement("div");
   card.className = "completion-verification";
   card.dataset.state = record.state;
   card.dataset.verdict = record.verdict ?? "";
-  const summary = document.createElement("summary");
+  const summary = document.createElement("button");
+  summary.type = "button";
+  summary.className = "verification-toggle";
+  summary.setAttribute("aria-expanded", "false");
   const title = document.createElement("span");
   title.setAttribute("role", "status");
   title.className = "verification-title";
@@ -96,20 +98,35 @@ export function completionVerificationElement(record: NonNullable<MessageView["c
   const label = record.state === "checking" ? t("verification.checking")
     : record.state === "interrupted" ? t("verification.interrupted")
     : record.verdict ? t(verdicts[record.verdict]) : t("verification.unknown");
-  const name = document.createElement("span");
-  name.className = "verification-name";
-  name.textContent = `${t("verification.title")} · `;
+  const accessibleLabel = `${t("verification.title")} · ${label}`;
+  summary.setAttribute("aria-label", accessibleLabel);
+  summary.title = accessibleLabel;
+  title.setAttribute("aria-label", accessibleLabel);
+  const passed = record.state === "judged" && record.verdict === "COMPLETE" && !record.continuationPaused;
+  card.classList.toggle("verification-passed", passed);
   const status = document.createElement("span");
   status.className = "verification-status";
-  status.textContent = label;
-  title.append(name, status);
+  status.textContent = passed ? "👍" : label;
+  title.append(status);
   const model = document.createElement("div");
   model.className = "verification-model";
   model.textContent = `${record.model} · medium`;
   summary.append(title);
   const content = document.createElement("div");
   content.className = "verification-details";
-  content.append(model);
+  content.id = `verification-details-${++verificationID}`;
+  content.hidden = true;
+  summary.setAttribute("aria-controls", content.id);
+  summary.addEventListener("click", () => {
+    const open = summary.getAttribute("aria-expanded") !== "true";
+    summary.setAttribute("aria-expanded", String(open));
+    card.classList.toggle("open", open);
+    content.hidden = !open;
+  });
+  const heading = document.createElement("div");
+  heading.className = "verification-heading";
+  heading.textContent = accessibleLabel;
+  content.append(heading, model);
   card.append(summary, content);
   if (record.state === "judged" && record.reason) {
     const reason = document.createElement("div");
