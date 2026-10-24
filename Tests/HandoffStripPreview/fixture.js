@@ -1,7 +1,7 @@
 // Synthetic data; uses the shipped chat.html/chat.js/chat.css unchanged.
 window.handoffStripFixture = (count, mode, working = false) => ({
   ...pinDockFixture(count), working,
-  messages: verificationFixture.messages,
+  messages: verificationFixture.messages, seenHeads: verificationFixture.seenHeads,
   pins: pinDockFixture(count).pins.map(pin => ({ ...pin, chip: { text: 'Very long status label · CPU Memory Claude Codex 426/494 GB', tone: 'good' } })),
   rounds: mode === 'rounds' ? { text: 'Round 1 of 6', stop: 'Stop now', kind: 'handoff', round: 1, limit: 6 } : null,
   handoffs: ['task', 'waiting', 'many'].includes(mode) ? Array.from({ length: mode === 'many' ? 2 : 1 }, (_, i) => ({

@@ -382,30 +382,31 @@ body.seen-heads .typing > .avatar { animation: head-working 1.8s ease-in-out inf
 /* The hand-offs between the heads (handoffs.ts): a chip at the end of the pinned strip's row,
    and the panel it opens above the row. */
 .handoff-chip {
-  margin-left: auto; display: inline-flex; align-items: center; flex: none; max-width: 100%; height: var(--control-h);
+  display: inline-flex; align-items: center; flex: 0 1 auto; min-width: 0; max-width: 100%; height: var(--control-h);
   border: 1px solid var(--border); border-radius: var(--control-radius); background: var(--bubble); overflow: hidden;
 }
 .handoff-chip[hidden], .handoff-panel[hidden] { display: none; }
 .handoff-toggle {
-  height: 100%; display: inline-flex; align-items: center; gap: 8px; padding: 0 10px; min-width: 0;
+  height: 100%; display: inline-flex; align-items: center; gap: 8px; padding: 0 10px; min-width: 0; flex: 1 1 auto;
   border: none; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; white-space: nowrap;
 }
 .handoff-toggle:disabled { cursor: default; }
 .handoff-toggle:not(:disabled):hover { color: var(--text); }
 .handoff-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
-.handoff-meter { display: inline-flex; gap: 2px; }
+.handoff-meter { display: inline-flex; flex: none; gap: 2px; }
 .handoff-meter i { width: 4px; height: 10px; border-radius: 1.5px; background: var(--border); }
 .handoff-meter i.on { background: var(--green); }
 .handoff-dots { display: inline-flex; }
 .handoff-dots .head-dot { box-shadow: 0 0 0 2px var(--bubble); }
 .handoff-dots .head-dot + .head-dot { margin-left: -3px; }
-.handoff-chevron { display: inline-flex; transition: transform 0.15s; }
+.handoff-chevron { display: inline-flex; flex: none; transition: transform 0.15s; }
 .handoff-toggle[aria-expanded="true"] .handoff-chevron { transform: rotate(180deg); }
 .handoff-stop, .handoff-stop-all, .handoff-stop-one {
   height: 24px; padding: 0 9px; border-radius: 7px; border: 1px solid var(--border); background: transparent;
   color: var(--text); font-size: 11.5px; cursor: pointer; white-space: nowrap;
 }
-.handoff-stop { margin-right: 4px; }
+.handoff-stop { flex: none; margin-right: 4px; }
+.handoff-toggle:focus-visible, .handoff-stop:focus-visible { outline: 2px solid var(--blue); outline-offset: -2px; }
 .handoff-stop:hover, .handoff-stop-all:hover, .handoff-stop-one:hover { border-color: var(--error); color: var(--error); }
 .handoff-panel {
   margin-top: 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--bubble);
@@ -742,9 +743,22 @@ body.watching #messages { gap: 2px; justify-content: flex-start; max-width: 720p
 .pin-tag.command { background: rgba(76, 195, 138, 0.14); color: #8FDDB6; }
 
 /* The chips above the input box, and the sheet one raises. */
-#pin-area { position: relative; max-width: 640px; width: 100%; margin: 0 auto; padding: 0 24px; }
-/* The row over the input box: the pinned strip, and the hand-off chip on its right. Wraps when narrow. */
-.dock-row { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; padding-top: 6px; }
+#pin-area { container: status-strip / inline-size; position: relative; max-width: 640px; width: 100%; margin: 0 auto; padding: 0 24px; }
+/* Pins yield space to Hand-off and Stop; only the pin list scrolls, never the controls. */
+.dock-row { display: flex; align-items: center; gap: 0; flex-wrap: nowrap; padding-top: 6px; }
+/* Join the two groups into one strip, keeping the existing standalone pin appearance. */
+.dock-row:has(> .handoff-chip:not([hidden])) > .pin-dock {
+  flex: 0 1 auto; min-width: 76px; border-right: none; border-radius: var(--control-radius) 0 0 var(--control-radius);
+}
+.dock-row > .pin-dock:not([hidden]) + .handoff-chip {
+  flex: 0 0 auto; max-width: calc(100% - 76px); border-radius: 0 var(--control-radius) var(--control-radius) 0;
+}
+.dock-row:has(> .handoff-chip:not([hidden])) > .pin-dock:has(> .pin-chip-list:empty) { flex: none; min-width: 0; }
+.dock-row:has(> .handoff-chip:not([hidden])) .pin-chip:not(.add) { max-width: min(132px, 100%); }
+@container status-strip (max-width: 430px) {
+  /* The numeric progress remains; the decorative bars give narrow pins enough room. */
+  .handoff-meter { display: none; }
+}
 .dock-row:not(:has(> :not([hidden]))) { display: none; }
 /* The pins scroll within one row; + keeps its own slot at the end, even when space is tight. */
 .pin-dock {

@@ -13,6 +13,8 @@ import WebKit
     init(repo: URL, output: URL) {
         self.repo = repo; self.output = output
         let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
+        // Match macOS Full Keyboard Access: include all native HTML buttons in Tab order.
+        config.preferences.setValue(true, forKey: "tabFocusesLinks")
         view = WKWebView(frame: NSRect(x: 0, y: 0, width: 900, height: 620), configuration: config)
         window = NSWindow(contentRect: view.frame, styleMask: .borderless, backing: .buffered, defer: false)
         super.init()
@@ -45,6 +47,13 @@ import WebKit
         for file in ["Tests/PinDockPreview/fixture.js", "Tests/CompletionVerificationPreview/fixture.js", "Tests/HandoffStripPreview/fixture.js"] {
             _ = try await js(String(contentsOf: repo.appending(path: file), encoding: .utf8))
         }
+        let assets = repo.appending(path: "Sources/ClaudeCodeBotCore/Resources/CharacterArt/animation-posters/avatars")
+        var heads = [String: String]()
+        for (mark, name) in [("C", "claude"), ("X", "gpt")] {
+            heads[mark] = "data:image/png;base64," + (try Data(contentsOf: assets.appending(path: "\(name)/idle.png"))).base64EncodedString()
+        }
+        let headJSON = String(data: try JSONSerialization.data(withJSONObject: heads), encoding: .utf8)!
+        _ = try await js("verificationFixture.seenHeads=\(headJSON); verificationFixture.messages.forEach((m,i)=>m.avatar=verificationFixture.seenHeads[i ? 'X' : 'C']); true")
         var results = [[String: Any]]()
         for width in [900, 654, 480, 360, 320] {
             view.setFrameSize(NSSize(width: width, height: 620)); window.setContentSize(view.frame.size)
@@ -76,7 +85,7 @@ import WebKit
         for (mode, type) in [("task", "stopHandoff"), ("rounds", "stopRounds")] {
             for (code, chars) in [(UInt16(36), "\r"), (UInt16(49), " ")] {
                 _ = try await js("ccb.setState(handoffStripFixture(12, '\(mode)')); document.querySelector('.handoff-stop').focus(); true")
-                _ = try await js("const updated = handoffStripFixture(12, '\(mode)'); updated.pins[0].chip.text='Updated'; ccb.setState(updated); true")
+                _ = try await js("var updated = handoffStripFixture(12, '\(mode)'); updated.pins[0].chip.text='Updated'; ccb.setState(updated); true")
                 guard try await js("document.activeElement.matches('.handoff-stop')") as? Bool == true else { throw NSError(domain: "Stop focus lost", code: 4) }
                 actions.removeAll(); try await key(code, chars)
                 let stops = actions.filter { ($0["type"] as? String)?.hasPrefix("stop") == true }
@@ -87,7 +96,7 @@ import WebKit
         }
         _ = try await js("ccb.setState(handoffStripFixture(12, 'task')); document.querySelector('.handoff-toggle').focus(); true")
         try await key(48, "\t")
-        guard try await js("document.activeElement.matches('.handoff-stop')") as? Bool == true else { throw NSError(domain: "Tab cannot reach Stop", code: 7) }
+        guard try await js("document.activeElement.matches('.handoff-stop')") as? Bool == true else { throw NSError(domain: "Tab cannot reach Stop: \(try await js("document.activeElement.outerHTML"))", code: 7) }
         checks["tabToStop"] = true
         try await shot("strip-320-stop-focused")
         _ = try await js("document.querySelector('[data-id=P11]').focus(); true")
