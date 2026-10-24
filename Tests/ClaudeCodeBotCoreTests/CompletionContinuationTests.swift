@@ -485,7 +485,9 @@ extension CompletionContinuationTests {
         let bot = makeBot(fake)
         defer { bot.stop() }
         let captured = PromiseCheckTests.Calls()
-        bot.promiseCheck = { end in
+        // Keep this synchronous fake on Bot's actor: recording the call must not race
+        // application of its returned verdict before the next user message.
+        bot.promiseCheck = { @MainActor end in
             captured.add(PromiseCheck.classifierMessage(end))
             if end.reply == "I will analyze next." { return .continueWork }
             if end.reply == "Missing dataset permission; all analysis requires it." { return .waitingUser }
