@@ -37,13 +37,20 @@ struct SubagentOwnerTests {
         #expect(bot.subagentOwnerMark("missing") == nil)
     }
 
-    @Test func aOneHeadedBotNeedsNoOwnerMark() async throws {
+    @Test(arguments: BotEngine.allCases)
+    func aOneHeadedSubagentStillHasAnAvatarIdentity(_ engine: BotEngine) throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "ccb-owner-\(UUID().uuidString)")
         let store = BotStore(directory: root.appending(path: "store"))
-        store.save(subagents: [Subagent(id: "solo", description: "Solo", type: "general-purpose", prompt: "Research")])
+        store.save(engine: engine)
+        store.save(heads: HeadsSettings(engines: [engine]))
+        // Neither a misleading task name/type nor model may change the owning head.
+        store.save(subagents: [Subagent(id: "solo", description: "Other head review", type: engine == .claude ? "codex-worker" : "general-purpose", prompt: "Research")])
         let bot = Bot(profile: .main(home: root), launcher: FakeLauncher().launcher, store: store)
-        #expect(bot.subagentEngine("solo") == .claude)
-        #expect(bot.subagentOwnerMark("solo") == nil)
+        #expect(bot.subagentEngine("solo") == engine)
+        // Both sidebar and settled navigation rows consume this identity. Hiding it for a
+        // single head left the child with only a branch arrow and no avatar.
+        #expect(bot.subagentOwnerMark("solo") == engine)
+        #expect(bot.subagentOwnerMark("missing") == nil)
     }
 
     @Test(arguments: BotEngine.allCases)
