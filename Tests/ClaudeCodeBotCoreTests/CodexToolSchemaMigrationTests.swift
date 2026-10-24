@@ -3,6 +3,42 @@ import Testing
 @testable import ClaudeCodeBotCore
 
 struct CodexToolSchemaMigrationTests {
+    @Test func routineOnlySchemaMigratesWithRoutineAndMonitorStatePreserved() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-monitor-schema-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let threads = CodexThreads(folder: root.appending(path: "threads")), owner = UUID()
+        let oldThread = "routine-only-thread"
+        threads.save(oldThread, for: owner)
+        let tools = try #require(JSONSerialization.jsonObject(with: Data(CodexSession.managedToolSignature.utf8)) as? [[String: Any]])
+        let oldTools = tools.filter { !(($0["name"] as? String)?.hasPrefix("app_monitor_") ?? false) }
+        #expect(oldTools.count == 4)
+        let signature = String(decoding: try JSONSerialization.data(withJSONObject: oldTools, options: [.sortedKeys, .prettyPrinted]), as: UTF8.self)
+        let marker = threads.folder.appending(path: owner.uuidString.lowercased() + ".managed")
+        threads.markManaged(oldThread, for: owner)
+        var stamp = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: marker)) as? [String: Any])
+        stamp["tools"] = signature
+        try JSONSerialization.data(withJSONObject: stamp).write(to: marker)
+        #expect(!threads.isManaged(owner, thread: oldThread))
+        let routinesURL = root.appending(path: "routines.cron")
+        let store = ScheduledRoutineStore(url: root.appending(path: "scheduled-routines.json"))
+        _ = try store.perform(["operation": "create", "kind": "once", "task": "preserve routine",
+            "request_id": "migration", "at": "2099-01-01T00:00:00Z"])
+        let bytes = try Data(contentsOf: store.url)
+        let monitor = CommandMonitor(id: "preserved", owner: owner, command: "true", cwd: root.path, createdAt: Date())
+        try threads.saveMonitors([monitor], for: owner)
+        var launch = AgentLaunch(engine: .codex, model: .sonnet, sessionID: owner, resume: true,
+            workingDirectory: root, systemPrompt: "coordinate")
+        launch.codexWorkerInstructions = "execute"
+        launch.routinesURL = routinesURL
+        let config = try CodexAgentProcess.config(for: launch, threads: threads)
+        #expect(config.resumeThread == nil)
+        #expect(config.routinesURL == routinesURL)
+        #expect(config.ownerSession == owner)
+        #expect(config.restoredMonitors == [monitor])
+        #expect(threads.thread(for: owner) == oldThread)
+        #expect(try Data(contentsOf: store.url) == bytes)
+    }
+
     @Test func oldTwoToolMarkerMigratesWithoutLosingThreadLineageOrWorkerRecords() throws {
         let root = FileManager.default.temporaryDirectory.appending(path:"ccb-schema-migration-\(UUID())")
         defer { try? FileManager.default.removeItem(at:root) }

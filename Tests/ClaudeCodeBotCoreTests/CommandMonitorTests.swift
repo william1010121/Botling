@@ -28,6 +28,41 @@ struct CommandMonitorTests {
         return try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
     }
 
+    @Test func routineToolsAndMonitorCompletionRemainIndependentInOneSession() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "monitor-routine-integration-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        var session = CodexSession(config: .init(workingDirectory: root, instructions: "coordinate",
+            workerInstructions: "execute", routinesURL: root.appending(path: "routines.cron")))
+        let initialize = Out(session.start()).writes[0]
+        let thread = h.response(initialize, [:], &session)
+        let tools = try #require(thread.params("thread/start")?["dynamicTools"] as? [[String: Any]])
+        #expect(Set(tools.compactMap { $0["name"] as? String }) == ["app_routines", "app_monitor_start",
+            "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint"])
+        _ = h.response(h.write(thread, "thread/start"), ["thread": ["id": "root"]], &session)
+        h.rootTurn(&session)
+        let store = ScheduledRoutineStore(url: root.appending(path: "scheduled-routines.json"))
+        for (rpc, kind) in [(930, "once"), (931, "recurring")] {
+            var arguments: [String: Any] = ["operation": "create", "kind": kind, "task": "preserve \(kind)",
+                "request_id": kind, "timezone": "Asia/Taipei"]
+            if kind == "once" { arguments["at"] = "2099-01-01T00:00:00Z" }
+            else { arguments["cron"] = "0 9 * * *" }
+            let receipt = h.tool(rpc, name: "app_routines", arguments: arguments, &session)
+            #expect((receipt.writes.first?["result"] as? [String: Any])?["success"] as? Bool == true)
+            #expect(receipt.events.allSatisfy { if case .permission = $0 { false } else { true } })
+        }
+        let jobs = try store.load()
+        #expect(Set(jobs.map(\.kind)) == [.once, .recurring])
+        let bytes = try Data(contentsOf: store.url)
+        let (id, _) = try start(&session)
+        let run = approve(id, &session)
+        #expect(!h.completed("root", "parent-1", &session).methods.contains("turn/start"))
+        let wake = result(run, exit: 7, &session)
+        #expect(try payload(wake)["monitor_id"] as? String == id)
+        #expect(try payload(wake)["exit_code"] as? Int == 7)
+        #expect(try store.load() == jobs)
+        #expect(try Data(contentsOf: store.url) == bytes)
+    }
+
     @Test func completionAndFailureWakeCorrectOwnerExactlyOnceAfterUserQueue() throws {
         for exit in [0, 7] {
             var (session, _) = h.ready()
