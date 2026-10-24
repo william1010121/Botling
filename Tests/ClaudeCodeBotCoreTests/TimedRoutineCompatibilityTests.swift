@@ -183,4 +183,39 @@ struct TimedRoutineCompatibilityTests {
         #expect(end.scheduledWakeups?.contains { $0.id == PromiseCheck.wakeupID("routine:" + line) } == true)
         #expect(end.scheduledWakeups?.contains { $0.id == job.id } == true)
     }
+
+    @Test func monitorAndTimerReturnRoutesRemainDistinctInCombinedEvidence() throws {
+        var end = TimedWaitContinuationTests.evidence()
+        end.terminalRequired = true
+        end.workerDependencies = [.init(id: "monitor", run: 1, task: "Inspect the already running command",
+            state: .running, callback: "app_monitor_result")]
+        let timer = PromiseCheck.Judgment(verdict: .waitingTimer, reason: "Observed failure; saved retry is in the future.", wakeupID: "retry")
+        #expect(PromiseCheck.review(.waitingDependency, for: end).verdict == .waitingDependency)
+        #expect(PromiseCheck.review(timer, for: end) == timer)
+        #expect(PromiseCheck.review(.init(verdict: .waitingTimer, reason: "Wrong return route", wakeupID: "monitor"), for: end).verdict == .unknown)
+        end.workerDependencies?[0].state = .reportQueued
+        #expect(PromiseCheck.review(.waitingDependency, for: end).verdict == .unknown)
+        #expect(PromiseCheck.review(timer, for: end) == timer)
+        end.evaluatedAt = deadline.ISO8601Format()
+        #expect(PromiseCheck.review(timer, for: end).verdict == .unknown)
+        end.workerDependencies?[0].state = .running
+        #expect(PromiseCheck.review(.waitingDependency, for: end).verdict == .waitingDependency)
+    }
+
+    @Test func packedTimerEvidencePreservesMonitorIdentityAndReturnPolicy() throws {
+        var end = TimedWaitContinuationTests.evidence()
+        end.workerDependencies = [.init(id: "monitor", run: 7, task: String(repeating: "Observed output 漢🙂", count: 5000),
+            state: .running, callback: "app_monitor_result")]
+        let packed = PromiseCheck.classifierMessage(end)
+        let decoded = try JSONDecoder().decode(PromiseCheck.TurnEnd.self, from: Data(packed.utf8))
+        #expect(packed.utf8.count <= 96_000)
+        #expect(decoded.workerDependencies?.first?.id == "monitor")
+        #expect(decoded.workerDependencies?.first?.run == 7)
+        #expect(decoded.workerDependencies?.first?.callback == "app_monitor_result")
+        #expect(decoded.scheduledWakeups?.first?.id == "retry")
+        #expect(decoded.scheduledWakeups?.first?.callback == "app_routine")
+        #expect(PromiseCheck.review(.waitingDependency, for: decoded).verdict == .waitingDependency)
+        #expect(PromiseCheck.classifierPrompt.contains("callback app_monitor_result"))
+        #expect(PromiseCheck.classifierPrompt.contains("no app-managed worker or monitored command is running"))
+    }
 }
