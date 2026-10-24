@@ -37,5 +37,6 @@
    "taskTruncated": false
   }
  ],
- "workerDependenciesTruncated": false
+ "workerDependenciesTruncated": false,
+ "scheduledWakeupsTruncated": false
 }
