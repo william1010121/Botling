@@ -13,6 +13,8 @@
 //   · the turn answers only the user, with no approval open and no subagent at work: what it said
 //     so far stays as a bubble marked cut off, and the earlier message and the new one go to claude
 //     as one ("I sent this in parts…"), then the turn is interrupted, so one reply answers both;
+//   · a Codex head at work on anything but handed-over work or the tidy takes the message into the
+//     turn under way (`turn/steer`), as 1.x does: one reply answers both, after your new line;
 //   · otherwise (an approval is open, a subagent works, the turn is claude's own or the tidy) the
 //     message waits and goes when the turn ends. (1.x hands it to claude at once, or pauses claude's
 //     own work for it; 2.0 queues — simpler, and nothing is lost.)
@@ -36,8 +38,9 @@
 //   · a message to both goes to one head first (the lead, taking turns); the other gets it once the
 //     lead has said what it takes on (its first words, or its reply), with those words, or after
 //     `claimWaitMs` anyway (`claimLead`, `holdForClaim`, `releaseClaim`);
-//   · each head hears what the other replied ("(App: Codex, this bot's other head, replied …") with
-//     its next message, or at once when it is Codex at work (`turn/steer`);
+//   · each head hears what the other replied ("(App: Codex, this bot's other head, replied …") and
+//     what it says between its tool calls at once when it is at work (1.x's context-only delivery:
+//     claude gets it written to its stdin mid-turn, Codex as `turn/steer`), else with its next message;
 //   · a reply ending in <handoff to=… kind=…> hands the other head work, within the conductor's
 //     budgets per user message (heads.ts), and its reply goes back; a question can be handed over
 //     with decision=…, and a pick on any copy of it is applied once, by the head that asked.
@@ -245,6 +248,10 @@ export class Bot {
   private tidyFollowUp: ((text: string) => void) | null = null;
   /** Heads being ended (a Stop it did not listen to, quitting): nothing they print counts any more. */
   private ending = new WeakSet<AgentHead>();
+  /** The other head's words written to claude mid-turn, by message uuid: one that gets a turn of its own is the app's. */
+  private contextSent = new Set<string>();
+  /** Our turn that claude has not begun yet, set aside while it answers the other head's words first. */
+  private deferred: Turn | null = null;
 
   constructor(private options: BotOptions) {
     const primary = options.primary;
@@ -645,8 +652,7 @@ export class Bot {
     lines.push(words);
     const message = lines.join("\n\n");
     if (!two) {
-      const turn = this.newTurn("user", message, user.id);
-      this.route(turn);
+      const turn = this.route(this.newTurn("user", message, user.id));
       return { messageId: turn.messageId, turnId: turn.id };
     }
     this.conduct(this.conductor.userMessage(words));
@@ -693,8 +699,7 @@ export class Bot {
     if (extra.conducted) turn.conducted = true;
     if (extra.handoffId) turn.handoffId = extra.handoffId;
     if (extra.about) turn.about = extra.about;
-    bot.route(turn);
-    return turn;
+    return bot.route(turn);
   }
 
   private newTurn(origin: Origin, words: string, userId: string | null): Turn {
@@ -756,14 +761,31 @@ export class Bot {
   private tell(head: Engine, note: string, about: string[]) {
     const target = this.botFor(head);
     if (!target || !target.head?.running) return;
-    const turn = target.turn;
-    if (turn?.open && turn.sent && target.head instanceof CodexHead && target.head.steer(note)) {
-      for (const id of about) turn.peer.add(id);
-      this.markSeen(about, head);
-      return;
-    }
+    if (target.hearNow(note, about)) return;
     target.pendingNote = [target.pendingNote, note].filter(Boolean).join("\n\n");
     target.pendingAbout.push(...about);
+  }
+
+  /**
+   * The other head's words for this head's turn under way, at once (1.x's `Outgoing(contextOnly:)`):
+   * Codex takes them into the turn (`turn/steer`); claude gets them as a message on its stdin, which
+   * it reads into the turn under way (or, if that turn ends first, answers in a turn of its own,
+   * which counts as the app's: `<no-reply/>` shows nothing). False: no turn of ours to join.
+   */
+  private hearNow(note: string, about: string[]): boolean {
+    const turn = this.turn;
+    const head = this.head;
+    if (!turn?.open || !turn.sent || turn.origin === "tidy" || !head?.running || turn.head !== head || this.draining || this.ignoreResults > 0 || this.ending.has(head)) return false;
+    if (head instanceof CodexHead) {
+      if (!head.steer(note)) return false;
+    } else {
+      const id = randomUUID();
+      this.contextSent.add(id);
+      head.send(note, id);
+    }
+    for (const id of about) turn.peer.add(id);
+    this.markSeen(about, this.engine);
+    return true;
   }
 
   /** What it said between its tool calls, while the other head may work too (`headWords`). */
@@ -778,7 +800,7 @@ export class Bot {
       return;
     }
     const target = owner.botFor(other);
-    if (target?.working && target.head instanceof CodexHead) target.head.steer(note);
+    if (target?.working) target.hearNow(note, []);
   }
 
   /** A head showed a reply: the other head hears it, and the conductor carries any hand-off (`headReplied`). */
@@ -1001,13 +1023,55 @@ export class Bot {
     return true;
   }
 
-  /** Where a new turn goes: now, joined with the one under way, or after it. */
-  private route(turn: Turn) {
+  /** Where a new turn goes: now, joined with the one under way, or after it. The turn that carries it. */
+  private route(turn: Turn): Turn {
     const current = this.turn;
-    if (!current && !this.tidying) return this.begin(turn);
-    if (current && this.canMerge(current, turn)) return this.merge(current, turn);
+    if (!current && !this.tidying) { this.begin(turn); return turn; }
+    if (current && this.canMerge(current, turn)) { this.merge(current, turn); return turn; }
+    if (current && this.canSteer(current, turn) && this.steerInto(current, turn)) return current;
     this.queue.push(turn);
     this.log("a message waits for the turn under way");
+    return turn;
+  }
+
+  /**
+   * 1.x's Codex path: a message from you while Codex works joins the turn under way (`turn/steer`),
+   * unless that turn is handed-over work (1.x pauses it for you; 2.0 queues) or the tidy.
+   */
+  private canSteer(current: Turn, next: Turn): boolean {
+    return this.engine === "codex" && next.origin === "user" && current.origin !== "tidy" && !current.conducted && current.open && current.sent
+      && current.head === this.head && !!this.head?.running && this.head instanceof CodexHead && !this.draining && !this.ignoreResults;
+  }
+
+  /** Steers `next` into `current`: the reply now answers your latest words, and shows after them. */
+  private steerInto(current: Turn, next: Turn): boolean {
+    const head = this.head as CodexHead;
+    if (!head.steer(this.compose(next, false))) return false;
+    // Your two messages are one piece of work: their cards join (1.x leaves the first card as it was).
+    if (current.origin === "user" && current.userId && next.userId) { this.tasks.join(current.userId, next.userId); this.saveTasks(); }
+    current.origin = "user";
+    current.userId = next.userId;
+    current.words = next.words;
+    current.claimed = false;
+    current.usedTools = false;
+    current.about.push(...next.about);
+    for (const id of next.peer) current.peer.add(id);
+    this.markSeen([...next.about, ...(next.userId ? [next.userId] : [])], this.engine);
+    // The reply so far moves below your new line, where its end will be.
+    const record = current.record;
+    if (record) {
+      const at = this.records.indexOf(record);
+      if (at >= 0) {
+        this.records.splice(at, 1);
+        this.emit({ type: "message.removed", botId: this.id, messageId: record.id });
+        this.records.push(record);
+        this.persist();
+        this.emit({ type: "message.added", botId: this.id, message: this.messageView(record) });
+      }
+    }
+    void current.done.then(next.resolve);
+    this.log("you wrote while Codex worked: your message joined its turn (turn/steer)");
+    return true;
   }
 
   /** `Bot.merging`: the turn under way only answers the user, and stopping it loses nothing. */
@@ -1194,10 +1258,10 @@ export class Bot {
     return record;
   }
 
-  /** Claude started a turn of its own (a background subagent told it something). */
-  private backgroundTurn(head: AgentHead): Turn {
+  /** Claude started a turn of its own (a background subagent told it something; `app`: the other head's words it answers). */
+  private backgroundTurn(head: AgentHead, origin: "background" | "app" = "background"): Turn {
     // While tidying, the app's own turns (a Codex worker's report on the memory file) are the tidy's.
-    const turn = this.newTurn(this.tidying ? "tidy" : "background", "", null);
+    const turn = this.newTurn(this.tidying ? "tidy" : origin, "", null);
     if (this.tidying) turn.onReply = (text) => this.tidyFollowUp?.(text);
     turn.head = head;
     turn.sent = true;
@@ -1230,6 +1294,17 @@ export class Bot {
       return;
     }
     if (item.kind === "controlResponse") return;
+    if (item.kind === "command") {
+      // The other head's words, read too late for the turn they were meant for: claude answers them
+      // in a turn of its own, the app's (its words show; <no-reply/> shows nothing). A message of
+      // ours sent after them but not begun yet waits for that turn to end.
+      if (item.state !== "started" || !this.contextSent.delete(item.id) || this.ignoreResults || this.draining) return;
+      const waiting = this.turn;
+      if (waiting && (!waiting.open || waiting.head !== head || waiting.reply.text || waiting.steps.length || waiting.record)) return;
+      if (waiting) { this.turn = null; this.deferred = waiting; }
+      this.backgroundTurn(head, "app");
+      return;
+    }
     if (item.kind === "permissionCancelled") {
       for (const [id, approval] of this.approvals) if (approval.requestId === item.requestId) this.settle(id, NO_LONGER_NEEDED, false);
       return;
@@ -1545,6 +1620,14 @@ export class Bot {
   /** The next waiting message, if any; else the idle clock starts. */
   private next(): void {
     if (this.turn || this.tidying) return;
+    const deferred = this.deferred;
+    if (deferred) {
+      // It was sent already: claude begins it now.
+      this.deferred = null;
+      if (deferred.open && deferred.head === this.head && this.head?.running) { this.turn = deferred; return; }
+      // Stopped meanwhile: what claude does with it belongs to nobody.
+      if (!deferred.open && deferred.head === this.head && this.head?.running) { this.ignoreResults += 1; this.head.interrupt(); }
+    }
     const waiting = this.queue.shift();
     if (waiting) {
       if (!waiting.open) return this.next();
@@ -1590,6 +1673,15 @@ export class Bot {
         this.emit({ type: "turn.finished", botId: this.id, turnId, messageId: waiting.messageId, status: "stopped", text: "" });
         this.finished.set(turnId, "stopped");
         waiting.resolve("stopped");
+        return { stopped: true, killed: [], forced: false };
+      }
+      // Sent, but set aside while claude answers the other head's words first.
+      if (this.deferred?.id === turnId) {
+        const deferred = this.deferred;
+        deferred.open = false;
+        this.emit({ type: "turn.finished", botId: this.id, turnId, messageId: deferred.messageId, status: "stopped", text: "" });
+        this.finished.set(turnId, "stopped");
+        deferred.resolve("stopped");
         return { stopped: true, killed: [], forced: false };
       }
       // The message held for the other head (a message to both): taken back too.
@@ -1660,7 +1752,7 @@ export class Bot {
   async await(turnId: string, signal: AbortSignal): Promise<ResultOf<"turn.await">> {
     const done = this.finished.get(turnId) ?? this.partner?.finished.get(turnId);
     if (done) return { status: done };
-    const turn = this.turn?.id === turnId ? this.turn : this.queue.find((candidate) => candidate.id === turnId)
+    const turn = this.turn?.id === turnId ? this.turn : this.deferred?.id === turnId ? this.deferred : this.queue.find((candidate) => candidate.id === turnId)
       ?? (this.claimHold?.turn.id === turnId ? this.claimHold.turn : undefined);
     if (!turn) {
       if (this.partner) return this.partner.await(turnId, signal);
@@ -1681,6 +1773,7 @@ export class Bot {
     this.clearIdle();
     this.ignoreResults = 0;
     this.mergeRaced = false;
+    this.contextSent.clear();
     for (const [id, approval] of [...this.approvals]) if (approval.head === head) this.settle(id, NO_LONGER_NEEDED, false);
     // Its subagents (and Codex's workers) run inside its process: they went with it.
     this.managedPending = false;
@@ -1702,6 +1795,9 @@ export class Bot {
       }
       this.finishTurn(turn, "failed", `The agent exited (${why}) without finishing. ${exit.stderr.slice(-1_000)}`.trim());
     }
+    const deferred = this.deferred;
+    this.deferred = null;
+    if (deferred?.open) this.finishTurn(deferred, "failed", `The agent exited (${why}) before it began this message.`);
     this.log(`head exited (${why})${exit.expected ? "" : " unexpectedly"}`);
     if (exit.expected) {
       // It went to sleep: the next wake is a new session, briefed from memory.md and the chat.
@@ -2021,6 +2117,7 @@ export class Bot {
     this.shuttingDown = true;
     // Messages still waiting never reached claude.
     for (const waiting of this.queue.splice(0)) { waiting.open = false; waiting.resolve("stopped"); }
+    if (this.deferred) { this.deferred.open = false; this.deferred.resolve("stopped"); this.deferred = null; }
     // A running turn's tree is ended at once (what it said so far stays); such a head does not tidy.
     const working = this.shownTurn;
     if (working) await this.stop(working.id, { quitting: true }).catch(() => {});

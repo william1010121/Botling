@@ -27,6 +27,8 @@ export type StreamItem =
   /** A control request the app does not handle: answer it with an error so claude does not wait. */
   | { kind: "unsupportedRequest"; requestId: string; subtype: string }
   | { kind: "controlResponse"; requestId: string }
+  /** A message sent with a `uuid` (`command_lifecycle`): read into claude's queue, or its own turn starts. */
+  | { kind: "command"; id: string; state: "queued" | "started" }
   /** The turn ended. */
   | { kind: "result"; ok: boolean; text: string; error: string; subtype: string };
 
@@ -180,6 +182,12 @@ export function parseLine(line: string): StreamItem[] {
         return [{ kind: "permission", requestId, tool: request.tool_name, summary: permissionSummary(request.tool_name, input, request.description), input }];
       }
       return [{ kind: "unsupportedRequest", requestId, subtype: String(request.subtype ?? "") }];
+    }
+    case "command_lifecycle": {
+      // A message sent with a `uuid`: queued when claude reads it, started when its turn begins (StreamEvent.swift).
+      const id = typeof message.command_uuid === "string" ? message.command_uuid.toLowerCase() : null;
+      const state = message.state === "queued" || message.state === "started" ? message.state : null;
+      return id && state ? [{ kind: "command", id, state }] : [];
     }
     case "control_cancel_request":
       return typeof message.request_id === "string" ? [{ kind: "permissionCancelled", requestId: message.request_id }] : [];

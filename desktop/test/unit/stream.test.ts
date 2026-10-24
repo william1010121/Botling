@@ -87,3 +87,13 @@ describe("the per-turn runner (Phase 0)", () => {
     expect(text).toBe("You said: per turn");
   });
 });
+
+describe("command_lifecycle", () => {
+  it("reads a message's queued and started lines (StreamEvent.swift), with its uuid in lower case", () => {
+    const id = "6A0B0000-0000-4000-8000-0000000000AB";
+    expect(parseLine(JSON.stringify({ type: "command_lifecycle", command_uuid: id, state: "queued", uuid: "x" }))).toEqual([{ kind: "command", id: id.toLowerCase(), state: "queued" }]);
+    expect(parseLine(JSON.stringify({ type: "command_lifecycle", command_uuid: id.toLowerCase(), state: "started" }))).toEqual([{ kind: "command", id: id.toLowerCase(), state: "started" }]);
+    expect(parseLine(JSON.stringify({ type: "command_lifecycle", command_uuid: id, state: "finished" }))).toEqual([]);
+    expect(parseLine(JSON.stringify({ type: "command_lifecycle", state: "started" }))).toEqual([]);
+  });
+});

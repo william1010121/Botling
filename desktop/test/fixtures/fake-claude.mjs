@@ -23,6 +23,13 @@
 //   say      — "/say <text>": replies exactly <text> (a hand-off tag, say)
 //   solo     — "/solo <words>": with two heads, the head that hears the other's words first says only
 //              <no-reply/>; the one that reads it first takes it ("I take it: <words>")
+//   linger   — "/linger <words>": says "Thinking it over." first, takes FAKE_CLAUDE_LINGER_MS (default 600),
+//              then "You said: <words>", with " (heard mid-turn: N)" when the other head's words came meanwhile
+// The other head's words ("(App: …, working on this too, says:" / "…, replied in this chat:") that arrive
+// while a turn runs are read into that turn, as claude reads messages queued mid-turn; they are logged
+// with `midTurn: true` (FAKE_CLAUDE_NO_ABSORB=1: never; each waits for a turn of its own, answered
+// <no-reply/> after FAKE_CLAUDE_NOTE_MS). A message sent with a `uuid` gets `command_lifecycle` lines: "queued" when read,
+// "started" when it gets a turn of its own.
 // Work the other head hands over ("(App: Codex, this bot's other head, hands you this …") is answered
 // "Did it: <task>" ("/say …" as the task: exactly that; "/handoff:claude <task>": it hands <task> on); a hand-back ("… finished what you handed
 // over. Its reply: …") "Done: <its reply>".
@@ -154,6 +161,9 @@ let current = null; // { interrupted, helper, ignoreInterrupt }
 const pending = new Map(); // permission request id → resolve
 let wake = null;
 let closed = false;
+/** A turn is under way; what the other head said meanwhile. */
+let busy = false;
+let heard = [];
 
 const lines = createInterface({ input: process.stdin });
 lines.on("line", (line) => {
@@ -162,8 +172,16 @@ lines.on("line", (line) => {
   if (message.type === "user") {
     const content = message.message?.content;
     const text = typeof content === "string" ? content : Array.isArray(content) ? content.filter((p) => p.type === "text").map((p) => p.text).join("") : "";
+    const uuid = typeof message.uuid === "string" ? message.uuid : null;
+    if (uuid) out({ type: "command_lifecycle", command_uuid: uuid, state: "queued", uuid: `cl-${Math.random().toString(36).slice(2, 10)}` });
+    if (busy && process.env.FAKE_CLAUDE_NO_ABSORB !== "1" && /^\(App: (?:Claude|Codex), (?:working on this too, says:|this bot's other head, replied in this chat:)/.test(text.trim())) {
+      // Read into the turn under way (claude takes queued messages in at its next step).
+      heard.push(text.trim());
+      if (inputLog) appendFileSync(inputLog, JSON.stringify({ session, text, midTurn: true }) + "\n");
+      return;
+    }
     if (inputLog) appendFileSync(inputLog, JSON.stringify({ session, text }) + "\n");
-    queue.push({ text: text.trim() });
+    queue.push({ text: text.trim(), uuid });
     wake?.();
   } else if (message.type === "control_request" && message.request?.subtype === "interrupt") {
     out({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: {} } });
@@ -233,11 +251,32 @@ async function turn(job) {
     return;
   }
   const said = words(prompt);
+  // Only the app's notes (the other head's words read too late for its turn): nothing for the user.
+  if (!said.all.trim()) {
+    await sleep(Number(process.env.FAKE_CLAUDE_NOTE_MS ?? 0));
+    const text = await stream("<no-reply/>");
+    result(text);
+    return;
+  }
   const solo = /^\/solo\b\s*/.exec(said.last);
   if (solo) {
     const peer = /this bot's other head, replied in this chat|working on this too, says:/.test(prompt);
     const text = await stream(peer ? "<no-reply/>" : `I take it: ${said.last.slice(solo[0].length)}`);
     result(text);
+    return;
+  }
+  const linger = /^\/linger\b\s*/.exec(said.last);
+  if (linger) {
+    out({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+    const first = await stream("Thinking it over.");
+    // Words between steps: the app passes them on to the other head.
+    const id = toolId();
+    assistant([{ type: "text", text: first }, { type: "tool_use", id, name: "Read", input: { file_path: "notes.md" } }]);
+    await sleep(Number(process.env.FAKE_CLAUDE_LINGER_MS ?? 600));
+    toolResult(id, "notes");
+    out({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
+    const text = await stream(`You said: ${said.last.slice(linger[0].length)}${heard.length ? ` (heard mid-turn: ${heard.length})` : ""}`);
+    result(`${first}\n\n${text}`);
     return;
   }
   const say = /^\/say\s+/.exec(said.last);
@@ -329,7 +368,12 @@ async function turn(job) {
 
 for (;;) {
   if (queue.length) {
-    await turn(queue.shift());
+    const job = queue.shift();
+    if (job.uuid) out({ type: "command_lifecycle", command_uuid: job.uuid, state: "started", uuid: `cl-${Math.random().toString(36).slice(2, 10)}` });
+    busy = true;
+    heard = [];
+    await turn(job);
+    busy = false;
     current = null;
     continue;
   }

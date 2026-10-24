@@ -20,7 +20,7 @@ afterEach(async () => {
 });
 
 const lines = (file: string): any[] => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) : []);
-const claudeInputs = (dir: string): string[] => lines(join(dir, "claude-input.log")).map((entry) => entry.text);
+const claudeInputs = (dir: string): string[] => lines(join(dir, "claude-input.log")).filter((entry) => !entry.midTurn).map((entry) => entry.text);
 const codexInputs = (dir: string, kind = "turn"): string[] => lines(join(dir, "codex-input.log")).filter((entry) => entry.kind === kind).map((entry) => entry.text);
 
 /** A main bot whose head is Codex (bot.json as 1.x writes it). */
@@ -129,6 +129,25 @@ describe("a Codex head", () => {
   });
 });
 
+describe("timing as 1.x", () => {
+  it("a message to a Codex head at work joins its turn (turn/steer): one reply, after your new line", async () => {
+    const dir = tempDir("codex");
+    codexOnly(dir);
+    const c = core(dir, { FAKE_CODEX_TURN_MS: "900" });
+    const first = await c.call({ type: "chat.send", botId: MAIN, text: "first" });
+    await until(() => codexInputs(dir).some((text) => text.endsWith("first")), { timeout: 5_000 });
+    const second = await c.call({ type: "chat.send", botId: MAIN, text: "second" });
+    // It is the turn under way that answers it.
+    expect(second.turnId).toBe(first.turnId);
+    expect(second.messageId).toBe(first.messageId);
+    expect((await finishedFor(c, first.turnId)).event).toMatchObject({ status: "done", text: "Codex says: first (also heard: second)" });
+    expect(codexInputs(dir, "steer")).toEqual([expect.stringMatching(/^second/)]);
+    expect(codexInputs(dir).filter((text) => text.includes("second"))).toEqual([]);
+    const shown = (await c.chat()).messages.filter((m: any) => m.role !== "divider" && m.role !== "notice").map((m: any) => [m.role, m.text]);
+    expect(shown).toEqual([["user", "first"], ["user", "second"], ["bot", "Codex says: first (also heard: second)"]]);
+  });
+});
+
 describe("two heads in one chat", () => {
   async function twoHeads(dir: string, env: Record<string, string> = {}) {
     const c = core(dir, env);
@@ -167,6 +186,40 @@ describe("two heads in one chat", () => {
     const partner = JSON.parse(readFileSync(join(dir, "main", "partner-codex", "chat.json"), "utf8"));
     expect(partner.every((m: any) => m.engine === "codex")).toBe(true);
     expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).heads).toMatchObject({ engines: ["claude", "codex"], answerWith: "both", limits: { discussion: 3, review: 2, handoffs: 6 } });
+  });
+
+  it("Claude hears the other head mid-turn (1.x's context-only delivery), and only once", async () => {
+    const dir = tempDir("heads");
+    const c = await twoHeads(dir, { FAKE_CLAUDE_LINGER_MS: "1500" });
+    const { messageId: userId } = await c.call({ type: "chat.send", botId: MAIN, text: "/linger plan it" });
+    // Claude leads; its first words go to Codex with the message; Codex answers while Claude still works.
+    const codex = await until(async () => (await lastBy(c, "codex"))?.state === "done" && lastBy(c, "codex"), { timeout: 10_000 });
+    expect(codexInputs(dir)[0]).toContain("(App: Claude, working on this too, says: Thinking it over.)\n\n/linger plan it");
+    const midTurn = await until(() => lines(join(dir, "claude-input.log")).find((entry) => entry.midTurn), { timeout: 5_000 });
+    expect(midTurn.text).toBe(`(App: Codex, this bot's other head, replied in this chat:)\n${codex.text}`);
+    const claude = await until(async () => (await lastBy(c, "claude"))?.state === "done" && lastBy(c, "claude"), { timeout: 10_000 });
+    expect(claude.text).toBe("Thinking it over.\n\nYou said: plan it (heard mid-turn: 1)");
+    expect((await c.chat()).messages.find((m: any) => m.id === codex.id).seenBy).toEqual(["claude", "codex"]);
+    expect((await c.chat()).messages.find((m: any) => m.id === userId).seenBy).toEqual(["claude", "codex"]);
+    await until(async () => !(await bots(c))[0].working, { timeout: 10_000 });
+    // Not again with its next message.
+    await turn(c, "and now?", { to: "claude" });
+    expect(claudeInputs(dir).at(-1)).not.toContain("replied in this chat");
+    expect(claudeInputs(dir).at(-1)).toMatch(/and now\?/);
+  });
+
+  it("words claude reads only after its turn ended get a turn of their own, the app's: <no-reply/> shows nothing", async () => {
+    const dir = tempDir("heads");
+    const c = await twoHeads(dir, { FAKE_CLAUDE_LINGER_MS: "800", FAKE_CLAUDE_NO_ABSORB: "1", FAKE_CLAUDE_NOTE_MS: "300" });
+    await c.call({ type: "chat.send", botId: MAIN, text: "/linger plan it" });
+    await until(async () => (await lastBy(c, "claude"))?.state === "done", { timeout: 10_000 });
+    // The note's own turn starts (command_lifecycle "started"): the bot works, then shows nothing.
+    await until(() => claudeInputs(dir).some((text) => text.startsWith("(App: Codex, this bot's other head, replied")), { timeout: 5_000 });
+    await until(async () => !(await bots(c))[0].working, { timeout: 10_000 });
+    const replies = (await c.chat()).messages.filter((m: any) => m.role === "bot");
+    expect(replies.map((m: any) => [m.engine, m.text])).toEqual([["claude", "Thinking it over.\n\nYou said: plan it"], ["codex", "Codex says: /linger plan it"]]);
+    // A message after it goes as usual.
+    expect((await turn(c, "after", { to: "claude" })).event.text).toBe("You said: after");
   });
 
   it("a lead that says nothing: the other head gets the message after the wait; the lead's first words release it (headWords)", async () => {
