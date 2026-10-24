@@ -247,3 +247,41 @@ extension WorkerDependencyVerificationTests {
         #expect(session.completionWorkerDependencies.first?.task == evidence)
     }
 }
+
+extension WorkerDependencyVerificationTests {
+    @Test func ownershipEvidencePersistsSeparatelyAndResetsForANewAssignment() throws {
+        let h = CodexManagedWorkerTests()
+        var (session, _) = h.ready()
+        h.rootTurn(&session)
+        let (task, _) = h.launch(&session)
+        let followup = "Research only; do not implement the proposed change."
+        let sent = h.tool(101, name: "app_send_message", arguments: ["task_id": task, "message": followup], &session)
+        _ = h.response(h.write(sent, "turn/steer"), [:], &session)
+        let evidence = try #require(session.completionWorkerDependencies.first?.task)
+        let saved = try JSONDecoder().decode([CodexManagedWorkerRecord].self, from: JSONEncoder().encode(session.managedWorkerRecords))
+        #expect(saved.first?.instructions == "fix and test")
+        #expect(saved.first?.ownershipInstructions == evidence)
+        #expect(evidence.contains(followup))
+        // Pre-field records still decode and use their original instruction evidence.
+        var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(saved[0])) as? [String: Any])
+        legacy.removeValue(forKey: "ownershipInstructions")
+        let old = try JSONDecoder().decode(CodexManagedWorkerRecord.self, from: JSONSerialization.data(withJSONObject: legacy))
+        #expect(old.ownershipInstructions == nil)
+        #expect(old.instructions == "fix and test")
+        // A restored pending callback retains the latest scope, without running execution.
+        _ = h.item("worker", "worker-1", ["id": "result", "type": "agentMessage", "phase": "final_answer", "text": "Research complete."], &session)
+        _ = h.completed("worker", "worker-1", &session)
+        #expect(session.completionWorkerDependencies.first?.state == .reportQueued)
+        #expect(session.completionWorkerDependencies.first?.task == evidence)
+        let restored = CodexSession(config: .init(workingDirectory: URL(filePath: "/tmp/bot"), instructions: "coordinate",
+            workerInstructions: "execute", restoredWorkers: session.managedWorkerRecords))
+        #expect(restored.completionWorkerDependencies.first?.state == .reportQueued)
+        #expect(restored.completionWorkerDependencies.first?.task == evidence)
+        let fresh = "Analyze the new synthetic table only."
+        _ = h.tool(102, name: "app_send_message", arguments: ["task_id": task, "message": fresh], &session)
+        #expect(session.completionWorkerDependencies.first?.task == fresh)
+        #expect(session.completionWorkerDependencies.first?.run == 2)
+        #expect(session.managedWorkerRecords.first?.instructions == fresh)
+        #expect(session.managedWorkerRecords.first?.ownershipInstructions == nil)
+    }
+}

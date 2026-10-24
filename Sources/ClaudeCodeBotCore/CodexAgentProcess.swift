@@ -16,6 +16,8 @@ struct CodexManagedWorkerRecord: Codable, Equatable {
     var tokens: TokenUsage?
     var runtime: WorkerRuntimeInfo?
     var reconciliationAttempt: Int?
+    /// Judge ownership evidence can include steers; never replay it as a launch prompt.
+    var ownershipInstructions: String?
 }
 
 /// Which Codex thread each bot session is: `codex app-server` names its threads itself, while a
@@ -661,6 +663,7 @@ struct CodexSession {
         var id: String
         var name: String
         var instructions: String
+        var ownershipInstructions: String?
         var thread: String?
         var turnID: String?
         var run = 1
@@ -680,6 +683,7 @@ struct CodexSession {
         }
         init(record: CodexManagedWorkerRecord) {
             id = record.id; name = record.name; instructions = record.instructions
+            ownershipInstructions = record.ownershipInstructions
             thread = record.thread; run = record.run; active = false
             runtime = record.runtime
             tokens = record.tokens ?? TokenUsage()
@@ -723,7 +727,7 @@ struct CodexSession {
             return CodexManagedWorkerRecord(id: worker.id, name: worker.name, instructions: worker.instructions,
                 thread: worker.thread, run: worker.run, wasActive: worker.active, reportPending: result != nil,
                 report: result?.report, status: result?.status, turn: result?.turn, tokens: worker.tokens, runtime: worker.runtime,
-                reconciliationAttempt: result?.reconciliationAttempt)
+                reconciliationAttempt: result?.reconciliationAttempt, ownershipInstructions: worker.ownershipInstructions)
         }.sorted { $0.id < $1.id }
     }
 
@@ -734,12 +738,12 @@ struct CodexSession {
     var completionWorkerDependencies: [PromiseCheck.WorkerDependency] {
         guard !stopped else { return [] }
         let running = workers.values.filter { $0.active && !$0.cancelled }.map {
-            PromiseCheck.WorkerDependency(id: $0.id, run: $0.run, task: $0.instructions,
+            PromiseCheck.WorkerDependency(id: $0.id, run: $0.run, task: $0.ownershipInstructions ?? $0.instructions,
                 state: .running, callback: "app_task_result")
         }
         let queued = workerResults.compactMap { result -> PromiseCheck.WorkerDependency? in
             guard let worker = workers[result.task], !worker.active, worker.run == result.run else { return nil }
-            return .init(id: worker.id, run: worker.run, task: worker.instructions,
+            return .init(id: worker.id, run: worker.run, task: worker.ownershipInstructions ?? worker.instructions,
                 state: .reportQueued, callback: "app_task_result", outcome: result.status)
         }
         return running.sorted { $0.id < $1.id } + queued.sorted { $0.id < $1.id }
@@ -946,9 +950,9 @@ struct CodexSession {
     private mutating func messageWorker(_ task: String, text: String) -> [CodexOutput] {
         guard let worker = workers[task], !stopped else { return [] }
         if worker.active {
-            // Include scope corrections/stops sent during this run in the judge's ownership
-            // evidence too, after they leave the transient steer queue.
-            workers[task]?.instructions += "\nFollow-up: " + text
+            // Retain scope corrections after the steer queue drains without changing the
+            // launch prompt: a pre-launch follow-up must still be delivered only as a steer.
+            workers[task]?.ownershipInstructions = (worker.ownershipInstructions ?? worker.instructions) + "\nFollow-up: " + text
             if let turnID = worker.turnID {
                 return [workerSteer(task, text: text, turnID: turnID, run: worker.run)]
             }
@@ -960,6 +964,7 @@ struct CodexSession {
         workers[task]?.active = true
         workers[task]?.cancelled = false
         workers[task]?.instructions = text
+        workers[task]?.ownershipInstructions = nil
         workers[task]?.turnID = nil
         var out: [CodexOutput] = [.event(.trace(.subagentStarted(id: task, description: worker.name, type: "codex-worker", prompt: text, background: true)))]
         if worker.loaded { out += startWorkerTurn(task, text: text) }
