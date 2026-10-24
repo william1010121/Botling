@@ -5,6 +5,7 @@ export type Role = "user" | "bot" | "divider" | "error" | "relay" | "notice";
 export type SampleKind = "testRun" | "reply" | "page";
 
 export interface ChoiceView {
+  id?: string | null;
   label: string;
   detail: string | null;
   recommended: boolean;
@@ -44,6 +45,7 @@ export interface MessageView {
   sourceEngine?: string | null;
   sourceTime?: string | null;
   id: string;
+  decisionID?: string | null;
   reactionEnabled?: boolean | null;
   reactions?: { emoji: string; actors: string[]; own: boolean }[] | null;
   role: Role;
@@ -513,7 +515,7 @@ export type Action =
   | { type: "setAnswerWith"; botID: string; to: string; requestID: number }
   /** A chat's unsent text and caret changed (empty: none), for the app to keep over a restart. */
   | { type: "draft"; botID: string; text: string; cursor: number }
-  | { type: "choose"; messageID: string; index: number }
+  | { type: "choose"; messageID: string; index: number; text?: string; images?: { name: string; base64: string }[] }
   | { type: "answer"; messageID: string; text: string; images?: { name: string; base64: string }[] }
   | { type: "setReaction"; messageID: string; emoji: string; present: boolean }
   | { type: "reply"; messageID: string }

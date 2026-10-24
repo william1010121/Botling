@@ -277,7 +277,7 @@ struct ChatSurface: NSViewRepresentable {
                 }
             case "choose":
                 if let messageID = id("messageID"), let index = body["index"] as? Int {
-                    workspace.choose(index, in: messageID, of: bot)
+                    workspace.choose(index, in: messageID, of: bot, notes: body["text"] as? String, files: Self.pictures(body["images"]))
                 }
             case "answer":
                 // Words, pictures the user attached in the component, or both.

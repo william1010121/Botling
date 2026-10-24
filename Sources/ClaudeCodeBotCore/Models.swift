@@ -123,9 +123,11 @@ public struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var date: Date
     /// Buttons for a decision the user has to make.
     public var choices: [Choice]?
+    /// Shared only by explicitly associated handoff views; the message UUID remains the view ID.
+    public var decisionID: UUID?
     /// Which of `choices` the user picked.
     public var chosen: Int?
-    /// What the user typed instead of picking one (a component's "Other").
+    /// A typed answer ("Other"/Skip), or notes accompanying `chosen`. Both may be present.
     public var answer: String?
     /// For a notice: the project, and the manager's message it points at.
     public var sourceID: UUID?
@@ -286,6 +288,8 @@ public struct Choice: Codable, Equatable, Sendable {
         case allowOnce, alwaysAllow, deny
     }
 
+    /// Stable within a shared decision. Nil for legacy/unassociated options.
+    public var id: UUID?
     public var label: String
     /// What picking it costs, in a few words.
     public var detail: String?

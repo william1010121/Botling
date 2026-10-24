@@ -14,6 +14,8 @@ public struct HeadTags: Equatable, Sendable {
         public var to: BotEngine
         public var kind: HandoffKind
         public var task: String
+        /// Explicitly associates an already posted question with this assignment.
+        public var decisionID: UUID? = nil
     }
 
     public var handoff: Handoff?
@@ -43,7 +45,7 @@ public struct HeadTags: Equatable, Sendable {
         let task = String(text[inner]).trimmingCharacters(in: .whitespacesAndNewlines)
         var tags = HeadTags()
         if let to = attribute("to").flatMap({ BotEngine(rawValue: $0.lowercased()) }), !task.isEmpty {
-            tags.handoff = Handoff(to: to, kind: attribute("kind").flatMap { HandoffKind(rawValue: $0.lowercased()) } ?? .task, task: task)
+            tags.handoff = Handoff(to: to, kind: attribute("kind").flatMap { HandoffKind(rawValue: $0.lowercased()) } ?? .task, task: task, decisionID: attribute("decision").flatMap(UUID.init(uuidString:)))
         }
         return (body.trimmingCharacters(in: .whitespacesAndNewlines), tags)
     }

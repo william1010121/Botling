@@ -1842,9 +1842,11 @@ public final class Workspace: ObservableObject {
     /// answers the original, and a pick on the original settles its copies; a pick on a bot's
     /// line in a group goes back to that bot there.
     @discardableResult
-    public func choose(_ index: Int, in messageID: UUID, of bot: Bot) -> Bool {
-        defer { refreshWaiting() }
+    public func choose(_ index: Int, in messageID: UUID, of bot: Bot, notes: String? = nil, files: [URL] = []) -> Bool {
+        defer { synchronizeDecisionCopies(); refreshWaiting() }
         guard let message = bot.messages.first(where: { $0.id == messageID }) else { return false }
+        if let result = chooseDecisionNotice(index, message: message, notes: notes, files: files) { return result }
+        if let result = bot.resolveDecision(messageID, index: index, text: notes, files: files) { return result }
         if let proposal = installQuestions[messageID] {
             guard message.isOpenQuestion else { return false }
             installQuestions[messageID] = nil
@@ -1912,15 +1914,17 @@ public final class Workspace: ObservableObject {
         }
         if message.role == .notice, let questionID = message.sourceMessageID {
             guard message.isOpenQuestion else { return false }
-            guard let original = message.sourceID.flatMap(member), original.choose(index, in: questionID) else {
+            guard let original = message.sourceID.flatMap(member), original.choose(index, in: questionID, notes: notes, files: files) else {
                 // The question was settled or is gone: so is this copy.
                 closeCopy(of: message, in: bot)
                 return false
             }
-            bot.markChosen(index, in: messageID)
+            if let original = message.sourceID.flatMap(member)?.messages.first(where: { $0.id == questionID }), original.decisionID != nil {
+                bot.synchronizeDecisionCopy(messageID, from: original)
+            } else { bot.markChosen(index, in: messageID) }
             return true
         }
-        guard bot.choose(index, in: messageID) else { return false }
+        guard bot.choose(index, in: messageID, notes: notes, files: files) else { return false }
         forEachCopy(of: messageID) { chat, copy in chat.markChosen(index, in: copy.id) }
         return true
     }
@@ -1936,10 +1940,11 @@ public final class Workspace: ObservableObject {
     /// kept in the chat's attachments folder and reach the bot as a message's attachments do.
     @discardableResult
     public func answer(_ text: String, files: [URL] = [], in messageID: UUID, of bot: Bot) -> Bool {
-        defer { refreshWaiting() }
+        defer { synchronizeDecisionCopies(); refreshWaiting() }
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !files.isEmpty else { return false }
         guard let message = bot.messages.first(where: { $0.id == messageID }) else { return false }
+        if let result = bot.resolveDecision(messageID, index: nil, text: text, files: files) { return result }
         // The usage card's delete button: off that bot's list, not out of the library.
         if !message.shown.isEmpty, let name = Self.componentToDrop(in: text) {
             dropComponent(name, shownIn: message, in: bot)
@@ -2009,7 +2014,9 @@ public final class Workspace: ObservableObject {
                 closeCopy(of: message, in: bot)
                 return false
             }
-            bot.markAnswered(shown, in: messageID)
+            if let original = message.sourceID.flatMap(member)?.messages.first(where: { $0.id == questionID }), original.decisionID != nil {
+                bot.synchronizeDecisionCopy(messageID, from: original)
+            } else { bot.markAnswered(shown, in: messageID) }
             return true
         }
         guard bot.answer(text, files: files, in: messageID) else { return false }
@@ -2042,6 +2049,34 @@ public final class Workspace: ObservableObject {
         }
     }
 
+    /// Legacy notice mirrors have source identity but no option IDs. Only an unchanged full
+    /// canonical option definition permits that old index; reordered/changed definitions fail closed.
+    private func chooseDecisionNotice(_ index: Int, message: ChatMessage, notes: String?, files: [URL]) -> Bool? {
+        guard message.role == .notice, let sourceID = message.sourceID, let questionID = message.sourceMessageID,
+              let original = member(sourceID), let source = original.messages.first(where: { $0.id == questionID }),
+              source.decisionID != nil else { return nil }
+        guard message.isOpenQuestion, let option = message.choices?[safe: index] else { return false }
+        let mapped: Int?
+        if let id = option.id { mapped = source.choices?.firstIndex { $0.id == id } }
+        else {
+            let normalize: ([Choice]?) -> [Choice]? = { $0?.map { var c = $0; c.id = nil; return c } }
+            mapped = normalize(message.choices) == normalize(source.choices) ? index : nil
+        }
+        guard let mapped else { return false }
+        return original.choose(mapped, in: questionID, notes: notes, files: files)
+    }
+
+    private func synchronizeDecisionCopies() {
+        for chat in [mainBot] + Array(groupChats.values) {
+            for copy in chat.messages where copy.role == .notice {
+                guard let sourceID = copy.sourceID, let questionID = copy.sourceMessageID,
+                      let source = member(sourceID)?.messages.first(where: { $0.id == questionID }),
+                      source.decisionID != nil else { continue }
+                chat.synchronizeDecisionCopy(copy.id, from: source)
+            }
+        }
+    }
+
     /// A bot's question was settled in its own chat: so are its copies.
     private func closeCopies(of message: ChatMessage) {
         forEachCopy(of: message.id) { chat, copy in
@@ -2053,7 +2088,9 @@ public final class Workspace: ObservableObject {
     /// A copy whose question can no longer be answered: show what became of it.
     private func closeCopy(of copy: ChatMessage, in chat: Bot) {
         let original = copy.sourceID.flatMap(member)?.messages.first { $0.id == copy.sourceMessageID }
-        if let chosen = original?.chosen {
+        if let original, original.decisionID != nil {
+            chat.synchronizeDecisionCopy(copy.id, from: original)
+        } else if let chosen = original?.chosen {
             chat.markChosen(chosen, in: copy.id)
         } else {
             chat.markAnswered(original?.answer ?? Bot.noLongerNeeded, in: copy.id)

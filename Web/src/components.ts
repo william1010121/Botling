@@ -17,6 +17,7 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./
  * - `answer(value)`: a number picks an option by index, text is a typed answer, and
  *   `{text, images}` sends words with pictures (`images`: File/Blob objects, data: URLs, or
  *   `{name, base64}`); the bot gets the pictures as saved files, like a message's attachments.
+ *   `{index, text, images}` preserves a choice together with its notes/pictures.
  *   Returns a promise that settles once it is sent.
  * - `pickImage({multiple})`: opens the picture picker; resolves to the pictures picked
  *   (`{name, type, base64, dataURL}` each, [] if cancelled). Call it from a click.
@@ -181,7 +182,7 @@ ${imeGuardScript}
       if (value && typeof value === 'object' && !(value instanceof String)) {
         const text = value.text == null ? '' : String(value.text);
         return Promise.all([...(value.images || [])].map(picture)).then((list) => {
-          parent.postMessage({ccb: 'answer', text, images: list.filter(Boolean)}, '*');
+          parent.postMessage({ccb: 'answer', ...(Number.isInteger(value.index) && value.index >= 0 ? {index: value.index} : {}), text, images: list.filter(Boolean)}, '*');
         });
       }
       parent.postMessage({ccb: 'answer', text: String(value)}, '*');
@@ -611,7 +612,7 @@ window.addEventListener("message", (event) => {
     frame.closest(".board-card, .pin-sheet, .float-card")?.classList.toggle("hovered", !!(message as { on?: unknown }).on);
   } else if (message.ccb === "answer" && frame.ccbAnswer) {
     const images = answerImages(message.images);
-    if (typeof message.index === "number") frame.ccbAnswer({ index: message.index });
+    if (typeof message.index === "number" && Number.isInteger(message.index)) frame.ccbAnswer({ index: message.index, ...(typeof message.text === "string" && message.text.trim() ? {text: message.text} : {}), ...(images.length ? {images} : {}) });
     else if (images.length) frame.ccbAnswer({ text: typeof message.text === "string" ? message.text : "", images });
     else if (typeof message.text === "string" && message.text.trim() !== "") frame.ccbAnswer({ text: message.text });
   } else if (message.ccb === "open" && typeof message.url === "string" && message.url !== "") {
@@ -648,7 +649,7 @@ export function answerImages(value: unknown): AnswerImage[] {
  * Nothing for an empty answer.
  */
 export function answerAction(messageID: string, answer: ComponentAnswer): Action | null {
-  if (answer.index !== undefined) return { type: "choose", messageID, index: answer.index };
+  if (answer.index !== undefined) return { type: "choose", messageID, index: answer.index, ...(answer.text?.trim() ? { text: answer.text } : {}), ...(answer.images?.length ? { images: answer.images } : {}) };
   const text = answer.text ?? "";
   const images = answer.images ?? [];
   if (images.length) return { type: "answer", messageID, text, images };

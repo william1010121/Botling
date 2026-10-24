@@ -717,7 +717,7 @@ function choicesElement(message: MessageView, components: Record<string, Compone
  */
 export function foldedChoices(message: MessageView, components: Record<string, ComponentInfo>): HTMLElement {
   const picked = message.chosen != null ? message.choices?.[message.chosen]?.label : null;
-  const label = picked ?? message.answer ?? t("messages.answered");
+  const label = picked ? picked + (message.answer ? ` — ${message.answer}` : "") : message.answer ?? t("messages.answered");
   const button = document.createElement("button");
   button.className = "folded-choice";
   button.setAttribute("aria-expanded", "false");

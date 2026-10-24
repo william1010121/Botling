@@ -63,8 +63,11 @@ public enum ReplyParser {
         public var reactions: [ReactionAction] = []
         public var displays: [ComponentInstance]
         public var completionSignals: [PromiseCheck.Signal] = []
+        public var decisionReference: UUID? = nil
     }
 
+    private static let decisionReferenceTag = try! NSRegularExpression(pattern: #"(?m)^ {0,3}<decision-ref\s+id="([0-9A-Fa-f-]{36})"\s*/>[ \t]*$"#)
+    private static let quotedHTMLRegion = try! NSRegularExpression(pattern: #"(?is)<(pre|code|blockquote)\b[^>]*>.*?</\1\s*>|<!--.*?-->"#)
     private static let choicesBlock = try! NSRegularExpression(pattern: #"<choices>\s*(.*?)\s*</choices>"#, options: .dotMatchesLineSeparators)
     private static let requestTag = try! NSRegularExpression(
         pattern: #"<(team|component|new-bot)\s+name\s*=\s*"([^"]+)"\s*>\s*(.*?)\s*</\1>"#,
@@ -201,7 +204,7 @@ public enum ReplyParser {
             mask.replaceCharacters(in: match.range, with: marker)
         }
         var reactions: [ReactionAction] = []
-        let quotedHTML = try! NSRegularExpression(pattern: #"(?is)<(pre|code|blockquote)\b[^>]*>.*?</\1\s*>|<!--.*?-->"#)
+        let quotedHTML = quotedHTMLRegion
         let quotedRanges = quotedHTML.matches(in: mask as String, range: NSRange(location: 0, length: mask.length)).map(\.range)
         for match in reactionTag.matches(in: mask as String, range: NSRange(location: 0, length: mask.length)).reversed() {
             guard !quotedRanges.contains(where: { NSIntersectionRange($0, match.range).length > 0 }) else { continue }
@@ -270,6 +273,17 @@ public enum ReplyParser {
 
         // Several blocks (an earlier part of the turn asked, then a later one): the last one
         // is the question; every block comes out of the text.
+        var decisionReference: UUID?
+        let referenceMask = NSMutableString(string: mask as String)
+        for quoted in quotedHTML.matches(in: mask as String, range: NSRange(location: 0, length: mask.length)).reversed() {
+            referenceMask.replaceCharacters(in: quoted.range, with: String(repeating: " ", count: quoted.range.length))
+        }
+        let references = decisionReferenceTag.matches(in: referenceMask as String, range: NSRange(location: 0, length: referenceMask.length))
+        if references.count == 1 { decisionReference = UUID(uuidString: text.substring(with: references[0].range(at: 1))) }
+        for match in references.reversed() {
+            text.replaceCharacters(in: match.range, with: "")
+            mask.replaceCharacters(in: match.range, with: "")
+        }
         var choices: [Choice]?
         take(choicesBlock) { groups in
             guard choices == nil else { return }
@@ -289,13 +303,13 @@ public enum ReplyParser {
 
         let (body, places) = placing(text as String, count: displays.count)
         for index in displays.indices { displays[index].at = places[index] }
-        return Parsed(body: body, choices: choices, requests: requests, reactions: reactions, displays: displays, completionSignals: signals)
+        return Parsed(body: body, choices: choices, requests: requests, reactions: reactions, displays: displays, completionSignals: signals, decisionReference: decisionReference)
     }
 
     /// Every tag the app acts on, in the order `parseAll` knows them.
     private static var replyTags: [NSRegularExpression] {
         [showTag, requestTag, pluginTag, installTag, projectTag, buildTag, screenshotTag, folderTag,
-         openQuestionTag, listTag, suggestTag, specTag, choicesBlock]
+         openQuestionTag, listTag, suggestTag, specTag, choicesBlock, decisionReferenceTag]
     }
 
     /// Takes the app's tags (`<choices>`, `<show>`, `<plugin>`, …) out of one earlier part of a
@@ -305,7 +319,12 @@ public enum ReplyParser {
     public static func liftTags(_ segment: String) -> (rest: String, tags: [String]) {
         let mask = masked(segment)
         let whole = NSRange(location: 0, length: mask.length)
-        let ranges = replyTags.flatMap { $0.matches(in: mask as String, range: whole).map(\.range) }
+        let quoted = quotedHTMLRegion.matches(in: mask as String, range: whole).map(\.range)
+        let ranges = replyTags.flatMap { tag in
+            tag.matches(in: mask as String, range: whole).filter { match in
+                tag !== decisionReferenceTag || !quoted.contains { NSIntersectionRange($0, match.range).length > 0 }
+            }.map(\.range)
+        }
             .sorted { $0.location < $1.location }
         var kept: [NSRange] = []
         for range in ranges where kept.last.map({ NSMaxRange($0) <= range.location }) ?? true {

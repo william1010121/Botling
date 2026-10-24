@@ -9,6 +9,7 @@ public struct ChatPayload: Encodable, Equatable {
         var recommended: Bool
         /// A tool question's button: what it does (`Choice.Action`), apart from its words.
         var action: String?
+        var id: String? = nil
     }
 
     public struct File: Encodable, Equatable {
@@ -80,6 +81,7 @@ public struct ChatPayload: Encodable, Equatable {
         var sourceAuthor: String? = nil
         var sourceEngine: String? = nil
         var sourceTime: String? = nil
+        var decisionID: String? = nil
     }
 
     public struct SubagentRef: Encodable, Equatable {
@@ -646,7 +648,7 @@ public struct ChatPayload: Encodable, Equatable {
                 text: message.text,
                 stamp: stamp(for: bot.messages, at: index, now: now),
                 avatar: face,
-                choices: message.choices?.map { Choice(label: $0.label, detail: $0.detail, recommended: $0.recommended, action: $0.action?.rawValue) },
+                choices: message.choices?.map { Choice(label: $0.label, detail: $0.detail, recommended: $0.recommended, action: $0.action?.rawValue, id: $0.id?.uuidString) },
                 chosen: message.chosen,
                 answer: message.answer,
                 open: message.isOpenQuestion,
@@ -696,7 +698,8 @@ public struct ChatPayload: Encodable, Equatable {
                 completionVerification: message.completionVerification,
                 sourceAuthor: message.role == .bot ? (sourceName ?? (message.sourceID == nil ? bot.name : nil)) : nil,
                 sourceEngine: message.engine?.rawValue,
-                sourceTime: CatchUp.time(message.date)
+                sourceTime: CatchUp.time(message.date),
+                decisionID: message.decisionID?.uuidString
             )
         }
         // All the chat's background work goes on its latest message, as one row of counts.

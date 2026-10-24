@@ -28,6 +28,11 @@ public final class Bot: ObservableObject, Identifiable {
     @Published public private(set) var partner: Bot?
     /// On a partner: the bot whose chat it speaks in.
     private weak var primary: Bot?
+    /// Explicit candidates passed with this assignment, never inferred from similar words.
+    private var handoffDecisions: [UUID: Set<UUID>] = [:]
+    /// Explicit question views delivered with the current peer context, including a held turn
+    /// released before its separately queued handoff can start.
+    private var turnPeerMessages: Set<UUID> = []
     private var partnerWatch: AnyCancellable?
     private var partnerTraceWatch: AnyCancellable?
     /// Presentation copies of partner teams, including saved teams before either head wakes.
@@ -643,7 +648,7 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// `appNote` goes to Claude ahead of your words without showing in the chat (what the app
     /// did about a card you answered).
-    func send(_ text: String, files: [URL], replyingTo replyID: UUID?, appNote: String?, to target: AnswerTarget? = nil) {
+    func send(_ text: String, files: [URL], replyingTo replyID: UUID?, appNote: String?, to target: AnswerTarget? = nil, decisionOwner: BotEngine? = nil) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !files.isEmpty else { return }
         let attachments = files.compactMap(keep)
@@ -674,6 +679,14 @@ public final class Bot: ObservableObject, Identifiable {
         }
         // Whether paused work reported up is read before this turn becomes yours.
         let outgoing = Outgoing(text: lines.joined(separator: "\n\n"), images: attachments.filter { $0.kind == .image }, fromUser: true, messageID: message.id)
+        if let decisionOwner {
+            // A shared decision has exactly one execution owner. Do not send a second copy
+            // as peer context: a working peer would receive that as another CLI message.
+            conduct(conductor.userMessage(text))
+            deliver(outgoing, to: decisionOwner)
+            turnFromRelay = false
+            return
+        }
         guard heads.hasTwo else {
             route(outgoing)
             turnFromRelay = false
@@ -839,6 +852,8 @@ public final class Bot: ObservableObject, Identifiable {
         made.onQuestionSettled = { [weak self] message in self?.onQuestionSettled?(message) }
         made.permissionTimeout = permissionTimeout
         partner = made
+        // The shared chat is authoritative if a previous run ended between the two saves.
+        made.reconcileDecisions(from: messages)
         // Its lines show in this chat as they come and change (a question answered, a card).
         // At once (the publisher sends the new lines as they are set), so a line is here
         // before the other head is told about it.
@@ -862,6 +877,12 @@ public final class Bot: ObservableObject, Identifiable {
                 var copy = line
                 copy.seenBy = Self.union(messages[index].seenBy, line.seenBy)
                 copy.reactions = messages[index].reactions
+                if messages[index].decisionID != nil, !messages[index].isOpenQuestion {
+                    copy.decisionID = messages[index].decisionID
+                    copy.choices = messages[index].choices
+                    copy.chosen = messages[index].chosen
+                    copy.answer = messages[index].answer
+                }
                 if messages[index] != copy {
                     messages[index] = copy
                     changed = true
@@ -940,15 +961,37 @@ public final class Bot: ObservableObject, Identifiable {
     /// A head showed a reply: the other head hears it, and the conductor carries any hand-off.
     fileprivate func headReplied(_ message: ChatMessage, by head: BotEngine, tags: HeadTags, handed: Bool, handoffID: UUID?) {
         guard message.role == .bot else { return }
+        let actions = conductor.replied(head, message.text, tags: tags, handed: handed, handoffID: handoffID)
+        var decisions = handoffID.flatMap { handoffDecisions[$0] } ?? []
+        // A legacy OPEN question can acquire identity when it is actually handed over.
+        // Historical answers and permission/app cards never acquire inferred approvals.
+        if message.isOpenQuestion, message.permissionTool == nil, actions.contains(where: { action in
+            if case .ask(_, _, .some(_)) = action { return true }; return false
+        }) {
+            identifyDecision(message.id)
+            decisions.insert(message.decisionID ?? message.id)
+        }
+        // Existing chat data needs an explicit question reference on the assignment. An old
+        // answered card without a shared identity must never become an inferred approval.
+        if let reference = tags.handoff?.decisionID,
+           let source = messages.first(where: { $0.id == reference && $0.role == .bot && $0.permissionTool == nil }),
+           source.isOpenQuestion || source.decisionID == reference {
+            if source.isOpenQuestion { identifyDecision(reference) }
+            if let id = messages.first(where: { $0.id == reference })?.decisionID { decisions.insert(id) }
+        }
+        for action in actions {
+            if case let .ask(_, _, id?) = action { handoffDecisions[id] = decisions }
+        }
+        let note = Self.saidNote(head, message) + decisionContext(decisions)
+        let about = [message.id] + decisions.sorted { $0.uuidString < $1.uuidString }
         for other in BotEngine.allCases where other != head {
             if let hold = claimHold, hold.lead == head, hold.held == other {
-                // It answered before saying anything else: the reply goes with the message.
-                releaseClaim(saying: Self.saidNote(head, message), about: [message.id])
+                releaseClaim(saying: note, about: about)
             } else {
-                tell(other, Self.saidNote(head, message), about: [message.id])
+                tell(other, note, about: about)
             }
         }
-        conduct(conductor.replied(head, message.text, tags: tags, handed: handed, handoffID: handoffID))
+        conduct(actions)
     }
 
     /// What it said between its tool calls, while the other head works too: passed on at once,
@@ -1000,7 +1043,7 @@ public final class Bot: ObservableObject, Identifiable {
         for action in actions {
             switch action {
             case let .ask(head, text, handoffID):
-                deliver(Outgoing(text: text, conducted: true, handoffID: handoffID), to: head)
+                deliver(Outgoing(text: text + decisionContext(handoffID), conducted: true, handoffID: handoffID), to: head)
             case let .line(text):
                 append(ChatMessage(role: .divider, text: text))
             case let .card(text, choices):
@@ -1016,6 +1059,8 @@ public final class Bot: ObservableObject, Identifiable {
             }
         }
         if handoffs != conductor.records { handoffs = conductor.records }
+        let kept = Set(conductor.records.map(\.id))
+        handoffDecisions = handoffDecisions.filter { kept.contains($0.key) }
     }
 
     /// Shows a rounds line with no hand-offs behind it: only for drawing the page (snapshots).
@@ -1197,13 +1242,134 @@ public final class Bot: ObservableObject, Identifiable {
         route(Outgoing(text: text))
     }
 
+    /// Attach a stable identity to the actual open source, including its private head store.
+    private func identifyDecision(_ id: UUID) {
+        guard let at = messages.firstIndex(where: { $0.id == id }), messages[at].isOpenQuestion,
+              messages[at].permissionTool == nil, messages[at].role == .bot, messages[at].engine != nil else { return }
+        var source = messages[at]
+        source.decisionID = source.decisionID ?? id
+        source.choices = source.choices?.map { choice in
+            var choice = choice; choice.id = choice.id ?? UUID(); return choice
+        }
+        messages[at] = source
+        store?.save(messages: messages)
+        if let partner, let p = partner.messages.firstIndex(where: { $0.id == id }) {
+            partner.messages[p] = source
+            partner.store?.save(messages: partner.messages)
+        }
+    }
+
+    private func decisionContext(_ handoffID: UUID?) -> String {
+        guard let handoffID, let ids = handoffDecisions[handoffID] else { return "" }
+        return decisionContext(ids)
+    }
+
+    private func decisionContext(_ ids: Set<UUID>) -> String {
+        guard !ids.isEmpty else { return "" }
+        let lines = ids.sorted { $0.uuidString < $1.uuidString }.compactMap { id -> String? in
+            guard let source = messages.first(where: { $0.id == id && $0.decisionID == id }) else { return nil }
+            let options = source.choices?.map(\.label).joined(separator: " / ") ?? ""
+            let selected = source.chosen.flatMap { source.choices?[safe: $0]?.label }
+            let actual = [selected, source.answer].compactMap { $0 }.joined(separator: "\nNotes: ")
+            let answer = actual.isEmpty ? "unanswered" : actual
+            return "Decision \(id): \(Self.preview(of: source)); options: \(options); answer: \(answer)"
+        }
+        return "\n\n(App: Shared handoff decisions. If your reply presents the SAME decision, use <decision-ref id=\"SOURCE-UUID\"/> with its ID below, without a choices block. The app copies the original options and actual answer; never recreate, reinterpret or re-ask it. Independent decisions must use their own choices block. Answering any linked view dispatches once to the original head; the other head must not duplicate decision application.)\n" + lines.joined(separator: "\n")
+    }
+
+    private func associateDecision(_ message: inout ChatMessage, reference: UUID?) {
+        let owner = primary ?? self
+        guard let reference, message.choices == nil else { return }
+        let fromHandoff = turnHandoffID.flatMap { owner.handoffDecisions[$0]?.contains(reference) } ?? false
+        let fromPeer = turnPeerMessages.contains { id in owner.messages.first(where: { $0.id == id })?.decisionID == reference }
+        guard fromHandoff || fromPeer,
+              let source = owner.messages.first(where: { $0.id == reference && $0.decisionID == reference }),
+              source.role == .bot, source.permissionTool == nil else { return }
+        // Canonical options, including their identities: local option order cannot change meaning.
+        message.decisionID = reference
+        message.choices = source.choices
+        message.chosen = source.chosen
+        message.answer = source.answer
+    }
+
+    private func reconcileDecisions(from shared: [ChatMessage]) {
+        for index in messages.indices {
+            guard let id = messages[index].decisionID,
+                  let source = shared.first(where: { $0.id == id && $0.decisionID == id }),
+                  !source.isOpenQuestion else { continue }
+            applyDecision(source, to: &messages[index])
+        }
+        store?.save(messages: messages)
+    }
+
+    /// Explicit notice mirrors remain views, not new authorizations. Never rewrite old answers.
+    func synchronizeDecisionCopy(_ copyID: UUID, from source: ChatMessage) {
+        guard let at = messages.firstIndex(where: { $0.id == copyID }), let id = source.decisionID,
+              !source.isOpenQuestion,
+              messages[at].isOpenQuestion || messages[at].decisionID == id else { return }
+        var copy = messages[at]
+        copy.decisionID = id
+        applyDecision(source, to: &copy)
+        messages[at] = copy
+        store?.save(messages: messages)
+    }
+
+    private func applyDecision(_ source: ChatMessage, to view: inout ChatMessage) {
+        let optionID = source.chosen.flatMap { source.choices?[safe: $0]?.id }
+        view.chosen = optionID.flatMap { id in view.choices?.firstIndex { $0.id == id } }
+        // If a corrupt/old view cannot represent the option, preserve the actual answer in words.
+        view.answer = view.chosen == nil && source.chosen != nil
+            ? [source.chosen.flatMap { source.choices?[safe: $0]?.label }, source.answer].compactMap { $0 }.joined(separator: "\n\n")
+            : source.answer
+    }
+
+    /// MainActor, no suspension: claim/persist every view BEFORE any answer can wake a head.
+    /// nil means this is an unrelated ordinary question; false is an already settled/invalid claim.
+    func resolveDecision(_ messageID: UUID, index: Int?, text: String?, files: [URL] = []) -> Bool? {
+        let owner = primary ?? self
+        if owner !== self { return owner.resolveDecision(messageID, index: index, text: text, files: files) }
+        guard let view = messages.first(where: { $0.id == messageID }), let id = view.decisionID else { return nil }
+        guard view.role == .bot, view.permissionTool == nil,
+              var source = messages.first(where: { $0.id == id && $0.decisionID == id }),
+              source.role == .bot, source.permissionTool == nil, source.isOpenQuestion, view.isOpenQuestion,
+              let decisionOwner = source.engine, heads.engines.contains(decisionOwner) else { return false }
+        let words = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let dispatch: String
+        if let index {
+            guard let choice = view.choices?[safe: index], let optionID = choice.id,
+                  let canonical = source.choices?.firstIndex(where: { $0.id == optionID }) else { return false }
+            source.chosen = canonical
+            source.answer = words.isEmpty ? nil : words
+            dispatch = choice.label + (words.isEmpty ? "" : "\n\n" + words)
+        } else {
+            guard !words.isEmpty || !files.isEmpty else { return false }
+            source.answer = Self.answerLabel(words, files: files)
+            dispatch = words
+        }
+        // Persist the canonical shared record first. A stale private head copy never overwrites it.
+        var updated = messages
+        for p in updated.indices where updated[p].decisionID == id { applyDecision(source, to: &updated[p]) }
+        do { try store?.saveDecisionMessages(updated) } catch { return false }
+        messages = updated
+        partner?.reconcileDecisions(from: messages)
+        let target = AnswerTarget(decisionOwner)
+        let wasRelay = turnFromRelay
+        let ownerWasRelay = bot(forExisting: decisionOwner)?.turnFromRelay ?? false
+        send(dispatch, files: files, replyingTo: source.id,
+             appNote: "(App: Decision \(id) resolved once. You own applying this answer; linked views are already resolved. Do not ask or execute it twice.)", to: target, decisionOwner: decisionOwner)
+        turnFromRelay = wasRelay
+        bot(forExisting: decisionOwner)?.turnFromRelay = ownerWasRelay
+        return true
+    }
+
     /// The user picked a button: mark it, then send its label as their answer. A question can be
     /// answered once.
     @discardableResult
-    public func choose(_ index: Int, in messageID: UUID) -> Bool {
+    public func choose(_ index: Int, in messageID: UUID, notes: String? = nil, files: [URL] = []) -> Bool {
+        if let resolved = (primary ?? self).resolveDecision(messageID, index: index, text: notes, files: files) { return resolved }
         // A question the other head asked: its own to settle.
         if let partner, partner.messages.contains(where: { $0.id == messageID }) {
-            return partner.choose(index, in: messageID)
+            return partner.choose(index, in: messageID, notes: notes, files: files)
         }
         guard let message = messages.first(where: { $0.id == messageID }),
               message.isOpenQuestion,
@@ -1218,7 +1384,8 @@ public final class Bot: ObservableObject, Identifiable {
         markChosen(index, in: messageID)
         let wasRelay = message.role == .bot && turnFromRelay
         // As a reply to the question, so it knows which one you answered, even after a sleep.
-        send(choice.label, files: [], replyingTo: messageID)
+        if let notes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { markAnswered(notes, in: messageID) }
+        send(choice.label + (notes.map { "\n\n" + $0 } ?? ""), files: files, replyingTo: messageID)
         // Picking answers the manager's own question; its next report still goes back up.
         turnFromRelay = wasRelay
         return true
@@ -1229,6 +1396,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// the component, e.g. in "Other") go along like a message's attachments.
     @discardableResult
     public func answer(_ text: String, files: [URL] = [], in messageID: UUID) -> Bool {
+        if let resolved = (primary ?? self).resolveDecision(messageID, index: nil, text: text, files: files) { return resolved }
         if let partner, partner.messages.contains(where: { $0.id == messageID }) {
             return partner.answer(text, files: files, in: messageID)
         }
@@ -1444,6 +1612,8 @@ public final class Bot: ObservableObject, Identifiable {
 
     private func deliver(_ outgoing: Outgoing, id: UUID? = nil) {
         guard let process else { return }
+        if outgoing.contextOnly { turnPeerMessages.formUnion(outgoing.about) }
+        else { turnPeerMessages = Set(outgoing.about) }
         cancelIdle()
         // A turn you started, or one you are adding to; anything else is not yours to add to.
         if !outgoing.contextOnly {
@@ -1467,6 +1637,7 @@ public final class Bot: ObservableObject, Identifiable {
             pendingNote = nil
             text = note + "\n\n" + text
             seen += pendingAbout
+            turnPeerMessages.formUnion(pendingAbout)
             pendingAbout = []
         }
         if !outgoing.contextOnly {
@@ -1524,6 +1695,7 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     private func wake(with outgoing: Outgoing, id: UUID? = nil) {
+        turnPeerMessages = Set(outgoing.about)
         pendingNote = nil
         do {
             let process = try start()
@@ -1757,6 +1929,7 @@ public final class Bot: ObservableObject, Identifiable {
         if !parsed.displays.isEmpty { message.displays = parsed.displays }
         message.session = sessionID
         message.engine = engine
+        associateDecision(&message, reference: parsed.decisionReference)
         if sharesChat { message.seenBy = [engine] }
         message.steps = trace.takeSteps()
         message.backgroundTasks = trace.takeTasks()

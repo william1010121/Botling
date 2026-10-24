@@ -92,6 +92,12 @@ public struct BotStore: Sendable {
         try JSONEncoder().encode(Array(messages.suffix(Self.historyLimit))).write(to: chatURL, options: .atomic)
     }
 
+    /// A decision claim must reach disk before it can dispatch an answer.
+    public func saveDecisionMessages(_ messages: [ChatMessage]) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONEncoder().encode(Array(messages.suffix(Self.historyLimit))).write(to: chatURL, options: .atomic)
+    }
+
     /// The subagents it sent off, with everything they did.
     public func loadSubagents() -> [Subagent] {
         guard let data = try? Data(contentsOf: subagentsURL) else { return [] }
