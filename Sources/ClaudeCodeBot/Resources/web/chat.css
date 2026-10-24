@@ -1304,7 +1304,8 @@ body.spec-mode .float-layer { display: none; }
 .verification-reason { margin-top: 3px; white-space: pre-wrap; }
 
 /* Catch-up summary: unread messages folded on your return (catchup.ts). */
-.row.catchup-folded { display: none; }
+/* Chat.render returns the timestamp wrapper when the source has a stamp. */
+.row.catchup-folded, .stamped.catchup-folded { display: none; }
 .catchup-head { display: flex; flex-direction: column; gap: 14px; margin-top: 10px; }
 .catchup-divider { display: flex; align-items: center; gap: 10px; color: var(--link); font-size: 12px; font-weight: 600; }
 .catchup-divider .line, .catchup-end .line { flex: 1; height: 1px; }

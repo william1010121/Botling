@@ -2,6 +2,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { CatchUpView, ChatState, MessageView } from "../src/types";
 import { sent } from "../src/bridge";
 import { bulletHTML } from "../src/catchup";
+import { readFileSync } from "node:fs";
+const chatCSS = readFileSync("src/chat.css", "utf8");
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
 
@@ -204,4 +206,41 @@ it("keeps historical cards, links, retry targets and expansion independent in ev
   window.ccb.setState(state(null, { messages: [], subagent: { id: "sub" } as ChatState["subagent"] }));
   expect(heads()).toHaveLength(0);
   expect(document.querySelector(".interval-summary-trigger")).toBeNull();
+});
+
+it("folds timestamped component requests and attachments within the cutoff", () => {
+  const style = document.createElement("style");
+  style.textContent = chatCSS;
+  document.head.append(style);
+  const request = (id: string, stamp: string): MessageView => ({ ...line(id, "relay"), stamp,
+    reactionEnabled: true, attachments: [{ name: `${id}.png`, kind: "image", url: `file:///tmp/${id}.png` }] });
+  const messages = [line("boundary", "user"), line("reply"), request("contribution", "Today 9:11 pm"),
+    request("token", "Today 10:17 pm"), line("last"), line("next", "user"), request("later", "Later")];
+  const ids = ["reply", "contribution", "token", "last"];
+  const container = (id: string) => {
+    const row = document.querySelector<HTMLElement>(`[data-id="${id}"]`)!;
+    return row.closest<HTMLElement>(".stamped") ?? row;
+  };
+  try {
+    for (const interval of [false, true]) {
+      const summary = view({ key: `stamped-${interval}`, ids, count: 2, manual: interval });
+      for (const phase of ["loading", "ready", "failed"] as const) {
+        summary.state = phase;
+        window.ccb.setState(state(interval ? null : summary, { messages, intervalSummaries: interval ? [summary] : [] }));
+        for (const id of ids) expect(getComputedStyle(container(id)).display, `${phase}: ${id}`).toBe("none");
+        for (const id of ["boundary", "next", "later"]) expect(getComputedStyle(container(id)).display).not.toBe("none");
+        const original = container("contribution"), image = original.querySelector("img.thumb");
+        expect(document.querySelectorAll(".catchup-links [data-url]")).toHaveLength(2);
+        document.querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
+        expect(container("contribution")).toBe(original);
+        expect(original.querySelector("img.thumb")).toBe(image);
+        expect(image).not.toBeNull();
+        for (const id of ids) expect(getComputedStyle(container(id)).display).not.toBe("none");
+        document.querySelector<HTMLButtonElement>('[data-action="collapse"]')!.click();
+        expect(getComputedStyle(original).display).toBe("none");
+      }
+    }
+    window.ccb.setState(state(null, { messages, intervalSummaries: [] }));
+    for (const id of ids) expect(getComputedStyle(container(id)).display).not.toBe("none");
+  } finally { style.remove(); }
 });
