@@ -4,7 +4,7 @@
 // takes a fresh snapshot instead of patching on guesses. Events that arrive while a snapshot is
 // on its way are buffered and replayed if newer than it. Chat events for other bots are not
 // kept (their chats are fetched when shown); `bot.updated` is kept for every bot.
-import type { PluginsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
+import type { PendingFileView, PluginsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
 
 /** A turn under way and its steps so far (with two heads, two can run at once). */
 export interface RunState { turnId: string; messageId: string; live: StepView[] }
@@ -27,6 +27,8 @@ export interface ChatView {
   pins?: PinView[];
   floating?: PinView[];
   pinChoices?: PinChoiceView[];
+  /** Files waiting in the input box. */
+  pendingFiles?: PendingFileView[];
 }
 
 export interface WorkspaceView {
@@ -181,6 +183,8 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
       const other = runs[0];
       return withChat({ ...next, runs, running: other ? { turnId: other.turnId, messageId: other.messageId } : null, live: other?.live ?? [] });
     }
+    case "files.updated":
+      return withChat({ ...chat, pendingFiles: event.files });
     case "heads.updated":
       return withChat({ ...chat, heads: event.heads });
     case "pins.updated":

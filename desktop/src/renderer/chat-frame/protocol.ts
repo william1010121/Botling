@@ -3,8 +3,14 @@
 // checks who sent a message (`event.source`) and its origin, so a card frame inside the chat frame
 // cannot pass for either.
 import type { ChatState } from "../../../../Web/src/types";
-import type { Command } from "../../contract";
+import type { Command, WebPluginSpecView } from "../../contract";
 import type { FrameExtras } from "../payload";
+
+/** The app page's origin (the React shell, which has the bridge). */
+export const APP_ORIGIN = "app://botling";
+/** The chat page's own origin (Phase 4a): it shares nothing with the app page but postMessage. */
+export const CHAT_ORIGIN = "botling-chat://chat";
+export const CHAT_PAGE = `${CHAT_ORIGIN}/chat.html`;
 
 /** Frame → shell. */
 export type FrameMessage =
@@ -25,5 +31,9 @@ export type ShellMessage =
   | { botling: "answerWithSaved"; botID: string; requestID: number; chosen: string }
   /** Where a component frame's page is served (null: refused). */
   | { botling: "page"; id: number; url: string | null }
+  /** Plugins' web parts to run in the page (`ccb.setPlugins`, after the bundled ccb-latex). */
+  | { botling: "plugins"; specs: WebPluginSpecView[] }
+  /** A web part's `ccb.host.call` was answered (`ccb.hostReply`). */
+  | { botling: "hostReply"; callID: number; ok: boolean; value: unknown }
   /** A component's `ccb.runDetail` answer (`ccb.detailReply`). */
   | { botling: "detailReply"; requestID: number; ok: boolean; value: string };

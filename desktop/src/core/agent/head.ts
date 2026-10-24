@@ -6,6 +6,8 @@
 // This class only speaks the protocol. Turn bookkeeping, approvals, gates and restarts are the
 // bot's (bot.ts).
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { imageMediaType } from "../attachments";
 import { processTreeAdapter, type ManagedProcess, type ProcessTreeAdapter, type TerminateResult } from "../process/tree";
 import { childEnvironment } from "./runner";
 import { parseLine, type StreamItem } from "./stream";
@@ -146,9 +148,23 @@ export class ClaudeHead {
     this.process.child.stdin.write(`${JSON.stringify(value)}\n`);
   }
 
-  /** A user message. `uuid` lets claude report its progress under that id. */
-  send(text: string, uuid: string) {
-    this.write({ type: "user", message: { role: "user", content: text }, uuid: uuid.toLowerCase() });
+  /**
+   * A user message. `uuid` lets claude report its progress under that id. Pictures go in as base64
+   * blocks so the model sees them (AgentProcess.swift's `write`); one claude does not take (another
+   * type, over 4.5 MB, unreadable) is left to the path the text already names.
+   */
+  send(text: string, uuid: string, images: string[] = []) {
+    const blocks: Record<string, unknown>[] = [];
+    for (const path of images) {
+      const mediaType = imageMediaType(path);
+      if (!mediaType) continue;
+      let data: Buffer;
+      try { data = readFileSync(path); } catch { continue; }
+      if (data.length > 4_500_000) continue;
+      blocks.push({ type: "image", source: { type: "base64", media_type: mediaType, data: data.toString("base64") } });
+    }
+    const content = blocks.length ? [{ type: "text", text }, ...blocks] : text;
+    this.write({ type: "user", message: { role: "user", content }, uuid: uuid.toLowerCase() });
   }
 
   /** Answers a permission request: run it (with its input unchanged), or not (`message` says why to claude). */

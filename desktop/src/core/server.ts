@@ -8,6 +8,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { PendingFiles, servedType } from "./attachments";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
   type Command, type Event, type ImportView, type Outbound, type ResultOf,
@@ -84,11 +85,14 @@ export class Core {
   /** The pins the user can see now, in the chat on screen (`RefreshSight`). */
   private visiblePins: { botId: string; ids: string[] } | null = null;
   readonly plugins: Plugins;
+  /** Files waiting in each bot's input box. */
+  readonly pending: PendingFiles;
   readonly maintainer: MaintainerDesk;
   private lastPlugins = "";
 
   constructor(private options: CoreOptions) {
     mkdirSync(options.dataDir, { recursive: true });
+    this.pending = new PendingFiles(join(options.dataDir, "incoming"), (botId, files) => this.event({ type: "files.updated", botId, files }));
     this.catchUps = new CatchUps({
       cache: new CatchUpCache(join(options.dataDir, "catchup-summaries.json")),
       summarizer: options.summarizer ?? null,
@@ -300,6 +304,20 @@ export class Core {
   /** Your message through the plugins' beforeSend hooks first; one can change it or stop it (`Workspace.send`). */
   private async send(botId: string, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex" }): Promise<ResultOf<"chat.send">> {
     const bot = this.bot(botId);
+    // The files waiting in its input box go with the message (1.x sends them all).
+    const files = this.pending.take(botId);
+    try {
+      const result = await this.sendWith(bot, text, { ...options, files: files.map((file) => file.path) });
+      this.pending.done(files);
+      return result;
+    } catch (error) {
+      this.pending.restore(botId, files);
+      throw error;
+    }
+  }
+
+  private async sendWith(bot: Bot, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex"; files: string[] }): Promise<ResultOf<"chat.send">> {
+    if (!text.trim() && !options.files.length) throw new ContractError("bad_request", "Nothing to send.");
     const outcome = await this.plugins.beforeSend(this.botInfo(bot), text);
     if ("stoppedBy" in outcome) {
       const plugin = this.plugins.registry.plugin(outcome.stoppedBy);
@@ -308,6 +326,16 @@ export class Core {
       return { messageId, turnId: null, stoppedBy: outcome.stoppedBy };
     }
     return bot.send(outcome.send.slice(0, 100_000) || text, options);
+  }
+
+  /** A file the chat origin may serve for this bot: one of its lines' attachments, or one waiting in its input box. */
+  private attachmentFile(botId: string, ref: string): ResultOf<"attachment.file"> {
+    const bot = this.bot(botId);
+    let path: string | null = null;
+    if (ref.startsWith("pending:")) path = this.pending.get(botId, ref.slice(8))?.path ?? null;
+    else path = bot.attachmentPath(ref);
+    if (!path) throw new ContractError("not_found", "No such attachment.");
+    return { path, type: servedType(path) };
   }
 
   private settingsFile(): Record<string, unknown> | undefined {
@@ -409,6 +437,15 @@ export class Core {
       case "plugins.command": return { result: await this.plugins.command(cmd.id) ?? null };
       case "plugins.panel": return this.plugins.panel(cmd.name, cmd.panel);
       case "plugins.call": return { result: await this.plugins.call(cmd.name, cmd.method, cmd.params) ?? null };
+      case "plugins.web": return { specs: this.plugins.webSpecs() };
+      case "files.add": this.bot(cmd.botId); return { files: this.pending.addPaths(cmd.botId, cmd.paths) };
+      case "files.data": this.bot(cmd.botId); return { files: this.pending.addData(cmd.botId, cmd.name, cmd.base64) };
+      case "files.remove": return { files: this.pending.remove(cmd.botId, cmd.id) };
+      case "attachment.file": return this.attachmentFile(cmd.botId, cmd.ref);
+      case "plugins.loaded": this.plugins.webLoaded(cmd.name); return {};
+      case "plugins.failed": this.plugins.webFailed(cmd.name, cmd.message); return {};
+      case "plugins.notice": this.plugins.webNotice(cmd.name, cmd.text); return {};
+      case "plugins.file": return this.plugins.webFile(cmd.name, cmd.path);
       case "heads.set": return this.bot(cmd.botId).setHeads(cmd.engines);
       case "heads.answerWith": return this.bot(cmd.botId).setAnswerWith(cmd.to);
       case "handoff.stop": return this.bot(cmd.botId).stopHandoff(cmd.handoffId);
@@ -467,7 +504,7 @@ export class Core {
       seq: this.seq,
       bots: this.order.map((id) => this.bots.get(id)!.view()),
       imported: this.imported,
-      chat: bot ? { ...bot.snapshot(), ...this.summaries(bot) } : null,
+      chat: bot ? { ...bot.snapshot(), ...this.summaries(bot), pendingFiles: this.pending.views(bot.id) } : null,
       components: this.componentInfos(),
       plugins: this.plugins.view(),
     };

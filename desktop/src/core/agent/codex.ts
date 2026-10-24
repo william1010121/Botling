@@ -105,7 +105,7 @@ type Call =
   | { kind: "workerSteer"; task: string; run: number; text: string }
   | { kind: "monitorCommand"; id: string };
 
-interface Input { text: string; token: string }
+interface Input { text: string; token: string; images?: string[] }
 interface Turn { id: string | null; waitingSteers: Input[]; interruptAsked: boolean; interruptSent: boolean; said: { text: string; phase: string | null }[] }
 interface Approval { rpcId: unknown; kind: "command" | "fileChange" | { permissions: Record<string, unknown> }; thread: string | null }
 
@@ -209,8 +209,8 @@ export class CodexSession {
   }
 
   /** A message: a turn of its own (now, or once the one under way ends). */
-  send(text: string): CodexOutput[] {
-    const input = { text, token: randomUUID() };
+  send(text: string, images: string[] = []): CodexOutput[] {
+    const input: Input = { text, token: randomUUID(), ...(images.length ? { images } : {}) };
     if (!this.threadId || this.turn) {
       this.inbox.push(input);
       return [];
@@ -466,7 +466,8 @@ export class CodexSession {
       return [];
     }
     this.turn = { id: null, waitingSteers: [], interruptAsked: false, interruptSent: false, said: [] };
-    const params: Record<string, unknown> = { threadId: this.threadId, input: [{ type: "text", text: input.text }] };
+    // Pictures go along as `localImage` items (CodexSession.items), after the words.
+    const params: Record<string, unknown> = { threadId: this.threadId, input: [{ type: "text", text: input.text }, ...(input.images ?? []).map((path) => ({ type: "localImage", path }))] };
     if (this.managed) params.environments = [];
     if (this.config.effort) params.effort = this.config.effort;
     return [this.request("turn/start", params, { kind: "turn" })];
@@ -1269,8 +1270,8 @@ export class CodexHead {
     this.process.child.stdin.end();
   }
 
-  send(text: string, _uuid?: string) {
-    this.perform(this.session.send(text));
+  send(text: string, _uuid?: string, images: string[] = []) {
+    this.perform(this.session.send(text, images));
   }
 
   /** Words for the turn under way (`turn/steer`); false when it has none. */

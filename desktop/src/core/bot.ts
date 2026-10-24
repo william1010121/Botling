@@ -52,6 +52,8 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePathOf } from "node:path";
+import { fileURLToPath } from "node:url";
+import { attachmentList, attachmentsFolder, imageMediaType, keep } from "./attachments";
 import {
   ContractError, type RoutineView, type BotView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
   type StepView, type SubagentView, type TaskView,
@@ -800,16 +802,20 @@ export class Bot {
    * `to`: with two heads, both (the usual) or one by name; `appNote` goes ahead of the words without
    * showing; `decisionOwner`: a shared decision's answer, for the head that asked it only.
    */
-  send(text: string, { replyTo, to, appNote, decisionOwner }: { replyTo?: string; to?: AnswerTarget; appNote?: string; decisionOwner?: Engine } = {}): ResultOf<"chat.send"> {
-    if (this.options.primary) return this.options.primary.send(text, { replyTo, to, appNote, decisionOwner });
+  send(text: string, { replyTo, to, appNote, decisionOwner, files }: { replyTo?: string; to?: AnswerTarget; appNote?: string; decisionOwner?: Engine; files?: string[] } = {}): ResultOf<"chat.send"> {
+    if (this.options.primary) return this.options.primary.send(text, { replyTo, to, appNote, decisionOwner, files });
     this.refuseIfClosed();
     const words = text.trim();
-    if (!words) throw new ContractError("bad_request", "Nothing to send.");
+    if (!words && !files?.length) throw new ContractError("bad_request", "Nothing to send.");
+    // Files are copied into the bot's own attachments folder so it can open them again later (`keep`).
+    const kept = (files ?? []).flatMap((file) => keep(file, attachmentsFolder(this.profile)) ?? []);
+    if (!words && !kept.length) throw new ContractError("bad_request", "The files could not be read.");
     const heads = this.headsSettings;
     const two = hasTwo(heads);
     const target = fitted(heads, decisionOwner ?? to ?? heads.answerWith);
     const user: ChatRecord = { id: newId(), role: "user", text: words, date: toSwiftDate() };
     if (two && target !== "both") user.to = target;
+    if (kept.length) user.attachments = kept.map((file) => ({ url: file.url, kind: file.kind }));
     const quoted = replyTo ? this.records.find((record) => record.id === replyTo) : undefined;
     if (quoted) {
       user.replyTo = quoted.id;
@@ -827,7 +833,8 @@ export class Bot {
       const whose = quoted.role === "user" ? "what I said earlier" : quoted.role === "notice" ? "the app's message" : "what you said earlier";
       lines.push(`(Replying to ${whose}: "${preview(quoted)}")`);
     }
-    lines.push(words);
+    if (words) lines.push(words);
+    if (kept.length) lines.push(attachmentList(kept.map((file) => file.path)));
     const message = lines.join("\n\n");
     if (!two) {
       const turn = this.route(this.newTurn("user", message, user.id));
@@ -1395,7 +1402,7 @@ export class Bot {
     turn.started = toSwiftDate();
     const brief = waking && this.briefing;
     if (brief) this.briefing = false;
-    head.send(this.compose(turn, brief), turn.userId ?? turn.messageId);
+    head.send(this.compose(turn, brief), turn.userId ?? turn.messageId, this.turnImages(turn));
     // With two heads: what reached this head (`markSeen`).
     const seen = [...turn.about, ...(turn.userId ? [turn.userId] : [])];
     if (brief) seen.push(...this.chat.slice(-20).filter((record) => record.id !== turn.userId).map((record) => record.id));
@@ -1407,6 +1414,28 @@ export class Bot {
    * line, the chat's last lines and the reactions intro before the words; later messages have
    * their reactions update after them.
    */
+  /** The pictures your line has, for the head to look at (claude: types it reads; Codex: any picture). */
+  private turnImages(turn: Turn): string[] {
+    if (!turn.userId) return [];
+    const record = this.owner.records.find((candidate) => candidate.id === turn.userId);
+    return (record?.attachments ?? []).flatMap((file) => {
+      if (file.kind !== "image" || typeof file.url !== "string" || !file.url.startsWith("file:")) return [];
+      try {
+        const path = fileURLToPath(file.url);
+        return this.engine === "codex" || imageMediaType(path) ? [path] : [];
+      } catch { return []; }
+    });
+  }
+
+  /** A file this bot's chat shows as an attachment (the chat origin serves only these). */
+  attachmentPath(url: string): string | null {
+    if (this.options.primary) return this.options.primary.attachmentPath(url);
+    if (!url.startsWith("file:")) return null;
+    const named = this.records.some((record) => record.attachments?.some((file) => file.url === url));
+    if (!named) return null;
+    try { return fileURLToPath(url); } catch { return null; }
+  }
+
   private compose(turn: Turn, brief: boolean): string {
     // What the other head said since this one last heard: ahead of the words (`pendingNote`).
     let words = turn.words;
@@ -1623,7 +1652,7 @@ export class Bot {
         if (!item.ok && turn.merged && this.mergeRaced && !turn.retried && !turn.reply.text && head.running) {
           this.mergeRaced = false;
           turn.retried = true;
-          head.send(this.compose(turn, false), turn.userId ?? turn.messageId);
+          head.send(this.compose(turn, false), turn.userId ?? turn.messageId, this.turnImages(turn));
           return;
         }
         this.mergeRaced = false;

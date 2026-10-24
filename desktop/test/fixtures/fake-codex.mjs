@@ -268,6 +268,8 @@ function startTurn(rpcId, params) {
     return;
   }
   log(thread, state.coordinator ? "turn" : "worker", text);
+  const images = (params.input ?? []).filter((part) => part?.type === "localImage").map((part) => part.path);
+  if (images.length) log(thread, "images", images.join("\n"));
   void (state.coordinator ? coordinatorTurn(thread, turn, text) : workerTurn(thread, turn, text));
 }
 

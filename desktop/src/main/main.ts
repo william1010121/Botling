@@ -1,6 +1,6 @@
 // Electron main: thin. It owns windows, sessions and protocols, checks every IPC message (who sent
 // it and what it is), and relays the rest to the core process. It runs no agents and keeps no chat.
-import { app, BrowserWindow, ipcMain, protocol, safeStorage, session, net, type WebContents, type Session, type IpcMainEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, session, net, type WebContents, type Session, type IpcMainEvent } from "electron";
 import { join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
@@ -28,15 +28,22 @@ const APP_ORIGIN = "app://botling";
 const CARD_PREFIX = "botling-card://card/";
 /** Component pages (Web/src's `componentPage`) the chat page hands over for its sandboxed frames. */
 const PAGE_PREFIX = "botling-card://page/";
-/** The reused Web/src chat page, in a frame of the app page. */
-const CHAT_URL = `${APP_ORIGIN}/chat.html`;
+/**
+ * The reused Web/src chat page, in a frame of the app page, on an origin of its own (Phase 4a): it
+ * runs agent markdown and plugins' web parts, so it must not share the app page's origin (which has
+ * the bridge). It reaches the app page only with postMessage.
+ */
+const CHAT_ORIGIN = "botling-chat://chat";
+const CHAT_URL = `${CHAT_ORIGIN}/chat.html`;
+/** What the chat origin serves from out/renderer: the page, its script and styles, and KaTeX's files. */
+const CHAT_FILES = /^\/(?:chat\.html|chat\.js|chat\.js\.map|chat\.css|frame\.css|plugins\/ccb-latex\/(?:katex\.min\.css|fonts\/[A-Za-z0-9_-]+\.woff2))$/;
 
 /** Each app page's CSP. The chat page draws agent text as markdown (raw HTML off) and KaTeX, which
  * needs inline styles; it loads the ccb-latex plugin from a blob: module. Neither page can connect
  * anywhere or frame anything but what is listed. */
 const APP_CSP = [
   "default-src 'none'", "script-src 'self'", "style-src 'self'", "img-src 'self' data:", "font-src 'self'",
-  "frame-src 'self' botling-card:", "connect-src 'none'", "base-uri 'none'", "form-action 'none'", "object-src 'none'",
+  "frame-src botling-chat: botling-card:", "connect-src 'none'", "base-uri 'none'", "form-action 'none'", "object-src 'none'",
 ].join("; ");
 const CHAT_CSP = [
   "default-src 'none'", "script-src 'self' blob:", "style-src 'self' 'unsafe-inline'", "img-src 'self' data: blob:", "font-src 'self' data:",
@@ -55,6 +62,7 @@ function note(entry: string) {
 protocol.registerSchemesAsPrivileged([
   { scheme: "app", privileges: { standard: true, secure: true, supportFetchAPI: true } },
   { scheme: "botling-card", privileges: { standard: true, secure: true } },
+  { scheme: "botling-chat", privileges: { standard: true, secure: true } },
 ]);
 
 if (!app.requestSingleInstanceLock({ dataDir })) {
@@ -181,12 +189,13 @@ ipcMain.on("botling:post", (event, raw: unknown) => {
     return;
   }
   if (MAIN_COMMANDS.has(cmd.type)) {
-    try {
-      reply(okResponse(id, handleInMain(cmd)));
-    } catch (error) {
-      const code = (error as { code?: string }).code === "not_found" ? "not_found" : "bad_request";
-      reply(errorResponse(id, { code, message: (error as Error).message }));
-    }
+    void Promise.resolve().then(() => handleInMain(cmd, event.sender)).then(
+      (result) => reply(okResponse(id, result)),
+      (error) => {
+        const code = (error as { code?: string }).code === "not_found" ? "not_found" : "bad_request";
+        reply(errorResponse(id, { code, message: (error as Error).message }));
+      },
+    );
     return;
   }
   void core.request(cmd, scoped(id)).then((response) => reply({ ...response, id }));
@@ -206,8 +215,28 @@ function addPage(html: string, panel = false): string {
   return `${PAGE_PREFIX}${token}`;
 }
 
-function handleInMain(cmd: Command): unknown {
+/**
+ * The + button's picker: main's own dialog, so the paths that reach the core are ones you chose
+ * (a page never names a path). Tests (unpackaged only) answer it with BOTLING_TEST_PICK, a JSON list.
+ */
+async function pickFiles(botId: string, sender: WebContents): Promise<unknown> {
+  let paths: string[];
+  if (!app.isPackaged && process.env.BOTLING_TEST_PICK) {
+    paths = JSON.parse(process.env.BOTLING_TEST_PICK) as string[];
+  } else {
+    const owner = BrowserWindow.fromWebContents(sender);
+    const options: Electron.OpenDialogOptions = { properties: ["openFile", "multiSelections"], buttonLabel: "Add" };
+    const answer = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
+    if (answer.canceled) return { files: [] };
+    paths = answer.filePaths;
+  }
+  if (!paths.length) return { files: [] };
+  return core.call({ type: "files.add", botId, paths: paths.slice(0, 50) });
+}
+
+async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown> {
   switch (cmd.type) {
+    case "files.pick": return pickFiles(cmd.botId, sender);
     case "card.page": return { url: addPage(cmd.html, cmd.panel === true) };
     case "accounts.list": return { accounts: accounts() };
     case "site.open": return { windowId: openSite(cmd.accountId, cmd.url) };
@@ -278,16 +307,58 @@ function createWindow() {
   return window;
 }
 
+const NO_SNIFF = { "X-Content-Type-Options": "nosniff" };
+
+/** A file of the chat origin: the page's own, a plugin's stylesheet (and its fonts), or an attachment the chat names. */
+async function chatFile(url: URL): Promise<Response | null> {
+  const path = url.pathname;
+  if (CHAT_FILES.test(path)) {
+    const response = await net.fetch(pathToFileURL(join(rendererDir, path)).toString());
+    const headers = new Headers(response.headers);
+    if (path === "/chat.html") headers.set("Content-Security-Policy", CHAT_CSP);
+    return new Response(response.body, { status: response.status, headers });
+  }
+  // A plugin's stylesheet or a font beside it (only files the core says the plugin ships for its web part).
+  const style = /^\/plugin-files\/([a-z0-9][a-z0-9._-]*)\/(.+)$/.exec(path);
+  if (style) {
+    const answer = await core.request({ type: "plugins.file", name: style[1]!, path: decodeURIComponent(style[2]!) });
+    if (!answer.ok) return null;
+    const { path: file, type } = answer.result as { path: string; type: string };
+    try { return new Response(readFileSync(file), { headers: { "Content-Type": type, ...NO_SNIFF, "Cache-Control": "no-store" } }); } catch { return null; }
+  }
+  // A file a message (or the input box) in this bot's chat has attached; never any other path.
+  const attached = /^\/attachment\/([A-Za-z0-9_.:-]{1,64})\/([A-Za-z0-9_-]{1,8000})$/.exec(path);
+  if (attached) {
+    const answer = await core.request({ type: "attachment.file", botId: attached[1]!, ref: Buffer.from(attached[2]!, "base64url").toString("utf8") });
+    if (!answer.ok) return null;
+    const { path: file, type } = answer.result as { path: string; type: string };
+    try {
+      return new Response(readFileSync(file), { headers: {
+        "Content-Type": type, ...NO_SNIFF, "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; media-src 'self'", "Cache-Control": "no-store",
+      } });
+    } catch { return null; }
+  }
+  return null;
+}
+
 function serveApp() {
   protocol.handle("app", async (request) => {
     const url = new URL(request.url);
     if (url.host !== "botling") return new Response("Not found", { status: 404 });
     const file = normalize(join(rendererDir, decodeURIComponent(url.pathname)));
-    if (!file.startsWith(rendererDir + sep)) return new Response("Not found", { status: 404 });
+    // The chat page and its files are the chat origin's, not the app's.
+    if (!file.startsWith(rendererDir + sep) || CHAT_FILES.test(url.pathname)) return new Response("Not found", { status: 404 });
     const response = await net.fetch(pathToFileURL(file).toString());
     const headers = new Headers(response.headers);
-    if (file.endsWith(".html")) headers.set("Content-Security-Policy", file.endsWith(`${sep}chat.html`) ? CHAT_CSP : APP_CSP);
+    if (file.endsWith(".html")) headers.set("Content-Security-Policy", APP_CSP);
     return new Response(response.body, { status: response.status, headers });
+  });
+  protocol.handle("botling-chat", async (request) => {
+    const url = new URL(request.url);
+    if (url.host !== "chat") return new Response("Not found", { status: 404 });
+    const served = await chatFile(url);
+    if (!served) return new Response("Not found", { status: 404 });
+    return served;
   });
   protocol.handle("botling-card", async (request) => {
     const url = new URL(request.url);

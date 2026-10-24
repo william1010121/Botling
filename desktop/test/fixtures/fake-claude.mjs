@@ -180,6 +180,8 @@ lines.on("line", (line) => {
     const content = message.message?.content;
     const text = typeof content === "string" ? content : Array.isArray(content) ? content.filter((p) => p.type === "text").map((p) => p.text).join("") : "";
     const uuid = typeof message.uuid === "string" ? message.uuid : null;
+    // Pictures sent as base64 blocks (logged as their media types).
+    const images = Array.isArray(content) ? content.filter((p) => p.type === "image").map((p) => p.source?.media_type ?? "?") : [];
     if (uuid) out({ type: "command_lifecycle", command_uuid: uuid, state: "queued", uuid: `cl-${Math.random().toString(36).slice(2, 10)}` });
     if (busy && process.env.FAKE_CLAUDE_NO_ABSORB !== "1" && /^\(App: (?:Claude|Codex), (?:working on this too, says:|this bot's other head, replied in this chat:)/.test(text.trim())) {
       // Read into the turn under way (claude takes queued messages in at its next step).
@@ -187,7 +189,7 @@ lines.on("line", (line) => {
       if (inputLog) appendFileSync(inputLog, JSON.stringify({ session, text, midTurn: true }) + "\n");
       return;
     }
-    if (inputLog) appendFileSync(inputLog, JSON.stringify({ session, text }) + "\n");
+    if (inputLog) appendFileSync(inputLog, JSON.stringify({ session, text, ...(images.length ? { images } : {}) }) + "\n");
     queue.push({ text: text.trim(), uuid });
     wake?.();
   } else if (message.type === "control_request" && message.request?.subtype === "interrupt") {

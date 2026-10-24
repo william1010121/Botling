@@ -4,14 +4,30 @@
 // 1.5 s, so an edited plugin reloads without a restart. Secret settings are not in plugins.json: they
 // are sealed (secrets.ts).
 //
-// 2.0 differences: no built-in plugins folder (ccb-latex is bundled into the chat page); a broken web
-// part has no "last version that worked" to fall back on, since 2.0 runs third-party web parts only
-// in sandboxed panel frames (see core/plugins/index.ts).
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+// 2.0 differences: no built-in plugins folder (ccb-latex is bundled into the chat page). Since Phase 4a
+// web parts run in the chat page again (it has an origin of its own), with 1.x's "last version that
+// worked" to fall back on when a new one breaks.
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { dirname, extname, join, normalize, relative, sep } from "node:path";
 import { writeFileAtomic } from "../durable/atomic";
 import { checkPlugin, loadPlugin, title, type JSONValue, type PluginManifest, type PluginPanel } from "./manifest";
 import type { SecretStore } from "./secrets";
+
+/** A plugin's web part as the chat page loads it (`WebPluginSpec`). `styles` are paths in the plugin's folder. */
+export interface WebSpec {
+  name: string;
+  version: string;
+  source: string;
+  styles: string[];
+  settings: Record<string, JSONValue>;
+  commands: { id: string; title: string; key?: string }[];
+}
+
+/** File types a web part's stylesheet may bring along (fonts, pictures). */
+const WEB_FILE_TYPES: Record<string, string> = {
+  ".css": "text/css; charset=utf-8", ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".otf": "font/otf",
+  ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+};
 
 export interface InstalledPlugin {
   manifest: PluginManifest;
@@ -105,6 +121,9 @@ export class PluginRegistry {
   private fingerprints: Record<string, string> = {};
   private reportedProblems: Record<string, string[]> = {};
   private crashes = new Map<string, number[]>();
+  /** Web parts the chat page loaded without trouble (1.x's `lastGood`), and what was last handed to it. */
+  private lastGood = new Map<string, WebSpec>();
+  private lastSent = new Map<string, WebSpec>();
   private scanned = false;
 
   constructor(readonly library: string, private readonly stateFile: string, readonly secrets: SecretStore) {
@@ -152,15 +171,81 @@ export class PluginRegistry {
     this.bump();
   }
 
-  /** The plugin broke (a program part failed to load, or kept crashing): off until its files change. */
+  /** The plugin broke (a program part failed to load, or kept crashing; its web part threw): off until its files change. */
   markFailed(name: string, message: string) {
     if (this.state.failures[name]?.fingerprint === this.fingerprints[name]) return;
     this.state.failures[name] = { message, fingerprint: this.fingerprints[name] ?? "" };
     this.saveState();
     this.rescan(true);
     const shown = this.plugin(name) ? title(this.plugin(name)!.manifest) : name;
-    this.onNotice(`Plugin "${shown}" failed and was disabled for now: ${message}`);
+    if (this.usingPrevious(name)) this.onNotice(`Plugin "${shown}": the new version failed; using the previous version and handed it to Maintainer: ${message}`);
+    else this.onNotice(`Plugin "${shown}" failed and was disabled for now: ${message}`);
     this.onBroken(name, message);
+  }
+
+  /** The chat page loaded this web part without trouble: the one to fall back to (`markLoaded`). */
+  markLoaded(name: string) {
+    const spec = this.lastSent.get(name);
+    if (spec) this.lastGood.set(name, spec);
+  }
+
+  /** A broken plugin (not turned off by you) whose last good web part still runs. */
+  private usingPrevious(name: string): boolean {
+    const plugin = this.plugin(name);
+    return !!plugin?.failure && !this.state.disabled.includes(name) && this.lastGood.has(name);
+  }
+
+  /**
+   * Every web part the chat page runs (`webSpecs`): those of plugins that are on, and for a broken one
+   * you did not turn off, the last version that loaded.
+   */
+  webSpecs(): WebSpec[] {
+    return this.plugins.flatMap((plugin): WebSpec[] => {
+      const name = plugin.manifest.name;
+      if (this.state.disabled.includes(name)) return [];
+      if (plugin.failure) {
+        const previous = this.lastGood.get(name);
+        return previous ? [{ ...previous, settings: this.resolvedSettings(plugin) }] : [];
+      }
+      const web = plugin.manifest.ccb?.web;
+      if (!web) return [];
+      let source: string;
+      try { source = readFileSync(join(plugin.folder, web), "utf8"); } catch { return []; }
+      const spec: WebSpec = {
+        name, version: plugin.manifest.version, source, styles: [...(plugin.manifest.ccb?.styles ?? [])],
+        settings: this.resolvedSettings(plugin), commands: (plugin.manifest.ccb?.contributes?.commands ?? []).map((command) => ({ ...command })),
+      };
+      this.lastSent.set(name, spec);
+      return [spec];
+    });
+  }
+
+  /**
+   * One of a web part's files for the chat page: a stylesheet its manifest names, or a font or picture
+   * in the folder of one (what a stylesheet loads relative to itself). Never anything else in the folder.
+   */
+  webFile(name: string, path: string): { path: string; type: string } | null {
+    const plugin = this.plugin(name);
+    if (!plugin || this.state.disabled.includes(name)) return null;
+    const styles = (plugin.manifest.ccb?.styles ?? []).map((style) => normalize(style));
+    const wanted = normalize(path);
+    if (wanted.startsWith("..") || wanted.startsWith(sep) || wanted.split(sep).some((part) => part.startsWith("."))) return null;
+    const type = WEB_FILE_TYPES[extname(wanted).toLowerCase()];
+    if (!type) return null;
+    const listed = styles.includes(wanted);
+    const beside = styles.some((style) => {
+      const folder = dirname(style);
+      return (folder === "." || wanted.startsWith(folder + sep)) && extname(wanted).toLowerCase() !== ".css";
+    });
+    if (!listed && !beside) return null;
+    try {
+      const real = realpathSync(join(plugin.folder, wanted));
+      const root = realpathSync(plugin.folder);
+      if (!real.startsWith(root + sep) || !statSync(real).isFile()) return null;
+      return { path: real, type };
+    } catch {
+      return null;
+    }
   }
 
   /** A program part threw or brought the host down: the third time in 10 minutes it is turned off; a load failure at once. */

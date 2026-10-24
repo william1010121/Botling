@@ -9,7 +9,7 @@ import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
 import { avatarURL } from "./avatars";
-import type { FrameMessage, ShellMessage } from "./chat-frame/protocol";
+import { CHAT_ORIGIN, CHAT_PAGE, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { PluginsButton } from "./Plugins";
 
 export function App({ client, store }: { client: Client; store: WorkspaceStore }) {
@@ -136,10 +136,24 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
     }
     const { state, extras } = current.subagent ? subagentState(bot, current.subagent) : chatState(bot, chat, new Date(), quoted, { components: current.components, board: current.board });
     const message: ShellMessage = { botling: "state", state, extras };
-    target.postMessage(message, location.origin);
+    target.postMessage(message, CHAT_ORIGIN);
   }, []);
 
   useEffect(push, [push, view, replying]);
+
+  // Plugins' web parts, asked for again whenever the library changes (only what changed reloads in the page).
+  const lastSpecs = useRef("");
+  const pushPlugins = useCallback(() => {
+    void client.request({ type: "plugins.web" }).then((result) => {
+      const text = JSON.stringify(result.specs);
+      const target = frame.current?.contentWindow;
+      if (!target || !ready.current || text === lastSpecs.current) return;
+      lastSpecs.current = text;
+      const message: ShellMessage = { botling: "plugins", specs: result.specs };
+      target.postMessage(message, CHAT_ORIGIN);
+    }, () => {});
+  }, [client]);
+  useEffect(() => { if (ready.current) pushPlugins(); }, [pushPlugins, view.plugins]);
 
   useEffect(() => {
     // A frame's calls (saves, Detail commands, its chip) are paced: 20 at once, then 10 a second.
@@ -161,7 +175,7 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
     };
     const onMessage = (event: MessageEvent) => {
       // Only the chat frame itself (never a card inside it, never anything else).
-      if (!frame.current || event.source !== frame.current.contentWindow || event.origin !== location.origin) return;
+      if (!frame.current || event.source !== frame.current.contentWindow || event.origin !== CHAT_ORIGIN) return;
       const message = event.data as FrameMessage | null;
       if (!message || typeof message !== "object") return;
       const chat = latest.current.chat;
@@ -175,7 +189,7 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
         // A component frame's page: main serves it from botling-card://page/ under its own CSP.
         const answer = (url: string | null) => {
           const reply: ShellMessage = { botling: "page", id: message.id, url };
-          frame.current?.contentWindow?.postMessage(reply, location.origin);
+          frame.current?.contentWindow?.postMessage(reply, CHAT_ORIGIN);
         };
         if (typeof message.html !== "string" || typeof message.id !== "number") return;
         client.request({ type: "card.page", html: message.html }).then((result) => answer(result.url), () => answer(null));
@@ -184,7 +198,7 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
       if (message.botling === "request") {
         const reply = (ok: boolean, error?: string) => {
           const response: ShellMessage = { botling: "response", id: message.id, ok, ...(error ? { error } : {}) };
-          frame.current?.contentWindow?.postMessage(response, location.origin);
+          frame.current?.contentWindow?.postMessage(response, CHAT_ORIGIN);
         };
         const cmd = message.cmd;
         if (cmd?.type !== "card.save" && cmd?.type !== "card.action") {
@@ -200,12 +214,16 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
         case "ready":
           ready.current = true;
           push();
+          // A page that (re)loaded has no plugins yet.
+          lastSpecs.current = "";
+          pushPlugins();
           return;
         case "resync":
           push();
           return;
         case "send": {
-          if (!chat || typeof action.text !== "string" || !action.text.trim()) return;
+          // Words, or only the files waiting in the input box.
+          if (!chat || typeof action.text !== "string" || (!action.text.trim() && !chat.pendingFiles?.length)) return;
           onSent();
           const reply = replyingRef.current?.botId === chat.botId ? replyingRef.current.id : undefined;
           setReplying(null);
@@ -220,7 +238,7 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
           void client.request({ type: "heads.answerWith", botId, to: action.to })
             .then((result) => {
               const saved: ShellMessage = { botling: "answerWithSaved", botID: botId, requestID, chosen: result.answerWith };
-              frame.current?.contentWindow?.postMessage(saved, location.origin);
+              frame.current?.contentWindow?.postMessage(saved, CHAT_ORIGIN);
             })
             .catch(onError);
           return;
@@ -280,7 +298,7 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
           const requestID = action.requestID;
           const reply = (ok: boolean, value: string) => {
             const answer: ShellMessage = { botling: "detailReply", requestID, ok, value };
-            frame.current?.contentWindow?.postMessage(answer, location.origin);
+            frame.current?.contentWindow?.postMessage(answer, CHAT_ORIGIN);
           };
           if (!paced(`detail:${action.name}`)) { reply(false, "Too many Detail calls: wait a moment."); return; }
           const values = action.values && typeof action.values === "object" && !Array.isArray(action.values) ? action.values as Record<string, string | number> : {};
@@ -345,6 +363,47 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
         case "closeSubagent":
           store.watch(null);
           return;
+        // Files for the next message: main's picker, a pasted or dropped file the page read, taking one out.
+        case "pickFiles":
+          if (chat) void client.request({ type: "files.pick", botId: chat.botId }).catch(onError);
+          return;
+        case "addFileData":
+          if (chat && typeof action.name === "string" && typeof action.base64 === "string" && action.base64) {
+            void client.request({ type: "files.data", botId: chat.botId, name: action.name.slice(0, 255) || "file", base64: action.base64 }).catch(onError);
+          }
+          return;
+        case "removeFile":
+          if (chat && typeof action.id === "string") void client.request({ type: "files.remove", botId: chat.botId, id: action.id }).catch(onError);
+          return;
+        // Plugins' web parts in the page (`PluginBridge` in 1.x).
+        case "pluginLoaded":
+          if (typeof action.name === "string" && action.name !== "ccb-latex") void client.request({ type: "plugins.loaded", name: action.name }).catch(() => {});
+          return;
+        case "pluginError":
+          if (typeof action.name === "string" && action.name !== "ccb-latex") {
+            void client.request({ type: "plugins.failed", name: action.name, message: typeof action.message === "string" ? action.message.slice(0, 4_000) : "" }).catch(() => {});
+          }
+          return;
+        case "pluginNotice":
+          if (typeof action.name === "string" && typeof action.text === "string" && action.text.trim() && paced(`notice:${action.name}`)) {
+            void client.request({ type: "plugins.notice", name: action.name, text: action.text.slice(0, 4_000) }).catch(() => {});
+          }
+          return;
+        case "command":
+          if (typeof action.id === "string" && /^[A-Za-z0-9_.:-]{1,200}$/.test(action.id)) void client.request({ type: "plugins.command", id: action.id }).catch(onError);
+          return;
+        case "hostCall": {
+          if (typeof action.plugin !== "string" || typeof action.method !== "string" || typeof action.callID !== "number") return;
+          const callID = action.callID;
+          const answer = (ok: boolean, value: unknown) => {
+            const reply: ShellMessage = { botling: "hostReply", callID, ok, value };
+            frame.current?.contentWindow?.postMessage(reply, CHAT_ORIGIN);
+          };
+          if (!paced(`host:${action.plugin}`)) { answer(false, "Too many calls: wait a moment."); return; }
+          client.request({ type: "plugins.call", name: action.plugin, method: action.method.slice(0, 200), params: action.params ?? null })
+            .then((result) => answer(true, result.result), (failure) => answer(false, failure instanceof RequestFailed ? failure.error.message : String(failure)));
+          return;
+        }
         default:
           // Drafts, files, reactions, components, pins… are not in 2.0 yet.
           return;
@@ -352,9 +411,9 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [client, onError, onSent, push, store]);
+  }, [client, onError, onSent, push, pushPlugins, store]);
 
-  return <iframe id="chat-frame" ref={frame} src="chat.html" title="Chat" />;
+  return <iframe id="chat-frame" ref={frame} src={CHAT_PAGE} title="Chat" />;
 }
 
 /**

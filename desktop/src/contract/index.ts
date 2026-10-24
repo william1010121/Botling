@@ -24,8 +24,10 @@ import shared from "../../../Web/src/contract.json";
  *    displays, the component library, pins and the Board) and their commands' approvals.
  * 6: plugins (the library, on/off, settings, sealed secrets, commands, sandboxed panels and their
  *    program part's calls), a message a plugin stopped, Maintainer.
+ * 7: the chat page on its own origin with plugins' web parts in it, attachments (files for the next
+ *    message, a message with only files), settings, projects, the right panel and inboxes, the browser.
  */
-export const PROTOCOL_VERSION = 6 as const;
+export const PROTOCOL_VERSION = 7 as const;
 
 /** The most a card's `ccb.save` keeps, shared with the Swift app (`ComponentState.limit`). */
 export const CARD_SAVE_LIMIT: number = (shared as { saveLimit: number }).saveLimit;
@@ -118,6 +120,11 @@ export const Engine = z.enum(["claude", "codex"]);
 export const AnswerTarget = z.enum(["claude", "codex", "both"]);
 
 export const AttachmentView = z.strictObject({ name: z.string().max(400), kind: z.enum(["image", "video", "file"]), url: z.string().max(4_000) });
+/** A file waiting in the input box for your next message (1.x's `ChatPayload.Pending`). */
+export const PendingFileView = z.strictObject({ id, name: z.string().max(400), kind: z.enum(["image", "video", "file"]) });
+export type PendingFileView = z.infer<typeof PendingFileView>;
+/** The most a pasted or dropped file may be, as base64 text (about 30 MB of file). */
+export const FILE_DATA_LIMIT = 40_000_000;
 
 /** A component drawn in a line (`<show>`), with its command's run when its data comes from one (`ChatPayload.Display`). */
 export const DisplayView = z.strictObject({
@@ -346,6 +353,15 @@ export const PluginView = z.strictObject({
   panels: z.array(z.strictObject({ id: z.string().max(100), title: z.string().max(200) })).max(20),
 });
 export type PluginView = z.infer<typeof PluginView>;
+/** A plugin's web part for the chat page (1.x's `WebPluginSpec`). */
+export const WebPluginSpecView = z.strictObject({
+  name: z.string().max(214), version: z.string().max(100), source: z.string().max(5_000_000),
+  /** Its stylesheets, served by the chat origin (botling-chat://chat/plugin-files/<name>/<path>). */
+  styles: z.array(z.string().max(2_000)).max(20),
+  settings: z.record(z.string().max(200), z.unknown()),
+  commands: z.array(z.strictObject({ id: z.string().max(200), title: z.string().max(200), key: z.string().max(40).optional() })).max(100),
+});
+export type WebPluginSpecView = z.infer<typeof WebPluginSpecView>;
 export const PluginsView = z.strictObject({
   plugins: z.array(PluginView).max(200),
   /** Folders that look like plugins but failed the check, with why. */
@@ -360,7 +376,17 @@ export const Command = z.discriminatedUnion("type", [
   /** Every bot, and (with `botId`) that bot's chat. Main bot when `botId` is left out. */
   z.strictObject({ type: z.literal("chat.snapshot"), botId: botId.optional() }),
   /** A message; while a reply is being written it joins or follows that turn (as 1.x steers). `replyTo`: a line it answers. */
-  z.strictObject({ type: z.literal("chat.send"), botId, text: z.string().min(1).max(MESSAGE_TEXT_LIMIT), replyTo: id.optional(), to: AnswerTarget.optional() }),
+  /** Your words and the files waiting in the input box (either may be empty, not both). */
+  z.strictObject({ type: z.literal("chat.send"), botId, text: z.string().max(MESSAGE_TEXT_LIMIT), replyTo: id.optional(), to: AnswerTarget.optional() }),
+  /** Main only: the + button's file picker (main's dialog); what you pick waits in the input box. */
+  z.strictObject({ type: z.literal("files.pick"), botId }),
+  /** Main only (from its dialog): files to wait in the input box. Never from a page: a page names no paths. */
+  z.strictObject({ type: z.literal("files.add"), botId, paths: z.array(z.string().min(1).max(4_096)).min(1).max(50) }),
+  /** A pasted or dropped file, read by the page (`addFileData`). */
+  z.strictObject({ type: z.literal("files.data"), botId, name: z.string().min(1).max(255), base64: z.string().min(1).max(FILE_DATA_LIMIT) }),
+  z.strictObject({ type: z.literal("files.remove"), botId, id }),
+  /** Main only: a file the chat shows (an attachment of one of the bot's lines, or one waiting: `pending:<id>`). */
+  z.strictObject({ type: z.literal("attachment.file"), botId, ref: z.string().min(1).max(5_000) }),
   /** One head or two (Claude, Codex). The bot's first head stays. */
   z.strictObject({ type: z.literal("heads.set"), botId, engines: z.array(Engine).min(1).max(2) }),
   /** Who new messages go to (the composer's Both / Claude / Codex). */
@@ -455,6 +481,16 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("plugins.panel"), name: PluginName, panel: z.string().min(1).max(100) }),
   /** A panel's `ccb.host.call(method, params)` to its own plugin's program part (the plugin comes from the frame). */
   z.strictObject({ type: z.literal("plugins.call"), name: PluginName, method: z.string().min(1).max(200), params: z.unknown() }),
+  /** Every enabled plugin's web part, for the chat page. */
+  z.strictObject({ type: z.literal("plugins.web") }),
+  /** The chat page loaded a plugin's web part (kept as the one to fall back to). */
+  z.strictObject({ type: z.literal("plugins.loaded"), name: PluginName }),
+  /** A plugin's web part threw in the chat page: off until its files change (1.x's `markFailed`). */
+  z.strictObject({ type: z.literal("plugins.failed"), name: PluginName, message: z.string().max(4_000) }),
+  /** A web part's `ccb.notify(text)`: a line in the main bot's chat. */
+  z.strictObject({ type: z.literal("plugins.notice"), name: PluginName, text: z.string().min(1).max(4_000) }),
+  /** Main only: one of a plugin's web files (a stylesheet it declares, or a font or picture beside one). */
+  z.strictObject({ type: z.literal("plugins.file"), name: PluginName, path: z.string().min(1).max(1_000) }),
   /** Main only: the picture a component's data named, by its token. */
   z.strictObject({ type: z.literal("card.image"), token: z.string().regex(/^[0-9a-f]{40}$/) }),
   z.strictObject({ type: z.literal("accounts.list") }),
@@ -471,9 +507,10 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "catchup.retry", "catchup.interval",
   "component.command", "component.detail", "component.save", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
+  "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick"]);
 
 export interface ChatSnapshot {
   botId: string;
@@ -493,6 +530,8 @@ export interface ChatSnapshot {
   pins: PinView[];
   floating: PinView[];
   pinChoices: PinChoiceView[];
+  /** Files waiting in the input box for the next message. */
+  pendingFiles?: PendingFileView[];
 }
 
 export interface Results {
@@ -532,6 +571,16 @@ export interface Results {
   "plugins.command": { result: unknown };
   "plugins.panel": { title: string; source: string; settings: Record<string, boolean | number | string | null> };
   "plugins.call": { result: unknown };
+  "plugins.web": { specs: WebPluginSpecView[] };
+  "plugins.loaded": Record<string, never>;
+  "plugins.failed": Record<string, never>;
+  "plugins.notice": Record<string, never>;
+  "plugins.file": { path: string; type: string };
+  "files.pick": { files: PendingFileView[] };
+  "files.add": { files: PendingFileView[] };
+  "files.data": { files: PendingFileView[] };
+  "files.remove": { files: PendingFileView[] };
+  "attachment.file": { path: string; type: string };
   "catchup.retry": { started: boolean };
   "catchup.interval": { started: boolean };
   "accounts.list": { accounts: AccountView[] };
@@ -572,6 +621,8 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("catchup.updated"), botId, catchUp: CatchUpView.nullable(), intervalSummaries: z.array(CatchUpView).max(200) }),
   /** The plugin library changed (a plugin added, edited, turned off, broken; the host started or stopped). */
   z.strictObject({ type: z.literal("plugins.updated"), plugins: PluginsView }),
+  /** The files waiting in a bot's input box changed. */
+  z.strictObject({ type: z.literal("files.updated"), botId, files: z.array(PendingFileView).max(50) }),
   /** Its routines changed (one ran, the bot or the app edited them). */
   z.strictObject({ type: z.literal("routines.updated"), botId, routines: z.array(RoutineView).max(200), error: z.string().max(2_000).nullable() }),
 ]);

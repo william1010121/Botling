@@ -7,11 +7,11 @@ import "./component-frames";
 import "../../../../Web/src/main";
 import { CardBroker, type CardTarget } from "../broker";
 import type { FrameExtras } from "../payload";
-import type { FrameMessage, ShellMessage } from "./protocol";
+import { APP_ORIGIN, type FrameMessage, type ShellMessage } from "./protocol";
 
 declare const __LATEX_SOURCE__: string;
 
-const origin = location.origin;
+const origin = APP_ORIGIN;
 const toShell = (message: FrameMessage) => window.parent.postMessage(message, origin);
 
 // ---------------------------------------------------------------------------------------------
@@ -139,6 +139,10 @@ window.addEventListener("message", (event: MessageEvent) => {
     decorate(message.extras);
   } else if (message.botling === "answerWithSaved") {
     window.ccb.answerWithSaved({ botID: message.botID, requestID: message.requestID, chosen: message.chosen });
+  } else if (message.botling === "plugins") {
+    void setPlugins(message.specs);
+  } else if (message.botling === "hostReply") {
+    window.ccb.hostReply(message.callID, message.ok, message.value);
   } else if (message.botling === "detailReply") {
     window.ccb.detailReply(message.requestID, message.ok, message.value);
   } else if (message.botling === "response") {
@@ -156,11 +160,20 @@ document.addEventListener("keydown", (event) => {
 });
 
 // LaTeX in messages: the ccb-latex plugin, bundled in (its stylesheet and fonts sit beside chat.html).
-void window.ccb.setPlugins([{
+const latex = {
   name: "ccb-latex",
   version: "1.0.0",
   source: __LATEX_SOURCE__,
   styles: [new URL("plugins/ccb-latex/katex.min.css", location.href).toString()],
   settings: { "ccb-latex.preview": true, "ccb-latex.copyTeX": true },
   commands: [{ id: "ccb-latex.insert", title: "Insert inline formula", key: "cmd+shift+m" }],
-}]);
+};
+/**
+ * Plugins' web parts run here as in 1.x (Phase 4a: this page has an origin of its own, so they reach
+ * neither the app page's document nor its bridge). A plugin of the library named like the bundled one
+ * does not replace it.
+ */
+function setPlugins(specs: { name: string; version: string; source: string; styles: string[]; settings: Record<string, unknown>; commands: { id: string; title: string; key?: string }[] }[]) {
+  return window.ccb.setPlugins([latex, ...specs.filter((spec) => spec.name !== latex.name)]);
+}
+void setPlugins([]);

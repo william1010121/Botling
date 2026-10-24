@@ -36,7 +36,7 @@ const evil = String.raw`<pre id="results">running</pre>
   // Spoofed identities and raw contract messages: the broker must refuse each.
   parent.postMessage({ ccb: 'save', data: '{"pwned":1}', messageId: '${VICTIM}', cardId: 'c-victim' }, '*');
   parent.postMessage({ ccb: 'save', data: '{"pwned":2}', botId: 'another-bot' }, '*');
-  parent.postMessage({ v: 6, id: 'x', cmd: { type: 'chat.send', botId: '${MAIN}', text: 'sent by a card' } }, '*');
+  parent.postMessage({ v: 7, id: 'x', cmd: { type: 'chat.send', botId: '${MAIN}', text: 'sent by a card' } }, '*');
   // The app page is the chat page's parent: it must not take the chat page's messages from a card.
   top.postMessage({ botling: 'action', action: { type: 'send', text: 'sent by a card via top' } }, '*');
   top.postMessage({ botling: 'request', id: 1, cmd: { type: 'card.save', botId: '${MAIN}', messageId: '${VICTIM}', cardId: 'c-victim', data: '{"pwned":3}' } }, '*');
@@ -44,7 +44,7 @@ const evil = String.raw`<pre id="results">running</pre>
   parent.postMessage({ ccb: 'save', data: 'not json' }, '*');
   // Well-formed, but asking the core for something it does not grant.
   parent.postMessage({ ccb: 'action', name: 'runShell', value: 'rm -rf ~' }, '*');
-  const fetches = ['file:///etc/passwd', 'app://botling/index.html', '${victimURL}', 'http://127.0.0.1:9/'];
+  const fetches = ['file:///etc/passwd', 'app://botling/index.html', 'botling-chat://chat/chat.html', '${victimURL}', 'http://127.0.0.1:9/'];
   Promise.all(fetches.map((url) => fetch(url).then(() => 'fetched', (error) => 'blocked ' + error.name))).then((outcomes) => {
     fetches.forEach((url, i) => { results['fetch ' + url] = outcomes[i]; });
     const nested = document.createElement('iframe');
@@ -128,7 +128,7 @@ test("a hostile card is contained; a legitimate card can save and act", async ()
     expect(savedCard(dataDir, VICTIM)).toBe('{"secret":"victim"}');
     // The nested frame inside the card never loaded the app (CSP frame-src 'none'): the only app
     // frames are the app page and its chat page.
-    expect(page.frames().filter((frame) => frame.url().startsWith("app://")).map((frame) => frame.url()).sort()).toEqual(["app://botling/chat.html", "app://botling/index.html"]);
+    expect(page.frames().filter((frame) => /^(app|botling-chat):/.test(frame.url())).map((frame) => frame.url()).sort()).toEqual(["app://botling/index.html", "botling-chat://chat/chat.html"]);
   } finally {
     await app.close();
   }

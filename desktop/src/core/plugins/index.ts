@@ -5,14 +5,15 @@
 // each checked here (a plugin it names must be loaded; creating bots and talking to them on the
 // user's behalf need the "bots" permission). Everything else is refused.
 //
-// Web parts: 2.0 does not load third-party web parts into the chat page (the chat page shares the
-// app page's origin, so a plugin there could reach the app's bridge). A plugin's panels run its web
-// part in a sandboxed frame instead (botling-card://page/…, opaque origin, no network), with a
-// small `ccb` (panels, settings, notify, commands, host.call); its other web hooks (the composer,
-// markdown, components) are not available there. ccb-latex stays bundled into the chat page.
+// Web parts: since Phase 4a the chat page has an origin of its own (botling-chat://chat, no bridge,
+// nothing shared with the app page but postMessage), so plugins' web parts run in it again as in 1.x:
+// composer, markdown and component hooks, commands and `host.call`; their stylesheets are served by the
+// chat origin (only files the manifest names, and fonts beside them). A plugin's panels still run its
+// web part in a sandboxed frame (botling-card://page/…, opaque origin, no network). ccb-latex stays
+// bundled into the chat page.
 import { join } from "node:path";
 import { z } from "zod";
-import { ContractError, type PluginsView } from "../../contract";
+import { ContractError, type PluginsView, type WebPluginSpecView } from "../../contract";
 import { PluginHostClient, type HostCommand, type HostTiming, DEFAULT_TIMING } from "./host-client";
 import { title } from "./manifest";
 import { PluginRegistry } from "./registry";
@@ -183,6 +184,40 @@ export class Plugins {
       this.options.world.notice(`Command "${id}" failed: ${(error as Error).message}`);
       throw new ContractError("conflict", (error as Error).message);
     }
+  }
+
+  /** Every web part for the chat page; each style becomes a URL the chat origin serves. */
+  webSpecs(): WebPluginSpecView[] {
+    return this.registry.webSpecs().slice(0, 100).map((spec) => ({
+      name: spec.name, version: spec.version.slice(0, 100), source: spec.source.slice(0, 5_000_000),
+      styles: spec.styles.slice(0, 20).map((style) => `botling-chat://chat/plugin-files/${spec.name}/${style.split("/").map(encodeURIComponent).join("/")}`),
+      settings: spec.settings,
+      commands: spec.commands.slice(0, 100).map((command) => ({ id: command.id.slice(0, 200), title: command.title.slice(0, 200), ...(command.key ? { key: command.key.slice(0, 40) } : {}) })),
+    }));
+  }
+
+  /** The chat page loaded a web part. */
+  webLoaded(name: string) {
+    this.known(name);
+    this.registry.markLoaded(name);
+  }
+
+  /** A web part threw in the chat page: off until its files change (its last good version runs meanwhile). */
+  webFailed(name: string, message: string) {
+    this.known(name);
+    this.registry.markFailed(name, message.slice(0, 2_000) || "Its web part failed.");
+  }
+
+  /** A web part's `ccb.notify`. */
+  webNotice(name: string, text: string) {
+    const plugin = this.known(name);
+    this.options.world.notice(`${title(plugin.manifest)}: ${text.slice(0, 4_000)}`);
+  }
+
+  webFile(name: string, path: string) {
+    const file = this.registry.webFile(name, path);
+    if (!file) throw new ContractError("not_found", "No such file.");
+    return file;
   }
 
   /** A panel's web part and settings, for its sandboxed frame. */

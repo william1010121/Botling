@@ -14,13 +14,14 @@ import { Host } from "../../../Web/host/src/host";
 function channel(): [PortLike & { closed: boolean }, PortLike & { closed: boolean }] {
   const make = () => {
     const listeners: { message: ((event: { data: unknown }) => void)[]; close: (() => void)[] } = { message: [], close: [] };
-    const port = {
-      other: null as null | typeof port,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const port: any = {
+      other: null,
       closed: false,
-      postMessage(data: unknown) { const other = port.other!; if (!port.closed) setTimeout(() => other.listeners.message.forEach((fn) => fn({ data })), 0); },
+      postMessage(data: unknown) { const other = port.other; if (!port.closed) setTimeout(() => other.listeners.message.forEach((fn: (event: { data: unknown }) => void) => fn({ data })), 0); },
       on(event: "message" | "close", fn: never) { (listeners[event] as unknown[]).push(fn); },
       start() {},
-      close() { if (port.closed) return; port.closed = true; port.other!.closed = true; setTimeout(() => port.other!.listeners.close.forEach((fn) => fn()), 0); },
+      close() { if (port.closed) return; port.closed = true; port.other.closed = true; setTimeout(() => port.other.listeners.close.forEach((fn: () => void) => fn()), 0); },
       listeners,
     };
     return port;

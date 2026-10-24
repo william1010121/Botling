@@ -19,6 +19,18 @@ export interface FrameExtras {
 
 const MINUTE = 60_000;
 
+/**
+ * Where the chat origin serves a bot's file: an attachment of one of its lines (its file:// URL) or
+ * one waiting in the input box (`pending:<id>`). Main asks the core, which serves only those.
+ */
+export function attachmentURL(botId: string, ref: string): string {
+  const bytes = new TextEncoder().encode(ref);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const encoded = btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+  return `botling-chat://chat/attachment/${encodeURIComponent(botId)}/${encoded}`;
+}
+
 function timeOfDay(date: Date): string {
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
@@ -168,7 +180,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       chosen: message.chosen ?? null,
       answer: message.answer ?? null,
       open: !!choices && message.chosen == null && message.answer == null,
-      attachments: message.attachments?.map((file): FileView => ({ name: file.name, kind: file.kind, url: file.url })) ?? null,
+      attachments: message.attachments?.map((file): FileView => ({ name: file.name, kind: file.kind, url: file.url.startsWith("file:") ? attachmentURL(bot.id, file.url) : file.url })) ?? null,
       replyTo: message.replyTo ?? null,
       replyPreview: message.replyPreview ?? null,
       openable: false,
@@ -200,7 +212,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     avatar: avatarURL(bot.avatar, "open"),
     placeholder: placeholder(bot),
     replyingTo,
-    pendingFiles: [],
+    pendingFiles: (chat.pendingFiles ?? []).map((file) => ({ id: file.id, name: file.name, kind: file.kind, url: attachmentURL(bot.id, `pending:${file.id}`) })),
     components: componentInfos(components),
     live: running && !runningShown ? chat.live.map(step) : [],
     slashCommands: [],

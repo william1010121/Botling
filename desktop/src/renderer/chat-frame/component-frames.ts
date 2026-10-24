@@ -8,9 +8,9 @@
 // what it posts goes through the app page and the core, which decide what it may do.
 //
 // Frames without scripts (`sandbox=""`, the Catch-up source snapshots) keep their srcdoc.
-import type { FrameMessage, ShellMessage } from "./protocol";
+import { APP_ORIGIN, type FrameMessage, type ShellMessage } from "./protocol";
 
-const origin = location.origin;
+const origin = APP_ORIGIN;
 const native = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "srcdoc")!;
 let next = 0;
 const waiting = new Map<number, (url: string | null) => void>();

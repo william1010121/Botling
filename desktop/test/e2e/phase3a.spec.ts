@@ -46,7 +46,7 @@ test("the Routines panel lists a schedule and pauses it", async () => {
   const { app, page } = await launch({ dataDir, env: { BOTLING_ROUTINE_TICK_MS: "0" } });
   try {
     await page.setViewportSize({ width: 1120, height: 820 });
-    const made = await post(page, { v: 6, id: "r1", cmd: { type: "routines.change", botId: MAIN, operation: "create", kind: "recurring", cron: "0 9 * * 1-5", timezone: "Asia/Taipei", task: "Standup: check the board", requestId: "standup" } });
+    const made = await post(page, { v: 7, id: "r1", cmd: { type: "routines.change", botId: MAIN, operation: "create", kind: "recurring", cron: "0 9 * * 1-5", timezone: "Asia/Taipei", task: "Standup: check the board", requestId: "standup" } });
     expect(made.ok).toBe(true);
     await page.getByRole("button", { name: "Routines" }).click();
     const panel = page.getByRole("dialog", { name: "Routines" });
