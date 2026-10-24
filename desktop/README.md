@@ -7,7 +7,11 @@ against the Swift code), sleep/wake/tidy as 1.x, steering a running reply, the r
 no-reply, task cards, reactions), Agent-tool subagents, the chat archive and a project lock. Phase 2b
 done: a Codex head (`codex app-server`, as a coordinator with app-managed workers), and Claude and
 Codex as two heads of one bot (claim, hand-offs with their budgets, shared decisions), with the
-Codex prompts checked string for string against the Swift code.** Not yet a replacement for the Swift app (see "Gaps vs the Swift app").
+Codex prompts checked string for string against the Swift code. Phase 3a done: two-head timing as
+1.x (Claude hears the other head mid-turn; a message steers a Codex turn), routines (routines.cron and
+app-owned schedules, Codex's `app_routines`), command monitors, Catch-up and interval summaries, and
+components (the library, `<show>` cards with the full `ccb` API, commands after Allow, pins and the
+Board).** Not yet a replacement for the Swift app (see "Gaps vs the Swift app").
 It lives beside it: nothing under `Sources/` or `Web/` changed, and the Swift app does not use
 anything here. Web/src is *bundled from source* into the desktop's chat frame (its packages come
 from `desktop/node_modules`), so `cd Web && npm run build` and its output are untouched;
@@ -33,6 +37,7 @@ cd desktop && npm install
 | `npm test` | Unit tests (vitest, real processes) then Electron end-to-end tests (Playwright). |
 | `npm run test:live` | Three short real `claude` turns through the long-lived head (spends a little usage). |
 | `npm run test:live:codex` | One real Codex turn and one real two-head claim (three turns; Codex gets a throwaway `CODEX_HOME` with a copy of `auth.json` only). |
+| `npm run test:live:3a` | Phase 3a's real checks: claude hearing a message mid-turn, a monitored command through `codex app-server`'s `command/exec`, a Catch-up summary by `codex exec` (same throwaway `CODEX_HOME`). |
 | `npm run typecheck` | `tsc --noEmit`. |
 
 Data goes to `$BOTLING_DATA_DIR`, by default `desktop/.data/` in development (ignored by git) and
@@ -56,7 +61,11 @@ saved sessions in `npm run dev`), `BOTLING_HARMLESS_TOOLS=Bash` (tools that exis
 `BOTLING_MODEL`, `BOTLING_CLAUDE_PATH`, and for Codex heads `BOTLING_CODEX_PATH` (default `codex`),
 `BOTLING_CODEX_MODEL`, `BOTLING_CODEX_EFFORT` (low … xhigh), `BOTLING_CLAIM_WAIT_MS` (how long the second
 head waits for the lead's first words, 20 s as 1.x), `BOTLING_FAKE_CODEX` (the fake app-server, set by
-main for `dev:fake`). A real Codex head reads the user's own `~/.codex` (or `CODEX_HOME`) like 1.x; the
+main for `dev:fake`), `BOTLING_ROUTINE_TICK_MS` (how often routines are checked, 30 s as 1.x; 0: never),
+`BOTLING_COMPONENT_SCAN_MS` (how often the component library is looked at for changes, 1.5 s),
+`BOTLING_SUMMARY_TIMEOUT_MS` (a Catch-up summary's limit, 60 s), `BOTLING_PLAIN_SHELL=1` (component
+commands run with `/bin/sh -c` instead of 1.x's login shell `zsh -lc`; the tests set it so they never
+read the user's shell files). A real Codex head reads the user's own `~/.codex` (or `CODEX_HOME`) like 1.x; the
 thread's approval policy and sandbox are always said explicitly.
 
 A bot gets two heads from bot.json's `heads` key in 1.x's format (`{"engines":["claude","codex"],
@@ -75,13 +84,22 @@ not echoed; the tidy note is answered `OK` after writing the memory file it name
 take `/say <text>` (reply exactly that, e.g. a `<handoff>` tag) and `/solo <words>` (with two heads, the
 head that hears the other's words first says only `<no-reply/>`), and answer work the other head
 hands over ("Did it: <task>"; `/handoff:claude <task>` as the task hands it on) and hand-backs
-("Done: <reply>").
+("Done: <reply>"). Since Phase 3a: `/linger <words>` (says "Thinking it over." before a tool call, takes
+`FAKE_CLAUDE_LINGER_MS`, then "You said: …", with "(heard mid-turn: N)" when the other head's words
+came meanwhile); the other head's words that arrive while a turn runs are read into it (logged with
+`midTurn: true`), or — `FAKE_CLAUDE_NO_ABSORB=1`, what real claude did for a text-only turn — answered
+in a turn of their own (`<no-reply/>` after `FAKE_CLAUDE_NOTE_MS`); messages sent with a `uuid` get
+`command_lifecycle` queued/started lines.
 
 The fake Codex (`test/fixtures/fake-codex.mjs`) speaks app-server's JSON-RPC: `/tool <cmd>` (asks
 first), `/slow`, `/choices`, `/worker <task>` (an app-managed worker that reports after
 `FAKE_CODEX_WORKER_MS`; `/slowworker`, `/failworker` in the task), report turns that record an
 `app_task_checkpoint` (`/nocheckpoint` in the report: none), and a tidy done through a worker.
-`FAKE_CODEX_INPUT=<file>` logs every turn input, steer, report and thread start.
+`FAKE_CODEX_INPUT=<file>` logs every turn input, steer, report and thread start. Since Phase 3a:
+`/monitor <cmd>` (app_monitor_start; `command/exec` really runs the command, `command/exec/terminate`
+ends it; the `app_monitor_result` wake answers "Monitor <status>, exit <code>: <stdout>"), `/routine
+<json>` (app_routines with those arguments), and `exec …` as Catch-up runs it (bullets citing the last
+three messages; `FAKE_CODEX_EXEC_LOG`, `FAKE_CODEX_EXEC_FAIL=1`, `FAKE_CODEX_EXEC_MS`).
 
 ## Architecture as built
 
@@ -114,7 +132,9 @@ first), `/slow`, `/choices`, `/worker <task>` (an app-managed worker that report
 │   a coordinator with app_handoff workers; codex-threads/<session> keeps the thread and workers   │
 │   two heads: the primary Bot + a partner Bot (partner-<engine>/), lines mirrored into one chat;  │
 │   heads.ts: hand-off tags, the Conductor (budgets, hand-backs, the limit card), notes            │
-│ ProcessLedger: ends heads a crashed core left · JobStore (Phase 0, not wired yet)               │
+│ routines.ts (routines.cron + scheduled-routines.json, the 30 s clock) · catchup.ts (summaries)   │
+│ components/ (library, commands after Allow, pins, pictures by token) · agent/monitors.ts         │
+│ ProcessLedger: ends heads a crashed core left · durable/ (atomic files, locks; JobStore spike)  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -140,10 +160,21 @@ Files: `src/contract/` (the typed contract), `src/core/` (core process: `server.
                             in the shared chat.json), subagents.json, bot.json — as 1.x
 <core>/codex-threads/<session>   1.x's: the Codex thread a bot session is; .previous-threads,
                             .managed (the tool schema the thread was made with), .workers.json
-                            (CodexManagedWorkerRecord: task id, name, instructions, thread, run, …)
+                            (CodexManagedWorkerRecord: task id, name, instructions, thread, run, …),
+                            .monitors.json (CommandMonitor: command, state, exit code, output, wake)
+<working folder>/routines.cron, scheduled-routines.json   1.x's: the bot's routines (main: <core>/main/;
+                            a project: <project>/.bot/; scheduled-routines.json beside routines.cron)
+<core>/<bot>/pins.json      1.x's: the bot's pinned components
+<core>/plugins/<plugin>/components/<name>/   the component library (template.html, about.md, …);
+                            ccb-components first. The first launch imports 1.x's (text files only)
+<core>/approved-commands.json   1.x's format: component commands the user allowed, by folder
+                            (2.0 does not import 1.x's: it asks again)
+<core>/catchup-summaries.json   1.x's format: ≤ 200 summaries by range (1.x keeps it in ~/.claudecodebot)
 ```
 
-bot.json keys 2.0 now writes too: `heads` and `engine` (1.x's). Chat lines carry 1.x's `engine`,
+bot.json keys 2.0 now writes too: `heads` and `engine` (1.x's); since Phase 3a `routineRuns` (when
+each routines.cron job last ran) and `components` (its own list). Chat lines keep 1.x's `displays`
+(name, data, at, command, savedAt, id, refresh). Chat lines carry 1.x's `engine`,
 `to`, `seenBy` and `decisionID` (and choices their `id`).
 
 Formats follow Swift's `JSONEncoder` as 1.x uses it: dates are **seconds since 2001-01-01**
@@ -151,7 +182,15 @@ Formats follow Swift's `JSONEncoder` as 1.x uses it: dates are **seconds since 2
 every key it does not know as it was, and adds its own (`turnID`, `state`, `cards`, `error`), which
 1.x's decoder ignores. Message ids are UUIDs (1.x fails a whole chat.json on one bad id).
 
-### The contract (`src/contract/index.ts`, protocol version 4)
+### The contract (`src/contract/index.ts`, protocol version 5)
+
+Version 5 (Phase 3a) adds: `routines.list`, `routines.change` and event `routines.updated`;
+`catchup.retry`, `catchup.interval`, event `catchup.updated` and the snapshot's `catchUp` /
+`intervalSummaries`; `MessageView.displays`, the snapshot's `components` (the library), `pins`,
+`floating`, `pinChoices`, events `pins.updated` and `components.updated`; `component.command`,
+`component.detail`, `component.save`, `pin.add`, `pin.change`, `pin.arrange`, `pin.command`,
+`pin.shown`; main-only `card.page` (a component frame's page) and core-only `card.image` (a picture by
+token).
 
 Version 4 (Phase 2b) adds: `chat.send.to` (both, or one head), `heads.set`, `heads.answerWith`,
 `handoff.stop`, `rounds.stop`; event `heads.updated`; `BotView.heads`; `MessageView.engine / to /
@@ -253,8 +292,9 @@ uncertain; three cores racing over 60 jobs → each delivered exactly once; a wr
 random moments never left a torn file; a dead holder's lock is broken, a live one's respected; an
 unreadable store is reported, never treated as empty. *Not covered:* sleep/resume, DST and cron
 (the Swift `ScheduledRoutines` semantics still need porting), network filesystems, Windows
-(`rename` over an open file), pid reuse beyond the start-time check. The store is not yet wired to
-routines or workers in the core.
+(`rename` over an open file), pid reuse beyond the start-time check. Phase 3a's routines use the same
+atomic files and locks with 1.x's scheduled-routines.json and its claim → dispatch → fired contract
+(`core/routines.ts`); the JobStore class itself stays a spike.
 
 ## Phase 1b: what was built and how it was checked
 
@@ -340,7 +380,7 @@ the test). Harmless mode now leaves the app prompt out again; that check runs on
 `Tests/ClaudeCodeBotCoreTests/DesktopPromptGoldenExport.swift` (a Swift test that runs only when
 asked) writes them (since Phase 2b also the Codex prompts, the heads rules, HeadTags samples, the
 notes between the heads and five Conductor runs). After changing Prompts.swift, ReplyParser.swift, TaskCards.swift or the briefing
-code, in this worktree:
+code (since Phase 3a also CatchUp.swift's prompt/instructions/arguments and ComponentKnowledge), in this worktree:
 
 ```sh
 CCB_DESKTOP_PROMPT_EXPORT=$PWD/desktop/test/fixtures/prompts-golden.json TZ=UTC \
@@ -395,7 +435,7 @@ reads the user's language setting) and real Codex got the message with Claude's 
 - **Two heads as 1.x builds them**: a partner Bot with its own process, turns, approvals and files
   (`partner-<engine>/`), its lines the same records in the shared chat. Each head keeps its own
   queue and steering rules; the primary owns the chat, the task cards, the conductor and the decisions.
-- **Codex messages during a Codex turn wait** for the turn (as 2.0's claude does when it cannot
+- ~~**Codex messages during a Codex turn wait**~~ (superseded in Phase 3a: they steer into it, and claude hears the other head mid-turn) for the turn (as 2.0's claude does when it cannot
   merge) instead of 1.x's `turn/steer` into the turn; the other head's words *do* steer into a
   Codex turn under way. Claude hears the other head with its next message (1.x also sends it
   mid-turn; claude's stream-json would make that a turn of its own).
@@ -404,7 +444,7 @@ reads the user's language setting) and real Codex got the message with Claude's 
 - **Stop stops every turn under way** (both heads); Stop of a Codex turn interrupts the coordinator
   only, its workers go on (as 1.x).
 - **The coordinator gets 1.x's 7 tools unchanged** (so the policy text and the tool stamp match);
-  `app_routines` and `app_monitor_*` answer that 2.0 cannot do them yet. The component-editor role is
+  ~~`app_routines` and `app_monitor_*` answer that 2.0 cannot do them yet~~ (done in Phase 3a). The component-editor role is
   refused (no Maintainer in 2.0).
 - **No auto mode yet**: Codex's reviewer is always the user (approvals in the chat).
 - **Each head tidies itself** before it sleeps (1.x lets one head tidy the shared memory file).
@@ -412,18 +452,55 @@ reads the user's language setting) and real Codex got the message with Claude's 
   `handoffs` (as ChatPayload sends them) but does not draw them; the hand-off panel is not drawn yet.
 - **Live Codex runs never touch `~/.codex`**: a throwaway `CODEX_HOME` with only `auth.json`.
 
+## Phase 3a: what was built and how it was checked
+
+| Piece | What it does | Evidence |
+| --- | --- | --- |
+| Two-head timing (`core/bot.ts`) | As 1.x: the other head's words (its first words, what it says between tool calls, its reply) reach a head **at work at once** — Codex as `turn/steer`, claude as a message written to its stdin (sent with a `uuid`). If claude reads it only after its turn ended (`command_lifecycle` "started"), that turn is the app's (`<no-reply/>` shows nothing, words show), and a message of ours sent meanwhile waits for it. A message from you while **Codex** works on anything but handed-over work joins its turn (`turn/steer`): one reply, which moves below your new line; your two messages' task cards join | `unit/two-heads.test.ts` ("timing as 1.x", "Claude hears the other head mid-turn", "words claude reads only after its turn ended…"), `unit/stream.test.ts`; **live**: real claude queued a message written mid-turn (text-only turn) and answered it in a turn of its own, with `command_lifecycle` queued/started — exactly the path 2.0 handles |
+| Routines (`core/routines.ts`) | Routines.swift + ScheduledRoutines.swift: routines.cron (local time, `routineRuns`, first sight counts from now, a missed time runs once later that day; 1.x's old bot.json routines move into it; the main bot starts with the daily summary); app-owned schedules in 1.x's scheduled-routines.json — once (an instant with an explicit offset) or recurring (cron in an IANA zone, catching up only today), request ids for retries, **claimed and written before dispatch**, `fired` after, a claim nobody confirmed shown as `delivery_uncertain` and never sent again, pause/resume (resume skips what passed while paused)/cancel, corrupt files reported (in the chat, once) and never written over. The core checks every 30 s while the app runs; a divider "Name · 08:15", then 1.x's prompt to the bot's first head. Codex's `app_routines` uses the same store; a Routines panel in the header lists, pauses, resumes and cancels | `unit/routines.test.ts` (**19 cases ported from RoutineTests/ScheduledRoutineTests**: same inputs, same answers, plus DST folds and gaps), `unit/routines-core.test.ts` (a cron job runs once; a schedule claimed, dispatched, fired; a dead claim stays uncertain; a broken file; Codex's tool), `e2e/phase3a.spec.ts` (`routines.png`) |
+| Command monitors (`agent/monitors.ts`, `agent/codex.ts`) | CommandMonitor.swift: `app_monitor_start/status/cancel` (only from the owning turn; 16 active, 128 kept), an **Allow once card that outlives the turn** (Codex ends its turn at once), then `command/exec` with the sandbox said explicitly (workspace-write, network off, 8 KB per stream), one `app_monitor_result` wake (the reply is "Monitor result: …" if the turn says nothing); Don't allow or Stop cancels and suppresses the wake; records in 1.x's codex-threads/<session>.monitors.json; after a restart a running or waiting command is `interrupted` (never run again) and reported, a wake mid-dispatch `uncertain` with a recovery note | `unit/routines-core.test.ts` (allow → run → wake once; deny → nothing), `unit/codex.test.ts` (restore/reconcile, owning turn, Stop); **live**: real `codex app-server` ran `command/exec` with exactly these parameters (exit 3, stdout kept) |
+| Catch-up (`core/catchup.ts`) | CatchUp.swift + Workspace+CatchUp.swift: more than 3 unread replies fold into a summary when you open the chat; with `intervalSummaryEnabled` each closed interval is summarized by itself; the footer summarizes any interval; one isolated read-only `codex exec` per range (1.x's arguments, its JSON schema, events checked: only words, a finished turn), cached per range and language in catchup-summaries.json (over restarts), failures say why and Retry runs them again; settings.json's thresholds, model and writing preferences; the page's own Catch-up cards draw it (task chips included) | `unit/catchup.test.ts` (**prompt, instructions in 5 languages, arguments, schema, key and ranges equal to Swift's**, golden export extended), `unit/catchup-core.test.ts`, `e2e/phase3a.spec.ts` (`catchup.png`); **live**: real `codex exec` (gpt-6-luna, throwaway `CODEX_HOME`) wrote bullets citing the messages |
+| Components (`core/components/`, `bot.ts`) | The library from `<core>/plugins/*/components` (imported from 1.x, text files only; rescanned every 1.5 s; about.md's Command/Detail command/Refresh/Sizes/Icon lines); each bot's list (bot.json `components`) and what it is told — the whole briefing at a wake, only changes later (**ComponentKnowledge equal to Swift's**); `<show>` cards (and `id=` updates in place), `ccb.save` kept in the line (and the bot told with your next message), an empty card said once, a component's answer sent as your words; commands only in the core, only after **Allow and run for exactly the command, folder and Detail command the card showed** (approved-commands.json), `zsh -lc` in the bot's folder, 60 s / 1 MB, the whole group ended; Detail commands with checked values only (`{save: true}` too); `ccb.image` pictures by token only; pins in 1.x's pins.json (chips with `ccb.setStatus`, the Board with sizes and places, ccb.save on a pin, refresh when shown / every N / on ↻ for pins in view, float in a corner), the header's Board button | `unit/components.test.ts`, `unit/components-core.test.ts`, `unit/importer.test.ts`, `e2e/components.spec.ts` (a hostile probe in a component frame: opaque origin, no bridge, no parent document, no storage), screenshots `component-card.png`, `component-command-ask.png`, `component-command-ran.png`, `component-board.png`, `component-pin-chip.png` (looked at) |
+| Component frames in the reused page (`chat-frame/component-frames.ts`, `main.ts`) | Web/src draws a component in `<iframe sandbox="allow-scripts" srcdoc=…>`; a srcdoc frame would inherit the chat page's CSP (no inline script), so the page is handed to main (`card.page`, through the app page) and served from `botling-card://page/<token>` under its own CSP (inline script and style only; images data:/blob:/botling-card:; no network, frames, forms or workers); still sandboxed. Web/src's own listener remains the in-page broker (it finds a frame by its window); the app page paces a frame's calls (20, then 10/s) and turns them into contract commands the core checks again | `e2e/components.spec.ts`, `e2e/cards.spec.ts` (Phase 0's isolation tests still pass) |
+
+Tests: unit 217 (vitest), e2e 25 (Playwright/Electron), all green. Live (Phase 3a, 4 real calls):
+`npm run test:live:3a` once (claude mid-turn, codex `command/exec` — no model call —, Catch-up's
+`codex exec`), then the claude check once more because the first run's console output was lost (it
+now also writes `BOTLING_LIVE_REPORT`). Codex used a throwaway `CODEX_HOME` with a copy of `auth.json`
+only, deleted afterwards.
+
+### Decisions (Phase 3a)
+
+- **Two-head timing as 1.x** (the user's call): claude hears the other head mid-turn, written to its
+  stdin; a message to a Codex head at work steers into its turn. Where 1.x pauses handed-over work for
+  your message (`pauseNote`), 2.0 still queues it. The steered reply moves below your new line (1.x
+  shows the reply at the end too); your two messages' task cards join (1.x leaves the first as it was).
+- **Routines run only while the app runs** (decided earlier). 2.0 locks scheduled-routines.json with
+  its own lock file (`…botling2.lock`), not 1.x's `flock`: the project lock keeps the two apps off one
+  bot. The main bot's routine prompt has 1.x's project list without inboxes, Maintainer and teams
+  (2.0 has none of them yet).
+- **No auto mode yet**, so a monitored command always asks (Allow once), as 1.x does without it.
+- **Component commands**: 1.x's approvals model (per folder and command, remembered), but 2.0 starts
+  with none: 1.x's approved-commands.json is not imported (a trust decision the user makes again).
+- **A bot with no component list that drew none gets the library (up to 20)**: 2.0 has no Maintainer
+  to give it any, so without this a fresh bot would only know one line of each.
+- **Components' pictures** go to frames by token (`botling-card://image/<token>`) for paths the data
+  names that exist and are images; the frame never sees or asks for a path.
+- **Catch-up** keeps its cache in 2.0's folder; arriving at a chat is opening it in the app (2.0 does
+  not yet track window focus as 1.x does).
+
 ## Gaps vs the Swift app (1.x)
 
 Not in 2.0 yet, roughly in order of how much they matter:
 
 - **Codex / two heads, still missing**: managed workers' cross-head return routes (a worker's report
   for handed-over work going back to the other head) and task cards' "helps" links; Codex's native
-  subagents (off in a coordinator anyway); the component-editor role; monitors and `app_routines`;
-  auto mode (Codex's reviewer); rate limits and token use; images in Codex messages; the model list
-  (`model/list`) and model/effort settings UI, switching a head's model (the handoff/resume prompts
-  are ported, unused); 1.x's mid-turn delivery of the other head's words to claude; completion
-  verification (PromiseCheck) of either head; drawing the hand-off panel; a one-head bot's
-  `<handoff to="claude">` for publishing (a notice says it cannot).
+  subagents (off in a coordinator anyway); the component-editor role; auto mode (Codex's reviewer);
+  rate limits and token use; images in Codex messages; the model list (`model/list`) and model/effort
+  settings UI, switching a head's model (the handoff/resume prompts are ported, unused); 1.x's
+  pausing of handed-over work for your message (2.0 queues); completion verification (PromiseCheck)
+  of either head; drawing the hand-off panel; a one-head bot's `<handoff to="claude">` for publishing
+  (a notice says it cannot).
 - **Subagents**: rows in the left column and the right panel's list, SendMessage resumes, background
   commands/Monitors (`backgroundTasks` chips), the interrupted-work note on wake, token speed.
 - **Prompts**: the main bot's wake note (project list, inboxes, teams) and the component list are
@@ -431,16 +508,21 @@ Not in 2.0 yet, roughly in order of how much they matter:
   (no model switch yet). Codex-only prompts are not ported.
 - **Requests**: teams, new bots/projects, components, plugins, installs, open questions, @ call-ins
   (a notice says so).
-- **Routines and monitors** (routines.cron, ScheduledRoutines → `JobStore`, Codex `app_routines`,
-  command monitors), **Catch-up** generation (the button is hidden), the right panel's Tasks list
-  (chips only), group chats, feedback relays, completion verification (`<end>/<block>` are parsed,
-  not judged).
+- The right panel's Tasks list (chips only), group chats, feedback relays, completion verification
+  (`<end>/<block>` are parsed, not judged); claude's own scheduling tools (CronCreate, ScheduleWakeup)
+  as background-task chips; 1.x's Settings → Routines page (2.0 has the header's small panel; the
+  `addRoutine` UI for a new daily job is missing); Catch-up on window focus (only on opening a chat).
 - **The main bot's world**: its project list and inboxes in the wake note, inbox delivery, teams.
-- **Components and plugins**: the component library, `<show>` displays (imported `displays` are not
-  drawn), pins/Board/floating cards, specs, Maintainer, the plugin host and its plugins other than
-  ccb-latex (bundled), `/` commands.
+- **Components and plugins, still missing**: Maintainer (asking for, building and changing components;
+  `<component>` requests get a notice), component specs ("Make into component"), reports, revert and
+  version history, the `/` component menu, "Show in all bots" floats (each chat floats its own), "making
+  it live" (a Board command handed to Maintainer), SF Symbol icons (emoji icons work), pictures sent
+  back with a component's answer (`ccb.pickImage` works, the pictures are not kept yet: no attachments),
+  `ccb.open` of pages (pictures open in the page's lightbox); the plugin host and its plugins other than
+  ccb-latex (bundled) and hooks.
 - **Composer**: attachments (`+` does nothing; dropped files are ignored), drafts across restarts,
   @ mentions. (Steering, replies to a message and reactions are in.)
+- **Main bot's project list and inbox** in its wake note and routines, inbox delivery.
 - **Settings** (heads, model, effort, auto mode, language — the page is in English; `settings.json`
   is imported and kept), spending and rate limits, Doctor.
 - **Packaging and updates** (electron-builder, fuses, signing, notarization, an updater).
@@ -483,7 +565,21 @@ Not in 2.0 yet, roughly in order of how much they matter:
   script). Since Phase 1b the chat itself is Web/src's page with its own chat.css; the React
   chrome's colours (`src/renderer/styles.css`) are Theme.swift's.
 
-## What's next (proposed)
+## What's next (proposed, after Phase 3a)
+
+1. **Plugins host + hooks**: Web/src's plugin loader with a host in the core (`hostCall`), then 1.x's
+   plugins and their hooks; Maintainer on top (component requests, specs, reports).
+2. **Attachments**: a main-owned picker, a protocol serving attachment folders, pictures in answers
+   (components' `pickImage` too), images to Codex.
+3. **Settings UI** (React): language, models/effort, auto mode, Catch-up thresholds and model,
+   routines (1.x's page), heads, permissions (allowed commands, always-allowed tools).
+4. **Main bot's world**: project list + inboxes in its wake note and routines, inbox delivery, teams,
+   new bots/projects.
+5. **Browser / web chats** (1.x's web AIs) in account partitions (spike 3's sessions).
+6. **Packaging and updates** (electron-builder, fuses, signing/notarization, an updater), then
+   **Windows** (spike 4: Job Objects; zsh-less command shells for components and monitors).
+
+## What was next before Phase 3a (kept for reference)
 
 1. **Live checks still open**: the approval round trip (`npm run test:live -- -t "asks before"`) and
    the app prompt as a real bot (`BOTLING_LIVE_REAL_BOT=1 … -t "choices block"`, in a throwaway folder).
@@ -507,6 +603,13 @@ Packaging (not done): electron-builder `dir` target for a macOS dev build, Elect
 signing/notarization, then Windows installer signing.
 
 ## Risks
+
+- **Component commands run with the user's rights** once allowed (as in 1.x): the approval is per
+  folder and exact command text; a Detail command's values are restricted to letters, digits and
+  `. _ / -`, single-quoted. A template the user allowed can still be changed on disk later; the Detail
+  command is re-read and must match what was allowed, the Command line likewise (the card asks again).
+- **Monitors run through `codex app-server`'s `command/exec`** with an explicit workspace-write sandbox
+  and network off; their whole process belongs to the app-server's tree (ended with the head).
 
 - **Windows is entirely unverified**: process trees, paths, `claude` resolution, atomic rename,
   WSL vs native (a product decision — see below).
@@ -547,9 +650,13 @@ Codex turn wait rather than steer; claude hears the other head only with its nex
 stops both heads; a pick goes to the head that asked; each head tidies itself; routines/monitors
 tools answer "not yet".
 
+Decided by the user for Phase 3a: two-head timing as 1.x (claude hears the other head mid-turn; a
+message to a busy Codex head steers its turn). Decided by the agent in Phase 3a (the user was away;
+each can be changed): handed-over work is still queued behind your message, not paused; 2.0 asks
+again for component commands 1.x had allowed; a fresh bot gets the library (up to 20) since there is
+no Maintainer; scheduled-routines.json uses 2.0's own lock file; monitors always ask (no auto mode).
+
 Still open:
-- Whether claude should hear the other head mid-turn (1.x does; 2.0 waits for its next message),
-  and whether a message to a busy Codex head should steer its turn (1.x) or wait (2.0).
 - One real `claude` call to confirm the approval round trip, and one as a real bot (tools on) to
   see the app prompt's choices/task lines from real claude.
 - Is a 15 s tidy on quit acceptable (1.x waits for it), or should quitting skip it?
