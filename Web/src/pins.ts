@@ -791,6 +791,8 @@ export class PinArea {
   /** The row over the input box: the pinned strip on the left, room on its right (the hand-off chip). */
   readonly row: HTMLElement;
   private readonly dock: HTMLElement;
+  private readonly chipList: HTMLElement;
+  private readonly addChip: HTMLButtonElement;
   private readonly sheet: HTMLElement;
   private readonly board: HTMLElement;
   private readonly grid: HTMLElement;
@@ -830,6 +832,10 @@ export class PinArea {
     this.dock.className = "pin-dock";
     this.dock.setAttribute("role", "toolbar");
     this.dock.hidden = true;
+    this.chipList = document.createElement("div");
+    this.chipList.className = "pin-chip-list";
+    this.addChip = button("pin-chip add", t("pins.pinAComponent"), icons.plus, () => openPicker());
+    this.dock.append(this.chipList, this.addChip);
     this.row = document.createElement("div");
     this.row.className = "dock-row";
     this.row.append(this.dock);
@@ -857,6 +863,8 @@ export class PinArea {
     if (this.wordsIn !== language()) {
       this.wordsIn = language();
       this.dock.setAttribute("aria-label", t("pins.dock"));
+      this.addChip.title = t("pins.pinAComponent");
+      this.addChip.setAttribute("aria-label", t("pins.pinAComponent"));
       this.board.setAttribute("aria-label", t("pins.board"));
       this.sheetKey = this.dockKey = this.headKey = this.sheetHeadKey = "";
       for (const entry of this.cards.values()) entry.key = "";
@@ -901,7 +909,10 @@ export class PinArea {
     const key = JSON.stringify([pins.map((p) => [p.id, p.name, p.headline, p.chip ?? null, icon(p), p.display.status]), this.openID]);
     if (key === this.dockKey) return;
     this.dockKey = key;
-    this.dock.innerHTML = "";
+    const scrollLeft = this.chipList.scrollLeft;
+    const focusedID = this.chipList.contains(document.activeElement)
+      ? (document.activeElement as HTMLElement).dataset.id : undefined;
+    this.chipList.replaceChildren();
     pins.forEach((pin, index) => {
       // A small status icon: the component's icon, a short value beside it and a dot for its
       // tone; its name and whole line in the tooltip.
@@ -921,16 +932,22 @@ export class PinArea {
       }
       chip.title = pin.headline ? `${pin.name} — ${pin.headline}` : pin.name;
       chip.setAttribute("aria-label", status.text ? `${pin.name}: ${status.text}` : pin.name);
+      chip.addEventListener("focus", () => chip.scrollIntoView({ block: "nearest", inline: "nearest" }));
       chip.addEventListener("click", () => (this.openID === pin.id ? this.close() : this.open(pin.id)));
       chip.addEventListener("contextmenu", (event) => {
         event.preventDefault();
         pinMenu(chip, pin);
       });
       this.dragAndDrop(chip, pin.id, index);
-      this.dock.append(chip);
+      this.chipList.append(chip);
     });
-    const add = button("pin-chip add", t("pins.pinAComponent"), icons.plus, () => openPicker());
-    this.dock.append(add);
+    // Status refreshes and opening a sheet redraw the chips. Keep the user's place in the
+    // scrollable row, including the keyboard target; the add button never leaves its slot.
+    this.chipList.scrollLeft = scrollLeft;
+    if (focusedID) {
+      [...this.chipList.querySelectorAll<HTMLButtonElement>(".pin-chip")]
+        .find(chip => chip.dataset.id === focusedID)?.focus({ preventScroll: true });
+    }
   }
 
   /** Drag one pin onto another to put it there. */

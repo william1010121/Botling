@@ -3,6 +3,7 @@ import { PinArea } from "../src/pins";
 import type { ChatState, PinView } from "../src/types";
 
 globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
+HTMLElement.prototype.scrollIntoView ??= () => {};
 
 const pins: PinView[] = ["CPU 24%", "426/494 GB", "Memory 80%", "Today: Claude…", "botling · use…"].map((text, index) => ({
   id: `P${index}`, name: `Status ${index}`, headline: text, chip: { text, tone: "neutral" },
@@ -53,5 +54,13 @@ describe("the status strip keeps its add control beside overflowing pins", () =>
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     expect((document.activeElement as HTMLElement).dataset.id).toBe("P4");
     expect(document.activeElement?.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keeps the add button and its keyboard focus through status refreshes", () => {
+    const add = document.querySelector<HTMLButtonElement>(".pin-chip.add")!;
+    add.focus();
+    area.update(state(pins.map(pin => ({ ...pin, chip: { text: "Updated", tone: "good" } }))));
+    expect(document.querySelector(".pin-chip.add")).toBe(add);
+    expect(document.activeElement).toBe(add);
   });
 });

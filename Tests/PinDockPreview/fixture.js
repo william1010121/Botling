@@ -23,4 +23,10 @@ window.pinDockMeasure = () => {
     overflow: document.documentElement.scrollWidth > innerWidth || d.right > innerWidth,
     scrollable: !!dock.querySelector(".pin-chip-list") && dock.querySelector(".pin-chip-list").scrollWidth > dock.querySelector(".pin-chip-list").clientWidth };
 };
+window.pinDockFocusMeasure = () => {
+  const list = document.querySelector(".pin-chip-list"), chip = document.activeElement;
+  const l = list.getBoundingClientRect(), c = chip.getBoundingClientRect();
+  return { id: chip.dataset.id, expanded: chip.getAttribute("aria-expanded"), scrollLeft: list.scrollLeft,
+    visible: c.left >= l.left - 1 && c.right <= l.right + 1 };
+};
 true;

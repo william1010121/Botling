@@ -46,7 +46,35 @@ import WebKit
         try JSONSerialization.data(withJSONObject: results, options: [.prettyPrinted, .sortedKeys]).write(to: output.appending(path: "webkit-results.json"))
         let failures = results.filter { $0["oneRow"] as? Bool != true || $0["addVisible"] as? Bool != true || $0["overflow"] as? Bool != false }
         guard failures.isEmpty else { throw NSError(domain: "\(failures.count)/\(results.count) layouts failed: \(failures)", code: 2) }
-        print("PASS: 24 WKWebView layouts; 900/654/640/480/360/320px; 1/5/12 pins and handoff; single row, visible add, no document overflow; 12 screenshots")
+        _ = try await view.evaluateJavaScript("ccb.setState(pinDockFixture(12)); document.querySelector('[data-id=\"P11\"]').focus(); true")
+        var focusResults = [[String: Any]]()
+        for action in [
+            "true",
+            "const refreshed = pinDockFixture(12); refreshed.pins[11].chip.text = 'Updated status'; ccb.setState(refreshed); true",
+            "document.activeElement.click(); true",
+            "document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape'})); true"
+        ] {
+            _ = try await view.evaluateJavaScript(action)
+            let result = try await view.evaluateJavaScript("pinDockFocusMeasure()") as! [String: Any]
+            guard result["id"] as? String == "P11", result["visible"] as? Bool == true, (result["scrollLeft"] as? Double ?? 0) > 0 else {
+                throw NSError(domain: "Focused pin not revealed/retained: \(result)", code: 3)
+            }
+            focusResults.append(result)
+        }
+        guard focusResults[2]["expanded"] as? String == "true", focusResults[3]["expanded"] as? String == "false" else {
+            throw NSError(domain: "Sheet activation failed", code: 4)
+        }
+        try JSONSerialization.data(withJSONObject: focusResults, options: [.prettyPrinted, .sortedKeys]).write(to: output.appending(path: "webkit-focus-results.json"))
+        let focused = try await view.takeSnapshot(configuration: nil)
+        try NSBitmapImageRep(data: focused.tiffRepresentation!)!.representation(using: .png, properties: [:])!.write(to: output.appending(path: "strip-320-focused.png"))
+        _ = try await view.evaluateJavaScript("document.querySelector('.pin-chip.add').focus(); const updated = pinDockFixture(12); updated.pins[0].chip.text = 'Refreshed'; ccb.setState(updated); true")
+        let addFocused = try await view.evaluateJavaScript("document.activeElement.matches('.pin-chip.add')") as? Bool
+        guard addFocused == true else { throw NSError(domain: "Add focus lost on refresh", code: 5) }
+        _ = try await view.evaluateJavaScript("document.activeElement.click(); true")
+        guard try await view.evaluateJavaScript("document.querySelectorAll('.pin-picker-row').length") as? Int == 1 else { throw NSError(domain: "Add picker failed", code: 6) }
+        let picker = try await view.takeSnapshot(configuration: nil)
+        try NSBitmapImageRep(data: picker.tiffRepresentation!)!.representation(using: .png, properties: [:])!.write(to: output.appending(path: "strip-320-picker.png"))
+        print("PASS: 24 WKWebView layouts; 900/654/640/480/360/320px; 1/5/12 pins and handoff; single row, visible add, no document overflow; offscreen focus, live refresh, sheet open/close, add focus/picker; 14 screenshots")
     }
 }
 @main struct Main {
