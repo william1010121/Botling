@@ -14,7 +14,8 @@
     "test:unit": "node build.mjs && vitest run test/unit",
     "test:e2e": "node build.mjs && playwright test",
     "test:live": "node build.mjs && BOTLING_LIVE_CLAUDE=1 vitest run test/live",
-    "test:live:codex": "node build.mjs && BOTLING_LIVE_CODEX=1 vitest run test/live/codex.test.ts"
+    "test:live:codex": "node build.mjs && BOTLING_LIVE_CODEX=1 vitest run test/live/codex.test.ts",
+    "test:live:3a": "node build.mjs && BOTLING_LIVE_PHASE3A=1 vitest run test/live/phase3a.test.ts"
   },
   "dependencies": {
     "@codemirror/commands": "6.9.0",
