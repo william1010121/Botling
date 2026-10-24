@@ -8,6 +8,14 @@ app and publishes it on GitHub Releases.
 
 ### Added
 
+- **Catch-up summary.** Come back to a chat with more than a few unread messages (3 by
+  default) and they fold into one group behind a short 1–5 bullet summary of what finished,
+  what is still running and what waits for your decision. The summary is written by an
+  isolated, read-only `codex exec` at medium effort, cached per range, and never enters the
+  chat, its archive or the bot's processes; the group expands to every message, and a failed
+  summary shows the error with Retry. Messages now count as read only while the window is
+  focused. Settings → General → Catch-up summary turns it off, sets the threshold and picks
+  the model.
 - **Stop one hand-off.** Each expanded hand-off row now stops its chain by its stable
   identity, leaving independent hand-offs running; the single hand-off chip does the same. Pending
   work and return continuations are cancelled, the selected head turn is interrupted, and its

@@ -226,6 +226,60 @@ struct CatchUpTests {
         #expect(workspace.catchUpView(for: garden)?.state == "failed")
     }
 
+    @Test func retryAfterAFailureSummarizesTheSameRangeWithTheCurrentModel() async throws {
+        let root = tempRoot("retry")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = makeWorkspace(root)
+        let fake = FakeSummaries()
+        fake.failure = SummaryDown()
+        workspace.catchUpSummarizer = fake.summarizer
+        let (project, garden) = try project(in: workspace, root: root)
+        for index in 1...4 { garden.post(ChatMessage(role: .bot, text: "u\(index)")) }
+        workspace.select(project.id)
+        await settle(workspace, garden)
+        let failed = try #require(workspace.catchUps[garden.id])
+        #expect(failed.phase == .failed)
+
+        // Retry is only for a failed group: a ready one is left alone.
+        fake.failure = nil
+        let medium = CodexModel(id: "gpt-retry", name: "Retry", isDefault: false, supportedReasoningEfforts: ["medium"])
+        #expect(workspace.setCatchUpModel(medium))
+        workspace.retryCatchUp(in: garden)
+        #expect(workspace.catchUps[garden.id]?.phase == .loading)
+        #expect(workspace.catchUps[garden.id]?.error == nil)
+        await settle(workspace, garden)
+        let ready = try #require(workspace.catchUps[garden.id])
+        #expect(ready.phase == .ready)
+        #expect(ready.key == failed.key)
+        #expect(ready.messageIDs == failed.messageIDs)
+        #expect(ready.model == "gpt-retry")
+        #expect(fake.models == [PromiseCheck.judgeModel, "gpt-retry"])
+        workspace.retryCatchUp(in: garden)
+        #expect(fake.prompts.count == 2)
+    }
+
+    @Test func aWebSiteSelectionIsNoChatSoTheMainBotStaysUnread() throws {
+        let root = tempRoot("website")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = makeWorkspace(root)
+        let fake = FakeSummaries()
+        workspace.catchUpSummarizer = fake.summarizer
+        let chat = workspace.mainBot
+        let site = try #require(WebSite.all.first)
+        workspace.select(site.selectionID)
+        #expect(workspace.selectedBot === chat)
+        #expect(!workspace.isViewing(chat))
+        for index in 1...5 { _ = workspace.tell(chat, "behind the site \(index)") }
+        #expect(chat.unreadCount == 5)
+        #expect(workspace.catchUps[chat.id] == nil)
+
+        // Back to the main chat: the unread lines fold into a group.
+        workspace.select(nil)
+        #expect(workspace.isViewing(chat))
+        #expect(chat.unreadCount == 0)
+        #expect(workspace.catchUps[chat.id]?.messageIDs.count == 5)
+    }
+
     @Test func theSameRangeIsSummarizedOnceEvenAfterARelaunch() async throws {
         let root = tempRoot("cache")
         defer { try? FileManager.default.removeItem(at: root) }
