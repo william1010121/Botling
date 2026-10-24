@@ -6,11 +6,12 @@
 
 Formerly ClaudeCodeBot (the repository moved from `william1010121/ClaudeCodeBot`; old links redirect). Releases up to 1.15.1 still ship as `ClaudeCodeBot.app`; existing data stays in `~/.claudecodebot`. See [naming and compatibility](docs/botling-rename.md).
 
-**A team of Claude Code agents on your Mac, in one chat.**
+**A team of Claude Code and Codex agents on your Mac, in one chat.**
 
-Hand off real work to background subagents running in parallel, see the results as live
-components you can pin, and change the app itself with plugins. All local, on the `claude` CLI
-you already have.
+Give a bot two heads, Claude and Codex, that split the work and hand it to each other. Send real
+work to background subagents and Codex workers running in parallel, see the results as live
+components you can pin, and change the app itself with plugins. All local, on the `claude` and
+`codex` CLIs you already have.
 
 [![Latest release](https://img.shields.io/github/v/release/william1010121/Botling?label=release&color=4c8bf5)](https://github.com/william1010121/Botling/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/william1010121/Botling/total?color=4c8bf5)](https://github.com/william1010121/Botling/releases)
@@ -35,14 +36,18 @@ you already have.
 
 ## Why
 
-- **A team that works while you talk.** Real work goes to background subagents running in
-  parallel, so the bot is never too busy to answer you.
+- **Two heads, one chat.** A bot can run on Claude, on Codex, or on both at once; the heads
+  decide who does what and hand work and reviews to each other.
+- **A team that works while you talk.** Real work goes to background subagents and app-managed
+  Codex workers running in parallel, so the bot is never too busy to answer you.
+- **"Done" is checked.** After a reply, a separate judge model checks whether the work it
+  promised was actually finished, and sends the bot back to work when it was not.
 - **Answers you can see.** Charts and cards drawn right in the chat, one click from becoming a
   pinned chip or a Board tile.
 - **An app that changes itself.** Plugins hot-reload, and in developer mode the bot works on
   Botling's own source.
-- **Nothing leaves your Mac but Claude.** It drives the `claude` CLI you already have; chats and
-  memory are plain markdown files.
+- **Nothing leaves your Mac but the models.** It drives the `claude` and `codex` CLIs you
+  already have; chats and memory are plain markdown files.
 - **In your language.** The app speaks English, 繁體中文, 简体中文, 日本語 and 한국어, and bots
   reply in the language you pick.
 
@@ -58,6 +63,13 @@ Real work (building, fixing, researching) is handed to subagents that run in the
 in parallel, so the bot stays free to talk to you. Subagents that change code work in a git
 worktree of their own and merge when their tests pass. The right panel shows each one running,
 then settled, and a dropped network does not lose them: they carry on where they stopped.
+
+On Codex, the bot hands tasks to **app-managed workers**: independent Codex sessions the app
+tracks. The conversation finishes its turn right after handing off, worker cards keep their
+progress and follow-ups, and the app wakes the conversation to report each result. Each
+subagent row shows which head started it and its model; Settings → **Engines and subagents**
+sets the Claude subagent model and the Codex workers' model, effort and Fast mode (or follows
+`~/.codex/config.toml`).
 
 The chat's latest message carries one row for **all background work**: subagents, background
 commands, Monitors that watch for events, and scheduled wake-ups or cron jobs (with when they
@@ -162,6 +174,30 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
 </tr>
 </table>
 
+### Claude and Codex in one bot
+
+- **Pick an engine per bot.** A bot's settings have an Engine row: Claude (`claude` stream-json)
+  or Codex (`codex app-server`), each with its own model menu. Both read and write the same
+  `memory.md`, so switching engines keeps what the bot knows.
+- **Or turn on both heads.** Every message goes to both; one head reads it first and says what
+  it takes on, then both work side by side in the same folder and hear each other mid-turn.
+  **Answer with** in the input box's toolbar picks Both, Claude or Codex for a message
+  (⌥1 ⌥2 ⌥3, or start it with `@both`, `@claude` or `@codex`), and the choice is saved per bot.
+- **Hand-offs.** A head can hand the other a task, a review or a question with
+  `<handoff to="codex" kind="…">`; the reply goes back to the head that asked. Each of your
+  messages allows at most 6 hand-offs (2 reviews, 3 discussion rounds; adjustable). A chip on
+  the input box's status strip shows progress, lists every hand-off under way, and can stop one
+  chain or all of them.
+- **Completion verification.** When a reply ends, a read-only `codex exec` judge looks at it and
+  decides whether the authorized work is done, waiting on you, or should continue; a bot that
+  stopped early is sent back to finish. The verdict sits under the reply as a small disclosure.
+  The judge model is chosen in Settings → Engines and subagents.
+- **Characters.** In the Cute look (the default), Claude and Codex are drawn as small animated
+  characters that blink, type while working and wave when done; Settings → General sets the
+  chat avatar size (32–96 px) or switches back to the Original look. Under each message, small
+  heads show who it went to and who has read it, and both you and the heads can add **emoji
+  reactions**.
+
 ### Also
 
 - **A main bot and one manager per project.** The main bot answers "how is X going?" from each
@@ -173,7 +209,13 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
   asks (Allow once / Always / Don't allow) in the chat, with Claude Code's auto mode on by default.
 - **Results as claude.ai Artifacts.** Reports, comparisons and previews are published as a
   private claude.ai Artifact and linked in the reply as a card; anything sensitive stays a local
-  HTML page. Settings → Permissions → Reports and results picks the rule.
+  HTML page. Settings → Permissions → Reports and results picks the rule. Codex has no Artifact
+  tool, so a Codex head keeps results as local pages or hands publishing to Claude.
+- **Web bots: Gemini, ChatGPT, Claude and Grok.** The left column's **Web** section opens each
+  site in the chat column with its own sign-in (several Google accounts for Gemini). When an
+  answer finishes, the app reads the conversation as Markdown into `~/.claudecodebot/web/`, so
+  the main bot can search it. LaTeX snippets and live math preview (web-laas) work in their
+  input boxes, and **Capture** records a page's traffic so the Maintainer can fix a page reader.
 - **A rich chat**: Markdown, LaTeX, tables, images, videos, attachments, replies, group chats,
   result pages as preview cards, and an input box that works with CJK input methods.
 - **Call in any bot with `@name`.** It answers in your chat and keeps the work, with its steps,
@@ -184,9 +226,11 @@ shows which `claude` (and `codex`) the bots use and how each is signed in.
   (or follow the Mac), switched at once without a restart. Bots reply in it too; what bots write
   and your own data are never translated.
 - **Routines**: a crontab-style `routines.cron` per bot, which bots edit when you ask.
-- **Usage at a glance**: today's tokens per bot, rings for the 5-hour and weekly limits, a daily
-  budget, per-bot model and effort, and **Doctor** to check your Claude Code and Codex installs.
-- **Panels that fold**: the left column into a strip of faces, the right panel into icons.
+- **Usage at a glance**: today's tokens per bot, the Claude and Codex 5-hour and weekly limits,
+  a daily budget, per-bot model and effort, and **Doctor** to check your Claude Code and Codex
+  installs. Settings look like macOS System Settings, with a searchable sidebar.
+- **Panels that fold**: the left column into a strip of faces, the right panel into icons. Pin
+  bots and web conversations to keep them on top.
 
 ## Install
 
@@ -203,7 +247,7 @@ The build is universal (Apple silicon and Intel).
 |---|---|---|
 | macOS | 14 Sonoma or later | required |
 | [Claude Code](https://docs.claude.com/en/docs/claude-code) CLI | **2.1.111** or later, signed in | required: every bot is a `claude` process |
-| [Codex](https://github.com/openai/codex) CLI | **0.99.0** or later, signed in | optional: for bots that call `codex` |
+| [Codex](https://github.com/openai/codex) CLI | **0.99.0** or later, signed in | recommended: Codex heads and workers, and the completion verification judge |
 | Node.js | any current LTS | recommended: plugins with a program part |
 | git | | recommended: the plugin library's history |
 
@@ -219,7 +263,9 @@ when something is off.
 3. Click **Add project** and pick a folder, or ask the main bot: "Add `~/code/my-app` as a project."
 4. Ask for work: "In my-app, fix the failing tests." The main bot hands it to that project's
    manager, which reports back in its own chat (an unread count shows in the left column).
-5. Make a group with **+** next to Chats, or a bot of your own with **New bot**.
+5. To add Codex, open a bot's settings (right of its chat) and turn on **Engines in this bot**:
+   Claude, Codex or both. Then pick who answers with **Answer with** in the input box.
+6. Make a group with **+** next to Chats, or a bot of your own with **New bot**.
 
 Your data lives in `~/.claudecodebot` (chats, memory files, routines, the plugin library). Each
 project's own notes live in `<project>/.bot/`, which is git-ignored.
@@ -232,9 +278,13 @@ project's own notes live in `<project>/.bot/`, which is git-ignored.
   the right column shows what is going on, what waits for you, results and settings.
 - **The chat** in the middle is a web page (TypeScript, markdown-it, KaTeX, CodeMirror 6) in a
   `WKWebView`, which is also where plugins' web parts run.
-- **Each bot** is one long-lived `claude -p --input-format stream-json --output-format stream-json`
-  process. Bots talk back through a few tags in their replies (`<choices>`, `<team>`, `<show>`,
-  `<component>`, `<plugin>`, `<install>`), which the app turns into buttons, teams and requests.
+- **Each head** is one long-lived process: Claude runs as
+  `claude -p --input-format stream-json --output-format stream-json`, Codex as
+  `codex app-server`. A two-headed bot runs both side by side. Bots talk back through a few tags
+  in their replies (`<choices>`, `<team>`, `<show>`, `<component>`, `<plugin>`, `<install>`,
+  `<handoff>`), which the app turns into buttons, teams, hand-offs and requests.
+- **The app keeps the books**: it tracks subagents, Codex workers, background commands and
+  hand-off budgets itself, and runs the completion verification judge after each reply.
 - **Memory** is plain markdown: `memory.md` with four sections, an `inbox.md` per project, and
   `routines.cron`. Bots stay inside the one-hour prompt-cache window while awake and write their
   memory before they sleep.
@@ -293,6 +343,12 @@ the project that is your Botling checkout. Its manager may then install a new bu
 app after you confirm (a build that does not come up within 90 seconds is rolled back), look at
 the app's window, and receives the replies you mark "Not right" in any chat.
 
+In that project's chat, **`/share`** checks a feature branch you built (up to date, no keys,
+tokens or home-folder paths, a fork as origin) and opens a pull request labelled
+`community-feature`. **Settings → Release planner** lists those pull requests, most 👍 first:
+the 👍 button votes, and the repository's owner picks the next version's features and hands
+them to the developer project's manager to merge.
+
 Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) for the PR flow, and
 [SECURITY.md](SECURITY.md) to report a vulnerability.
 
@@ -320,9 +376,9 @@ CCB_SNAPSHOT=/tmp/chat.png swift run botling   # render a sample chat to a PNG a
 
 | Path | What |
 |---|---|
-| `Sources/ClaudeCodeBotCore` | Bots, workspace, routines, components, plugin registry, plugin host client, installer |
+| `Sources/ClaudeCodeBotCore` | Bots and their Claude and Codex processes, hand-offs, completion verification, workspace, routines, components, web bots, plugin registry, plugin host client, installer |
 | `Sources/ClaudeCodeBot` | The SwiftUI app and the web view bridge |
-| `Web/src` | The chat surface (TypeScript) |
+| `Web/src` | The chat surface (TypeScript), with its five locales in `Web/src/locales` |
 | `Web/host` | The Node plugin host |
 | `Web/plugins` | Built-in plugins (`ccb-latex`) |
 | `docs/` | Product docs, flowcharts and README images |
