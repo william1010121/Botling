@@ -27,6 +27,7 @@ export const en = {
   "source.openFrom": "Open source by {author} for point {n}",
 
   "interval.summarize": ["Summarize {n} reply", "Summarize {n} replies"],
+  "interval.replies": ["{n} reply", "{n} replies"],
   "interval.originals": "{n} replies{heads} · Open originals",
   "interval.heads": " ({heads})",
   "interval.separator": ", ",
@@ -398,7 +399,7 @@ export const en = {
   "catchup.divider": "{n} unread · since {since}",
   "catchup.dividerNoTime": "{n} unread",
   "catchup.count": "{n} unread",
-  "catchup.heads": "{n} heads",
+  "catchup.heads": ["{n} head", "{n} heads"],
   "catchup.writing": "Writing summary with {model}…",
   "catchup.failed": "Couldn’t write a summary",
   "catchup.nothingLost": "Nothing was lost — all {n} messages are below.",

@@ -10,7 +10,7 @@ import { escapeHTML } from "./util";
 export function sourceAuthor(message: MessageView, reference?: SourceReference): string {
   if (reference?.part === "answer" || message.role === "user") return t("source.you");
   const engine = message.sourceEngine === "claude" ? "Claude" : message.sourceEngine === "codex" ? "Codex" : null;
-  return [message.sourceAuthor ?? message.speaker, engine].filter(Boolean).join(" · ") || t("source.unknown");
+  return [message.sourceAuthor ?? message.speaker, engine].filter(Boolean).join(" · ") || t("source.originals");
 }
 export function sourceHead(message: MessageView, reference?: SourceReference): string {
   return reference?.part === "answer" || message.role === "user" ? "you" : message.sourceEngine === "claude" || message.sourceEngine === "codex" ? message.sourceEngine : "unknown";

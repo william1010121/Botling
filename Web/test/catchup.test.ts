@@ -181,11 +181,12 @@ it("keeps historical cards, links, retry targets and expansion independent in ev
   const sourceURLs = () => [...heads()[0].querySelectorAll<HTMLElement>(".catchup-links [data-url]")].map(a => a.dataset.url);
   expect(heads()).toHaveLength(2);
   expect(sourceURLs()).toEqual(["file:///tmp/exact.html", "https://claude.ai/public/artifacts/old"]);
-  expect(heads()[0].querySelector(".speaker")?.textContent).toBe("botling · Summary");
-  expect(heads()[1].querySelector(".speaker")?.textContent).toBe("botling · Summary · 自動");
-  expect(heads()[0].querySelector(".interval-originals")?.textContent).toBe("›1 則回覆（Codex ×1） · 點開看原文");
-  expect(heads()[1].textContent).toContain("未知來源 ×1");
-  expect(heads()[1].textContent).toContain("你送出下一則時自動結算 · 1 則回覆，達到門檻");
+  expect(heads()[0].querySelector(".catchup-card")).not.toBeNull();
+  expect(heads()[1].querySelector(".catchup-card")).not.toBeNull();
+  expect(heads()[0].querySelector(".catchup-meta")?.textContent).toContain("1 則回覆");
+  expect(heads()[1].querySelector(".catchup-meta")?.textContent).toContain("1 則回覆");
+  expect(heads()[0].querySelector('[data-action="toggle"]')?.textContent).toContain("2");
+  expect(heads()[1].querySelector(".interval-auto, .speaker")).toBeNull();
   heads()[0].querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
   expect(document.querySelector('[data-id="old"]')?.classList.contains("catchup-folded")).toBe(true);
   expect(document.querySelector('[data-id="metadata"]')?.classList.contains("catchup-folded")).toBe(true);
@@ -245,3 +246,29 @@ it("folds timestamped component requests and attachments within the cutoff", () 
     for (const id of ids) expect(getComputedStyle(container(id)).display).not.toBe("none");
   } finally { style.remove(); }
 }, 30000);
+
+
+it.each([false, true])("uses the existing Catch-up shell for interval summaries (automatic=%s)", automatic => {
+  const summary = view({ manual: true, automatic, ids: ["b", "c", "metadata"], count: 2, heads: null, speakerCounts: { codex: 2 } });
+  window.ccb.setState(state(null, { messages: [line("a", "user"), line("b"), line("metadata", "notice"), line("c")], intervalSummaries: [summary], lang: "en" }));
+  const head = document.querySelector(".interval-summary-head")!;
+  expect(head.querySelector(".catchup-card.stacked .catchup-card-body")).not.toBeNull();
+  expect(head.querySelector(".row.bot, .bot-bubble, .speaker, .interval-auto, .interval-originals")).toBeNull();
+  expect(head.querySelector(".catchup-title")?.textContent).toBe("Catch-up");
+  expect(head.querySelector(".catchup-meta")?.textContent).toBe("2 replies · 1 head");
+  expect(head.querySelector(".catchup-range")?.textContent).toBe("18:04 – 18:36");
+  expect(head.textContent).not.toContain("unread");
+  expect(head.querySelector(".catchup-foot .catchup-latest")?.textContent).toBe("Latest · Claude: Ship now?");
+  expect(head.querySelectorAll(".catchup-faces img")).toHaveLength(2);
+  expect(head.querySelector('[data-action="toggle"]')?.textContent).toContain("Show 3 messages");
+  expect(head.querySelector(".catchup-by")?.textContent).toContain("gpt-test");
+});
+
+
+it("derives interval header/footer from real source metadata absent in the interval payload", () => {
+  const summary = view({manual:true,automatic:true,ids:["b","c"],count:2,heads:null,speakerCounts:{codex:2},since:null,until:null,latest:null});
+  window.ccb.setState(state(null,{messages:[line("a","user"),{...line("b"),sourceTime:"10:21 PM"},{...line("c"),sourceTime:"10:31 PM",sourceAuthor:"Garden",sourceEngine:"codex",text:"Latest real reply"}],intervalSummaries:[summary],lang:"en"}));
+  expect(document.querySelector(".catchup-range")?.textContent).toBe("10:21 PM – 10:31 PM");
+  expect(document.querySelector(".catchup-latest")?.textContent).toBe("Latest · Garden · Codex: Latest real reply");
+  expect(document.querySelector(".catchup-meta")?.textContent).toBe("2 replies · 1 head");
+});

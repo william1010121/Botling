@@ -25,6 +25,7 @@ export const ja: Dictionary = {
   "source.openCitation": "クリックして元の会話を開く",
   "source.openFrom": "項目 {n} の {author} の参照元を開く",
   "interval.summarize": "{n} 件の返信を要約",
+  "interval.replies": "返信 {n} 件",
   "interval.originals": "{n} 件の返信{heads} · 原文を開く",
   "interval.heads": "（{heads}）",
   "interval.separator": "、",

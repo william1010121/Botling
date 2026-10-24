@@ -36,7 +36,9 @@ import WebKit
   // Wait until the real frame has produced its unique init action before folding it.
   for _ in 0..<100 where !actions.contains(where:{$0["type"] as? String == "sourceAudit"}){try await Task.sleep(for:.milliseconds(50))}
   guard actions.contains(where:{$0["type"] as? String == "sourceAudit"}) else{throw NSError(domain:"Original live card did not initialize",code:2)}
-  _=try await js("window.originalFrame=document.querySelector('iframe.component-frame');window.originalMessages=JSON.stringify(fixture.messages);window.originalRows=[...document.querySelectorAll('#messages>[data-id],#messages>.stamped')];fixture.catchUp=summary;ccb.setState(fixture);true")
+  let interval=CommandLine.arguments.contains("--interval")
+  let automatic=CommandLine.arguments.contains("--auto")
+  _=try await js("window.originalFrame=document.querySelector('iframe.component-frame');window.originalMessages=JSON.stringify(fixture.messages);window.originalRows=[...document.querySelectorAll('#messages>[data-id],#messages>.stamped')];if(\(interval)){summary.manual=true;summary.automatic=\(automatic);summary.speakerCounts={claude:1,codex:2};fixture.intervalSummaries=[summary]}else{fixture.catchUp=summary};ccb.setState(fixture);true")
   let baseline=actions.count;var results=[[String:Any]]()
   for width in [760,360]{
    web.setFrameSize(NSSize(width:width,height:900));window.setContentSize(web.frame.size)

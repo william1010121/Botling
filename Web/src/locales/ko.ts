@@ -25,6 +25,7 @@ export const ko: Dictionary = {
   "source.openCitation": "클릭하여 원본 대화 열기",
   "source.openFrom": "항목 {n}의 {author} 출처 열기",
   "interval.summarize": "답장 {n}개 요약",
+  "interval.replies": "답글 {n}개",
   "interval.originals": "답장 {n}개{heads} · 원문 보기",
   "interval.heads": " ({heads})",
   "interval.separator": ", ",

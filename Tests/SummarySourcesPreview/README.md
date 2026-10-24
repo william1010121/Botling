@@ -5,3 +5,5 @@ Synthetic fixtures run in the generated production chat bundle; the recorder nev
 `report.swift` links the production ClaudeCodeBotCore module and uses PagePreview.response/windowURL/previewURL for both report-window and sandbox-card routes. It checks each embedded PNG and captures both ends of the report.
 
 An unloaded custom card is deliberately **not initialized** to obtain its source preview. Its saved data is shown with an explicit unavailable-preview label and, when applicable, Answer in chat. Loaded custom cards use a static snapshot of their existing frame; they cannot send native actions, execute scripts, submit forms, refresh commands, or navigate.
+
+Pass `--interval` to verify manual interval summaries through the same Catch-up shell; add `--auto` for automatic interval summaries. Both use the existing synthetic card/citation fixture.

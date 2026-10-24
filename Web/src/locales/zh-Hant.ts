@@ -25,6 +25,7 @@ export const zhHant: Dictionary = {
   "source.openCitation": "點擊開啟原始對話",
   "source.openFrom": "開啟第 {n} 點由 {author} 撰寫的來源",
   "interval.summarize": "Summarize {n} 則回覆",
+  "interval.replies": "{n} 則回覆",
   "interval.originals": "{n} 則回覆{heads} · 點開看原文",
   "interval.heads": "（{heads}）",
   "interval.separator": "、",

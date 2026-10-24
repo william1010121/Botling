@@ -25,6 +25,7 @@ export const zhHans: Dictionary = {
   "source.openCitation": "点击打开原始对话",
   "source.openFrom": "打开第 {n} 点由 {author} 撰写的来源",
   "interval.summarize": "Summarize {n} 条回复",
+  "interval.replies": "{n} 条回复",
   "interval.originals": "{n} 条回复{heads} · 展开查看原文",
   "interval.heads": "（{heads}）",
   "interval.separator": "、",

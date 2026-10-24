@@ -33,3 +33,10 @@ it("attributes a real selection or note to the user only with explicit validated
 it("preserves exact quotes containing single square brackets",()=>{
  expect(citedBullet("Done [[source:A|Read [the source] first.]]",[{...source[0],text:"Read [the source] first."}]).sources).toEqual([{messageID:"A",quote:"Read [the source] first."}]);
 });
+
+
+it("labels source records without author metadata honestly without inventing an author", async () => {
+  const { sourceAuthor } = await import("../src/summary-viewer");
+  expect(sourceAuthor({...source[0],role:"notice"})).toBe("Original conversation");
+  expect(sourceAuthor({...source[0],sourceAuthor:"Garden",sourceEngine:"codex"})).toBe("Garden · Codex");
+});

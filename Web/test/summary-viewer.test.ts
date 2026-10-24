@@ -22,7 +22,7 @@ it("keeps original authors/time, selected option and notes, without emitting ans
  expect(document.querySelector(".source-header")?.textContent).toContain("persisted-model");
  expect(document.querySelector(".source-header")?.textContent).toContain("asked by You");
  expect(sent.length).toBe(before);
- expect(sourceAuthor(message("unknown"))).toBe("Unknown source");
+ expect(sourceAuthor(message("unknown"))).toBe("Original conversation");
 });
 it("reuses the window, navigates exact references and returns to all originals",()=>{
  viewer.open("owner",state(),view,()=>null,()=>{},0,0);const dialog=document.querySelector("dialog");
