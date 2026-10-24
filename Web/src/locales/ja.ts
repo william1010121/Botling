@@ -2,6 +2,20 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Japanese (keys as in `en.ts`). */
 export const ja: Dictionary = {
+  "verification.title": "完了検証",
+  "verification.checking": "検証中…",
+  "verification.interrupted": "中断・判定なし",
+  "verification.continue": "未完了の作業あり",
+  "verification.analysis": "分析が必要",
+  "verification.complete": "完了",
+  "verification.evidence": "終了の根拠が必要",
+  "verification.user": "あなたの判断待ち",
+  "verification.cancelled": "キャンセル済み",
+  "verification.dependency": "依存作業待ち",
+  "verification.unknown": "確認できません",
+  "verification.unavailable": "検証できません",
+  "verification.paused": "新しい結果や実質的な分析がないため自動継続を一時停止しました。作業は未完了です。",
+
   "avatar.library": "キャラクターアニメーション",
   "avatar.portrait": "アバター",
   "avatar.sticker": "ステッカー",

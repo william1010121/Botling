@@ -2,6 +2,20 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Korean (keys as in `en.ts`). */
 export const ko: Dictionary = {
+  "verification.title": "완료 검증",
+  "verification.checking": "검증 중…",
+  "verification.interrupted": "중단됨; 판정 없음",
+  "verification.continue": "남은 작업 있음",
+  "verification.analysis": "추가 분석 필요",
+  "verification.complete": "완료됨",
+  "verification.evidence": "종료 근거 필요",
+  "verification.user": "사용자 결정 대기",
+  "verification.cancelled": "취소됨",
+  "verification.dependency": "의존 작업 대기",
+  "verification.unknown": "확인 불가",
+  "verification.unavailable": "검증 사용 불가",
+  "verification.paused": "새 결과나 실질적인 분석이 없어 자동 계속을 일시 중지했습니다. 작업은 아직 완료되지 않았습니다.",
+
   "avatar.library": "캐릭터 애니메이션",
   "avatar.portrait": "아바타",
   "avatar.sticker": "스티커",

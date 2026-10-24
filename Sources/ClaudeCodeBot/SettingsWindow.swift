@@ -658,12 +658,13 @@ private struct EnginesPage: View {
                 Footnote(L("Applied to every bot now; a bot's own settings page (right of its chat) can still choose differently for that bot."))
             }
         }
-        ComponentEditorSection(workspace: workspace)
-        AllBotsModelSection(workspace: workspace, codexModels: codexModels)
+        CompletionVerificationSection(workspace: workspace, models: codexModels)
             .task {
                 config = CodexConfig.load()
                 codexModels = await CodexModels.load()
             }
+        ComponentEditorSection(workspace: workspace)
+        AllBotsModelSection(workspace: workspace, codexModels: codexModels)
     }
 
     /// The model and effort controls are only for Botling's own choice.

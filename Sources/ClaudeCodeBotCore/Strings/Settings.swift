@@ -183,6 +183,12 @@ extension L10n {
         "Copied": ["已拷貝", "已复制", "コピーしました", "복사됨"],
         "Copy the command, then run it in Terminal": ["拷貝指令，然後在「終端機」中執行", "复制命令，然后在“终端”中运行", "コマンドをコピーして、ターミナルで実行してください", "명령을 복사한 다음 터미널에서 실행하세요"],
         // General → Language
+        "Completion verification": ["完成驗證", "完成验证", "完了検証", "완료 검증"],
+        "Verification model": ["驗證模型", "验证模型", "検証モデル", "검증 모델"],
+        "{0} (not currently listed)": ["{0}（目前未列出）", "{0}（当前未列出）", "{0}（現在の一覧にありません）", "{0} (현재 목록에 없음)"],
+        "Current verification model: {0}": ["目前驗證模型：{0}", "当前验证模型：{0}", "現在の検証モデル：{0}", "현재 검증 모델: {0}"],
+        "No compatible models listed. Check Codex installation and login; restart Botling to refresh its model list.": ["未列出相容模型。請檢查 Codex 安裝與登入；重新啟動 Botling 可更新模型清單。", "未列出兼容模型。请检查 Codex 安装和登录；重新启动 Botling 可更新模型列表。", "対応モデルがありません。Codex のインストールとログインを確認し、Botling を再起動して一覧を更新してください。", "호환 모델이 없습니다. Codex 설치와 로그인을 확인하고 Botling을 재시작해 목록을 새로 고치세요."],
+        "Checks both heads using your Codex login with medium effort. Only models that advertise medium effort are offered. Changes apply to the next check; each reply shows its actual model, verdict and reason. Access failures remain visible in chat.": ["透過你的 Codex 登入，以 medium 推理強度驗證兩個引擎。只列出明確支援 medium 的模型。變更於下一次驗證生效；每則回覆會顯示實際模型、判定與理由。存取失敗也會顯示在聊天中。", "通过你的 Codex 登录，以 medium 推理强度验证两个引擎。只列出明确支持 medium 的模型。更改于下次验证生效；每条回复显示实际模型、判定和理由。访问失败也会显示在聊天中。", "Codex のログインで両エンジンを medium で検証します。medium 対応を明示するモデルのみ選べます。変更は次の検証から適用され、各返信に実際のモデル・判定・理由を表示します。アクセス失敗もチャットに表示します。", "Codex 로그인으로 두 엔진을 medium 강도로 검증합니다. medium 지원을 명시한 모델만 선택할 수 있습니다. 변경은 다음 검증부터 적용되며 각 응답에 실제 모델, 판정, 이유가 표시됩니다. 접근 실패도 채팅에 표시됩니다."],
         "Language": ["語言", "语言", "言語", "언어"],
         "App language": ["App 語言", "应用语言", "アプリの言語", "앱 언어"],
         "Bot look": ["Bot 外觀", "Bot 外观", "ボットの見た目", "봇 모습"],

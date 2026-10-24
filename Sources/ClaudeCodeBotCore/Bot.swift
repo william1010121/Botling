@@ -153,6 +153,7 @@ public final class Bot: ObservableObject, Identifiable {
     public var replyObserver: ((ChatMessage) -> Void)?
     /// Shared semantic completion judgment after a reply is displayed, for either engine.
     public var promiseCheck: PromiseCheck.Check?
+    public internal(set) var completionVerificationModel = PromiseCheck.judgeModel
     /// Called with what each turn cost, in US dollars.
     public var onSpend: ((Double) -> Void)?
     /// Called with the tokens each turn used.
@@ -333,6 +334,7 @@ public final class Bot: ObservableObject, Identifiable {
     /// A new input/cancellation retires an in-flight completion judgment, even before a turn ends.
     private var completionEpoch = 0
     private var completionTask: Task<Void, Never>?
+    private var completionMessageID: UUID?
     private var completionAuthorization = ""
     private var completionRequiresTerminalSignal = false
     private var completionSuspended = false
@@ -406,8 +408,13 @@ public final class Bot: ObservableObject, Identifiable {
         // Background work still running when the app quit went with it (its chip says so, and
         // the bot hears of it when it next wakes).
         let stopped = loaded.stopBackgroundTasks(as: .interrupted, at: Date())
+        var interruptedVerification = false
+        for index in loaded.indices where loaded[index].completionVerification?.state == .checking {
+            loaded[index].completionVerification?.state = .interrupted
+            interruptedVerification = true
+        }
         messages = loaded
-        if stopped { store?.save(messages: loaded) }
+        if stopped || interruptedVerification { store?.save(messages: loaded) }
         // A chat from before there was an archive goes into it once, so all of it can be searched.
         if !loaded.isEmpty, !FileManager.default.fileExists(atPath: profile.archiveURL.path) {
             Self.archiveAll(loaded, in: profile.archiveURL)
@@ -808,6 +815,7 @@ public final class Bot: ObservableObject, Identifiable {
         made.replyFilter = { [weak self] in self?.replyFilter?() ?? nil }
         made.replyObserver = { [weak self] message in self?.replyObserver?(message) }
         made.promiseCheck = promiseCheck
+        made.completionVerificationModel = completionVerificationModel
         made.onSpend = { [weak self] amount in self?.onSpend?(amount) }
         made.onTokens = { [weak self] tokens in self?.onTokens?(tokens) }
         made.onRateLimits = { [weak self] limits in self?.onRateLimits?(limits) }
@@ -1824,7 +1832,23 @@ public final class Bot: ObservableObject, Identifiable {
         return true
     }
 
+    private func setCompletionVerification(_ verification: CompletionVerification, on id: UUID) {
+        guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
+        messages[index].completionVerification = verification
+        store?.save(messages: messages)
+    }
+
+    private func interruptCompletionVerification() {
+        guard let id = completionMessageID else { return }
+        if var record = messages.first(where: { $0.id == id })?.completionVerification, record.state == .checking {
+            record.state = .interrupted
+            setCompletionVerification(record, on: id)
+        }
+        completionMessageID = nil
+    }
+
     private func invalidateCompletion() {
+        interruptCompletionVerification()
         completionEpoch += 1
         completionTask?.cancel()
         completionTask = nil
@@ -1882,14 +1906,22 @@ public final class Bot: ObservableObject, Identifiable {
         completionAssignment = (handed, handoffID, turnFromRelay)
         cancelIdle()
         completionTask?.cancel()
+        interruptCompletionVerification()
+        let verificationModel = completionVerificationModel
+        completionMessageID = message.id
+        setCompletionVerification(.init(model: verificationModel), on: message.id)
         completionTask = Task { [weak self] in
             let judgment = await promiseCheck(end)
             guard let self, !Task.isCancelled, completionEpoch == epoch, turn == turnsEnded,
                   process === source, !isWorking, phase == .awake,
                   internalReply == nil, groupReply == nil, groupCommand == nil,
-                  permissionAsks.isEmpty, denialAsks.isEmpty, outage == nil, !removed else { return }
+                  permissionAsks.isEmpty, denialAsks.isEmpty, outage == nil, !removed else {
+                if let self, self.completionMessageID == message.id { self.interruptCompletionVerification() }
+                return
+            }
             completionTask = nil
             if let handoffID, !(primary ?? self).conductor.records.contains(where: { $0.id == handoffID && $0.isActive }) {
+                interruptCompletionVerification()
                 completionAssignment = nil
                 afterTurn()
                 return
@@ -1897,10 +1929,15 @@ public final class Bot: ObservableObject, Identifiable {
             let reviewed = PromiseCheck.review(judgment, for: end)
             let verdict = reviewed.verdict
             var reason = reviewed.reason
+            completionMessageID = nil
+            setCompletionVerification(.init(model: verificationModel, state: .judged,
+                verdict: verdict, reason: reason), on: message.id)
             switch verdict {
             case .continueWork, .continueAnalysis, .needsTerminalSignal:
                 completionNoProgress = progressed || (verdict == .continueAnalysis && freshReply) ? 0 : completionNoProgress + 1
                 guard completionNoProgress <= 2 else {
+                    setCompletionVerification(.init(model: verificationModel, state: .judged,
+                        verdict: verdict, reason: reason, continuationPaused: true), on: message.id)
                     append(ChatMessage(role: .notice, text: "Automatic continuation paused: repeated turns produced no new results or substantive analysis. Authorized work remains unfinished; the last reply is not completion."))
                     afterTurn()
                     return

@@ -1349,3 +1349,11 @@ body.spec-mode .float-layer { display: none; }
 .reaction-message-column .choices { min-width:0; }
 .reaction-message-column .choice { min-width:0; flex-wrap:wrap; }
 .reaction-message-column .choice .detail { white-space:normal; }
+
+/* The app's actual completion check, attached to the reply it evaluated. */
+.completion-verification { margin-top: 8px; padding: 8px 10px; border-left: 2px solid var(--muted); background: #ffffff05; border-radius: 4px; font-size: 12px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; min-width: 0; }
+.verification-title { color: var(--text); font-weight: 500; }
+.verification-model { font-size: 11px; }
+.verification-reason { margin-top: 3px; white-space: pre-wrap; }
+.completion-verification[data-verdict="COMPLETE"] { border-left-color: #7baa8c; }
+.completion-verification[data-verdict="UNAVAILABLE"], .completion-verification[data-verdict="UNKNOWN"] { border-left-color: #b89d66; }

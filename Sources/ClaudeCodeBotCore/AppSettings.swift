@@ -39,6 +39,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// to new ones.
     public var subagentModelDefault: BotModel?
 
+    /// Separate from conversation and worker models; old settings keep the Luna judge.
+    public var completionVerificationModelChoice: String?
+    public var completionVerificationModel: String { completionVerificationModelChoice ?? PromiseCheck.judgeModel }
+
     /// App-managed Codex workers follow `~/.codex/config.toml`. Nil (a settings file from before
     /// it) means on.
     public var codexWorkersFollow: Bool?

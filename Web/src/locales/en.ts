@@ -3,6 +3,20 @@
 export type Word = string | readonly [one: string, other: string];
 
 export const en = {
+  "verification.title": "Completion verification",
+  "verification.checking": "Checking…",
+  "verification.interrupted": "Interrupted; no verdict",
+  "verification.continue": "Work remains",
+  "verification.analysis": "Analysis remains",
+  "verification.complete": "Completed",
+  "verification.evidence": "Terminal evidence needed",
+  "verification.user": "Waiting on you",
+  "verification.cancelled": "Cancelled",
+  "verification.dependency": "Waiting on dependency",
+  "verification.unknown": "Uncertain",
+  "verification.unavailable": "Unavailable",
+  "verification.paused": "Automatic continuation paused: repeated turns produced no new results or substantive analysis. Work remains unfinished.",
+
   "avatar.library": "Character animations",
   "avatar.portrait": "Avatar",
   "avatar.sticker": "Sticker",

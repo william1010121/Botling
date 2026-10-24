@@ -1599,10 +1599,14 @@ public struct CodexModel: Equatable, Hashable, Sendable {
     public let name: String
     public let isDefault: Bool
 
-    public init(id: String, name: String, isDefault: Bool) {
+    /// Nil means this CLI did not advertise effort capabilities.
+    public let supportedReasoningEfforts: [String]?
+
+    public init(id: String, name: String, isDefault: Bool, supportedReasoningEfforts: [String]? = nil) {
         self.id = id
         self.name = name
         self.isDefault = isDefault
+        self.supportedReasoningEfforts = supportedReasoningEfforts
     }
 }
 
@@ -1629,7 +1633,8 @@ public enum CodexModels {
               let list = (object["result"] as? [String: Any])?["data"] as? [[String: Any]] else { return nil }
         return list.compactMap { model in
             guard model["hidden"] as? Bool != true, let id = model["id"] as? String else { return nil }
-            return CodexModel(id: id, name: model["displayName"] as? String ?? id, isDefault: model["isDefault"] as? Bool ?? false)
+            return CodexModel(id: id, name: model["displayName"] as? String ?? id, isDefault: model["isDefault"] as? Bool ?? false,
+                supportedReasoningEfforts: (model["supportedReasoningEfforts"] as? [[String: Any]])?.compactMap { $0["reasoningEffort"] as? String })
         }
     }
 

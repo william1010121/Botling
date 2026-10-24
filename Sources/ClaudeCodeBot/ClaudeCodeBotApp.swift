@@ -339,7 +339,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return try ClaudeAgentProcess.launcher(executable: executable)(launch)
         }
         // Every bot's turn ends with the app's own check: no ending on a promise nothing will keep.
-        let promiseCheck = PromiseCheck.checker(classify: PromiseCheck.codexClassifier())
         let workspace = Workspace(
             root: root,
             builtInPlugins: ChatSurface.builtInPlugins,
@@ -350,10 +349,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             checkCommand: Bundle.main.executablePath.map { "'\($0)' --check-plugin" },
             shotCommand: Bundle.main.executablePath.map { "'\($0)' --component-shot" },
-            launcher: launcher
+            launcher: launcher,
+            completionClassifier: { PromiseCheck.codexClassifier(model: $0) }
         ) { profile, store in
             let bot = Bot(profile: profile, idleInterval: idle, launcher: launcher, store: store)
-            bot.promiseCheck = promiseCheck
             return bot
         }
         workspace.applyLanguage()

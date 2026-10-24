@@ -223,8 +223,8 @@ public enum PromiseCheck {
         over older authorization. Only CONTINUE or CONTINUE_ANALYSIS permits an automatic continuation. The reason must explain the decision; no extra text outside JSON.
         """
 
-    /// Verified separately against local Codex model/list and real inference; independent of
-    /// the conversation model and all user/global preference defaults.
+    /// Backward-compatible default, verified against local Codex model/list and real inference.
+    /// A separate saved selection may override it without changing conversation/worker models.
     public static let judgeModel = "gpt-6-luna"
     static let judgmentSchema = """
         {"type":"object","properties":{"verdict":{"type":"string","enum":["CONTINUE","CONTINUE_ANALYSIS","COMPLETE","NEEDS_TERMINAL_SIGNAL","WAITING_USER","CANCELLED","WAITING_DEPENDENCY","UNKNOWN"]},"reason":{"type":"string"}},"required":["verdict","reason"],"additionalProperties":false}
@@ -233,11 +233,11 @@ public enum PromiseCheck {
     /// Existing Codex login, an ephemeral read-only classification process, medium reasoning.
     /// User config/AGENTS, hooks, plugins, shell, web and delegation are excluded for this judge
     /// only. Any unexpected tool item is rejected rather than used as completion evidence.
-    static func classifierArguments(message: String, folder: URL) -> [String] {
+    static func classifierArguments(message: String, folder: URL, model: String = judgeModel) -> [String] {
         let encodedPrompt = String(decoding: try! JSONSerialization.data(withJSONObject: classifierPrompt,
             options: [.fragmentsAllowed, .withoutEscapingSlashes]), as: UTF8.self)
         return ["exec", "--ignore-user-config", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check",
-            "--cd", folder.path, "--model", judgeModel, "-c", #"model_reasoning_effort="medium""#,
+            "--cd", folder.path, "--model", model, "-c", #"model_reasoning_effort="medium""#,
             "-c", "project_doc_max_bytes=0", "-c", #"web_search="disabled""#,
             "-c", "developer_instructions=" + encodedPrompt,
             "--disable", "shell_tool", "--disable", "unified_exec", "--disable", "multi_agent",
@@ -252,8 +252,8 @@ public enum PromiseCheck {
         var errorDescription: String? {
             switch self {
             case .missingCodex: "The completion judge requires the Codex CLI and its existing login; Codex was not found."
-            case .timedOut: "The GPT-6 Luna completion judge exceeded its time limit."
-            case .providerFailed: "The GPT-6 Luna completion call failed; check the existing Codex login and model access."
+            case .timedOut: "The completion judge exceeded its time limit."
+            case .providerFailed: "The selected completion model call failed; check the existing Codex login and model access."
             case .unexpectedTool: "The completion provider attempted a tool call; its result was rejected."
             case .invalidResult: "The completion provider did not return a valid structured judgment and reason."
             }
@@ -282,7 +282,7 @@ public enum PromiseCheck {
         return judgment
     }
 
-    public static func codexClassifier(locate: @escaping @Sendable () -> URL? = { CodexCLI.locateNewest() },
+    public static func codexClassifier(model: String = judgeModel, locate: @escaping @Sendable () -> URL? = { CodexCLI.locateNewest() },
                                        timeout: TimeInterval = classifierTimeout) -> Classifier {
         { message in
             guard let executable = locate() else { throw ClassifierFailure.missingCodex }
@@ -291,7 +291,7 @@ public enum PromiseCheck {
             defer { try? FileManager.default.removeItem(at: folder) }
             try judgmentSchema.write(to: folder.appending(path: "schema.json"), atomically: true, encoding: .utf8)
             let result = await blocking {
-                CommandRunner.runBlocking(executable, classifierArguments(message: message, folder: folder), timeout: timeout)
+                CommandRunner.runBlocking(executable, classifierArguments(message: message, folder: folder, model: model), timeout: timeout)
             }
             guard let result else { throw ClassifierFailure.providerFailed }
             if result.timedOut { throw ClassifierFailure.timedOut }
@@ -303,7 +303,7 @@ public enum PromiseCheck {
         }
     }
 
-    public static func codexClassifier(executable: URL, timeout: TimeInterval = classifierTimeout) -> Classifier {
-        codexClassifier(locate: { executable }, timeout: timeout)
+    public static func codexClassifier(executable: URL, model: String = judgeModel, timeout: TimeInterval = classifierTimeout) -> Classifier {
+        codexClassifier(model: model, locate: { executable }, timeout: timeout)
     }
 }

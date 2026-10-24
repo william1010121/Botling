@@ -69,6 +69,13 @@ export interface MessageView {
   seen?: SeenView[] | null;
   /** A bot's turn cut off before it answered (you wrote again, it stopped): what it had said and done so far. */
   interrupted?: boolean | null;
+  completionVerification?: {
+    model: string;
+    state: "checking" | "judged" | "interrupted";
+    verdict?: "CONTINUE" | "CONTINUE_ANALYSIS" | "COMPLETE" | "NEEDS_TERMINAL_SIGNAL" | "WAITING_USER" | "CANCELLED" | "WAITING_DEPENDENCY" | "UNKNOWN" | "UNAVAILABLE" | null;
+    reason?: string | null;
+    continuationPaused?: boolean | null;
+  } | null;
 }
 
 /** A head under a line: recipient highlighting and its separate actual-read receipt. */

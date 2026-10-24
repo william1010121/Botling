@@ -169,6 +169,7 @@ public final class Workspace: ObservableObject {
     /// Web AIs in the left column (Gemini): their conversations and saved text.
     public let web: WebShelf
     private let makeBot: BotFactory
+    let completionClassifier: ((String) -> PromiseCheck.Classifier)?
     /// Botling's own settings: developer mode, auto-approve, ignored items.
     @Published public internal(set) var settings: AppSettings
     /// The right panel folded (or opened) for a while by a view such as a Board, not saved;
@@ -216,11 +217,13 @@ public final class Workspace: ObservableObject {
         gitForPlugins: PluginLibraryGit? = nil,
         secrets: SecretStore = KeychainSecretStore(),
         launcher: @escaping AgentLauncher = { _ in throw CocoaError(.featureUnsupported) },
+        completionClassifier: ((String) -> PromiseCheck.Classifier)? = nil,
         makeBot: @escaping BotFactory
     ) {
         self.root = root
         web = WebShelf(folder: Layout.web(in: root), library: Layout.plugins(in: root))
         self.makeBot = makeBot
+        self.completionClassifier = completionClassifier
         self.launcher = launcher
         briefWriter = ComponentBrief.writer(launcher: launcher)
         let loadedSettings = AppSettings.load(from: root.appending(path: "settings.json"))
@@ -1579,6 +1582,7 @@ public final class Workspace: ObservableObject {
     /// Every bot starts with the plugins' Claude parts, their MCP tools allowed, and the secrets
     /// those servers read.
     private func giveClaudeParts(to bot: Bot) {
+        configureCompletionVerification(for: bot)
         bot.pluginDirectories = { [weak self] in self?.plugins.claudeDirectories() ?? [] }
         bot.pluginStamp = { [weak self] in self?.plugins.claudeStamp() ?? [] }
         bot.pluginTools = { [weak self] in self?.plugins.claudeTools() ?? [] }

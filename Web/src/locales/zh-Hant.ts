@@ -2,6 +2,20 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Traditional Chinese, as used in Taiwan (keys as in `en.ts`). */
 export const zhHant: Dictionary = {
+  "verification.title": "完成驗證",
+  "verification.checking": "驗證中…",
+  "verification.interrupted": "已中斷；未有判定",
+  "verification.continue": "仍有工作待完成",
+  "verification.analysis": "仍有分析待完成",
+  "verification.complete": "已完成",
+  "verification.evidence": "需要結束證據",
+  "verification.user": "等待你決定",
+  "verification.cancelled": "已取消",
+  "verification.dependency": "等待相依工作",
+  "verification.unknown": "無法確認",
+  "verification.unavailable": "驗證無法使用",
+  "verification.paused": "自動續跑已暫停：多次回合沒有新結果或實質分析，工作仍未完成。",
+
   "avatar.library": "角色動圖",
   "avatar.portrait": "頭像",
   "avatar.sticker": "全身貼圖",

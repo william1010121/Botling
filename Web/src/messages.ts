@@ -66,10 +66,52 @@ export function messageElement(message: MessageView, components: Record<string, 
       holder.append(footer);
     }
   }
+  if (message.completionVerification) {
+    const holder = row.querySelector(".bot-column, .speaker-column");
+    holder?.append(completionVerificationElement(message.completionVerification));
+  }
   for (const { plugin, handler } of extensions.afterRender) {
     extensions.guard(plugin, () => handler(row, { id: message.id, role: message.role, text: message.text }));
   }
   return row;
+}
+
+/** App-owned verdict on this reply; all provider text is inserted as text, never HTML. */
+export function completionVerificationElement(record: NonNullable<MessageView["completionVerification"]>): HTMLElement {
+  const card = document.createElement("div");
+  card.className = "completion-verification";
+  card.dataset.state = record.state;
+  card.dataset.verdict = record.verdict ?? "";
+  card.setAttribute("role", "status");
+  const title = document.createElement("div");
+  title.className = "verification-title";
+  const verdicts = {
+    CONTINUE: "verification.continue", CONTINUE_ANALYSIS: "verification.analysis",
+    COMPLETE: "verification.complete", NEEDS_TERMINAL_SIGNAL: "verification.evidence",
+    WAITING_USER: "verification.user", CANCELLED: "verification.cancelled",
+    WAITING_DEPENDENCY: "verification.dependency", UNKNOWN: "verification.unknown",
+    UNAVAILABLE: "verification.unavailable",
+  } as const;
+  const label = record.state === "checking" ? t("verification.checking")
+    : record.state === "interrupted" ? t("verification.interrupted")
+    : record.verdict ? t(verdicts[record.verdict]) : t("verification.unknown");
+  title.textContent = `${t("verification.title")} · ${label}`;
+  const model = document.createElement("div");
+  model.className = "verification-model";
+  model.textContent = `${record.model} · medium`;
+  card.append(title, model);
+  if (record.state === "judged" && record.reason) {
+    const reason = document.createElement("div");
+    reason.className = "verification-reason";
+    reason.textContent = record.reason;
+    card.append(reason);
+  }
+  if (record.continuationPaused) {
+    const paused = document.createElement("div");
+    paused.textContent = t("verification.paused");
+    card.append(paused);
+  }
+  return card;
 }
 
 export function reactionBar(message: MessageView): HTMLElement {
@@ -159,7 +201,7 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
       const actions = message.role === "bot" && (feedback.enabled || makeComponents.enabled) ? actionColumn(message) : replyButton(message);
       const chips = message.specs?.length ? specChips(message, components) : null;
       const tasks = message.tasks?.length ? taskChips(message.id, message.tasks) : null;
-      if (message.speaker || chips || tasks) {
+      if (message.speaker || chips || tasks || message.completionVerification) {
         // The group chat: who said it, above what they said. A spec's chip goes under it.
         const column = document.createElement("div");
         column.className = message.speaker ? "speaker-column" : "bot-column";

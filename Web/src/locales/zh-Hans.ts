@@ -2,6 +2,20 @@ import type { Dictionary } from "./en";
 
 /** The chat page's words in Simplified Chinese (keys as in `en.ts`). */
 export const zhHans: Dictionary = {
+  "verification.title": "完成验证",
+  "verification.checking": "验证中…",
+  "verification.interrupted": "已中断；没有判定",
+  "verification.continue": "仍有工作待完成",
+  "verification.analysis": "仍有分析待完成",
+  "verification.complete": "已完成",
+  "verification.evidence": "需要结束证据",
+  "verification.user": "等待你决定",
+  "verification.cancelled": "已取消",
+  "verification.dependency": "等待依赖工作",
+  "verification.unknown": "无法确认",
+  "verification.unavailable": "验证不可用",
+  "verification.paused": "自动继续已暂停：多次回合没有新结果或实质分析，工作仍未完成。",
+
   "avatar.library": "角色动图",
   "avatar.portrait": "头像",
   "avatar.sticker": "全身贴图",
