@@ -362,3 +362,69 @@ describe("a floating pin shown in all bots", () => {
     expect(item.disabled).toBe(true);
   });
 });
+
+describe("a floating card's ⋯ menu opens and closes", () => {
+  const menus = () => document.querySelectorAll(".pin-menu");
+  const more = () => document.querySelector<HTMLButtonElement>(".float-card [aria-label='More']")!;
+  // A real click: mousedown (where a click elsewhere closes the menu) and then click.
+  const press = (target: Element) => {
+    target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  };
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("⋯ again closes it, and does not open it again", async () => {
+    const layer = setUp();
+    layer.update(state());
+    press(more());
+    expect(menus()).toHaveLength(1);
+    await tick();
+    press(more());
+    expect(menus()).toHaveLength(0);
+    await tick();
+    press(more());
+    expect(menus()).toHaveLength(1);
+  });
+
+  it("a refresh redrawing its header neither closes nor rebuilds it, and the new ⋯ still closes it", async () => {
+    const layer = setUp();
+    layer.update(state());
+    const old = more();
+    press(old);
+    const menu = document.querySelector(".pin-menu");
+    await tick();
+    // Its command runs (the header says Running…) and finishes: the header is drawn again.
+    layer.update(state({ floating: floating(pin({ display: { ...pin().display, status: "running" } })) }));
+    layer.update(state({ floating: floating(pin({ display: { ...pin().display, ranAt: "10:43" } })) }));
+    expect(more()).not.toBe(old);
+    expect(menus()).toHaveLength(1);
+    expect(document.querySelector(".pin-menu")).toBe(menu);
+    press(more());
+    expect(menus()).toHaveLength(0);
+  });
+
+  it("a click elsewhere, in a component's frame, Escape or an item closes it", async () => {
+    const layer = setUp();
+    layer.update(state());
+    press(more());
+    await tick();
+    press(document.getElementById("scroller")!);
+    expect(menus()).toHaveLength(0);
+
+    press(more());
+    await tick();
+    // A click inside a frame reaches only the frame: the page loses focus.
+    window.dispatchEvent(new Event("blur"));
+    expect(menus()).toHaveLength(0);
+
+    press(more());
+    await tick();
+    document.querySelector(".pin-menu button")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(menus()).toHaveLength(0);
+
+    press(more());
+    await tick();
+    press([...document.querySelectorAll<HTMLButtonElement>(".pin-menu button")].find((e) => e.textContent === "Fold to one line")!);
+    expect(menus()).toHaveLength(0);
+  });
+});

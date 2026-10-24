@@ -324,11 +324,21 @@ function sizeGrid(grid: SizeGrid, menu: HTMLElement): HTMLElement {
   return holder;
 }
 
-export function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[]): void {
+/**
+ * Opens a menu by `anchor`, or closes it when that anchor's menu is the one open (⋯ clicked again).
+ * `key` names whose menu it is, for an anchor drawn again while it is open (a floating pin's header
+ * redrawn as its data refreshes): its button carries `data-menu-key` (`PinHeadTools.menuKey`).
+ */
+export function openMenu(anchor: HTMLElement, items: (MenuItem | "-")[], key?: string): void {
+  const open = document.querySelector<HTMLElement>(".pin-menu");
+  const same = open && (popupAnchors.get(open) === anchor || (key !== undefined && open.dataset.menuKey === key));
   closePopups();
+  if (same) return;
   const menu = document.createElement("div");
   menu.className = "pin-menu pin-popup";
   menu.setAttribute("role", "menu");
+  if (key !== undefined) menu.dataset.menuKey = key;
+  popupAnchors.set(menu, anchor);
   for (const item of items) {
     if (item === "-") {
       const line = document.createElement("div");
@@ -384,7 +394,10 @@ export function closePopups(): void {
   document.querySelectorAll(".pin-popup").forEach((popup) => popup.remove());
 }
 
-/** A popup by its anchor, inside the window; a click elsewhere closes it. */
+/** The anchor each open menu was opened by, so clicking it again closes the menu. */
+const popupAnchors = new WeakMap<HTMLElement, HTMLElement>();
+
+/** A popup by its anchor, inside the window; a click elsewhere (a component's frame too) closes it. */
 function place(popup: HTMLElement, anchor: HTMLElement): void {
   document.body.append(popup);
   const rect = anchor.getBoundingClientRect();
@@ -411,16 +424,38 @@ function place(popup: HTMLElement, anchor: HTMLElement): void {
       }
     });
   }
-  const close = (event: MouseEvent) => {
-    if (!popup.isConnected) return document.removeEventListener("mousedown", close);
-    if (!popup.contains(event.target as Node)) {
-      // A refresh row's edit is applied as its field is left (see `intervalRow`), then it closes.
-      if (popup.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
-      popup.remove();
-      document.removeEventListener("mousedown", close);
-    }
+  const stop = () => {
+    document.removeEventListener("mousedown", close);
+    window.removeEventListener("blur", away);
   };
-  setTimeout(() => document.addEventListener("mousedown", close), 0);
+  const dismiss = () => {
+    // A refresh row's edit is applied as its field is left (see `intervalRow`), then it closes.
+    if (popup.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
+    popup.remove();
+    stop();
+  };
+  const close = (event: MouseEvent) => {
+    if (!popup.isConnected) return stop();
+    const target = event.target as Node;
+    if (popup.contains(target)) return;
+    // Its own ⋯ (or the one drawn in its place): left to that button's click, which closes it.
+    // Closed here, that click would open it again at once.
+    // (A menu opened by right-clicking a card closes on any click in it.)
+    const key = popup.dataset.menuKey;
+    if (anchor instanceof HTMLButtonElement && anchor.contains(target)) return;
+    if (key !== undefined && target instanceof Element && target.closest<HTMLElement>("[data-menu-key]")?.dataset.menuKey === key) return;
+    dismiss();
+  };
+  // A click in a component's frame never reaches this document: the page loses focus instead.
+  const away = () => {
+    if (!popup.isConnected) return stop();
+    dismiss();
+  };
+  setTimeout(() => {
+    if (!popup.isConnected) return;
+    document.addEventListener("mousedown", close);
+    window.addEventListener("blur", away);
+  }, 0);
 }
 
 /** The menu of a pin (a chip's right-click, a sheet's or card's ⋯). */
@@ -651,6 +686,8 @@ export function pinStatus(pin: PinView): ChipStatus {
 /** A header's buttons beyond ↻: ⋯ always, collapse where the panel can be put away. */
 export interface PinHeadTools {
   more: (anchor: HTMLElement) => void;
+  /** Its menu's `openMenu` key, so ⋯ closes the menu it opened even after the header is redrawn. */
+  menuKey?: string;
   close?: () => void;
 }
 
@@ -688,6 +725,7 @@ export function fillPinHead(head: HTMLElement, pin: PinView, info: ComponentInfo
     bar.append(refresh);
   }
   const more = button("pin-tool", t("pins.more"), icons.more, () => tools.more(more));
+  if (tools.menuKey !== undefined) more.dataset.menuKey = tools.menuKey;
   bar.append(more);
   if (tools.close) bar.append(button("pin-tool", t("pins.collapse"), icons.close, tools.close));
   head.append(title, chip, bar);

@@ -4,7 +4,7 @@ import { shared } from "./contract";
 import { componentSizes, keepFrames, maxColumns, maxRows, pinSize, resizeFrame, sizeInfo } from "./components";
 import { LiveSchedule, liveTick, type LiveCard } from "./refresh";
 import { onScreen, whenShownAgain, windowVisible } from "./visible";
-import { boardCell, boardGap, capture, closePopups, drawnPart, fillPinHead, openMenu, pinBody, pinHeadKey, pinTitle, refreshItems, whenWords, type MenuItem } from "./pins";
+import { boardCell, boardGap, capture, drawnPart, fillPinHead, openMenu, pinBody, pinHeadKey, pinTitle, refreshItems, whenWords, type MenuItem } from "./pins";
 import type { ChatState, ComponentInfo, FloatCorner, FloatView, FloatingPinView, PinSize, PinView } from "./types";
 
 /**
@@ -114,6 +114,11 @@ function ownerMark(botName: string): HTMLElement {
 }
 
 const globe = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>`;
+
+/** Whose ⋯ menu it is: a floating pin's, by its id. */
+function menuKey(entry: { pin: PinView }): string {
+  return `float:${entry.pin.id}`;
+}
 
 /**
  * Its menu's "Show in all bots" (off, saying which chat has no room, when one already shows the
@@ -282,7 +287,7 @@ export class FloatLayer {
     entry.card.classList.toggle("global", entry.global);
     if (key === entry.headKey) return;
     entry.headKey = key;
-    fillPinHead(entry.head, pin, info, { more: (anchor) => this.menu(entry, anchor) });
+    fillPinHead(entry.head, pin, info, { more: (anchor) => this.menu(entry, anchor), menuKey: menuKey(entry) });
     if (entry.global) entry.head.querySelector(".pin-head-tools")?.before(ownerMark(entry.botName));
     entry.head.title = t("float.headTitle");
     entry.card.querySelector(".float-resize")?.setAttribute("title", t("float.dragToResize"));
@@ -467,8 +472,8 @@ export class FloatLayer {
     }
     items.push(...globalItems(entry));
     items.push({ label: t("float.stop"), run: () => post({ type: "floatPin", id: pin.id, floating: false }) });
-    closePopups();
-    openMenu(anchor, items);
+    // Its ⋯ again closes it; a refresh redrawing the header leaves it as it is.
+    openMenu(anchor, items, menuKey(entry));
   }
 
   /** Pins that just came into sight: those refreshed "when shown" run (once allowed). */
