@@ -89,6 +89,13 @@ struct ComponentEditorTransportTests {
         if method == "initialize":
             result(rpc, {})
         elif method == "thread/start":
+            # Validate the catalog actually serialized across stdio before the caller uses
+            # its role field. A receiver-only implementation cannot pass this fixture.
+            handoff = next(t for t in params["dynamicTools"] if t["name"] == "app_handoff")
+            schema = handoff["inputSchema"]
+            assert set(schema["properties"]) == {"instructions", "name", "role"}
+            assert schema["properties"]["role"]["enum"] == ["component-editor"]
+            assert schema["required"] == ["instructions"] and schema["additionalProperties"] is False
             result(rpc, {"thread": {"id": "root"}})
         elif method == "turn/start":
             report = params.get("toolOutput")
