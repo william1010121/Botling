@@ -14,7 +14,7 @@ afterEach(async () => {
   for (const harness of harnesses.splice(0)) if (harness.child.exitCode === null && harness.child.signalCode === null) await harness.kill("SIGTERM");
 });
 const env = (extra: Record<string, string> = {}) => ({
-  BOTLING_AGENT: "claude", BOTLING_HARMLESS: "1", ...(process.env.BOTLING_MODEL ? { BOTLING_MODEL: process.env.BOTLING_MODEL } : {}), ...extra,
+  BOTLING_AGENT: "claude", BOTLING_HARMLESS: "1", BOTLING_QUIT_TIDY_MS: "0", ...(process.env.BOTLING_MODEL ? { BOTLING_MODEL: process.env.BOTLING_MODEL } : {}), ...extra,
 });
 const headPid = (c: CoreHarness) => Number(/head started pid (\d+)/.exec(c.stderr)?.[1]);
 

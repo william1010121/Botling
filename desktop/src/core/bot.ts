@@ -846,18 +846,8 @@ export class Bot {
       this.persist();
       archiveLine(this.paths.archive, record);
     }
-    this.emit({
-      type: "turn.finished", botId: this.id, turnId: turn.id, messageId: turn.messageId, status, text: record.text,
-      ...(error ? { error: error.slice(0, 2_000) } : {}), ...(cards ? { cards: cards.map(cardView) } : {}),
-    });
-    this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
-    this.finished.set(turn.id, status);
-    turn.resolve(status);
+    // The task cards it belongs to, from its <task> lines (written before anyone hears the turn ended).
     if (status === "done") {
-      this.crashes = 0;
-      this.unread += 1;
-      this.store.saveSetting("unread", this.unread);
-      // The task cards it belongs to, from its <task> lines.
       this.tasks.replied(record.id, {
         head: "claude",
         userMessage: turn.origin === "user" ? turn.userId : null,
@@ -869,6 +859,18 @@ export class Bot {
         runningSubagents: new Set(this.subagents.running.map((subagent) => subagent.id)),
       }, parsed.tasks, toSwiftDate());
       this.saveTasks();
+    }
+    this.emit({
+      type: "turn.finished", botId: this.id, turnId: turn.id, messageId: turn.messageId, status, text: record.text,
+      ...(error ? { error: error.slice(0, 2_000) } : {}), ...(cards ? { cards: cards.map(cardView) } : {}),
+    });
+    this.emit({ type: "message.updated", botId: this.id, message: this.messageView(record) });
+    this.finished.set(turn.id, status);
+    turn.resolve(status);
+    if (status === "done") {
+      this.crashes = 0;
+      this.unread += 1;
+      this.store.saveSetting("unread", this.unread);
       if (parsed.requests.length) {
         const what = [...new Set(parsed.requests.map(unsupportedRequest))];
         this.notice(`Botling 2.0 cannot do this yet, so nothing happened: ${what.join("; ")}.`);

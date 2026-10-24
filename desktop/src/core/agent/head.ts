@@ -47,6 +47,9 @@ export function headArguments(config: HeadConfig): string[] {
   const allowed = config.harmless ? [] : config.allowedTools;
   if (allowed.length) args.push("--allowedTools", allowed.join(","));
   if (config.model) args.push("--model", config.model);
+  // The app's own instructions (Prompts.swift's). Not in harmless mode: they rely on Read/Write/Edit
+  // (memory.md, routines), and a live run with no tools but these instructions wrote fake tool calls
+  // as text for minutes instead of answering (Phase 2a).
   if (config.systemPrompt && !config.harmless) args.push("--append-system-prompt", config.systemPrompt);
   if (config.harmless) {
     args.push("--safe-mode", "--strict-mcp-config", "--no-session-persistence", "--tools", (config.harmlessTools ?? []).join(","));
