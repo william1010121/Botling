@@ -114,6 +114,8 @@ public final class Workspace: ObservableObject {
     @Published public internal(set) var callInSpeakers: [UUID: UUID] = [:]
     /// The turns of bots called into a bot's own chat run one after another, by its member id.
     var callInQueues: [UUID: Task<Void, Never>] = [:]
+    /// The bot @s delivered (BotMentions.swift), kept so none is delivered twice.
+    lazy var botMentionLog = BotMentionLog(url: root.appending(path: "bot-mentions.json"))
     /// Maintainer's project (the plugin library); not in `projects`, which are the user's own.
     public let maintainerProject: Project
     /// The plugin library's git (made a repo on first need, see `prepareLibrary`).
@@ -275,8 +277,9 @@ public final class Workspace: ObservableObject {
         mainBot.extraDirectories = { [weak self] in self?.everyProject.map(\.notesFolder) ?? [] }
         giveClaudeParts(to: mainBot)
         countComponents(of: mainBot)
-        mainBot.onReply = { [weak self] _, _ in
+        mainBot.onReply = { [weak self] message, _ in
             guard let self else { return }
+            receiveBotMention(message, from: mainBot)
             deliverInboxes()
             refreshWaiting()
             readIfViewing(mainBot)
@@ -2296,6 +2299,7 @@ public final class Workspace: ObservableObject {
         countComponents(of: bot)
         bot.onReply = { [weak self, weak bot] message, _ in
             guard let self else { return }
+            if let bot { receiveBotMention(message, from: bot) }
             if project.isMaintainer {
                 components.finishWorking()
                 finishSpecBuilds()

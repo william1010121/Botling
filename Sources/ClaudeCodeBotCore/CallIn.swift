@@ -80,27 +80,29 @@ extension Workspace {
     }
 
     /// Queues the called bots' turns after any still running for this chat, so they never talk
-    /// over each other.
-    func startCallIn(in chat: Bot, to members: [Member], newest: UUID?, ask: String?) {
+    /// over each other. `caller` is the chat's own bot when its reply did the @ (see
+    /// BotMentions.swift); nil when the user did.
+    func startCallIn(in chat: Bot, to members: [Member], newest: UUID?, ask: String?, caller: BotMention? = nil) {
         guard let host = hostID(of: chat) else { return }
         let previous = callInQueues[host]
         callInQueues[host] = Task { [weak self] in
             await previous?.value
             guard !Task.isCancelled else { return }
-            await self?.runCallIn(in: chat, host: host, to: members, newest: newest, ask: ask)
+            await self?.runCallIn(in: chat, host: host, to: members, newest: newest, ask: ask, caller: caller)
         }
     }
 
-    private func runCallIn(in chat: Bot, host: UUID, to members: [Member], newest: UUID?, ask: String?) async {
+    private func runCallIn(in chat: Bot, host: UUID, to members: [Member], newest: UUID?, ask: String?, caller: BotMention?) async {
         let before = Self.transcriptBefore(newest, in: chat.messages)
         var unheard: [String] = []
         for member in members {
             guard let bot = self.member(member.id), hostID(of: chat) == host else { continue }
-            let prompt = callInPrompt(for: member, into: chat, transcript: before, newest: newest, ask: ask)
+            let prompt = caller.map { botCallInPrompt(for: member, into: chat, transcript: before, mention: $0) }
+                ?? callInPrompt(for: member, into: chat, transcript: before, newest: newest, ask: ask)
             callInSpeakers[host] = member.id
             let timing = groupTiming
             let askedAt = Date()
-            let asked = ask ?? newest.flatMap { id in chat.messages.first { $0.id == id }?.text } ?? ""
+            let asked = ask ?? caller.map { "@\(member.name) \($0.body)" } ?? newest.flatMap { id in chat.messages.first { $0.id == id }?.text } ?? ""
             let answer = await bot.groupTurn(prompt, waitFor: timing.busyNamed, answerWithin: timing.answerNamed)
             callInSpeakers[host] = nil
             if member.id == Self.mainBotID { deliverInboxes() }
@@ -111,9 +113,10 @@ extension Workspace {
                 unheard.append(L("{0} ({1})", member.name, Self.firstLine(of: why)))
             case let .reply(text, steps):
                 let hostName = everyMember.first { $0.bot === chat }?.name ?? chat.name
-                // You named it, so its tags act as they would in its own chat.
+                // You named it, so its tags act as they would in its own chat. Called in by a bot,
+                // its answer is only a line: no tags act, nothing in it is dispatched.
                 _ = await postGuestReply(text, steps: steps, from: member, bot: bot, into: chat, seen: isViewing(chat),
-                                         policy: .init(passes: false, tagsAct: true)) { [hostName] line in
+                                         policy: .init(passes: false, tagsAct: caller == nil)) { [hostName] line in
                     bot.keepCallIn(asked: L("Called into {0}'s chat with @: {1}", hostName, asked), at: askedAt, reply: line)
                 }
             }
