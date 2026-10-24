@@ -183,6 +183,9 @@ public struct AgentLaunch: Equatable, Sendable {
     /// The model its subagents use (`CLAUDE_CODE_SUBAGENT_MODEL`); nil: the same as its own.
     /// An agent whose definition names a model keeps that one.
     public var subagentModel: BotModel? = nil
+    /// Its subagents keep their prompt cache for an hour (`CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL`);
+    /// false leaves Claude Code's own default (5 minutes).
+    public var subagentHourCache = false
     /// App-owned routine tool is scoped to this bot, never a caller-supplied filesystem path.
     public var routinesURL: URL? = nil
 }
@@ -262,7 +265,8 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         return (try? JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
     }
 
-    /// What it adds to the app's environment: plugins' secrets, the subagent model, and the
+    /// What it adds to the app's environment: plugins' secrets, the subagent model (and, when
+    /// chosen, the subagents' 1-hour prompt cache), and the
     /// Artifact tool switched on. Claude Code leaves that tool out of `-p` sessions unless
     /// `CLAUDE_CODE_ARTIFACT` asks for it, so without it a bot has no way to publish a result
     /// (and when results stay local, nothing to ask the user for). One set in the app's own
@@ -275,10 +279,11 @@ public final class ClaudeAgentProcess: AgentProcess, @unchecked Sendable {
         if let model = launch.subagentModel {
             environment["CLAUDE_CODE_SUBAGENT_MODEL"] = model.rawValue
         }
-        // Subagents keep their prompt cache for an hour, like the bot's own turns: a subagent
-        // that waits more than 5 minutes (on a tool, a build, the user) would otherwise write its
-        // whole context again. One the app's environment sets ("5m") is left as it is.
-        if inherited[subagentCacheTTL] == nil, environment[subagentCacheTTL] == nil {
+        // When chosen in Settings, subagents keep their prompt cache for an hour, like the bot's
+        // own turns: a subagent that waits more than 5 minutes (on a tool, a build, the user)
+        // would otherwise write its whole context again. One the app's environment sets ("5m")
+        // is left as it is.
+        if launch.subagentHourCache, inherited[subagentCacheTTL] == nil, environment[subagentCacheTTL] == nil {
             environment[subagentCacheTTL] = "1h"
         }
         return environment

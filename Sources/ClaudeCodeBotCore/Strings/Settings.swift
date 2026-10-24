@@ -194,6 +194,14 @@ extension L10n {
         "Copied": ["已拷貝", "已复制", "コピーしました", "복사됨"],
         "Copy the command, then run it in Terminal": ["拷貝指令，然後在「終端機」中執行", "复制命令，然后在“终端”中运行", "コマンドをコピーして、ターミナルで実行してください", "명령을 복사한 다음 터미널에서 실행하세요"],
         // General → Language
+        // Engines and subagents → Claude subagents
+        "Keep subagents' prompt cache for 1 hour": ["子代理的提示快取保留 1 小時", "子代理的提示缓存保留 1 小时", "サブエージェントのプロンプトキャッシュを 1 時間保持", "서브에이전트 프롬프트 캐시 1시간 유지"],
+        "Each cache write costs more than with the 5-minute default, but long-running subagents re-read their context more cheaply. Applies when a bot next starts.": [
+            "每次寫入快取的費用比預設的 5 分鐘高，但長時間執行的子代理重讀上下文會更便宜。於 Bot 下次啟動時生效。",
+            "每次写入缓存的费用比默认的 5 分钟高，但长时间运行的子代理重读上下文会更便宜。于 Bot 下次启动时生效。",
+            "キャッシュの書き込みは既定の 5 分より割高ですが、長く動くサブエージェントはコンテキストを安く読み直せます。ボットの次回起動から適用されます。",
+            "캐시 쓰기 비용은 기본값 5분보다 높지만, 오래 실행되는 서브에이전트는 컨텍스트를 더 저렴하게 다시 읽습니다. 봇이 다음에 시작할 때 적용됩니다.",
+        ],
         "Completion verification": ["完成驗證", "完成验证", "完了検証", "완료 검증"],
         "Verification model": ["驗證模型", "验证模型", "検証モデル", "검증 모델"],
         "Verify completion automatically": ["自動驗證完成狀態", "自动验证完成状态", "完了を自動で検証", "완료 자동 검증"],

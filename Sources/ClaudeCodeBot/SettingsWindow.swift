@@ -576,6 +576,13 @@ private struct EnginesPage: View {
             }
             .pickerStyle(.segmented)
             .fixedSize()
+            Toggle(isOn: Binding(
+                get: { workspace.settings.subagentHourCache },
+                set: { workspace.setSubagentHourCache($0) }
+            )) {
+                TitleAndNote(title: L("Keep subagents' prompt cache for 1 hour"), note: L("Each cache write costs more than with the 5-minute default, but long-running subagents re-read their context more cheaply. Applies when a bot next starts."))
+            }
+            .toggleStyle(.switch)
         } header: {
             VStack(alignment: .leading, spacing: 18) {
                 Text(L("Which model the subagents (Claude) and workers (Codex) bots send out use by default. Each bot's own engine, model and thinking effort stay on that bot's settings page, right of the chat."))

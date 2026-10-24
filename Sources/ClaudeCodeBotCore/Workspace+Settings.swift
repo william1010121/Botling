@@ -25,7 +25,7 @@ public enum SettingsSection: String, CaseIterable, Identifiable, Sendable {
     var searchTerms: [String] {
         switch self {
         case .general: ["Language", "App language", "Bot look", "Chat avatars", "Chat avatar size", "Reminders", "Remind after no new step for", "Catch-up summary", "Summarize unread messages", "Unread threshold", "Summary model"]
-        case .engines: ["Claude subagents", "Codex workers", "Follow Codex config file", "Model", "Reasoning effort", "Fast mode", "Component editor", "Engine and model for all bots", "Completion verification", "Verification model"]
+        case .engines: ["Claude subagents", "Codex workers", "Follow Codex config file", "Model", "Reasoning effort", "Fast mode", "Component editor", "Engine and model for all bots", "Keep subagents' prompt cache for 1 hour", "Completion verification", "Verification model"]
         case .permissions: ["Auto mode", "Auto-approve safe actions", "Reports and results", "Publish as", "Approved component commands", "Ignored"]
         case .usage: ["App context savings", "Send only reaction changes", "Send only component changes", "Usage today", "Cost", "Tokens", "Subscription limits", "By bot", "Earlier days"]
         case .plugins: ["Installed", "Add plugin"]
@@ -151,6 +151,14 @@ extension Workspace {
         settings.reactionChangesOnlyChoice = on
         settings.save(to: settingsURL)
         for bot in modelSettingsBots { bot.reactionChangesOnly = on }
+    }
+
+    /// Saved immediately; each bot's `claude` reads it when it next starts (a running one keeps
+    /// what it started with).
+    public func setSubagentHourCache(_ on: Bool) {
+        guard on != settings.subagentHourCache else { return }
+        settings.subagentHourCacheChoice = on
+        settings.save(to: settingsURL)
     }
 
     public func setComponentChangesOnly(_ on: Bool) {

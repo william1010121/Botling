@@ -140,6 +140,9 @@ public final class Bot: ObservableObject, Identifiable {
     public var pluginEnvironment: (() -> [String: String])?
     /// Whether it starts in Claude Code's auto mode, read at each wake (off when not set).
     public var autoMode: (() -> Bool)?
+    /// Whether its Claude subagents keep their prompt cache for an hour (Settings), read at each
+    /// start (off when not set).
+    public var subagentHourCache: (() -> Bool)?
     /// Where it puts results for the user (Settings), read at each start.
     public var resultPublishing: (() -> ResultPublishing)?
     /// The language it replies in by default (Settings), read at each start.
@@ -820,6 +823,7 @@ public final class Bot: ObservableObject, Identifiable {
         made.pluginTools = pluginTools
         made.pluginEnvironment = pluginEnvironment
         made.autoMode = autoMode
+        made.subagentHourCache = subagentHourCache
         made.resultPublishing = resultPublishing
         made.language = language
         made.onReply = { [weak self] message, relay in self?.onReply?(message, relay) }
@@ -1659,6 +1663,7 @@ public final class Bot: ObservableObject, Identifiable {
             codexWorkerInstructions: engine == .codex ? prompts.codexWorkerSystem : nil,
             codexWorkerDefaults: codexWorkerDefaults,
             subagentModel: subagentModel,
+            subagentHourCache: subagentHourCache?() ?? false,
             routinesURL: primary?.profile.routinesURL ?? profile.routinesURL
         ))
         self.process = process

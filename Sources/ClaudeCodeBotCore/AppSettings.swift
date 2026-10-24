@@ -39,6 +39,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// to new ones.
     public var subagentModelDefault: BotModel?
 
+    /// Claude subagents keep their prompt cache for an hour instead of 5 minutes
+    /// (`CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL=1h`), Settings → Engines and subagents. Nil (a
+    /// settings file from before it) means off.
+    public var subagentHourCacheChoice: Bool?
+    public var subagentHourCache: Bool { subagentHourCacheChoice ?? false }
+
     /// Separate from conversation and worker models; old settings keep the Luna judge.
     public var completionVerificationModelChoice: String?
     public var completionVerificationModel: String { completionVerificationModelChoice ?? PromiseCheck.judgeModel }

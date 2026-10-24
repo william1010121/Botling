@@ -10,8 +10,8 @@ struct BotTuningTests {
         FileManager.default.temporaryDirectory.appending(path: "ccb-tuning-\(UUID().uuidString)")
     }
 
-    private func launch(effort: EffortLevel? = nil, subagentModel: BotModel? = nil, environment: [String: String] = [:]) -> AgentLaunch {
-        AgentLaunch(
+    private func launch(effort: EffortLevel? = nil, subagentModel: BotModel? = nil, environment: [String: String] = [:], subagentHourCache: Bool = false) -> AgentLaunch {
+        var launch = AgentLaunch(
             model: .sonnet,
             sessionID: UUID(),
             workingDirectory: FileManager.default.temporaryDirectory,
@@ -20,6 +20,8 @@ struct BotTuningTests {
             effort: effort,
             subagentModel: subagentModel
         )
+        launch.subagentHourCache = subagentHourCache
+        return launch
     }
 
     // MARK: Persistence
@@ -96,14 +98,46 @@ struct BotTuningTests {
 
     @Test func sameAsBotSetsNoSubagentModel() {
         let environment = ClaudeAgentProcess.launchEnvironment(for: launch(environment: ["TOKEN": "x"]), inherited: [:])
-        #expect(environment == ["TOKEN": "x", "CLAUDE_CODE_ARTIFACT": "1", "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL": "1h"])
+        #expect(environment == ["TOKEN": "x", "CLAUDE_CODE_ARTIFACT": "1"])
     }
 
-    @Test func subagentsKeepTheirPromptCacheForAnHourUnlessTheAppSaysOtherwise() {
-        #expect(ClaudeAgentProcess.launchEnvironment(for: launch(), inherited: [:])["CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"] == "1h")
-        let set = ["CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL": "5m"]
-        #expect(ClaudeAgentProcess.launchEnvironment(for: launch(), inherited: set)["CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"] == nil)
-        #expect(ClaudeAgentProcess.launchEnvironment(for: launch(environment: set), inherited: [:])["CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"] == "5m")
+    private let ttl = "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL"
+
+    @Test func subagentHourCacheOffSetsNothing() {
+        #expect(ClaudeAgentProcess.launchEnvironment(for: launch(), inherited: [:])[ttl] == nil)
+        // The user's own value still goes through as before.
+        #expect(ClaudeAgentProcess.launchEnvironment(for: launch(environment: [ttl: "1h"]), inherited: [:])[ttl] == "1h")
+    }
+
+    @Test func subagentHourCacheOnSetsAnHourUnlessTheUserSaysOtherwise() {
+        #expect(ClaudeAgentProcess.launchEnvironment(for: launch(subagentHourCache: true), inherited: [:])[ttl] == "1h")
+        let set = [ttl: "5m"]
+        // Set in the app's own environment: left there (the child inherits it), not overridden.
+        #expect(ClaudeAgentProcess.launchEnvironment(for: launch(subagentHourCache: true), inherited: set)[ttl] == nil)
+        #expect(ClaudeAgentProcess.launchEnvironment(for: launch(environment: set, subagentHourCache: true), inherited: [:])[ttl] == "5m")
+    }
+
+    @Test func subagentHourCacheSettingIsOffByDefaultSavedAndReachesTheLaunch() async throws {
+        let old = try JSONDecoder().decode(AppSettings.self, from: Data("{\"developerMode\":false}".utf8))
+        #expect(!old.subagentHourCache)
+        let root = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fake = FakeLauncher()
+        let open = { Workspace(root: root, launcher: fake.launcher) { profile, store in Bot(profile: profile, launcher: fake.launcher, store: store) } }
+        let workspace = open()
+        #expect(!workspace.settings.subagentHourCache)
+        workspace.mainBot.send("hello")
+        await eventually { !workspace.mainBot.isWorking }
+        #expect(fake.agents.last?.launch.subagentHourCache == false)
+        workspace.mainBot.stop()
+        workspace.setSubagentHourCache(true)
+        let reloaded = open()
+        #expect(reloaded.settings.subagentHourCache)
+        reloaded.mainBot.send("hello again")
+        await eventually { !reloaded.mainBot.isWorking }
+        defer { reloaded.mainBot.stop() }
+        #expect(fake.agents.last?.launch.subagentHourCache == true)
+        #expect(SettingsSection.matching("Keep subagents' prompt cache for 1 hour", in: SettingsSection.allCases) == [.engines])
     }
 
     @Test func eachSubagentModelGoesInTheEnvironment() {

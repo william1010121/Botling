@@ -1603,6 +1603,7 @@ public final class Workspace: ObservableObject {
         bot.reactionChangesOnly = settings.reactionChangesOnly
         bot.componentChangesOnly = settings.componentChangesOnly
         bot.autoMode = { [weak self] in self?.settings.autoApprovesSafeActions ?? false }
+        bot.subagentHourCache = { [weak self] in self?.settings.subagentHourCache ?? false }
         bot.resultPublishing = { [weak self] in self?.settings.resultPublishing ?? .artifactUnlessSensitive }
         bot.language = { [weak self] in self?.language ?? .english }
     }
