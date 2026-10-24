@@ -7,7 +7,7 @@ const botB: BotView = { ...botA, id: "B", name: "B", role: "bot", working: false
 const reply: MessageView = { id: "m1", role: "bot", text: "", time: "t", turnId: "t1", state: "streaming" };
 const snap = (epoch: string, seq: number, text = "", botId = "A"): ResultOf<"chat.snapshot"> => ({
   epoch, seq, bots: [botA, botB], imported: null,
-  chat: { botId, messages: [{ ...reply, text }], running: { turnId: "t1", messageId: "m1" }, live: [], tasks: [], runs: [], heads: null },
+  chat: { botId, messages: [{ ...reply, text }], running: { turnId: "t1", messageId: "m1" }, live: [], tasks: [], runs: [], heads: null, catchUp: null, intervalSummaries: [] },
 });
 const delta = (epoch: string, seq: number, text: string, botId = "A"): EventEnvelope =>
   ({ v: 5, epoch, seq, event: { type: "turn.delta", botId, turnId: "t1", messageId: "m1", text } });

@@ -4,7 +4,7 @@
 // takes a fresh snapshot instead of patching on guesses. Events that arrive while a snapshot is
 // on its way are buffered and replayed if newer than it. Chat events for other bots are not
 // kept (their chats are fetched when shown); `bot.updated` is kept for every bot.
-import type { BotView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
+import type { BotView, CatchUpView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
 
 /** A turn under way and its steps so far (with two heads, two can run at once). */
 export interface RunState { turnId: string; messageId: string; live: StepView[] }
@@ -20,6 +20,9 @@ export interface ChatView {
   runs?: RunState[];
   /** A bot with two heads: who new messages go to, the rounds line, the hand-offs. */
   heads?: HeadsView | null;
+  /** Unread lines folded with their summary, and the interval summaries. */
+  catchUp?: CatchUpView | null;
+  intervalSummaries?: CatchUpView[];
 }
 
 export interface WorkspaceView {
@@ -162,6 +165,8 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
     }
     case "heads.updated":
       return withChat({ ...chat, heads: event.heads });
+    case "catchup.updated":
+      return withChat({ ...chat, catchUp: event.catchUp, intervalSummaries: event.intervalSummaries });
     case "card.updated":
       return withChat(update(event.messageId, (message) => ({
         ...message,

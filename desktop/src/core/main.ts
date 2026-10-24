@@ -10,6 +10,7 @@ import type { HeadConfig } from "./agent/head";
 import type { CodexHeadConfig, CodexThreads } from "./agent/codex";
 import type { BotProfile } from "./store/workspace";
 import type { Outbound } from "../contract";
+import { codexSummarizer } from "./catchup";
 
 const dataDir = resolve(process.env.BOTLING_DATA_DIR ?? join(process.cwd(), ".data"));
 const number = (value: string | undefined, fallback: number) => (value && Number.isFinite(Number(value)) ? Number(value) : fallback);
@@ -68,6 +69,15 @@ const emit: (message: Outbound) => void = parentPort
   : (message) => process.stdout.write(JSON.stringify(message) + "\n");
 const log = (line: string) => process.stderr.write(`[core] ${line}\n`);
 
+/** Catch-up summaries: the real Codex CLI (`codex exec`), or the fake one's `exec`. */
+function summarizer() {
+  const kind = process.env.BOTLING_AGENT ?? "fake";
+  const timeout = number(process.env.BOTLING_SUMMARY_TIMEOUT_MS, 60_000);
+  if (kind === "claude") return codexSummarizer({ file: process.env.BOTLING_CODEX_PATH ?? "codex" }, timeout);
+  const script = process.env.BOTLING_FAKE_CODEX;
+  return script ? codexSummarizer({ file: process.execPath, prefixArgs: [script], env: { ELECTRON_RUN_AS_NODE: "1" } }, timeout) : null;
+}
+
 const core = new Core({
   dataDir,
   headConfig,
@@ -82,6 +92,7 @@ const core = new Core({
   tidyTimeoutMs: number(process.env.BOTLING_TIDY_TIMEOUT_MS, 5 * 60_000),
   quitTidyMs: number(process.env.BOTLING_QUIT_TIDY_MS, 15_000),
   routineTickMs: number(process.env.BOTLING_ROUTINE_TICK_MS, 30_000),
+  summarizer: summarizer(),
   languages: process.env.BOTLING_LANGUAGES ? process.env.BOTLING_LANGUAGES.split(",").filter(Boolean) : undefined,
   // 1.x's data folder, to tell whether it has a project open; only when named (packaged: ~/.claudecodebot).
   oneX: {

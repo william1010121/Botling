@@ -68,6 +68,7 @@ import { isPlainOK, PARTS_NOTE, profilePaths, withoutPartsNote, type BotPrompts 
 import { masked, parseReply, saysNoReply, saysNothing, unsupportedRequest } from "./reply";
 import { SubagentBook, readSubagent, SUBAGENT_TOOLS, toolCount, type SubagentRecord } from "./subagents";
 import { readTaskCard, TaskBook, type TaskCard } from "./tasks";
+import type { CatchUpChat } from "./catchup";
 import {
   CronSchedule, DAILY_SUMMARY, RoutineFile, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
   routineStatus, routineTitle, scheduledRoutine, type Routine, type ScheduledRoutine,
@@ -603,11 +604,18 @@ export class Bot {
       tasks: this.taskViews(),
       runs: turns.map((turn) => ({ turnId: turn.id, messageId: turn.messageId, head: owner(turn).engine, live: turn.steps.slice(-500).map((step) => stepView(step, owner(turn).subagents)) })),
       heads: this.headsView(),
+      catchUp: null,
+      intervalSummaries: [],
     };
   }
 
   get messageCount() {
     return this.records.length;
+  }
+
+  /** What its summaries are made from (catchup.ts). */
+  catchUpChat(): CatchUpChat {
+    return { id: this.id, name: this.profile.name, records: this.records, unread: this.unread, tasks: this.tasks.tasks };
   }
 
   subagentView(id: string): ResultOf<"subagent.view"> {

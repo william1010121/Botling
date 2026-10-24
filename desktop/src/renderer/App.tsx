@@ -224,6 +224,12 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
             .catch(onError);
           return;
         }
+        case "catchUpRetry":
+          if (chat && action.botID === chat.botId) void client.request({ type: "catchup.retry", botId: chat.botId, ...(typeof action.key === "string" && action.key ? { key: action.key } : {}) }).catch(onError);
+          return;
+        case "catchUpManual":
+          if (chat && action.botID === chat.botId && typeof action.userMessageID === "string") void client.request({ type: "catchup.interval", botId: chat.botId, userMessageId: action.userMessageID }).catch(onError);
+          return;
         case "closeSubagent":
           store.watch(null);
           return;

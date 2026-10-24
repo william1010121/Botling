@@ -35,6 +35,25 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
+// `codex exec` as Catch-up runs it: reads the selected messages from the prompt and writes 1–3
+// bullets citing them to --output-last-message, with --json events on stdout. FAKE_CODEX_EXEC_LOG:
+// a file it appends its arguments to; FAKE_CODEX_EXEC_FAIL=1: exits 1; FAKE_CODEX_EXEC_MS: takes that long.
+if (process.argv[2] === "exec") {
+  const args = process.argv.slice(3);
+  const flag = (name) => args[args.indexOf(name) + 1];
+  if (process.env.FAKE_CODEX_EXEC_LOG) appendFileSync(process.env.FAKE_CODEX_EXEC_LOG, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd() }) + "\n");
+  await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_CODEX_EXEC_MS ?? 20)));
+  if (process.env.FAKE_CODEX_EXEC_FAIL === "1") { process.stdout.write(JSON.stringify({ type: "turn.failed", error: { message: "fake failure" } }) + "\n"); process.exit(1); }
+  const prompt = args.at(-1) ?? "";
+  const sources = [...prompt.matchAll(/^\[source:([0-9A-F-]{36})\] ([^:\n]+): (.*)$/gm)].slice(-3);
+  const bullets = sources.length ? sources.map((m) => `${m[2]}: ${m[3].slice(0, 60)} [[source:${m[1]}]]`) : ["Nothing to say."];
+  writeFileSync(flag("--output-last-message"), JSON.stringify({ bullets }));
+  for (const event of [{ type: "thread.started", thread_id: "fake" }, { type: "turn.started" }, { type: "item.completed", item: { id: "i0", type: "agent_message", text: JSON.stringify({ bullets }) } }, { type: "turn.completed", usage: {} }]) {
+    process.stdout.write(JSON.stringify(event) + "\n");
+  }
+  process.exit(0);
+}
+
 const inputLog = process.env.FAKE_CODEX_INPUT;
 if (process.env.FAKE_CODEX_LOG) appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ pid: process.pid, args: process.argv.slice(2), cwd: process.cwd() }) + "\n");
 const workerMs = Number(process.env.FAKE_CODEX_WORKER_MS ?? 300);

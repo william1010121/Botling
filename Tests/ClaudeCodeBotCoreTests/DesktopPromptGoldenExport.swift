@@ -146,6 +146,63 @@ struct DesktopPromptGoldenExport {
             "tidyLead": BotPrompts.tidyLead,
             "relayPrefix": BotPrompts.relayPrefix,
         ]
+        // Catch-up (CatchUp.swift): the summary prompt, instructions and arguments for the same lines.
+        var catchLines = lines
+        catchLines[4].displays = [ComponentInstance(name: "status", data: "{\"ok\":true}")]
+        catchLines[5].answer = "Go with B / soon"
+        catchLines[8].engine = .codex
+        let catchTask = TaskCard(id: UUID(uuidString: "44444444-0000-4000-8000-000000000001")!, name: "Forms", state: .running, createdAt: base,
+                                 messageIDs: [lines[2].id, lines[4].id, UUID(uuidString: "44444444-0000-4000-8000-0000000000FF")!])
+        func catchName(_ message: ChatMessage) -> String {
+            switch message.role {
+            case .bot: return message.engine.map { "Garden · \($0.displayName)" } ?? "Garden"
+            case .user: return "You"
+            case .error: return "Error"
+            case .relay: return "Handed over"
+            default: return "Botling"
+            }
+        }
+        let longLine = ChatMessage(id: UUID(uuidString: "44444444-0000-4000-8000-000000000002")!, role: .bot, text: String(repeating: "a b ", count: 20_000), date: base)
+        let catchUp: [String: Any] = [
+            "messages": catchLines.map { message -> [String: Any] in
+                var row: [String: Any] = ["id": message.id.uuidString, "role": message.role.rawValue, "text": message.text, "date": message.date.timeIntervalSinceReferenceDate]
+                if let choices = message.choices {
+                    row["choices"] = choices.map { choice -> [String: Any] in
+                        var c: [String: Any] = ["label": choice.label, "recommended": choice.recommended]
+                        if let detail = choice.detail { c["detail"] = detail }
+                        return c
+                    }
+                }
+                if let chosen = message.chosen { row["chosen"] = chosen }
+                if let answer = message.answer { row["answer"] = answer }
+                if let engine = message.engine { row["engine"] = engine.rawValue }
+                if let displays = message.displays { row["displays"] = displays.map { ["name": $0.name, "data": $0.data] } }
+                return row
+            },
+            "task": ["id": catchTask.id.uuidString, "name": catchTask.name, "state": catchTask.state.rawValue, "messageIDs": catchTask.messageIDs.map(\.uuidString)],
+            "prompt": CatchUp.prompt(for: Array(catchLines[1...9]), language: .english, tasks: [catchTask], name: catchName),
+            "promptCustom": CatchUp.prompt(for: Array(catchLines[3...6]), language: .japanese, writingPrompt: "Short / plain \"quoted\" 中文", name: catchName),
+            "promptLong": CatchUp.prompt(for: [longLine] + Array(catchLines[0...2]), language: .english, name: catchName),
+            "instructions": Dictionary(uniqueKeysWithValues: AppLanguage.allCases.map { ($0.rawValue, CatchUp.instructions(language: $0)) }),
+            "arguments": CatchUp.arguments(prompt: "hello", folder: URL(filePath: "/tmp/catchup"), model: "gpt-test", language: .japanese),
+            "unread3": CatchUp.unreadMessages(in: catchLines, unread: 3).map(\.id.uuidString),
+            "unread50": CatchUp.unreadMessages(in: catchLines, unread: 50).map(\.id.uuidString),
+            "interval": CatchUp.intervalMessages(in: catchLines).map(\.id.uuidString),
+            "intervalAfter": CatchUp.intervalMessages(in: catchLines, after: lines[2].id).map(\.id.uuidString),
+            "key": CatchUp.key(Array(catchLines[3...6]), language: .japanese),
+            "schema": CatchUp.schema,
+        ]
+        // Components (Workspace+Components.swift): what a bot is told, whole and as changes.
+        let told = ComponentKnowledge(own: [.init(name: "status", text: "- status: A status card.\n  Data: {\"ok\":true}"), .init(name: "chart", text: "- chart: A chart.")],
+                                      others: [.init(name: "todo", text: "- todo: A todo list."), .init(name: "gone", text: "- gone: Old.")], limit: 20)
+        let now = ComponentKnowledge(own: [.init(name: "status", text: "- status: A status card.\n  Data: {\"ok\":false}"), .init(name: "todo", text: "- todo: A todo list.\n  Data: []")],
+                                     others: [.init(name: "chart", text: "- chart: A chart."), .init(name: "weather", text: "- weather: Weather.")], limit: 20)
+        let components: [String: Any] = [
+            "full": told.full,
+            "fullNoOthers": ComponentKnowledge(own: told.own, others: [], limit: 20).full,
+            "changes": now.changes(since: told) ?? NSNull(),
+            "unchanged": told.changes(since: told) ?? NSNull(),
+        ]
         let export: [String: Any] = [
             "replies": Self.replySamples.map { sample -> [String: Any] in
                 let parsed = ReplyParser.parseAll(sample)
@@ -183,6 +240,8 @@ struct DesktopPromptGoldenExport {
             "heads": Self.headsExport(),
             "briefing": briefing,
             "notes": notes,
+            "catchUp": catchUp,
+            "components": components,
         ]
         try JSONSerialization.data(withJSONObject: export, options: [.prettyPrinted, .sortedKeys]).write(to: URL(filePath: path))
     }

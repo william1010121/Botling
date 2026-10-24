@@ -23,6 +23,7 @@ import { ProcessLedger } from "./process/ledger";
 import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/importer";
 import { MAIN_BOT_ID } from "./store/records";
 import { Layout, loadProfiles, type BotProfile } from "./store/workspace";
+import { CatchUpCache, CatchUps, catchUpSettings, type CatchUpViewData, type Summarizer } from "./catchup";
 
 export interface CoreOptions {
   dataDir: string;
@@ -48,6 +49,8 @@ export interface CoreOptions {
   oneX?: OneXCheck;
   /** How often routines are checked (1.x: every 30 s); 0: never (tests drive `checkRoutines`). */
   routineTickMs?: number;
+  /** Writes Catch-up summaries (an isolated `codex exec`); null: there is no summary service. */
+  summarizer?: Summarizer | null;
 }
 
 export class Core {
@@ -59,9 +62,17 @@ export class Core {
   private readonly ledger: ProcessLedger;
   private imported: ImportView | null = null;
   private routineClock: NodeJS.Timeout | null = null;
+  private readonly catchUps: CatchUps;
 
   constructor(private options: CoreOptions) {
     mkdirSync(options.dataDir, { recursive: true });
+    this.catchUps = new CatchUps({
+      cache: new CatchUpCache(join(options.dataDir, "catchup-summaries.json")),
+      summarizer: options.summarizer ?? null,
+      settings: () => catchUpSettings(this.settingsFile()),
+      language: () => this.language(),
+      changed: (botId) => { const bot = this.bots.get(botId); if (bot) this.event({ type: "catchup.updated", botId, ...this.summaries(bot) }); },
+    });
     this.ledger = new ProcessLedger(join(options.dataDir, "children.json"));
     const leftovers = this.ledger.endLeftovers();
     if (leftovers.length) this.log(`ended agent process groups an earlier core left running: ${leftovers.join(", ")}`);
@@ -152,14 +163,30 @@ export class Core {
     this.options.log?.(line);
   }
 
+  private settingsFile(): Record<string, unknown> | undefined {
+    try {
+      const value = readJSON(Layout.settings(this.options.dataDir));
+      return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   /** settings.json as 1.x writes it (`AppSettings`): only the keys the prompts need. */
   private settings(): { language: string | undefined; results: string | undefined } {
-    try {
-      const value = readJSON(Layout.settings(this.options.dataDir)) as Record<string, unknown> | undefined;
-      return { language: value?.languageChoice as string | undefined, results: value?.resultPublishingChoice as string | undefined };
-    } catch {
-      return { language: undefined, results: undefined };
-    }
+    const value = this.settingsFile();
+    return { language: value?.languageChoice as string | undefined, results: value?.resultPublishingChoice as string | undefined };
+  }
+
+  /** The app's language: settings.json's, else the system's (`AppLanguage.preferred`). */
+  private language() {
+    const settings = this.settings();
+    return isAppLanguage(settings.language) ? settings.language : preferredLanguage(this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale]);
+  }
+
+  private summaries(bot: Bot): { catchUp: CatchUpViewData | null; intervalSummaries: CatchUpViewData[] } {
+    const views = this.catchUps.views(bot.catchUpChat());
+    return { catchUp: views.catchUp, intervalSummaries: views.intervalSummaries.slice(-200) };
   }
 
   /** The bot's instructions (Prompts.swift's), from its profile and the app's settings. */
@@ -177,6 +204,11 @@ export class Core {
 
   private event(event: Event) {
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
+    // Your line closes an interval: it may be summarized by itself (`summarizeClosedInterval`).
+    if (event.type === "message.added" && event.message.role === "user") {
+      const bot = this.bots.get(event.botId);
+      if (bot) this.catchUps.closedInterval(bot.catchUpChat(), event.message.id);
+    }
   }
 
   /** Handles one message from main. Exactly one response per request id, cancelled or not. */
@@ -231,7 +263,14 @@ export class Core {
       case "chat.answer": return this.bot(cmd.botId).answer(cmd.messageId, cmd.text);
       case "chat.react": return this.bot(cmd.botId).react(cmd.messageId, cmd.emoji, cmd.present);
       case "subagent.view": return this.bot(cmd.botId).subagentView(cmd.subagentId);
-      case "chat.read": return this.bot(cmd.botId).read();
+      case "chat.read": {
+        // You came back to it: many unread replies fold into a summary first (`arrive(at:)`).
+        const bot = this.bot(cmd.botId);
+        this.catchUps.arrive(bot.catchUpChat());
+        return bot.read();
+      }
+      case "catchup.retry": return { started: this.catchUps.retry(this.bot(cmd.botId).catchUpChat(), cmd.key) };
+      case "catchup.interval": return { started: this.catchUps.interval(this.bot(cmd.botId).catchUpChat(), cmd.userMessageId) };
       case "turn.stop": return this.bot(cmd.botId).stop(cmd.turnId);
       case "turn.await": return this.bot(cmd.botId).await(cmd.turnId, signal);
       case "card.save": return this.bot(cmd.botId).cardSave(cmd.messageId, cmd.cardId, cmd.data);
@@ -254,7 +293,7 @@ export class Core {
       seq: this.seq,
       bots: this.order.map((id) => this.bots.get(id)!.view()),
       imported: this.imported,
-      chat: bot ? bot.snapshot() : null,
+      chat: bot ? { ...bot.snapshot(), ...this.summaries(bot) } : null,
     };
   }
 

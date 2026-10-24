@@ -231,6 +231,28 @@ export const RoutineView = z.strictObject({
 });
 export type RoutineView = z.infer<typeof RoutineView>;
 
+/** A summary of a range of the chat (`ChatPayload.CatchUpView`): unread lines folded on your return, or one interval between your messages. */
+export const CatchUpView = z.strictObject({
+  key: z.string().max(300),
+  ids: z.array(id).max(2_000),
+  count: z.number().int().nonnegative(),
+  heads: z.number().int().nonnegative().nullable(),
+  state: z.enum(["loading", "ready", "failed"]),
+  bullets: z.array(z.string().max(4_000)).max(5),
+  error: z.string().max(2_000).nullable(),
+  model: z.string().max(100),
+  since: z.string().max(100).nullable(),
+  until: z.string().max(100).nullable(),
+  latest: z.string().max(400).nullable(),
+  manual: z.boolean(),
+  automatic: z.boolean(),
+  speakerCounts: z.record(z.string().max(20), z.number().int().nonnegative()).nullable(),
+  requestedBy: z.string().max(40).nullable(),
+  /** The task cards with lines in the range. */
+  taskIds: z.array(id).max(100),
+});
+export type CatchUpView = z.infer<typeof CatchUpView>;
+
 export const AccountView = z.strictObject({ id, name: z.string().max(80), partition: z.string() });
 export type AccountView = z.infer<typeof AccountView>;
 
@@ -278,6 +300,10 @@ export const Command = z.discriminatedUnion("type", [
     id: z.string().min(1).max(2_200).optional(), kind: z.enum(["once", "recurring"]).optional(), task: z.string().min(1).max(2_000).optional(),
     at: z.string().max(64).optional(), cron: z.string().max(200).optional(), timezone: z.string().max(100).optional(), requestId: id.optional(),
   }),
+  /** Retry on a failed summary: the folded group, or the interval summary `key`. */
+  z.strictObject({ type: z.literal("catchup.retry"), botId, key: z.string().min(1).max(300).optional() }),
+  /** Summarizes the interval after one of your lines (the footer's button). */
+  z.strictObject({ type: z.literal("catchup.interval"), botId, userMessageId: id }),
   z.strictObject({ type: z.literal("accounts.list") }),
   /** Main only: opens a website in that account's own persistent session, with no bridge. */
   z.strictObject({ type: z.literal("site.open"), accountId: id, url: z.url({ protocol: /^https?$/ }).max(2_000) }),
@@ -289,6 +315,7 @@ export type CommandType = Command["type"];
 export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.react", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
+  "catchup.retry", "catchup.interval",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
 export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open"]);
@@ -304,6 +331,9 @@ export interface ChatSnapshot {
   runs: RunView[];
   /** A bot with two heads; null with one. */
   heads: HeadsView | null;
+  /** Unread lines folded on your return, with their summary. */
+  catchUp: CatchUpView | null;
+  intervalSummaries: CatchUpView[];
 }
 
 export interface Results {
@@ -325,6 +355,8 @@ export interface Results {
   "card.html": { html: string };
   "routines.list": { routines: RoutineView[]; error: string | null };
   "routines.change": { routines: RoutineView[]; error: string | null };
+  "catchup.retry": { started: boolean };
+  "catchup.interval": { started: boolean };
   "accounts.list": { accounts: AccountView[] };
   "site.open": { windowId: number };
 }
@@ -355,6 +387,8 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("card.acted"), botId, messageId: id, cardId: id, name: z.string(), value: z.string() }),
   /** A bot with two heads: who new messages go to, the rounds line and the hand-offs changed (null: one head now). */
   z.strictObject({ type: z.literal("heads.updated"), botId, heads: HeadsView.nullable() }),
+  /** A summary started, finished or failed. */
+  z.strictObject({ type: z.literal("catchup.updated"), botId, catchUp: CatchUpView.nullable(), intervalSummaries: z.array(CatchUpView).max(200) }),
   /** Its routines changed (one ran, the bot or the app edited them). */
   z.strictObject({ type: z.literal("routines.updated"), botId, routines: z.array(RoutineView).max(200), error: z.string().max(2_000).nullable() }),
 ]);

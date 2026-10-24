@@ -2,8 +2,8 @@
 // side builds in ChatPayload.swift. Here the same state is built from the contract's views, so the
 // page runs unchanged. What 2.0 has no data for yet (components, pins, heads, tasks, Catch-up) is
 // left out, which the page treats as "none".
-import type { BotView, CardView, HeadsView, MessageView, SubagentView, TaskView } from "../contract";
-import type { ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView } from "../../../Web/src/types";
+import type { BotView, CardView, CatchUpView, HeadsView, MessageView, SubagentView, TaskView } from "../contract";
+import type { CatchUpView as WebCatchUp, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
 import { avatarURL } from "./avatars";
 
@@ -99,6 +99,19 @@ export function headsParts(heads: HeadsView | null | undefined): Pick<ChatState,
   };
 }
 
+/** A summary as the page draws it (`ChatPayload.CatchUpView`): its task cards as chips. */
+export function catchUpView(view: CatchUpView, tasks: TaskView[]): WebCatchUp {
+  const chips = view.taskIds.flatMap((id) => {
+    const task = tasks.find((candidate) => candidate.id === id);
+    return task ? [{ id: task.id, name: task.name, state: task.state, owner: task.owner } satisfies TaskCardView] : [];
+  });
+  return {
+    key: view.key, ids: view.ids, count: view.count, heads: view.heads, state: view.state, bullets: view.bullets, error: view.error, model: view.model,
+    since: view.since, until: view.until, latest: view.latest, manual: view.manual, automatic: view.automatic, speakerCounts: view.speakerCounts,
+    requestedBy: view.requestedBy, tasks: chips.length ? chips : null,
+  };
+}
+
 export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyingTo: ChatState["replyingTo"] = null): { state: ChatState; extras: FrameExtras } {
   const face = avatarURL(bot.avatar);
   const running = chat.running;
@@ -164,6 +177,8 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     live: running && !runningShown ? chat.live.map(step) : [],
     slashCommands: [],
     ...headsParts(chat.heads),
+    catchUp: chat.catchUp ? catchUpView(chat.catchUp, chat.tasks ?? []) : null,
+    intervalSummaries: (chat.intervalSummaries ?? []).map((view) => catchUpView(view, chat.tasks ?? [])),
   };
   return { state, extras };
 }
