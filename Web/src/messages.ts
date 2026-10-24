@@ -9,6 +9,7 @@ import { acceptPictures } from "./pictures";
 import type { ComponentRender } from "./plugins";
 import { liveElement, stepsElement } from "./steps";
 import { taskChips } from "./tasks";
+import { taskCardChips } from "./task-cards";
 import type { ComponentInfo, DisplayView, FileView, MessageView, SeenView, SpecChipView, StepView } from "./types";
 import { escapeHTML } from "./util";
 import { characterAvatar } from "./animated-avatar";
@@ -45,7 +46,8 @@ export function messageElement(message: MessageView, components: Record<string, 
 
   drawRole(row, message, components);
   const tasks = row.querySelector<HTMLElement>(".task-chips");
-  if (tasks || message.reactionEnabled || message.seen?.length || message.completionVerification) {
+  const cards = message.taskCards?.length ? taskCardChips(message.taskCards) : null;
+  if (cards || tasks || message.reactionEnabled || message.seen?.length || message.completionVerification) {
     let holder = row.querySelector<HTMLElement>(".user-body, .speaker-column, .bot-column");
     if (!holder) {
       const body = row.querySelector<HTMLElement>(".bot-bubble, .notice-bubble, .relay-column, .relay:not(.row), .error-text");
@@ -60,6 +62,8 @@ export function messageElement(message: MessageView, components: Record<string, 
       // Keep all compact metadata together; expanded work details get their own footer line.
       const footer = document.createElement("div");
       footer.className = "message-footer";
+      // The task it belongs to comes first: what the reply is part of.
+      if (cards) footer.append(cards);
       if (tasks) footer.append(tasks);
       if (message.completionVerification) footer.append(completionVerificationElement(message.completionVerification));
       if (message.reactionEnabled) footer.append(reactionBar(message));

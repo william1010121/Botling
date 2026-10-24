@@ -38,6 +38,21 @@ export interface CatchUpView {
   since?: string | null;
   until?: string | null;
   latest?: string | null;
+  /** The task cards with lines in the range: a chip beside each bullet about one, and the header's count. */
+  tasks?: TaskCardView[] | null;
+}
+
+/** A task card as the chip under one of its replies shows it (Swift's `TaskCardChip`). */
+export interface TaskCardView {
+  id: string;
+  name: string;
+  /** "stale": running, but maybe stuck. */
+  state: "pending" | "running" | "waiting" | "done" | "stopped" | "stale";
+  owner?: "claude" | "codex" | null;
+  /** On the task's latest reply only: what it does now, or what it waits on. */
+  detail?: string | null;
+  /** The right panel shows this task open. */
+  selected?: boolean | null;
 }
 
 export interface MessageView {
@@ -94,6 +109,8 @@ export interface MessageView {
   seen?: SeenView[] | null;
   /** A bot's turn cut off before it answered (you wrote again, it stopped): what it had said and done so far. */
   interrupted?: boolean | null;
+  /** The task cards it belongs to: a chip each under the reply. */
+  taskCards?: TaskCardView[] | null;
   completionVerification?: {
     model: string;
     state: "checking" | "judged" | "interrupted";
@@ -557,6 +574,7 @@ export type Action =
   | { type: "pinSave"; id: string; data: string }
   | { type: "makeComponent"; messageID: string; preview?: number; purpose?: string }
   | { type: "openSpec"; id: string }
+  | { type: "selectTask"; id: string }
   | { type: "pressSpec"; id: string }
   | { type: "specCommand"; id: string; command: string; folder: string; detail?: string; approve?: boolean; force?: boolean }
   | { type: "specEdit"; id: string; key: string; value: string }

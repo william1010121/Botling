@@ -1,6 +1,7 @@
 import type { CatchUpView, MessageView } from "./types";
 export interface SourceReference { messageID: string; quote?: string; part?: "answer"; }
-export interface CitedBullet { text: string; sources: SourceReference[]; }
+/** `tasks`: the ids of the task cards it is about ([[task:ID]]), when it names any. */
+export interface CitedBullet { text: string; sources: SourceReference[]; tasks?: string[]; }
 
 /** A quote cannot splice two options or the prompt and the answer. */
 export function sourceTexts(message: MessageView): string[] {
@@ -45,8 +46,15 @@ export function citedBullet(bullet: string, source: MessageView[]): CitedBullet 
     const key = JSON.stringify([message.id, answer, exact]);
     if (!seen.has(key)) { sources.push({ messageID: message.id, ...(exact ? { quote: exact } : {}), ...(answer ? {part: "answer" as const} : {}) }); seen.add(key); }
     return "";
-  }).trim();
-  return { text, sources };
+  });
+  // Task markers name a card of the range; the page draws its chip, never the id.
+  const tasks: string[] = [];
+  const unmarked = text.replace(/\[\[task:([0-9A-Fa-f-]{36})\]\]/g, (_marker, id: string) => {
+    if (!tasks.includes(id.toUpperCase())) tasks.push(id.toUpperCase());
+    return "";
+  });
+  const bare = (tasks.length ? unmarked.replace(/[ \t]{2,}/g, " ") : unmarked).trim();
+  return { text: bare, sources, ...(tasks.length ? { tasks } : {}) };
 }
 
 export function summaryReferences(view: CatchUpView, messages: MessageView[]): CitedBullet[] {

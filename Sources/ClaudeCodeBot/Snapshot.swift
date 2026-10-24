@@ -107,6 +107,16 @@ enum Snapshot {
             }
             return true
         }
+        // `CCB_SNAPSHOT_SAMPLE=tasks`: a two-head chat whose replies carry task chips (sample data).
+        if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "tasks" {
+            let store = BotStore(directory: Workspace.Layout.mainBot(in: root))
+            store.save(heads: HeadsSettings(engines: [.claude, .codex]))
+            let (messages, tasks) = sampleTasks(now: now)
+            store.save(messages: messages)
+            store.save(tasks: tasks)
+            draw(root: root, to: path) { workspace in workspace.setLanguage(.traditionalChinese) }
+            return true
+        }
         // Integrated feature fixture: saved sample messages only; no model or live chat access.
         if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_SAMPLE"] == "reactions" {
             let store = BotStore(directory: Workspace.Layout.mainBot(in: root))
@@ -1058,6 +1068,39 @@ enum Snapshot {
         ]), settled: false)
     }
 
+    /// Sample task cards and the lines they belong to (the design's example): one done, one
+    /// running, two waiting on you, one maybe stuck.
+    static func sampleTasks(now: Date) -> ([ChatMessage], [TaskCard]) {
+        func reply(_ text: String, _ head: BotEngine, _ ago: TimeInterval) -> ChatMessage {
+            var message = ChatMessage(role: .bot, text: text, date: now.addingTimeInterval(-ago))
+            message.engine = head
+            return message
+        }
+        let ask1 = ChatMessage(role: .user, text: "幫我把 contribution board 修好，它一直沒好", date: now.addingTimeInterval(-900))
+        let fixed = reply("找到了：卡片只算目前 branch，落後 main 141 個 commit。已改成算 main，22 項測試全過。", .claude, 840)
+        let platform = reply("跨平台要不要先開兩週驗證？", .claude, 700)
+        let ask2 = ChatMessage(role: .user, text: "任務卡那個幫我畫仔細一點，要配合現在的 summary", date: now.addingTimeInterval(-600))
+        let drawing = reply("正在畫詳細版：整個視窗、跟 Catch-up 的配合、傳新訊息時怎麼更新。", .claude, 420)
+        let activity = reply("agent-activity 的分組收合已套用，等你重新整理確認。", .codex, 300)
+        let cleanup = reply("在清理快取，先列出大檔案。", .codex, 1500)
+        func card(_ name: String, _ head: BotEngine, _ state: TaskCard.State, _ lines: [ChatMessage], ago: TimeInterval,
+                  now doing: String? = nil, next: String? = nil, blocked: String? = nil) -> TaskCard {
+            var card = TaskCard(name: name, owner: head, state: state, now: doing, next: next, blocked: blocked,
+                                createdAt: now.addingTimeInterval(-ago - 120), updatedAt: now.addingTimeInterval(-ago), messageIDs: lines.map(\.id))
+            card.kept = true
+            return card
+        }
+        var design = card("任務卡詳細設計", .claude, .running, [ask2, drawing], ago: 420, now: "畫第 2 張：跟 Catch-up 配合", next: "畫更新流程與規則")
+        design.helps = [TaskCard.Help(handoffID: UUID(), head: .codex, text: "驗收截圖")]
+        return ([cleanup, ask1, fixed, platform, ask2, drawing, activity], [
+            card("清理硬碟", .codex, .running, [cleanup], ago: 1500, now: "列出大檔案"),
+            card("貢獻卡數字錯", .claude, .done, [ask1, fixed], ago: 840),
+            card("跨平台方向", .claude, .waiting, [platform], ago: 700, blocked: "要不要開兩週驗證"),
+            design,
+            card("agent-activity 卡", .codex, .waiting, [activity], ago: 300, blocked: "重新整理後確認"),
+        ])
+    }
+
     /// One saved sample conversation on another site, so the column shows every site with a row.
     private static func sampleWebConversation(on site: WebSite, index: Int, in workspace: Workspace) {
         let titles = ["Changelog wording", "Load factor bounds", "Release checklist"]
@@ -1081,6 +1124,12 @@ enum Snapshot {
         store.save(messages: [
             ChatMessage(role: .bot, text: "Done: [Sidebar option A](file:///tmp/a.html), [Sidebar collapse](file:///tmp/b.html), [Botling v1.7.1](file:///tmp/c.html)", date: Date())
         ])
+        // `CCB_SNAPSHOT_TASKS=1`: sample task cards under Tasks, Waiting on you and Just done.
+        if ProcessInfo.processInfo.environment["CCB_SNAPSHOT_TASKS"] != nil {
+            let (messages, tasks) = sampleTasks(now: Date())
+            store.save(messages: messages)
+            store.save(tasks: tasks)
+        }
         store.save(subagents: ["Fix choices block not rendering", "Fix markdown table column widths", "Design collapsible sidebar options", "Fix duplicate decision cards"].enumerated().map { index, title in
             var subagent = Subagent(id: "s\(index)", description: title, prompt: title, status: .completed)
             subagent.endedAt = Date()

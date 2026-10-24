@@ -7,6 +7,9 @@ import WebKit
 extension Notification.Name {
     /// Puts the cursor back in the chat's input box.
     static let focusComposer = Notification.Name("ClaudeCodeBot.focusComposer")
+    /// Scrolls the chat to a task's latest line ("Jump to chat" on its card): `userInfo` has
+    /// "bot", "message" and "task" (UUIDs).
+    static let jumpToTask = Notification.Name("ClaudeCodeBot.jumpToTask")
 }
 
 /// Files and reply targets waiting in each bot's composer, kept while you switch between bots.
@@ -55,6 +58,13 @@ struct ChatSurface: NSViewRepresentable {
                 view.evaluateJavaScript("ccb.focus()")
             }
         }
+        context.coordinator.jumpObserver = NotificationCenter.default.addObserver(forName: .jumpToTask, object: nil, queue: .main) { [weak view, weak coordinator = context.coordinator] note in
+            MainActor.assumeIsolated {
+                guard let view, let info = note.userInfo, let bot = info["bot"] as? UUID, coordinator?.surface?.bot.id == bot,
+                      let message = info["message"] as? UUID, let task = info["task"] as? UUID else { return }
+                view.evaluateJavaScript("ccb.jumpToTask(\"\(message.uuidString)\", \"\(task.uuidString)\")")
+            }
+        }
         return view
     }
 
@@ -66,6 +76,7 @@ struct ChatSurface: NSViewRepresentable {
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
         view.configuration.userContentController.removeScriptMessageHandler(forName: "ccb")
         if let observer = coordinator.focusObserver { NotificationCenter.default.removeObserver(observer) }
+        if let observer = coordinator.jumpObserver { NotificationCenter.default.removeObserver(observer) }
         coordinator.stopWatchingWindow()
     }
 
@@ -113,6 +124,7 @@ struct ChatSurface: NSViewRepresentable {
             pins: !bot.profile.capabilities.board ? nil : workspace.pinContext(for: bot, board: inputs.boards.contains(bot.id)),
             specs: bot.profile.capabilities.specs,
             openSpec: workspace.openSpecID,
+            selectedTask: workspace.selectedTask,
             floating: workspace.floatingPinViews(in: bot),
             look: workspace.settings.botLook == .cute ? ChibiImages.look(for: bot.avatarKind) : nil,
             sourceLook: { id in
@@ -137,6 +149,7 @@ struct ChatSurface: NSViewRepresentable {
         var surface: ChatSurface?
         weak var view: WKWebView?
         var focusObserver: NSObjectProtocol?
+        var jumpObserver: NSObjectProtocol?
         private var ready = false
         /// What the page was last sent, so the next update carries only what changed.
         private var patcher = ChatPayload.Patcher()
@@ -530,6 +543,8 @@ struct ChatSurface: NSViewRepresentable {
                     let command = body["command"] as? String, folder = body["folder"] as? String, detail = body["detail"] as? String
                     Task { await workspace.runSpecComponent(specID, in: bot, command: command, folder: folder, detail: detail, approve: approve, force: force) }
                 }
+            case "selectTask":
+                workspace.selectTask(id("id"))
             case "openSpec":
                 // "Edit spec": the spec in the right panel (pressed again, folded back).
                 if let specID = id("id") {

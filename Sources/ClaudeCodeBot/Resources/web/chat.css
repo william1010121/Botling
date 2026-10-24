@@ -1289,6 +1289,27 @@ body.spec-mode .float-layer { display: none; }
 
 /* Verification disclosure in the reply's action row; its content wraps below every action. */
 .message-footer > .completion-verification { display: contents; }
+/* Task cards: a chip under each reply of a task, in its state's color (the same shape as the
+   background-work pills); pressed, the right panel opens the task. Also beside a summary's bullet. */
+.message-footer > .task-card-chips { display: contents; }
+.task-card-chip {
+  --task-card-bg: #1A2233; --task-card-fg: var(--link);
+  display: inline-flex; align-items: center; gap: 5px; height: 20px; max-width: 100%; min-width: 0; padding: 0 9px;
+  border: none; border-radius: 10px; background: var(--task-card-bg); color: var(--task-card-fg);
+  font: inherit; font-size: 11px; line-height: 20px; cursor: pointer; vertical-align: middle;
+}
+.task-card-chip.waiting { --task-card-bg: #2E2617; --task-card-fg: var(--orange-text); }
+.task-card-chip.done { --task-card-bg: #15291F; --task-card-fg: var(--green); }
+.task-card-chip.stale { --task-card-bg: #2E1B1A; --task-card-fg: var(--error); }
+.task-card-chip.pending, .task-card-chip.stopped { --task-card-bg: var(--chip); --task-card-fg: var(--faint); }
+.task-card-chip:hover { filter: brightness(1.2); }
+.task-card-chip.selected { box-shadow: inset 0 0 0 1px currentColor; }
+.task-card-chip:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.task-card-mark { flex: none; font-size: 10px; }
+.task-card-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.catchup-bullets .task-card-chip { margin: 0 4px 0 2px; }
+.catchup-task-count.waiting { color: var(--orange-text); }
+.catchup-bullets li.flash, .catchup-card.flash { background: rgba(76, 141, 255, 0.12); border-radius: 8px; transition: background 0.3s; }
 .completion-verification > .verification-toggle { font: inherit; border: 0; background: transparent; display: inline-flex; flex: 1 1 0; align-items: center; gap: 4px; min-width: 0; max-width: max-content; min-height: 26px; box-sizing: border-box; padding: 3px 5px; border-radius: 6px; color: var(--muted); font-size: 12px; line-height: 1.5; cursor: pointer; list-style: none; }
 .completion-verification > .verification-toggle::before { content: "›"; flex: 0 0 auto; font-size: 14px; line-height: 1; }
 .completion-verification.open > .verification-toggle::before { transform: rotate(90deg); }

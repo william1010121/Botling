@@ -815,6 +815,9 @@ private struct BotRow: View {
                     Text("C + X").font(.system(size: 11)).foregroundStyle(Theme.faint)
                         .help(L("Claude and Codex"))
                 }
+                if bot.openTaskCount > 0 {
+                    TaskCountBadge(count: bot.openTaskCount)
+                }
                 if let count = RailLayout.unreadBadge(unread: bot.unreadCount, waiting: waiting, selected: selected) {
                     UnreadBadge(count: count)
                 }
@@ -1191,60 +1194,33 @@ struct DetailPanel: View {
                 }
             }
 
-            PanelSection(L("Now")) {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 10) {
-                        Circle().fill(bot.statusColor).frame(width: 8, height: 8)
-                        Text(bot.statusText)
-                        Spacer()
-                        if let sleepsAt = bot.sleepsAt {
-                            SleepCountdown(until: sleepsAt)
-                        }
-                    }
-                    .frame(minHeight: 24)
-                    if look == .cute || bot.heads.hasTwo {
-                        HeadsNow(bot: bot)
-                    }
-                    // A manager: the first thing under "In progress" in its memory.md.
-                    if bot.profile.role == .manager,
-                       let doing = MemoryFile.items(at: bot.profile.memoryURL, section: .inProgress).first {
-                        Text(doing)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Theme.muted)
-                            .lineLimit(2)
-                    }
-                    // The main bot: temporary teams at work.
-                    if bot.profile.role == .main {
-                        ForEach(workspace.runningTeams) { run in
-                            HStack(spacing: 10) {
-                                AvatarView(kind: .cloud, size: 22)
-                                Text(run.spec.title).font(.system(size: 13))
-                                Spacer()
-                                TimelineView(.periodic(from: .now, by: 30)) { context in
-                                    Text(L("{0} min", max(1, Int(context.date.timeIntervalSince(run.startedAt) / 60))))
-                                        .font(.system(size: 12))
-                                        .monospacedDigit()
-                                        .foregroundStyle(Theme.faint)
-                                }
-                            }
-                            .help(run.task)
+            PanelSection(L("Tasks")) {
+                TaskSection(workspace: workspace, bot: bot)
+            }
+
+            let waitingTasks = bot.tasks.contains { $0.state == .waiting }
+            if (bot.profile.role == .main && !workspace.waiting.isEmpty) || waitingTasks {
+                PanelSection(L("Waiting on you")) {
+                    VStack(spacing: 6) {
+                        // Each task waiting on you opens its card above.
+                        if waitingTasks { WaitingTaskRows(workspace: workspace, bot: bot) }
+                        if bot.profile.role == .main, !workspace.waiting.isEmpty {
+                            WaitingList(workspace: workspace, items: workspace.waiting)
                         }
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
-                .background(RoundedRectangle(cornerRadius: 14).fill(Theme.bubble))
             }
 
-            if bot.profile.role == .main, !workspace.waiting.isEmpty {
-                PanelSection(L("Waiting on you")) {
-                    WaitingList(workspace: workspace, items: workspace.waiting)
+            let finished = DoneTaskRows.finished(bot.tasks)
+            if !finished.isEmpty {
+                PanelSection(L("Just done")) {
+                    DoneTaskRows(workspace: workspace, bot: bot, tasks: finished)
                 }
             }
 
             let results = Array(bot.results.prefix(3))
             if !results.isEmpty {
-                PanelSection(bot.profile.role == .main ? L("Just done") : L("Results")) {
+                PanelSection(bot.profile.role == .main && finished.isEmpty ? L("Just done") : L("Results")) {
                     VStack(spacing: 6) {
                         ForEach(results, id: \.self) { chip in
                             Button { ResultWindows.open(chip) } label: {
@@ -1274,7 +1250,7 @@ struct DetailPanel: View {
 }
 
 /// "☾ 48:12": how long until the bot tidies up and falls asleep.
-private struct SleepCountdown: View {
+struct SleepCountdown: View {
     let until: Date
 
     var body: some View {
@@ -1582,7 +1558,7 @@ extension SettingsPage {
 }
 
 /// Only enabled heads appear, including the selected character in single-engine Cute mode.
-private struct HeadsNow: View {
+struct HeadsNow: View {
     @ObservedObject var bot: Bot
 
     var body: some View {
