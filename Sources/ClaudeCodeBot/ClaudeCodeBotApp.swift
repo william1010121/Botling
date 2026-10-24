@@ -339,7 +339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return try ClaudeAgentProcess.launcher(executable: executable)(launch)
         }
         // Every bot's turn ends with the app's own check: no ending on a promise nothing will keep.
-        let promiseCheck = PromiseCheck.checker(classify: PromiseCheck.claudeClassifier(locate: { locator.locate() }))
+        let promiseCheck = PromiseCheck.checker(classify: PromiseCheck.codexClassifier())
         let workspace = Workspace(
             root: root,
             builtInPlugins: ChatSurface.builtInPlugins,

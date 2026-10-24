@@ -90,7 +90,7 @@ struct CodexWorkerBotTests {
         let fake = FakeLauncher()
         let bot = make(fake)
         defer { bot.stop() }
-        bot.promiseCheck = { _ in true }
+        bot.promiseCheck = { _ in .waitingDependency }
         bot.send("Fix billing")
         await eventually { fake.agents.count == 1 }
         let agent = fake.agents[0]

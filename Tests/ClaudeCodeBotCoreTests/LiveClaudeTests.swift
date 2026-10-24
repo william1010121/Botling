@@ -685,11 +685,11 @@ extension LiveClaudeTests {
 }
 
 extension LiveClaudeTests {
-    /// The Haiku check: what it says about promises and plain replies, and how long it takes.
+    /// The Luna check: what it says about promises and plain replies, and how long it takes.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
-    func theHaikuCheckTellsPromisesApartAndHowLongItTakes() async throws {
-        let executable = try #require(ClaudeExecutableLocator().locate())
-        let classify = PromiseCheck.claudeClassifier(executable: executable)
+    func theSharedLunaCheckTellsPromisesApartAndHowLongItTakes() async throws {
+        let executable = try #require(CodexCLI.locateNewest())
+        let classify = PromiseCheck.codexClassifier(executable: executable)
         let cases: [(String, Bool)] = [
             ("好的，接下來我會確認一下測試結果，再回報給你。", true),
             ("Got it. I'll look into the failing build and report back.", true),
@@ -699,23 +699,25 @@ extension LiveClaudeTests {
         var times: [Double] = []
         for (message, promises) in cases {
             let start = Date()
-            let verdict = try await classify(message)
+            let input = PromiseCheck.classifierMessage(.init(reply: message, workPending: false,
+                task: promises ? "The user authorized the next action stated in the reply. Perform it and report." : "Answer the user within their current permission boundary."))
+            let verdict = try await classify(input)
             let seconds = Date().timeIntervalSince(start)
             times.append(seconds)
-            print(String(format: "%.2fs", seconds), verdict ? "YES" : "NO", "-", message)
-            #expect(verdict == promises, "\(message)")
+            print(String(format: "%.2fs", seconds), verdict.rawValue, "-", message)
+            #expect(([PromiseCheck.Verdict.continueWork, .continueAnalysis].contains(verdict.verdict)) == promises, "\(message)")
         }
-        print(String(format: "Haiku check: mean %.2fs, max %.2fs", times.reduce(0, +) / Double(times.count), times.max() ?? 0))
+        print(String(format: "Luna check: mean %.2fs, max %.2fs", times.reduce(0, +) / Double(times.count), times.max() ?? 0))
         #expect(times.allSatisfy { $0 < PromiseCheck.classifierTimeout })
     }
 
-    /// The Haiku check on its own wording alone: a next step the bot states it is starting is a
+    /// The shared Luna check with authorization context: a next step the bot states it is starting is a
     /// promise; finished work, a question, choices, a background task that reports back, or a
     /// suggestion to the user isn't.
     @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
-    func theHaikuCheckCatchesAStatedNextStepButNotASuggestion() async throws {
-        let executable = try #require(ClaudeExecutableLocator().locate())
-        let classify = PromiseCheck.claudeClassifier(executable: executable)
+    func theSharedLunaCheckCatchesAStatedNextStepButNotASuggestion() async throws {
+        let executable = try #require(CodexCLI.locateNewest())
+        let classify = PromiseCheck.codexClassifier(executable: executable)
         let cases: [(String, Bool)] = [
             ("1.13.0-dev（389d00d）已經換上，截圖看起來正常：網頁預覽卡片改成顯示截圖，背景工作的 subagent 狀態也只出現在最後一則。下一步照先前說好的，開始做 1.14.0 的多國語言。", true),
             ("好，我接著把測試補上。", true),
@@ -728,9 +730,11 @@ extension LiveClaudeTests {
             ("下一步可以考慮加快取，要做的話跟我說。", false)
         ]
         for (message, promises) in cases {
-            let verdict = try await classify(message)
-            print(verdict ? "YES" : "NO", "-", message)
-            #expect(verdict == promises, "\(message)")
+            let input = PromiseCheck.classifierMessage(.init(reply: message, workPending: false,
+                task: promises ? "The user authorized the next action stated in the reply. Perform it and report." : "Answer the user within their current permission boundary."))
+            let verdict = try await classify(input)
+            print(verdict.rawValue, "-", message)
+            #expect(([PromiseCheck.Verdict.continueWork, .continueAnalysis].contains(verdict.verdict)) == promises, "\(message)")
         }
     }
 
@@ -745,9 +749,9 @@ extension LiveClaudeTests {
         try "The secret word is KUMQUAT.\n".write(to: home.appending(path: "a.txt"), atomically: true, encoding: .utf8)
         let profile = BotProfile(name: "Probe", role: .manager, avatar: "square", workingDirectory: home, memoryPath: ".bot/memory.md", tools: ["Read"])
         let bot = Bot(profile: profile, defaultModel: .haiku, launcher: ClaudeAgentProcess.launcher(executable: executable))
-        bot.promiseCheck = PromiseCheck.checker(classify: PromiseCheck.claudeClassifier(executable: executable))
+        bot.promiseCheck = PromiseCheck.checker(classify: PromiseCheck.codexClassifier())
         let start = Date()
-        bot.send("Do not use any tool in this reply. Reply with exactly this sentence and nothing else: 好的，接下來我會讀 a.txt 確認內容，再回報給你。")
+        bot.send("Your authorized task is to read a.txt and report its contents. For the first reply only, do not use a tool and reply with exactly this sentence: 好的，接下來我會讀 a.txt 確認內容，再回報給你。")
         await eventually({ bot.messages.contains { $0.role == .bot && $0.text.contains("KUMQUAT") } && !bot.isWorking }, timeout: 180)
         print(String(format: "took %.1fs", Date().timeIntervalSince(start)))
         for message in bot.messages { print("[\(message.role)] \(message.text.prefix(300))") }
@@ -798,5 +802,103 @@ extension LiveClaudeTests {
         let list = try #require(tools)
         print("Tools:", list)
         #expect(list.contains(ResultPublishing.tool))
+    }
+}
+
+extension LiveClaudeTests {
+    /// Real configured small model; replay evidence only, with no SSH or GPU operations.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func sharedCompletionJudgeUnderstandsAuthorizationDependenciesAndIdleGPU() async throws {
+        let executable = try #require(CodexCLI.locateNewest())
+        let check = PromiseCheck.checker(classify: PromiseCheck.codexClassifier(executable: executable))
+        let cases: [(PromiseCheck.TurnEnd, PromiseCheck.Verdict)] = [
+            (.init(reply: CompletionContinuationTests.idleReply, workPending: true,
+                   task: CompletionContinuationTests.authorization,
+                   dependencies: ["GPU2 Track2 EEGNet actively running, returns via notification", "Monitor: 30 minute fallback"],
+                   actions: ["SSH output only: GPU3 idle >1 minute"]), .continueWork),
+            (.init(reply: "All four hypotheses failed; GPU3 idle. I want to ask the data next.", workPending: true,
+                   task: CompletionContinuationTests.authorization,
+                   dependencies: ["Monitor checks idle GPUs and will wake on a change; no analysis worker owns GPU3"]), .continueWork),
+            (.init(reply: "GPU3 is idle. Do you want me to analyze subject errors?", workPending: true,
+                   task: CompletionContinuationTests.authorization,
+                   dependencies: ["GPU2 experiment running"]), .continueWork),
+            (.init(reply: "The analysis is running; I will report when it returns.", workPending: true,
+                   task: "Analyze the errors in errors.csv and report. No other work.",
+                   dependencies: ["Subagent errors: actively analyzing errors.csv, returns full result via task_notification"]), .waitingDependency),
+            (.init(reply: "All requested analyses and validation passed. Here is the final report.", workPending: false,
+                   task: "Produce one analysis report and validate it; then stop.",
+                   actions: ["Report written; validation completed successfully"]), .complete),
+            (.init(reply: "I need permission to read the private dataset. All remaining analysis requires it.", workPending: false,
+                   task: "Research this dataset using approved access only.",
+                   actions: ["Read failed: permission denied; no accessible data or independent research remains"]), .waitingUser),
+            (.init(reply: "I will analyze another hypothesis.", workPending: false,
+                   task: CompletionContinuationTests.authorization,
+                   conversation: "[user latest] Stop research now. No more analysis or experiments."), .cancelled),
+            (.init(reply: "The research report is complete. Next I will implement the proposed change.", workPending: false,
+                   task: "Research only. Deliver findings and stop. Implementation requires explicit later authorization.",
+                   actions: ["Research report delivered and all requested findings verified. No implementation authorized."]), .complete),
+            (.init(reply: "I will analyze subject errors next.", workPending: true,
+                   task: CompletionContinuationTests.authorization, dependencies: ["GPU2 experiment only"],
+                   terminalRequired: true, signals: [.init(kind: .end, evidence: "I will analyze next")]), .continueWork),
+            (.init(reply: "GPU2 is running; I cannot do anything.", workPending: true,
+                   task: CompletionContinuationTests.authorization, dependencies: ["GPU2 only; GPU3 idle and unowned"],
+                   terminalRequired: true, signals: [.init(kind: .block, evidence: "GPU2 is busy")]), .continueWork),
+            (.init(reply: "All report checks passed.", workPending: false, task: "Write and validate one report; then stop.",
+                   actions: ["Report written and validation passed"], terminalRequired: true,
+                   signals: [.init(kind: .end, evidence: "Report produced and all required validations passed")]), .complete),
+            (.init(reply: "All report checks passed.", workPending: false, task: "Write and validate one report; then stop.",
+                   actions: ["Report written and validation passed"], terminalRequired: true), .needsTerminalSignal),
+            (.init(reply: "The private dataset cannot be accessed without your approval.", workPending: false,
+                   task: "Analyze the private dataset with approved access only.", actions: ["Access denied; no independent authorized progress possible"],
+                   terminalRequired: true, signals: [.init(kind: .block, evidence: "Missing dataset read permission; user approval is required, and all analysis requires that data")]), .waitingUser),
+            (.init(reply: "The private dataset cannot be accessed without your approval.", workPending: false,
+                   task: "Analyze the private dataset with approved access only.", actions: ["Access denied; no independent authorized progress possible"],
+                   terminalRequired: true), .needsTerminalSignal),
+            (.init(reply: CompletionContinuationTests.idleReply, workPending: true,
+                   task: CompletionContinuationTests.authorization, conversation: "The previous two replies were exactly: " + CompletionContinuationTests.idleReply,
+                   dependencies: ["GPU2 only"], actions: ["Same SSH status again, no subject or interval analysis"], terminalRequired: true), .continueWork),
+            (.init(reply: "I will continue research next.", workPending: false, task: CompletionContinuationTests.authorization,
+                   conversation: "[latest user] Cancel the analysis. Do not resume.", terminalRequired: true), .cancelled)
+        ]
+        var times: [Double] = []
+        for (end, expected) in cases {
+            let started = Date()
+            let raw = await check(end)
+            let verdict = PromiseCheck.review(raw, for: end)
+            times.append(Date().timeIntervalSince(started))
+            print("completion-case", expected.rawValue, "raw", raw.rawValue, "effective", verdict.rawValue, "reason", verdict.reason)
+            // A first report of a new batch can count as fresh interpretation, but both
+            // continuation verdicts MUST wake the same unfinished task. A repeated promise
+            // below must specifically have no new-analysis credit.
+            let firstBatchReport = end.reply == CompletionContinuationTests.idleReply && end.conversation.isEmpty && !end.terminalRequired
+            #expect(verdict.verdict == expected || (firstBatchReport && verdict.verdict == .continueAnalysis), "\(end.reply)")
+            #expect(!verdict.reason.isEmpty)
+        }
+        print(String(format: "Luna structured cases: %d; mean %.2fs; max %.2fs", cases.count, times.reduce(0, +) / Double(times.count), times.max() ?? 0))
+        #expect(times.allSatisfy { $0 < PromiseCheck.classifierTimeout })
+    }
+
+    /// Actual Bot event/delivery pipeline and actual provider judgment; head events are replayed
+    /// to keep the regression independent from any live research host or GPU.
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["CCB_LIVE"] == "1"))
+    func liveCompletionJudgeWakesIdleResearchInTheExistingBotSession() async throws {
+        let executable = try #require(CodexCLI.locateNewest())
+        let fake = FakeLauncher()
+        fake.respond = { _ in nil }
+        let bot = makeBot(fake)
+        defer { bot.stop() }
+        bot.promiseCheck = PromiseCheck.checker(classify: PromiseCheck.codexClassifier(executable: executable))
+        bot.send(CompletionContinuationTests.authorization)
+        await eventually { fake.agents.count == 1 }
+        let agent = fake.agents[0]
+        agent.emit(.trace(.subagentStarted(id: "gpu2", description: "GPU2 experiment", type: nil, prompt: "Track2 GPU2 only; GPU3 not owned", background: true)))
+        agent.emit(.trace(.monitorStarted(id: "fallback", description: "30 minute fallback")))
+        agent.emit(.trace(.toolUse(id: "ssh", tool: "Bash", title: "Check SSH", detail: "Read experiment log", parent: nil)))
+        agent.emit(.trace(.toolResult(id: "ssh", output: "GPU2 running; GPU3 idle > 1 minute", failed: false, parent: nil)))
+        agent.reply(CompletionContinuationTests.idleReply)
+        await eventually({ agent.sent.contains(PromiseCheck.followUp) }, timeout: 30)
+        #expect(fake.agents.count == 1)
+        #expect(bot.isWorking)
+        #expect(bot.messages.contains { $0.text == CompletionContinuationTests.idleReply })
     }
 }

@@ -151,8 +151,7 @@ public final class Bot: ObservableObject, Identifiable {
     public var replyFilter: (() -> ((String) async -> String)?)?
     /// Every reply shown, for plugins listening with bots.onReply.
     public var replyObserver: ((ChatMessage) -> Void)?
-    /// Asked when a turn's reply has shown, with only its words and whether work the app saw
-    /// start will still wake it: true sends it `PromiseCheck.followUp` (see `PromiseCheck`).
+    /// Shared semantic completion judgment after a reply is displayed, for either engine.
     public var promiseCheck: PromiseCheck.Check?
     /// Called with what each turn cost, in US dollars.
     public var onSpend: ((Double) -> Void)?
@@ -331,8 +330,19 @@ public final class Bot: ObservableObject, Identifiable {
     private var pausedOrigin: TurnOrigin?
     /// Counts turns that ended, so a check's answer that comes late finds the bot moved on.
     private var turnsEnded = 0
-    /// The count at which the promise check's follow-up turn ends: its reply is not checked again.
-    private var followUpTurn: Int?
+    /// A new input/cancellation retires an in-flight completion judgment, even before a turn ends.
+    private var completionEpoch = 0
+    private var completionTask: Task<Void, Never>?
+    private var completionAuthorization = ""
+    private var completionRequiresTerminalSignal = false
+    private var completionSuspended = false
+    private var completionSignals: [UUID: [PromiseCheck.Signal]] = [:]
+    private var completionNoProgress = 0
+    private var completionEvidence: [String] = []
+    private var completionReplies: [String] = []
+    private var pausedCompletionContext: (task: String, terminalRequired: Bool)?
+    private var completionAssignment: (handed: Bool, id: UUID?, fromRelay: Bool)?
+
     static let pauseNote = "(App: I stopped what you were doing to ask you this. Answer me first; you will be told to carry on with it after.)"
     static let resumeNote = "(App: Now carry on with what you were doing before the user's message, where you left off.)"
 
@@ -1011,9 +1021,15 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     private func cancelHandoffWork(_ id: UUID) {
+        if completionAssignment?.id == id || turnHandoffID == id {
+            invalidateCompletion()
+            completionSuspended = true
+            completionRequiresTerminalSignal = false
+        }
         queued.removeAll { $0.handoffID == id }
         if resumeRetry?.handoffID == id { resumeRetry = nil }
         if pausedHandoffID == id {
+            pausedCompletionContext = nil
             pausedHandoffID = nil
             pausedWork = nil
             pausedOrigin = nil
@@ -1057,6 +1073,12 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// "Stop now" on the rounds line: no more hand-offs for this message.
     public func stopRounds() {
+        invalidateCompletion()
+        completionSuspended = true
+        completionRequiresTerminalSignal = false
+        partner?.invalidateCompletion()
+        partner?.completionSuspended = true
+        partner?.completionRequiresTerminalSignal = false
         conduct(conductor.stop())
         managedHandbackPending = false
         managedHandbackTasks.removeAll()
@@ -1277,6 +1299,38 @@ public final class Bot: ObservableObject, Identifiable {
     private func route(_ outgoing: Outgoing) {
         if let id = outgoing.handoffID,
            !(primary ?? self).conductor.records.contains(where: { $0.id == id && $0.isActive }) { return }
+        // A judgment owns this assignment until it settles. Independent queued assignments
+        // cannot retire its result or steal its return route.
+        if outgoing.handoffID != nil, completionTask != nil {
+            queued.append(outgoing)
+            return
+        }
+        if !outgoing.contextOnly {
+            if outgoing.fromUser, pausedCompletionContext == nil,
+               completionAssignment?.handed == true || pausing(for: outgoing) {
+                pausedCompletionContext = (completionAuthorization, completionRequiresTerminalSignal)
+            }
+            // A user's intervening question must not retire an unfinished handed assignment.
+            if outgoing.fromUser, let assignment = completionAssignment, assignment.handed, pausedWork == nil {
+                pausedWork = assignment.fromRelay
+                pausedConducted = true
+                pausedHandoffID = assignment.id
+            }
+            invalidateCompletion()
+            completionNoProgress = 0
+            completionEvidence.removeAll()
+            completionReplies.removeAll()
+            if outgoing.fromUser, completionRequiresTerminalSignal {
+                // A status question or approval does not silently finish the existing goal.
+                // The judge gives the latest user instruction priority, including cancellation.
+                completionAuthorization += "\nLatest user instruction (supersedes conflicting earlier instructions):\n" + outgoing.text
+                completionSuspended = false
+            } else if outgoing.fromUser || outgoing.conducted || outgoing.messageID != nil || completionAuthorization.isEmpty {
+                completionAuthorization = outgoing.text
+                completionRequiresTerminalSignal = false
+                completionSuspended = false
+            }
+        }
         // Keep independently stoppable work separate, including its return continuation.
         // Peer context and the user's intervening question still reach the current turn.
         if cancellingHandoff || (outgoing.handoffID != nil && (isWorking || managedHandbackPending)) {
@@ -1681,6 +1735,7 @@ public final class Bot: ObservableObject, Identifiable {
         let (body, tags) = isError ? (parsed.body, HeadTags()) : HeadTags.parse(parsed.body)
         lastTags = tags
         var message = ChatMessage(role: isError ? .error : .bot, text: body, choices: parsed.choices)
+        if promiseCheck != nil, !parsed.completionSignals.isEmpty { completionSignals[message.id] = parsed.completionSignals }
         if !parsed.displays.isEmpty { message.displays = parsed.displays }
         message.session = sessionID
         message.engine = engine
@@ -1724,11 +1779,14 @@ public final class Bot: ObservableObject, Identifiable {
         let handed = takeHandback()
         let tags = lastTags
         lastTags = HeadTags()
-        if sharesChat || tags.handoff != nil { (primary ?? self).headReplied(message, by: engine, tags: tags, handed: handed, handoffID: handoffID) }
+        // Display/relay the reply immediately, but keep its assignment owned until semantic
+        // judgment confirms a terminal result. A handoff tag already has its own return path.
+        let deferHandback = handed && canCheckCompletion(message) && tags.handoff == nil && pausedWork == nil
+        if sharesChat || tags.handoff != nil { (primary ?? self).headReplied(message, by: engine, tags: tags, handed: handed && !deferHandback, handoffID: handoffID) }
         if held, !queued.isEmpty { Task { [weak self] in await self?.flushQueue() } }
-        if resumePausedWork() { return }
+        if promiseCheck == nil, resumePausedWork() { return }
         afterTurn()
-        checkPromise(in: message)
+        checkPromise(in: message, handed: deferHandback, handoffID: handoffID)
     }
 
     private func takeHandback() -> Bool {
@@ -1746,8 +1804,13 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// A user question can interrupt handed work, but neither its answer nor a silent
     /// acknowledgement completes that work. Restore its own origin and return route.
-    private func resumePausedWork() -> Bool {
+    private func resumePausedWork(note: String? = nil) -> Bool {
         guard let fromRelay = pausedWork, process != nil else { return false }
+        if let context = pausedCompletionContext {
+            completionAuthorization = context.task
+            completionRequiresTerminalSignal = context.terminalRequired
+            pausedCompletionContext = nil
+        }
         pausedWork = nil
         turnFromRelay = fromRelay
         let origin = pausedOrigin
@@ -1756,31 +1819,134 @@ public final class Bot: ObservableObject, Identifiable {
         pausedConducted = false
         let handoffID = pausedHandoffID
         pausedHandoffID = nil
-        deliver(Outgoing(text: Self.resumeNote, conducted: conducted, handoffID: handoffID))
+        deliver(Outgoing(text: note ?? Self.resumeNote, conducted: conducted, handoffID: handoffID))
         if let origin { turnOrigin = origin }
         return true
     }
 
-    /// The reply just shown promised work nothing will trigger: it is sent back to do it, once.
-    /// Not for an error, a question it asked, or the follow-up's own reply.
-    private func checkPromise(in message: ChatMessage) {
-        guard let promiseCheck, followUpTurn != turnsEnded, message.role == .bot, message.choices == nil, process != nil else { return }
-        let end = PromiseCheck.TurnEnd(reply: message.text, workPending: hasWorkPending)
-        let turn = turnsEnded
-        Task { [weak self] in
-            guard await promiseCheck(end), let self else { return }
-            // Something else started a turn meanwhile (you wrote, background work woke it).
-            guard turn == turnsEnded, !isWorking, !hasWorkPending, phase == .awake, process != nil, queued.isEmpty,
-                  internalReply == nil, groupReply == nil, groupCommand == nil, !removed else { return }
-            followUpTurn = turnsEnded + 1
-            deliver(Outgoing(text: PromiseCheck.followUp))
-        }
+    private func invalidateCompletion() {
+        completionEpoch += 1
+        completionTask?.cancel()
+        completionTask = nil
+        completionAssignment = nil
     }
 
-    /// Work the app saw start that will wake it: a subagent or command still running, a wake-up
-    /// or cron job set.
-    private var hasWorkPending: Bool {
-        managedWorkPending || trace.subagents.contains(where: \.isRunning) || messages.hasBackgroundWorkRunning(now: now()) || scheduleDue != nil
+    private func canCheckCompletion(_ message: ChatMessage) -> Bool {
+        promiseCheck != nil && !completionSuspended && message.role == .bot && process != nil && outage == nil
+            && internalReply == nil && groupReply == nil && groupCommand == nil
+            && permissionAsks.isEmpty && denialAsks.isEmpty && !removed
+    }
+
+    /// Judge every finished normal turn, including continuations. Correlate dependency ownership
+    /// semantically rather than letting an unrelated worker/monitor suppress the entire check.
+    private func checkPromise(in message: ChatMessage, handed: Bool, handoffID: UUID?) {
+        guard canCheckCompletion(message), let promiseCheck, let source = process else { return }
+        let tasks = messages.flatMap { $0.backgroundTasks ?? [] }.filter { $0.holdsBotAwake(now: now()) }
+        var dependencies = trace.subagents.filter(\.isRunning).map {
+            "Subagent \($0.id): \($0.description); task: \($0.prompt); result returns via task notification"
+        }
+        dependencies += tasks.map { "\($0.kind.rawValue) \($0.id): \($0.title); \($0.detail ?? ""); returns by notification/scheduled wake" }
+        if managedWorkPending {
+            dependencies.append("App-managed workers/reports pending; only their recorded tasks are owned, not all remaining work")
+            dependencies += trace.subagents.filter { !$0.isRunning }.suffix(12).map {
+                "Worker \($0.id): \($0.description); task: \($0.prompt); status: \($0.status.rawValue); report queued by the app"
+            }
+        }
+        dependencies += (primary ?? self).conductor.records.filter { $0.isActive && $0.from == engine }.map {
+            "Handoff \($0.id) to \($0.to.rawValue), state \($0.state.rawValue): \($0.task); result returns via conductor"
+        }
+        let steps = (message.steps ?? []).filter { $0.kind != .text }
+        let actions = steps.map { "\($0.tool ?? $0.kind.rawValue): \($0.title); input: \($0.detail ?? ""); done: \($0.done); failed: \($0.failed); output: \($0.output ?? "")" }
+        let authorization = messages.filter { $0.role == .user || $0.role == .relay }.suffix(6)
+            .map { "[\($0.role)] \($0.text)" }.joined(separator: "\n")
+        let recent = messages.suffix(10).map { "[\($0.role)] \($0.text)" }.joined(separator: "\n")
+        let end = PromiseCheck.TurnEnd(reply: message.text, workPending: !dependencies.isEmpty,
+            task: pausedCompletionContext.map { $0.task + "\nCurrent user interruption: " + completionAuthorization } ?? completionAuthorization, conversation: authorization + "\nRecent conversation:\n" + recent,
+            dependencies: dependencies, actions: actions,
+            memory: profile.keepsMemory ? ((try? String(contentsOf: profile.memoryURL, encoding: .utf8)) ?? "") : "",
+            terminalRequired: completionRequiresTerminalSignal, signals: completionSignals.removeValue(forKey: message.id) ?? [])
+        // A new tool ID or another promise alone is not progress. Repeated identical checks
+        // cannot sustain an endless self-wake loop. Genuine new results allow ongoing research.
+        let evidence = steps.filter { $0.done && !$0.failed && $0.output?.isEmpty == false }.map {
+            "\($0.tool ?? "")|\($0.detail ?? "")|\($0.output ?? "")"
+        }
+        let progressed = evidence.contains { !completionEvidence.contains($0) }
+        let replyIdentity = message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let freshReply = !completionReplies.contains(replyIdentity)
+        completionReplies.append(replyIdentity)
+        completionReplies = Array(completionReplies.suffix(128))
+        completionEvidence += evidence.filter { !completionEvidence.contains($0) }
+        completionEvidence = Array(completionEvidence.suffix(256))
+        let epoch = completionEpoch
+        let turn = turnsEnded
+        completionAssignment = (handed, handoffID, turnFromRelay)
+        cancelIdle()
+        completionTask?.cancel()
+        completionTask = Task { [weak self] in
+            let judgment = await promiseCheck(end)
+            guard let self, !Task.isCancelled, completionEpoch == epoch, turn == turnsEnded,
+                  process === source, !isWorking, phase == .awake,
+                  internalReply == nil, groupReply == nil, groupCommand == nil,
+                  permissionAsks.isEmpty, denialAsks.isEmpty, outage == nil, !removed else { return }
+            completionTask = nil
+            if let handoffID, !(primary ?? self).conductor.records.contains(where: { $0.id == handoffID && $0.isActive }) {
+                completionAssignment = nil
+                afterTurn()
+                return
+            }
+            let reviewed = PromiseCheck.review(judgment, for: end)
+            let verdict = reviewed.verdict
+            var reason = reviewed.reason
+            switch verdict {
+            case .continueWork, .continueAnalysis, .needsTerminalSignal:
+                completionNoProgress = progressed || (verdict == .continueAnalysis && freshReply) ? 0 : completionNoProgress + 1
+                guard completionNoProgress <= 2 else {
+                    append(ChatMessage(role: .notice, text: "Automatic continuation paused: repeated turns produced no new results or substantive analysis. Authorized work remains unfinished; the last reply is not completion."))
+                    afterTurn()
+                    return
+                }
+                completionAssignment = nil
+                completionRequiresTerminalSignal = true
+                if reason.isEmpty { reason = "The last reply leaves authorized work unperformed: " + String(end.reply.prefix(240)) }
+                let reportOnly = verdict == .needsTerminalSignal
+                append(ChatMessage(role: .notice, text: (reportOnly ? "Checking terminal evidence: " : "Continuing the authorized task: ") + reason))
+                let instruction = reportOnly ? PromiseCheck.terminalFollowUp : PromiseCheck.followUp
+                if resumePausedWork(note: instruction) {
+                    completionRequiresTerminalSignal = true
+                    return
+                }
+                // The notice is delivered before the same process is woken. Evidence is data;
+                // the fixed instruction remains independent of the judge's free-form wording.
+                deliver(Outgoing(text: instruction, conducted: handed, handoffID: handoffID))
+            case .complete, .waitingUser, .cancelled:
+                completionAssignment = nil
+                completionNoProgress = 0
+                if verdict != .waitingUser { completionRequiresTerminalSignal = false }
+                if verdict == .cancelled {
+                    let cancelledID = pausedHandoffID
+                    pausedWork = nil
+                    pausedConducted = false
+                    pausedOrigin = nil
+                    pausedHandoffID = nil
+                    pausedCompletionContext = nil
+                    if let cancelledID { _ = (primary ?? self).stopHandoff(cancelledID) }
+                } else if verdict == .complete, resumePausedWork() { return }
+                if verdict == .waitingUser, !reason.isEmpty { append(ChatMessage(role: .notice, text: "Blocked: " + reason)) }
+                if handed {
+                    let owner = primary ?? self
+                    owner.conduct(owner.conductor.replied(engine, message.text, tags: HeadTags(), handed: true, handoffID: handoffID))
+                }
+                afterTurn()
+            case .waitingDependency:
+                // Keep the return route for the actual dependency report. Do not duplicate it.
+                if handed { turnConducted = true; turnHandoffID = handoffID }
+                completionAssignment = nil
+                afterTurn()
+            case .unknown, .unavailable:
+                append(ChatMessage(role: .notice, text: "Completion could not be established (\(verdict.rawValue)): " + reason + " The last reply was delivered; this is not a completed-work verdict."))
+                afterTurn()
+            }
+        }
     }
 
     // MARK: Group chat
@@ -2311,17 +2477,6 @@ public final class Bot: ObservableObject, Identifiable {
             if !isError {
                 let parsed = ReplyParser.parseAll(text)
                 applyReactions(parsed.reactions)
-                if !parsed.reactions.isEmpty && Self.saysNothing(text) && trace.tasks.isEmpty {
-                    trace.dropSteps()
-                    isWorking = false
-                    early = EarlyReplies()
-                    reloadRoutines()
-                    turnConducted = false
-                    lastTags = HeadTags()
-                    if resumePausedWork() { return }
-                    afterTurn()
-                    return
-                }
             }
             if isError, lostConnection {
                 showNetworkLoss(text)
@@ -2331,21 +2486,26 @@ public final class Bot: ObservableObject, Identifiable {
             // a bubble with no words ("Worked · 1 step") would only look like it stopped.
             // Or it said nothing at all (no words, only tool calls): no bubble either.
             let silent = Self.saysNothing(text) && trace.tasks.isEmpty
+            let reactionsOnly = !isError && silent && !ReplyParser.parseAll(text).reactions.isEmpty
             // With two heads, the one with nothing to add to your message says only <no-reply/>.
-            if fromBackground || (!fromUser && silent) || (sharesChat && silent), !isError, ReplyParser.saysNoReply(text) || (fromBackground && silent) {
+            if !isError, reactionsOnly || ((fromBackground || (!fromUser && silent) || (sharesChat && silent)) && (ReplyParser.saysNoReply(text) || (fromBackground && silent))) {
                 // Background work woke it with nothing for you: no bubble, and nothing unread.
                 // (A turn you started always shows, and an app's turn with words; the tag is just taken out.)
-                trace.dropSteps()
+                var silentMessage = ChatMessage(role: .bot, text: text.isEmpty ? "<no-reply/>" : text)
+                silentMessage.steps = trace.takeSteps()
+                completionSignals[silentMessage.id] = ReplyParser.parseAll(text).completionSignals
                 isWorking = false
                 reloadRoutines()
                 let handoffID = turnHandoffID
                 let handed = takeHandback()
                 lastTags = HeadTags()
+                let deferHandback = handed && canCheckCompletion(silentMessage) && pausedWork == nil
                 let owner = primary ?? self
-                owner.conduct(owner.conductor.replied(engine, "", tags: HeadTags(), handed: handed, handoffID: handoffID))
-                if resumePausedWork() { return }
+                owner.conduct(owner.conductor.replied(engine, "", tags: HeadTags(), handed: handed && !deferHandback, handoffID: handoffID))
+                if promiseCheck == nil, resumePausedWork() { return }
                 if reportFinishedSubagents() { return }
                 afterTurn()
+                checkPromise(in: silentMessage, handed: deferHandback, handoffID: handoffID)
                 return
             }
             if !isError, let filter = replyFilter?() {
@@ -2714,6 +2874,9 @@ public final class Bot: ObservableObject, Identifiable {
         let clock = date.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
         append(ChatMessage(role: .divider, text: "\(routine.title) · \(clock)", date: date))
         turnFromRelay = profile.role == .manager
+        completionAuthorization = prompt
+        completionRequiresTerminalSignal = false
+        completionSuspended = false
         route(Outgoing(text: prompt))
     }
 
@@ -2828,6 +2991,7 @@ public final class Bot: ObservableObject, Identifiable {
 
     /// Ends the process at once without tidying (the bot is being removed).
     public func stop() {
+        invalidateCompletion()
         removed = true
         claimHold = nil
         partner?.stop()
@@ -3199,7 +3363,7 @@ public final class Bot: ObservableObject, Identifiable {
     }
 
     private func flushQueue() async {
-        guard !queued.isEmpty, !cancellingHandoff else { return }
+        guard !queued.isEmpty, !cancellingHandoff, completionTask == nil else { return }
         // Preserve assignment identity instead of flattening unrelated work into one turn.
         let waiting = queued
         queued.removeAll()

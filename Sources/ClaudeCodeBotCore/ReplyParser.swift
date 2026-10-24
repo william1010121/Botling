@@ -62,6 +62,7 @@ public enum ReplyParser {
         /// came, each at the place in `body` it was written (`at`).
         public var reactions: [ReactionAction] = []
         public var displays: [ComponentInstance]
+        public var completionSignals: [PromiseCheck.Signal] = []
     }
 
     private static let choicesBlock = try! NSRegularExpression(pattern: #"<choices>\s*(.*?)\s*</choices>"#, options: .dotMatchesLineSeparators)
@@ -158,12 +159,14 @@ public enum ReplyParser {
     // Standalone complete lines only: prose, quotations and masked code cannot execute actions.
     private static let reactionTag = try! NSRegularExpression(pattern: #"(?m)^ {0,3}<reaction message="([0-9A-Fa-f-]{36})" emoji="([^"]+)" present="(true|false)"/>[ \t]*$"#)
 
+    private static let terminalTag = try! NSRegularExpression(pattern: #"<(end|block)>(.*?)</\1>"#, options: .dotMatchesLineSeparators)
+
     public static func parseAll(_ reply: String) -> Parsed {
         let text = NSMutableString(string: reply)
         let mask = masked(reply)
         var requests: [BotRequest] = []
         var displays: [ComponentInstance] = []
-
+        var signals: [PromiseCheck.Signal] = []
         /// Matches of `pattern` outside code, last first; each is taken out of the reply.
         func take(_ pattern: NSRegularExpression, first only: Bool = false, _ found: ([String]) -> Void) {
             var matches = pattern.matches(in: mask as String, range: NSRange(location: 0, length: mask.length))
@@ -273,9 +276,20 @@ public enum ReplyParser {
             let parsed = groups[0].split(separator: "\n").compactMap(choice(from:))
             choices = parsed.isEmpty ? nil : parsed
         }
+        // Existing payload parsers run first: literal end/block examples inside component JSON
+        // or request bodies are data, not a terminal claim by this head.
+        // Preserve evidence in the prose while retaining typed claims for semantic verification.
+        for match in terminalTag.matches(in: mask as String, range: NSRange(location: 0, length: mask.length)).reversed() {
+            let kind = (text as NSString).substring(with: match.range(at: 1))
+            let evidence = (text as NSString).substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+            signals.insert(.init(kind: kind == "end" ? .end : .block, evidence: evidence), at: 0)
+            text.replaceCharacters(in: match.range, with: evidence)
+            mask.replaceCharacters(in: match.range, with: masked(evidence) as String)
+        }
+
         let (body, places) = placing(text as String, count: displays.count)
         for index in displays.indices { displays[index].at = places[index] }
-        return Parsed(body: body, choices: choices, requests: requests, reactions: reactions, displays: displays)
+        return Parsed(body: body, choices: choices, requests: requests, reactions: reactions, displays: displays, completionSignals: signals)
     }
 
     /// Every tag the app acts on, in the order `parseAll` knows them.
