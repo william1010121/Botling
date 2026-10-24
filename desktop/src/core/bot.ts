@@ -368,7 +368,8 @@ export class Bot {
     this.updated();
   }
 
-  async stop(turnId: string): Promise<ResultOf<"turn.stop">> {
+  /** `quitting`: no polite interrupt first (the app is going), the tree is ended at once. */
+  async stop(turnId: string, { quitting = false } = {}): Promise<ResultOf<"turn.stop">> {
     const turn = this.turn;
     if (!turn || turn.id !== turnId) return { stopped: false, killed: [], forced: false };
     // Order matters: the turn is closed (and says so) before claude hears of it.
@@ -388,6 +389,10 @@ export class Bot {
     this.updated();
     const head = turn.head;
     if (!head || !head.running) return { stopped: true, killed: [], forced: false };
+    if (quitting) {
+      const result = await head.terminate(1_000);
+      return { stopped: true, killed: result.killed, forced: result.forced };
+    }
     // Ask claude to end the turn (the session goes on); wait for its result line.
     let resolve!: () => void;
     const promise = new Promise<void>((r) => (resolve = r));
@@ -617,13 +622,15 @@ export class Bot {
     this.shuttingDown = true;
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this.clearIdle();
-    if (this.turn) await this.stop(this.turn.id).catch(() => {});
+    // Quitting must be quick (main gives the core a few seconds): a running turn's tree is ended
+    // at once; an idle head gets a moment to exit by itself first.
+    if (this.turn) await this.stop(this.turn.id, { quitting: true }).catch(() => {});
     for (const id of [...this.approvals.keys()]) this.settle(id, NO_LONGER_NEEDED, false);
     const head = this.head;
     if (head?.running) {
       // A polite end first (claude writes its session); then the tree.
       head.finish();
-      const ended = await Promise.race([head.exited.then(() => true), sleep(1_500).then(() => false)]);
+      const ended = await Promise.race([head.exited.then(() => true), sleep(1_000).then(() => false)]);
       if (!ended) await head.terminate(1_000);
     }
     this.persist();

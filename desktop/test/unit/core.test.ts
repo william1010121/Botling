@@ -82,6 +82,20 @@ describe("core process", () => {
     expect((await c.call({ type: "turn.stop", botId: MAIN, turnId })).stopped).toBe(false);
   });
 
+  it("quitting during a turn ends its whole tree quickly (no polite wait), even one ignoring SIGTERM", async () => {
+    const dir = tempDir("core");
+    const pidsFile = join(dir, "pids");
+    const c = core(dir, { FAKE_CLAUDE_MODE: "stubborn", FAKE_CLAUDE_PIDS: pidsFile });
+    await c.call({ type: "chat.send", botId: MAIN, text: "go" });
+    const pids = await until(() => (pidsIn(pidsFile).length >= 2 ? pidsIn(pidsFile) : null));
+    const started = Date.now();
+    await c.kill("SIGTERM");
+    expect(Date.now() - started).toBeLessThan(3_000); // Main gives the core 4 s before it goes.
+    expect(pids.every((pid) => !alive(pid))).toBe(true);
+    const saved = JSON.parse(readFileSync(join(dir, "main", "chat.json"), "utf8"));
+    expect(saved.at(-1)).toMatchObject({ role: "bot", state: "stopped", interrupted: true });
+  });
+
   it("a CLI that crashes mid-reply fails the turn instead of hanging", async () => {
     const c = core(tempDir("core"), { FAKE_CLAUDE_MODE: "crash" });
     await c.call({ type: "chat.send", botId: MAIN, text: "go" });
