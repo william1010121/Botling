@@ -16,6 +16,7 @@ import { PendingFiles, servedType, writeIncoming } from "./attachments";
 import { safeName } from "./components/library";
 import { SpecDesk } from "./spec-desk";
 import { check, type Classifier } from "./promise-check";
+import type { CodexModel } from "./agent/codex-models";
 import { appendFeedback, FEEDBACK_NO_WORDS } from "./feedback";
 import { archiveEntry } from "./briefing";
 import { fileURLToPath } from "node:url";
@@ -84,6 +85,8 @@ export interface CoreOptions {
   summarizer?: Summarizer | null;
   /** The completion judge on Codex for a model (`completionClassifier`); null: none (the check stays off). */
   classifier?: ((model: string) => Classifier) | null;
+  /** The models the local Codex offers (`model/list`); null: none known. */
+  codexModels?: (() => Promise<CodexModel[]>) | null;
   /** How often the component library is looked at for changes on disk (0: never; 1.x: 1.5 s). */
   componentScanMs?: number;
   /** How often memory files are looked at for what waits on you (0: never; chat changes always look). */
@@ -1306,6 +1309,7 @@ First write a test that shows this, then fix it.`;
       }
       case "spec.act": return { accepted: await this.specAct(cmd.specId, cmd.action) };
       case "spec.close": this.specs.close(); return {};
+      case "codex.models": return { models: ((await this.options.codexModels?.()) ?? []).slice(0, 200).map((model) => ({ id: model.id.slice(0, 200), name: model.name.slice(0, 200), isDefault: model.isDefault, efforts: model.efforts?.slice(0, 10) ?? null })) };
       case "spec.wide": this.specs.setWide(cmd.wide); return {};
       case "component.revert": {
         const problem = this.components.library.revert(cmd.name);

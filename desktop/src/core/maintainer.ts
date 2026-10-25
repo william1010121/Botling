@@ -486,7 +486,7 @@ export class MaintainerDesk {
     if (!maintainer) return;
     if (allowed && !this.allowed(folder)) {
       writeFileAtomic(this.foldersFile, JSON.stringify([...this.approvedFolders(), folder]));
-      maintainer.restartBeforeNextMessage();
+      maintainer.restartBeforeNextMessage({ told: `may read ${folder}`, shown: `may read ${folder}` });
     }
     try { maintainer.relay(folderAnswer(folder, allowed)); } catch (error) { this.deps.log(`folder: ${(error as Error).message}`); }
   }

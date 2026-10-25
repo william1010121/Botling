@@ -3,6 +3,7 @@
 // like the existing plugin host.
 import { tmpdir } from "node:os";
 import { CLASSIFIER_TIMEOUT_MS, codexClassifier } from "./promise-check";
+import { askModels, cachedModels } from "./agent/codex-models";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { Core } from "./server";
@@ -99,6 +100,14 @@ function summarizer() {
   return script ? codexSummarizer({ file: process.execPath, prefixArgs: [script], env: { ELECTRON_RUN_AS_NODE: "1" } }, timeout) : null;
 }
 
+/** The models the local Codex offers (`model/list`): the real CLI, or the fake app-server. */
+function codexModels() {
+  const kind = process.env.BOTLING_AGENT ?? "fake";
+  if (kind === "claude") return cachedModels(() => askModels({ file: process.env.BOTLING_CODEX_PATH ?? "codex" }));
+  const script = process.env.BOTLING_FAKE_CODEX;
+  return script ? cachedModels(() => askModels({ file: process.execPath, prefixArgs: [script], env: { ELECTRON_RUN_AS_NODE: "1" } })) : null;
+}
+
 /** The completion judge (`PromiseCheck.codexClassifier`): the real Codex CLI, or the fake one's `exec`. */
 function classifier() {
   const kind = process.env.BOTLING_AGENT ?? "fake";
@@ -159,6 +168,7 @@ const core = new Core({
   routineTickMs: number(process.env.BOTLING_ROUTINE_TICK_MS, 30_000),
   summarizer: summarizer(),
   classifier: classifier(),
+  codexModels: codexModels(),
   componentScanMs: number(process.env.BOTLING_COMPONENT_SCAN_MS, 1_500),
   waitingScanMs: number(process.env.BOTLING_WAITING_SCAN_MS, 5_000),
   plugins: { node, hostScript, sealer },

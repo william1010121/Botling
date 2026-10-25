@@ -341,6 +341,8 @@ export class Bot {
   private restartTimer: NodeJS.Timeout | null = null;
   /** Its next message starts its process again in the same session (1.x's `restart(_:)`, e.g. "may read …"). */
   private restartPending = false;
+  /** Why it starts again before its next message (1.x's `RestartReason`): what it is told, what its divider says. */
+  private restartReason: { told: string; shown: string } | null = null;
   /** A head ended for such a restart: its session carries on. */
   private restarting: AgentHead | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
@@ -1475,12 +1477,33 @@ export class Bot {
   configure(change: { model?: string | null; effort?: string | null; subagentModel?: string | null; codexModel?: string | null }): BotSettingsView {
     const owner = this.owner;
     if (owner.readOnly) throw new ContractError("conflict", owner.problem ?? "Read-only.");
+    const before = owner.settingsView();
     for (const key of ["model", "effort", "subagentModel"] as const) {
       if (change[key] !== undefined) owner.store.saveSetting(key, change[key] ?? undefined);
     }
     if (change.codexModel !== undefined) {
       owner.headsSettings.codexModel = change.codexModel ?? null;
       owner.saveHeads();
+    }
+    // Switching (1.x's `switchModel`, `setEffort`, `setSubagentModel`, a Codex model): awake, each head goes on in
+    // the same session on it just before its next message; asleep, the next wake has it.
+    const heads = [owner, owner.partner].filter((bot): bot is Bot => !!bot);
+    const name = (model: string) => ({ haiku: "Haiku", sonnet: "Sonnet", opus: "Opus" } as Record<string, string>)[model] ?? model;
+    const effortName = (level: string | null) => (level ? ({ low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" } as Record<string, string>)[level] ?? level : "default");
+    if (change.model !== undefined && change.model !== before.model && change.model) {
+      const claude = heads.find((bot) => bot.engine === "claude");
+      if (claude?.head?.running) claude.restartFor({ told: name(change.model), shown: name(change.model) });
+      else if (claude) owner.add({ id: newId(), role: "divider", text: `Switched to ${name(change.model)}`, date: toSwiftDate() });
+    }
+    if (change.effort !== undefined && change.effort !== before.effort) {
+      for (const bot of heads) bot.restartFor({ told: `${change.effort ?? "default"} effort`, shown: `${effortName(change.effort)} effort` });
+    }
+    if (change.subagentModel !== undefined && change.subagentModel !== before.subagentModel) {
+      const model = change.subagentModel;
+      for (const bot of heads) if (bot.engine === "claude") bot.restartFor({ told: `subagents on ${model ? name(model) : "the same model"}`, shown: model ? `subagents on ${name(model)}` : "subagents on the same model" });
+    }
+    if (change.codexModel !== undefined && change.codexModel !== before.codexModel) {
+      for (const bot of heads) if (bot.engine === "codex") bot.restartFor({ told: `Codex model ${change.codexModel ?? "default"}`, shown: change.codexModel ?? "Codex's default model" });
     }
     return owner.settingsView();
   }
@@ -1778,9 +1801,16 @@ export class Bot {
    * Its process starts again, in the same session, before its next message (1.x's `restart(_:)` for
    * "may read <folder>": a folder you allowed is one more `--add-dir`). Asleep, the next wake has it anyway.
    */
-  restartBeforeNextMessage() {
-    if (this.options.primary) { this.options.primary.restartBeforeNextMessage(); return; }
-    if (this.head?.running) this.restartPending = true;
+  restartBeforeNextMessage(reason: { told: string; shown: string } | null = null) {
+    if (this.options.primary) { this.options.primary.restartBeforeNextMessage(reason); return; }
+    this.restartFor(reason);
+  }
+
+  /** This head starts again in the same session before its next message, for `reason` (`restart(_:)`). Asleep: the next wake has it. */
+  private restartFor(reason: { told: string; shown: string } | null) {
+    if (!this.head?.running) return;
+    this.restartPending = true;
+    if (reason) this.restartReason = reason;
   }
 
   /** Writes the turn's message to a head (starting one, in a new session, if the bot is asleep). */
@@ -1789,9 +1819,12 @@ export class Bot {
     while (this.draining) await this.draining.promise;
     if (this.turn !== turn || !turn.open) return;
     const old = this.head;
+    let restarted: { told: string; shown: string } | null = null;
     if (!given && this.restartPending && old?.running && !this.subagents.running.length && !this.managedPending) {
       this.restartPending = false;
       this.restarting = old;
+      restarted = this.restartReason;
+      this.restartReason = null;
       this.log("starting its process again before this message");
       old.finish();
       const exited = await Promise.race([old.exited.then(() => true), sleep(5_000).then(() => false)]);
@@ -1809,6 +1842,11 @@ export class Bot {
     turn.head = head;
     turn.sent = true;
     turn.started = toSwiftDate();
+    if (restarted) {
+      // Said in the chat, and told with this message (1.x's `resume(_:reason:)`).
+      this.owner.add({ id: newId(), role: "divider", text: `Restarted → ${restarted.shown}`, date: toSwiftDate() });
+      turn.words = `(App: Botling restarted you in this same conversation (${restarted.told}); carry on as before.)\n\n${turn.words}`;
+    }
     const brief = waking && this.briefing;
     if (brief) this.briefing = false;
     head.send(this.compose(turn, brief), turn.userId ?? turn.messageId, this.turnImages(turn));

@@ -308,6 +308,12 @@ lines.on("line", (line) => {
       return out({ id, result: { userAgent: "claudecodebot/0.163.0-fake", platformFamily: "unix", platformOs: "macos" } });
     case "initialized":
       return;
+    case "model/list":
+      return out({ id, result: { data: [
+        { id: "gpt-6-luna", displayName: "GPT-6 Luna", isDefault: true, hidden: false, supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "medium" }, { reasoningEffort: "high" }] },
+        { id: "gpt-6-sol", displayName: "GPT-6 Sol", isDefault: false, hidden: false, supportedReasoningEfforts: [{ reasoningEffort: "medium" }, { reasoningEffort: "xhigh" }] },
+        { id: "secret", displayName: "Hidden", isDefault: false, hidden: true },
+      ] } });
     case "thread/start": {
       const thread = randomUUID();
       const coordinator = !coordinatorSeen && Array.isArray(params.dynamicTools);

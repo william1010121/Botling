@@ -251,6 +251,9 @@ function Engines({ settings, change }: { settings: SettingsView; change: (next: 
 /** The shown bot's own choices (1.x: the bot's settings beside its chat). */
 function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onProblem: (problem: string | null) => void }) {
   const [view, setView] = useState<BotSettingsView | null>(null);
+  const [models, setModels] = useState<{ id: string; name: string; isDefault: boolean }[]>([]);
+  const codexHead = bot.heads.includes("codex");
+  useEffect(() => { if (codexHead) void client.request({ type: "codex.models" }).then((result) => setModels(result.models), () => setModels([])); }, [client, codexHead]);
   useEffect(() => { void client.request({ type: "bot.settings", botId: bot.id }).then(setView, (failure) => onProblem(why(failure))); }, [client, bot.id, bot.heads.length, onProblem]);
   const configure = (change: Omit<Extract<import("../contract").Command, { type: "bot.configure" }>, "type" | "botId">) => {
     onProblem(null);
@@ -268,7 +271,7 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
   const hasCodex = view.engines.includes("codex");
   return (
     <>
-      <Group title={bot.name} note="A head already awake keeps its model until the bot next wakes.">
+      <Group title={bot.name} note="A head already awake goes on in the same conversation on the new choice just before its next message.">
         <Row label="Heads" hint={`Its first head is ${first === "claude" ? "Claude" : "Codex"}; it stays.`}>
           <Segmented label="Heads" options={[{ id: "one", label: first === "claude" ? "Claude" : "Codex" }, { id: "two", label: "Claude & Codex" }] as const}
             value={two ? "two" : "one"} onChange={(value) => setHeads(value === "two" ? [first, other] : [first])} />
@@ -287,8 +290,14 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
           </Row>
         )}
         {hasCodex && (
-          <Row label="Codex's model">
-            <TextSetting label="Codex's model" value={view.codexModel} placeholder="Codex's default model" onSave={(value) => configure({ codexModel: value })} />
+          <Row label="Codex's model" hint={models.length ? "What your Codex offers (model/list)." : undefined}>
+            {models.length ? (
+              <select aria-label="Codex's model" value={view.codexModel ?? ""} onChange={(event) => configure({ codexModel: event.target.value || null })}>
+                <option value="">Codex's default model</option>
+                {models.map((model) => <option key={model.id} value={model.id}>{model.name}{model.isDefault ? " (default)" : ""}</option>)}
+                {view.codexModel && !models.some((model) => model.id === view.codexModel) && <option value={view.codexModel}>{view.codexModel}</option>}
+              </select>
+            ) : <TextSetting label="Codex's model" value={view.codexModel} placeholder="Codex's default model" onSave={(value) => configure({ codexModel: value })} />}
           </Row>
         )}
       </Group>

@@ -780,6 +780,8 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("spec.act"), specId: id, action: SpecAction }),
   /** The spec panel folds back to the chip (`closeSpec`), or is made wide (`setSpecPanelWide`). */
   z.strictObject({ type: z.literal("spec.close") }),
+  /** The models the local Codex offers (`model/list`, 1.x's `CodexModels`), for the Codex model menu. */
+  z.strictObject({ type: z.literal("codex.models") }),
   z.strictObject({ type: z.literal("spec.wide"), wide: z.boolean() }),
   /**
    * "Not right" on a reply, in developer mode (1.x's `reportFeedback`): your words and pictures go to the
@@ -892,7 +894,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.react", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "catchup.retry", "catchup.interval",
-  "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
+  "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore",
@@ -991,6 +993,7 @@ export interface Results {
   "spec.make": { specId: string | null };
   "spec.act": { accepted: boolean };
   "spec.close": Record<string, never>;
+  "codex.models": { models: { id: string; name: string; isDefault: boolean; efforts: string[] | null }[] };
   "spec.wide": Record<string, never>;
   "pin.add": { pinned: boolean };
   "pin.change": { changed: boolean };
