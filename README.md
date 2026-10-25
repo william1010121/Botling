@@ -23,6 +23,7 @@ components you can pin, and change the app itself with plugins. All local, on th
 [![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-D97757?logo=claude&logoColor=white)](https://docs.claude.com/en/docs/claude-code)
 
 [**Download**](https://github.com/william1010121/Botling/releases/latest) ·
+[First open / 首次開啟（Botling 2）](docs/first-open.md) ·
 [Quick start](#quick-start) ·
 [Features](#features) ·
 [Plugins](#plugins--components) ·

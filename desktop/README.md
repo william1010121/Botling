@@ -33,14 +33,40 @@ shots, the `/` component menu and its mention note), the Phase 4c leftovers, com
 the "not right" feedback relay, and Codex's worker return routes, model list and model switching. Phase 5b
 done (macOS): electron-builder makes a runnable arm64 `.app` and zip with Electron's fuses hardened, ad-hoc
 signed (ready for a Developer ID and notarization from the environment), test-only variables ignored, the
-plugin host as a utility process, Maintainer's plugin check as the app's own `--check-plugin`, a read-only
-update check against GitHub Releases (off by default), and a smoke test of the packaged app; Windows and
+plugin host as a utility process, Maintainer's plugin check as the app's own `--check-plugin`, an
+update check against GitHub Releases (on by default; signed self-updates described below), and a smoke test of the packaged app; Windows and
 Linux targets are configured only.**
 Not yet a replacement for the Swift app (see "Gaps vs the Swift app").
 It lives beside it: nothing under `Sources/` or `Web/` changed, and the Swift app does not use
 anything here. Web/src is *bundled from source* into the desktop's chat frame (its packages come
 from `desktop/node_modules`), so `cd Web && npm run build` and its output are untouched;
 `Web/src/contract.json` is read (for the shared `ccb.save` limit), never written.
+
+## Verified updates and first open
+
+See [First open / 首次開啟](../docs/first-open.md) for macOS 15 **System Settings → Privacy & Security → Open Anyway**, the app-scoped quarantine command, and Windows SmartScreen.
+
+Updates check GitHub Releases `v2.*` by default (an explicit Settings opt-out is kept).
+**Download and verify** authenticates an Ed25519 manifest, ZIP SHA-256 and exact size before extraction or app modification. **Restart to update** is a separate required click; ordinary quit never installs. A bounded shell helper waits for the old process to exit, swaps sibling bundles, and retains `previous.app` until the new version has a loaded, ready renderer and responsive core. Crash/no receipt within 30 seconds restores the old bundle. macOS only; read-only/translocated apps must be moved into Applications. Only the verified extracted app has quarantine removed.
+
+Release trust is deliberately **unconfigured** (`release-config.json`: `publicKey: null`): this checkout cannot self-install updates. No production key has been created. A maintainer must explicitly run the following once (not part of build):
+
+```sh
+cd desktop
+node scripts/release-sign.mjs keygen
+```
+
+It exclusively creates `~/.botling-release/ed25519.key` with mode **600** and `ed25519.pub` (refuses overwrite). Keep the private key outside the repo. Put the **public** PEM string in `desktop/release-config.json`'s `publicKey`, then build with `BOTLING_RELEASE_BUILD=1` (fails without configured Ed25519 trust). This public key is embedded in main; runtime variables cannot override it. In CI, supply the matching private PEM through **BOTLING_RELEASE_KEY**; signing locally otherwise reads the operator's key file.
+
+After building a release ZIP, sign it explicitly:
+
+```sh
+node scripts/release-sign.mjs sign 2.0.1 dist/Botling-2-2.0.1-mac-arm64.zip
+```
+
+Upload that ZIP and its adjacent `Botling-2-2.0.1-mac-arm64.zip.manifest.json` to the same `v2.0.1` GitHub release. The script refuses a key different from release-config.json. Manifest fields are `version`, lowercase hex `sha256`, byte `size`, and base64 `signature`. Ed25519 signs UTF-8 `JSON.stringify([version, sha256, size])` without newline. The ZIP must contain only `Botling 2.app/…`, with matching bundle ID/version. Signing this manifest does not replace Apple notarization or establish trust in the first download. Future key rotation requires a build already trusted by the old key.
+
+Focused updater tests use disposable keys, a loopback fake release server, and fake app bundles under `desktop/.tmp`; they never update an installed app. A complete packaged-update integration run remains separate.
 
 ## Run it
 
@@ -860,7 +886,7 @@ CCB_DESKTOP_PHASE5_EXPORT=$PWD/desktop/test/fixtures/phase5-golden.json TZ=UTC \
 | Fuses | RunAsNode off, cookie encryption on, NODE_OPTIONS off, `--inspect` off, embedded ASAR integrity on (electron-builder writes `ElectronAsarIntegrity`), only-load-from-asar on, file:// extra privileges off, browser-specific V8 snapshot off | `packaged.spec.ts` (`@electron/fuses` reads the wire), `npx @electron/fuses read --app …` |
 | Signing | No certificate: ad-hoc (`identity: "-"`), no hardened runtime (ad-hoc + hardened runtime fails library validation), no notarization, keychain auto-discovery off. With `CSC_LINK`/`CSC_NAME`: that Developer ID, hardened runtime with `build/entitlements.mac.plist` (JIT only), and notarization when `APPLE_API_KEY`+`APPLE_API_KEY_ID`+`APPLE_API_ISSUER`, `APPLE_ID`+`APPLE_APP_SPECIFIC_PASSWORD`+`APPLE_TEAM_ID` or `APPLE_KEYCHAIN`+`APPLE_KEYCHAIN_PROFILE` are set. Windows: `WIN_CSC_LINK`/`CSC_LINK` when given | `codesign --verify --deep --strict` in `packaged.spec.ts` (also on the app unzipped from the zip) |
 | Packaged runtime (`main/packaged.ts`, `main.ts`) | Test-only variables dropped (above); the real heads; the fake CLIs' paths not even set; `Botling --check-plugin <folder>` (1.x's flag, `core/plugins/check-report.ts`) is the plugin check Maintainer is given, since Electron can no longer run a script as Node; the plugin host is the utility process main starts (as in development since Phase 3b) | `unit/packaged.test.ts`, `e2e/shot.spec.ts` (`--check-plugin` and the command handed over), `packaged.spec.ts` |
-| Update check (`main/updates.ts`, Settings → Updates, `Updates.tsx`) | Main reads `api.github.com/repos/william1010121/Botling/releases` (read only) for a published release tagged `v2.x.y` or later newer than this build (prereleases only for a prerelease build; the 1.x releases never count), with this platform's zip named when it has one; at most every 6 hours, Check now any time; the result is kept in `<data>/updates.json`. The app shows "Botling X is available." under the header with Open release page (the browser, only a page of that repository) and Later. Nothing is downloaded or installed. Off by default | `unit/updates.test.ts` (versions, which releases count, throttle, failures), `e2e/updates.spec.ts` (local feed), `packaged.spec.ts` (off: nothing looked up), screenshot `phase5b-update.png` |
+| Updates (`main/updates.ts`, `main/update-install.ts`, Settings → Updates) | Published `v2.*` releases only; checks default on, at most every 6 hours, manual any time. Explicit Ed25519 trust, signed version/SHA-256/size, verified staging, separate restart click, bounded relaunch/rollback. The shipped placeholder public key refuses installation. | `unit/updates.test.ts`, `unit/update-install.test.ts` (loopback server and fake app transactions), `e2e/update-actions.spec.ts` (click and verification boundaries); full packaged integration remains separate |
 | Packaged smoke test (`playwright.packaged.config.ts`, `test/packaged/`) | Starts the packaged binary as a user would (fuses stop Playwright's Electron launcher) with `--remote-debugging-port=0` and `--use-mock-keychain`, a throwaway data folder and HOME in `desktop/.tmp`, stand-ins for `claude`/`codex` that only log, no 1.x import; reaches the app page over CDP: it boots to the main bot's chat with its input box, the plugin host (a utility process) answers a plugin's command, test-only variables (a fake agent, a test web site, a shot command, a Node plugin host, an update feed) are ignored, no CLI ran, nothing went to HOME; SIGTERM quits with code 0 and leaves no process | `npm run test:packaged` (3 tests), screenshot `phase5b-packaged.png` |
 | Windows and Linux | Targets only: NSIS (x64, arm64), AppImage and deb (x64, arm64), `botling2` on Linux | not built, not run |
 
@@ -884,10 +910,7 @@ e2e suite twice in a row after the last change).
 - **A packaged app drops test-only variables rather than refusing to start**, and logs which (`[packaged]
   ignored …`). `BOTLING_SHOT_COMMAND`/`BOTLING_CHECK_COMMAND` count as test-only: Maintainer is always handed
   this build's own command.
-- **The update check only reads and links**, off by default: no signature to verify a download against
-  (ad-hoc, no Developer ID), and Squirrel.Mac (electron-updater's macOS path) needs a signed app. Once there
-  is a Developer ID, electron-updater with a `latest-mac.yml` feed is the next step. Only tags `v2.*` or
-  later count, so 1.x's releases (v1.19.0 …) are never offered to 2.0.
+- **Verified updates** now use an explicitly configured, embedded Ed25519 public key and signed manifests (see above). Checks default on; an unconfigured trust key refuses installation. Only `v2.*` tags count; 1.x releases are never offered.
 - **The protocol stays version 10**: `updates.check`/`updates.open` and `settings.updateCheck` were added;
   the app page and main ship together.
 - **The smoke test drives the packaged app over CDP** (`--remote-debugging-port`, a Chromium switch, not a
@@ -965,8 +988,7 @@ Not in 2.0 yet, roughly in order of how much they matter:
 - **Settings**: auto mode, spending and rate limits, Doctor; the React chrome's own words are English
   (the chat page follows the language setting).
 - **Packaging and updates, still missing** (Phase 5b did macOS arm64): a Developer ID signature and
-  notarization (configured, never run: no certificate here), so no installable download for others and no
-  self-updating (only the read-only check); a DMG; x64/universal macOS; the full e2e suite against the
+  notarization (configured, never run: no certificate here), so first-open guidance is needed; self-updating requires an explicitly configured Ed25519 release key (above); a DMG; x64/universal macOS; the full e2e suite against the
   packaged build (it runs on the development build; the packaged app has its smoke test); a plugin's own
   child processes are not ended with a utility-process plugin host (no process group of its own); the
   packaged app with real `claude`/`codex` (the smoke test uses stand-ins, never the user's data).
@@ -1018,8 +1040,7 @@ Not in 2.0 yet, roughly in order of how much they matter:
 
 1. **Windows** (spike 4 on a Windows 11 machine or VM: build `dist:win`, run the suite, Job Objects,
    zsh-less command shells), then Linux.
-2. **Real signing** once there is a Developer ID: notarize, then electron-updater (Squirrel.Mac) with a
-   release feed, a DMG.
+2. **Real signing** once there is a Developer ID: notarize. Configure the Ed25519 release identity above before distributing self-updating builds; packaged integration and a DMG remain separate.
 3. **Smaller parity**: switching a head's engine through a memory handoff, the spec brief, specs from
    result pages, developer mode's build installs and screenshots, Codex rate limits and token use.
 
@@ -1176,7 +1197,7 @@ SIGTERM.
 
 Still open:
 - A Developer ID certificate (and an App Store Connect API key) to sign and notarize, which also unlocks
-  real self-updating.
+  Apple notarization (Ed25519 manifest verification is configured separately, above).
 - One real `claude` call to confirm the approval round trip, and one as a real bot (tools on) to
   see the app prompt's choices/task lines from real claude.
 - Is a 15 s tidy on quit acceptable (1.x waits for it), or should quitting skip it?
