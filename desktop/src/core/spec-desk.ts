@@ -57,7 +57,7 @@ export class SpecDesk {
   openId: string | null = null;
   wide = false;
   /** Specs being built, by the component name they wait for (`specBuilds`). */
-  private builds = new Map<string, { chat: string; spec: string; version: number | null }>();
+  private builds = new Map<string, { chat: string; spec: string; version: number | null; before?: string[] }>();
 
   constructor(private readonly deps: SpecDeskDeps) {}
 
@@ -137,7 +137,7 @@ export class SpecDesk {
     spec.conversation.push({ kind: "event", text: "Sent to Maintainer to build the first version" });
     this.store(spec, chat);
     const had = this.library.names.includes(spec.name);
-    this.builds.set(spec.name, { chat: chat.id, spec: id, version: had ? this.library.versionOf(spec.name) : null });
+    this.builds.set(spec.name, { chat: chat.id, spec: id, version: had ? this.library.versionOf(spec.name) : null, before: [...this.library.names] });
     this.markWorking(spec.name, "built from a reply");
     const record = chat.lines().find((line) => line.id === spec.messageID);
     const asked = record ? this.askedBefore(record, chat) : null;
@@ -287,7 +287,7 @@ export class SpecDesk {
     spec.conversation.push({ kind: "event", text: event });
     this.store(spec, chat);
     const had = this.library.names.includes(spec.name);
-    this.builds.set(spec.name, { chat: chat.id, spec: spec.id, version: had ? this.library.versionOf(spec.name) : null });
+    this.builds.set(spec.name, { chat: chat.id, spec: spec.id, version: had ? this.library.versionOf(spec.name) : null, before: [...this.library.names] });
     this.markWorking(spec.name, change ? "changed from its spec panel" : "built from a component spec");
   }
 
@@ -353,8 +353,14 @@ export class SpecDesk {
       // Built under another name: that one is waited for (a new one, or a change to it).
       const build = this.builds.get(before.name)!;
       this.builds.delete(before.name);
-      this.builds.set(spec.name, { chat: build.chat, spec: build.spec, version: this.library.names.includes(spec.name) ? this.library.versionOf(spec.name) : null });
       this.doneWorking(before.name);
+      // 2.0: a component that landed under that name since the build began (the editor's work comes before
+      // Maintainer's answer) is the one built; 1.x would wait for its template to change again.
+      if (this.library.names.includes(spec.name) && build.before && !build.before.includes(spec.name)) {
+        this.finish(id, spec.name, chat);
+        return;
+      }
+      this.builds.set(spec.name, { chat: build.chat, spec: build.spec, version: this.library.names.includes(spec.name) ? this.library.versionOf(spec.name) : null, before: build.before });
       this.markWorking(spec.name, "built from a reply");
     }
   }
