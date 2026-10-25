@@ -19,7 +19,12 @@ the Swift strings), pausing handed-over work for your message as 1.x, and a dete
 Phase 4a done: the chat page on its own origin with plugins' web parts in it, attachments,
 Settings in React, the main bot's world (Add project, `<new-project>`, the project list it wakes
 with, inbox delivery, "Waiting on you" and the right panel), and the web AIs (Gemini, ChatGPT,
-Claude in the app's own browser, their conversations saved for the main bot, its `webBriefing`).**
+Claude in the app's own browser, their conversations saved for the main bot, its `webBriefing`).
+Phase 4b done: temporary teams (`<team>`, the ccb-teams plugin, a run per team in `runs/`), bots of
+their own (New bot, `<new-bot>`, a plugin's `bots.create`), removing a bot or a project (nothing on
+disk is deleted), `<open-question>` copies, subagent rows in the left column with settling, the right
+panel's Results and Settled and its folded strip, and the team lines back in the main bot's project
+list (checked string for string against the Swift code).**
 Not yet a replacement for the Swift app (see "Gaps vs the Swift app").
 It lives beside it: nothing under `Sources/` or `Web/` changed, and the Swift app does not use
 anything here. Web/src is *bundled from source* into the desktop's chat frame (its packages come
@@ -94,7 +99,8 @@ In the fake CLI (`npm run dev:fake`) a message can start with a directive: `/too
 it: try Allow once / Don't allow), `/tool:WebFetch https://x` (a tool that can be "always" allowed),
 `/slow` (streams until Stop), `/stubborn` (ignores Stop and SIGTERM: the tree is killed), `/card`,
 `/crash`, `/resume` (says which session it runs and whether it was resumed), `/choices`, `/task`,
-`/team` (a request 2.0 cannot do), `/react <message id>`, `/agent` (a subagent that reads a file and
+`/team` (a `<team>` request; since Phase 4b a team's task, `(App: A task from the main bot)` + the
+task, is read as the user's words, so `/say`, `/linger` … work in it), `/react <message id>`, `/agent` (a subagent that reads a file and
 reports), `/bgagent` and `/bgagent:silent` (a background subagent that reports later in claude's own
 turn, which says something or only `<no-reply/>`). App notes in a message (`(App: …` paragraphs) are
 not echoed; the tidy note is answered `OK` after writing the memory file it names.
@@ -210,6 +216,11 @@ Files: `src/contract/` (the typed contract), `src/core/` (core process: `server.
 <core>/component-editor.json    1.x's: hashes of the editor file the app wrote / you chose to keep
 <core>/install-staging/     1.x's: a fetched plugin until you answer Install / Don't install
 <core>/projects/DEC0DE00-…/     Maintainer's chat files (1.x's fixed id)
+<core>/bots/<ID>/           1.x's: a bot of its own's folder (New bot, <new-bot>, a plugin's bots.create);
+                            its projects.json row has `job` (and `plugin` when a plugin made it)
+<core>/plugins/ccb-teams/   1.x's: the temporary teams as Claude Code agents (claude/agents/<team>.md)
+<core>/runs/<yyyyMMdd-HHmmss>-<team>/   1.x's: a team's run (artifacts/ for its result page)
+<core>/removed-bots.json    1.x's: bots plugins made that you removed (`plugin/name`), not made again
 ```
 
 bot.json keys 2.0 now writes too: `heads` and `engine` (1.x's); since Phase 3a `routineRuns` (when
@@ -222,7 +233,14 @@ Formats follow Swift's `JSONEncoder` as 1.x uses it: dates are **seconds since 2
 every key it does not know as it was, and adds its own (`turnID`, `state`, `cards`, `error`), which
 1.x's decoder ignores. Message ids are UUIDs (1.x fails a whole chat.json on one bad id).
 
-### The contract (`src/contract/index.ts`, protocol version 8)
+### The contract (`src/contract/index.ts`, protocol version 9)
+
+Version 9 (Phase 4b) adds: `bots.create` (New bot), `bots.remove`, `subagent.settle`, `results.list`,
+main-only `result.open`; `BotView.job` and `BotView.subagentRows` (`SubagentRowView`: id, title,
+status, head, start/end, `unsettledAt`, `settled`, prompt); events `bot.removed` and `teams.updated`,
+the snapshot's `teams` (`TeamRunView`); settings' `rightPanelCollapsed`. The shared helpers
+`resultLinks` (1.x's `Bot.results`), `listedRows` / `settledRows` (`TraceBook.listed` / `.settled`)
+live in the contract so the renderer and the core use the same code.
 
 Version 8 (Phase 4a, the main bot's world) adds: main-only `projects.pick` (main's folder picker, then
 `projects.add`, which the page may not send: it never names a path), core `projects.add`, `waiting.list`,
@@ -656,10 +674,55 @@ Tests after item 5: unit 283, e2e 38, typecheck, all green (the full e2e suite f
   command); "Add project" goes through main's picker, `<new-project>` through a card you answer.
 - **An inbox is emptied only after its bot took the text** (1.x empties it first): a bot that cannot
   take it now (read-only, locked) keeps it for the next reply.
-- **2.0 has no teams**, so the project list leaves out their lines and the `<open-question>` note; the
-  briefing is otherwise 1.x's string (the web AIs' part came with item 5).
-- **The right panel is always shown** beside the chat (hidden below 860 px); 1.x's collapsed strip
-  and its Results / Settled sections are not built.
+- ~~**2.0 has no teams**, so the project list leaves out their lines and the `<open-question>` note; the
+  briefing is otherwise 1.x's string (the web AIs' part came with item 5).~~ (Phase 4b: the lines are back.)
+- ~~**The right panel is always shown** beside the chat (hidden below 860 px); 1.x's collapsed strip
+  and its Results / Settled sections are not built.~~ (Phase 4b: built; the open panel is still hidden below 860 px.)
+
+## Phase 4b: what was built and how it was checked
+
+| Piece | What it does | Evidence |
+| --- | --- | --- |
+| Temporary teams (`core/teams.ts`) | Teams.swift + `Workspace.startTeam`: TeamSpec (parse, file text, the research and prototype defaults), TeamPrompts (system with the language and results rules, tools plus Artifact unless results stay local, the task line); the `ccb-teams` plugin made once (old `teams/` files move in, `teams.v1-backup`); teams are the agents of enabled plugins' Claude parts (not ccb-core's), the first of a name wins. The main bot's `<team>` starts one turn of a head that asks nothing (no `--permission-prompt-tool`; a permission request is refused) in `runs/<stamp>-<team>/`; its reply comes back as "Research team: …", a failure as "… did not finish: …"; stopped after an hour; managers' `<team>` is left out as in 1.x | `unit/teams.test.ts` (**12 system prompts, tools, the task, the agent files and 5 parsed files equal to what Swift wrote**, `test/fixtures/teams-golden.json`; a run through the core: folder, arguments, input, the reply, `teams.updated`), `e2e/phase4b.spec.ts` (the Now card while it works) |
+| The project list | 1.x's `projectBriefing` again with the team lines and, when a project or bot asks, the `<open-question>` note; the main bot's wake note and routines get it; an awake main bot hears "(App: The list of projects and bots changed.)" when bots come and go | `unit/teams.test.ts` (**empty, plain and asking lists equal to Swift's** for the same projects and bot), `unit/head.test.ts`, `unit/projects.test.ts` |
+| Bots of their own | `makeBot`: `botName` (one line, no quotes/@/<>/\`, 40 characters), the app's names and projects' names taken, the same name (any case) gives that bot back, its folder `bots/<ID>/` with `.bot/`, its row in projects.json with `job` (and `plugin`), "New bot "X": …" in the main chat, set up at once with 1.x's "(App) You were just created. Your job: …" relay. From the New bot form (`bots.create`), the main bot's or Maintainer's `<new-bot>` ("There is already a bot called …", "No bot was made: …"), and a plugin's `bots.create` (with the `bots` permission; a bot you removed is not made again) | `unit/teams.test.ts`, `unit/plugin-host.test.ts`, `e2e/phase4b.spec.ts` |
+| Removing | A row's menu: Remove bot… (1.x) and Remove project… (2.0), a confirmation; the bot stops at once (no tidy), leaves the list, projects.json and the main bot's project list; its copies in the main chat are closed "No longer needed"; nothing on disk is deleted (its folder, `.bot/`, chat files) | `unit/teams.test.ts` (also after a restart; the main bot and Maintainer are refused), `e2e/phase4b.spec.ts` |
+| `<open-question>` | `showOpenQuestion`: the project's own card shows in the main chat as "Name: question" with its buttons (1.x's `sourceID` / `sourceMessageID`); a pick or words on it go to the project's question; settled in its own chat, the copy follows; what waits on you lists it once | `unit/teams.test.ts` |
+| Subagent rows | Under each bot (1.x's SubagentRows): the ones it sent itself that run or ended in the last 10 minutes, running first, at most 4 with "Show N more"; the end mark (✓ ! ■), the head's letter with two heads; click opens its conversation; the clock settles it into the right panel's Settled (`dismissedAt` in subagents.json, as 1.x), ↩ brings it back | `unit/teams.test.ts` (listing, settling through the core), `e2e/phase4b.spec.ts` |
+| Results, Settled, the strip | Results ("Just done" for the main bot): the links in the chat's bot and app lines, newest first, three shown; main opens one only if it is that chat's link (web links in the browser; a local page, picture, video or document with its app, anything else shown in Finder). Settled: five, then Show N more. Folded (the button at the top right, ⌃⌘I; settings.json `rightPanelCollapsed`): 1.x's strip — the face with its status dot and the Now card as a tip, an icon per section with a count, the section beside the strip, the bot's settings at the bottom | `unit/teams.test.ts` (`resultLinks`), `e2e/phase4b.spec.ts`, screenshots `phase4b-rows.png`, `phase4b-panel.png`, `phase4b-strip.png` (looked at) |
+
+Tests after Phase 4b: unit 297, e2e 40, typecheck, all green (the full e2e suite twice in a row green
+after the last change; one earlier full run had the Phase 4a plugin web part test time out once
+waiting for the plugin to load — it passed 6 times alone and in the next full runs; not pinned down).
+
+### How the teams' golden strings are made
+
+```sh
+CCB_DESKTOP_TEAMS_EXPORT=$PWD/desktop/test/fixtures/teams-golden.json TZ=UTC \
+  swift test --scratch-path /Volumes/My-SSD/botling-work/swift-build --filter DesktopTeamsGoldenExport
+```
+
+### Decisions (Phase 4b)
+
+- **Group chats are not part of teams** in 1.x (GroupChat.swift is its own feature: "New group",
+  members, a shared conversation), so they are not built here; they stay a gap.
+- **Removing a project exists in 2.0** (1.x only removes bots of their own): the same semantics as
+  1.x's `removeBot` — it stops at once, leaves the list and projects.json, and nothing on disk is
+  deleted (the project's files, its `.bot/` notes, its chat files). Adding the folder again makes it a
+  project again (with a new chat).
+- **A removed bot stops without tidying** (1.x's `stop()`), unlike quitting.
+- **Teams run through the same head as bots** (`ClaudeHead`, the real CLI or the fake one, harmless in
+  `npm run dev`), with `askPermission: false`; a permission request is refused instead of asked.
+- **Results open outside the app**: a web link in the browser, a local file with its own app only for
+  pages, pictures, videos, sounds and documents (anything else is shown in Finder, never run); 1.x's
+  own result window is not ported. Main opens only a link that is in that bot's chat.
+- **`<open-question>` copies do not survive a restart** (like the app's other questions, they close
+  "No longer needed"); a two-head shared decision's copy is not kept in step (no `decisionID` sync).
+- **A bot's open question is its own lines only** (1.x: role `.bot`); the app's cards in its chat no
+  longer count for the project list or what waits on you.
+- **The right panel keeps 2.0's width** (272 pt; 1.x 340) and the strip 1.x's 56 pt.
+- **Rows in the left column are computed in the renderer** from the bot's rows (10 minutes after
+  ending, every 30 s), so the core does not have to send an event when a row ages out.
 
 ## Gaps vs the Swift app (1.x)
 
@@ -672,19 +735,25 @@ Not in 2.0 yet, roughly in order of how much they matter:
   settings UI, switching a head's model (the handoff/resume prompts are ported, unused); completion verification (PromiseCheck)
   of either head; drawing the hand-off panel; a one-head bot's `<handoff to="claude">` for publishing
   (a notice says it cannot).
-- **Subagents**: rows in the left column and the right panel's list, SendMessage resumes, background
-  commands/Monitors (`backgroundTasks` chips), the interrupted-work note on wake, token speed.
-- **Prompts**: the main bot's wake note has no teams (2.0 has none); the handoff/resume
-  prompts are ported but unused (no model switch yet). Codex-only prompts are not ported.
-- **Requests**: teams, new bots (projects: done in Phase 4a), `<open-question>`, `<need-folder>`, component specs and suggestions, open
-  questions, @ call-ins (a notice says so). (Components, plugins and installs: done in Phase 3b.)
+- **Subagents**: SendMessage resumes, background commands/Monitors (`backgroundTasks` chips), the
+  interrupted-work note on wake, token speed, a subagent waiting for the network on its row. (Rows in
+  the left column and Settled: done in Phase 4b.)
+- **Prompts**: the handoff/resume prompts are ported but unused (no model switch yet). Codex-only
+  prompts are not ported. (The team lines: back in Phase 4b.)
+- **Requests**: `<need-folder>`, component specs and suggestions, @ call-ins (a notice says so).
+  (Projects: Phase 4a; teams, new bots, `<open-question>`: Phase 4b; components, plugins and
+  installs: Phase 3b.)
+- **Teams, still missing**: their cost and rate limits (1.x records each team's spend), a team's
+  Claude parts checked before use, the team list changing while the app runs beyond what each wake
+  reads, new bots and projects starting on the app's engine defaults (`seedEngineDefaults`).
 - The right panel's Tasks list (chips only), group chats, feedback relays, completion verification
   (`<end>/<block>` are parsed, not judged); claude's own scheduling tools (CronCreate, ScheduleWakeup)
   as background-task chips; 1.x's Settings → Routines page (2.0 has the header's small panel; the
   `addRoutine` UI for a new daily job is missing); Catch-up on window focus (only on opening a chat).
-- **The main bot's world, still missing**: teams, making bots of their own ("New bot"), removing a
-  project or bot, pinning bots, group chats, the right panel's Results and Settled, its collapsed
-  strip, the Dock count.
+- **The main bot's world, still missing**: pinning bots (Pin / Unpin in a row's menu, the Pinned
+  section), group chats (New group, members, their conversation), the left column's search (⌘K) and
+  folded column, the right panel's Tasks list and "Just done" task rows, 1.x's own result window,
+  the Dock count.
 - **Components and plugins, still missing**: component specs ("Make into component"), reports, revert and
   version history, the `/` component menu, "Show in all bots" floats (each chat floats its own), "making
   it live" (a Board command handed to Maintainer), SF Symbol icons (emoji icons work),
@@ -740,11 +809,18 @@ Not in 2.0 yet, roughly in order of how much they matter:
   script). Since Phase 1b the chat itself is Web/src's page with its own chat.css; the React
   chrome's colours (`src/renderer/styles.css`) are Theme.swift's.
 
-## What's next (proposed, after Phase 4a)
+## What's next (proposed, after Phase 4b)
+
+1. **Group chats and pinned bots** (1.x's GroupChat.swift, Pin / Unpin, the column's search and
+   folded rail), and the right panel's Tasks list.
+2. **Maintainer, rest** (component specs, reports, revert/history, shots, `<need-folder>`).
+3. **Packaging and updates**, then **Windows**, as below.
+
+## What was next after Phase 4a (kept for reference)
 
 1. ~~Built-in browser / web chats and `webBriefing`~~ — done (Phase 4a item 5).
-2. **Teams and bots of their own** ("New bot", `<team>`, removing), the right panel's Results and
-   Settled, subagent rows in the left column.
+2. ~~**Teams and bots of their own** ("New bot", `<team>`, removing), the right panel's Results and
+   Settled, subagent rows in the left column~~ — done (Phase 4b).
 3. **Maintainer, rest** and **packaging / Windows** as below.
 
 ## What was next after Phase 3b (kept for reference)
@@ -849,6 +925,12 @@ Decided by the agent in Phase 4a (the user was away; each can be changed): plugi
 chat page on its own origin; a project is added only through main's picker or a card you answer; an
 inbox is emptied only once its bot took the text; the right panel is always shown (no collapsed strip);
 the project list leaves out teams and web AIs.
+
+Decided by the agent in Phase 4b (the user was away; each can be changed): group chats are not
+part of teams (left for later); projects can be removed too, non-destructively; a removed bot does
+not tidy; teams run through the bots' head without asking; results open outside the app (pages,
+pictures, documents with their own app, anything else in Finder); `<open-question>` copies close on
+a restart; a bot's open question is its own lines only; the right panel keeps its width.
 
 Still open:
 - One real `claude` call to confirm the approval round trip, and one as a real bot (tools on) to
