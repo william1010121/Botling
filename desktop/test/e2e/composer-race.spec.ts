@@ -51,7 +51,9 @@ test("Return sends even right after focus left the box by itself", async () => {
 
 // Legacy key/ack messages are deliberately held. Native input must not depend on their delivery.
 test("launch recovery preserves native edit order without forwarding keys", async () => {
-  const { app, page, chat } = await launch();
+  // This case forces its own cross-origin focus loss; keep unrelated child-frame startup out.
+  // The four first-second cases above continue to exercise the actual welcome iframe loading.
+  const { app, page, chat } = await launch({chat:[{id:"00000000-0000-4000-8000-000000000053",role:"notice",text:"Native focus fixture",date:0}]});
   try {
     await app.context().addInitScript(() => {
       if (location.origin !== "botling-chat://chat") return;
@@ -68,6 +70,7 @@ test("launch recovery preserves native edit order without forwarding keys", asyn
     const box = chat.getByRole("textbox", { name: "Message" });
     await box.click();
     await page.keyboard.type("Prefix ");
+    await expect(box).toHaveText("Prefix ");
     await box.evaluate(element => (element as HTMLElement).blur());
     await page.evaluate(() => {
       document.body.tabIndex = -1;

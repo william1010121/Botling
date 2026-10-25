@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {readFileSync,writeFileSync,mkdirSync,existsSync} from "node:fs";
 import {pathToFileURL} from "node:url";
 import { alive, pidsIn, sleep, tempDir, until, desktop, fakeCli } from "../helpers";
-import { audit, chatFrame, launch, post, say } from "./launch";
+import { audit, chatFrame, launch, post, say, waitForWelcome } from "./launch";
 
 test("sends a message and streams the reply into the chat", async () => {
   const { app, page, chat } = await launch();
@@ -61,17 +61,14 @@ for(const startup of [0,5500])test(`reloading the window preserves the running t
     const before = await chat.locator(".row.bot[data-id]").count();
     await page.reload();
     await page.waitForSelector('.shell[data-ready="1"]');
+    await chat.locator('html[data-chat]').waitFor({state:'attached'});await waitForWelcome(chat);
     const reply = chat.locator(".row.bot[data-id]").last();
     await expect(reply).toHaveAttribute("data-state", "streaming");
     await expect(chat.locator(".row.bot[data-id]")).toHaveCount(before); // No second turn was started.
     const length = (await reply.locator(".markdown").textContent())!.length;
     await expect.poll(async () => (await reply.locator(".markdown").textContent())!.length).toBeGreaterThan(length);
-    if(startup===0){
-      // Retain the original reload/Stop contract. The additional slow-start case measures only
-      // startup and reload continuity, then closes through real app shutdown in finally.
-      await chat.getByRole("button", { name: "Stop" }).click();
-      await expect(reply).toHaveAttribute("data-state", "stopped");
-    }
+    await chat.getByRole("button", { name: "Stop" }).click();
+    await expect(reply).toHaveAttribute("data-state", "stopped");
   } catch(error){
     const folder=join(desktop,'.cache/evidence/review-d');mkdirSync(folder,{recursive:true});
     writeFileSync(join(folder,`reload-startup-${startup}-failure.json`),JSON.stringify({error:String(error),stack:error instanceof Error?error.stack:null,stderr,marker:existsSync(marker)?JSON.parse(readFileSync(marker,'utf8')):null,head:existsSync(join(dataDir,'core/main/head.json'))?JSON.parse(readFileSync(join(dataDir,'core/main/head.json'),'utf8')):null},null,2));throw error;

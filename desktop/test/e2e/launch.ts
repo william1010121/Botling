@@ -30,6 +30,7 @@ export async function launch(options: { dataDir?: string; env?: Record<string, s
   delete env.ELECTRON_RUN_AS_NODE;
   if (!options.importFrom) delete env.BOTLING_IMPORT_FROM;
   const app = await electron.launch({ executablePath:electronExecutable(), args: [desktop,...(options.args??[])], env, cwd: desktop });
+  try {
   const page = await app.firstWindow();
   const chat = page.frameLocator("#chat-frame");
   // A test of the first second types as soon as the input box is there (before any state).
@@ -40,12 +41,17 @@ export async function launch(options: { dataDir?: string; env?: Record<string, s
   await chat.locator("html[data-chat]").waitFor({ state: "attached" });
   // Feature tests start after the initial welcome iframe has loaded and sized itself. Its load
   // can take native focus mid-keypress. Launch-race tests explicitly use waitForState:false.
-  const welcome=chat.locator('[data-card="c-counter"] iframe');
-  if(await welcome.count()){
-    await chat.frameLocator('[data-card="c-counter"] iframe').locator('#n').waitFor();
-    await until(async()=>await welcome.evaluate(el=>(el as HTMLIFrameElement).style.height!=='80px'),{what:'welcome card load/size handshake'});
-  }
+  if(!options.args?.some(arg=>arg.startsWith('--botling-update-token=')))await waitForWelcome(chat);
   return { app, page, chat, dataDir };
+  }catch(error){await app.close().catch(()=>{});throw error;}
+}
+
+/** The initial card may still be loading after the outer shell/first chat state is ready. */
+export async function waitForWelcome(chat:FrameLocator):Promise<void>{
+ const welcome=chat.locator('[data-card="c-counter"] iframe');
+ if(!await welcome.count())return;
+ await chat.frameLocator('[data-card="c-counter"] iframe').locator('#n').waitFor();
+ await until(async()=>await welcome.evaluate(el=>(el as HTMLIFrameElement).style.height!=='80px'),{what:'welcome card load/size handshake'});
 }
 
 /** The chat frame itself (for evaluate). */
