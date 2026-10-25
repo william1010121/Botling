@@ -6,8 +6,9 @@
 // directly, the same JSON-RPC lines as on stdio, still checked by host-client.ts. Main ends the host
 // when the core asks, when the core exits, and when the app quits.
 //
-// Difference from the Node child: a utility process is not in a process group of its own, so a
-// plugin's own child processes are not ended with it (see the README's gaps).
+// Difference from the Node child: a utility process is not in a process group of its own, so the
+// host puts each child process a plugin starts in a group of its own and tells main, which ends those
+// groups with the host (Phase 5c: src/host/children.ts, src/main/plugin-children.ts).
 import type { HostHandlers, HostLauncher, HostProcess } from "./host-client";
 
 /** The core's parent port as Electron gives it to a utility process. */

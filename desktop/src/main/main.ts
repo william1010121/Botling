@@ -97,6 +97,7 @@ const appContents = new Set<number>();
 const core = new CoreClient({
   script: join(root, "out", "core", "main.cjs"),
   hostScript: join(root, "out", "host", "host-utility.mjs"),
+  ledgerFile: join(dataDir, "core", "children.json"),
   env: coreEnvironment(),
   onEvent: (event) => {
     // The web AIs' pages are main's to show: it follows the core's view of them.
@@ -643,4 +644,5 @@ app.on("before-quit", (event) => {
 (globalThis as unknown as { __botlingShotCommand: string | undefined }).__botlingShotCommand = shotMode ? undefined : coreEnvironment().BOTLING_SHOT_COMMAND;
 (globalThis as unknown as { __botlingCheckCommand: string | undefined }).__botlingCheckCommand = shotMode ? undefined : coreEnvironment().BOTLING_CHECK_COMMAND;
 (globalThis as unknown as { __botlingHostPids: () => number[] }).__botlingHostPids = () => core.hostPids;
+(globalThis as unknown as { __botlingPluginGroups: () => number[] }).__botlingPluginGroups = () => core.pluginGroups;
 void PROTOCOL_VERSION;

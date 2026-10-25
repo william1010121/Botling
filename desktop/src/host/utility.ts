@@ -2,15 +2,19 @@
 // file and sends one message carrying a MessagePort to the core; each protocol line goes over that
 // port as a string instead of stdin/stdout. Plugins' console output goes to the core as `{stderr}`,
 // as the Node host sends it to stderr. When the port closes (the core went away) the host ends.
+import { containChildren } from "./children";
+
 type Port = {
   postMessage(message: unknown): void;
   on(event: "message", listener: (event: { data: unknown }) => void): void;
   on(event: "close", listener: () => void): void;
   start(): void;
 };
-type ParentPort = { once(event: "message", listener: (event: { data: unknown; ports: Port[] }) => void): void };
+type ParentPort = { once(event: "message", listener: (event: { data: unknown; ports: Port[] }) => void): void; postMessage(message: unknown): void };
 
 const parentPort = (process as unknown as { parentPort: ParentPort }).parentPort;
+// Plugins' child processes lead process groups of their own, which main ends with this host (children.ts).
+containChildren((pid) => parentPort.postMessage({ botling: "child", pid }));
 // host.ts runs its stdio `main()` when CCB_PLUGIN_HOST is "1": not here.
 const wanted = process.env.CCB_PLUGIN_HOST;
 process.env.CCB_PLUGIN_HOST = "utility";

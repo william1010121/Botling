@@ -2,6 +2,7 @@
 // restart it if it dies. Requests that were waiting when it died fail with `core_unavailable`; the
 // renderer sees a new epoch and takes a fresh snapshot. Nothing is re-sent automatically.
 import { MessageChannelMain, utilityProcess, type UtilityProcess } from "electron";
+import { PluginChildren } from "./plugin-children";
 import {
   EventEnvelope, PROTOCOL_VERSION, ResponseEnvelope, describeIssues,
   type Command, type EventEnvelope as EventEnvelopeT, type ResponseEnvelope as ResponseEnvelopeT, type ResultOf, type CommandType,
@@ -16,6 +17,8 @@ export interface CoreClientOptions {
   seal?: (op: "seal" | "open", text: string) => string;
   /** The plugin host's utility-process entry (out/host/host-utility.mjs); main never runs another file for it. */
   hostScript?: string;
+  /** The core's process ledger (`<data>/core/children.json`): plugins' process groups are kept there too. */
+  ledgerFile?: string;
 }
 
 interface Pending { resolve: (response: ResponseEnvelopeT) => void }
@@ -30,10 +33,21 @@ export class CoreClient {
   /** Plugin hosts main runs for the core (utility processes), by the core's id for each. */
   private hosts = new Map<number, UtilityProcess>();
 
-  constructor(private options: CoreClientOptions) {}
+  /** Plugins' own process groups, per host (ended with their host). */
+  readonly pluginChildren: PluginChildren;
+
+  constructor(private options: CoreClientOptions) {
+    this.pluginChildren = new PluginChildren({
+      ...(options.ledgerFile ? { ledgerFile: options.ledgerFile } : {}),
+      protectedPids: () => [...(this.pid ? [this.pid] : []), ...this.hostPids],
+      log: (text) => process.stderr.write(`[plugin host] ${text}\n`),
+    });
+  }
 
   /** Pids of the plugin hosts running now (for tests). */
   get hostPids(): number[] { return [...this.hosts.values()].map((host) => host.pid ?? -1); }
+  /** Process groups plugins started in the running hosts (for tests). */
+  get pluginGroups(): number[] { return [...this.hosts.keys()].flatMap((id) => this.pluginChildren.of(id)); }
 
   /**
    * The core asks main to start or end its plugin host (core/plugins/utility-host.ts). Main forks
@@ -70,6 +84,9 @@ export class CoreClient {
       return;
     }
     this.hosts.set(id, host);
+    host.on("message", (message: { botling?: unknown; pid?: unknown } | null) => {
+      if (message && typeof message === "object" && message.botling === "child") this.pluginChildren.add(id, message.pid);
+    });
     host.stdout?.on("data", () => {});
     host.stderr?.on("data", (chunk) => process.stderr.write(`[plugin host] ${chunk}`));
     host.once("spawn", () => {
@@ -80,14 +97,17 @@ export class CoreClient {
     });
     host.once("exit", (code) => {
       if (this.hosts.get(id) === host) this.hosts.delete(id);
+      // However it ended (shut down, killed, crashed), what its plugins started ends with it.
+      void this.pluginChildren.end(id);
       if (this.child === child) child.postMessage({ botling: "hostExit", id, code });
     });
   }
 
-  /** Ends every plugin host (the core went away, or the app quits). */
-  private endHosts() {
+  /** Ends every plugin host (the core went away, or the app quits) and what their plugins started. */
+  private endHosts(): Promise<void> {
     for (const host of this.hosts.values()) host.kill();
     this.hosts.clear();
+    return this.pluginChildren.endAll();
   }
 
   start() {
@@ -104,7 +124,7 @@ export class CoreClient {
     child.on("exit", (code) => {
       if (this.child !== child) return;
       this.child = null;
-      this.endHosts();
+      void this.endHosts();
       for (const [id, pending] of this.pending) {
         pending.resolve({ v: PROTOCOL_VERSION, id, ok: false, error: { code: "core_unavailable", message: "The core process stopped." } });
       }
@@ -182,8 +202,8 @@ export class CoreClient {
     if (!child) return Promise.resolve();
     return new Promise((resolve) => {
       // Awake bots tidy their notes before the core exits (BOTLING_QUIT_TIDY_MS, 15 s at most each, in parallel).
-      const timer = setTimeout(() => resolve(), Number(this.options.env.BOTLING_QUIT_TIDY_MS ?? 15_000) + 5_000);
-      child.once("exit", () => { clearTimeout(timer); this.endHosts(); resolve(); });
+      const timer = setTimeout(() => { void this.endHosts().then(resolve); }, Number(this.options.env.BOTLING_QUIT_TIDY_MS ?? 15_000) + 5_000);
+      child.once("exit", () => { clearTimeout(timer); void this.endHosts().then(resolve); });
       child.kill();
     });
   }
