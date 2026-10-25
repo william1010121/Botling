@@ -153,9 +153,23 @@ export function componentInfos(components: Record<string, ComponentInfoView>): R
 /** What the app's settings change in the page: its language, the avatars' size and look. */
 export interface PageLook { lang?: string | null; chatAvatarSize?: number | null; look?: Look }
 
+/** The main bot's and Maintainer's ids: the bots the @ menu offers first (`offeredAfterAt`). */
+const OFFERED = ["6A0B0000-0000-4000-8000-000000000002", "DEC0DE00-0000-4000-8000-00000000DEC0"];
+
+/** The bots you can @ in `bot`'s chat (`callInView`): the main bot and Maintainer first, then every other bot. */
+export function mentionNames(bot: BotView, bots: BotView[]): { mentions: string[]; allMentions: string[] } {
+  const callable = bots.filter((other) => other.id !== bot.id);
+  const first = callable.filter((other) => OFFERED.includes(other.id));
+  const rest = callable.filter((other) => !OFFERED.includes(other.id));
+  return { mentions: first.map((other) => other.name), allMentions: [...first, ...rest].map((other) => other.name) };
+}
+
 export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyingTo: ChatState["replyingTo"] = null,
-  { components = {}, board = false, lang = null, chatAvatarSize = null, look = "original" }: { components?: Record<string, ComponentInfoView>; board?: boolean } & PageLook = {}): { state: ChatState; extras: FrameExtras } {
+  { components = {}, board = false, lang = null, chatAvatarSize = null, look = "original", bots = [] }: { components?: Record<string, ComponentInfoView>; board?: boolean; bots?: BotView[] } & PageLook = {}): { state: ChatState; extras: FrameExtras } {
   const face = avatarURL(bot.avatar);
+  // A line another bot said here (called in with @): its name and face (`speaker`).
+  const guestOf = (message: { role: string; sourceId?: string }) => (message.role === "bot" && message.sourceId ? bots.find((other) => other.id === message.sourceId) ?? null : null);
+  const guestFace = (other: BotView, engine?: string | null) => (look === "cute" ? faceURL(other, "cute", { engine: engine ?? other.heads[0] }) : avatarURL(other.avatar));
   // Cute: each reply shows the character of the head that wrote it, with the bot's face as its hat.
   const faceOf = (engine: string | null | undefined) => (look === "cute" ? faceURL(bot, "cute", { engine: engine ?? bot.heads?.[0] }) : face);
   const running = chat.running;
@@ -175,12 +189,18 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     const run = runs.find((candidate) => candidate.messageId === message.id);
     const choices: WebChoice[] | null = message.choices?.map((choice) => ({ label: choice.label, detail: choice.detail, recommended: choice.recommended, action: choice.action })) ?? null;
     const steps = run ? run.live : message.steps;
+    const guest = guestOf(message);
+    if (message.role === "bot" && message.sourceId && !guest) {
+      // Said by a bot since removed.
+      return { id: message.id, role: message.role, text: message.text, stamp: stamp(shown, index, now), avatar: faceOf(null), choices, chosen: message.chosen ?? null, answer: message.answer ?? null,
+        open: false, attachments: null, replyTo: null, replyPreview: null, openable: false, speaker: "A removed bot", steps: steps?.length ? steps.map(step) : null };
+    }
     return {
       id: message.id,
       role: message.role,
       text: message.role === "bot" && message.state === "failed" && !message.text ? "(The reply did not finish.)" : message.text,
       stamp: stamp(shown, index, now),
-      avatar: message.role === "bot" ? faceOf(message.engine) : message.role === "notice" ? faceOf(null) : null,
+      avatar: guest ? guestFace(guest, message.engine) : message.role === "bot" ? faceOf(message.engine) : message.role === "notice" ? faceOf(null) : null,
       choices,
       chosen: message.chosen ?? null,
       answer: message.answer ?? null,
@@ -192,10 +212,10 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       steps: steps?.length ? steps.map(step) : null,
       // Stopped or cut off: its words so far stay, and it says so.
       interrupted: message.role === "bot" && (message.interrupted || message.state === "stopped" || message.state === "failed") ? true : null,
-      sourceAuthor: message.role === "bot" ? bot.name : null,
+      sourceAuthor: message.role === "bot" ? guest?.name ?? bot.name : null,
       sourceEngine: message.role === "bot" ? message.engine ?? "claude" : null,
       // With two heads: which head said a reply ("garden · Codex"), and who your line was for (`headLabel`).
-      speaker: two ? (message.role === "bot" && message.engine ? `${bot.name} · ${headName(message.engine)}` : message.role === "user" && message.to ? `to ${headName(message.to)}` : null) : null,
+      speaker: guest ? guest.name : two ? (message.role === "bot" && message.engine ? `${bot.name} · ${headName(message.engine)}` : message.role === "user" && message.to ? `to ${headName(message.to)}` : null) : null,
       seen: two && (message.role === "user" || message.role === "bot") ? engines.map((engine) => ({
         mark: markLetter(engine), name: headName(engine), seen: !!message.seenBy?.includes(engine),
         ...(message.role === "user" ? { recipient: !message.to || message.to === engine } : {}),
@@ -203,18 +223,22 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       decisionID: message.decisionId ?? null,
       reactionEnabled: message.role !== "divider",
       reactions: reactions(message),
-      taskCards: message.role === "bot" ? chips.get(message.id) ?? null : null,
+      taskCards: message.role === "bot" && !guest ? chips.get(message.id) ?? null : null,
       // Replies before your latest line fold their finished subagents away (still in their steps).
       earlier: index < lastYours && !!steps?.length ? true : null,
       displays: message.displays?.length ? message.displays.map(displayView) : null,
     };
   });
+  // Another bot answering here (called in with @) while the chat's own bot is not at work: its typing bubble.
+  const answering = runs.length === 0 && bot.guest ? bots.find((other) => other.id === bot.guest) ?? null : null;
   const state: ChatState = {
     botID: bot.id,
     botName: bot.name,
     messages,
-    working: runs.length > 0,
-    avatar: look === "cute" ? faceURL(bot, "cute", { working: runs.length > 0, waiting: bot.approvals > 0 }) : avatarURL(bot.avatar, "open"),
+    working: runs.length > 0 || !!answering,
+    avatar: answering ? (look === "cute" ? faceURL(answering, "cute", { working: true }) : avatarURL(answering.avatar, "open"))
+      : look === "cute" ? faceURL(bot, "cute", { working: runs.length > 0, waiting: bot.approvals > 0 }) : avatarURL(bot.avatar, "open"),
+    ...(bots.length ? mentionNames(bot, bots) : {}),
     placeholder: placeholder(bot),
     ...(lang ? { lang } : {}),
     ...(chatAvatarSize ? { chatAvatarSize } : {}),

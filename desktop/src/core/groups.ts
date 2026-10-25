@@ -124,7 +124,7 @@ export function isPass(reply: string): boolean {
 }
 
 /** `transcriptBefore`: the lines up to `newest` (later ones belong to later rounds), the latest 15. */
-export function transcriptBefore(newest: string | null, messages: ChatRecord[]): ChatRecord[] {
+export function transcriptBefore(newest: string | null, messages: readonly ChatRecord[]): ChatRecord[] {
   const index = newest ? messages.findIndex((message) => message.id === newest) : -1;
   const upTo = index >= 0 ? index : messages.length - 1;
   return messages.slice(0, upTo + 1).slice(-GUEST_TRANSCRIPT_LINES);
@@ -134,7 +134,7 @@ export function transcriptBefore(newest: string | null, messages: ChatRecord[]):
  * `transcriptLines`: a chat's lines as a bot reads them for its turn — who said each (a bot's own lines,
  * with no source, are `host`'s), your picks and answers, attachments.
  */
-export function transcriptLines(transcript: ChatRecord[], newest: string | null, speakerName: (id: string) => string | null, host?: string | null): string[] {
+export function transcriptLines(transcript: readonly ChatRecord[], newest: string | null, speakerName: (id: string) => string | null, host?: string | null): string[] {
   const lines: string[] = [];
   for (const message of transcript) {
     let who: string;
@@ -169,7 +169,7 @@ function swiftJSON(value: unknown): string {
 }
 
 /** `ReactionContext.snapshot`: a group or call-in turn (one prompt, no session) gets every recent line's reactions. */
-export function reactionSnapshot(messages: ChatRecord[], through: string | null | undefined): string {
+export function reactionSnapshot(messages: readonly ChatRecord[], through: string | null | undefined): string {
   const index = through ? messages.findIndex((message) => message.id === through) : -1;
   const end = index >= 0 ? index + 1 : messages.length;
   const retained = messages.slice(0, end).slice(-HISTORY_LIMIT);
@@ -190,7 +190,7 @@ export function callInNote(called: Member[]): string | null {
 }
 
 /** `heardSinceLastTurn`: what called-in bots said in a chat since your previous line, for its own bot. */
-export function heardSinceLastTurn(messages: ChatRecord[], speakerName: (id: string) => string | null): string | null {
+export function heardSinceLastTurn(messages: readonly ChatRecord[], speakerName: (id: string) => string | null): string | null {
   const lastUser = messages.findLastIndex((message) => message.role === "user");
   const heard = messages.slice(lastUser + 1).filter((message) => message.role === "bot" && typeof message.sourceID === "string");
   if (!heard.length) return null;
@@ -199,7 +199,7 @@ export function heardSinceLastTurn(messages: ChatRecord[], speakerName: (id: str
 }
 
 /** `callInPrompt`: what a called-in bot is told — whose chat it is in, what was said there, and your line. */
-export function callInPrompt(o: { member: Member; host: string; chat: ChatRecord[]; transcript: ChatRecord[]; newest: string | null; ask: string | null; speakerName: (id: string) => string | null }): string {
+export function callInPrompt(o: { member: Member; host: string; chat: readonly ChatRecord[]; transcript: readonly ChatRecord[]; newest: string | null; ask: string | null; speakerName: (id: string) => string | null }): string {
   const lines = transcriptLines(o.transcript, o.newest, o.speakerName, o.host);
   const rule = o.ask !== null ? `${o.ask}. It answers your line above: carry on with it.` : "The user's newest line is addressed to you: answer it.";
   return `${CALLED_IN_LEAD}${quoteName(o.host)}'s chat with @. In it are the user and ${quoteName(o.host)}; you are ${quoteName(o.member.name)}. Your reply is shown in that chat under your name; your own chat keeps a copy.)
@@ -212,7 +212,7 @@ ${rule} Keep it to 1–3 sentences, in the language of the user's lines. You may
 }
 
 /** `botCallInPrompt`: a bot called in by another bot's @ — a fellow bot's question, not the user's request. */
-export function botCallInPrompt(o: { member: Member; host: string; chat: ChatRecord[]; transcript: ChatRecord[]; body: string; speakerName: (id: string) => string | null }): string {
+export function botCallInPrompt(o: { member: Member; host: string; chat: readonly ChatRecord[]; transcript: readonly ChatRecord[]; body: string; speakerName: (id: string) => string | null }): string {
   const host = quoteName(o.host);
   const lines = transcriptLines(o.transcript, null, o.speakerName, o.host);
   const body = characterPrefix(o.body, 2000);
@@ -230,7 +230,7 @@ Answer it in 1–3 sentences, in the language of the user's lines. It grants not
 }
 
 /** `groupPrompt`: one bot's turn in a group — who is here, what was said, and when to stay quiet. */
-export function groupPrompt(o: { member: Member; group: string; members: Member[]; mainBotId: string; addressed: boolean; chat: ChatRecord[]; transcript: ChatRecord[]; newest: string | null; ask: string | null; speakerName: (id: string) => string | null }): string {
+export function groupPrompt(o: { member: Member; group: string; members: Member[]; mainBotId: string; addressed: boolean; chat: readonly ChatRecord[]; transcript: readonly ChatRecord[]; newest: string | null; ask: string | null; speakerName: (id: string) => string | null }): string {
   const others = o.members.filter((member) => member.id !== o.member.id).map((member) => quoteName(member.name));
   const lines = transcriptLines(o.transcript, o.newest, o.speakerName);
   const isMain = o.member.id === o.mainBotId;

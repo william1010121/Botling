@@ -73,6 +73,8 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     resultPublishing: oneOf(RESULT_PUBLISHING, raw.resultPublishingChoice) ?? "artifactUnlessSensitive",
     stallReminderMinutes: stall !== null && stall >= 0 ? stall : 15,
     rightPanelCollapsed: bool(raw.rightPanelCollapsed, false),
+    railCollapsed: bool(raw.railCollapsed, false),
+    pinnedBots: [...new Set(readSettingsList(raw.pinnedBots).filter((id) => /^[0-9A-Fa-f-]{36}$/.test(id)).map((id) => id.toUpperCase()))].slice(0, 200),
   };
 }
 
@@ -109,6 +111,9 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "resultPublishing": set("resultPublishingChoice", change.value); break;
     case "stallReminderMinutes": set("stallReminderMinutes", change.value); break;
     case "rightPanelCollapsed": set("rightPanelCollapsed", change.value); break;
+    case "railCollapsed": set("railCollapsed", change.value); break;
+    // 1.x keeps the list (an empty one too) once anything was pinned.
+    case "pinnedBots": set("pinnedBots", [...new Set(change.value.map((id) => id.toUpperCase()))]); break;
   }
   return next;
 }

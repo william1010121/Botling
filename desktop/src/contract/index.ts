@@ -233,6 +233,8 @@ export const MessageView = z.strictObject({
   decisionId: id.optional(),
   /** Components it shows (`<show>`). */
   displays: z.array(DisplayView).max(20).optional(),
+  /** The bot that said it, when it is not this chat's own (a bot called in with @, a group's member; 1.x's `sourceID`). */
+  sourceId: BotId.optional(),
 });
 export type MessageView = z.infer<typeof MessageView>;
 
@@ -313,6 +315,10 @@ export const BotView = z.strictObject({
   job: z.string().max(4_000).nullable(),
   /** Its subagents sent off by the bot itself (not ones a subagent sent), newest kept. */
   subagentRows: z.array(SubagentRowView).max(100),
+  /** Another bot answering in its chat right now (called in with @), for the typing bubble. */
+  guest: BotId.nullable().optional(),
+  /** Its tasks running or waiting on you ("3 tasks" beside its name; 1.x's `openTaskCount`). */
+  openTasks: z.number().int().nonnegative().optional(),
 });
 export type BotView = z.infer<typeof BotView>;
 
@@ -455,6 +461,10 @@ export const SettingsView = z.strictObject({
   stallReminderMinutes: z.number().int().min(0).max(10_000),
   /** The right panel folded into a strip of icons (1.x's `rightPanelCollapsed`). */
   rightPanelCollapsed: z.boolean(),
+  /** The left column folded into a strip of faces (1.x's `railCollapsed`). */
+  railCollapsed: z.boolean(),
+  /** Bots pinned to the top of the left column, in the order they were pinned (1.x's `pinnedBots`). */
+  pinnedBots: z.array(BotId).max(200),
 });
 export type SettingsView = z.infer<typeof SettingsView>;
 /** One change on the Settings page (null: back to the default). */
@@ -479,6 +489,8 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("resultPublishing"), value: z.enum(["artifactUnlessSensitive", "localOnly", "artifactAlways"]) }),
   z.strictObject({ key: z.literal("stallReminderMinutes"), value: z.number().int().min(0).max(1_440) }),
   z.strictObject({ key: z.literal("rightPanelCollapsed"), value: z.boolean() }),
+  z.strictObject({ key: z.literal("railCollapsed"), value: z.boolean() }),
+  z.strictObject({ key: z.literal("pinnedBots"), value: z.array(BotId).max(200) }),
 ]);
 export type SettingsChange = z.infer<typeof SettingsChange>;
 /** A bot's own choices (bot.json): its heads, its model and effort, its subagents' model, Codex's model. */

@@ -22,7 +22,7 @@ import {
   type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView,
   type SettingsChange, type SettingsView, type WebStateView, type TeamRunView,
 } from "../contract";
-import { Bot, type SessionStart, type SessionStartCodex } from "./bot";
+import { Bot, NO_LONGER_NEEDED, type SessionStart, type SessionStartCodex } from "./bot";
 import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
 import type { Engine, Heads } from "./heads";
@@ -31,9 +31,11 @@ import { BotStore, readJSON } from "./store/bot-store";
 import { DEFAULT_ONE_X_PROCESS, ProjectLock, type OneXCheck } from "./store/lock";
 import { ProcessLedger } from "./process/ledger";
 import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/importer";
-import { MAIN_BOT_ID } from "./store/records";
+import { isOpenQuestion, MAIN_BOT_ID } from "./store/records";
 import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
-import type { BotRequest } from "./reply";
+import { unsupportedRequest, type BotRequest } from "./reply";
+import { Conversations } from "./conversations";
+import { answeredNote, pickedNote, type GROUP_TIMING } from "./groups";
 import { CatchUpCache, CatchUps, catchUpSettings, type CatchUpViewData, type Summarizer } from "./catchup";
 import { ComponentsContext } from "./components/service";
 import { readdirSync } from "node:fs";
@@ -47,6 +49,8 @@ import type { ChatRecord } from "./store/records";
 
 export interface CoreOptions {
   dataDir: string;
+  /** How long a bot answering in another chat waits for a busy one and may take (tests shorten it; 1.x's `groupTiming`). */
+  groupTiming?: typeof GROUP_TIMING;
   /** How to run a bot's head for a session. */
   headConfig: (profile: BotProfile, session: SessionStart) => HeadConfig;
   /** How to run a Codex head (threads: <data>/codex-threads); null when Codex is not available. */
@@ -128,6 +132,8 @@ export class Core {
   private webQueued = false;
   /** The temporary teams at work (`runningTeams`). */
   readonly teams: TeamDesk;
+  /** Bots answering in chats that are not their own: call-ins and bots' @ (Phase 4c). */
+  readonly conversations: Conversations;
   /** Bots taken out of the left column: what they still say goes nowhere. */
   private removed = new Set<string>();
   /** Bots plugins made that you removed (`plugin/name`, lower case; removed-bots.json), so they stay removed. */
@@ -212,6 +218,8 @@ export class Core {
         replied: (bot, record) => this.replied(bot, record),
         plugins: () => ({ dirs: this.plugins.registry.claudeDirectories(), env: this.plugins.registry.secretEnvironment() }),
         launch: () => launchSettings(readSettings(Layout.settings(this.options.dataDir))),
+        // (Asked while the bots are made, before the conversations exist.)
+        guest: () => this.conversations?.speakers.get(profile.id) ?? null,
       });
       this.bots.set(profile.id, bot);
       return bot;
@@ -220,6 +228,26 @@ export class Core {
       this.newBot(profile);
       this.order.push(profile.id);
     }
+    this.conversations = new Conversations({
+      dataDir: options.dataDir,
+      // Everyone who can answer outside their own chat, in turn order (`everyMember`).
+      members: () => this.order.flatMap((id) => {
+        const profile = this.profiles.find((candidate) => candidate.id === id);
+        return profile && !this.removed.has(id) ? [{ id, name: profile.role === "main" ? "Main bot" : profile.name }] : [];
+      }),
+      bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
+      mainBotId: MAIN_BOT_ID,
+      replyFilter: (bot) => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
+      handle: (bot, requests) => {
+        const left = this.maintainer.handle(bot, this.projectRequests(bot, requests));
+        if (left.length) bot.appNotice(`Botling 2.0 cannot do this yet, so nothing happened: ${[...new Set(left.map(unsupportedRequest))].join("; ")}.`);
+      },
+      afterMainTurn: () => this.deliverInboxes(),
+      speaking: (chatId) => this.bots.get(chatId)?.refresh(),
+      refreshWaiting: () => this.refreshWaiting(),
+      log: (line) => this.log(line),
+      timing: options.groupTiming,
+    });
     this.maintainer = new MaintainerDesk({
       root: options.dataDir,
       maintainer: () => this.bots.get(MAINTAINER_ID) ?? null,
@@ -788,6 +816,8 @@ export class Core {
   /** A reply showed: plugins listening hear it; Maintainer's settles the component changes bots asked for. */
   private replied(bot: Bot, record: ChatRecord) {
     if (record.text) this.plugins.replied(this.botInfo(bot), record.text);
+    // A line of its reply that starts with @ and another bot's name calls that bot in (`receiveBotMention`).
+    this.conversations.receiveBotMention(record, bot);
     // What the main bot wrote into an inbox goes to that bot now (1.x: after every main-bot reply).
     if (bot.id === MAIN_BOT_ID) this.deliverInboxes();
     if (bot.id === MAINTAINER_ID) this.maintainer.settle(record);
@@ -817,7 +847,16 @@ export class Core {
       const messageId = bot.appNotice(`Plugin "${name}" stopped this message: ${text}`);
       return { messageId, turnId: null, stoppedBy: outcome.stoppedBy };
     }
-    return bot.send(outcome.send.slice(0, 100_000) || text, options);
+    const words = outcome.send.slice(0, 100_000) || text;
+    // Bots you named with @ are called in: they answer here too, after reading the chat (`Workspace.send`).
+    const called = this.conversations.calledIn(words, bot.id);
+    const appNote = this.conversations.notes(bot, called);
+    const sent = bot.send(words, { ...options, ...(appNote ? { appNote } : {}) });
+    if (called.length) {
+      const newest = bot.lines().findLast((line) => line.role === "user");
+      if (newest) this.conversations.startCallIn(bot, called, newest.id, null);
+    }
+    return sent;
   }
 
   /** A file the chat origin may serve for this bot: one of its lines' attachments, or one waiting in its input box. */
@@ -918,6 +957,36 @@ export class Core {
       .finally(() => this.inflight.delete(message.id));
   }
 
+  /** Your pick on a called-in bot's line goes back to it (`answerCallIn`); null: not such a line. */
+  private calledInPick(botId: string, messageId: string, index: number): { accepted: boolean } | null {
+    const chat = this.bot(botId);
+    const record = chat.line(messageId);
+    if (!record || !this.conversations.isCalledIn(record, chat.id)) return null;
+    const label = record.choices?.[index]?.label;
+    if (!isOpenQuestion(record) || label === undefined) return { accepted: false };
+    if (!this.conversations.answerCallIn(chat, record, pickedNote(label))) {
+      chat.settleAppQuestion(messageId, { answer: NO_LONGER_NEEDED });
+      return { accepted: false };
+    }
+    chat.settleAppQuestion(messageId, { chosen: index });
+    return { accepted: true };
+  }
+
+  /** Your words on a called-in bot's question go back to it. */
+  private calledInAnswer(botId: string, messageId: string, text: string, files: number): { accepted: boolean } | null {
+    const chat = this.bot(botId);
+    const record = chat.line(messageId);
+    if (!record || !this.conversations.isCalledIn(record, chat.id) || !record.choices?.length) return null;
+    const shown = answerLabel(text.trim(), files);
+    if (!shown || !isOpenQuestion(record)) return { accepted: false };
+    if (!this.conversations.answerCallIn(chat, record, answeredNote(shown))) {
+      chat.settleAppQuestion(messageId, { answer: NO_LONGER_NEEDED });
+      return { accepted: false };
+    }
+    chat.settleAppQuestion(messageId, { answer: shown });
+    return { accepted: true };
+  }
+
   private bot(id: string): Bot {
     const bot = this.bots.get(id);
     if (!bot) throw new ContractError("not_found", "No such bot.");
@@ -998,11 +1067,11 @@ export class Core {
       case "heads.answerWith": return this.bot(cmd.botId).setAnswerWith(cmd.to);
       case "handoff.stop": return this.bot(cmd.botId).stopHandoff(cmd.handoffId);
       case "rounds.stop": return this.bot(cmd.botId).stopRounds();
-      case "chat.choose": return this.bot(cmd.botId).choose(cmd.messageId, cmd.index, cmd.text);
+      case "chat.choose": return this.calledInPick(cmd.botId, cmd.messageId, cmd.index) ?? this.bot(cmd.botId).choose(cmd.messageId, cmd.index, cmd.text);
       case "chat.answer": {
         // A component's pictures: written to incoming/, kept by the bot with the answer, then removed.
         const files = (cmd.images ?? []).flatMap((image) => writeIncoming(join(this.options.dataDir, "incoming"), image.name, image.base64) ?? []);
-        try { return this.bot(cmd.botId).answer(cmd.messageId, cmd.text, files); } finally { for (const file of files) rmSync(file, { force: true }); }
+        try { return this.calledInAnswer(cmd.botId, cmd.messageId, cmd.text, files.length) ?? this.bot(cmd.botId).answer(cmd.messageId, cmd.text, files); } finally { for (const file of files) rmSync(file, { force: true }); }
       }
       case "chat.react": return this.bot(cmd.botId).react(cmd.messageId, cmd.emoji, cmd.present);
       case "subagent.view": return this.bot(cmd.botId).subagentView(cmd.subagentId);

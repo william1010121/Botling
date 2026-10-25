@@ -21,6 +21,7 @@
 //   bgagent  — (long-lived) sends one to the background; it reports a moment later, and claude starts
 //              a turn of its own to say so ("/bgagent:silent": that turn says only <no-reply/>)
 //   say      — "/say <text>": replies exactly <text> (a hand-off tag, say)
+//   mention  — "/mention <name> <words>[|…]": "Let me ask." and a line "@<name> <words>" each (a bot's @)
 //   solo     — "/solo <words>": with two heads, the head that hears the other's words first says only
 //              <no-reply/>; the one that reads it first takes it ("I take it: <words>")
 //   linger   — "/linger <words>": says "Thinking it over." first, takes FAKE_CLAUDE_LINGER_MS (default 600),
@@ -274,6 +275,28 @@ async function turn(job) {
     result(text);
     return;
   }
+  // A turn in another chat (a call-in by @, a bot's @, a group chat; Phase 4c): "<name> here: <what it was
+  // asked>"; "/guestsay <text>" in what it was asked: exactly <text>; a group turn not addressed to it: PASS.
+  const guestAt = prompt.search(/\(App: (?:The user called you into |A bot called you in with @\. |Group chat )/);
+  if (guestAt >= 0) {
+    // Woken for it, the wake briefing comes first.
+    const asked = prompt.slice(guestAt);
+    const me = /you are "([^"]*)"/.exec(asked)?.[1] ?? "?";
+    const quotes = [...asked.matchAll(/<<<\n([\s\S]*?)\n>>>/g)].map((match) => match[1]);
+    const body = asked.startsWith("(App: A bot called you in") ? quotes[1] ?? "" : null;
+    const newest = /^User \(newest\): (.*)$/m.exec(quotes[0] ?? "")?.[1] ?? null;
+    const ask = /\n>>>\n(.*)\. It answers your line above: carry on with it\./.exec(asked)?.[1] ?? null;
+    const what = body ?? ask ?? newest ?? "";
+    await sleep(Number(process.env.FAKE_CLAUDE_GUEST_MS ?? 0));
+    const own = /\/guestsay(?::([^ ]+))? (.*)$/.exec(what.replaceAll(" ⏎ ", "\n").split("\n")[0] ?? "");
+    let text;
+    if (own && (!own[1] || own[1].toLowerCase() === me.toLowerCase().replaceAll(" ", "_"))) text = own[2].replaceAll("\\n", "\n");
+    else if (asked.includes("Otherwise reply with exactly PASS")) text = "PASS";
+    else text = `${me} here: ${what}`;
+    text = await stream(text);
+    result(text);
+    return;
+  }
   const conducted = conductedReply(prompt);
   if (conducted === SLOW_HANDED) {
     current = { interrupted: false, helper: null, ignoreInterrupt: false };
@@ -318,6 +341,14 @@ async function turn(job) {
     out({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
     const text = await stream(`You said: ${said.last.slice(linger[0].length)}${heard.length ? ` (heard mid-turn: ${heard.length})` : ""}`);
     result(`${first}\n\n${text}`);
+    return;
+  }
+  // "/mention <name> <words>[|<name> <words>…]": a reply whose lines call other bots with @ (Phase 4c).
+  const mention = /^\/mention\s+/.exec(said.last);
+  if (mention) {
+    const lines = said.last.slice(mention[0].length).split("|").map((part) => `@${part.trim()}`);
+    const text = await stream(`Let me ask.\n${lines.join("\n")}`);
+    result(text);
     return;
   }
   const say = /^\/say\s+/.exec(said.last);

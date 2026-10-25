@@ -124,11 +124,18 @@ const checkNode: HostCommand | null = process.env.BOTLING_NODE_PATH ? { command:
   : process.versions.electron ? { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: "1" } } : { command: process.execPath };
 const checkCommand = checkNode ? `${checkNode.env?.ELECTRON_RUN_AS_NODE ? "ELECTRON_RUN_AS_NODE=1 " : ""}${quote(checkNode.command)} ${quote(checkScript)}` : null;
 
+function groupTiming(text: string | undefined) {
+  const [busy, busyNamed, answer, answerNamed] = (text ?? "").split(",").map(Number);
+  return [busy, busyNamed, answer, answerNamed].every((value) => Number.isFinite(value) && value! > 0) ? { busy: busy!, busyNamed: busyNamed!, answer: answer!, answerNamed: answerNamed! } : undefined;
+}
+
 const core = new Core({
   dataDir,
   headConfig,
   codexConfig,
   claimWaitMs: number(process.env.BOTLING_CLAIM_WAIT_MS, 20_000),
+  // How long a bot answering in another chat waits for a busy one and may take ("busy,named,answer,named" in ms; 1.x's `groupTiming`).
+  groupTiming: groupTiming(process.env.BOTLING_GROUP_TIMING_MS),
   emit,
   log,
   importFrom: process.env.BOTLING_IMPORT_FROM || null,

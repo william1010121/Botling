@@ -89,7 +89,7 @@ import { codexWorkerDefaults } from "./settings";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
 import type { ProjectLock } from "./store/lock";
 import {
-  HISTORY_LIMIT, fromSwiftDate as fromSwiftDateMs, isOpenQuestion, newId, swiftDateISO, toSwiftDate, type ChatRecord, type ChoiceRecord, type StepRecord,
+  HISTORY_LIMIT, fromSwiftDate as fromSwiftDateMs, isOpenQuestion, isUUID, newId, swiftDateISO, toSwiftDate, type ChatRecord, type ChoiceRecord, type StepRecord,
 } from "./store/records";
 import type { BotProfile } from "./store/workspace";
 
@@ -169,6 +169,8 @@ export interface BotOptions {
   wakeNote?: () => string;
   /** Folders a new claude head may also read and write (`--add-dir`: the main bot's every `.bot/`). */
   addDirs?: () => string[];
+  /** Another bot answering in its chat right now (a call-in's speaker). */
+  guest?: () => string | null;
   /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
   launch?: () => { subagentHourCache: boolean };
 }
@@ -217,7 +219,12 @@ interface Turn {
   resolve: (status: Status) => void;
   /** For the tidy turn: its reply. */
   onReply?: (text: string) => void;
+  /** Its turn in another chat (a group, or a chat it was called into): hidden here like the tidy, but it may ask for tools. */
+  guest?: boolean;
 }
+
+/** What a bot said for its turn in another chat (1.x's `GroupAnswer`). */
+export type GuestAnswer = { kind: "busy" } | { kind: "failed"; why: string } | { kind: "reply"; text: string; steps: StepRecord[]; engine: string };
 
 interface Approval {
   /** A monitored command's Allow once card: it outlives the turn that asked (Codex ends its turn at once). */
@@ -230,7 +237,7 @@ interface Approval {
   expires: number;
 }
 
-const NO_LONGER_NEEDED = "No longer needed";
+export const NO_LONGER_NEEDED = "No longer needed";
 const NO_ANSWER = "No answer in time";
 /** Tools whose "always" would be far broader than it sounds; they are asked every time (`Bot.neverAlways`). */
 const NEVER_ALWAYS = new Set(["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Monitored command"]);
@@ -629,12 +636,101 @@ export class Bot {
     this.deliverTo(this.engine, words, null, { origin: "app" });
   }
 
+  // ------------------------------------------------------------------------------------------
+  // Turns in other chats (1.x's `groupTurn`, `post`, `keepCallIn`)
+
+  private guestTurn = false;
+
+  /**
+   * Says `text` (its turn in a group chat, or in a chat it was called into) and returns the reply,
+   * showing neither in this chat. Wakes it if asleep. While it is busy with its own chat it waits up to
+   * `waitForMs`, then gives up (busy); once asked, it has `answerWithinMs` to reply.
+   */
+  async groupTurn(text: string, waitForMs: number, answerWithinMs: number): Promise<GuestAnswer> {
+    if (this.options.primary) return this.options.primary.groupTurn(text, waitForMs, answerWithinMs);
+    const deadline = Date.now() + waitForMs;
+    while (this.turn || this.queue.length || this.tidying || this.guestTurn || this.deferred || this.claimHold) {
+      if (this.shuttingDown) return { kind: "failed", why: "It was removed." };
+      if (Date.now() >= deadline) return { kind: "busy" };
+      await sleep(300);
+    }
+    if (this.shuttingDown) return { kind: "failed", why: "It was removed." };
+    const problem = this.problem ?? this.profile.problem ?? (this.checkLock() ? null : this.lockProblem);
+    if (problem) return { kind: "failed", why: problem };
+    this.guestTurn = true;
+    const engine = this.engine;
+    try {
+      return await new Promise<GuestAnswer>((resolve) => {
+        const turn = this.newTurn("tidy", text, null);
+        turn.guest = true;
+        let settled = false;
+        const settle = (answer: GuestAnswer) => { if (!settled) { settled = true; clearTimeout(timer); resolve(answer); } };
+        const timer = setTimeout(() => {
+          if (turn.open) {
+            turn.open = false;
+            if (this.turn === turn) this.turn = null;
+            turn.resolve("stopped");
+            // Its reply, when it comes, belongs to nobody now.
+            if (turn.sent && turn.head?.running) { this.ignoreResults += 1; turn.head.interrupt(); }
+          }
+          settle({ kind: "failed", why: "No answer in time." });
+        }, answerWithinMs);
+        turn.onReply = (reply) => settle({ kind: "reply", text: reply, steps: turn.steps.slice(-500), engine });
+        void turn.done.then((status) => settle(status === "done" ? { kind: "reply", text: turn.reply.text, steps: turn.steps.slice(-500), engine } : { kind: "failed", why: status === "failed" ? "It could not answer." : "It was stopped." }));
+        this.begin(turn);
+      });
+    } finally {
+      this.guestTurn = false;
+      if (!this.shuttingDown) this.next();
+    }
+  }
+
+  /** A line in this chat that is not part of its own conversation (a guest's line, a group's lines): `Bot.post`. */
+  post(record: ChatRecord, { unread = true } = {}) {
+    if (this.options.primary) { this.options.primary.post(record, { unread }); return; }
+    this.add(record);
+    if (unread) this.bumpUnread();
+  }
+
+  /**
+   * A turn it took in another chat, called in there with @ (`keepCallIn`): kept in its own chat and
+   * archive too, as what it was asked there and its reply. Not unread: you read it where you called it in.
+   */
+  keepCallIn(asked: string, at: number, line: ChatRecord) {
+    if (this.options.primary) { this.options.primary.keepCallIn(asked, at, line); return; }
+    this.add({ id: newId(), role: "notice", text: asked, date: at });
+    const copy: ChatRecord = { id: newId(), role: "bot", text: line.text, date: toSwiftDate() };
+    if (line.displays) copy.displays = line.displays;
+    if (line.steps?.length) copy.steps = line.steps;
+    if (line.engine) copy.engine = line.engine;
+    copy.session = this.session.sessionId;
+    if (!copy.text && !copy.displays) return;
+    this.add(copy);
+  }
+
+  /** A guest's reactions on this chat's lines (`applyReactions(actor: "guest:…")`). */
+  guestReactions(actions: { messageId: string; emoji: string; present: boolean }[], actor: string) {
+    for (const action of actions) {
+      try { this.owner.setReaction(action.messageId, action.emoji, action.present, actor); } catch { /* A line it named that is not here. */ }
+    }
+  }
+
+  /** Marks the chat read when you are looking at it (`markRead`). */
+  markRead() {
+    void this.read();
+  }
+
   /** Its latest question still waiting for you (1.x's `openQuestion`), if any (not tool approvals). */
   openQuestion(): { id: string; text: string; choices: { label: string; detail?: string; recommended: boolean }[] } | null {
     const owner = this.owner;
     // The bot's own (1.x: role .bot), not the app's cards in its chat.
-    const record = owner.records.findLast((candidate) => candidate.role === "bot" && isOpenQuestion(candidate) && !candidate.permissionTool);
+    const record = owner.records.findLast((candidate) => candidate.role === "bot" && isOpenQuestion(candidate) && !candidate.permissionTool && typeof candidate.sourceID !== "string");
     return record ? { id: record.id, text: record.text, choices: (record.choices ?? []).map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: !!choice.recommended })) } : null;
+  }
+
+  /** Its chat's lines as they stand (read only). */
+  lines(): readonly ChatRecord[] {
+    return this.owner.records;
   }
 
   /** A line of its chat as it stands (a question's pick or answer), or null. */
@@ -768,7 +864,11 @@ export class Bot {
     if (this.options.primary) return this.options.primary.saveTasks();
     if (!this.readOnly) this.store.saveList("tasks.json", this.tasks.tasks);
     this.emit({ type: "tasks.updated", botId: this.id, tasks: this.taskViews() });
+    // Its row's "N tasks" follows.
+    const open = this.tasks.tasks.filter((card) => card.state === "running" || card.state === "waiting").length;
+    if (open !== this.lastOpenTasks) { this.lastOpenTasks = open; this.updated(); }
   }
+  private lastOpenTasks = 0;
 
   private saveSubagents() {
     if (!this.readOnly) this.store.saveList("subagents.json", this.subagents.list);
@@ -806,7 +906,14 @@ export class Bot {
       heads: this.headsSettings.engines,
       job: this.profile.job?.slice(0, 4_000) ?? null,
       subagentRows: this.subagentRows(),
+      guest: this.options.guest?.() ?? null,
+      openTasks: this.owner.tasks.tasks.filter((card) => card.state === "running" || card.state === "waiting").length,
     };
+  }
+
+  /** Its row changed outside its own work (a guest answering in its chat): told again. */
+  refresh() {
+    this.updated();
   }
 
   /** The two-head parts of the chat: who new messages go to, the rounds line and the hand-offs. */
@@ -1619,6 +1726,11 @@ export class Bot {
       this.pendingAbout = [];
     }
     for (const id of turn.about) turn.peer.add(id);
+    if (turn.guest && brief) {
+      // Woken for a turn in another chat (1.x's `wake(with:)`): its wake briefing first.
+      const recent = recentChat(this.chat, { archive: this.paths.archive, leavingOut: null, head: this.sharesChat ? this.engine : null });
+      return [this.wakeLine(turn, () => recent), this.wakeNote(), this.componentNote(), this.engine === "claude" ? recent : "", words].filter(Boolean).join("\n\n");
+    }
     if (turn.origin === "tidy") return words;
     if (this.queuedNote && !brief) {
       words = `${this.queuedNote}\n\n${words}`;
@@ -1673,6 +1785,7 @@ export class Bot {
 
   private ensureHead(): AgentHead {
     if (this.head?.running) return this.head;
+    this.restartPending = false;
     if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null; }
     const resume = this.session.started && !this.briefing;
     const prompts = this.prompts();
@@ -3038,7 +3151,7 @@ export class Bot {
       return;
     }
     // Tidying: nobody is reading this turn, and it only touches memory.md.
-    if (turn.origin === "tidy") {
+    if (turn.origin === "tidy" && !turn.guest) {
       head.answer(item.requestId, false, item.input, "Not now: this turn only updates your memory file.");
       return;
     }
@@ -3467,6 +3580,7 @@ export function messageView(record: ChatRecord, approval?: { expires: number }, 
     if (seen.length) view.seenBy = [...seen];
   }
   if (typeof record.decisionID === "string" && /^[A-Za-z0-9_.:-]{1,64}$/.test(record.decisionID)) view.decisionId = record.decisionID;
+  if (isUUID(record.sourceID)) view.sourceId = record.sourceID.toUpperCase();
   if (displays?.length) view.displays = displays.map((display) => ({ ...display, name: display.name.slice(0, 200), data: display.data.slice(0, 1_100_000) }));
   if (Array.isArray(record.reactions) && record.reactions.length) {
     view.reactions = record.reactions.slice(0, 60).filter((r) => typeof r?.emoji === "string" && typeof r?.actor === "string")
