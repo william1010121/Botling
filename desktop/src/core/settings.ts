@@ -121,3 +121,8 @@ export function launchSettings(raw: RawSettings): { subagentModel: string | null
     codexWorkers: view.codexWorkersFollow ? null : view.codexWorkers,
   };
 }
+
+/** A list of strings in settings.json (`ignoredWaiting`). */
+export function readSettingsList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}

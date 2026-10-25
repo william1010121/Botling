@@ -30,6 +30,7 @@ function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
     // Plugins' Claude parts (Maintainer's component editor among them) and their MCP servers' secrets.
     pluginDirs: session.pluginDirs ?? [], ...(Object.keys(env).length ? { env } : {}),
     model: process.env.BOTLING_MODEL ?? session.model ?? null,
+    addDirs: session.addDirs ?? [],
     effort: session.effort ?? null,
   };
   if (kind === "claude") {
@@ -139,6 +140,7 @@ const core = new Core({
   routineTickMs: number(process.env.BOTLING_ROUTINE_TICK_MS, 30_000),
   summarizer: summarizer(),
   componentScanMs: number(process.env.BOTLING_COMPONENT_SCAN_MS, 1_500),
+  waitingScanMs: number(process.env.BOTLING_WAITING_SCAN_MS, 5_000),
   plugins: { node, hostScript, sealer },
   checkCommand,
   languages: process.env.BOTLING_LANGUAGES ? process.env.BOTLING_LANGUAGES.split(",").filter(Boolean) : undefined,

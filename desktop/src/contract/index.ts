@@ -27,7 +27,7 @@ import shared from "../../../Web/src/contract.json";
  * 7: the chat page on its own origin with plugins' web parts in it, attachments (files for the next
  *    message, a message with only files), settings, projects, the right panel and inboxes, the browser.
  */
-export const PROTOCOL_VERSION = 7 as const;
+export const PROTOCOL_VERSION = 8 as const;
 
 /** The most a card's `ccb.save` keeps, shared with the Swift app (`ComponentState.limit`). */
 export const CARD_SAVE_LIMIT: number = (shared as { saveLimit: number }).saveLimit;
@@ -122,6 +122,16 @@ export const AnswerTarget = z.enum(["claude", "codex", "both"]);
 export const AttachmentView = z.strictObject({ name: z.string().max(400), kind: z.enum(["image", "video", "file"]), url: z.string().max(4_000) });
 /** A file waiting in the input box for your next message (1.x's `ChatPayload.Pending`). */
 export const PendingFileView = z.strictObject({ id, name: z.string().max(400), kind: z.enum(["image", "video", "file"]) });
+
+/** One thing waiting on you (1.x's `Workspace.Waiting`): a bot's open question, or its memory's "Waiting on you". */
+export const WaitingItemView = z.strictObject({ botId: BotId, text: z.string().max(400), messageId: id.nullable() });
+export type WaitingItemView = z.infer<typeof WaitingItemView>;
+/** What the right panels show: what waits on you across the bots, and each manager's first "In progress" line. */
+export const WaitingView = z.strictObject({
+  items: z.array(WaitingItemView).max(200),
+  doing: z.record(BotId, z.string().max(400)),
+});
+export type WaitingView = z.infer<typeof WaitingView>;
 export type PendingFileView = z.infer<typeof PendingFileView>;
 /** The most a pasted or dropped file may be, as base64 text (about 30 MB of file). */
 export const FILE_DATA_LIMIT = 40_000_000;
@@ -557,6 +567,14 @@ export const Command = z.discriminatedUnion("type", [
     type: z.literal("bot.configure"), botId, model: BotModel.nullable().optional(), effort: Effort.nullable().optional(),
     subagentModel: BotModel.nullable().optional(), codexModel: ModelId.nullable().optional(),
   }),
+  /** Main only: "Add project…" (main's folder picker), then `projects.add`; the new bot is selected. */
+  z.strictObject({ type: z.literal("projects.pick") }),
+  /** Main only (from its picker): a folder becomes a project with a manager (one that is already a project: that one). */
+  z.strictObject({ type: z.literal("projects.add"), folder: z.string().min(1).max(4_096) }),
+  /** What waits on you across the bots (the main bot's right panel). */
+  z.strictObject({ type: z.literal("waiting.list") }),
+  /** Takes one off that list without answering it. */
+  z.strictObject({ type: z.literal("waiting.ignore"), botId, text: z.string().min(1).max(400) }),
   /** Every enabled plugin's web part, for the chat page. */
   z.strictObject({ type: z.literal("plugins.web") }),
   /** The chat page loaded a plugin's web part (kept as the one to fall back to). */
@@ -584,10 +602,10 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.detail", "component.save", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
-  "settings.get", "settings.set", "bot.settings", "bot.configure",
+  "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick"]);
 
 export interface ChatSnapshot {
   botId: string;
@@ -612,7 +630,7 @@ export interface ChatSnapshot {
 }
 
 export interface Results {
-  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView };
+  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView; waiting?: WaitingView };
   /** `stoppedBy`: a plugin's beforeSend hook stopped it (`messageId` is the notice saying so, `turnId` null). */
   "chat.send": { messageId: string; turnId: string | null; stoppedBy?: string };
   "heads.set": { engines: ("claude" | "codex")[] };
@@ -650,6 +668,10 @@ export interface Results {
   "plugins.call": { result: unknown };
   "plugins.web": { specs: WebPluginSpecView[] };
   "settings.get": SettingsView;
+  "projects.pick": { botId: string | null; added: boolean };
+  "projects.add": { botId: string; added: boolean };
+  "waiting.list": WaitingView;
+  "waiting.ignore": WaitingView;
   "settings.set": SettingsView;
   "bot.settings": BotSettingsView;
   "bot.configure": BotSettingsView;
@@ -704,6 +726,8 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("plugins.updated"), plugins: PluginsView }),
   /** The app's settings changed. */
   z.strictObject({ type: z.literal("settings.updated"), settings: SettingsView }),
+  /** What waits on you across the bots (or a manager's "In progress") changed. */
+  z.strictObject({ type: z.literal("waiting.updated"), waiting: WaitingView }),
   /** The files waiting in a bot's input box changed. */
   z.strictObject({ type: z.literal("files.updated"), botId, files: z.array(PendingFileView).max(50) }),
   /** Its routines changed (one ran, the bot or the app edited them). */

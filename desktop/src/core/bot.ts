@@ -107,6 +107,8 @@ export interface SessionStart {
   effort?: string | null;
   subagentModel?: string | null;
   subagentHourCache?: boolean;
+  /** More folders it may use (`--add-dir`). */
+  addDirs?: string[];
   /** Codex workers' model, effort and Fast mode when the app sets them (null: ~/.codex/config.toml's). */
   codexWorkers?: { model: string | null; effort: string | null; fast: boolean | null } | null;
 }
@@ -162,6 +164,10 @@ export interface BotOptions {
   replied?: (bot: Bot, record: ChatRecord) => void;
   /** Plugins' Claude parts (`--plugin-dir`) and the secrets their MCP servers read, for a new claude head. */
   plugins?: () => { dirs: string[]; env: Record<string, string> };
+  /** Said at each wake after the wake line (the main bot's project list: `wakeNote`). */
+  wakeNote?: () => string;
+  /** Folders a new claude head may also read and write (`--add-dir`: the main bot's every `.bot/`). */
+  addDirs?: () => string[];
   /** What settings.json says for new heads (the subagents' model and cache, Codex workers). */
   launch?: () => { subagentModel: string | null; subagentHourCache: boolean; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null };
 }
@@ -607,6 +613,18 @@ export class Bot {
     const words = text.trim();
     if (!words || this.problem || this.profile.problem || this.shuttingDown || !this.checkLock()) return;
     this.deliverTo(this.engine, words, null, { origin: "app" });
+  }
+
+  /** Its latest question still waiting for you (1.x's `openQuestion`), if any (not tool approvals). */
+  openQuestion(): { id: string; text: string } | null {
+    const owner = this.owner;
+    const record = owner.records.findLast((candidate) => isOpenQuestion(candidate) && !candidate.permissionTool);
+    return record ? { id: record.id, text: record.text } : null;
+  }
+
+  /** Every question in its chat still waiting for you. */
+  openQuestions(): { id: string; text: string }[] {
+    return this.owner.records.filter((candidate) => isOpenQuestion(candidate) && !candidate.permissionTool).map((record) => ({ id: record.id, text: record.text }));
   }
 
   /** Told with its next message when it is awake (`Bot.queueNote`; a later note replaces an earlier one). An asleep bot reads it all at its wake. */
@@ -1507,11 +1525,11 @@ export class Bot {
     const parts: string[] = [];
     if (brief && turn.origin === "app") {
       // Woken by the app (work the other head handed over): its wake briefing, then the note.
-      parts.push(this.wakeLine(turn, recent), this.componentNote(), words);
+      parts.push(this.wakeLine(turn, recent), this.wakeNote(), this.componentNote(), words);
     } else if (turn.origin === "app") {
       return words;
     } else if (brief) {
-      parts.push(this.wakeLine(turn, recent), this.componentNote());
+      parts.push(this.wakeLine(turn, recent), this.wakeNote(), this.componentNote());
       if (this.engine === "claude") parts.push(recent(turn.userId));
       parts.push(reactionIntro(chat, turn.userId), words);
     } else {
@@ -1534,6 +1552,11 @@ export class Bot {
     return parts.join("\n\n");
   }
 
+  /** The note it wakes with after its wake line (1.x's order: wake line, note, components, …). */
+  private wakeNote(): string {
+    return this.owner.options.wakeNote?.() ?? "";
+  }
+
   /** This head's instructions now. */
   private prompts(): BotPrompts {
     return this.options.prompts(this.engine, this.sharesChat ? this.heads : null);
@@ -1551,6 +1574,7 @@ export class Bot {
       sessionId: this.session.sessionId, resume, systemPrompt: prompts.system, pluginDirs: plugins.dirs, pluginEnv: plugins.env,
       model: choices.model, effort: choices.effort, subagentModel: choices.subagentModel ?? launch.subagentModel,
       subagentHourCache: launch.subagentHourCache, codexWorkers: launch.codexWorkers,
+      addDirs: this.owner.options.addDirs?.() ?? [],
     };
     let head: AgentHead;
     if (this.engine === "codex") {

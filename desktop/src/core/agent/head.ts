@@ -23,6 +23,8 @@ export interface HeadConfig {
   /** Go on with `sessionId` (`--resume`) instead of starting it (`--session-id`). */
   resume: boolean;
   model?: string | null;
+  /** More folders it may use (`--add-dir`). */
+  addDirs?: string[];
   /** How hard it thinks (`--effort`); null: the model's default. */
   effort?: string | null;
   /** Tools it uses without asking (`--allowedTools`); anything else is asked about. */
@@ -59,6 +61,7 @@ export function headArguments(config: HeadConfig): string[] {
   // as text for minutes instead of answering (Phase 2a).
   if (config.systemPrompt && !config.harmless) args.push("--append-system-prompt", config.systemPrompt);
   if (!config.harmless) for (const dir of config.pluginDirs ?? []) args.push("--plugin-dir", dir);
+  if (!config.harmless) for (const dir of config.addDirs ?? []) args.push("--add-dir", dir);
   if (config.harmless) {
     args.push("--safe-mode", "--strict-mcp-config", "--no-session-persistence", "--tools", (config.harmlessTools ?? []).join(","));
   }

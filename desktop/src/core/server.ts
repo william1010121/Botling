@@ -5,15 +5,18 @@
 //
 // Its data folder has the Swift app's layout (store/workspace.ts). On the first start with an
 // empty folder it imports a 1.x folder when one is given (read-only; store/importer.ts).
-import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join, resolve as resolvePath } from "node:path";
+import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { PendingFiles, servedType, writeIncoming } from "./attachments";
-import { applySetting, launchSettings, readSettings, settingsView, writeSettings } from "./settings";
+import { applySetting, launchSettings, readSettings, readSettingsList, settingsView, writeSettings } from "./settings";
+import { childFolders, defaultName, firstLine, folderPath, memoryItemsAt, nextAvatar, prepareNotesFolder, projectFolders, saveProjectRow } from "./projects";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
-  type Command, type Event, type ImportView, type Outbound, type ResultOf,
+  type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView,
   type SettingsChange, type SettingsView,
 } from "../contract";
 import { Bot, type SessionStart, type SessionStartCodex } from "./bot";
@@ -26,7 +29,8 @@ import { DEFAULT_ONE_X_PROCESS, ProjectLock, type OneXCheck } from "./store/lock
 import { ProcessLedger } from "./process/ledger";
 import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/importer";
 import { MAIN_BOT_ID } from "./store/records";
-import { Layout, loadProfiles, type BotProfile } from "./store/workspace";
+import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
+import type { BotRequest } from "./reply";
 import { CatchUpCache, CatchUps, catchUpSettings, type CatchUpViewData, type Summarizer } from "./catchup";
 import { ComponentsContext } from "./components/service";
 import { readdirSync } from "node:fs";
@@ -65,6 +69,8 @@ export interface CoreOptions {
   summarizer?: Summarizer | null;
   /** How often the component library is looked at for changes on disk (0: never; 1.x: 1.5 s). */
   componentScanMs?: number;
+  /** How often memory files are looked at for what waits on you (0: never; chat changes always look). */
+  waitingScanMs?: number;
   /** The plugin host (null: plugins' program parts do not run) and how secrets are sealed. */
   plugins?: { node: HostCommand | null; hostScript: string; sealer: Sealer | null; timing?: HostTiming } | null;
   /** Maintainer's `ccb plugin check` command (null: none this time). */
@@ -88,6 +94,15 @@ export class Core {
   /** The pins the user can see now, in the chat on screen (`RefreshSight`). */
   private visiblePins: { botId: string; ids: string[] } | null = null;
   readonly plugins: Plugins;
+  /** Every bot's profile, in the left column's order (Maintainer last). */
+  private profiles: BotProfile[] = [];
+  private makeBot!: (profile: BotProfile) => Bot;
+  /** "Add as project?" cards waiting for your pick, by their line in the main chat. */
+  private projectQuestions = new Map<string, { folder: string; task: string }[]>();
+  /** What waits on you as the windows were last told, and the timers that look again. */
+  private lastWaiting = "";
+  private waitingTimer: NodeJS.Timeout | null = null;
+  private waitingClock: NodeJS.Timeout | null = null;
   /** Files waiting in each bot's input box. */
   readonly pending: PendingFiles;
   readonly maintainer: MaintainerDesk;
@@ -128,7 +143,8 @@ export class Core {
     const oneX: OneXCheck = options.oneX ?? { folder: null, process: DEFAULT_ONE_X_PROCESS };
     const threads = new CodexThreads(join(options.dataDir, "codex-threads"));
     const codexConfig = options.codexConfig;
-    for (const profile of profiles) {
+    this.profiles = profiles;
+    this.makeBot = (profile) => {
       const bot: Bot = new Bot({
         profile,
         headConfig: options.headConfig,
@@ -146,15 +162,22 @@ export class Core {
         idleMs: options.idleMs ?? 30 * 60_000,
         interruptGraceMs: options.interruptGraceMs ?? 2_000,
         welcome: profile.id === MAIN_BOT_ID && !this.imported,
-        projectBriefing: profile.role === "main" ? () => this.projectBriefing(profiles) : undefined,
+        projectBriefing: profile.role === "main" ? () => this.projectBriefing() : undefined,
+        // The main bot wakes with the project list (`mainBot.wakeNote`) and may write every inbox (`--add-dir`).
+        wakeNote: profile.role === "main" ? () => this.projectBriefing() : undefined,
+        addDirs: profile.role === "main" ? () => this.profiles.filter((other) => other.role !== "main" && !other.problem).map((other) => join(other.folder, ".bot")) : undefined,
         components: this.components,
-        onRequests: (bot, requests) => this.maintainer.handle(bot, requests),
+        onRequests: (bot, requests) => this.maintainer.handle(bot, this.projectRequests(bot, requests)),
         replyFilter: (): ((text: string) => Promise<string>) | null => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
         replied: (bot, record) => this.replied(bot, record),
         plugins: () => ({ dirs: this.plugins.registry.claudeDirectories(), env: this.plugins.registry.secretEnvironment() }),
         launch: () => launchSettings(readSettings(Layout.settings(this.options.dataDir))),
       });
       this.bots.set(profile.id, bot);
+      return bot;
+    };
+    for (const profile of profiles) {
+      this.makeBot(profile);
       this.order.push(profile.id);
     }
     this.maintainer = new MaintainerDesk({
@@ -219,6 +242,13 @@ export class Core {
       this.routineClock = setInterval(() => this.checkRoutines(), tick);
       this.routineClock.unref?.();
     }
+    // Memory files change under the bots' hands (a manager's "Waiting on you", "In progress"): looked at every few seconds.
+    this.lastWaiting = JSON.stringify(this.waiting());
+    const look = options.waitingScanMs ?? 5_000;
+    if (look > 0) {
+      this.waitingClock = setInterval(() => this.refreshWaiting(), look);
+      this.waitingClock.unref?.();
+    }
   }
 
   /** A template or about.md changed on disk: the page draws it anew; bots hear what changed with their next message. */
@@ -253,18 +283,224 @@ export class Core {
   }
 
   /**
-   * What the main bot's routines are told about the projects (`Workspace.projectBriefing`), without
-   * what 2.0 does not have yet: inboxes (nothing delivers them) and teams.
+   * The project list the main bot wakes with and its routines get (`Workspace.projectBriefing`): each
+   * project's memory and inbox file, and a question waiting in its own chat. 2.0 has no teams, so
+   * their lines and the <open-question> note are left out.
    */
-  private projectBriefing(profiles: BotProfile[]): string {
+  projectBriefing(): string {
     const memory = (profile: BotProfile) => join(profile.folder, profile.memoryPath);
-    const projects = profiles.filter((profile) => profile.role === "manager" && profile.id !== MAINTAINER_ID);
-    const own = profiles.filter((profile) => profile.role === "bot");
-    const maintainer = profiles.find((profile) => profile.id === MAINTAINER_ID);
-    const projectLines = projects.length ? projects.map((profile) => `- ${profile.name} (folder ${profile.folder}): memory file ${memory(profile)}`).join("\n") : "(No projects yet.)";
-    const botLines = own.length ? "\n(App: Bots of their own, which you check the same way.)\n" + own.map((profile) => `- ${profile.name} (${(profile.job ?? "").split("\n")[0]}): memory file ${memory(profile)}`).join("\n") : "";
-    const maintainerLine = maintainer ? `\n- Maintainer (plugin-library extensions and in-chat components only): memory file ${memory(maintainer)}` : "";
-    return `(App: Project list. To check progress, read the memory file and do not wake the manager.)\n${projectLines}${botLines}${maintainerLine}`;
+    const inbox = (profile: BotProfile) => join(profile.folder, ".bot", "inbox.md");
+    const question = (profile: BotProfile) => {
+      const open = this.bots.get(profile.id)?.openQuestion();
+      return open ? `; open question in its chat: ${firstLine(open.text)}` : "";
+    };
+    const projects = this.profiles.filter((profile) => profile.role === "manager" && profile.id !== MAINTAINER_ID);
+    const own = this.profiles.filter((profile) => profile.role === "bot");
+    const maintainer = this.profiles.find((profile) => profile.id === MAINTAINER_ID);
+    const projectLines = projects.length
+      ? projects.map((profile) => `- ${profile.name} (folder ${profile.folder}): memory file ${memory(profile)}; inbox file ${inbox(profile)}${question(profile)}`).join("\n")
+      : "(No projects yet.)";
+    const botLines = own.length ? "\n(App: Bots of their own, which you reach the same way.)\n" + own.map((profile) => `- ${profile.name} (${firstLine(profile.job ?? "")}): memory file ${memory(profile)}; inbox file ${inbox(profile)}${question(profile)}`).join("\n") : "";
+    const maintainerLine = maintainer ? `\n- Maintainer (plugin-library extensions and in-chat components only): memory file ${memory(maintainer)}; inbox file ${inbox(maintainer)}${question(maintainer)}` : "";
+    return `(App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file.)\n${projectLines}${botLines}${maintainerLine}`;
+  }
+
+  /** Hands what the main bot wrote into an inbox.md to that bot, emptying the file (`deliverInboxes`). */
+  deliverInboxes() {
+    for (const profile of this.profiles) {
+      if (profile.role === "main" || profile.problem) continue;
+      const file = join(profile.folder, ".bot", "inbox.md");
+      let text: string;
+      try { text = readFileSync(file, "utf8"); } catch { continue; }
+      if (!text.trim()) continue;
+      const bot = this.bots.get(profile.id);
+      if (!bot) continue;
+      // Handed over first, then emptied: a bot that cannot take it now (read-only, closing) keeps it for later.
+      try { bot.relay(text); } catch (error) { this.log(`inbox of ${profile.name} kept: ${(error as Error).message}`); continue; }
+      try { writeFileSync(file, ""); } catch (error) { this.log(`inbox of ${profile.name} not emptied: ${(error as Error).message}`); }
+    }
+  }
+
+  /**
+   * What waits on you (`refreshWaiting`): each bot's latest open question in its own chat, else its
+   * memory's "Waiting on you"; then the main bot's own questions; without what you set aside.
+   */
+  waiting(): WaitingView {
+    const ignored = new Set(readSettingsList(readSettings(Layout.settings(this.options.dataDir)).ignoredWaiting));
+    const out: WaitingView["items"] = [];
+    const doing: WaitingView["doing"] = {};
+    for (const profile of this.profiles) {
+      if (profile.role === "main") continue;
+      // A manager's Now card: the first thing under "In progress" in its memory.md.
+      if (profile.role === "manager" && !profile.problem) {
+        const first = memoryItemsAt(join(profile.folder, profile.memoryPath), "inProgress")[0];
+        if (first) doing[profile.id] = first.slice(0, 400);
+      }
+      const question = this.bots.get(profile.id)?.openQuestion();
+      if (question) out.push({ botId: profile.id, text: firstLine(question.text).slice(0, 400), messageId: question.id });
+      else for (const item of memoryItemsAt(join(profile.folder, profile.memoryPath), "waitingOnYou")) out.push({ botId: profile.id, text: item.slice(0, 400), messageId: null });
+    }
+    for (const question of this.bots.get(MAIN_BOT_ID)?.openQuestions() ?? []) out.push({ botId: MAIN_BOT_ID, text: firstLine(question.text).slice(0, 400), messageId: question.id });
+    return { items: out.filter((item) => !ignored.has(`${item.botId}-${item.text}`)).slice(0, 200), doing };
+  }
+
+  /** Tells the windows when what waits on you changed (1.x's `refreshWaiting`, after anything that may change it). */
+  refreshWaiting() {
+    let view: WaitingView;
+    try { view = this.waiting(); } catch (error) { this.log(`waiting: ${(error as Error).message}`); return; }
+    const text = JSON.stringify(view);
+    if (text === this.lastWaiting) return;
+    this.lastWaiting = text;
+    this.event({ type: "waiting.updated", waiting: view });
+  }
+
+  /** A refresh soon after a chat changed (several changes in a row make one). */
+  private waitingSoon() {
+    if (this.waitingTimer) return;
+    this.waitingTimer = setTimeout(() => { this.waitingTimer = null; this.refreshWaiting(); }, 150);
+    this.waitingTimer.unref?.();
+  }
+
+  /** Takes one off the list without answering it (settings' `ignoredWaiting`, 1.x's ids). */
+  ignoreWaiting(botId: string, text: string): WaitingView {
+    const file = Layout.settings(this.options.dataDir);
+    const raw = readSettings(file);
+    const ignored = readSettingsList(raw.ignoredWaiting);
+    const key = `${botId}-${text}`;
+    // Only the last 200: old ones are long answered or gone (1.x).
+    if (!ignored.includes(key)) writeSettings(file, { ...raw, ignoredWaiting: [...ignored, key].slice(-200) });
+    this.refreshWaiting();
+    return this.waiting();
+  }
+
+  /**
+   * Adds a folder as a project with a manager (`Workspace.addProject`); a folder that is one already
+   * gives that project. Its row goes into projects.json, its `.bot/` is made, its bot joins the list.
+   */
+  addProject(path: string): { botId: string; added: boolean } {
+    const folder = folderPath(path);
+    if (!folder || !existsSync(folder) || !statSync(folder).isDirectory()) throw new ContractError("not_found", `There is no folder at ${path}.`);
+    const existing = this.profiles.find((profile) => profile.role !== "main" && profile.folder === folder);
+    if (existing) return { botId: existing.id, added: false };
+    const id = randomUUID().toUpperCase();
+    const row = { id, name: defaultName(folder), folder, avatar: nextAvatar(this.profiles.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID).map((profile) => profile.avatar)) };
+    prepareNotesFolder(folder);
+    saveProjectRow(this.options.dataDir, row);
+    const profile = projectProfile(this.options.dataDir, { id, name: row.name, folder: pathToFileURL(folder).href + "/", avatar: row.avatar });
+    // Before Maintainer, who stays last.
+    const at = this.profiles.findIndex((candidate) => candidate.id === MAINTAINER_ID);
+    this.profiles.splice(at < 0 ? this.profiles.length : at, 0, profile);
+    const bot = this.makeBot(profile);
+    const orderAt = this.order.indexOf(MAINTAINER_ID);
+    this.order.splice(orderAt < 0 ? this.order.length : orderAt, 0, id);
+    this.event({ type: "bot.updated", bot: bot.view() });
+    this.log(`added project ${row.name} (${folder})`);
+    return { botId: id, added: true };
+  }
+
+  /**
+   * The main bot's <new-project folder="…">task</new-project> (`proposeProjects`): folders found (`/*`,
+   * `/**`), ones that are projects already get the task, the rest are asked about on one card.
+   */
+  private projectRequests(bot: Bot, requests: BotRequest[]): BotRequest[] {
+    const asked = requests.filter((request): request is Extract<BotRequest, { kind: "newProject" }> => request.kind === "newProject");
+    if (!asked.length || bot.id !== MAIN_BOT_ID) return requests;
+    const main = bot;
+    const home = homedir();
+    const own = resolvePath(this.options.dataDir);
+    const adding: { folder: string; task: string }[] = [];
+    const missing: string[] = [];
+    const tooBroad: string[] = [];
+    const handed: string[] = [];
+    const expanded: { path: string; task: string }[] = [];
+    for (const { folder: path, task } of asked) {
+      const trimmed = path.trim();
+      if (trimmed.endsWith("/**")) {
+        const parent = folderPath(trimmed.slice(0, -3));
+        if (!parent || !existsSync(parent)) { missing.push(trimmed.slice(0, -3)); continue; }
+        const found = projectFolders(parent);
+        if (!found.length) missing.push(trimmed);
+        expanded.push(...found.map((folder) => ({ path: folder, task })));
+        continue;
+      }
+      if (!trimmed.endsWith("/*")) { expanded.push({ path, task }); continue; }
+      const parent = folderPath(trimmed.slice(0, -2));
+      const inside = parent ? childFolders(parent) : null;
+      if (!inside) { missing.push(trimmed.slice(0, -2)); continue; }
+      if (!inside.length) missing.push(trimmed);
+      expanded.push(...inside.map((folder) => ({ path: folder, task })));
+    }
+    for (const { path, task: raw } of expanded) {
+      const task = raw.trim();
+      const folder = folderPath(path);
+      if (!folder || !existsSync(folder) || !statSync(folder).isDirectory()) { missing.push(path); continue; }
+      if (folder === "/" || folder === home || folder === own || folder.startsWith(own + "/")) { tooBroad.push(folder); continue; }
+      const existing = this.profiles.find((profile) => profile.role !== "main" && profile.folder === folder);
+      if (existing) {
+        if (task) { try { this.bots.get(existing.id)?.relay(task); } catch { /* read-only */ } }
+        handed.push(existing.name);
+        continue;
+      }
+      if (!adding.some((entry) => entry.folder === folder)) adding.push({ folder, task });
+    }
+    const notes: string[] = [];
+    if (missing.length) {
+      main.appNotice(`Couldn't add a project: there is no folder at ${missing.join(", ")}.`);
+      notes.push(`There is no folder at ${missing.join(", ")}; nothing was added for it. Ask the user for the full path.`);
+    }
+    if (tooBroad.length) {
+      main.appNotice(`Couldn't add ${tooBroad.join(", ")} as a project: a manager there could change far more than one project.`);
+      notes.push(`${tooBroad.join(", ")} was not added: a whole disk, the home folder or Botling's own folder cannot be a project. Ask for the project's own folder.`);
+    }
+    if (handed.length) main.appNotice(handed.length === 1 ? `${handed[0]} is already a project; any task went to its manager.` : `${handed.join(", ")} are already projects; any task went to their managers.`);
+    if (adding.length) {
+      let text: string;
+      let add: string;
+      if (adding.length === 1) {
+        const only = adding[0]!;
+        text = `Add **${basename(only.folder)}** as a project?\n\n\`${only.folder}\`\n\nIts manager can read and change the files in this folder.${only.task ? `\n\nThen its manager starts on: ${only.task}` : ""}`;
+        add = "Add as project";
+      } else {
+        const tasks = new Set(adding.map((entry) => entry.task));
+        const shared = tasks.size === 1 ? [...tasks][0]! : null;
+        const list = adding.map((entry) => `- **${basename(entry.folder)}** \`${entry.folder}\`${shared !== null || !entry.task ? "" : ` — then: ${entry.task}`}`);
+        const then = shared ? `\n\nThen each manager starts on: ${shared}` : "";
+        text = `Add these ${adding.length} folders as projects?\n\n${list.join("\n")}${then}\n\nEach gets a manager that can read and change the files in its folder. To leave some out, tell the main bot instead.`;
+        add = `Add all ${adding.length}`;
+      }
+      const question = main.appNotice(text, [{ label: add, recommended: true }, { label: "Don't add" }], (index) => this.answerProjects(question, index === 0));
+      this.projectQuestions.set(question, adding);
+      notes.push(`The user now sees a card asking to add ${adding.length === 1 ? "this folder" : `these ${adding.length} folders`} as projects: ${adding.map((entry) => entry.folder).join(", ")}. Nothing is added until they pick.`);
+    }
+    if (notes.length) main.queueNote(`(App: ${notes.join(" ")})`);
+    return requests.filter((request) => request.kind !== "newProject");
+  }
+
+  /** Your pick on an "Add as project?" card (`answerProjects`). */
+  private answerProjects(question: string, add: boolean) {
+    const folders = this.projectQuestions.get(question);
+    this.projectQuestions.delete(question);
+    const main = this.bots.get(MAIN_BOT_ID);
+    if (!folders || !main) return;
+    const paths = folders.map((entry) => entry.folder).join(", ");
+    if (!add) { main.queueNote(`(App: The user chose not to add ${paths} as projects.)`); return; }
+    const names: string[] = [];
+    for (const { folder, task } of folders) {
+      try {
+        const { botId } = this.addProject(folder);
+        names.push(this.bots.get(botId)!.profile.name);
+        if (task) this.bots.get(botId)?.relay(task);
+      } catch (error) {
+        this.log(`adding ${folder}: ${(error as Error).message}`);
+      }
+    }
+    if (!names.length) { main.appNotice(`Couldn't add ${paths} as ${folders.length === 1 ? "a project" : "projects"}.`); return; }
+    const list = names.join(", ");
+    const anyTask = folders.some((entry) => entry.task);
+    main.appNotice(names.length === 1
+      ? (anyTask ? `Added ${list} as a project; the managers with a task are on it.` : `Added ${list} as a project.`)
+      : (anyTask ? `Added ${list} as projects; the managers with a task are on it.` : `Added ${list} as projects.`));
+    main.queueNote(`(App: The user added ${list} as projects (${paths}); they are in the project list now.)`);
   }
 
   private importOnce() {
@@ -303,6 +539,8 @@ export class Core {
   /** A reply showed: plugins listening hear it; Maintainer's settles the component changes bots asked for. */
   private replied(bot: Bot, record: ChatRecord) {
     if (record.text) this.plugins.replied(this.botInfo(bot), record.text);
+    // What the main bot wrote into an inbox goes to that bot now (1.x: after every main-bot reply).
+    if (bot.id === MAIN_BOT_ID) this.deliverInboxes();
     if (bot.id === MAINTAINER_ID) this.maintainer.settle(record);
   }
 
@@ -384,6 +622,8 @@ export class Core {
 
   private event(event: Event) {
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
+    // A question asked or answered, a bot added: what waits on you may have changed.
+    if (event.type === "message.added" || event.type === "message.updated" || event.type === "message.removed" || event.type === "bot.updated") this.waitingSoon();
     // Your line closes an interval: it may be summarized by itself (`summarizeClosedInterval`).
     if (event.type === "message.added" && event.message.role === "user") {
       const bot = this.bots.get(event.botId);
@@ -444,6 +684,9 @@ export class Core {
       case "plugins.call": return { result: await this.plugins.call(cmd.name, cmd.method, cmd.params) ?? null };
       case "plugins.web": return { specs: this.plugins.webSpecs() };
       case "settings.get": return this.settingsNow();
+      case "projects.add": return this.addProject(cmd.folder);
+      case "waiting.list": return this.waiting();
+      case "waiting.ignore": return this.ignoreWaiting(cmd.botId, cmd.text);
       case "settings.set": return this.changeSetting(cmd.change);
       case "bot.settings": return this.bot(cmd.botId).settingsView();
       case "bot.configure": {
@@ -524,6 +767,7 @@ export class Core {
       components: this.componentInfos(),
       plugins: this.plugins.view(),
       settings: this.settingsNow(),
+      waiting: this.waiting(),
     };
   }
 
@@ -546,6 +790,8 @@ export class Core {
     if (this.routineClock) { clearInterval(this.routineClock); this.routineClock = null; }
     if (this.componentClock) { clearInterval(this.componentClock); this.componentClock = null; }
     if (this.pinClock) { clearInterval(this.pinClock); this.pinClock = null; }
+    if (this.waitingClock) { clearInterval(this.waitingClock); this.waitingClock = null; }
+    if (this.waitingTimer) { clearTimeout(this.waitingTimer); this.waitingTimer = null; }
     await Promise.all([...this.bots.values()].map((bot) => bot.shutdown()).concat(this.plugins.shutdown()));
   }
 }
