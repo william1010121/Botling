@@ -1,6 +1,6 @@
 import {test,expect} from '@playwright/test';
 import {randomUUID} from 'node:crypto';
-import {existsSync,mkdirSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
+import {existsSync,mkdirSync,readFileSync,rmSync,writeFileSync,cpSync} from 'node:fs';
 import {dirname,join} from 'node:path';
 import {launch,MAIN,post,chatFrame} from './launch';
 import {desktop,tempDir,swiftLine} from '../helpers';
@@ -9,7 +9,7 @@ import {writeLibrary} from '../fixtures/components';
 
 test('D3 recovery offers Open folder and explicit restored-data continuation; fresh launch is unblocked',async()=>{
  const target=dirname(dirname(dirname(electronExecutable()))),data=tempDir('d3-ui'),token=randomUUID(),root=join(dirname(target),'.botling-update-d3-'+token);
- mkdirSync(join(root,'data-before'),{recursive:true});mkdirSync(join(data,'core'));writeFileSync(join(data,'core/schema'),'restored synthetic data');
+ mkdirSync(join(root,'data-before'),{recursive:true});mkdirSync(join(data,'core'));writeFileSync(join(data,'core/schema'),'restored synthetic data');writeFileSync(join(data,'core/settings.json'),'{}');cpSync(data,join(root,'data-before'),{recursive:true});writeFileSync(join(root,'snapshot.complete'),'complete');
  writeFileSync(join(root,'owner.json'),JSON.stringify({target,dataDir:data,token,pid:99999999}));writeFileSync(join(root,'result'),'failed:19');writeFileSync(join(data,'update-pending.json'),JSON.stringify({target,root,token,version:'2.0.1',executable:'TestApp'}));
  let run:Awaited<ReturnType<typeof launch>>|undefined;
  try{
@@ -26,7 +26,8 @@ test('D3 recovery offers Open folder and explicit restored-data continuation; fr
   // Close the mocked restart instance, then actually launch the disposable app afresh.
   await run.app.evaluate(({app})=>app.exit(0));await run.app.close().catch(()=>{});run=await launch({dataDir:data});await expect(run.page.locator('.shell[data-ready="1"]')).toBeVisible();
   const counter=run.chat.frameLocator('iframe[src^="botling-card://card/"]').getByRole('button',{name:'Count: 0'});
-  await expect(counter).toBeVisible();await counter.click();await expect(run.chat.frameLocator('iframe[src^="botling-card://card/"]').locator('#n')).toHaveText('1');
+  const trace:any[]=[];run.page.on('console',message=>{if(message.text().startsWith('d3-click:'))trace.push({console:message.text()});});run.page.on('framenavigated',frame=>trace.push({navigation:frame.url(),at:Date.now()}));
+  await expect(counter).toBeVisible();await counter.evaluate(el=>{for(const type of ['pointerdown','pointerup','click'])el.addEventListener(type,e=>console.log('d3-click:'+JSON.stringify({type:e.type,trusted:e.isTrusted,target:(e.target as Element)?.outerHTML,at:Date.now()})),true);});await counter.click();writeFileSync(join(desktop,'.cache/evidence/review-e/recovered-click-events.json'),JSON.stringify(trace,null,2));await expect(run.chat.frameLocator('iframe[src^="botling-card://card/"]').locator('#n')).toHaveText('1');
   await run.page.screenshot({path:join(desktop,'.cache/evidence/review-d/recovered-ui.png')});
  }finally{if(run){await run.app.evaluate(({app})=>app.exit(0)).catch(()=>{});await run.app.close().catch(()=>{});}rmSync(root,{recursive:true,force:true});}
 });

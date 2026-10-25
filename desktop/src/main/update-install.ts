@@ -23,7 +23,7 @@ export interface InstallOptions {
 }
 const run = promisify(execFile);
 // Native removal avoids Electron's ASAR virtual-filesystem recursion inside packaged bundles.
-const removeTree = async (path: string) => { await run("/bin/rm", ["-rf", path], {timeout:120_000}); };
+const removeTree = async (path: string) => { const work=run("/bin/rm", ["-rf", path], {timeout:120_000});const pid=work.child.pid??0;await work;return{path,pid,completedAt:Date.now()}; };
 interface Pending { token: string; root: string; target: string; version: string; executable: string }
 const MOVE_GUIDE = "Move Botling 2.app to Applications and open it there before updating (read-only or App Translocation copies cannot update).";
 
@@ -158,10 +158,10 @@ finish() {
   trap '' HUP INT TERM
   [ "$code" -ne 0 ] || exit 0
   if [ -f "$root/decision" ] && [ "$(/bin/cat "$root/decision")" = "commit:$token" ]; then result booted || true; exit 0; fi
-  # A never-completed snapshot cannot be a recovery copy. Free its bytes before any journal
-  # allocation: ENOSPC must not prevent the record that lets startup reclaim the transaction.
+  # Even partial data copies are retained until explicit user deletion. Free disposable assets
+  # before allocating the failure journal; ENOSPC must not consume the only recovery evidence.
   if [ "$code" -eq 18 ] && [ "$moved" -eq 0 ] && [ "$snapshot" -eq 0 ]; then
-    /bin/rm -rf "$root/data-before" "$root/download.zip" "$staged" || { printf 'incomplete snapshot cleanup failed\n' > "$root/cleanup-error" || true; }
+    /bin/rm -rf "$root/download.zip" "$staged" || { printf 'incomplete snapshot cleanup failed\n' > "$root/cleanup-error" || true; }
   fi
   decide rollback || { result failed:22 || true; exit 22; }
   if [ -n "$new_pid" ]; then
@@ -182,7 +182,6 @@ finish() {
     if [ -e "$restore" ] || [ -e "$after" ]; then code=19
     elif ! space_for "$root/data-before" "\${data%/*}"; then code=19
     elif ! /usr/bin/ditto "$root/data-before" "$restore"; then
-      /bin/rm -rf "$restore" || { printf 'partial restore cleanup failed\n' > "$root/cleanup-error" || true; }
       code=19
     elif ! /bin/rm -rf "$restore/update-pending.json" "$restore/update-recovery.json" "$restore/update-dismissed.json" "$restore/update-recovered.json" "$restore/update-last-boot.json" "$restore/update-orphan-commit.json" "$restore/update-cleanup" "$restore/update-diagnostics"; then code=19
     elif [ -e "$data" ] && ! /bin/mv "$data" "$after"; then code=20
@@ -224,7 +223,7 @@ while :; do
     decide commit || exit 22
     result booted || exit 22
     trap - EXIT HUP INT TERM
-    /bin/rm -rf "$previous" "$root/data-before" "$root/download.zip" &
+    /bin/rm -f "$root/download.zip" &
     cleanup_pid=$!
     printf '%s' "$cleanup_pid" > "$root/cleanup.pid" || true
     wait "$cleanup_pid" || true
@@ -410,10 +409,26 @@ async function sweepUpdates(dataDir:string,target:string,collect:boolean):Promis
   if(collect)await clearPending(pending.root);
  }
  const validClaim=(c:any)=>c.dataDir===dataDir&&c.target===target&&/^\.botling-update-gc-[a-z0-9-]+$/.test(c.root)&&(!c.source||/^\.botling-update-[a-zA-Z0-9-]+$/.test(c.source));
+ async function prune(root:string,c:any){
+  const removals:Awaited<ReturnType<typeof removeTree>>[]=[];
+  // Retain all data copies and previous.app in place, preserving exact recovery paths. The
+  // completion barrier concerns disposable assets only. Never rename a running bundle's root.
+  const running=await runningAppBundles();
+  for(const name of ['download.zip','extract','Botling 2.app','boot.log']){
+   const path=join(root,name);
+   if(running.some(bundle=>bundle===path||bundle.startsWith(path+sep)))continue;
+   removals.push(await removeTree(path));
+  }
+  const token=c.token;
+  const protectedCopy=['data-before','previous.app','failed.app'].some(name=>existsSync(join(root,name)))||
+   typeof token==='string'&&['after','restore'].some(kind=>existsSync(`${dataDir}.update-${kind}-${token}`));
+  if(protectedCopy)await writeRecord(join(root,'retained.json'),{at:Date.now(),dataDir,target,token,result:c.result});
+  else if(!running.some(bundle=>bundle===root||bundle.startsWith(root+sep)))removals.push(await removeTree(root));
+  return removals;
+ }
  async function collectClaim(c:any,file:string):Promise<void>{
   if(!collect)return;
   if(c.collectorPid!==process.pid&&processAlive(c.collectorPid)){
-   // The foreign owner can delete its lease before exiting; synchronize on that durable completion.
    const end=Date.now()+130_000;
    while(existsSync(file)&&processAlive(c.collectorPid)){if(Date.now()>end)throw new Error(`Update collector did not complete: ${file}`);await new Promise(r=>setTimeout(r,50));}
    if(!existsSync(file))return;
@@ -422,22 +437,18 @@ async function sweepUpdates(dataDir:string,target:string,collect:boolean):Promis
   await waitForOwner(c.helper,'helper finalization');await waitForOwner(c.cleanupPid,'helper native deletion');
   c.collectorPid=process.pid;await writeRecord(file,c);
   const source=join(dirname(target),c.source||c.root),garbage=join(dirname(target),c.root);
-  if(source!==garbage&&existsSync(source)&&!existsSync(garbage))await fs.rename(source,garbage);
-  await fs.mkdir(diagnostics,{recursive:true});
-  const diagnostic=typeof c.diagnostic==='string'&&dirname(c.diagnostic)===diagnostics?c.diagnostic:join(diagnostics,`${Date.now()}-${randomUUID()}.json`);
-  c.diagnostic=diagnostic;await writeRecord(file,c);
-  const report={...c,phase:'deleting',startedAt:Date.now(),completedAt:0,nativePid:0,cleanupError:null as string|null};
+  const root=existsSync(source)?source:garbage;
+  // Legacy GC claims may already have renamed a root. Preserve its copies where they now are.
   try{
-   for(const path of [garbage,...(c.cleanupPaths??[]).filter((path:unknown)=>typeof c.token==='string'&&/^[a-zA-Z0-9-]+$/.test(c.token)&&(path===`${dataDir}.update-after-${c.token}`||path===`${dataDir}.update-restore-${c.token}`))]){
-    // Native ASAR-unaware removal, exactly one attempt; its exit is the completion barrier.
-    await new Promise<void>((resolve,reject)=>{const child=execFile('/bin/rm',['-rf',path],{timeout:120_000},error=>error?reject(error):resolve());report.nativePid=child.pid??0;});
+   const startedAt=Date.now(),removals=await prune(root,c);
+   if(c.source)await clearPending(source);
+   if(existsSync(dataDir)){
+    await fs.mkdir(diagnostics,{recursive:true});
+    await writeRecord(join(diagnostics,`${Date.now()}-${randomUUID()}.json`),{...c,phase:'complete',startedAt,nativePid:removals.at(-1)?.pid??0,removals,completedAt:Date.now(),retained:existsSync(root)?root:null});
    }
-   report.phase='complete';report.completedAt=Date.now();await writeRecord(diagnostic,report);
-   if(c.source)await clearPending(join(dirname(target),c.source));
    await fs.rm(file,{force:true});
   }catch(error){
-   report.phase='failed';report.cleanupError=String(error).slice(0,500);await writeRecord(diagnostic,report);
-   c.collectorPid=0;await writeRecord(file,c);throw error;
+   c.collectorPid=0;c.cleanupError=String(error).slice(0,500);await writeRecord(file,c);throw error;
   }
  }
  // Resume interrupted removals and join existing collectors even when their root is already gone.
@@ -463,16 +474,11 @@ async function sweepUpdates(dataDir:string,target:string,collect:boolean):Promis
   if(processAlive(helper)){if(!result)continue;await waitForOwner(helper,'helper final result');}
   if(result==='booted'&&processAlive(candidate)&&!existsSync(join(root,'activated.ok')))continue;
   if(!result&&(processAlive(owner?.pid)||processAlive(candidate)))continue;
-  const cleanupPaths:string[]=[];
-  try{
-   const metadata=await smallJSON(join(root,'recovery.json'));
-   if(metadata.dataDir===dataDir&&metadata.token===token&&/^[a-zA-Z0-9-]+$/.test(token??'')&&(accepted||result==='booted'||existsSync(join(root,'data-restored')))){
-    for(const kind of ['after','restore']){const expected=`${dataDir}.update-${kind}-${token}`;if(metadata[kind]===expected)cleanupPaths.push(expected);}
-   }
-  }catch{}
   let tail='';try{const f=await fs.open(join(root,'boot.log'),constants.O_RDONLY|constants.O_NOFOLLOW);try{const stat=await f.stat(),bytes=Buffer.alloc(Math.min(8192,stat.size));await f.read(bytes,0,bytes.length,Math.max(0,stat.size-bytes.length));tail=bytes.toString('base64');}finally{await f.close();}}catch{}
+  if(existsSync(join(root,'retained.json'))){await clearPending(root);continue;}
   const garbageName='.botling-update-gc-'+createHash('sha256').update(root).digest('hex').slice(0,32),file=join(claims,garbageName+'.json');
-  const claim={root:garbageName,source:name,target,dataDir,result:result||'orphan',helper,cleanupPid:Number(await readText(join(root,'cleanup.pid'))),collectorPid:process.pid,token,cleanupPaths,tailBase64:tail,failure:code?issueFor(dataDir,target,root,code,token).message:null};
+  const claim={root:garbageName,source:name,target,dataDir,result:result||'orphan',helper,cleanupPid:Number(await readText(join(root,'cleanup.pid'))),collectorPid:process.pid,token,tailBase64:tail,failure:code?issueFor(dataDir,target,root,code,token).message:null};
+  if(!existsSync(dataDir)){await prune(root,claim);continue;}
   await fs.mkdir(claims,{recursive:true});const temp=file+'.'+randomUUID()+'.tmp';let won=false;
   try{await fs.writeFile(temp,JSON.stringify(claim),{flag:'wx',mode:0o600});try{await fs.link(temp,file);won=true;}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}}finally{await fs.rm(temp,{force:true});}
   await collectClaim(won?claim:await smallJSON(file),file);
@@ -485,4 +491,12 @@ export function recoverUpdates(dataDir:string,target:string,collect=true):Promis
  if(!collect)return sweepUpdates(dataDir,target,false);
  const key=dataDir+'\0'+target,previous=collections.get(key);if(previous)return previous;
  const work=sweepUpdates(dataDir,target,true).finally(()=>{collections.delete(key);});collections.set(key,work);return work;
+}
+
+/** ps reports the actual executable bundle, including an app running from previous.app. */
+export async function runningAppBundles():Promise<string[]>{
+ const {stdout}=await run('/bin/ps',['-axww','-o','comm='],{maxBuffer:4*1024*1024});
+ const paths=new Set<string>();
+ for(const line of [process.execPath,...stdout.split('\n')]){const path=line.trim(),at=path.indexOf('.app/');if(at>=0)paths.add(path.slice(0,at+4));}
+ return [...paths];
 }

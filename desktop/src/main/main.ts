@@ -10,8 +10,8 @@ import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { scrubEnvironment } from "./packaged";
 import { FEED, Updater } from "./updates";
 import { previewResponse } from "./preview-response";
-import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates } from "./update-install";
-import {blockingRecovery,commitUpdateReceipt,completeRecovery,dismissRecovery,issueFor,recoveryHTML,visibleRecovery,writeRecord} from "./update-state";
+import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates, runningAppBundles } from "./update-install";
+import {blockingRecovery,dataVolumeError,recoveryCopies,deleteRecoveryCopies,commitUpdateReceipt,completeRecovery,dismissRecovery,issueFor,recoveryHTML,visibleRecovery,writeRecord} from "./update-state";
 import {directoryDefaults} from "./main-environment";
 declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
@@ -44,7 +44,8 @@ const shotMode = isShotRequested(process.argv);
 const dataDir = shotMode ? mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "botling-shot-"))
   : resolve(process.argv.find(arg => arg.startsWith("--botling-update-data="))?.slice("--botling-update-data=".length) || process.env.BOTLING_DATA_DIR || (app.isPackaged ? join(app.getPath("appData"), "Botling 2") : join(root, ".data")));
 const installedApp = dirname(dirname(dirname(process.execPath)));
-const startupRecovery = shotMode ? null : blockingRecovery(dataDir,installedApp);
+const volumeRecovery = () => {const error=dataVolumeError(dataDir);return error?{...issueFor(dataDir,installedApp,dirname(installedApp),27),blocked:true,message:error}:null;};
+const startupRecovery = shotMode ? null : volumeRecovery() || blockingRecovery(dataDir,installedApp);
 if(!startupRecovery)mkdirSync(dataDir, { recursive: true });
 const profileDir = startupRecovery ? mkdtempSync(join(process.env.TMPDIR || tmpdir(), "botling-recovery-ui-")) : join(dataDir,"electron");
 // Everything Electron keeps (partitions, caches, logs) lives under the data dir, never the default.
@@ -378,8 +379,8 @@ async function openResult(botId: string, url: string): Promise<{ opened: boolean
   if (!access.result) throw Object.assign(new Error("That link is not one of this bot's results."), { code: "not_found" });
   return openLink(url);
 }
-async function openOrdinaryLink(botId: string, url: string, source: "user" | "component", messageId?:string): Promise<{opened:boolean}> {
-  const access = await core.call({type:"link.authorize",botId,url,...(messageId?{messageId}:{})});
+async function openOrdinaryLink(botId: string, url: string, source: "user" | "component", messageId?:string,pinId?:string): Promise<{opened:boolean}> {
+  const access = await core.call({type:"link.authorize",source,botId,url,...(messageId?{messageId}:{}),...(pinId?{pinId}:{})});
   if (!(source === "user" && /^(https?|mailto):/i.test(url)) && !access.linked) throw Object.assign(new Error("That link is not in this chat."),{code:"not_found"});
   return openLink(url);
 }
@@ -441,7 +442,7 @@ async function withScreenshot(cmd: Extract<Command, { type: "chat.feedback" }>, 
 async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown> {
   switch (cmd.type) {
     case "result.open": return openResult(cmd.botId, cmd.url);
-    case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId);
+    case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId,cmd.pinId);
     case "updates.dismiss": { await dismissRecovery(dataDir,cmd.id); return {dismissed:true}; }
     case "updates.check": return updater.check(cmd.manual);
     case "updates.stage": {
@@ -673,7 +674,13 @@ app.whenReady().then(async () => {
       });
     return;
   }
+  let recoveryMode=Boolean(startupRecovery);
+  const restartNormal = () => {
+    app.relaunch({args:[...process.argv.slice(1).filter(arg=>!arg.startsWith('--botling-update-token=')&&!arg.startsWith('--botling-update-data=')),'--botling-update-data='+dataDir]});app.quit();
+  };
   const showRecovery = (issue: NonNullable<ReturnType<typeof blockingRecovery>>,error?:string) => {
+    recoveryMode=true;
+    if(issue.code!==27)issue=issueFor(issue.dataDir,issue.target,issue.root,issue.code,issue.id.slice(0,issue.id.lastIndexOf(':')),issue.at);
     const previousWindow=mainWindow;
     const window=new BrowserWindow({width:900,height:700,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
     mainWindow=window;let acting=false;
@@ -686,24 +693,34 @@ app.whenReady().then(async () => {
       event.preventDefault();if(acting)return;
       let action:URL;try{action=new URL(url);}catch{return;}
       if(action.protocol!=='botling-recovery:'||action.hostname!=='action'||action.searchParams.get('id')!==issue.id)return;
+      if(action.pathname==='/retry'&&issue.code===27){if(volumeRecovery())showRecovery(volumeRecovery()!);else restartNormal();return;}
       if(action.pathname==='/open'){
-        const path=issue.paths?.find(p=>existsSync(p.path))?.path;
+        const path=issue.paths?.find(p=>p.label!=='Current data'&&existsSync(p.path))?.path;
         if(path)void shell.openPath(path).catch(()=>{});return;
+      }
+      if(action.pathname==='/delete'){
+        acting=true;
+        void (async()=>{
+          const copies=await recoveryCopies(issue);
+          const confirmation=await dialog.showMessageBox(window,{type:'warning',buttons:['Keep copies','Delete recovery copies'],defaultId:0,cancelId:0,message:'Permanently delete recovery copies?',detail:copies.map(copy=>copy.path+' ('+copy.bytes.toLocaleString()+' bytes)').join('\n')+'\nThis cannot be undone. The live data must match a complete retained copy. A running or only available previous app will be kept.'});
+          if(confirmation.response===1)await deleteRecoveryCopies(issue,await runningAppBundles());
+          showRecovery(issue);
+        })().catch(error=>showRecovery(issue,String(error.message||error)));return;
       }
       if(action.pathname!=='/continue')return;
       acting=true;
       const current=blockingRecovery(dataDir,installedApp);
       // The helper may have completed a safe rollback while this read-only page was open.
-      const completion=!current&&existsSync(dataDir)?Promise.resolve():completeRecovery(dataDir,installedApp,issue.id);
+      const completion=!current&&existsSync(dataDir)&&!volumeRecovery()?Promise.resolve():completeRecovery(dataDir,installedApp,issue.id);
       void completion.then(()=>{
         // Relaunch the available bundle without candidate identity; a manual restore must start a
         // normal core rather than reviving the failed updater's gated candidate session.
-        app.relaunch({args:[...process.argv.slice(1).filter(arg=>!arg.startsWith('--botling-update-token=')&&!arg.startsWith('--botling-update-data=')),'--botling-update-data='+dataDir]});app.quit();
+        restartNormal();
       }).catch(error=>{showRecovery(blockingRecovery(dataDir,installedApp)||issue,String(error.message||error));});
     });
-    void window.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(recoveryHTML(issue,error)));
+    void recoveryCopies(issue).then(copies=>{if(!window.isDestroyed())return window.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(recoveryHTML(issue,error,copies)));}).catch(error=>{if(!window.isDestroyed())void window.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(recoveryHTML(issue,String(error))));});
   };
-  app.on("activate", () => { if (!mainWindow) {const blocked=blockingRecovery(dataDir,installedApp);if(blocked)showRecovery(blocked);else createWindow();} });
+  app.on("activate", () => { if (!mainWindow) {const blocked=volumeRecovery()||blockingRecovery(dataDir,installedApp);if(blocked)showRecovery(blocked);else if(recoveryMode)restartNormal();else createWindow();} });
   if(startupRecovery){showRecovery(startupRecovery);return;}
   await recoverUpdates(dataDir, installedApp, false);
   const blocked=blockingRecovery(dataDir,installedApp);

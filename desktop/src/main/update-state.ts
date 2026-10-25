@@ -1,8 +1,11 @@
 // Small durable transaction records shared by startup, helper handoff and recovery UI.
 import {createHash,randomUUID} from 'node:crypto';
-import {existsSync,lstatSync,readFileSync,readdirSync,realpathSync} from 'node:fs';
+import {existsSync,lstatSync,statSync,readFileSync,readdirSync,realpathSync} from 'node:fs';
 import * as fs from 'node:fs/promises';
-import {basename,dirname,join} from 'node:path';
+import {basename,dirname,join,relative,sep} from 'node:path';
+import {createReadStream} from 'node:fs';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
 export interface PendingUpdate {token:string;root:string;target:string;version:string;executable:string}
 export interface RecoveryIssue {id:string;at:number;code:number;root:string;message:string;blocked:boolean;target:string;dataDir:string;paths?:{label:string;path:string}[]}
 export const UPDATE_RECORDS=['update-pending.json','update-recovery.json','update-dismissed.json','update-recovered.json','update-last-boot.json','update-orphan-commit.json','update-cleanup','update-diagnostics'];
@@ -83,7 +86,7 @@ export function blockingRecovery(dataDir:string,target?:string):RecoveryIssue|nu
   let code=Number(/^failed:(\d+)/.exec(result)?.[1]);
   if(!result){
    if(text(join(root,'decision'))==='rollback:'+owner.token&&!helper)code=22;
-   else if(!existsSync(dataDir))code=helper?26:21;
+   else if(!existsSync(dataDir)&&(['previous.app','snapshot.complete','new.pid'].some(name=>existsSync(join(root,name)))||owner.token&&['after','restore'].some(kind=>existsSync(`${dataDir}.update-${kind}-${owner.token}`))))code=helper?26:21;
    else if(!helper&&existsSync(join(root,'previous.app'))&&!existsSync(join(root,'Botling 2.app')))code=25;
   }
   if(code){const issue=issueFor(dataDir,owner.target,root,code,owner.token);if(issue.blocked&&!recoveryAccepted(issue))return issue;}
@@ -97,7 +100,7 @@ export async function completeRecovery(dataDir:string,target:string,id:string):P
  if(processAlive(text(join(issue.root,'helper.pid'))))throw new Error('Recovery is still running. Wait for the helper to finish.');
  const candidate=Number(text(join(issue.root,'new.pid')));
  if(candidate!==process.pid&&processAlive(candidate))throw new Error('The candidate app is still running. Close it before continuing.');
- if(!existsSync(dataDir)||!lstatSync(dataDir).isDirectory())throw new Error('Restore the complete data directory before continuing.');
+ await validateRestoredData(issue);
  const accepted={id:issue.id,root:issue.root,at:Date.now()};
  if(validRoot(issue.root,issue.target))await writeRecord(join(issue.root,'recovery-accepted.json'),accepted);
  await writeRecord(join(dataDir,'update-recovered.json'),accepted);
@@ -106,10 +109,11 @@ export async function completeRecovery(dataDir:string,target:string,id:string):P
  if(json(join(dataDir,'update-recovery.json'))?.id===id)await fs.rm(join(dataDir,'update-recovery.json'),{force:true});
  if(json(join(dataDir,'update-dismissed.json'))?.id===id)await fs.rm(join(dataDir,'update-dismissed.json'),{force:true});
 }
-export function recoveryHTML(issue:RecoveryIssue,error?:string):string {
+export function recoveryHTML(issue:RecoveryIssue,error?:string,copies:RecoveryCopy[]=[]):string {
  const escape=(s:string)=>s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
  const action=(name:string)=>'botling-recovery://action/'+name+'?id='+encodeURIComponent(issue.id);
- return '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'"><title>Botling update recovery</title><style>body{background:#151517;color:#eee;font:17px system-ui;padding:48px;line-height:1.6}p{white-space:pre-wrap;overflow-wrap:anywhere}a{display:inline-block;color:#fff;background:#345c9b;padding:8px 16px;margin:8px 12px 0 0;border-radius:6px}</style><h1>Update recovery required</h1><p role="alert" aria-label="Update recovery">'+escape(issue.message)+'</p>'+(error?'<p role="alert">'+escape(error)+'</p>':'')+'<p>Restore the complete snapshot with all app windows closed. Restore destination: '+escape(issue.dataDir)+'. Continue only after the complete data is restored there. Continuing restarts the available app and allows cleanup of this transaction’s recovery copies.</p><a href="'+escape(action('open'))+'">Open recovery folder</a><a href="'+escape(action('continue'))+'">I restored my data — continue</a>';
+ if(issue.code===27)return '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'"><title>Data volume unavailable</title><style>body{font:18px system-ui;padding:48px;line-height:1.6}p{overflow-wrap:anywhere}</style><h1>Data volume unavailable</h1><p role="alert">'+escape(issue.message)+'</p><a href="'+escape(action('retry'))+'">I mounted the volume — reopen</a>';
+ return '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'"><title>Botling update recovery</title><style>body{background:#151517;color:#eee;font:17px system-ui;padding:48px;line-height:1.6}p{white-space:pre-wrap;overflow-wrap:anywhere}a{display:inline-block;color:#fff;background:#345c9b;padding:8px 16px;margin:8px 12px 0 0;border-radius:6px}</style><h1>Update recovery required</h1><p role="alert" aria-label="Update recovery">'+escape(issue.message)+'</p>'+(error?'<p role="alert">'+escape(error)+'</p>':'')+'<p>Recovery copies retained: '+escape(copies.map(copy=>copy.path+' ('+copy.bytes.toLocaleString()+' bytes)').join('\n')||'No retained copies found.')+'</p><p>Restore the complete snapshot with all app windows closed. Restore destination: '+escape(issue.dataDir)+'. Continue only after the complete data is restored there. Continuing restarts the available app and keeps all recovery copies until you explicitly delete them.</p><a href="'+escape(action('open'))+'">Open recovery folder</a><a href="'+escape(action('continue'))+'">I restored my data — continue</a><a href="'+escape(action('delete'))+'">Delete recovery copies…</a>';
 }
 export async function commitUpdateReceipt(dataDir:string,target:string,version:string,argv:string[]):Promise<'waiting'|'committed'|'blocked'>{
  const token=argv.find(a=>a.startsWith('--botling-update-token='))?.slice('--botling-update-token='.length);
@@ -135,4 +139,80 @@ export async function commitUpdateReceipt(dataDir:string,target:string,version:s
  if(read('decision')!=='commit:'+token||read('result').startsWith('failed:'))return block(root,22);
  const file=join(root,'result-candidate-'+randomUUID());await fs.writeFile(file,'booted\n',{mode:0o600});await fs.rename(file,join(root,'result'));
  await writeRecord(join(dataDir,'update-orphan-commit.json'),{token,version,helper:Number(read('helper.pid')),candidate:process.pid});return'committed';
+}
+
+/** Never create an absent external-volume mount point as an ordinary directory. */
+export function dataVolumeError(dataDir:string):string|null {
+ const match=/^\/Volumes\/([^/]+)(?:\/|$)/i.exec(dataDir);if(!match)return null;
+ const volume=join('/Volumes',match[1]!);
+ try{const stat=statSync(volume);if(stat.isDirectory()&&(stat.dev!==statSync('/Volumes').dev||realpathSync(volume)==='/'))return null;}catch{}
+ return `Data volume is unavailable: ${volume}. Mount the original volume before opening Botling. No data directory has been created.`;
+}
+export interface RecoveryCopy {path:string;bytes:number;kind:'data'|'app'}
+export function recoveryCopyPaths(issue:RecoveryIssue):{path:string;kind:'data'|'app'}[]{
+ if(!validRoot(issue.root,issue.target))return[];
+ const token=json(join(issue.root,'owner.json'))?.token;
+ const paths:{path:string;kind:'data'|'app'}[]=[{path:join(issue.root,'data-before'),kind:'data'},{path:join(issue.root,'previous.app'),kind:'app'}];
+ if(typeof token==='string'&&/^[a-zA-Z0-9-]+$/.test(token))for(const kind of ['after','restore'])paths.push({path:`${issue.dataDir}.update-${kind}-${token}`,kind:'data'});
+ return paths.filter(p=>existsSync(p.path));
+}
+async function bytesAt(path:string):Promise<number>{
+ const stat=await fs.lstat(path);if(!stat.isDirectory())return stat.size;
+ let size=0;for(const name of await fs.readdir(path))size+=await bytesAt(join(path,name));return size;
+}
+export async function recoveryCopies(issue:RecoveryIssue):Promise<RecoveryCopy[]>{
+ return Promise.all(recoveryCopyPaths(issue).map(async copy=>({...copy,bytes:await bytesAt(copy.path)})));
+}
+const CACHE_NAMES=new Set(['Cache','Code Cache','GPUCache','ShaderCache','GrShaderCache','DawnGraphiteCache','DawnWebGPUCache','SingletonLock','SingletonSocket','SingletonCookie']);
+async function inventory(folder:string):Promise<Map<string,string>>{
+ const entries=new Map<string,string>();
+ async function visit(path:string):Promise<void>{
+  const key=relative(folder,path),parts=key.split(sep);
+  if(UPDATE_RECORDS.includes(parts[0]!))return;
+  if(parts[0]==='electron'&&CACHE_NAMES.has(parts.at(-1)!)&&(parts.length===2||parts[1]==='Partitions'&&parts.length===4))return;
+  const stat=await fs.lstat(path);
+  if(stat.isSymbolicLink()){entries.set(key,'link:'+await fs.readlink(path));return;}
+  if(stat.isDirectory()){entries.set(key,'dir');for(const name of (await fs.readdir(path)).sort())await visit(join(path,name));return;}
+  if(!stat.isFile())throw new Error('Unsupported restored data entry: '+path);
+  const hash=createHash('sha256');for await(const chunk of createReadStream(path))hash.update(chunk);entries.set(key,hash.digest('hex'));
+ }
+ for(const name of (await fs.readdir(folder)).sort())await visit(join(folder,name));return entries;
+}
+async function recognizableData(folder:string):Promise<boolean>{
+ try{const settings=JSON.parse(await fs.readFile(join(folder,'core/settings.json'),'utf8'));if(settings&&typeof settings==='object'&&!Array.isArray(settings))return true;}catch{}
+ try{return Array.isArray(JSON.parse(await fs.readFile(join(folder,'core/main/chat.json'),'utf8')));}catch{return false;}
+}
+/** Acknowledgment does not certify arbitrary/empty directories. Compare persistent bytes against
+ * a completed snapshot or the original whole-directory rename; never trust a partial restore. */
+export async function validateRestoredData(issue:RecoveryIssue):Promise<string>{
+ const fail=()=>new Error('Restore the complete data directory before continuing. It must match a complete retained snapshot or previous-data copy; all recovery copies are preserved.');
+ if(!await recognizableData(issue.dataDir))throw fail();
+ const copies=recoveryCopyPaths(issue).filter(copy=>copy.kind==='data'&&(copy.path.includes('.update-after-')||copy.path===join(issue.root,'data-before')&&existsSync(join(issue.root,'snapshot.complete'))));
+ const live=await inventory(issue.dataDir);
+ const verified=json(join(issue.root,'restored-validated.json'));
+ if(verified?.id===issue.id&&verified.digest===inventoryDigest(live))return verified.digest;
+ for(const copy of copies){
+  if(!await recognizableData(copy.path))continue;const saved=await inventory(copy.path);
+  if(saved.size===live.size&&[...saved].every(([key,value])=>live.get(key)===value))return inventoryDigest(live);
+ }
+ throw fail();
+}
+/** Only an explicit native confirmation may call this. Retention is the default, even after
+ * Continue or a successful update. A running/sole available app is never eligible. */
+function inventoryDigest(entries:Map<string,string>):string{return createHash('sha256').update(JSON.stringify([...entries].sort(([a],[b])=>a.localeCompare(b)))).digest('hex');}
+export async function deleteRecoveryCopies(issue:RecoveryIssue,runningBundles:string[]):Promise<void>{
+ if(processAlive(text(join(issue.root,'helper.pid'))))throw new Error('Recovery is still running.');
+ const validatedDigest=await validateRestoredData(issue);
+ const candidate=Number(text(join(issue.root,'new.pid')));
+ if(candidate!==process.pid&&processAlive(candidate))throw new Error('The candidate app is still running.');
+ await writeRecord(join(issue.root,'restored-validated.json'),{id:issue.id,digest:validatedDigest,at:Date.now()});
+ const copies=recoveryCopyPaths(issue),owner=json(join(issue.root,'owner.json')),healthy=json(join(issue.dataDir,'update-last-boot.json'));
+ for(const copy of copies){
+  if(copy.kind==='app'){
+   const knownGood=healthy?.activated===true&&healthy.token===owner?.token&&existsSync(issue.target)&&runningBundles.includes(issue.target);
+   if(!knownGood||runningBundles.some(path=>path===copy.path||path.startsWith(copy.path+sep)))continue;
+  }
+  // Native ASAR-unaware deletion, awaited; only after the explicit native confirmation.
+  await promisify(execFile)('/bin/rm',['-rf',copy.path],{timeout:120_000});
+ }
 }

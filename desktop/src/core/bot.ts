@@ -3531,10 +3531,13 @@ export class Bot {
         if (state.data !== null) { data = state.data; ranAt = state.ranAt !== null ? toSwiftDate(state.ranAt) : undefined; }
       } else if (data === "null") return { pinned: false };
       pin = this.newPin(id, display.name, command, data, refresh, minutes, seconds, ranAt);
+      // Persist provenance from the stored reply, never from a component action payload.
+      if(record.role === "bot")pin.linkAuthor=typeof record.sourceID === "string"?record.sourceID.toUpperCase():this.id;
     } else if (from.name && context.library.names.includes(from.name)) {
       const command = context.library.command(from.name);
       if (!command) return { pinned: false };
       pin = this.newPin(id, from.name, command, "null", refresh, minutes, seconds);
+      pin.linkAuthor=this.id;
     } else {
       return { pinned: false };
     }

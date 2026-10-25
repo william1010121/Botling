@@ -25,7 +25,7 @@ async function swap(mode:'snapshot'|'snapshot-full'|'restore'|'rm'|'env'|'cache'
  const fail=mode==='snapshot'||mode==='snapshot-full'?`case "$2" in '${f.root}/data-before'*) mkdir -p "$2"; echo partial > "$2/partial"; exit 1;; esac`: mode==='restore'||mode==='rm'?`case "$2" in '${f.data}'|'${f.data}.update-restore-'*) mkdir -p "$2"; echo partial > "$2/partial"; exit 1;; esac`:'';
  writeFileSync(ditto,`#!/bin/sh\n${fail}\nexec /usr/bin/ditto "$@"\n`,{mode:0o755});
  writeFileSync(rm,`#!/bin/sh\n${mode==='rm'?`for arg do case "$arg" in '${f.data}'|'${f.data}.update-restore-'*) exit 1;; esac; done`:''}\nexec /bin/rm "$@"\n`,{mode:0o755});
- writeFileSync(mv,`#!/bin/sh\n${mode==='snapshot-full'?`case "$2" in '${f.root}/result') [ ! -d '${f.root}/data-before' ] || exit 1;; esac`:mode==='move-old'?`[ "$1" != '${f.data}' ] || exit 1`:mode==='move-new'?`[ "$1" != '${f.data}.update-restore-c-token' ] || exit 1`:''}\nexec /bin/mv "$@"\n`,{mode:0o755});
+ writeFileSync(mv,`#!/bin/sh\n${mode==='snapshot-full'?`case "$2" in '${f.root}/result') [ ! -f '${f.root}/download.zip' ] || exit 1;; esac`:mode==='move-old'?`[ "$1" != '${f.data}' ] || exit 1`:mode==='move-new'?`[ "$1" != '${f.data}.update-restore-c-token' ] || exit 1`:''}\nexec /bin/mv "$@"\n`,{mode:0o755});
  if(mode==='cache'){
   for(const dir of ['core/Cache','electron/Partitions/synthetic/Cache','electron/Partitions/synthetic/Local Storage']){mkdirSync(join(f.data,dir),{recursive:true});writeFileSync(join(f.data,dir,'content'),'persistent');}
  }
@@ -37,10 +37,10 @@ async function swap(mode:'snapshot'|'snapshot-full'|'restore'|'rm'|'env'|'cache'
  const child=spawn('/bin/sh',[script,'99999999',f.target,f.staged,join(f.root,'previous.app'),join(f.root,'boot.ok'),'c-token','TestApp','0','0.02',f.data,'10','50'],{env,stdio:['ignore','ignore','pipe']});let errors='';child.stderr!.on('data',b=>errors+=b);
  cleanups.push(()=>{child.kill('SIGKILL');});const [code]=await once(child,'exit');return{...f,code};
 }
-it('C1 snapshot failure is reclaimable; no partial snapshot/stage/pending blocks the next update',async()=>{
+it('C1 snapshot failure preserves partial data but reclaims assets/pending so another update is possible',async()=>{
  const f=await swap('snapshot');expect(f.code).toBe(18);await recoverUpdates(f.data,f.target);
  expect(readFileSync(join(f.data,'schema'),'utf8')).toBe('old-flushed');
- expect(readdirSync(f.base).filter(n=>n.startsWith('.botling-update-'))).toEqual([]);expect(existsSync(join(f.data,'update-pending.json'))).toBe(false);
+ expect(existsSync(join(f.root,'data-before'))).toBe(true);expect(existsSync(join(f.root,'download.zip'))).toBe(false);expect(existsSync(join(f.data,'update-pending.json'))).toBe(false);
 });
 it('C1 reclaims missing-root pending metadata even when the app was moved',async()=>{
  const f=fixture();rmSync(f.root,{recursive:true});await recoverUpdates(f.data,join(f.base,'Moved.app'));
@@ -92,9 +92,9 @@ it('C7 active helper and rollback decisions forbid candidate self-commit',async(
  expect(await commitUpdateReceipt(f.data,f.target,'2.0.1',args)).toBe('blocked');expect(existsSync(join(f.root,'result'))).toBe(false);
 });
 
-it('C1 reclaims incomplete snapshot bytes before attempting a disk-full failure journal',async()=>{
+it('C1 frees disposable download bytes before a disk-full failure journal, retaining partial data',async()=>{
  const f=await swap('snapshot-full');expect(f.code).toBe(18);
  expect(readFileSync(join(f.root,'result'),'utf8')).toBe('failed:18\n');
  expect(readFileSync(join(f.data,'schema'),'utf8')).toBe('old-flushed');
- await recoverUpdates(f.data,f.target);expect(existsSync(f.root)).toBe(false);expect(existsSync(join(f.data,'update-pending.json'))).toBe(false);
+ await recoverUpdates(f.data,f.target);expect(existsSync(join(f.root,'data-before'))).toBe(true);expect(existsSync(join(f.root,'download.zip'))).toBe(false);expect(existsSync(join(f.data,'update-pending.json'))).toBe(false);
 });

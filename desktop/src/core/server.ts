@@ -1300,19 +1300,21 @@ First write a test that shows this, then fix it.`;
       case "link.authorize": {
         const lines=this.bot(cmd.botId).lines();
         const context=cmd.messageId?lines.find(line=>line.id===cmd.messageId):null;
+        const pin=cmd.pinId?this.bot(cmd.botId).pin(cmd.pinId):null;
+        if(cmd.pinId&&(!pin||typeof pin.linkAuthor!=="string"))return {result:false,linked:false};
         // A component inherits its own reply's author, never a guest's links merely because they
         // appear in the same host/group chat. Notices can echo user text and grant no authority.
         if(cmd.messageId&&(!context||context.role!=="bot"))return {result:false,linked:false};
         // Automatically generated preview frames come from Markdown, without stored displays.
         const author=(line:typeof lines[number])=>typeof line.sourceID==='string'?line.sourceID.toUpperCase():cmd.botId;
-        const owner=context?author(context):cmd.botId;
+        const owner=pin?String(pin.linkAuthor).toUpperCase():context?author(context):cmd.botId;
         const same=(url:string)=>url===cmd.url||(filePath(url)!==null&&filePath(url)===filePath(cmd.url));
         let result=false,linked=false;
         for(const line of lines){
-          if(line.role!=="bot")continue;
+          if(line.role!=="bot"&&!(cmd.source==="user"&&line.role==="notice"))continue;
           const match=[...line.text.matchAll(/\[[^\]\n]+\]\(([^)\s]+)\)/g)].some(value=>same(value[1]!));
           const shown=line.displays?.some(display=>display.name===PAGE_COMPONENT&&same(pageInCard(display.data)??""));
-          if(match||shown){result=true;if(author(line)===owner)linked=true;}
+          if(match||shown){if(line.role==="bot")result=true;if(cmd.source==="user"||line.role==="bot"&&author(line)===owner)linked=true;}
         }
         return {result,linked};
       }

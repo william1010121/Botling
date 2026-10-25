@@ -19,8 +19,9 @@ function userLink(url:unknown):boolean {
         const linkSource = value?.type === "openURL" && userLink(value.url) ? "user" : "component";
         const event=window.event;
         const component=event instanceof MessageEvent?[...document.querySelectorAll<HTMLIFrameElement>('iframe.component-frame')].find(frame=>frame.contentWindow===event.source):null;
-        const linkMessageId=component?(component.closest<HTMLElement>('.row[data-id]')?.dataset.id||'unattributed-component'):undefined;
-        window.parent.postMessage({ botling: "action", action, linkSource, ...(linkMessageId?{linkMessageId}:{}) }, origin);
+        const linkPinId=component?(component as HTMLIFrameElement & {ccbPin?:string}).ccbPin:undefined;
+        const linkMessageId=component&&!linkPinId?(component.closest<HTMLElement>('.row[data-id]')?.dataset.id||'unattributed-component'):undefined;
+        window.parent.postMessage({ botling: "action", action, linkSource, ...(linkMessageId?{linkMessageId}:{}), ...(linkPinId?{linkPinId}:{}) }, origin);
       },
     }),
   }),

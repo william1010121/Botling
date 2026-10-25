@@ -151,9 +151,9 @@ describe.skipIf(process.platform !== "darwin")("verified update from a local rel
     expect(acknowledgeUpdateBoot(join(f.base, "data"), f.target, "2.0.1", [`--botling-update-token=${pending.token}`])).toBe(true);
     await until(() => existsSync(join(root, "result")));
     expect(readFileSync(join(root, "result"), "utf8")).toBe("booted\n");
-    // Commit is published before native deletion; join the helper/collector completion barrier.
+    // Commit is published before disposable cleanup; join its completion barrier.
     await recoverUpdates(join(f.base,"data"),f.target);
-    expect(existsSync(join(root, "previous.app"))).toBe(false);
+    expect(existsSync(join(root, "previous.app"))).toBe(true);
   });
   it("detects a staged executable modified before the restart click", async () => {
     const f = await fixture(); await f.installer.stage(f.release);
@@ -214,11 +214,11 @@ describe.skipIf(process.platform !== "darwin")("relaunch transaction", () => {
     const [code] = await finished;
     return { base, root, target, code, marker, token, pidFile };
   }
-  it("only commits after new boot, then removes previous app and exits helper", async () => {
+  it("only commits after new boot, then retains previous app and exits helper", async () => {
     const t = await transaction("boot");
     expect(t.code).toBe(0);
     expect(readFileSync(join(t.target, "Contents", "Info.plist"), "utf8")).toContain("2.0.1");
-    expect(existsSync(join(t.root, "previous.app"))).toBe(false);
+    expect(existsSync(join(t.root, "previous.app"))).toBe(true);
     expect(readFileSync(join(t.root, "result"), "utf8")).toBe("booted\n");
   });
   it.each(["crash"] as const)("restores previous app after new app %s", async (mode) => {
@@ -357,7 +357,7 @@ it('A4 reclaims completed and orphan stages, preserves active and unrelated root
   writeFileSync(join(data,'update-pending.json'),JSON.stringify({root:dead,target,token:'test',version:'2.0.1'}));
   const error=await (module as any).recoverUpdates(data,target);
   expect(error).toContain('failed:14');
-  expect(existsSync(dead)).toBe(false);expect(existsSync(orphan)).toBe(false);
+  expect(existsSync(join(dead,'failed.app'))).toBe(true);expect(existsSync(join(orphan,'failed.app'))).toBe(true);expect(existsSync(join(dead,'download.zip'))).toBe(false);expect(existsSync(join(orphan,'download.zip'))).toBe(false);
   expect(existsSync(active)).toBe(true);expect(existsSync(unrelated)).toBe(true);
   expect(existsSync(join(data,'update-pending.json'))).toBe(false);
   const logs=readdirSync(join(data,'update-diagnostics'));expect(logs.length).toBeLessThanOrEqual(5);

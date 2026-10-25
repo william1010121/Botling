@@ -778,9 +778,9 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("results.list"), botId }),
   /** Main only: opens one of a bot's results (a web link in the browser, a local page with its app). */
   z.strictObject({ type: z.literal("result.open"), botId, url: z.string().min(1).max(4_000) }),
-  z.strictObject({ type: z.literal("link.open"), messageId:z.string().min(1).max(100).optional(), source: z.enum(["user", "component"]).default("component"), botId, url: z.string().min(1).max(4_000) }),
+  z.strictObject({ type: z.literal("link.open"), pinId:z.string().min(1).max(100).optional(), messageId:z.string().min(1).max(100).optional(), source: z.enum(["user", "component"]).default("component"), botId, url: z.string().min(1).max(4_000) }),
   /** Core-only membership lookup: no chat payload or component rendering. */
-  z.strictObject({ type: z.literal("link.authorize"), messageId:z.string().min(1).max(100).optional(), botId, url: z.string().min(1).max(4_000) }),
+  z.strictObject({ type: z.literal("link.authorize"), source:z.enum(["user","component"]).optional(), pinId:z.string().min(1).max(100).optional(), messageId:z.string().min(1).max(100).optional(), botId, url: z.string().min(1).max(4_000) }),
   z.strictObject({ type: z.literal("chat.read"), botId }),
   z.strictObject({ type: z.literal("turn.stop"), botId, turnId: id }),
   /** Resolves when the turn ends. Cancelling the request stops the wait, never the turn. */
