@@ -120,3 +120,70 @@ test('native keys after unexpected composer refocus cannot overtake a delayed sh
   await page.keyboard.press('Enter');await expect(chat.locator('.row.user .user-bubble').last()).toHaveText('Prefix name');
  }finally{await app.close();}
 });
+
+// A normal app switch must never turn CodeMirror into a partial synthetic keyboard.
+test('app-switch blur preserves native caret order and editing', async () => {
+  const {app,page,chat}=await launch();
+  try {
+    const box=chat.getByRole('textbox',{name:'Message'});
+    await box.click();await page.waitForTimeout(350);
+    await box.evaluate(()=>window.dispatchEvent(new Event('blur')));
+    await page.keyboard.type('ab');await page.keyboard.press('ArrowLeft');await page.keyboard.type('X');
+    await expect(box).toHaveText('aXb');
+    await page.keyboard.press('Delete');await expect(box).toHaveText('aX');
+    await page.keyboard.press('Meta+z');await expect(box).toHaveText('aXb');
+  } finally {await app.close();}
+});
+
+// Composition events model the macOS unflagged candidate key. CDP supplies trusted keys with
+// isComposing=false (unlike a synthetic KeyboardEvent, which the old handoff skipped entirely).
+for (const mode of ['state','229','ended'] as const) test(`IME candidate Space/Enter stays native (${mode})`,async()=>{
+  const {app,page,chat}=await launch();
+  try {
+    const box=chat.getByRole('textbox',{name:'Message'});
+    await box.click();await box.fill('中文');await page.waitForTimeout(350);
+    await box.evaluate((element,mode)=>{
+      window.dispatchEvent(new Event('blur'));
+      element.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true,data:'中文'}));
+      if(mode!=='state')element.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true,data:'中文'}));
+      (window as any).__candidateKeys=[];
+      window.addEventListener('keydown',event=>(window as any).__candidateKeys.push({trusted:event.isTrusted,composing:event.isComposing,code:event.keyCode}),true);
+    },mode);
+    const cdp=await page.context().newCDPSession(page);
+    await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:' ',code:'Space',windowsVirtualKeyCode:mode==='229'?229:32});
+    await page.waitForTimeout(100);
+    expect(await box.textContent()).toBe('中文');
+    expect(await box.evaluate(()=> (window as any).__candidateKeys[0])).toMatchObject({trusted:true,composing:false,code:mode==='229'?229:32});
+    await cdp.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',code:'Enter',windowsVirtualKeyCode:229});
+    await page.waitForTimeout(100);
+    await expect(chat.locator('.row.user')).toHaveCount(0);
+    expect(await box.textContent()).toBe('中文');
+    await box.evaluate(element=>element.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true,data:'中文'})));
+    await cdp.detach();
+  }finally{await app.close();}
+});
+
+// Feedback has an ordinary textarea inside the chat, outside the composer.
+test('handoff never hijacks a feedback textarea',async()=>{
+ const {app,page,chat}=await launch();
+ try{
+  const box=chat.getByRole('textbox',{name:'Message'});await box.click();await page.waitForTimeout(350);
+  await box.evaluate(()=>{window.dispatchEvent(new Event('blur'));const feedback=document.createElement('textarea');feedback.ariaLabel='Feedback regression';document.body.append(feedback);feedback.focus();});
+  const feedback=chat.getByRole('textbox',{name:'Feedback regression'});await page.keyboard.type('feedback');
+  await expect(feedback).toHaveValue('feedback');await expect(box).toHaveText('');
+ }finally{await app.close();}
+});
+
+// Once Tab leaves the composer, a former handoff's idle acknowledgement must not steal it back.
+test('Tab focus survives the former 500ms handoff recovery timer',async()=>{
+ const {app,page,chat}=await launch();try{
+  const box=chat.getByRole('textbox',{name:'Message'});await box.click();
+  await page.evaluate(()=>{document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Shift',bubbles:true}));document.body.tabIndex=-1;window.focus();document.body.focus();window.dispatchEvent(new Event('focus'));});
+  await page.keyboard.type('n');await expect(box).toHaveText('n');
+  await box.evaluate(element=>(element as HTMLElement).focus());await page.keyboard.press('Tab');
+  const frame=page.frames().find(f=>f.url().endsWith('/chat.html'))!;
+  const active=await frame.evaluate(()=>{(window as any).__tabTarget=document.activeElement;return document.activeElement?.className;});
+  expect(active).not.toContain('cm-content');await page.waitForTimeout(750);
+  expect(await frame.evaluate(()=>document.activeElement===(window as any).__tabTarget)).toBe(true);
+ }finally{await app.close();}
+});
