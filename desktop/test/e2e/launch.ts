@@ -31,6 +31,9 @@ export async function launch(options: { dataDir?: string; env?: Record<string, s
   await page.waitForSelector('.shell[data-ready="1"]');
   const chat = page.frameLocator("#chat-frame");
   await chat.locator(".composer").waitFor();
+  // The page has its first state: the input box switched to this chat (and its draft) already, so
+  // what a test types stays.
+  await chat.locator("html[data-chat]").waitFor({ state: "attached" });
   return { app, page, chat, dataDir };
 }
 
@@ -42,8 +45,16 @@ export function chatFrame(page: Page): Promise<Frame> {
 /** Types a message in the chat page's input box and sends it with Return. */
 export async function say(chat: FrameLocator, text: string) {
   const box = chat.getByRole("textbox", { name: "Message" });
-  await box.click();
-  await box.fill(text);
+  // Right after the window opens, what was filled in is sometimes gone again before Return (the page
+  // is still taking its first states; seen in about one full run in two, also before Phase 4a's last
+  // changes): fill again until the box holds the words.
+  for (let attempt = 0; ; attempt++) {
+    await box.click();
+    await box.fill(text);
+    const typed = await box.evaluate((element) => (element.querySelector(".cm-placeholder") ? "" : element.textContent));
+    if (typed === text || attempt >= 4) break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
   await box.press("Enter");
 }
 

@@ -135,6 +135,9 @@ window.addEventListener("message", (event: MessageEvent) => {
   if (!message || typeof message !== "object") return;
   if (message.botling === "state") {
     window.ccb.setState(message.state);
+    // Which chat the page shows (the input box keeps a draft per chat, so typing before the first
+    // state would be replaced by that chat's draft); tests wait for it.
+    document.documentElement.dataset.chat = message.state.botID;
     addStop();
     decorate(message.extras);
   } else if (message.botling === "answerWithSaved") {
