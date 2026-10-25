@@ -7,6 +7,7 @@ import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { writeFileAtomic } from "./durable/atomic";
 import { readJSON } from "./store/bot-store";
+import { characterPrefix } from "./briefing";
 import { Layout } from "./store/workspace";
 
 /** The shapes new projects get, in order (`Workspace.avatars`, the main bot's circle left out). */
@@ -87,18 +88,43 @@ export function prepareNotesFolder(folder: string) {
   if (!existsSync(ignore)) writeFileSync(ignore, "*\n");
 }
 
-/** Adds a row to projects.json (1.x's format: {id, name, folder as a file URL, avatar}), keeping the rows and keys there. */
-export function saveProjectRow(root: string, row: { id: string; name: string; folder: string; avatar: string }) {
-  let rows: unknown[] = [];
+function projectRows(root: string): unknown[] {
   try {
     const value = readJSON(Layout.projectsFile(root));
-    if (Array.isArray(value)) rows = value;
+    if (Array.isArray(value)) return value;
   } catch { /* a broken file reads as none, as in 1.x; it is written anew */ }
-  let url = pathToFileURL(row.folder).href;
-  if (!url.endsWith("/")) url += "/";
-  rows.push({ id: row.id, name: row.name, folder: url, avatar: row.avatar });
+  return [];
+}
+
+/** A folder as projects.json keeps it: a file URL ending in "/". */
+export function folderURLText(folder: string): string {
+  const url = pathToFileURL(folder).href;
+  return url.endsWith("/") ? url : `${url}/`;
+}
+
+/**
+ * Adds a row to projects.json (1.x's format: {id, name, folder as a file URL, avatar}; a bot of its own
+ * also its `job`, and the `plugin` that made it), keeping the rows and keys there.
+ */
+export function saveProjectRow(root: string, row: { id: string; name: string; folder: string; avatar: string; job?: string; plugin?: string }) {
+  const rows = projectRows(root);
+  rows.push({ id: row.id, name: row.name, folder: folderURLText(row.folder), avatar: row.avatar, ...(row.job !== undefined ? { job: row.job } : {}), ...(row.plugin ? { plugin: row.plugin } : {}) });
   mkdirSync(root, { recursive: true });
   writeFileAtomic(Layout.projectsFile(root), JSON.stringify(rows));
+}
+
+/** Takes a row out of projects.json (by id), keeping the others as they are. The folder stays. */
+export function removeProjectRow(root: string, id: string) {
+  const rows = projectRows(root).filter((row) => !(row && typeof row === "object" && (row as { id?: unknown }).id === id));
+  writeFileAtomic(Layout.projectsFile(root), JSON.stringify(rows));
+}
+
+/** A bot's name as it is kept (`Workspace.botName`): one line, no quotes or @ (nor < > \`), at most 40 characters. */
+export function botName(name: string): string {
+  const line = name.split(/\r\n|[\n\r\u000b\u000c\u0085\u2028\u2029]/).find((piece) => piece.length > 0) ?? "";
+  const spaces = /^[\t \u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+|[\t \u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]+$/g;
+  const cleaned = [...line].filter((character) => !"\"@<>`".includes(character)).join("").replace(spaces, "");
+  return characterPrefix(cleaned, 40).replace(spaces, "");
 }
 
 /** The first line of a text (`Workspace.firstLine`). */
@@ -144,4 +170,24 @@ export function memoryItems(text: string, section: MemorySection): string[] {
 
 export function memoryItemsAt(file: string, section: MemorySection): string[] {
   try { return memoryItems(readFileSync(file, "utf8"), section); } catch { return []; }
+}
+
+/** A row of the main bot's project list: its name, what goes in brackets, its memory and inbox files, an open question's first line. */
+export interface BriefingRow { name: string; about: string; memory: string; inbox: string; question: string | null }
+
+/**
+ * `Workspace.projectBriefing`: the project list and the teams the main bot gets each time it wakes
+ * (and with its routines): each project's and bot's memory and inbox file and a question waiting in
+ * its own chat, Maintainer's, the <open-question> note when any of them asks, and the teams.
+ */
+export function projectBriefingText(input: { projects: BriefingRow[]; bots: BriefingRow[]; maintainer: BriefingRow; teams: { name: string; title: string; description: string }[] }): string {
+  const note = (row: BriefingRow) => (row.question !== null ? `; open question in its chat: ${firstLine(row.question)}` : "");
+  const line = (row: BriefingRow) => `- ${row.name} (${row.about}): memory file ${row.memory}; inbox file ${row.inbox}${note(row)}`;
+  const projectLines = input.projects.length ? input.projects.map(line).join("\n") : "(No projects yet.)";
+  const botLines = input.bots.length ? "\n(App: Bots of their own, which you reach the same way.)\n" + input.bots.map(line).join("\n") : "";
+  const maintainerLine = line(input.maintainer);
+  const asking = [...input.projects, ...input.bots, input.maintainer].some((row) => row.question !== null);
+  const cardLine = asking ? '\n(App: A decision marked "open question in its chat" already has its card there. To bring it up, write <open-question from="its name"/> in your reply: the app shows that same card here. Never write a new choices block for it.)' : "";
+  const teamLines = input.teams.map((team) => `- ${team.name} (${team.title}): ${team.description}`).join("\n");
+  return `(App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file.)\n${projectLines}${botLines}\n${maintainerLine}${cardLine}\n(App: Temporary teams you can start, with <team name="name">task</team>.)\n${teamLines}`;
 }

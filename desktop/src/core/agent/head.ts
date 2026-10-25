@@ -39,6 +39,8 @@ export interface HeadConfig {
   harmlessTools?: string[];
   /** Plugins' Claude parts (`--plugin-dir`); none in harmless mode. */
   pluginDirs?: string[];
+  /** false: nothing is asked about (a temporary team, 1.x's `asksPermission` off): no permission prompt tool. */
+  askPermission?: boolean;
 }
 
 /** claude's arguments for a long-lived head (cf. `ClaudeAgentProcess.arguments`). */
@@ -47,11 +49,13 @@ export function headArguments(config: HeadConfig): string[] {
     "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
     config.resume ? "--resume" : "--session-id", config.sessionId,
     "--permission-mode", config.harmless ? "default" : "acceptEdits",
-    // Approvals are asked on stdout and answered on stdin.
-    "--permission-prompt-tool", "stdio",
-    // Bots ask in the chat; AskUserQuestion would arrive as a permission request with no way to answer it.
-    "--disallowedTools", "AskUserQuestion",
   ];
+  if (config.askPermission !== false) {
+    // Approvals are asked on stdout and answered on stdin.
+    args.push("--permission-prompt-tool", "stdio");
+    // Bots ask in the chat; AskUserQuestion would arrive as a permission request with no way to answer it.
+    args.push("--disallowedTools", "AskUserQuestion");
+  }
   const allowed = config.harmless ? [] : config.allowedTools;
   if (allowed.length) args.push("--allowedTools", allowed.join(","));
   if (config.model) args.push("--model", config.model);

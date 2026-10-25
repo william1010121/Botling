@@ -307,6 +307,18 @@ export class PluginRegistry {
   }
 
   /** Claude parts of enabled plugins, for bots' `--plugin-dir`. */
+  /** Agent files (`claude/agents/*.md`) of enabled plugins, by file name: the temporary teams (`agentFiles`). */
+  agentFiles(): { plugin: string; file: string }[] {
+    return this.plugins.flatMap((plugin) => {
+      const claude = plugin.manifest.ccb?.claude;
+      if (!plugin.enabled || !claude) return [];
+      const folder = join(plugin.folder, claude, "agents");
+      let names: string[] = [];
+      try { names = readdirSync(folder).filter((name) => name.endsWith(".md")).sort(); } catch { /* none */ }
+      return names.map((name) => ({ plugin: plugin.manifest.name, file: join(folder, name) }));
+    });
+  }
+
   claudeDirectories(): string[] {
     return this.plugins.flatMap((plugin) => (plugin.enabled && !plugin.failure && plugin.manifest.ccb?.claude ? [join(plugin.folder, plugin.manifest.ccb.claude)] : []));
   }

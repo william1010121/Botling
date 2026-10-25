@@ -241,7 +241,9 @@ async function backgroundTurn(job) {
 async function turn(job) {
   init();
   if (job.background) return backgroundTurn(job);
-  const prompt = job.text;
+  // A temporary team's task (TeamPrompts.task): the words after the app's line are the task.
+  const TEAM_TASK = "(App: A task from the main bot)\n";
+  const prompt = job.text.startsWith(TEAM_TASK) ? job.text.slice(TEAM_TASK.length) : job.text;
   if (prompt.startsWith("(App: You have been idle")) {
     // The tidy: write the memory file it names, then OK.
     const file = /Update (\S+) with/.exec(prompt)?.[1];

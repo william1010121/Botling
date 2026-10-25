@@ -58,7 +58,7 @@ export function builtInManifest(name: string, displayName: string, description: 
 }
 
 /** The `.claude-plugin/plugin.json` of a Claude part (`PluginManifest.claudePluginText`). */
-function claudePluginText(name: string, description: string): string {
+export function claudePluginText(name: string, description: string): string {
   return swiftPrettyJSON({ name, version: "1.0.0", description, author: { name: "Botling" } }, { escapeSlashes: false }) + "\n";
 }
 
