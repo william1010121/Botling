@@ -13,6 +13,22 @@ const delta = (epoch: string, seq: number, text: string, botId = "A"): EventEnve
   ({ v: 10, epoch, seq, event: { type: "turn.delta", botId, turnId: "t1", messageId: "m1", text } });
 
 describe("WorkspaceStore", () => {
+  it("keeps the Board on same-chat snapshots and updates, but opens another bot in Chat", async () => {
+    const store = new WorkspaceStore(async (botId) => snap("e1", 1, "", botId ?? "A"));
+    await store.resync();
+    store.showBoard(true);
+    store.receive(delta("e1", 2, "new reply"));
+    expect(store.getView().board).toBe(true);
+    await store.resync();
+    expect(store.getView().board).toBe(true);
+    await store.select("A");
+    expect(store.getView().board).toBe(true);
+    await store.select("B");
+    expect(store.getView().board).toBe(false);
+    await store.select("A");
+    expect(store.getView().board).toBe(false);
+  });
+
   it("applies events in order after a snapshot, and only the shown bot's chat events", async () => {
     const store = new WorkspaceStore(async () => snap("e1", 5));
     await store.resync();

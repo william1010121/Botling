@@ -2,6 +2,8 @@
 // arrow.turn.down.right, clock.badge.checkmark, arrow.uturn.backward, exclamationmark.bubble,
 // arrow.up.right, safari, checkmark.circle, slider.horizontal.3). Drawn in the current colour.
 const paths: Record<string, string> = {
+  bubble: "M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H7l-3 2v-2H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z",
+  grid: "M2.5 2.5h4v4h-4zM9.5 2.5h4v4h-4zM2.5 9.5h4v4h-4zM9.5 9.5h4v4h-4z",
   sidebarRight: "M2.5 3.5h11a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1zM10 3.5v9M11.6 6h1.4M11.6 8h1.4",
   sparkles: "M8 2.2l1.2 3.3 3.3 1.2-3.3 1.2L8 11.2 6.8 7.9 3.5 6.7l3.3-1.2zM12.6 10.4l.5 1.4 1.4.5-1.4.5-.5 1.4-.5-1.4-1.4-.5 1.4-.5z",
   plus: "M8 3v10M3 8h10",

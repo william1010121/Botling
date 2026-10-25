@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { desktop, swiftLine } from "../helpers";
-import { launch, MAIN, post } from "./launch";
+import { launch, MAIN, post, say } from "./launch";
 
 test("Chat and Board stay centered and directly available with no pins, across updates and bot navigation", async () => {
   const { app, page, chat } = await launch({ chat: [swiftLine({
@@ -54,5 +54,23 @@ test("Chat and Board stay centered and directly available with no pins, across u
     await expect(chat.locator("body")).toHaveClass(/\bboard\b/);
     await page.screenshot({ path: join(screens, "centered-board.png") });
     expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every((w) => !w.isVisible() && !w.isFocused()))).toBe(true);
+  } finally { await app.close(); }
+});
+
+test("watching a subagent hides the switch and returning restores the selected Board", async () => {
+  const { app, page, chat } = await launch({ env: { FAKE_CLAUDE_BG_DELAY_MS: "200" } });
+  try {
+    const control = page.getByRole("group", { name: "Chat or Board", exact: true });
+    await say(chat, "/bgagent");
+    const row = page.locator(".subagent-row").first();
+    await expect(row).toBeVisible();
+    await control.getByRole("button", { name: "Board", exact: true }).click();
+    await row.click();
+    await expect(chat.locator("#subagent-bar")).toBeVisible();
+    await expect(control).toBeHidden();
+    await chat.locator("#subagent-bar .back").click();
+    await expect(control).toBeVisible();
+    await expect(control.getByRole("button", { name: "Board", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(chat.locator("body")).toHaveClass(/\bboard\b/);
   } finally { await app.close(); }
 });

@@ -87,7 +87,7 @@ test("a command card asks first, runs after Allow and run, and its runDetail ans
       return pins[0]?.status?.text === "2 open" && pins[0].status.tone === "good";
     }, { what: "the chip status set by ccb.setStatus" });
     await shot(page, "component-board");
-    await page.getByRole("button", { name: "Board" }).click();
+    await page.getByRole("button", { name: "Chat", exact: true }).click();
     await expect(chat.locator(".pin-chip, .pin-area button").first()).toBeVisible();
     await shot(page, "component-pin-chip");
   } finally {

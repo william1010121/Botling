@@ -274,13 +274,19 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
           {bot && <span className="chat-status" data-status={status(bot)}>{statusText(bot)}</span>}
           {bot && chat && (
             <span className="chat-actions">
-              {(chat.pins?.length ?? 0) > 0 && (
-                <button type="button" className={`header-button${view.board ? " on" : ""}`} aria-pressed={view.board} onClick={() => store.showBoard(!view.board)}>Board</button>
-              )}
               {bot.role !== "group" && <RoutinesButton client={client} botId={bot.id} />}
             </span>
           )}
         </header>
+        {bot && chat && !watching && (
+          // 1.x's BoardSwitch: its own centered bar above the messages, even with no pins.
+          <div className="board-switch-bar">
+            <div className="board-switch" role="group" aria-label="Chat or Board">
+              <button type="button" aria-pressed={!view.board} onClick={() => store.showBoard(false)}><Icon name="bubble" size={13} />Chat</button>
+              <button type="button" aria-pressed={view.board} onClick={() => store.showBoard(true)}><Icon name="grid" size={13} />Board</button>
+            </div>
+          </div>
+        )}
         <UpdateBanner client={client} enabled={view.settings?.updateCheck} />
         {bot?.problem && <div className="banner" role="alert">{bot.problem}</div>}
         {bot && chat?.heads?.rounds && (
