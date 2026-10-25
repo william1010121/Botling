@@ -16,15 +16,22 @@ export class CoreHarness {
   responses = new Map<string, ResponseEnvelope>();
   stderr = "";
   private counter = 0;
+  private failure = "";
+  private closed: Promise<void>;
 
   constructor(readonly dataDir: string, env: Record<string, string> = {}) {
     this.child = spawn(process.execPath, [coreScript], {
       env: { ...process.env, BOTLING_DATA_DIR: dataDir, BOTLING_AGENT: "fake", BOTLING_FAKE_CLI: fakeCli, BOTLING_FAKE_CODEX: fakeCodex, ...env },
       stdio: "pipe",
     });
-    this.child.stderr.on("data", (chunk) => (this.stderr += chunk));
+    this.closed = new Promise(resolve => this.child.once("close",()=>resolve()));
+    this.child.on("error",error=>{this.failure=`spawn: ${error.message}`;});
+    this.child.on("exit",(code,signal)=>{this.failure=`core exited: code=${code}, signal=${signal}`;});
+    this.child.stdin.on("error",error=>{this.failure ||= `stdin: ${error.message}`;});
+    this.child.stderr.on("data", (chunk) => {this.stderr=(this.stderr+chunk).slice(-65536);});
     createInterface({ input: this.child.stdout }).on("line", (line) => {
-      const message = JSON.parse(line) as Outbound;
+      let message:Outbound;
+      try{message=JSON.parse(line) as Outbound;}catch{this.failure=`invalid core output: ${line.slice(0,1000)}`;return;}
       if ("event" in message) this.events.push({ ...message, at: Date.now() });
       else this.responses.set(message.id, message);
     });
@@ -39,10 +46,19 @@ export class CoreHarness {
     return id;
   }
 
-  async call(cmd: unknown): Promise<any> {
+  private diagnostic(cmd:unknown,cause:string):Error {
+    return new Error(`${cause}\ncommand: ${JSON.stringify(cmd)}\npid: ${this.child.pid}; data: ${this.dataDir}\nrecent events: ${this.events.slice(-8).map(e=>e.event.type).join(', ')}\nstderr (last 64 KiB):\n${this.stderr}`);
+  }
+
+  async call(cmd: unknown,{timeout=10_000}={}): Promise<any> {
+    if(this.failure)throw this.diagnostic(cmd,this.failure);
     const id = this.send(cmd);
-    const response = await until(() => this.responses.get(id), { what: `response to ${JSON.stringify(cmd)}` });
-    if (!response.ok) throw new Error(`${response.error.code}: ${response.error.message}`);
+    const response = await until(() => {
+      const response=this.responses.get(id);if(response)return response;
+      if(this.failure)throw this.diagnostic(cmd,this.failure);
+      return null;
+    }, {timeout,what: `response to ${JSON.stringify(cmd)}`}).catch(error=>{throw this.diagnostic(cmd,String(error.message||error));});
+    if (!response.ok) throw this.diagnostic(cmd,`${response.error.code}: ${response.error.message}`);
     return response.result;
   }
 
@@ -56,8 +72,9 @@ export class CoreHarness {
   }
 
   kill(signal: NodeJS.Signals = "SIGTERM") {
-    this.child.kill(signal);
-    return new Promise((resolve) => this.child.once("exit", resolve));
+    if(this.child.exitCode===null&&this.child.signalCode===null)this.child.kill(signal);
+    // Registered at spawn, so teardown also joins an already exited/failed child and its streams.
+    return this.closed;
   }
 }
 
