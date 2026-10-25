@@ -388,8 +388,8 @@ export const BotView = z.strictObject({
   /** An avatar shape (`AvatarShape` in the Swift app: circle, square, …). */
   avatar: z.string().max(40),
   folder: z.string().max(4_000),
-  /** asleep: no agent process; starting; awake: its process is running; tidying: writing its notes before it sleeps. */
-  phase: z.enum(["asleep", "starting", "awake", "tidying"]),
+  /** asleep: no agent process; starting; awake: its process is running; tidying: writing its notes before it sleeps; switching: writing a handoff before it runs on the other engine. */
+  phase: z.enum(["asleep", "starting", "awake", "tidying", "switching"]),
   working: z.boolean(),
   /** Tool approvals waiting for the user. */
   approvals: z.number().int().nonnegative(),

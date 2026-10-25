@@ -177,6 +177,18 @@ test("Settings: language, bot look and avatar size reach the chat page; a summar
     expect(JSON.parse(readFileSync(join(dataDir, "core", "main", "bot.json"), "utf8")).model).toBe("opus");
     expect(JSON.parse(readFileSync(join(dataDir, "core", "settings.json"), "utf8"))).toMatchObject({ codexWorkersFollow: false, codexWorkerChoice: { effort: "high" } });
     await shot(page, "settings-bot");
+    // Phase 5c: 1.x's "Engines in this bot". The only head cannot go; with both, turning off the one it runs on
+    // runs it on the other (asleep here: "Switched to Codex", the next wake is a Codex head).
+    await expect(sheet.getByRole("switch", { name: "Claude", exact: true })).toBeDisabled();
+    await sheet.getByRole("switch", { name: "Codex", exact: true }).click();
+    await expect(sheet.getByRole("switch", { name: "Codex", exact: true })).toBeChecked();
+    await expect(sheet.getByRole("switch", { name: "Claude", exact: true })).toBeEnabled();
+    await sheet.getByRole("switch", { name: "Claude", exact: true }).click();
+    await expect(sheet.getByRole("switch", { name: "Claude", exact: true })).not.toBeChecked();
+    await expect(sheet.getByRole("switch", { name: "Codex", exact: true })).toBeDisabled();
+    await expect(chat.getByText("Switched to Codex")).toBeVisible();
+    expect(JSON.parse(readFileSync(join(dataDir, "core", "main", "bot.json"), "utf8"))).toMatchObject({ engine: "codex", heads: { engines: ["codex"] } });
+    await shot(page, "phase5c-engines");
     // The plugin library is a section too; Done closes.
     await sheet.getByRole("button", { name: "Plugins" }).click();
     await expect(sheet.getByRole("region", { name: "Plugins" })).toBeVisible();

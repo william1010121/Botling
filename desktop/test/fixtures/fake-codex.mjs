@@ -143,6 +143,19 @@ async function coordinatorTurn(thread, turn, text) {
     say(thread, turn, receipt?.success ? "Handed the memory update to a worker." : "Could not hand it over.");
     return complete(thread, turn);
   }
+  // A switch of engine (Phase 5c): a worker writes the handoff; the head that takes over reads the
+  // memory snapshot it is given and says what it carries on with (OK: nothing).
+  if (text.startsWith("(App: The model is about to change")) {
+    const file = /section of (\S+?);/.exec(text)?.[1] ?? ".bot/memory.md";
+    const receipt = await ask("item/tool/call", { threadId: thread, turnId: turn, callId: `call_${randomUUID().slice(0, 8)}`, tool: "app_handoff", arguments: { instructions: `FAKE-HANDOFF ${file}`, name: "Write handoff" } });
+    say(thread, turn, receipt?.success ? "Handed the handoff to a worker." : "Could not hand it over.");
+    return complete(thread, turn);
+  }
+  if (text.startsWith("(App: You just took over with a new model")) {
+    const work = /## In progress\n([^#\n][^\n]*)/.exec(text)?.[1];
+    say(thread, turn, work ? `Took over: ${work}` : "OK");
+    return complete(thread, turn);
+  }
   if (text.includes("(App: Now carry on with what you were doing")) {
     await sleep(Number(process.env.FAKE_CODEX_TURN_MS ?? 30));
     say(thread, turn, "Carried on: finished the handed work.");
@@ -230,12 +243,20 @@ async function reportTurn(thread, turn, output) {
   if (!String(result.report ?? "").includes("/nocheckpoint")) {
     await ask("item/tool/call", { threadId: thread, turnId: turn, callId: `call_${randomUUID().slice(0, 8)}`, tool: "app_task_checkpoint", arguments: { task_id: result.task_id, outcome: result.status === "completed" ? "complete" : "blocked", evidence: result.report || "no report" } });
   }
-  say(thread, turn, String(result.name) === "Tidy memory" ? "OK" : `The worker ${result.status === "completed" ? "finished" : "stopped"}: ${result.report}`);
+  say(thread, turn, String(result.name) === "Tidy memory" || String(result.name) === "Write handoff" ? "OK" : `The worker ${result.status === "completed" ? "finished" : "stopped"}: ${result.report}`);
   complete(thread, turn);
 }
 
 async function workerTurn(thread, turn, text) {
   const state = threads.get(thread);
+  if (text.startsWith("FAKE-HANDOFF ")) {
+    const file = text.slice("FAKE-HANDOFF ".length).trim();
+    const path = isAbsolute(file) ? file : join(process.cwd(), file);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `## Current status\nHanded over by the fake Codex worker.\n## In progress\n${process.env.FAKE_HANDOFF_WORK ?? "Finish the parser."}\n## Waiting on you\n## Decided\n`);
+    say(thread, turn, `Wrote ${file}.`);
+    return complete(thread, turn);
+  }
   if (text.startsWith("FAKE-TIDY ")) {
     const file = text.slice("FAKE-TIDY ".length).trim();
     const path = isAbsolute(file) ? file : join(process.cwd(), file);

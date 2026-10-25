@@ -294,18 +294,23 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
     void client.request({ type: "heads.set", botId: bot.id, engines }).then(() => client.request({ type: "bot.settings", botId: bot.id })).then(setView, (failure) => onProblem(why(failure)));
   };
   if (!view) return null;
-  const first = view.engines[0]!;
-  const other = first === "claude" ? "codex" : "claude";
   const two = view.engines.length > 1;
   const hasClaude = view.engines.includes("claude");
   const hasCodex = view.engines.includes("codex");
   return (
     <>
+      <Group title="Engines in this bot" note="With both, they work at the same time. Turning off the one it runs on hands its work to the other through memory.md, just before its next message.">
+        {(["claude", "codex"] as const).map((engine) => {
+          const on = view.engines.includes(engine);
+          const name = engine === "claude" ? "Claude" : "Codex";
+          // 1.x's "Engines in this bot": the only head cannot go; turning off the first of two runs the bot on the other, through a handoff.
+          return (
+            <Toggle key={engine} label={name} checked={on} disabled={bot.phase === "switching" || (on && !two)}
+              onChange={(wanted) => setHeads(wanted ? [...view.engines, engine] : view.engines.filter((candidate) => candidate !== engine))} />
+          );
+        })}
+      </Group>
       <Group title={bot.name} note="A head already awake goes on in the same conversation on the new choice just before its next message.">
-        <Row label="Heads" hint={`Its first head is ${first === "claude" ? "Claude" : "Codex"}; it stays.`}>
-          <Segmented label="Heads" options={[{ id: "one", label: first === "claude" ? "Claude" : "Codex" }, { id: "two", label: "Claude & Codex" }] as const}
-            value={two ? "two" : "one"} onChange={(value) => setHeads(value === "two" ? [first, other] : [first])} />
-        </Row>
         {hasClaude && (
           <Row label="Claude's model">
             <Segmented label="Claude's model" options={[{ id: "default", label: "Default" }, ...MODELS] as const} value={view.model ?? "default"} onChange={(value) => configure({ model: value === "default" ? null : value })} />

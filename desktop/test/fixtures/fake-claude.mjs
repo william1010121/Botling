@@ -44,7 +44,7 @@
 // FAKE_CLAUDE_PIDS: a file this process appends "<pid>\n" to, for itself and each helper it starts.
 // FAKE_CLAUDE_LOG: a file it appends one JSON line to per start: {pid, args, resume, session, cwd}.
 // FAKE_CLAUDE_FORGET=1: `--resume` fails like claude's for a session it does not have (exit 1, stderr only).
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
@@ -256,6 +256,25 @@ async function turn(job) {
     await sleep(Number(process.env.FAKE_CLAUDE_SLOW_TIDY_MS ?? 0));
     const text = await stream("OK");
     result(text);
+    return;
+  }
+  // A switch of engine (Phase 5c, 1.x's handoff/resume notes): the handoff goes into memory's "In
+  // progress"; the head that takes over reads it and says what it carries on with (OK: nothing).
+  if (prompt.startsWith("(App: The model is about to change")) {
+    const file = /section of (\S+?),/.exec(prompt)?.[1];
+    if (file) {
+      const path = join(process.cwd(), file);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, `## Current status\nHanded over by the fake CLI.\n## In progress\n${process.env.FAKE_HANDOFF_WORK ?? "Finish the parser."}\n## Waiting on you\n## Decided\n`);
+    }
+    result(await stream("OK"));
+    return;
+  }
+  if (prompt.startsWith("(App: You just took over with a new model")) {
+    const file = /Read (\S+) first/.exec(prompt)?.[1];
+    const memory = file && existsSync(join(process.cwd(), file)) ? readFileSync(join(process.cwd(), file), "utf8") : "";
+    const work = /## In progress\n([^#\n][^\n]*)/.exec(memory)?.[1];
+    result(await stream(work ? `Took over: ${work}` : "OK"));
     return;
   }
   if (prompt.startsWith("(App: Your subagent ")) {

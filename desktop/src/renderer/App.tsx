@@ -350,6 +350,7 @@ function statusText(bot: BotView): string {
   if (bot.working && bot.approvals) return "Waiting for your answer";
   if (bot.working) return "Writing…";
   if (bot.phase === "tidying") return "Tidying its notes…";
+  if (bot.phase === "switching") return "Writing handoff";
   if (bot.subagents) return `${bot.subagents} subagent${bot.subagents === 1 ? "" : "s"} at work`;
   if (bot.phase === "awake") return "Awake";
   return "Asleep";
