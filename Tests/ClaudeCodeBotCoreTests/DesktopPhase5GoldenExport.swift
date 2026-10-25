@@ -73,7 +73,243 @@ struct DesktopPhase5GoldenExport {
         out["reports"] = reports(workspace: workspace, root: root)
         out["specs"] = specs(workspace: workspace, root: root)
         out["feedback"] = feedback(workspace: workspace, root: root)
+        out["shots"] = shots(root: root)
+        out["completion"] = completion()
         return out
+    }
+
+    /// The completion judge's strings, its evidence record and its reviews (`PromiseCheck`).
+    static func completion() -> [String: Any] {
+        func ends() -> [(String, PromiseCheck.TurnEnd)] {
+            var plain = PromiseCheck.TurnEnd(reply: "Done: the parser is faster. See /tmp/a/b.", workPending: false, task: "Make the parser faster", conversation: "[user] Make the parser faster",
+                                             dependencies: [], actions: ["Bash: Run; input: npm test; done: true; failed: false; output: ok"], memory: "## Current status\n", terminalRequired: false, signals: [])
+            plain.evaluatedAt = "2026-10-25T04:00:00Z"
+            plain.timeZone = "UTC"
+            var workers = plain
+            workers.workPending = true
+            workers.workerDependencies = [.init(id: "w1", run: 1, task: String(repeating: "長", count: 1500), state: .running, callback: "app_task_result"),
+                                          .init(id: "w2", run: 2, task: "report", state: .reportQueued, callback: nil, outcome: "completed")]
+            workers.scheduledWakeups = [.init(id: PromiseCheck.wakeupID("routine:r1"), task: "Check again", fireAt: Date(timeIntervalSince1970: 1_792_900_000), callback: "app_routine"),
+                                        .init(id: "s2", task: "Past", fireAt: Date(timeIntervalSince1970: 1_700_000_000), callback: "session_wakeup")]
+            workers.completed = ["Task: old\nReported complete: merged"]
+            workers.signals = [.init(kind: .end, evidence: "merged abc123")]
+            workers.terminalRequired = true
+            var long = plain
+            long.reply = String(repeating: "r", count: 7000)
+            long.task = String(repeating: "t", count: 13000)
+            long.conversation = String(repeating: "c", count: 13000)
+            long.dependencies = (0..<30).map { "dep \($0) " + String(repeating: "d", count: 1300) }
+            long.actions = (0..<15).map { "act \($0) " + String(repeating: "a", count: 1700) }
+            var huge = plain
+            huge.conversation = String(repeating: "中文", count: 6000)
+            huge.memory = String(repeating: "記", count: 6000)
+            huge.reply = String(repeating: "答", count: 6000)
+            huge.task = String(repeating: "務", count: 12000)
+            huge.dependencies = (0..<24).map { _ in String(repeating: "依", count: 1200) }
+            huge.actions = (0..<12).map { _ in String(repeating: "動", count: 1600) }
+            return [("plain", plain), ("workers", workers), ("long", long), ("huge", huge)]
+        }
+        let judgments: [PromiseCheck.Judgment] = [
+            .init(verdict: .complete, reason: "done"), .init(verdict: .waitingUser, reason: "needs key"), .init(verdict: .unknown, reason: "unclear"),
+            .init(verdict: .waitingTimer, reason: "cooldown", wakeupID: PromiseCheck.wakeupID("routine:r1")), .init(verdict: .waitingTimer, reason: "past", wakeupID: "s2"),
+            .init(verdict: .waitingDependency, reason: "w1 owns it"), .init(verdict: .continueWork, reason: "more"),
+        ]
+        var reviews: [[String: Any]] = []
+        for (label, end) in ends() {
+            for judgment in judgments {
+                let reviewed = PromiseCheck.review(judgment, for: end)
+                reviews.append(["end": label, "verdict": judgment.verdict.rawValue, "wakeupID": judgment.wakeupID ?? NSNull(), "reviewed": reviewed.verdict.rawValue, "reason": reviewed.reason])
+            }
+        }
+        let parses = [#"{"verdict":"COMPLETE","reason":"ok","wakeupID":null}"#, #"{"verdict":"COMPLETE","reason":"  "}"#, #"{"verdict":"UNAVAILABLE","reason":"x"}"#, #"{"verdict":"NOPE","reason":"x"}"#, "nope",
+                      #"{"verdict":"WAITING_TIMER","reason":"wait","wakeupID":"abc"}"#].map { text -> [String: Any] in
+            if let judgment = try? PromiseCheck.parseVerdict(text) { return ["text": text, "verdict": judgment.verdict.rawValue, "reason": judgment.reason, "wakeupID": judgment.wakeupID ?? NSNull()] }
+            return ["text": text, "failed": true]
+        }
+        return [
+            "followUp": PromiseCheck.followUp, "terminalFollowUp": PromiseCheck.terminalFollowUp, "classifierPrompt": PromiseCheck.classifierPrompt,
+            "schema": PromiseCheck.judgmentSchema, "judgeModel": PromiseCheck.judgeModel, "wakeupID": PromiseCheck.wakeupID("routine:r1"),
+            "arguments": PromiseCheck.classifierArguments(message: "THE MESSAGE", folder: URL(filePath: "/tmp/judge"), model: "gpt-x"),
+            "messages": ends().map { ["end": $0.0, "message": PromiseCheck.classifierMessage($0.1), "live": PromiseCheck.hasLiveWorkerOwner($0.1)] as [String: Any] },
+            "reviews": reviews, "parses": parses,
+        ]
+    }
+
+    static func encode<T: Encodable>(_ value: T) -> Any {
+        (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(value))) ?? NSNull()
+    }
+
+    /// `botling --component-shot` (ComponentShot.swift): its usage, how it reads the command line, where
+    /// its data comes from, its Command check, `judge`, `isUniform` and `summary`. Paths under `root` are
+    /// written as "<root>" (the desktop test makes its own folder).
+    static func shots(root: URL) -> [String: Any] {
+        let base = root.appending(path: "shots")
+        let files = FileManager.default
+        let template = { (folder: URL, about: String?) in
+            try? files.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? Data("<div>card</div>".utf8).write(to: folder.appending(path: "template.html"))
+            if let about { try? Data(about.utf8).write(to: folder.appending(path: "about.md")) }
+        }
+        template(base.appending(path: "comp"), "A card.")
+        let place = { (text: String) in text.replacingOccurrences(of: base.path, with: "<root>") }
+
+        // The command line, from the folder `base`.
+        let lines: [[String]] = [
+            ["botling", "--component-shot"],
+            ["botling", "--component-shot", "--out", "x"],
+            ["botling", "--component-shot", "comp"],
+            ["botling", "--component-shot", "comp", "--out", "shots", "--data", "d.json", "--folder", "/abs/proj", "--surfaces", "Board, chat,board", "--sizes", "2x1,small,2×1", "--theme", "Dark"],
+            ["botling", "--component-shot", "./comp/../comp", "--sizes", "ALL"],
+            ["botling", "--component-shot", "comp", "--sizes", "4x2, M"],
+            ["botling", "--component-shot", "comp", "--surfaces", "chat,side"],
+            ["botling", "--component-shot", "comp", "--surfaces", ","],
+            ["botling", "--component-shot", "comp", "--sizes", "9x9"],
+            ["botling", "--component-shot", "comp", "--sizes", ","],
+            ["botling", "--component-shot", "comp", "--theme", "light"],
+            ["botling", "--component-shot", "comp", "--out"],
+            ["botling", "--component-shot", "nothing"],
+            ["botling", "--component-shot", "nothing", "--theme", "light"],
+            ["-psn_0", "--component-shot", "comp", "--verbose", "--sizes", "1x1", "stray"],
+            ["botling", "--component-shot", base.appending(path: "comp").path, "--surfaces", "floating,pinned"],
+        ]
+        let parsed = lines.map { arguments -> [String: Any] in
+            switch ComponentShot.parse(arguments, cwd: base) {
+            case let .success(options):
+                let out = options.out.lastPathComponent.hasPrefix("ccb-shot-comp-") && options.out.deletingLastPathComponent().standardizedFileURL == files.temporaryDirectory.standardizedFileURL ? "<default>" : place(options.out.path)
+                return ["arguments": arguments.map(place), "options": [
+                    "component": place(options.component.path), "out": out, "data": options.data.map { place($0.path) } ?? NSNull(),
+                    "folder": options.folder.map { place($0.path) } ?? NSNull(), "surfaces": options.surfaces.map(\.rawValue),
+                    "sizes": options.sizes?.map(\.rawValue) ?? NSNull(), "theme": options.theme,
+                ] as [String: Any]]
+            case let .failure(error):
+                return ["arguments": arguments.map(place), "error": place(error.description)]
+            }
+        }
+
+        let abouts = [
+            "A card.\n\n```json\n{\"a\": 1,\n \"b\": [2]}\n```\n",
+            "Broken first:\n```json\n{nope\n```\nthen\n```JSON\n[1, 2]\n```",
+            "- Data: {\"count\": 3}",
+            "Example: `[\"x\", \"y\"]`",
+            "  * example data: {\"a\": true}",
+            "Sample: nope\nData: \"text\"\nData: 42\nSample: {\"ok\": 1}",
+            "No example here.",
+            "```json\n{\"never\": \"closed\"}",
+            "```json\n\n```\nData: [1]",
+        ]
+        let samples = abouts.map { ["about": $0, "data": ComponentShot.sampleData(fromAbout: $0) ?? NSNull()] as [String: Any] }
+
+        let spelled = { (texts: [String]) in texts.compactMap { PinnedComponent.Size(spelled: $0) } }
+        let sizeCases: [([String]?, [String])] = [(nil, []), (nil, ["2x2"]), (nil, ["1x2", "2x1", "3x3"]), (["1x1"], ["3x3"]), ([], ["2x2"])]
+        let sizes = sizeCases.map { asked, hinted in
+            ["asked": asked ?? NSNull(), "hinted": hinted, "sizes": ComponentShot.sizes(asked: asked.map(spelled), hinted: spelled(hinted)).map(\.rawValue)] as [String: Any]
+        }
+        let folders = ["/lib/plug/components/card", "/lib/card", "/components/card", "/lib/plug/components"].map {
+            ["component": $0, "folder": ComponentShot.commandFolder(for: URL(filePath: $0)).path]
+        }
+        let sources: [String] = [ComponentShot.DataSource.file("/a/d.json"), .command("npm test --json"), .example, .none].map(\.description)
+
+        typealias Report = ComponentShot.FrameReport
+        let reports: [(String, Report, String, Bool)] = [
+            ("fine", Report(surface: "chat", size: "4x2", width: 600, height: 300, scrollWidth: 600, scrollHeight: 300, contentHeight: 120), "chat", false),
+            ("errors", Report(surface: "chat", size: "4x2", width: 600, height: 300, scrollWidth: 600, scrollHeight: 300, contentHeight: 120,
+                              errors: ["TypeError: x is undefined\n  at draw (line 3)\n\n  at load"], rejections: ["Error: nope"], console: ["bad thing {\"a\":1}"],
+                              ccb: ["ccb.nope is not part of ccb (see PLUGINS.md for the API)"], resources: ["img https://example.com/a.png"]), "chat", false),
+            ("long", Report(surface: "chat", size: "4x2", width: 600, height: 300, scrollWidth: 600, scrollHeight: 300, contentHeight: 120,
+                            errors: [String(repeating: "ab", count: 400)]), "chat", false),
+            ("wide", Report(surface: "board", size: "2x1", width: 340.6, height: 160, scrollWidth: 420.9, scrollHeight: 160, contentHeight: 150,
+                            widest: "table.list", widestRight: 419.7), "board 2x1", false),
+            ("wideNoElement", Report(surface: "pinned", size: "2x2", width: 500, height: 300, scrollWidth: 502, scrollHeight: 300, contentHeight: 150), "pinned", false),
+            ("slack", Report(surface: "board", size: "1x1", width: 160, height: 160, scrollWidth: 161, scrollHeight: 161, contentHeight: 150), "board 1x1", false),
+            ("tall", Report(surface: "board", size: "1x1", width: 160, height: 160, scrollWidth: 160, scrollHeight: 260.5, contentHeight: 260), "board 1x1", false),
+            ("tallChat", Report(surface: "chat", size: "4x2", width: 600, height: 300, scrollWidth: 600, scrollHeight: 900, contentHeight: 880), "chat", false),
+            ("nothing", Report(surface: "floating", size: "2x2", width: 300, height: 200, scrollWidth: 300, scrollHeight: 200, contentHeight: 1.5), "floating", true),
+            ("blank", Report(surface: "chat", size: "4x2", width: 600, height: 300, scrollWidth: 600, scrollHeight: 300, contentHeight: 40, hasText: false), "chat", true),
+            ("blankText", Report(surface: "chat", size: "4x2", width: 600, height: 300, scrollWidth: 600, scrollHeight: 300, contentHeight: 40, hasText: true), "chat", true),
+            ("blankMedia", Report(surface: "chat", size: "4x2", width: 600, height: 300, scrollWidth: 600, scrollHeight: 300, contentHeight: 40, hasText: false, hasMedia: true), "chat", true),
+            ("notUniform", Report(surface: "chat", size: "4x2", width: 600, height: 300, scrollWidth: 600, scrollHeight: 300, contentHeight: 40, hasText: false), "chat", false),
+        ]
+        let judged = reports.map { label, report, at, uniform in
+            ["label": label, "report": encode(report), "place": at, "uniform": uniform, "masked": report.hasMaskedErrors,
+             "findings": encode(ComponentShot.judge(report, place: at, uniform: uniform))] as [String: Any]
+        }
+        let masked = Report(surface: "chat", size: "4x2", width: 1, height: 1, scrollWidth: 1, scrollHeight: 1, contentHeight: 1, errors: ["Script error. (line 0)"]).hasMaskedErrors
+
+        // Pictures: one colour, a little noise, a stripe, half and half, nothing.
+        let pixels = { (count: Int, colour: (Int) -> [UInt8]) in (0..<count).flatMap { colour($0) } }
+        let pictures: [(String, [UInt8])] = [
+            ("flat", pixels(400) { _ in [30, 30, 34, 255] }),
+            ("noise", pixels(400) { i in [UInt8(30 + i % 7), 30, UInt8(34 + i % 5), 255] }),
+            ("stripe", pixels(400) { i in i < 4 ? [240, 240, 240, 255] : [30, 30, 34, 255] }),
+            ("dot", pixels(1000) { i in i == 0 ? [240, 240, 240, 255] : [30, 30, 34, 255] }),
+            ("half", pixels(400) { i in i < 150 ? [200, 40, 40, 255] : [30, 30, 34, 255] }),
+            ("empty", []),
+            ("edge", pixels(400) { i in i < 300 ? [15, 15, 15, 255] : [33, 33, 33, 255] }),
+        ]
+        let uniform = pictures.map { ["label": $0.0, "pixels": Data($0.1).base64EncodedString(), "uniform": ComponentShot.isUniform($0.1)] as [String: Any] }
+
+        typealias Finding = ComponentShot.Finding
+        let shotsMade = [ComponentShot.Shot(place: "chat", path: "/out/chat.png"), ComponentShot.Shot(place: "board 2x1", path: "/out/board-2x1.png"), ComponentShot.Shot(place: "board 2x2", path: "/out/board-2x2.png")]
+        let wide = "Wider than its frame: 420px of content in 340px, cut off on the right"
+        let summaryCases: [(String, ComponentShot.DataSource, [Finding], [ComponentShot.Shot], String?, [String])] = [
+            ("clean", .example, [], shotsMade, "/out/contact-sheet.png", []),
+            ("one", .file("/a/d.json"), [], [shotsMade[0]], nil, ["Its Command ran as written in /lib/plug."]),
+            ("none", .none, [Finding(level: .warning, place: "chat", text: "Not drawn: with null data the chat shows \"Nothing to show\" (give --data or add an example to about.md)")], [], nil, []),
+            ("grouped", .command("git log -1"), [
+                Finding(level: .problem, place: "board 2x1", text: wide), Finding(level: .problem, place: "chat", text: "Script error: boom"),
+                Finding(level: .problem, place: "board 2x2", text: wide), Finding(level: .warning, place: "board 1x1", text: "Taller than its tile"),
+                Finding(level: .problem, place: "board 2x1", text: wide), Finding(level: .warning, place: "board 2x1", text: "Taller than its tile"),
+            ], shotsMade, "/out/contact sheet.png", ["It has a Command; pass --folder <project> to draw what the command prints."]),
+        ]
+        let summaries = summaryCases.map { label, source, findings, shots, sheet, notes in
+            ["label": label, "component": "status card", "source": sources[[ComponentShot.DataSource.file("/a/d.json"), .command("git log -1"), .example, .none].firstIndex(of: source) ?? 0],
+             "findings": encode(findings), "shots": encode(shots), "sheet": sheet ?? NSNull(), "notes": notes,
+             "text": ComponentShot.summary(component: "status card", data: source, findings: findings, shots: shots, sheet: sheet, notes: notes)] as [String: Any]
+        }
+
+        // Its Command, run once as written (each in a folder of its own under `base`).
+        let commandCases: [(String, String?, String?, Double)] = [
+            ("noCommand", nil, nil, 30),
+            ("works", "echo '{\"n\": 1}'", nil, 30),
+            ("fails", "echo oops >&2; echo more >&2; exit 3", nil, 30),
+            ("failsInFolder", "echo oops >&2; exit 3", "project", 30),
+            ("noFolder", "echo hi", "missing", 30),
+            ("slow", "sleep 5", nil, 1),
+        ]
+        var commands: [[String: Any]] = []
+        for (label, command, folder, timeout) in commandCases {
+            let component = base.appending(path: "plug-\(label)/components/card")
+            template(component, command.map { "A card.\nCommand: \($0)\n" } ?? "A card.\n")
+            let project = folder.map { base.appending(path: $0) }
+            if folder == "project" { try? files.createDirectory(at: project!, withIntermediateDirectories: true) }
+            let done = DispatchSemaphore(value: 0)
+            nonisolated(unsafe) var check: ComponentShot.CommandCheck?
+            Task.detached {
+                check = await ComponentShot.checkCommand(component: component, folder: project, timeout: timeout)
+                done.signal()
+            }
+            done.wait()
+            commands.append(["label": label, "command": command ?? NSNull(), "folder": folder ?? NSNull(), "timeout": timeout,
+                             "check": check.map { ["command": $0.command, "folder": place($0.folder.path), "data": $0.outcome.data ?? NSNull(), "timedOut": $0.outcome.timedOut,
+                                                   "findings": (encode($0.findings) as? [[String: Any]] ?? []).map { finding in finding.mapValues { ($0 as? String).map(place) ?? $0 } }] as [String: Any] } ?? NSNull()])
+        }
+
+        return [
+            "usage": ComponentShot.usage,
+            "flag": ComponentShot.flag,
+            "parse": parsed,
+            "samples": samples,
+            "sizes": sizes,
+            "commandFolders": folders,
+            "sources": sources,
+            "judge": judged,
+            "maskedScriptError": masked,
+            "uniform": uniform,
+            "summaries": summaries,
+            "fileNames": ["board 2x1", "chat", "board  4x2"].map { ["place": $0, "file": ComponentShot.fileName($0)] },
+            "commands": commands,
+            "commandCheckTimeout": ComponentShot.commandCheckTimeout,
+        ]
     }
 
     /// "Not right" on a reply in developer mode (`reportFeedback`): what the developer project's manager gets.
