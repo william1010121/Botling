@@ -91,13 +91,15 @@ test("the left column: pin a bot to the top, search it (⌘K), fold it into a st
       await expect(form).toHaveCount(0);
     }
     const rows = page.locator(".bots .bot-row .bot-name");
-    await expect(rows).toHaveText(["Main bot", "Weather", "Garden", "Maintainer"]);
+    // The main bot and Maintainer, then the chats with the newest line first (1.x's RailView).
+    await expect(rows).toHaveCount(4);
+    expect((await rows.allTextContents()).slice(0, 2)).toEqual(["Main bot", "Maintainer"]);
     // Pin "Garden" with the glyph on its row: it goes under "Pinned", first after the main bot.
     const garden = page.locator(".bot-row-wrap", { has: page.locator(".bot-name", { hasText: "Garden" }) });
     await garden.hover();
     await garden.getByRole("button", { name: "Pin Garden" }).click();
     await expect(page.locator(".rail-section")).toHaveText("Pinned");
-    await expect(rows).toHaveText(["Main bot", "Garden", "Weather", "Maintainer"]);
+    await expect(rows).toHaveText(["Main bot", "Maintainer", "Garden", "Weather"]);
     const gardenId = await page.locator(".bot-row", { hasText: "Garden" }).getAttribute("data-bot");
     await expect.poll(() => JSON.parse(readFileSync(join(dataDir, "core", "settings.json"), "utf8")).pinnedBots).toEqual([gardenId]);
     await shot(page, "phase4c-pinned");
@@ -122,7 +124,7 @@ test("the left column: pin a bot to the top, search it (⌘K), fold it into a st
     await expect(strip.locator(".strip-bot")).toHaveCount(4);
     await expect.poll(() => JSON.parse(readFileSync(join(dataDir, "core", "settings.json"), "utf8")).railCollapsed).toBe(true);
     await strip.locator(".strip-bot").nth(1).hover();
-    await expect(page.locator(".rail-tip-title")).toHaveText("Weather");
+    await expect(page.locator(".rail-tip-title")).toHaveText("Maintainer");
     await shot(page, "phase4c-strip");
     await page.keyboard.press("Control+Meta+S");
     await expect(page.locator(".rail .bots")).toBeVisible();

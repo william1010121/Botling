@@ -197,11 +197,12 @@ test("projects: Add project picks a folder and shows its chat; the right panel g
     const panel = page.locator(".detail-panel");
     await expect(panel.locator(".detail-name")).toHaveText("Main bot");
     await page.getByRole("button", { name: "Add project" }).click();
-    // The new project sits above Maintainer and its chat is on screen.
+    // The new project is in the column (under the main bot and Maintainer) and its chat is on screen.
     const row = page.locator(".bot-row", { hasText: "Garden" });
     await expect(row).toHaveAttribute("aria-current", "page");
     const names = await page.locator(".bot-row .bot-name").allTextContents();
-    expect(names.indexOf("Garden")).toBe(names.indexOf("Maintainer") - 1);
+    expect(names.slice(0, 2)).toEqual(["Main bot", "Maintainer"]);
+    expect(names).toContain("Garden");
     await expect(panel.locator(".detail-name")).toHaveText("Garden");
     expect(JSON.parse(readFileSync(join(dataDir, "core", "projects.json"), "utf8"))[0]).toMatchObject({ name: "Garden", folder: pathToFileURL(folder).href + "/" });
     // Picking it again finds the same project.

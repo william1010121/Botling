@@ -28,7 +28,8 @@ test("bots imported from Botling 1.x show in the left column with their chats, a
   const log = join(dir, "starts.log");
   const { app, page, chat } = await launch({ dataDir: join(dir, "botling2"), importFrom: source, env: { FAKE_CLAUDE_LOG: log } });
   try {
-    await expect(page.locator(".bot-row .bot-name")).toHaveText(["Main bot", "blog", "News", "Broken", "Maintainer"]);
+    // The main bot and Maintainer first, then the chats with the newest line first (1.x's RailView).
+    await expect(page.locator(".bot-row .bot-name")).toHaveText(["Main bot", "Maintainer", "News", "blog", "Broken"]);
     await expect(page.locator(".rail-note")).toContainText("Imported 5 bots and 7 messages");
     await expect(chat.locator(".row.bot[data-id]").last().locator(".markdown")).toContainText("40 posts, 3 drafts");
     await expect(chat.locator(".row.bot", { hasText: "Wants to use" })).toContainText("Allow once"); // Answered, folded.
