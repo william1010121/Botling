@@ -97,34 +97,57 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
 function Usage({ client }: { client: Client }) {
   const [usage, setUsage] = useState<UsageView | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
-    const load = () => { setNow(Date.now()); void client.request({ type: "usage.view" }).then(setUsage, () => {}); };
+    let live = true, pending = false;
+    const load = () => {
+      if (pending) return;
+      pending = true;
+      setLoading(true);
+      setNow(Date.now());
+      void client.request({ type: "usage.view" }).then(value => {
+        if (live) { setUsage(value); setFailed(false); }
+      }, () => { if (live) setFailed(true); }).finally(() => {
+        pending = false;
+        if (live) setLoading(false);
+      });
+    };
     load();
     const timer = setInterval(load, 60_000);
-    return () => clearInterval(timer);
-  }, [client]);
-  if (!usage) return null;
-  const tokens = usage.tokens;
-  const total = tokens.input + tokens.output + tokens.cacheWrite + tokens.cacheRead;
+    return () => { live = false; clearInterval(timer); };
+  }, [client, retry]);
+  const tokens = usage?.tokens;
+  const available = usage?.spendingStatus === "available";
   return (
     <>
-      <Group title="Usage today" note={`In ${tokenCount(tokens.input)} · out ${tokenCount(tokens.output)} · cache write ${tokenCount(tokens.cacheWrite)} · cache read ${tokenCount(tokens.cacheRead)}`}>
-        <Row label="Cost"><span className="usage-number">{dollars(usage.spent)}</span></Row>
-        <Row label="Tokens"><span className="usage-number">{tokenCount(total)}</span></Row>
-      </Group>
-      <Group title="Subscription limits">
-        <LimitRow name="Claude" limits={usage.claude} now={now} />
-        {!isEmpty(usage.codex) && <LimitRow name="Codex" limits={usage.codex} now={now} />}
-      </Group>
-      <Group title="By bot">
-        {!usage.byBot.length && <Row label="No bot has used anything today." />}
-        {usage.byBot.map((bot) => <UsageRow key={bot.name} name={bot.name} spent={bot.spent} tokens={bot.tokens} />)}
-      </Group>
-      {usage.history.length > 0 && (
-        <Group title="Earlier days">
-          {[...usage.history].reverse().map((day) => <UsageRow key={day.day} name={day.day} spent={day.spent} tokens={day.tokens} />)}
+      {loading && <p className="settings-note" role="status">{usage ? "Refreshing usage…" : "Loading usage…"}</p>}
+      {failed && <div className="settings-note" role="alert">
+        Usage is unavailable. {usage ? "Showing the last successful reading." : "Try again to load recorded usage."}{" "}
+        <button type="button" disabled={loading} onClick={() => setRetry(value => value + 1)}>Retry</button>
+      </div>}
+      {usage && <>
+        <Group title="Usage today" note={available && tokens
+          ? `${usage.day} (local day). In ${tokenCount(tokens.input)} · out ${tokenCount(tokens.output)} · cache write ${tokenCount(tokens.cacheWrite)} · cache read ${tokenCount(tokens.cacheRead)}. Claude-reported cost; recorded tokens from both CLIs. This is local usage, not an account bill.`
+          : "No readable local spending record is available. Usage appears after a bot reports it; older usage may not have been imported."}>
+          {available && tokens ? <>
+            <Row label="Cost"><span className="usage-number">{dollars(usage.spent)}</span></Row>
+            <Row label="Tokens"><span className="usage-number">{tokenCount(tokens.input + tokens.output + tokens.cacheWrite + tokens.cacheRead)}</span></Row>
+          </> : <Row label="Recorded usage is unavailable." />}
         </Group>
-      )}
+        <Group title="Subscription limits" note="Latest readings reported by each CLI during bot turns. No data means no reading; a reset needs a new reading, not a known zero.">
+          <LimitRow name="Claude" limits={usage.claude} now={now} />
+          <LimitRow name="Codex" limits={usage.codex} now={now} />
+        </Group>
+        {available && <Group title="By bot">
+          {!usage.byBot.length && <Row label="No bot has used anything today." />}
+          {usage.byBot.map((bot) => <UsageRow key={bot.name} name={bot.name} spent={bot.spent} tokens={bot.tokens} />)}
+        </Group>}
+        {available && usage.history.length > 0 && <Group title="Earlier days">
+          {[...usage.history].reverse().map((day) => <UsageRow key={day.day} name={day.day} spent={day.spent} tokens={day.tokens} />)}
+        </Group>}
+      </>}
     </>
   );
 }

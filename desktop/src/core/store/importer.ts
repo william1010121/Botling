@@ -8,7 +8,7 @@
 // - projects.json, and each project's and bot's chat files, and Maintainer's;
 // - a bot of its own's notes (.bot/memory.md, inbox.md, routines.cron), into 2.0's bots/<ID>/,
 //   with its folder in projects.json pointed there;
-// - settings.json;
+// - settings.json and the three local usage records (spending and each CLI's limits);
 // - the web AIs' saved conversations (`web/<site>/`: conversations.json and each conversation's .md);
 // - the plugin library (`plugins/`): every plugin's text files (manifests, bundled code, components,
 //   Claude parts) and Maintainer's notes (.bot/memory.md), into 2.0's own plugins folder; and
@@ -19,6 +19,7 @@
 // pages and screenshots (messages keep pointing at them, read-only), the library's git history,
 // node_modules and binary files (pictures, fonts), web AIs' sign-ins (1.x's WebKit stores), the commands 1.x was allowed to
 // run (2.0 asks again), and claude's own sessions (2.0 starts new ones).
+import { readLimits, readSpending } from "../usage";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -209,6 +210,23 @@ export function importFrom1x(sourceDir: string, targetDir: string): ImportReport
       write(Layout.settings(target), settings);
     } catch {
       report.skipped.push(`${Layout.settings(source)}: not valid JSON, left out`);
+    }
+  }
+  // Only the existing accounting files: no CLI logs, sessions or credentials. Import never
+  // reads these again after first launch, so 2.x's own recorded totals are not overwritten.
+  for (const name of ["spending.json", "rate-limits.json", "codex-rate-limits.json"]) {
+    const data = read(join(source, name));
+    if (!data) continue;
+    try {
+      const value = JSON.parse(data.toString("utf8"));
+      const record = name === "spending.json" ? readSpending(value) : readLimits(value);
+      const valid = name === "spending.json" ? record !== null
+        : value && typeof value === "object" && !Array.isArray(value) && (Object.keys(value).length === 0 || Object.keys(record!).length > 0);
+      if (!valid) throw new Error("invalid usage record");
+      // Keep just usage fields, never arbitrary extra fields attached to these JSON files.
+      write(join(target, name), JSON.stringify(record));
+    } catch {
+      report.skipped.push(`${join(source, name)}: not a valid usage record, left out`);
     }
   }
   // The plugin library: every plugin's text files (its components among them), and Maintainer's notes.

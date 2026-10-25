@@ -176,10 +176,12 @@ export class UsageBook {
   spending: Spending;
   claude: RateLimits;
   codex: RateLimits;
+  spendingStatus: import("../contract").UsageView["spendingStatus"];
 
   constructor(private readonly dir: string, private readonly changed: () => void = () => {}, now = new Date()) {
     const read = (name: string) => { try { return existsSync(join(dir, name)) ? JSON.parse(readFileSync(join(dir, name), "utf8")) : null; } catch { return null; } };
     const saved = readSpending(read("spending.json"));
+    this.spendingStatus = saved ? "available" : existsSync(join(dir, "spending.json")) ? "unreadable" : "missing";
     const day = today(now);
     this.spending = !saved ? freshSpending(day) : saved.day === day ? saved : rolled(saved, day);
     this.claude = readLimits(read("rate-limits.json"));
@@ -190,6 +192,7 @@ export class UsageBook {
   record(amount: number, tokens: TokenUsage, by: string, date = new Date()) {
     if (amount <= 0 && totalTokens(tokens) <= 0) return;
     this.spending = addSpending(this.spending, amount, tokens, by, date);
+    this.spendingStatus = "available";
     this.save("spending.json", this.spending);
     this.changed();
   }
@@ -205,10 +208,10 @@ export class UsageBook {
   }
 
   /** Today's record, rolled over if the day changed since. */
-  view(now = new Date()): { spending: Spending; claude: RateLimits; codex: RateLimits } {
+  view(now = new Date()): { spending: Spending; claude: RateLimits; codex: RateLimits; spendingStatus: import("../contract").UsageView["spendingStatus"] } {
     const day = today(now);
     if (this.spending.day !== day) this.spending = rolled(this.spending, day);
-    return { spending: this.spending, claude: this.claude, codex: this.codex };
+    return { spending: this.spending, claude: this.claude, codex: this.codex, spendingStatus: this.spendingStatus };
   }
 
   private save(name: string, value: unknown) {
@@ -217,7 +220,7 @@ export class UsageBook {
 }
 
 /** What Settings → Usage shows (dates as ms since 1970): today's bots, most first, and the days before. */
-export function usageView(book: { spending: Spending; claude: RateLimits; codex: RateLimits }): import("../contract").UsageView {
+export function usageView(book: { spending: Spending; claude: RateLimits; codex: RateLimits; spendingStatus?: import("../contract").UsageView["spendingStatus"] }): import("../contract").UsageView {
   const { spending } = book;
   const names = [...new Set([...Object.keys(spending.byBot), ...Object.keys(spending.tokensByBot)])];
   const byBot = names.map((name) => ({ name: name.slice(0, 200), spent: Math.max(0, spending.byBot[name] ?? 0), tokens: totalTokens(spending.tokensByBot[name] ?? noTokens()) }))
@@ -227,6 +230,7 @@ export function usageView(book: { spending: Spending; claude: RateLimits; codex:
   const limits = (value: RateLimits) => ({ fiveHour: window(value.fiveHour), week: window(value.week) });
   const nonNegative = (tokens: TokenUsage): TokenUsage => ({ input: Math.max(0, tokens.input), output: Math.max(0, tokens.output), cacheWrite: Math.max(0, tokens.cacheWrite), cacheRead: Math.max(0, tokens.cacheRead) });
   return {
+    spendingStatus: book.spendingStatus ?? "available",
     day: spending.day.slice(0, 20), spent: Math.max(0, spending.spent), tokens: nonNegative(spending.tokens), byBot,
     history: spending.history.slice(-31).map((day) => ({ day: day.day.slice(0, 20), spent: Math.max(0, day.spent), tokens: Math.max(0, totalTokens(day.tokens)) })),
     claude: limits(book.claude), codex: limits(book.codex),
