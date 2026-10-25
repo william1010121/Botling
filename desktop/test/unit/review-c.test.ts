@@ -20,12 +20,12 @@ function fixture(){
  const opened=join(base,'opened');const open=join(base,'open');writeFileSync(open,`#!/bin/sh\nprintf '%s\\n' "$@" > '${opened}'\n`,{mode:0o755});
  cleanups.push(()=>rmSync(base,{recursive:true,force:true}));return{base,target,root,data,staged,opened,open};
 }
-async function swap(mode:'snapshot'|'restore'|'rm'|'env'|'cache'|'move-old'|'move-new'){
+async function swap(mode:'snapshot'|'snapshot-full'|'restore'|'rm'|'env'|'cache'|'move-old'|'move-new'){
  const f=fixture();const ditto=join(f.base,'ditto'),rm=join(f.base,'rm'),mv=join(f.base,'mv');
- const fail=mode==='snapshot'?`case "$2" in '${f.root}/data-before'*) mkdir -p "$2"; echo partial > "$2/partial"; exit 1;; esac`: mode==='restore'||mode==='rm'?`case "$2" in '${f.data}'|'${f.data}.update-restore-'*) mkdir -p "$2"; echo partial > "$2/partial"; exit 1;; esac`:'';
+ const fail=mode==='snapshot'||mode==='snapshot-full'?`case "$2" in '${f.root}/data-before'*) mkdir -p "$2"; echo partial > "$2/partial"; exit 1;; esac`: mode==='restore'||mode==='rm'?`case "$2" in '${f.data}'|'${f.data}.update-restore-'*) mkdir -p "$2"; echo partial > "$2/partial"; exit 1;; esac`:'';
  writeFileSync(ditto,`#!/bin/sh\n${fail}\nexec /usr/bin/ditto "$@"\n`,{mode:0o755});
  writeFileSync(rm,`#!/bin/sh\n${mode==='rm'?`for arg do case "$arg" in '${f.data}'|'${f.data}.update-restore-'*) exit 1;; esac; done`:''}\nexec /bin/rm "$@"\n`,{mode:0o755});
- writeFileSync(mv,`#!/bin/sh\n${mode==='move-old'?`[ "$1" != '${f.data}' ] || exit 1`:mode==='move-new'?`[ "$1" != '${f.data}.update-restore-c-token' ] || exit 1`:''}\nexec /bin/mv "$@"\n`,{mode:0o755});
+ writeFileSync(mv,`#!/bin/sh\n${mode==='snapshot-full'?`case "$2" in '${f.root}/result') [ ! -d '${f.root}/data-before' ] || exit 1;; esac`:mode==='move-old'?`[ "$1" != '${f.data}' ] || exit 1`:mode==='move-new'?`[ "$1" != '${f.data}.update-restore-c-token' ] || exit 1`:''}\nexec /bin/mv "$@"\n`,{mode:0o755});
  if(mode==='cache'){
   for(const dir of ['core/Cache','electron/Partitions/synthetic/Cache','electron/Partitions/synthetic/Local Storage']){mkdirSync(join(f.data,dir),{recursive:true});writeFileSync(join(f.data,dir,'content'),'persistent');}
  }
@@ -90,4 +90,11 @@ it('C7 active helper and rollback decisions forbid candidate self-commit',async(
  const args=['--botling-update-token=c-token'];expect(await commitUpdateReceipt(f.data,f.target,'2.0.1',args)).toBe('waiting');
  writeFileSync(join(f.root,'helper.pid'),'99999999');writeFileSync(join(f.root,'decision'),'rollback:c-token');
  expect(await commitUpdateReceipt(f.data,f.target,'2.0.1',args)).toBe('blocked');expect(existsSync(join(f.root,'result'))).toBe(false);
+});
+
+it('C1 reclaims incomplete snapshot bytes before attempting a disk-full failure journal',async()=>{
+ const f=await swap('snapshot-full');expect(f.code).toBe(18);
+ expect(readFileSync(join(f.root,'result'),'utf8')).toBe('failed:18\n');
+ expect(readFileSync(join(f.data,'schema'),'utf8')).toBe('old-flushed');
+ await recoverUpdates(f.data,f.target);expect(existsSync(f.root)).toBe(false);expect(existsSync(join(f.data,'update-pending.json'))).toBe(false);
 });

@@ -156,6 +156,11 @@ finish() {
   trap - EXIT HUP INT TERM
   [ "$code" -ne 0 ] || exit 0
   if [ -f "$root/decision" ] && [ "$(/bin/cat "$root/decision")" = "commit:$token" ]; then result booted || true; exit 0; fi
+  # A never-completed snapshot cannot be a recovery copy. Free its bytes before any journal
+  # allocation: ENOSPC must not prevent the record that lets startup reclaim the transaction.
+  if [ "$code" -eq 18 ] && [ "$moved" -eq 0 ] && [ "$snapshot" -eq 0 ]; then
+    /bin/rm -rf "$root/data-before" "$root/download.zip" "$staged" || { printf 'incomplete snapshot cleanup failed\n' > "$root/cleanup-error" || true; }
+  fi
   decide rollback || { result failed:22 || true; exit 22; }
   if [ -n "$new_pid" ]; then
     kill -TERM "$new_pid" 2>/dev/null || true
