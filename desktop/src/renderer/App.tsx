@@ -4,7 +4,7 @@
 // what the user does (send, a pick on an approval, Stop); this page turns that into contract
 // commands. Only this page has the bridge to main.
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { BotView, ResultOf } from "../contract";
+import { MAINTAINER_BOT_ID, resultLinks, type BotView, type ResultOf, type ResultView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
 import { chatState, subagentState } from "./payload";
@@ -12,7 +12,9 @@ import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { PluginsButton } from "./Plugins";
 import { SettingsSheet } from "./Settings";
-import { RightPanel } from "./RightPanel";
+import { RightPanel, RightToggle } from "./RightPanel";
+import { BotMenu, NewBotForm, RemoveDialog, SubagentRows, useMinuteClock } from "./Rail";
+import { Icon } from "./icons";
 import { WebPane, WebPanel, WebRail } from "./Web";
 
 export function App({ client, store }: { client: Client; store: WorkspaceStore }) {
@@ -22,13 +24,28 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
   /** The web AI shown in the chat column instead of a chat, if one is. */
   const [webSite, setWebSite] = useState<string | null>(null);
   const site = webSite ? view.web?.sites.find((candidate) => candidate.id === webSite) ?? null : null;
-  // ⌘, (Ctrl+, elsewhere) opens Settings, as in 1.x.
+  /** The New bot form, a row's menu, and the bot being asked about before it is removed. */
+  const [makingBot, setMakingBot] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [menu, setMenu] = useState<{ bot: BotView; x: number; y: number } | null>(null);
+  const [removing, setRemoving] = useState<BotView | null>(null);
+  const now = useMinuteClock();
+  const collapsed = view.settings?.rightPanelCollapsed ?? false;
+  const toggleRight = useCallback(() => {
+    void client.request({ type: "settings.set", change: { key: "rightPanelCollapsed", value: !(store.getView().settings?.rightPanelCollapsed ?? false) } }).catch(() => {});
+  }, [client, store]);
+  // ⌘, (Ctrl+, elsewhere) opens Settings, as in 1.x; ⌃⌘I folds or opens the right panel.
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "," && (event.metaKey || event.ctrlKey)) { event.preventDefault(); setSettingsOpen(true); } };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "," && (event.metaKey || event.ctrlKey)) { event.preventDefault(); setSettingsOpen(true); }
+      if ((event.key === "i" || event.key === "I") && event.metaKey && event.ctrlKey) { event.preventDefault(); toggleRight(); }
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [toggleRight]);
   const chat = view.chat;
+  const results = useMemo<ResultView[]>(() => (chat ? resultLinks(chat.messages) : []), [chat]);
+  const watching = view.subagent?.id ?? null;
   const bot = useMemo(() => view.bots.find((candidate) => candidate.id === chat?.botId) ?? null, [view.bots, chat?.botId]);
 
   const fail = useCallback((failure: unknown) => {
@@ -60,6 +77,41 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
     void client.request({ type: "projects.pick" }).then((result) => { if (result.botId) void store.select(result.botId); }, fail);
   }, [client, store, fail]);
 
+  // A subagent's row (left column or Settled): its conversation in the chat's place (its bot's chat first).
+  const openSubagent = useCallback((botId: string, row: SubagentRowView) => {
+    setError(null);
+    const show = () => client.request({ type: "subagent.view", botId, subagentId: row.id })
+      .then((result) => { if (store.getView().chat?.botId === botId) store.watch(result.subagent); }, fail);
+    if (webSite) { setWebSite(null); void client.request({ type: "web.leave" }).catch(() => {}); }
+    if (store.getView().chat?.botId === botId) void show();
+    else void store.select(botId).then(show);
+  }, [client, store, fail, webSite]);
+  const settleSubagent = useCallback((botId: string, row: SubagentRowView, settled: boolean) => {
+    void client.request({ type: "subagent.settle", botId, subagentId: row.id, settled }).catch(fail);
+  }, [client, fail]);
+
+  // "New bot": made, set up (it writes its routines and says hello), and shown.
+  const createBot = useCallback((made: { name: string; job: string } | null) => {
+    if (!made) { setMakingBot(false); return; }
+    setError(null);
+    setCreating(true);
+    void client.request({ type: "bots.create", name: made.name.slice(0, 400), job: made.job.slice(0, 4_000) })
+      .then((result) => { setMakingBot(false); void store.select(result.botId); }, fail)
+      .finally(() => setCreating(false));
+  }, [client, store, fail]);
+  const removeBot = useCallback((target: BotView) => {
+    setRemoving(null);
+    setError(null);
+    void client.request({ type: "bots.remove", botId: target.id }).catch(fail);
+  }, [client, fail]);
+
+  // A result opens in the browser or with its own app; main checks it is one of this chat's links.
+  const openResult = useCallback((result: ResultView) => {
+    if (!chat) return;
+    setError(null);
+    void client.request({ type: "result.open", botId: chat.botId, url: result.url }).catch(fail);
+  }, [client, chat, fail]);
+
   // Reading a chat clears its unread count.
   useEffect(() => {
     if (bot && bot.unread > 0) void client.request({ type: "chat.read", botId: bot.id }).catch(() => {});
@@ -71,22 +123,29 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
         <div className="rail-top drag" />
         <nav className="bots" aria-label="Bots">
           {view.bots.map((candidate) => (
-            <BotRow
-              key={candidate.id}
-              bot={candidate}
-              look={view.settings?.botLook ?? "original"}
-              selected={!site && candidate.id === chat?.botId}
-              waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
-              onSelect={() => selectBot(candidate.id)}
-            />
+            <div key={candidate.id} className="bot-entry">
+              <BotRow
+                bot={candidate}
+                look={view.settings?.botLook ?? "original"}
+                selected={!site && candidate.id === chat?.botId && !watching}
+                waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
+                onSelect={() => selectBot(candidate.id)}
+                onMenu={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? (x, y) => setMenu({ bot: candidate, x, y }) : undefined}
+              />
+              <SubagentRows bot={candidate} now={now} watching={chat?.botId === candidate.id ? watching : null}
+                onOpen={(row) => openSubagent(candidate.id, row)} onSettle={(row) => settleSubagent(candidate.id, row, true)} />
+            </div>
           ))}
           {view.web && view.web.sites.length > 0 && (
             <WebRail web={view.web} shown={site?.id ?? null} onOpen={openWeb}
               onSettle={(siteId, conversationId) => void client.request({ type: "web.settle", site: siteId, conversationId }).catch(fail)} />
           )}
         </nav>
+        {makingBot && <NewBotForm onDone={createBot} busy={creating} />}
         <div className="rail-add">
-          <button type="button" className="rail-button" onClick={addProject}>+ Add project</button>
+          <button type="button" className="rail-button" onClick={addProject}><Icon name="plus" size={13} />Add project</button>
+          <button type="button" className={`rail-button new-bot-button${makingBot ? " on" : ""}`} onClick={() => setMakingBot(!makingBot)}
+            title="A bot of its own, with its own memory and routines (a morning news bot, say)"><Icon name="sparkles" size={13} />New bot</button>
         </div>
         <PluginsButton client={client} plugins={view.plugins} />
         <div className="rail-settings">
@@ -142,10 +201,19 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
         <RightPanel
           bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}
           status={{ key: status(bot), text: statusText(bot) }}
+          results={results} teams={view.teams} watching={watching} collapsed={collapsed}
           onSelect={selectBot}
           onIgnore={(item) => void client.request({ type: "waiting.ignore", botId: item.botId, text: item.text }).catch(fail)}
+          onOpenResult={openResult}
+          onOpenSubagent={(row) => openSubagent(bot.id, row)}
+          onUnsettle={(row) => settleSubagent(bot.id, row, false)}
+          onSettings={() => setSettingsOpen(true)}
+          onExpand={toggleRight}
         />
       )}
+      {bot && !site && <RightToggle collapsed={collapsed} onToggle={toggleRight} />}
+      {menu && <BotMenu bot={menu.bot} at={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)} onRemove={() => { setRemoving(menu.bot); setMenu(null); }} />}
+      {removing && <RemoveDialog bot={removing} onCancel={() => setRemoving(null)} onRemove={() => removeBot(removing)} />}
       {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} plugins={view.plugins} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
@@ -166,11 +234,12 @@ function statusText(bot: BotView): string {
   return "Asleep";
 }
 
-function BotRow({ bot, selected, onSelect, look, waiting }: { bot: BotView; selected: boolean; onSelect: () => void; look: "original" | "cute"; waiting: boolean }) {
+function BotRow({ bot, selected, onSelect, look, waiting, onMenu }: { bot: BotView; selected: boolean; onSelect: () => void; look: "original" | "cute"; waiting: boolean; onMenu?: (x: number, y: number) => void }) {
   const asleep = bot.phase === "asleep" && !bot.working;
   const label = [bot.name, statusText(bot), bot.approvals ? `${bot.approvals} waiting on you` : waiting ? "waiting on you" : null, bot.unread && !selected ? `${bot.unread} unread` : null].filter(Boolean).join(", ");
   return (
-    <button className={`bot-row${selected ? " selected" : ""}${asleep ? " asleep" : ""}`} data-bot={bot.id} aria-current={selected ? "page" : undefined} aria-label={label} onClick={onSelect}>
+    <button className={`bot-row${selected ? " selected" : ""}${asleep ? " asleep" : ""}`} data-bot={bot.id} aria-current={selected ? "page" : undefined} aria-label={label} onClick={onSelect}
+      onContextMenu={onMenu ? (event) => { event.preventDefault(); onMenu(event.clientX, event.clientY); } : undefined}>
       <img className="bot-avatar" src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
       <span className={`bot-name${bot.role === "main" ? " main" : ""}`}>{bot.name}</span>
       <span className="bot-gap" />

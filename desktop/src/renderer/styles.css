@@ -179,8 +179,67 @@ button { font: inherit; color: inherit; }
 .segmented button:disabled { opacity: 0.5; cursor: default; }
 .plugins-list ul { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; }
 
-/* "Add project" under the bots (SidePanels.swift's bottom row). */
-.rail-add { padding: 0 10px 6px; }
+/* "Add project" and "New bot" under the bots (SidePanels.swift's bottom row). */
+.rail-add { padding: 0 10px 6px; display: flex; gap: 2px; }
+.rail-add .rail-button { width: auto; flex: 0 1 auto; white-space: nowrap; }
+.rail-add .new-bot-button { margin-left: auto; }
+
+/* A bot and its subagent rows (SubagentRows / SubagentRow: 30 pt rows, 26 pt in, 13 pt titles). */
+.bot-entry { display: flex; flex-direction: column; gap: 2px; }
+.subagent-rows { display: flex; flex-direction: column; }
+.subagent-row { display: flex; align-items: center; border-radius: 10px; -webkit-app-region: no-drag; }
+.subagent-row:hover { background: var(--hover); }
+.subagent-row.selected, .subagent-row.selected:hover { background: var(--selected); }
+.subagent-open {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 4px 0 26px;
+  background: none; border: 0; color: var(--muted); font-size: 13px; text-align: left; cursor: pointer;
+}
+.subagent-row.running .subagent-open { color: var(--text); }
+.subagent-arrow { color: var(--faint); display: inline-flex; flex-shrink: 0; }
+.subagent-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.subagent-owner {
+  width: 16px; height: 16px; flex-shrink: 0; border-radius: 50%; background: var(--chip); color: var(--text);
+  font-size: 9px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
+}
+.subagent-settle { width: 24px; height: 30px; margin-right: 6px; flex-shrink: 0; background: none; border: 0; padding: 0; cursor: pointer; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
+.subagent-settle .settle-icon { display: none; align-items: center; position: relative; }
+.subagent-settle .settle-icon .subagent-mark { position: absolute; right: -4px; bottom: -3px; font-size: 8px; }
+.subagent-row:hover .subagent-settle .settle-icon, .subagent-row:not(.running) .subagent-settle .settle-icon { display: inline-flex; }
+.subagent-row:hover .subagent-settle .settle-mark, .subagent-row:not(.running) .subagent-settle .settle-mark { display: none; }
+.subagent-row.running:not(:hover) .subagent-settle { cursor: default; }
+.settle-icon.failed { color: var(--orange); }
+.settle-icon.stopped { color: var(--faint); }
+.subagent-mark { display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 600; line-height: 1; }
+.subagent-mark.done { color: var(--faint); }
+.subagent-mark.failed { color: var(--orange); }
+.subagent-mark.stopped { color: var(--faint); font-size: 7px; }
+.subagent-more { background: none; border: 0; color: var(--faint); font-size: 12px; text-align: left; padding: 0 0 0 45px; height: 24px; cursor: pointer; -webkit-app-region: no-drag; }
+
+/* New bot (NewBotForm: two rounded fields, Cancel and Create, on Theme.bubble). */
+.new-bot { margin: 0 12px 8px; padding: 12px; border-radius: 12px; background: var(--bubble); display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
+.new-bot input, .new-bot textarea {
+  background: var(--ground); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; font: inherit; font-size: 13px; resize: none;
+}
+.new-bot input:focus, .new-bot textarea:focus { outline: none; border-color: rgba(76, 141, 255, 0.6); }
+.new-bot-buttons { display: flex; justify-content: flex-end; gap: 12px; align-items: center; }
+.new-bot-cancel { background: none; border: 0; color: var(--muted); font-size: 13px; cursor: pointer; }
+.new-bot-create { background: var(--chip); border: 0; border-radius: 6px; padding: 2px 12px; font-size: 13px; color: var(--text); cursor: pointer; }
+.new-bot-create:disabled { opacity: 0.45; cursor: default; }
+
+/* A row's menu and the "Remove …?" confirmation (1.x's contextMenu and confirmationDialog). */
+.bot-menu { position: fixed; z-index: 60; min-width: 170px; padding: 5px; background: var(--bubble); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5); }
+.bot-menu-item { width: 100%; text-align: left; background: none; border: 0; border-radius: 5px; padding: 4px 10px; font-size: 13px; cursor: pointer; }
+.bot-menu-item:hover { background: var(--blue); color: #fff; }
+.bot-menu-item.destructive { color: var(--error); }
+.bot-menu-item.destructive:hover { color: #fff; }
+.dialog-backdrop { position: fixed; inset: 0; z-index: 70; background: rgba(0, 0, 0, 0.45); display: flex; align-items: flex-start; justify-content: center; padding-top: 18vh; }
+.dialog { width: 340px; background: var(--bubble); border: 1px solid var(--line); border-radius: 12px; padding: 18px 18px 14px; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55); }
+.dialog h2 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+.dialog p { margin: 0 0 14px; font-size: 12.5px; color: var(--muted); word-break: break-word; }
+.dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; }
+.dialog-buttons button { border: 0; border-radius: 6px; padding: 4px 14px; font-size: 13px; cursor: pointer; }
+.dialog-cancel { background: var(--chip); color: var(--text); }
+.dialog-destructive { background: #B3261E; color: #fff; }
 
 /* The right panel (SidePanels.swift DetailPanel: Theme.side, 20 pt padding, 28 pt between sections). */
 .detail-panel {
@@ -211,6 +270,79 @@ button { font: inherit; color: inherit; }
 .waiting-ignore:hover { color: var(--text); }
 .bot-dot.waiting { background: var(--orange); }
 @media (max-width: 860px) { .detail-panel { display: none; } }
+
+/* The Now card's temporary teams (TaskPanel.swift: a cloud face, the title, minutes). */
+.team-run { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.team-face { width: 22px; height: 22px; flex-shrink: 0; }
+.team-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.team-time { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+/* Results (44 pt rows on Theme.bubble, the label and an arrow) and Settled (36 pt rows, ↩ back). */
+.result-list, .settled-list { display: flex; flex-direction: column; gap: 6px; }
+.result-row {
+  display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 14px; background: var(--bubble); border: 0; border-radius: 12px;
+  color: var(--text); font-size: 13.5px; text-align: left; cursor: pointer;
+}
+.result-row:hover { background: var(--selected); }
+.result-row.compact { height: 36px; padding: 0 12px; border-radius: 10px; background: var(--selected); font-weight: 600; }
+.result-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.result-icon { color: var(--faint); flex-shrink: 0; }
+.settled-row { display: flex; align-items: center; background: var(--bubble); border-radius: 12px; min-height: 36px; }
+.settled-row.selected { background: var(--selected); }
+.settled-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0 0 0 14px; height: 36px; background: none; border: 0; color: var(--muted); font-size: 13px; text-align: left; cursor: pointer; }
+.settled-mark { width: 10px; display: inline-flex; justify-content: center; flex-shrink: 0; }
+.settled-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.settled-title.running { color: var(--text); }
+.settled-back { width: 32px; height: 36px; margin-right: 4px; flex-shrink: 0; background: none; border: 0; color: var(--faint); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.settled-back:hover { color: var(--text); }
+.settled-more { background: none; border: 0; color: var(--faint); font-size: 12px; text-align: left; padding: 0 0 0 14px; height: 24px; cursor: pointer; }
+
+/* The button at the window's top right that folds the right panel (RightToggle: 28×24). */
+.right-toggle {
+  position: fixed; top: 8px; right: 14px; z-index: 25; width: 28px; height: 24px; display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; -webkit-app-region: no-drag;
+}
+.right-toggle.on { background: var(--selected); color: var(--text); }
+.right-toggle:hover { color: var(--text); }
+
+/* The folded panel (RightStrip: 56 pt wide, the face with its status dot, an icon per section, settings last). */
+.right-strip {
+  width: 56px; flex-shrink: 0; background: var(--side); border-left: 1px solid var(--line); padding: 36px 0 12px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px; position: relative;
+}
+.strip-face { width: 40px; height: 40px; border: 0; border-radius: 10px; background: var(--selected); position: relative; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.strip-face img { width: 26px; height: 26px; }
+.strip-dot { position: absolute; right: 3px; bottom: 3px; width: 10px; height: 10px; border-radius: 50%; background: var(--faint); border: 2px solid var(--selected); box-sizing: content-box; transform: translate(2px, 2px); }
+.strip-dot[data-status="working"] { background: var(--blue); }
+.strip-dot[data-status="waiting"] { background: var(--orange); }
+.strip-dot[data-status="awake"] { background: var(--green); }
+.strip-tip {
+  position: absolute; right: 60px; top: 36px; z-index: 40; width: 260px; padding: 8px 10px; background: #2A2A31; border: 1px solid #3A3A42; border-radius: 8px;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5); pointer-events: none;
+}
+.strip-tip-title { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; }
+.strip-tip-title .now-dot { width: 7px; height: 7px; }
+.strip-tip-detail { margin-top: 4px; font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.strip-rule { width: 28px; height: 1px; background: var(--chip); margin: 4px 0; }
+.strip-slot { position: relative; }
+.strip-icon { width: 40px; height: 40px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; position: relative; display: inline-flex; align-items: center; justify-content: center; }
+.strip-icon[data-section="waiting"] { color: var(--orange); }
+.strip-icon.on { background: var(--selected); color: var(--text); }
+.strip-badge {
+  position: absolute; top: -1px; right: -2px; min-width: 16px; height: 15px; padding: 0 4px; border-radius: 8px; font-size: 10px; font-weight: 700;
+  font-variant-numeric: tabular-nums; background: var(--chip); color: var(--text); border: 1px solid var(--side); display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
+}
+.strip-badge.waiting { background: var(--orange); color: var(--side); }
+.strip-flyout {
+  position: absolute; right: 50px; top: 0; z-index: 40; width: 300px; max-height: 520px; display: flex; flex-direction: column; gap: 8px; padding: 12px;
+  background: var(--bubble); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+.strip-flyout-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--faint); }
+.strip-esc { font-size: 11px; }
+.strip-flyout-body { overflow-y: auto; scrollbar-width: none; }
+.strip-gap { flex: 1; }
+.strip-settings { width: 40px; height: 40px; border: 0; background: none; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.strip-settings:hover { color: var(--text); }
 
 /* Web AIs (WebSiteViews.swift): the left column's "Web" section, a site in the chat column, its right panel. */
 .chat-column { flex: 1; min-height: 0; display: flex; flex-direction: column; }

@@ -196,7 +196,7 @@ test("projects: Add project picks a folder and shows its chat; the right panel g
     await page.setViewportSize({ width: 1120, height: 820 });
     const panel = page.locator(".detail-panel");
     await expect(panel.locator(".detail-name")).toHaveText("Main bot");
-    await page.getByRole("button", { name: "+ Add project" }).click();
+    await page.getByRole("button", { name: "Add project" }).click();
     // The new project sits above Maintainer and its chat is on screen.
     const row = page.locator(".bot-row", { hasText: "Garden" });
     await expect(row).toHaveAttribute("aria-current", "page");
@@ -206,7 +206,7 @@ test("projects: Add project picks a folder and shows its chat; the right panel g
     expect(JSON.parse(readFileSync(join(dataDir, "core", "projects.json"), "utf8"))[0]).toMatchObject({ name: "Garden", folder: pathToFileURL(folder).href + "/" });
     // Picking it again finds the same project.
     await page.locator(".bot-row", { hasText: "Main bot" }).click();
-    await page.getByRole("button", { name: "+ Add project" }).click();
+    await page.getByRole("button", { name: "Add project" }).click();
     await expect(row).toHaveAttribute("aria-current", "page");
     expect(await page.locator(".bot-row", { hasText: "Garden" }).count()).toBe(1);
     // Its memory says what it is doing and what waits on you.
