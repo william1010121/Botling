@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { writeFileAtomic } from "./durable/atomic";
 import { DEFAULT_WRITING_PROMPT, JUDGE_MODEL } from "./catchup";
 import type { SettingsChange, SettingsView } from "../contract";
+import { messageWidth } from "../contract/message-width";
 
 export const LANGUAGES = ["en", "zh-Hant", "zh-Hans", "ja", "ko"] as const;
 export const BOT_MODELS = ["haiku", "sonnet", "opus"] as const;
@@ -55,6 +56,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     effectiveLanguage: oneOf(LANGUAGES, raw.languageChoice) ?? systemLanguage,
     botLook: oneOf(["original", "cute"] as const, raw.botLookChoice) ?? "cute",
     chatAvatarSize: size === null ? null : Math.min(96, Math.max(32, size)),
+    messageColumnWidth: messageWidth(raw.messageColumnWidth),
     catchUpEnabled: bool(raw.catchUpEnabledChoice, true),
     intervalSummaryEnabled: bool(raw.intervalSummaryEnabledChoice, false),
     thresholdsCustomized: typeof raw.summaryThresholdsCustomizedChoice === "boolean" ? raw.summaryThresholdsCustomizedChoice : catchUpThreshold !== THRESHOLD || intervalThreshold !== THRESHOLD,
@@ -89,6 +91,7 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "language": set("languageChoice", change.value); break;
     case "botLook": set("botLookChoice", change.value); break;
     case "chatAvatarSize": set("chatAvatarSizeChoice", change.value === null ? null : Math.min(96, Math.max(32, Math.round(change.value)))); break;
+    case "messageColumnWidth": set("messageColumnWidth", messageWidth(change.value)); break;
     case "catchUpEnabled": set("catchUpEnabledChoice", change.value); break;
     case "intervalSummaryEnabled": set("intervalSummaryEnabledChoice", change.value); break;
     case "thresholdsCustomized":

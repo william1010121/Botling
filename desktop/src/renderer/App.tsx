@@ -497,6 +497,7 @@ function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExp
 function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void; onSelectTask: (id: string) => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const ready = useRef(false);
+  const widthDragging = useRef(false);
   const view = useSyncExternalStore(store.subscribe, store.getView);
   const latest = useRef(view);
   latest.current = view;
@@ -523,11 +524,35 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       // Developer mode with Botling's source among the projects: replies get "not right" (`feedback`).
       feedback: !!current.settings?.developerMode && current.bots.some((candidate) => candidate.id === current.settings?.developerProject && candidate.role === "manager"),
     });
-    const message: ShellMessage = { botling: "state", state, extras };
+    const message: ShellMessage = { botling: "state", state, extras, messageColumnWidth: current.settings?.messageColumnWidth ?? null };
     target.postMessage(message, CHAT_ORIGIN);
   }, []);
 
   useEffect(push, [push, view, replying]);
+
+  useEffect(() => {
+    // Chromium can deliver pointerup to the shell after a captured pointer leaves its iframe.
+    // Forward shell-side events in frame coordinates until the drag finishes or is cancelled.
+    const widthPointer = (kind: "move" | "up" | "cancel", event?: PointerEvent) => {
+      if (!widthDragging.current) return;
+      const box = frame.current?.getBoundingClientRect();
+      const message: ShellMessage = { botling: "messageWidthPointer", kind, pointerId: event?.pointerId ?? 0, x: (event?.clientX ?? 0) - (box?.left ?? 0) };
+      frame.current?.contentWindow?.postMessage(message, CHAT_ORIGIN);
+      if (kind !== "move") widthDragging.current = false;
+    };
+    const widthMove = (event: PointerEvent) => widthPointer("move", event);
+    const widthUp = (event: PointerEvent) => widthPointer("up", event);
+    const widthCancel = () => widthPointer("cancel");
+    window.addEventListener("pointermove", widthMove);
+    window.addEventListener("pointerup", widthUp);
+    window.addEventListener("pointercancel", widthCancel);
+    return () => {
+      widthCancel();
+      window.removeEventListener("pointermove", widthMove);
+      window.removeEventListener("pointerup", widthUp);
+      window.removeEventListener("pointercancel", widthCancel);
+    };
+  }, []);
 
   // Plugins' web parts, asked for again whenever the library changes (only what changed reloads in the page).
   const lastSpecs = useRef("");
@@ -616,6 +641,15 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       const message = event.data as FrameMessage | null;
       if (!message || typeof message !== "object") return;
       const chat = latest.current.chat;
+      if (message.botling === "messageWidthDrag") {
+        widthDragging.current = message.active === true;
+        return;
+      }
+      if (message.botling === "messageWidth") {
+        // The contract validates the number again in main and core; a card cannot impersonate this frame.
+        void client.request({ type: "settings.set", change: { key: "messageColumnWidth", value: message.value } }).catch((failure) => { onError(failure); push(); });
+        return;
+      }
       if (message.botling === "stop") {
         // Every turn under way (with two heads, both may work).
         const runs = chat?.runs?.length ? chat.runs : chat?.running ? [chat.running] : [];

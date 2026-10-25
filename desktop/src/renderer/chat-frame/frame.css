@@ -18,3 +18,31 @@ body.botling-running .composer .send:not(.stop) { display: none; }
 
 /* A hover bar over a component frame shows while the pointer is over the frame too (component-frames.ts). */
 .preview-holder.hovered > .preview-bar, .pin-holder.hovered > .pin-bar { opacity: 1; pointer-events: auto; }
+/* One desktop-only width for the transcript, its status strip and input box. CSS keeps the
+   user's preferred width while a narrow window fits it, without changing the saved setting. */
+:root { --message-column-width: 640px; }
+#messages, body.watching #messages, body:not(.board) #composer-slot, #pin-area {
+  width: 100%; min-width: 0; max-width: var(--message-column-width);
+}
+.message-width-handle {
+  position: fixed; top: 0; bottom: 0; width: 12px; z-index: 5;
+  cursor: col-resize; touch-action: none; outline: none;
+}
+.message-width-handle.left { left: max(0px, calc((100% - var(--message-column-width)) / 2)); }
+.message-width-handle.right { right: max(0px, calc((100% - var(--message-column-width)) / 2)); }
+.message-width-handle::after {
+  content: ""; position: absolute; top: calc(50% - 28px); left: 5px; width: 2px; height: 56px;
+  border-radius: 2px; background: var(--border); transition: background 120ms;
+}
+.message-width-handle:hover::after, .message-width-handle:focus-visible::after,
+.resizing-message-column .message-width-handle::after { background: var(--blue); }
+.resizing-message-column, .resizing-message-column * { cursor: col-resize !important; user-select: none !important; }
+body.board .message-width-handle, body.spec-mode .message-width-handle, body.panel-mode .message-width-handle { display: none; }
+@media (width < 480px) {
+  body:not(.board) #composer-slot, #pin-area { padding-left: 16px; padding-right: 16px; }
+}
+
+/* Let long replies use the wider column; short bubbles still size to their content. */
+#messages .bot-column, #messages .speaker-column, #messages .bot-bubble,
+#messages .notice-bubble, #messages .relay:not(.row), #messages .row.sub-from, #messages .row.sub-work { max-width: 100%; }
+#messages .user-body { max-width: min(100%, calc(var(--message-column-width) - 180px)); }

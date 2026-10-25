@@ -5,15 +5,17 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsView, UpdateView, UsageView } from "../contract";
 import { asOf, countdown, dollars, isEmpty, percent, resetDay, staleSince, tokenCount, type Limits } from "./usage-text";
+import { MESSAGE_WIDTH_DEFAULT, MESSAGE_WIDTH_MIN, MESSAGE_WIDTH_MAX } from "../contract/message-width";
 import { Client, RequestFailed } from "./client";
 import { PanelFrame, PluginsPanel } from "./Plugins";
 import { faceURL } from "./avatars";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
-type Section = "general" | "engines" | "bot" | "usage" | "permissions" | "plugins" | "updates" | "developer";
+type Section = "general" | "appearance" | "engines" | "bot" | "usage" | "permissions" | "plugins" | "updates" | "developer";
 const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
+  { id: "appearance", title: "Appearance", terms: "message column width chat composer size reset" },
   { id: "engines", title: "Engines and subagents", terms: "claude subagents model prompt cache hour codex workers config effort fast completion verification component editor" },
   { id: "bot", title: "This bot", terms: "engine heads claude codex model effort subagents" },
   { id: "usage", title: "Usage", terms: "usage cost tokens spending today by bot earlier days subscription limits rate 5 hours week claude codex" },
@@ -71,6 +73,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, onClo
           {problem && <p className="settings-problem" role="alert">{problem}</p>}
           <div className="settings-body">
             {shown && current?.id === "general" && <General settings={shown} change={change} bot={bot} />}
+            {shown && current?.id === "appearance" && <Appearance settings={shown} change={change} />}
             {shown && current?.id === "engines" && <Engines settings={shown} change={change} />}
             {current?.id === "bot" && bot && <ThisBot client={client} bot={bot} onProblem={setProblem} />}
             {current?.id === "usage" && <Usage client={client} />}
@@ -238,6 +241,18 @@ function TextSetting({ label, value, placeholder, onSave, disabled }: { label: s
   useEffect(() => setDraft(value ?? ""), [value]);
   const save = () => { const next = draft.trim() || null; if (next !== (value ?? null)) onSave(next); };
   return <input type="text" aria-label={label} value={draft} placeholder={placeholder} disabled={disabled} onChange={(event) => setDraft(event.target.value)} onBlur={save} onKeyDown={(event) => { if (event.key === "Enter") save(); }} />;
+}
+
+function Appearance({ settings, change }: { settings: SettingsView; change: (next: SettingsChange) => void }) {
+  const width = settings.messageColumnWidth ?? MESSAGE_WIDTH_DEFAULT;
+  return <Group title="Message column" note="Applies to every chat and its input box. Drag either column edge to resize; double-click an edge to reset. Narrow windows fit automatically.">
+    <Row label="Message column width" hint={`${width} px${settings.messageColumnWidth === null ? " (default)" : ""}`}>
+      <input type="range" aria-label="Message column width" min={MESSAGE_WIDTH_MIN} max={MESSAGE_WIDTH_MAX} value={width}
+        onChange={(event) => change({ key: "messageColumnWidth", value: Number(event.target.value) })} />
+    </Row>
+    <div className="settings-actions"><button type="button" disabled={settings.messageColumnWidth === null}
+      onClick={() => change({ key: "messageColumnWidth", value: null })}>Use default width</button></div>
+  </Group>;
 }
 
 function General({ settings, change, bot }: { settings: SettingsView; change: (next: SettingsChange) => void; bot: BotView | null }) {

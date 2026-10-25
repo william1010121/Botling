@@ -5,6 +5,7 @@
 import "./shim";
 import "./component-frames";
 import "../../../../Web/src/main";
+import { installMessageWidth } from "./message-width";
 import { EditorView } from "@codemirror/view";
 import { CardBroker, type CardTarget } from "../broker";
 import type { FrameExtras } from "../payload";
@@ -14,6 +15,7 @@ declare const __LATEX_SOURCE__: string;
 
 const origin = APP_ORIGIN;
 const toShell = (message: FrameMessage) => window.parent.postMessage(message, origin);
+const column = installMessageWidth((value) => toShell({ botling: "messageWidth", value }), (active) => toShell({ botling: "messageWidthDrag", active }));
 
 // ---------------------------------------------------------------------------------------------
 // Card requests go to the app page, which owns the contract client.
@@ -138,6 +140,7 @@ window.addEventListener("message", (event: MessageEvent) => {
     // Words typed before the first state (the first second after the window opens) would be replaced
     // by that chat's draft (empty) when the box switches to it: they are put back.
     const early = document.documentElement.dataset.chat === undefined ? typedSoFar() : null;
+    column.set(message.messageColumnWidth ?? null, message.state.botID);
     window.ccb.setState(message.state);
     if (early) keepTyped(early);
     // Which chat the page shows (the input box keeps a draft per chat, so typing before the first
@@ -145,6 +148,8 @@ window.addEventListener("message", (event: MessageEvent) => {
     document.documentElement.dataset.chat = message.state.botID;
     addStop();
     decorate(message.extras);
+  } else if (message.botling === "messageWidthPointer") {
+    column.pointer(message.kind, message.pointerId, message.x);
   } else if (message.botling === "answerWithSaved") {
     window.ccb.answerWithSaved({ botID: message.botID, requestID: message.requestID, chosen: message.chosen });
   } else if (message.botling === "plugins") {

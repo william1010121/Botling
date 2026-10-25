@@ -20,12 +20,15 @@ export type FrameMessage =
   | { botling: "request"; id: number; cmd: Extract<Command, { type: "card.save" | "card.action" }> }
   /** The Stop button the desktop adds to the input box. */
   | { botling: "stop" }
+  /** Global message column setting, committed after a drag or reset. */
+  | { botling: "messageWidth"; value: number | null }
+  | { botling: "messageWidthDrag"; active: boolean }
   /** A component frame's page, to be served from botling-card://page/ (component-frames.ts). */
   | { botling: "page"; id: number; html: string };
 
 /** Shell → frame. */
 export type ShellMessage =
-  | { botling: "state"; state: ChatState; extras: FrameExtras }
+  | { botling: "state"; state: ChatState; extras: FrameExtras; messageColumnWidth?: number | null }
   | { botling: "response"; id: number; ok: boolean; error?: string }
   /** The composer's Both/Claude/Codex pick was saved (`ccb.answerWithSaved`). */
   | { botling: "answerWithSaved"; botID: string; requestID: number; chosen: string }
@@ -41,6 +44,8 @@ export type ShellMessage =
   | { botling: "key"; key: string; code: string; shiftKey: boolean; altKey: boolean }
   /** The cursor back in the input box (after the left column's search; `ccb.focus`). */
   | { botling: "focus" }
+  /** Pointer events over the shell after a width drag leaves the chat iframe. */
+  | { botling: "messageWidthPointer"; kind: "move" | "up" | "cancel"; pointerId: number; x: number }
   /** "Jump to chat" on a task's card in the right panel (`ccb.jumpToTask`). */
   | { botling: "jumpToTask"; messageID: string; taskID: string }
   /** The spec panel's page (`chat.html?spec=1`): the open spec (`ccb.setSpec`). */
