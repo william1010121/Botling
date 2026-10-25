@@ -61,7 +61,7 @@ export async function deleteRetainedUpdateCopy(dataDir:string,target:string,id:s
  if(!item.view.deletable)throw new Error(item.view.reason!);
  if(!persistentDataIdentity(dataDir))throw new Error('The live persistent data is unavailable. All recovery copies are kept.');
  const block=blockingRecovery(dataDir,target);
- if(block){const digest=await validateRestoredData(block);await writeRecord(join(block.root,'restored-validated.json'),{id:block.id,digest,at:Date.now()});}
+ if(block){const digest=await validateRestoredData(block);if(validRoot(block.root,block.target))await writeRecord(join(block.root,'restored-validated.json'),{id:block.id,digest,at:Date.now()});}
  // Copies remain by default. Native deletion is limited to the owner-derived path selected above.
  await run('/bin/rm',['-rf',item.view.path],{timeout:120_000});
 }

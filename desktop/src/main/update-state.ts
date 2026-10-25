@@ -264,7 +264,7 @@ export async function deleteRecoveryCopies(issue:RecoveryIssue,runningBundles:st
  const validatedDigest=await validateRestoredData(issue,progress);
  const candidate=Number(text(join(issue.root,'new.pid')));
  if(candidate!==process.pid&&processAlive(candidate))throw new Error('The candidate app is still running.');
- await writeRecord(join(issue.root,'restored-validated.json'),{id:issue.id,digest:validatedDigest,at:Date.now()});
+ if(validRoot(issue.root,issue.target))await writeRecord(join(issue.root,'restored-validated.json'),{id:issue.id,digest:validatedDigest,at:Date.now()});
  const copies=recoveryCopyPaths(issue),owner=json(join(issue.root,'owner.json')),healthy=json(join(issue.dataDir,'update-last-boot.json'));
  for(const copy of copies){
   if(copy.role==='newer'&&!includeNewer)continue;
