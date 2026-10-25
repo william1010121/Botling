@@ -247,6 +247,7 @@ export class Core {
       bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
       mainBotId: MAIN_BOT_ID,
       mentionNote: (text) => this.components.library.mentionNote(text),
+      replied: (bot, line) => this.replied(bot, line),
       replyFilter: (bot) => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
       handle: (bot, requests) => {
         const left = this.maintainer.handle(bot, this.projectRequests(bot, requests));
@@ -630,6 +631,12 @@ export class Core {
       else for (const item of memoryItemsAt(join(profile.folder, profile.memoryPath), "waitingOnYou")) out.push({ botId: profile.id, text: item.slice(0, 400), messageId: null });
     }
     for (const question of this.bots.get(MAIN_BOT_ID)?.openQuestions() ?? []) out.push({ botId: MAIN_BOT_ID, text: firstLine(question.text).slice(0, 400), messageId: question.id });
+    // Questions in group chats: the member that asked (else the group), and the group (1.x's `inGroups`).
+    for (const group of this.groups?.groups ?? []) {
+      for (const question of this.groups.chat(group.id)?.openQuestions() ?? []) {
+        out.push({ botId: question.sourceID ?? group.id, text: firstLine(question.text).slice(0, 400), messageId: question.id, groupId: group.id });
+      }
+    }
     return { items: out.filter((item) => !ignored.has(`${item.botId}-${item.text}`)).slice(0, 200), doing };
   }
 

@@ -172,6 +172,10 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
       : [...view.bots, event.bot];
     return { ...view, bots };
   }
+  // A new line moves its chat up the column (`lastActivity`).
+  if (event.type === "message.added" && view.bots.some((bot) => bot.id === event.botId && bot.lastActivity !== event.message.time)) {
+    view = { ...view, bots: view.bots.map((bot) => (bot.id === event.botId ? { ...bot, lastActivity: event.message.time } : bot)) };
+  }
   const chat = view.chat;
   if (!chat || event.botId !== chat.botId) return view;
   const withChat = (next: ChatView): WorkspaceView => ({ ...view, chat: next });

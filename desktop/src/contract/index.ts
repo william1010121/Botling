@@ -98,6 +98,8 @@ export const TaskView = z.strictObject({
   updatedAt: z.string(),
   /** A subagent started for it is still at work. */
   atWork: z.boolean(),
+  /** The other head's hand-offs for it: "Codex helping: …" lines (`TaskCard.helps`). Phase 5a. */
+  helps: z.array(z.strictObject({ head: z.enum(["claude", "codex"]), text: z.string().max(400) })).max(20).optional(),
 });
 export type TaskView = z.infer<typeof TaskView>;
 
@@ -129,7 +131,7 @@ export const AttachmentView = z.strictObject({ name: z.string().max(400), kind: 
 export const PendingFileView = z.strictObject({ id, name: z.string().max(400), kind: z.enum(["image", "video", "file"]) });
 
 /** One thing waiting on you (1.x's `Workspace.Waiting`): a bot's open question, or its memory's "Waiting on you". */
-export const WaitingItemView = z.strictObject({ botId: BotId, text: z.string().max(400), messageId: id.nullable() });
+export const WaitingItemView = z.strictObject({ botId: BotId, text: z.string().max(400), messageId: id.nullable(), /** A question in a group's chat: the group (1.x's `groupID`). Phase 5a. */ groupId: BotId.optional() });
 export type WaitingItemView = z.infer<typeof WaitingItemView>;
 /** What the right panels show: what waits on you across the bots, and each manager's first "In progress" line. */
 export const WaitingView = z.strictObject({
@@ -321,6 +323,8 @@ export const BotView = z.strictObject({
   openTasks: z.number().int().nonnegative().optional(),
   /** A group chat's members, in turn order. */
   members: z.array(BotId).max(200).optional(),
+  /** When its chat's newest line was said (ISO-8601; null: no lines): the column lists chats newest first (`lastActivity`). Phase 5a. */
+  lastActivity: z.string().max(40).nullable().optional(),
   /** The bot's own component list (bot.json `components`); null: no list (a group has every component). Phase 5a. */
   components: z.array(z.string().max(200)).max(500).nullable().optional(),
 });

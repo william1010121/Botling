@@ -250,6 +250,8 @@ export class Bot {
   readonly store: BotStore;
   readonly tasks: TaskBook;
   readonly subagents: SubagentBook;
+  /** The task each head last replied on (`headTask`): hand-offs it makes help that task. */
+  private headTask = new Map<Engine, string>();
   private records: ChatRecord[] = [];
   /** Set when its chat file could not be read: nothing is written over it then. */
   private problem: string | null = null;
@@ -797,9 +799,10 @@ export class Bot {
   }
 
   /** Every question in its chat still waiting for you. */
-  openQuestions(): { id: string; text: string }[] {
+  openQuestions(): { id: string; text: string; sourceID?: string }[] {
     // Copies of other bots' questions (<open-question>) are theirs, not this chat's.
-    return this.owner.records.filter((candidate) => isOpenQuestion(candidate) && !candidate.permissionTool && !candidate.sourceMessageID).map((record) => ({ id: record.id, text: record.text }));
+    return this.owner.records.filter((candidate) => isOpenQuestion(candidate) && !candidate.permissionTool && !candidate.sourceMessageID)
+      .map((record) => ({ id: record.id, text: record.text, ...(typeof record.sourceID === "string" ? { sourceID: record.sourceID } : {}) }));
   }
 
   /** The links handed over in this chat, newest first (`Bot.results`). */
@@ -922,6 +925,7 @@ export class Bot {
       guest: this.options.guest?.() ?? null,
       openTasks: this.owner.tasks.tasks.filter((card) => card.state === "running" || card.state === "waiting").length,
       components: this.components,
+      lastActivity: this.records.length ? iso(this.records.at(-1)!.date) : null,
       ...(this.options.viewExtras?.() ?? {}),
     };
   }
@@ -1260,9 +1264,25 @@ export class Bot {
           break;
       }
     }
+    this.noteTaskHandoffs();
     const kept = new Set(this.conductor.records.map((record) => record.id));
     for (const id of [...this.handoffDecisions.keys()]) if (!kept.has(id)) this.handoffDecisions.delete(id);
     this.headsChanged();
+  }
+
+  /** Hand-offs the conductor just made help with the task their head was working on (`noteTaskHandoffs`). */
+  private noteTaskHandoffs() {
+    const helped = new Set(this.tasks.tasks.flatMap((card) => card.helps ?? []).map((help) => help.handoffID));
+    let changed = false;
+    for (const record of this.conductor.records) {
+      if (helped.has(record.id)) continue;
+      const task = this.headTask.get(record.from);
+      if (!task) continue;
+      const line = record.task.split(/\r?\n/)[0] ?? record.task;
+      this.tasks.help({ handoffID: record.id, head: record.to, text: [...line].slice(0, 120).join("") }, task);
+      changed = true;
+    }
+    if (changed) this.saveTasks();
   }
 
   /** "Stop now" on the rounds line: no more hand-offs for this message. */
@@ -2202,7 +2222,7 @@ export class Bot {
     }
     // The task cards it belongs to, from its <task> lines (written before anyone hears the turn ended).
     if (status === "done") {
-      this.tasks.replied(record.id, {
+      const touched = this.tasks.replied(record.id, {
         head: this.engine,
         userMessage: turn.origin === "user" ? turn.userId : null,
         userText: turn.userId ? this.chat.find((candidate) => candidate.id === turn.userId)?.text ?? null : null,
@@ -2214,6 +2234,7 @@ export class Bot {
         asks: !!record.choices?.length,
         runningSubagents: new Set(this.subagents.running.map((subagent) => subagent.id)),
       }, parsed.tasks, toSwiftDate());
+      if (touched[0]) this.owner.headTask.set(this.engine, touched[0]);
       this.saveTasks();
     }
     this.emit({
@@ -3545,6 +3566,7 @@ export function taskView(card: TaskCard, running: Set<string>): TaskView {
     messageIds: card.messageIDs.filter((id) => /^[A-Za-z0-9_.:-]{1,64}$/.test(id)).slice(-1_000),
     updatedAt: iso(card.updatedAt),
     atWork: (card.subagentIDs ?? []).some((id) => running.has(id)),
+    ...(card.helps?.length ? { helps: card.helps.slice(-20).map((help) => ({ head: help.head, text: clip(help.text, 400) ?? "" })) } : {}),
   };
 }
 

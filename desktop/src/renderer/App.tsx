@@ -191,7 +191,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
             return hits.map((candidate) => (
               <div key={candidate.id} className="bot-entry">
                 {candidate.role === "group" ? (
-                  <GroupRow group={candidate} bots={view.bots} selected={!site && candidate.id === chat?.botId && !watching}
+                  <GroupRow group={candidate} bots={view.bots} selected={!site && candidate.id === chat?.botId && !watching} waiting={view.waiting.items.some((item) => item.groupId === candidate.id)}
                     onSelect={() => { selectBot(candidate.id); setQuery(""); focusComposer(); }} onMenu={(x, y) => setMenu({ bot: candidate, x, y })} />
                 ) : (
                   <BotRow bot={candidate} look={view.settings?.botLook ?? "original"} selected={!site && candidate.id === chat?.botId && !watching}
@@ -207,7 +207,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
                   {section === "pinned" && <h4 className="rail-section">Pinned</h4>}
                   {section === "rest" && pinned.length > 0 && <div className="rail-rule" />}
                   {candidate.role === "group" ? (
-                    <GroupRow group={candidate} bots={view.bots} selected={!site && candidate.id === chat?.botId && !watching}
+                    <GroupRow group={candidate} bots={view.bots} selected={!site && candidate.id === chat?.botId && !watching} waiting={view.waiting.items.some((item) => item.groupId === candidate.id)}
                       onSelect={() => selectBot(candidate.id)} onMenu={(x, y) => setMenu({ bot: candidate, x, y })} />
                   ) : <BotRow
                     bot={candidate}
@@ -295,6 +295,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
           status={{ key: status(bot), text: statusText(bot) }}
           results={results} teams={view.teams} watching={watching} collapsed={collapsed}
           tasks={chat?.botId === bot.id ? chat.tasks ?? [] : []} messages={chat?.botId === bot.id ? chat.messages : []}
+          summarized={chat?.botId === bot.id ? new Set([...(chat.catchUp?.ids ?? []), ...(chat.intervalSummaries ?? []).flatMap((summary) => summary.ids)]) : undefined}
           selectedTask={selectedTask} onSelectTask={selectTask}
           onJumpToTask={(messageId, taskId) => {
             const target = (document.getElementById("chat-frame") as HTMLIFrameElement | null)?.contentWindow;
@@ -379,11 +380,18 @@ function BotRow({ bot, selected, onSelect, look, waiting, onMenu, pinned, onTogg
   );
 }
 
-/** The left column's rows: the main bot, then the pinned ones in the order they were pinned, then the rest as listed (Maintainer last). */
-function railOrder(bots: BotView[], pinned: string[]): { bot: BotView; section: "main" | "pinned" | "rest" | null }[] {
-  const main = bots.filter((bot) => bot.role === "main");
-  const top = pinned.map((id) => bots.find((bot) => bot.id === id)).filter((bot): bot is BotView => !!bot);
-  const rest = bots.filter((bot) => bot.role !== "main" && !pinned.includes(bot.id));
+/**
+ * The left column's rows (1.x's RailView): the main bot and Maintainer, then the pinned ones in the order
+ * they were pinned, then the rest — groups, projects and bots together — the one with the newest line
+ * first, as in Messages (`entries`, `RailLayout.pinnedFirst`).
+ */
+export function railOrder(bots: BotView[], pinned: string[]): { bot: BotView; section: "main" | "pinned" | "rest" | null }[] {
+  const main = bots.filter((bot) => bot.role === "main" || bot.id === MAINTAINER_BOT_ID).sort((a, b) => (a.role === "main" ? -1 : b.role === "main" ? 1 : 0));
+  const top = pinned.map((id) => bots.find((bot) => bot.id === id && bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID)).filter((bot): bot is BotView => !!bot);
+  const when = (bot: BotView) => (bot.lastActivity ? Date.parse(bot.lastActivity) : -Infinity);
+  const rest = bots.map((bot, offset) => ({ bot, offset }))
+    .filter(({ bot }) => bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID && !pinned.includes(bot.id))
+    .sort((a, b) => when(b.bot) - when(a.bot) || a.offset - b.offset).map(({ bot }) => bot);
   return [
     ...main.map((bot) => ({ bot, section: null })),
     ...top.map((bot, index) => ({ bot, section: index === 0 ? "pinned" as const : null })),

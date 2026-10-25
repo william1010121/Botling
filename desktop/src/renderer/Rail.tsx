@@ -153,13 +153,13 @@ export function GroupFace({ size = 32 }: { size?: number }) {
 }
 
 /** A group in the left column: its name, then who is writing or who is in it (1.x's GroupRow). */
-export function GroupRow({ group, bots, selected, onSelect, onMenu }: { group: BotView; bots: BotView[]; selected: boolean; onSelect: () => void; onMenu: (x: number, y: number) => void }) {
+export function GroupRow({ group, bots, selected, waiting = false, onSelect, onMenu }: { group: BotView; bots: BotView[]; selected: boolean; waiting?: boolean; onSelect: () => void; onMenu: (x: number, y: number) => void }) {
   const names = (group.members ?? []).map((id) => bots.find((bot) => bot.id === id)?.name).filter((name): name is string => !!name);
   const writing = group.guest ? bots.find((bot) => bot.id === group.guest)?.name ?? null : null;
   return (
     <div className="bot-row-wrap">
       <button className={`bot-row group-row${selected ? " selected" : ""}`} data-bot={group.id} data-group="1" aria-current={selected ? "page" : undefined}
-        aria-label={`Group ${group.name}${group.unread && !selected ? `, ${group.unread} unread` : ""}`} onClick={onSelect}
+        aria-label={`Group ${group.name}${waiting ? ", waiting on you" : ""}${group.unread && !selected ? `, ${group.unread} unread` : ""}`} onClick={onSelect}
         onContextMenu={(event) => { event.preventDefault(); onMenu(event.clientX, event.clientY); }}>
         <GroupFace />
         <span className="group-text">

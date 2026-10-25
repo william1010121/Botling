@@ -64,8 +64,8 @@ test("the Plugins panel: on/off, a setting, a sealed secret, a command; a panel 
   const { app, page } = await launch({ dataDir, env: { BOTLING_MOCK_KEYCHAIN: "1", BOTLING_COMPONENT_SCAN_MS: "200" } });
   try {
     await page.setViewportSize({ width: 1120, height: 820 });
-    // Maintainer is in the left column, last.
-    await expect(page.locator(".bot-row").last()).toContainText("Maintainer");
+    // Maintainer is in the left column, right under the main bot (1.x's MaintainerRow).
+    await expect(page.locator(".bot-row").nth(1)).toContainText("Maintainer");
     await page.getByRole("button", { name: "Plugins" }).click();
     const panel = page.getByRole("dialog", { name: "Plugins" });
     const item = panel.locator('.plugin[data-plugin="panelpal"]');

@@ -98,7 +98,11 @@ describe("call-ins and bots' @ (CallIn.swift, BotMentions.swift)", () => {
     // @Shop: only Shop, as named; its question's pick goes back to it.
     await c.call({ type: "chat.send", botId: groupId, text: "@Shop /guestsay Which one?\\n<choices>\\n- Red\\n- Blue\\n</choices>" });
     const question = await until(async () => (await c.chat(groupId)).messages.find((m: any) => m.sourceId === shop && m.choices?.length));
+    // It waits on you, as Shop's, in the group (1.x's `groupID`).
+    const waiting = await until(async () => { const list = await c.call({ type: "waiting.list" }); return list.items.find((item: any) => item.groupId === groupId); });
+    expect(waiting).toEqual({ botId: shop, text: "Which one?", messageId: question.id, groupId });
     expect(await c.call({ type: "chat.choose", botId: groupId, messageId: question.id, index: 0 })).toEqual({ accepted: true });
+    await until(async () => !(await c.call({ type: "waiting.list" })).items.some((item: any) => item.groupId === groupId));
     await until(async () => (await c.chat(groupId)).messages.some((m: any) => m.sourceId === shop && m.text === "Shop here: The user picked: Red"));
     // Renamed, Shop taken out: said in the chat.
     await c.call({ type: "groups.edit", groupId, name: "Desk", members: [MAIN] });

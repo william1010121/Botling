@@ -52,6 +52,8 @@ export interface ConversationsDeps {
   members: () => Member[];
   bot: (id: string) => Bot | null;
   mainBotId: string;
+  /** A guest's line was posted: plugins' bots.onReply hear it as that bot's reply. */
+  replied?: (bot: Bot, line: ChatRecord) => void;
   /** Plugins' afterReply hooks for a bot's reply (null: none). */
   replyFilter: (bot: Bot) => ((text: string) => Promise<string>) | null;
   /** Acts on the tags in a guest's reply, as from its own chat. */
@@ -254,6 +256,8 @@ export class Conversations {
     if (line.text || line.choices || line.displays) {
       chat.post(line);
       posted = line.id;
+      // Plugins listening with bots.onReply hear it as the guest's reply (`bot.replyObserver`).
+      this.deps.replied?.(bot, line);
     }
     if (parsed.requests.length && policy.tagsAct) this.deps.handle(bot, parsed.requests);
     return posted;

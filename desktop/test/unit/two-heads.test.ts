@@ -288,6 +288,17 @@ describe("two heads in one chat", () => {
     expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).heads.answerWith).toBe("claude");
   });
 
+  it("a hand-off helps the task its head was on: the card says \"Codex helping: …\" (1.x's noteTaskHandoffs)", async () => {
+    const dir = tempDir("heads");
+    const c = await twoHeads(dir);
+    await c.call({ type: "heads.answerWith", botId: MAIN, to: "claude" });
+    await c.call({ type: "chat.send", botId: MAIN, text: `/say Profiling now.\n<task name="Faster parser" now="Profiling" next="Review"/>\n<handoff to="codex" kind="review">Check the diff\nand the tests</handoff>` });
+    const card = await until(async () => (await c.chat()).tasks?.find((task: any) => task.helps), { timeout: 10_000, what: "a card with a help line" });
+    expect(card).toMatchObject({ name: "Faster parser", helps: [{ head: "codex", text: "Check the diff" }] });
+    const saved = await until(() => (JSON.parse(readFileSync(join(dir, "main", "tasks.json"), "utf8")) as any[]).find((task) => task.helps));
+    expect(saved.helps).toMatchObject([{ head: "codex", text: "Check the diff" }]);
+  });
+
   it("your message pauses claude's handed-over work (1.x's pausing): answered first, then it carries on and the hand-back goes on", async () => {
     const dir = tempDir("heads");
     const c = await twoHeads(dir);

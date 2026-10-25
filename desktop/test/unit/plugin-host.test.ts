@@ -70,6 +70,10 @@ describe("the plugin host", () => {
     await until(async () => (await c.chat()).messages.some((m: any) => m.role === "bot" && m.text === "You said: Hi (checked)"));
     await until(async () => (await notices(c)).some((text) => text.includes("Main bot replied, 2 bots in all: main/main,DEC0DE00-0000-4000-8000-00000000DEC0/manager")));
     await until(() => existsSync(join(dir, "plugin-data", "helper", "storage.json")) && readFileSync(join(dir, "plugin-data", "helper", "storage.json"), "utf8").includes("You said: Hi (checked)"));
+    // A guest's line (called in with @) is a reply too: bots.onReply hears it as that bot's (1.x's `replyObserver`).
+    await until(async () => !(await c.chat()).running);
+    await c.call({ type: "chat.send", botId: MAIN, text: "@Maintainer hello" });
+    await until(async () => (await notices(c)).some((text) => text.startsWith("helper: Maintainer replied")), { timeout: 15_000 });
     // A second start adds the same routine once.
     expect(readFileSync(join(dir, "main", "routines.cron"), "utf8").match(/Monday backup/g)).toHaveLength(1);
   });

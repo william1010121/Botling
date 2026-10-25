@@ -147,6 +147,13 @@ export class TaskBook {
     if (from !== null) this.merge(from, first.id);
   }
 
+  /** The other head took on part of `taskId` (a hand-off): a line on its card (`help(_:on:)`). */
+  help(help: TaskHelp, taskId: string) {
+    const card = this.task(taskId);
+    if (!card || card.helps?.some((other) => other.handoffID === help.handoffID)) return;
+    card.helps = [...(card.helps ?? []), help];
+  }
+
   link(subagent: string, taskId: string) {
     const card = this.task(taskId);
     if (!card || card.subagentIDs?.includes(subagent)) return;
