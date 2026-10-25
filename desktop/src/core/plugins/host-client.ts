@@ -79,6 +79,8 @@ export class PluginHostClient {
   onRegistered: () => void = () => {};
 
   private specs: HostSpec[] = [];
+  /** The plugins the host's last load ran (not the ones that failed). */
+  private loaded = new Set<string>();
   private process: HostProcess | null = null;
   private buffer = "";
   private stderr = "";
@@ -164,9 +166,23 @@ export class PluginHostClient {
     return this.request("command", { id, args }, id.split(".")[0] ?? null, this.timing.call);
   }
 
-  /** A web part's `host.call` to its own program part. */
-  webCall(plugin: string, method: string, params: unknown): Promise<unknown> {
+  /**
+   * A web part's `host.call` to its own program part. The chat page loads web parts as soon as it
+   * opens, often before the host has started and loaded the program parts (slower on a busy
+   * computer): a call for a plugin the host is meant to run waits for that load (at most the load's
+   * own limit) instead of failing.
+   */
+  async webCall(plugin: string, method: string, params: unknown): Promise<unknown> {
+    await this.whenLoaded(plugin, this.timing.load);
     return this.request("web", { plugin, method, params }, plugin, this.timing.call);
+  }
+
+  /** Resolves once the host runs `plugin`, it is no longer meant to, or `timeout` ms went by. */
+  private async whenLoaded(plugin: string, timeout: number) {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline && !this.stopping && this.specs.some((spec) => spec.name === plugin) && !(this.running && this.loaded.has(plugin))) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
   }
 
   request(method: string, params: unknown, plugin: string | null = null, timeout = this.timing.hook): Promise<unknown> {
@@ -260,6 +276,7 @@ export class PluginHostClient {
     const blamed = new Set(this.blame.values());
     this.process = null;
     this.running = false;
+    this.loaded.clear();
     for (const id of [...this.pending.keys()]) this.finish(id, new Error("The plugin host exited."));
     if (this.stopping) return;
     const status = signal ?? code ?? "?";
@@ -339,18 +356,22 @@ export class PluginHostClient {
 
   private async load() {
     let result: unknown;
+    const asked = this.specs;
     try {
-      result = await this.request("load", { plugins: this.specs }, null, this.timing.load);
+      result = await this.request("load", { plugins: asked }, null, this.timing.load);
     } catch (error) {
       this.log(`plugin host: loading failed: ${(error as Error).message}`);
       return;
     }
     const failed = (result as { failed?: unknown })?.failed;
+    const loaded = new Set(asked.map((spec) => spec.name));
     for (const failure of Array.isArray(failed) ? failed : []) {
       const name = (failure as { name?: unknown })?.name;
       const why = (failure as { message?: unknown })?.message;
+      if (typeof name === "string") loaded.delete(name);
       if (typeof name === "string") this.onPluginFailure(name, `The program part failed to load: ${typeof why === "string" ? why.slice(0, 2_000) : ""}`, true);
     }
+    this.loaded = loaded;
     this.running = true;
     this.onRegistered();
   }

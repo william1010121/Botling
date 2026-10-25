@@ -101,6 +101,20 @@ describe("the plugin host", () => {
     await until(() => !alive(last), { timeout: 5_000 });
   });
 
+  it("a web part's call made before the host has loaded its program part waits for the load (the Phase 4a e2e flake)", async () => {
+    const dir = tempDir("plugin-host");
+    // A program part that takes 2.5 s to load, as on a busy computer; its web part calls at once.
+    hostPlugin(dir, "slow", `await new Promise((resolve) => setTimeout(resolve, 2500));
+      export function activate(ccb) { ccb.web.handle("shout", (params) => String(params.text).toUpperCase()); }`, { web: "dist/web.js" });
+    writeFileSync(join(dir, "plugins", "slow", "dist", "web.js"), "export function activate() {}");
+    const c = core(dir);
+    await until(async () => (await c.call({ type: "plugins.web" })).specs.some((spec: any) => spec.name === "slow"), { timeout: 15_000 });
+    expect((await pluginsView(c)).host.running).toBe(false);
+    expect(await c.call({ type: "plugins.call", name: "slow", method: "shout", params: { text: "hello" } })).toEqual({ result: "HELLO" });
+    // A method it does not handle still fails, at once once it is loaded.
+    await expect(c.call({ type: "plugins.call", name: "slow", method: "whisper", params: null })).rejects.toThrow(/does not handle/);
+  });
+
   it("secrets: sealed on disk, given only to the program part, never shown; bots.create and bots.send need the bots permission", async () => {
     const dir = tempDir("plugin-host");
     hostPlugin(dir, "news", `export function activate(ccb) {
