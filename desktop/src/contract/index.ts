@@ -563,6 +563,8 @@ export const SettingsView = z.strictObject({
   /** Developer mode (1.x's `developerMode`): the project that is Botling's own source gets what you flag as "not right". Phase 5a. */
   developerMode: z.boolean(),
   developerProject: BotId.nullable(),
+  /** Phase 5b (2.0 only): main looks at GitHub Releases for a newer Botling 2 (once a day; off by default). */
+  updateCheck: z.boolean(),
 });
 export type SettingsView = z.infer<typeof SettingsView>;
 /** One change on the Settings page (null: back to the default). */
@@ -591,8 +593,26 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("developerProject"), value: BotId.nullable() }),
   z.strictObject({ key: z.literal("railCollapsed"), value: z.boolean() }),
   z.strictObject({ key: z.literal("pinnedBots"), value: z.array(BotId).max(200) }),
+  z.strictObject({ key: z.literal("updateCheck"), value: z.boolean() }),
 ]);
 export type SettingsChange = z.infer<typeof SettingsChange>;
+/** A newer Botling 2 on GitHub Releases (Phase 5b): only told about and linked, never downloaded or installed. */
+export const ReleaseView = z.strictObject({
+  version: z.string().max(100), name: z.string().max(400), url: z.string().max(2_000), publishedAt: z.string().max(100).nullable(),
+  /** This platform's download on the release page, when it has one. */
+  asset: z.string().max(400).nullable(),
+});
+export type ReleaseView = z.infer<typeof ReleaseView>;
+export const UpdateView = z.strictObject({
+  current: z.string().max(100),
+  /** False: the check is off in Settings (and nothing was fetched). */
+  enabled: z.boolean(),
+  /** The newest release for this build, when it is newer than this one. */
+  newer: ReleaseView.nullable(),
+  checkedAt: z.number().nullable(),
+  error: z.string().max(2_000).nullable(),
+});
+export type UpdateView = z.infer<typeof UpdateView>;
 /** A bot's own choices (bot.json): its heads, its model and effort, its subagents' model, Codex's model. */
 export const BotSettingsView = z.strictObject({
   botId: id,
@@ -838,6 +858,10 @@ export const Command = z.discriminatedUnion("type", [
   /** The app's settings (settings.json), with every default filled in. */
   z.strictObject({ type: z.literal("settings.get") }),
   z.strictObject({ type: z.literal("settings.set"), change: SettingsChange }),
+  /** Main: look at GitHub Releases (`manual`: now, even when the check is off or was done lately). */
+  z.strictObject({ type: z.literal("updates.check"), manual: z.boolean() }),
+  /** Main: open the newer release's page in the browser (only a release page of the app's own repository). */
+  z.strictObject({ type: z.literal("updates.open") }),
   /** A bot's own choices (bot.json). */
   z.strictObject({ type: z.literal("bot.settings"), botId }),
   /** Changes a bot's model, effort, subagents' model or Codex model (null: the default); a running head keeps its own until it next wakes. */
@@ -900,10 +924,10 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open",
-  "groups.create", "groups.edit", "groups.delete",
+  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "component.report", "chat.feedback"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "component.report", "chat.feedback", "updates.check", "updates.open"]);
 
 /** A temporary team at work (1.x's `TeamRun`): its title, the task, when it started (ms since 1970). */
 export const TeamRunView = z.strictObject({ id, name: z.string().max(200), title: z.string().max(200), task: z.string().max(4_000), startedAt: z.number() });
@@ -1016,6 +1040,8 @@ export interface Results {
   "waiting.list": WaitingView;
   "waiting.ignore": WaitingView;
   "settings.set": SettingsView;
+  "updates.check": UpdateView;
+  "updates.open": { opened: boolean };
   "bot.settings": BotSettingsView;
   "bot.configure": BotSettingsView;
   "plugins.loaded": Record<string, never>;

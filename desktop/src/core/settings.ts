@@ -77,6 +77,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     pinnedBots: [...new Set(readSettingsList(raw.pinnedBots).filter((id) => /^[0-9A-Fa-f-]{36}$/.test(id)).map((id) => id.toUpperCase()))].slice(0, 200),
     developerMode: bool(raw.developerMode, false),
     developerProject: typeof raw.developerProjectID === "string" && /^[0-9A-Fa-f-]{36}$/.test(raw.developerProjectID) ? raw.developerProjectID.toUpperCase() : null,
+    updateCheck: bool(raw.updateCheckEnabled, false),
   };
 }
 
@@ -116,6 +117,7 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "railCollapsed": set("railCollapsed", change.value); break;
     // 1.x keeps the project when developer mode goes off (`setDeveloperMode(_:project:)`).
     case "developerMode": set("developerMode", change.value); break;
+    case "updateCheck": set("updateCheckEnabled", change.value); break;
     case "developerProject": if (change.value) set("developerProjectID", change.value.toUpperCase()); break;
     // 1.x keeps the list (an empty one too) once anything was pinned.
     case "pinnedBots": set("pinnedBots", [...new Set(change.value.map((id) => id.toUpperCase()))]); break;

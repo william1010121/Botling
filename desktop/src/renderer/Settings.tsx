@@ -3,20 +3,21 @@
 // which is the shown bot's own bot.json (1.x keeps those on the bot's page beside the chat). Each
 // control shows what the core saved: a change goes out, the answer (or `settings.updated`) comes back.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsView } from "../contract";
+import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsView, UpdateView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { PanelFrame, PluginsPanel } from "./Plugins";
 import { faceURL } from "./avatars";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
-type Section = "general" | "engines" | "bot" | "permissions" | "plugins" | "developer";
+type Section = "general" | "engines" | "bot" | "permissions" | "plugins" | "updates" | "developer";
 const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
   { id: "engines", title: "Engines and subagents", terms: "claude subagents model prompt cache hour codex workers config effort fast completion verification component editor" },
   { id: "bot", title: "This bot", terms: "engine heads claude codex model effort subagents" },
   { id: "permissions", title: "Reports and results", terms: "publish artifact local html results reports" },
   { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },
+  { id: "updates", title: "Updates", terms: "updates version release github check new" },
   { id: "developer", title: "Developer", terms: "developer mode source project feedback not right" },
 ];
 
@@ -72,11 +73,40 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, onClo
             {current?.id === "bot" && bot && <ThisBot client={client} bot={bot} onProblem={setProblem} />}
             {shown && current?.id === "permissions" && <Results settings={shown} change={change} />}
             {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} />}
+            {shown && current?.id === "updates" && <Updates client={client} settings={shown} change={change} />}
             {shown && current?.id === "developer" && <Developer settings={shown} change={change} bots={bots} />}
           </div>
         </section>
       </div>
     </div>
+  );
+}
+
+/** Settings → Updates (Phase 5b; main/updates.ts does the looking, read only). */
+function Updates({ client, settings, change }: { client: Client; settings: SettingsView; change: (next: SettingsChange) => void }) {
+  const [state, setState] = useState<UpdateView | null>(null);
+  const [checking, setChecking] = useState(false);
+  const check = useCallback((manual: boolean) => {
+    setChecking(manual);
+    void client.request({ type: "updates.check", manual }).then(setState, () => {}).finally(() => setChecking(false));
+  }, [client]);
+  useEffect(() => { check(false); }, [check, settings.updateCheck]);
+  const found = state?.newer;
+  const line = checking ? "Looking…"
+    : state?.error ? state.error
+    : found ? `Botling ${found.version} is available${found.asset ? ` (${found.asset})` : ""}.`
+    : state?.checkedAt ? `Botling ${state.current} is the newest (looked ${new Date(state.checkedAt).toLocaleString()}).`
+    : `This is Botling ${state?.current ?? "2"}; not looked yet.`;
+  return (
+    <Group title="Updates" note="Botling looks at the releases on GitHub (william1010121/Botling) at most every 6 hours while it runs. It never downloads or installs anything: these builds are not signed with a Developer ID, so a download cannot be verified; a newer release's page opens in your browser.">
+      <Toggle label="Check for updates" hint="GitHub Releases, read only" checked={settings.updateCheck} onChange={(value) => change({ key: "updateCheck", value })} />
+      <Row label="Status" hint={line}>
+        <span className="settings-actions">
+          <button type="button" disabled={checking} onClick={() => check(true)}>Check now</button>
+          {found && <button type="button" onClick={() => void client.request({ type: "updates.open" }).catch(() => {})}>Open release page</button>}
+        </span>
+      </Row>
+    </Group>
   );
 }
 

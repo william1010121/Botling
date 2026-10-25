@@ -3,6 +3,7 @@
 // (chat-frame/), fed with the state ChatPayload.swift would build (payload.ts). The frame posts
 // what the user does (send, a pick on an approval, Stop); this page turns that into contract
 // commands. Only this page has the bridge to main.
+import { UpdateBanner } from "./Updates";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { MAINTAINER_BOT_ID, resultLinks, type BotView, type ResultOf, type ResultView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
@@ -275,6 +276,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
             </span>
           )}
         </header>
+        <UpdateBanner client={client} enabled={view.settings?.updateCheck} />
         {bot?.problem && <div className="banner" role="alert">{bot.problem}</div>}
         {bot && chat?.heads?.rounds && (
           // The rounds line over the input box (1.x: "Review round 1 of 2 · Stop now"). The chat page

@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { isRequested as isShotRequested, withProbe } from "../core/component-shot";
 import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { scrubEnvironment } from "./packaged";
+import { FEED, Updater } from "./updates";
 import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
 import { WebPages } from "./web";
@@ -115,6 +116,38 @@ const core = new CoreClient({
 });
 
 let lastEpoch: string | null = null;
+
+/**
+ * The update check (main/updates.ts): GitHub Releases, read only, off unless Settings turns it on.
+ * Tests (unpackaged only) point it at a JSON file with BOTLING_TEST_UPDATE_FEED.
+ */
+const updatesFile = join(dataDir, "updates.json");
+const updater = new Updater({
+  current: app.getVersion(),
+  platform: process.platform,
+  arch: process.arch,
+  enabled: async () => ((await core.call({ type: "settings.get" })) as { updateCheck?: boolean }).updateCheck === true,
+  fetchFeed: async () => {
+    const test = !app.isPackaged ? process.env.BOTLING_TEST_UPDATE_FEED : undefined;
+    if (test) return JSON.parse(readFileSync(test, "utf8"));
+    const response = await net.fetch(FEED, {
+      headers: { Accept: "application/vnd.github+json", "User-Agent": `Botling/${app.getVersion()}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+  },
+  load: () => {
+    try {
+      const value = JSON.parse(readFileSync(updatesFile, "utf8"));
+      return typeof value?.checkedAt === "number" ? { checkedAt: value.checkedAt, newer: value.newer ?? null } : null;
+    } catch { return null; }
+  },
+  save: (state) => { try { writeFileSync(updatesFile, JSON.stringify(state)); } catch { /* the next check tries again */ } },
+});
+/** Tests: the release pages main opened (BOTLING_NO_EXTERNAL=1 opens nothing for real). */
+const openedReleases: string[] = [];
+(globalThis as unknown as { __botlingOpenedReleases: string[] }).__botlingOpenedReleases = openedReleases;
 
 /** The web AIs (Gemini, ChatGPT, Claude): each in its own session, no Node, no preload (main/web.ts). */
 const web = new WebPages({
@@ -381,6 +414,14 @@ async function withScreenshot(cmd: Extract<Command, { type: "chat.feedback" }>, 
 async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown> {
   switch (cmd.type) {
     case "result.open": return openResult(cmd.botId, cmd.url);
+    case "updates.check": return updater.check(cmd.manual);
+    case "updates.open": {
+      const page = updater.releasePage();
+      if (!page) throw Object.assign(new Error("There is no newer release to open."), { code: "not_found" });
+      openedReleases.push(page);
+      if (process.env.BOTLING_NO_EXTERNAL !== "1") await shell.openExternal(page);
+      return { opened: true };
+    }
     case "component.report": return reportComponent(cmd, sender);
     case "chat.feedback": return withScreenshot(cmd, sender);
     case "files.pick": return pickFiles(cmd.botId, sender);

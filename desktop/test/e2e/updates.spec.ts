@@ -1,0 +1,44 @@
+// Phase 5b: the update check in the app — off by default (nothing fetched), Settings → Updates turns it on,
+// a newer Botling 2 shows under the header and its release page opens (only noted in tests). The feed is a
+// local copy of GitHub's JSON (BOTLING_TEST_UPDATE_FEED, unpackaged builds only).
+import { expect, test } from "@playwright/test";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { desktop, tempDir } from "../helpers";
+import { launch } from "./launch";
+
+test("off by default; on, a newer release is shown and its page opened; Later hides it", async () => {
+  const base = tempDir("e2e-updates");
+  const feed = join(base, "releases.json");
+  const page_ = (tag: string) => `https://github.com/william1010121/Botling/releases/tag/${tag}`;
+  writeFileSync(feed, JSON.stringify([
+    { tag_name: "v1.19.0", name: "Botling v1.19.0", html_url: page_("v1.19.0"), draft: false, prerelease: false, assets: [] },
+    { tag_name: "v2.0.1", name: "Botling 2.0.1", html_url: page_("v2.0.1"), draft: false, prerelease: false, published_at: "2026-10-20T00:00:00Z", assets: [{ name: "Botling-2-2.0.1-mac-arm64.zip" }] },
+  ]));
+  const dataDir = join(base, "data");
+  const { app, page } = await launch({ dataDir, env: { BOTLING_TEST_UPDATE_FEED: feed } });
+  try {
+    await page.waitForTimeout(500);
+    await expect(page.locator(".update-bar")).toHaveCount(0);
+    expect(existsSync(join(dataDir, "updates.json"))).toBe(false);
+    await page.getByRole("button", { name: "Settings" }).click();
+    const sheet = page.getByRole("dialog", { name: "Settings" });
+    await sheet.getByRole("button", { name: "Updates" }).click();
+    await expect(sheet.getByText("not looked yet")).toBeVisible();
+    await sheet.getByRole("switch", { name: "Check for updates" }).click();
+    await expect(sheet.getByRole("switch", { name: "Check for updates" })).toBeChecked();
+    await expect(sheet.getByText("Botling 2.0.1 is available (Botling-2-2.0.1-mac-arm64.zip).")).toBeVisible();
+    await sheet.getByRole("button", { name: "Done" }).click();
+    const bar = page.getByRole("status", { name: "Update" });
+    await expect(bar).toContainText("Botling 2.0.1 is available.");
+    await bar.getByRole("button", { name: "Open release page" }).click();
+    await expect.poll(() => app.evaluate(() => (globalThis as any).__botlingOpenedReleases.slice())).toEqual([page_("v2.0.1")]);
+    mkdirSync(join(desktop, ".tmp", "screens"), { recursive: true });
+    await page.screenshot({ path: join(desktop, ".tmp", "screens", "phase5b-update.png") });
+    await bar.getByRole("button", { name: "Later" }).click();
+    await expect(page.locator(".update-bar")).toHaveCount(0);
+    expect(existsSync(join(dataDir, "updates.json"))).toBe(true);
+  } finally {
+    await app.close();
+  }
+});
