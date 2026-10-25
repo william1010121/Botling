@@ -15,7 +15,11 @@ Board). Phase 3b done: plugins (the library, on/off and settings, secrets sealed
 safeStorage, the existing Node plugin host as its own untrusted process with hooks, commands and
 routines, plugin panels in sandboxed frames, the import of 1.x's library), Maintainer (component and
 plugin requests, `<install>` asking first, its instructions and the component editor checked against
-the Swift strings), pausing handed-over work for your message as 1.x, and a deterministic hand-off e2e.**
+the Swift strings), pausing handed-over work for your message as 1.x, and a deterministic hand-off e2e.
+Phase 4a mostly done: the chat page on its own origin with plugins' web parts in it, attachments,
+Settings in React, and the main bot's world (Add project, `<new-project>`, the project list it wakes
+with, inbox delivery, "Waiting on you" and the right panel); the built-in browser / web chats are not
+started.**
 Not yet a replacement for the Swift app (see "Gaps vs the Swift app").
 It lives beside it: nothing under `Sources/` or `Web/` changed, and the Swift app does not use
 anything here. Web/src is *bundled from source* into the desktop's chat frame (its packages come
@@ -218,7 +222,16 @@ Formats follow Swift's `JSONEncoder` as 1.x uses it: dates are **seconds since 2
 every key it does not know as it was, and adds its own (`turnID`, `state`, `cards`, `error`), which
 1.x's decoder ignores. Message ids are UUIDs (1.x fails a whole chat.json on one bad id).
 
-### The contract (`src/contract/index.ts`, protocol version 6)
+### The contract (`src/contract/index.ts`, protocol version 8)
+
+Version 8 (Phase 4a, the main bot's world) adds: main-only `projects.pick` (main's folder picker, then
+`projects.add`, which the page may not send: it never names a path), core `projects.add`, `waiting.list`,
+`waiting.ignore`, event `waiting.updated` and the snapshot's `waiting` (`{items: [{botId, text,
+messageId}], doing: {botId: "In progress" line}}`). Version 7 (Phase 4a) added attachments (`files.pick`
+in main, `files.add`, `files.data`, `files.remove`, `attachment.file`, event `files.updated`,
+`chat.send` with files only, `chat.answer.images`), plugins' web parts for the chat page (`plugins.web`,
+`plugins.loaded`, `plugins.failed`, `plugins.notice`, `plugins.file`) and, without a version bump,
+Settings (`settings.get`, `settings.set`, `bot.settings`, `bot.configure`, event `settings.updated`).
 
 Version 6 (Phase 3b) adds: `plugins.list`, `plugins.enable`, `plugins.setting`, `plugins.secret` (a
 value goes in, never comes back), `plugins.command`, `plugins.panel` (a panel's web part and settings),
@@ -560,7 +573,7 @@ with no tools it lists no agent types (not repeated, to stay within the budget).
   checked, a short list of requests. It still runs plugins' code with the user's rights (as 1.x: "permissions
   are only declared, not sandboxed"); all program parts share one host, so a plugin could claim another's
   name in a request — the checks are about the core's internals, not about plugins from each other.
-- **Third-party web parts do not run in the chat page.** The chat page shares the app page's origin, so a
+- ~~**Third-party web parts do not run in the chat page.**~~ (Superseded in Phase 4a: the chat page has its own origin and runs them.) The chat page shares the app page's origin, so a
   plugin there could reach the app's bridge. Panels run in sandboxed frames instead; a web part's
   composer, markdown and component hooks (`ccb.composer`, `ccb.messages`, `ccb.components`) do nothing
   there. ccb-latex stays bundled. Web parts' stylesheets are not loaded.
@@ -580,6 +593,43 @@ with no tools it lists no agent types (not repeated, to stay within the budget).
 - **Afterreply hooks see the shown text** (tags already acted on) and change the line after it showed;
   1.x holds the reply back until the hook answers (2.0 streams replies as they come).
 
+## Phase 4a: what was built and how it was checked
+
+| Piece | What it does | Evidence |
+| --- | --- | --- |
+| Chat page on its own origin (`main/main.ts`, `renderer/chat-frame/`) | The chat page is served from `botling-chat://chat` (its own CSP), not the app page's origin, so nothing in it reaches the bridge; plugins' web parts run in it as in 1.x (markdown, composer and component hooks, stylesheets and fonts served by the chat origin only when a manifest names them, `host.call`, `notify`, the last version that loaded when a new one fails) | `unit/phase4a.test.ts` (specs, secrets never in them, fallback, served files), `e2e/phase4a.spec.ts` (a web part runs; `parent.document` and the bridge are blocked) |
+| Attachments (`core/attachments.ts`) | The `+` picker (main's dialog: the page never names a path), pasted and dropped files, a message with files only; kept in the bot's attachments folder with 1.x's names; listed for the head as 1.x's `(Attachments: …)`; pictures as base64 blocks to claude and `localImage` to Codex; a component's answer may bring pictures; the chat may load only files of its own lines or waiting ones | `unit/phase4a.test.ts` (5 cases), `e2e/phase4a.spec.ts` |
+| Settings (`renderer/Settings.tsx`, `core/settings.ts`) | 1.x's settings.json keys (unknown keys kept) and bot.json: language, bot look (Cute) and avatar size, summaries, subagents' model and cache, Codex workers, results, the component editor's model; per bot heads, model, effort, subagents' and Codex's model, given to new heads | `unit/phase4a.test.ts` (2 cases), `e2e/phase4a.spec.ts` |
+| Projects (`core/projects.ts`, `server.ts`) | Workspace.swift's `addProject` (a projects.json row in 1.x's format, `.bot/` with its `.gitignore`, the next free shape, placed before Maintainer; a folder that is a project already gives that project) and `proposeProjects` for `<new-project>`: `/*` and `/**` (outermost folders with a project marker, 5 deep, build folders skipped), one "Add as project?" card (1.x's words), missing, too-broad (`/`, home, Botling's own folder) and existing folders said; Add makes them and hands each its task; the left column's **Add project** opens main's folder picker | `unit/projects.test.ts` (helpers; add, order, restart; the card, Add and Don't add), `e2e/phase4a.spec.ts` (Add project, picking the same folder again) |
+| The main bot's wake note and inboxes | The main bot wakes (and routines start) with 1.x's project list: each project's and bot's memory and inbox file and an open question in its chat; its claude head gets every bot's `.bot/` as `--add-dir`; after each of its replies what it wrote into an `inbox.md` goes to that bot as handed-over work and the file is emptied | `unit/projects.test.ts` (the exact list in the wake message, delivery, `--add-dir` only for the main bot), `unit/head.test.ts`, `unit/routines-core.test.ts` |
+| What waits on you, the right panel (`renderer/RightPanel.tsx`) | 1.x's `refreshWaiting`: each bot's latest open question, else its memory's "Waiting on you"; the main bot's questions; ignoring as 1.x (settings.json `ignoredWaiting`, the last 200). Looked at again after chat changes and every 5 s (memory files). The right panel: the bot, its Now card (a manager's first "In progress" line), and for the main bot "Waiting on you" (opens that chat; × ignores); an orange dot on bots with something waiting | `unit/projects.test.ts`, `e2e/phase4a.spec.ts`, screenshot `waiting-on-you.png` (looked at) |
+
+Tests: unit 262 (vitest), e2e 31 (Playwright/Electron), typecheck, all green (the full e2e suite three
+times in a row after the fix below); no helper process left after a run.
+
+E2e flake found and fixed on the test side: in about one full run in two, a message typed right after
+the window opened never left — Playwright's `fill` landed in the input box and was gone again before
+Return (seen in Phase 4a's earlier commit too, so not new). The chat frame now marks the chat it shows
+(`<html data-chat>`), `launch()` waits for it, and `say()` fills again until the box holds the words.
+Why the words go (the page taking its first states while CodeMirror reads the typed text) is not
+pinned down; whether a person typing in the first second can lose words is unverified.
+
+### Decisions (Phase 4a)
+
+- **Plugins' web parts run in the chat page again** (as 1.x), now that the page has an origin of its
+  own; the Phase 3b decision (panels only) is superseded. The chat origin serves a plugin's files only
+  when its manifest names them.
+- **Settings keep 1.x's keys** in settings.json and bot.json; settings 2.0 cannot act on yet
+  (completion verification, reminders) are kept and shown, not used. The contract stayed at v7 for them.
+- **A project is added only by you**: the page cannot name a folder (`projects.add` is not a renderer
+  command); "Add project" goes through main's picker, `<new-project>` through a card you answer.
+- **An inbox is emptied only after its bot took the text** (1.x empties it first): a bot that cannot
+  take it now (read-only, locked) keeps it for the next reply.
+- **2.0 has no teams or web AIs**, so the project list leaves out their lines and the
+  `<open-question>` note; the briefing is otherwise 1.x's string.
+- **The right panel is always shown** beside the chat (hidden below 860 px); 1.x's collapsed strip
+  and its Results / Settled sections are not built.
+
 ## Gaps vs the Swift app (1.x)
 
 Not in 2.0 yet, roughly in order of how much they matter:
@@ -593,37 +643,35 @@ Not in 2.0 yet, roughly in order of how much they matter:
   (a notice says it cannot).
 - **Subagents**: rows in the left column and the right panel's list, SendMessage resumes, background
   commands/Monitors (`backgroundTasks` chips), the interrupted-work note on wake, token speed.
-- **Prompts**: the main bot's wake note (project list, inboxes, teams) and the component list are
-  not attached (2.0 has neither); inbox delivery; the handoff/resume prompts are ported but unused
-  (no model switch yet). Codex-only prompts are not ported.
-- **Requests**: teams, new bots/projects, `<need-folder>`, component specs and suggestions, open
+- **Prompts**: the main bot's wake note has no teams or web AIs (2.0 has neither); the handoff/resume
+  prompts are ported but unused (no model switch yet). Codex-only prompts are not ported.
+- **Requests**: teams, new bots (projects: done in Phase 4a), `<open-question>`, `<need-folder>`, component specs and suggestions, open
   questions, @ call-ins (a notice says so). (Components, plugins and installs: done in Phase 3b.)
 - The right panel's Tasks list (chips only), group chats, feedback relays, completion verification
   (`<end>/<block>` are parsed, not judged); claude's own scheduling tools (CronCreate, ScheduleWakeup)
   as background-task chips; 1.x's Settings → Routines page (2.0 has the header's small panel; the
   `addRoutine` UI for a new daily job is missing); Catch-up on window focus (only on opening a chat).
-- **The main bot's world**: its project list and inboxes in the wake note, inbox delivery, teams.
+- **The main bot's world, still missing**: teams, making bots of their own ("New bot"), removing a
+  project or bot, pinning bots, group chats, the right panel's Results and Settled, its collapsed
+  strip, the Dock count.
 - **Components and plugins, still missing**: component specs ("Make into component"), reports, revert and
   version history, the `/` component menu, "Show in all bots" floats (each chat floats its own), "making
-  it live" (a Board command handed to Maintainer), SF Symbol icons (emoji icons work), pictures sent
-  back with a component's answer (`ccb.pickImage` works, the pictures are not kept yet: no attachments),
-  `ccb.open` of pages (pictures open in the page's lightbox); third-party web parts in the chat page
-  (composer, markdown and component hooks; only panels run, sandboxed), web parts' styles and fonts,
+  it live" (a Board command handed to Maintainer), SF Symbol icons (emoji icons work),
+  `ccb.open` of pages (pictures open in the page's lightbox),
   the plugin library's revert/remove and version history in the app, installs from npm or archives,
   `claude plugin validate` before a Claude part is used, plugins' MCP tools on the allowed list,
   browser tools (no browser yet), the component editor's model setting (sonnet unless settings.json
   says), Maintainer reading other folders, component shots, the Codex Maintainer's editor role, and a
   packaged build's Node for the plugin host (development uses Electron run as Node).
-- **Composer**: attachments (`+` does nothing; dropped files are ignored), drafts across restarts,
-  @ mentions. (Steering, replies to a message and reactions are in.)
-- **Main bot's project list and inbox** in its wake note and routines, inbox delivery.
-- **Settings** (heads, model, effort, auto mode, language — the page is in English; `settings.json`
-  is imported and kept), spending and rate limits, Doctor.
+- **Composer**: drafts across restarts, @ mentions; words typed in the first second after the window
+  opens may be lost (an e2e race, see Phase 4a). (Attachments, steering, replies to a message and
+  reactions are in.)
+- **Settings**: auto mode, spending and rate limits, Doctor; the React chrome's own words are English
+  (the chat page follows the language setting).
 - **Packaging and updates** (electron-builder, fuses, signing, notarization, an updater).
 - **Windows** (nothing has run there; see spike 4).
-- **Browser / web AIs, community share, release planner, screenshots of components.**
-- Attachment pictures from imported chats do not load (the chat page's CSP has no `file:`; a
-  protocol that serves only attachment folders is the plan).
+- **Browser / web AIs** (Phase 4a item 5, not started), community share, release planner, screenshots
+  of components.
 
 ## Decisions made in Phase 0 (and why)
 
@@ -659,7 +707,15 @@ Not in 2.0 yet, roughly in order of how much they matter:
   script). Since Phase 1b the chat itself is Web/src's page with its own chat.css; the React
   chrome's colours (`src/renderer/styles.css`) are Theme.swift's.
 
-## What's next (proposed, after Phase 3b)
+## What's next (proposed, after Phase 4a)
+
+1. **Built-in browser / web chats** (1.x's web AIs, Phase 4a's last item) in account partitions
+   (spike 3's sessions), and the main bot's `webBriefing`.
+2. **Teams and bots of their own** ("New bot", `<team>`, removing), the right panel's Results and
+   Settled, subagent rows in the left column.
+3. **Maintainer, rest** and **packaging / Windows** as below.
+
+## What was next after Phase 3b (kept for reference)
 
 1. **Settings UI** (React) on the contract that exists: plugins (move the rail panel there), language,
    models/effort, auto mode, Catch-up, routines, heads, permissions; the component editor's model.
@@ -757,11 +813,16 @@ page; `bots.send` needs the `bots` permission; secrets sealed by safeStorage and
 import; Maintainer always present with a Claude head; installs only from folders and git URLs for now;
 a new bot starts with the built-in components only (as 1.x).
 
+Decided by the agent in Phase 4a (the user was away; each can be changed): plugins' web parts run in the
+chat page on its own origin; a project is added only through main's picker or a card you answer; an
+inbox is emptied only once its bot took the text; the right panel is always shown (no collapsed strip);
+the project list leaves out teams and web AIs.
+
 Still open:
 - One real `claude` call to confirm the approval round trip, and one as a real bot (tools on) to
   see the app prompt's choices/task lines from real claude.
 - Is a 15 s tidy on quit acceptable (1.x waits for it), or should quitting skip it?
 - A Windows 11 machine or VM for spike 4.
-- Plugins' web parts in the chat itself (composer and markdown hooks) need the chat page on an origin
-  of its own (no path to the app's bridge); worth doing before third-party web parts are allowed there.
+- ~~Plugins' web parts in the chat itself (composer and markdown hooks) need the chat page on an origin
+  of its own (no path to the app's bridge); worth doing before third-party web parts are allowed there.~~ (Done in Phase 4a.)
 - Should `bots.send` without the `bots` permission stay refused (2.0) or be allowed (1.x)?
