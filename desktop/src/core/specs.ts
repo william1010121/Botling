@@ -87,6 +87,34 @@ export function newSpec(o: { messageID?: string; name: string; folder: string; b
   };
 }
 
+/** A spec as specs.json has it (1.x's decoder: a spec it cannot read drops the whole file; 2.0 drops only that one). */
+export function readSpec(value: unknown): ComponentSpec | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const spec = value as Partial<ComponentSpec>;
+  if (typeof spec.id !== "string" || typeof spec.name !== "string" || typeof spec.folder !== "string" || typeof spec.createdAt !== "number") return null;
+  const list = <T>(entries: unknown, keep: (entry: unknown) => entry is T): T[] => (Array.isArray(entries) ? entries.filter(keep) : []);
+  return {
+    ...(value as ComponentSpec),
+    id: spec.id.toUpperCase(),
+    about: typeof spec.about === "string" ? spec.about : "",
+    fields: list(spec.fields, (entry): entry is SpecField => !!entry && typeof (entry as SpecField).name === "string" && typeof (entry as SpecField).type === "string"),
+    refresh: spec.refresh === "shown" || spec.refresh === "interval" ? spec.refresh : "manual",
+    minutes: typeof spec.minutes === "number" ? spec.minutes : DEFAULT_MINUTES,
+    bots: list(spec.bots, (entry): entry is string => typeof entry === "string"),
+    reuse: spec.reuse === true,
+    samples: list(spec.samples, (entry): entry is SpecSample => !!entry && typeof (entry as SpecSample).label === "string" && typeof (entry as SpecSample).data === "string")
+      .map((entry) => ({ ...entry, kind: entry.kind === "testRun" || entry.kind === "reply" || entry.kind === "page" ? entry.kind : entry.kind === undefined ? (Object.entries(LABEL).find(([, label]) => label === entry.label)?.[0] as SampleKind | undefined) ?? null : null })),
+    questions: list(spec.questions, (entry): entry is SpecQuestion => !!entry && typeof (entry as SpecQuestion).id === "string" && typeof (entry as SpecQuestion).text === "string" && Array.isArray((entry as SpecQuestion).options)),
+    conversation: list(spec.conversation, (entry): entry is SpecLine => !!entry && typeof (entry as SpecLine).text === "string" && ["user", "maintainer", "event"].includes((entry as SpecLine).kind)),
+    origins: spec.origins && typeof spec.origins === "object" ? spec.origins : {},
+    status: spec.status === "building" || spec.status === "done" ? spec.status : "draft",
+    draft: typeof spec.draft === "number" ? spec.draft : 1,
+    opened: spec.opened === true,
+    asked: spec.asked === true,
+    pendingEdits: list(spec.pendingEdits, (entry): entry is string => typeof entry === "string"),
+  };
+}
+
 /** Its test runs' card key (`card`), apart from chat cards and pins. */
 export const specCard = (spec: ComponentSpec) => `spec/${spec.id}`;
 /** The version a change now makes (`nextVersion`). */
@@ -111,6 +139,9 @@ function stable(value: unknown): string {
   }
   return JSON.stringify(value) ?? "undefined";
 }
+
+/** Swift's `isNewline` characters, as a split pattern. */
+export const LINE_BREAKS = /[\n\r\u2028\u2029\u0085\u000b\u000c]+/;
 
 /** `clip`: at most `limit` characters, the last one "…". */
 export const clip = (text: string, limit: number) => (characterCount(text) > limit ? `${characterPrefix(text, limit - 1)}…` : text);
@@ -639,6 +670,6 @@ export function filledData(answer: string, name: string): { data: string } | { p
   const shown = parsed.displays.find((display) => display.name === name) ?? parsed.displays[0];
   const data = shown?.data.trim();
   if (data && data !== "null") return { data };
-  const said = parsed.body.split(/[\n\r\u2028\u2029\u0085\u000b\u000c]+/).find((line) => line.length > 0) ?? "";
+  const said = parsed.body.split(LINE_BREAKS).find((line) => line.length > 0) ?? "";
   return { problem: said ? clip(said, 200) : "it answered without the component" };
 }

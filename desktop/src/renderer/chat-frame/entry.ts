@@ -155,6 +155,8 @@ window.addEventListener("message", (event: MessageEvent) => {
     typeStrayKey(message);
   } else if (message.botling === "focus") {
     window.ccb.focus();
+  } else if (message.botling === "spec") {
+    window.ccb.setSpec(message.spec);
   } else if (message.botling === "jumpToTask") {
     window.ccb.jumpToTask(message.messageID, message.taskID);
   } else if (message.botling === "detailReply") {

@@ -207,6 +207,23 @@ export const PinChoiceView = z.strictObject({ name: z.string().max(200), command
 export type PinChoiceView = z.infer<typeof PinChoiceView>;
 
 export const MessageState = z.enum(["streaming", "done", "stopped", "failed"]);
+/** A component made from a reply, under it (`ChatPayload.SpecChip`, Phase 5a): a chip while a suggestion or building, then the component itself. */
+export const SpecChipView = z.strictObject({
+  id,
+  name: z.string().max(200),
+  status: z.enum(["draft", "building", "done"]),
+  /** A bot suggested it; nothing has run or been built. */
+  suggested: z.boolean(),
+  /** It shows in the right panel now. */
+  open: z.boolean(),
+  /** The library component it became, drawn under the reply. */
+  component: z.string().max(200).nullable(),
+  display: DisplayView.nullable(),
+  /** The bot that wrote the reply is drawing it now (its name). */
+  filling: z.string().max(200).nullable(),
+});
+export type SpecChipView = z.infer<typeof SpecChipView>;
+
 export const MessageView = z.strictObject({
   id,
   role: z.enum(["user", "bot", "divider", "error", "relay", "notice"]),
@@ -241,8 +258,71 @@ export const MessageView = z.strictObject({
   displays: z.array(DisplayView).max(20).optional(),
   /** The bot that said it, when it is not this chat's own (a bot called in with @, a group's member; 1.x's `sourceID`). */
   sourceId: BotId.optional(),
+  /** Component specs made from it (Phase 5a). */
+  specs: z.array(SpecChipView).max(20).optional(),
+  /** The library component this reply already is ("Add to another bot…"). */
+  component: z.string().max(200).optional(),
+  /** A "not right" report to the developer project: shown short (1.x's `FeedbackNote`). */
+  feedback: z.strictObject({ about: z.string().max(400), words: z.string().max(20_000) }).optional(),
 });
 export type MessageView = z.infer<typeof MessageView>;
+
+const SpecOriginView = z.enum(["user", "maintainer", "app"]);
+/** The spec workspace in the right panel (1.x's `SpecPayload`; Web/src's `SpecState`). */
+export const SpecStateView = z.strictObject({
+  id,
+  name: z.string().max(200),
+  about: z.string().max(20_000),
+  status: z.enum(["draft", "building", "done"]),
+  draft: z.number().int(),
+  chat: z.string().max(400),
+  from: z.string().max(400),
+  suggestedBy: z.string().max(400).nullable(),
+  existing: z.string().max(200).nullable(),
+  fields: z.array(z.strictObject({ name: z.string().max(400), type: z.string().max(400), by: SpecOriginView })).max(200),
+  command: z.string().max(20_000).nullable(),
+  folder: z.string().max(4_000),
+  refresh: z.enum(["shown", "interval", "manual"]),
+  minutes: z.number().int(),
+  bots: z.array(z.strictObject({ name: z.string().max(200), on: z.boolean() })).max(500),
+  similar: z.string().max(200).nullable(),
+  similarAbout: z.string().max(4_000).nullable(),
+  reuse: z.boolean(),
+  samples: z.array(z.strictObject({ label: z.string().max(400), kind: z.enum(["testRun", "reply", "page"]).nullable(), data: z.string().max(1_100_000) })).max(50),
+  preferredSample: z.number().int().nullable(),
+  questions: z.array(z.strictObject({ id: z.string().max(200), text: z.string().max(4_000), options: z.array(z.strictObject({ label: z.string().max(400) })).max(20), suggested: z.number().int().nullable() })).max(20),
+  conversation: z.array(z.strictObject({ kind: z.enum(["user", "maintainer", "event"]), text: z.string().max(40_000), images: z.array(z.string().max(4_000)).max(20).optional() })).max(500),
+  origins: z.record(z.string().max(40), SpecOriginView),
+  preview: z.string().max(200).nullable(),
+  components: z.record(z.string().max(200), ComponentInfoView),
+  testRun: z.strictObject({
+    status: z.enum(["approve", "idle", "running", "done", "failed", "empty"]), command: z.string().max(20_000), folder: z.string().max(4_000),
+    output: z.string().max(1_100_000).nullable(), error: z.string().max(10_000).nullable(), ranAt: z.string().max(100).nullable(), matches: z.boolean().nullable(),
+  }).nullable(),
+  steps: z.array(z.strictObject({ label: z.string().max(400), state: z.enum(["done", "doing", "todo", "failed"]) })).max(10).nullable(),
+  version: z.number().int().nullable(),
+  change: z.strictObject({
+    state: z.enum(["working", "asking", "updated", "failed"]), version: z.number().int(), startedAt: z.number(), endedAt: z.number().nullable(),
+    error: z.string().max(2_000).nullable(), request: z.string().max(200).nullable(),
+  }).nullable(),
+  queued: z.array(z.string().max(20_000)).max(50),
+  wide: z.boolean(),
+});
+export type SpecStateView = z.infer<typeof SpecStateView>;
+
+/** What the spec panel and a reply's chips ask (`Workspace+Specs`); the spec is found by its id. */
+export const SpecAction = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("press") }),
+  z.strictObject({ kind: z.literal("open") }),
+  z.strictObject({ kind: z.literal("edit"), key: z.string().max(40), value: z.string().max(20_000) }),
+  z.strictObject({ kind: z.literal("answer"), question: z.string().max(200), option: z.number().int().nonnegative().max(19) }),
+  z.strictObject({ kind: z.literal("say"), text: z.string().max(20_000), request: z.string().max(200).optional() }),
+  z.strictObject({ kind: z.literal("testRun"), command: z.string().max(20_000), folder: z.string().max(4_000), approve: z.boolean().optional() }),
+  z.strictObject({ kind: z.literal("command"), command: z.string().max(20_000), folder: z.string().max(4_000), detail: z.string().max(20_000).optional(), approve: z.boolean().optional(), force: z.boolean().optional() }),
+  z.strictObject({ kind: z.literal("build") }),
+  z.strictObject({ kind: z.literal("cancel") }),
+]);
+export type SpecAction = z.infer<typeof SpecAction>;
 
 /** A subagent's row under its bot in the left column, or in the right panel's "Settled" (1.x's `Subagent`). Times are ms since 1970. */
 export const SubagentRowView = z.strictObject({
@@ -686,6 +766,13 @@ export const Command = z.discriminatedUnion("type", [
     images: z.array(z.strictObject({ name: z.string().min(1).max(255), base64: z.string().min(1).max(FILE_DATA_LIMIT) })).max(10),
     rect: z.strictObject({ x: z.number(), y: z.number(), width: z.number().positive().max(10_000), height: z.number().positive().max(10_000) }).nullable(),
     problem: z.boolean(), pinId: id.optional(), screenshot: z.string().max(FILE_DATA_LIMIT).optional() }),
+  /** "Make into component" on a reply (1.x's `makeComponent`): Maintainer builds the first version now. */
+  z.strictObject({ type: z.literal("spec.make"), botId, messageId: id, purpose: z.string().max(4_000).optional() }),
+  /** Something done with a spec (its chip, its panel); the spec is found by its id. */
+  z.strictObject({ type: z.literal("spec.act"), specId: id, action: SpecAction }),
+  /** The spec panel folds back to the chip (`closeSpec`), or is made wide (`setSpecPanelWide`). */
+  z.strictObject({ type: z.literal("spec.close") }),
+  z.strictObject({ type: z.literal("spec.wide"), wide: z.boolean() }),
   /** Puts back a component's version from before its last change (git; 1.x's `revert`). */
   z.strictObject({ type: z.literal("component.revert"), name: z.string().min(1).max(200) }),
   /** Pins a line's component (`messageId`+`index`) or one from the picker (`name`). `id` is the page's. */
@@ -789,7 +876,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.react", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "catchup.retry", "catchup.interval",
-  "component.command", "component.detail", "component.save", "component.report", "component.revert", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
+  "component.command", "component.detail", "component.save", "component.report", "component.revert", "spec.make", "spec.act", "spec.close", "spec.wide", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore",
@@ -852,7 +939,7 @@ export interface ChatSnapshot {
 }
 
 export interface Results {
-  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView; waiting?: WaitingView; web?: WebStateView; teams?: TeamRunView[] };
+  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView; waiting?: WaitingView; web?: WebStateView; teams?: TeamRunView[]; spec?: SpecStateView | null };
   "subagent.settle": { changed: boolean };
   "bots.create": { botId: string; created: boolean };
   "groups.create": { groupId: string };
@@ -884,6 +971,10 @@ export interface Results {
   "component.save": { saved: boolean };
   "component.report": { sent: boolean };
   "component.revert": { reverted: boolean; problem: string | null };
+  "spec.make": { specId: string | null };
+  "spec.act": { accepted: boolean };
+  "spec.close": Record<string, never>;
+  "spec.wide": Record<string, never>;
   "pin.add": { pinned: boolean };
   "pin.change": { changed: boolean };
   "pin.arrange": { changed: boolean };
@@ -974,6 +1065,8 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("settings.updated"), settings: SettingsView }),
   /** What waits on you across the bots (or a manager's "In progress") changed. */
   z.strictObject({ type: z.literal("waiting.updated"), waiting: WaitingView }),
+  /** The open spec changed, opened or closed (Phase 5a). */
+  z.strictObject({ type: z.literal("spec.updated"), spec: SpecStateView.nullable() }),
   /** The files waiting in a bot's input box changed. */
   z.strictObject({ type: z.literal("files.updated"), botId, files: z.array(PendingFileView).max(50) }),
   /** Its routines changed (one ran, the bot or the app edited them). */

@@ -54,9 +54,10 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePathOf } from "node:path";
 import { fileURLToPath } from "node:url";
 import { answerLabel, attachmentList, attachmentsFolder, imageMediaType, keep } from "./attachments";
+import { readSpec, sameSpec, type ComponentSpec } from "./specs";
 import {
   ContractError, type RoutineView, type BotView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
-  type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks,
+  type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks, type SpecChipView,
 } from "../contract";
 import { ClaudeHead, type HeadConfig, type HeadExit } from "./agent/head";
 import { CodexHead, type CodexHeadConfig, type CodexItem } from "./agent/codex";
@@ -173,6 +174,10 @@ export interface BotOptions {
   guest?: () => string | null;
   /** What its row shows beyond its own (a group's chat: the group and its members). */
   viewExtras?: () => Partial<BotView>;
+  /** What a line shows besides itself: the specs made from it, the component it already is (Phase 5a). */
+  lineExtras?: (bot: Bot, record: ChatRecord) => { specs?: SpecChipView[]; component?: string };
+  /** Its specs changed (the spec panel follows). */
+  specsChanged?: (bot: Bot) => void;
   /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
   launch?: () => { subagentHourCache: boolean };
 }
@@ -250,6 +255,8 @@ export class Bot {
   readonly store: BotStore;
   readonly tasks: TaskBook;
   readonly subagents: SubagentBook;
+  /** Components being made from its replies (specs.json, 1.x's format; the primary's). */
+  private specList: ComponentSpec[] = [];
   /** The task each head last replied on (`headTask`): hand-offs it makes help that task. */
   private headTask = new Map<Engine, string>();
   private records: ChatRecord[] = [];
@@ -354,6 +361,7 @@ export class Bot {
     this.subagents = new SubagentBook(this.readList("subagents.json", readSubagent));
     if (!primary) {
       this.pins = this.readList("pins.json", readPin);
+      this.specList = this.readList("specs.json", readSpec);
       const list = this.store.loadSettings().components;
       this.componentList = Array.isArray(list) ? list.filter((name): name is string => typeof name === "string") : null;
     }
@@ -484,7 +492,7 @@ export class Bot {
     }
   }
 
-  private readList<T>(name: "tasks.json" | "subagents.json" | "pins.json", read: (value: unknown) => T | null): T[] {
+  private readList<T>(name: "tasks.json" | "subagents.json" | "pins.json" | "specs.json", read: (value: unknown) => T | null): T[] {
     try {
       return this.store.loadList(name).map(read).filter((value): value is T => value !== null);
     } catch (error) {
@@ -564,7 +572,41 @@ export class Bot {
   private messageView(record: ChatRecord): MessageView {
     const partner = this.partner;
     const lookup = partner ? { get: (id: string) => this.subagents.get(id) ?? partner.subagents.get(id) } : this.subagents;
-    return messageView(record, this.approvals.get(record.id) ?? partner?.approvals.get(record.id), lookup, this.owner.displayViews(record));
+    const view = messageView(record, this.approvals.get(record.id) ?? partner?.approvals.get(record.id), lookup, this.owner.displayViews(record));
+    // Specs made from it and the component it already is (Phase 5a), from the spec desk.
+    const extras = this.owner.options.lineExtras?.(this.owner, record);
+    if (extras?.specs?.length) view.specs = extras.specs;
+    if (extras?.component) view.component = extras.component;
+    return view;
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // Component specs (1.x's `specs`, `editSpecs`)
+
+  /** The specs made from its replies. */
+  get specs(): readonly ComponentSpec[] {
+    return this.owner.specList;
+  }
+
+  /** Changes its specs and saves them, if anything changed (`editSpecs`); the lines they belong to are drawn again. */
+  editSpecs(change: (specs: ComponentSpec[]) => void): boolean {
+    const owner = this.owner;
+    const edited = structuredClone(owner.specList);
+    change(edited);
+    if (sameSpec(edited, owner.specList)) return false;
+    const touched = new Set([...owner.specList, ...edited].flatMap((spec) => (spec.messageID ? [spec.messageID] : [])));
+    owner.specList = edited;
+    if (!owner.readOnly) owner.store.saveList("specs.json", edited);
+    for (const id of touched) owner.refreshLine(id);
+    owner.options.specsChanged?.(owner);
+    return true;
+  }
+
+  /** A line is drawn again (its chips changed). */
+  refreshLine(messageId: string) {
+    const owner = this.owner;
+    const record = owner.records.find((candidate) => candidate.id === messageId);
+    if (record) owner.emit({ type: "message.updated", botId: owner.id, message: owner.messageView(record) });
   }
 
   /** A new line; `archive: false` for a reply still being written (it is archived when it ends). */

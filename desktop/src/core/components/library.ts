@@ -189,6 +189,9 @@ export class ComponentLibrary {
   // ------------------------------------------------------------------------------------------
   // Changing (Maintainer's work, git history)
 
+  /** How many times its template changed since the app started (`versions[name]`). */
+  versionOf(name: string): number { return this.versions.get(name) ?? 0; }
+
   /** Maintainer was asked to change `name`: shown as being worked on (`markWorking`). */
   markWorking(name: string, change: string) {
     const safe = safeName(name);

@@ -2,7 +2,7 @@
 // each other with postMessage. Both are the app's own code on the same origin; each side still
 // checks who sent a message (`event.source`) and its origin, so a card frame inside the chat frame
 // cannot pass for either.
-import type { ChatState } from "../../../../Web/src/types";
+import type { ChatState, SpecState } from "../../../../Web/src/types";
 import type { Command, WebPluginSpecView } from "../../contract";
 import type { FrameExtras } from "../payload";
 
@@ -42,4 +42,6 @@ export type ShellMessage =
   /** The cursor back in the input box (after the left column's search; `ccb.focus`). */
   | { botling: "focus" }
   /** "Jump to chat" on a task's card in the right panel (`ccb.jumpToTask`). */
-  | { botling: "jumpToTask"; messageID: string; taskID: string };
+  | { botling: "jumpToTask"; messageID: string; taskID: string }
+  /** The spec panel's page (`chat.html?spec=1`): the open spec (`ccb.setSpec`). */
+  | { botling: "spec"; spec: SpecState };

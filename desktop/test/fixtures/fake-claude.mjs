@@ -269,6 +269,13 @@ async function turn(job) {
     result(text);
     return;
   }
+  // A component made from its reply, to draw (Phase 5a's fill request): <show> with the data FAKE_CLAUDE_FILL names (else {"filled":true}).
+  const fill = /^\(App: Draw the component "([^"]+)" for your reply/.exec(prompt);
+  if (fill) {
+    const text = await stream(process.env.FAKE_CLAUDE_FILL === "refuse" ? "That reply does not fit this component." : `<show name="${fill[1]}">${process.env.FAKE_CLAUDE_FILL ?? '{"filled":true}'}</show>`);
+    result(text);
+    return;
+  }
   // Work the app hands over (Maintainer's jobs): taken on, never echoed (an echo would repeat the job's tags).
   if (prompt.includes("(From the main bot) ")) {
     const text = await stream("On it.");

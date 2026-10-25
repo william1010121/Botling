@@ -97,11 +97,12 @@ describe("reply tags", () => {
 
   it("requests 2.0 cannot act on are taken out of the reply and a notice says so", async () => {
     const c = core(tempDir("tags"));
-    // (Teams, new bots and <open-question> are done since Phase 4b, <need-folder> since 4c; <suggest-component> is still not.)
-    const { event } = await turn(c, "/say Asked for it.\n<suggest-component name=\"weather\">a card</suggest-component>");
+    // (Teams, new bots and <open-question> are done since Phase 4b, <need-folder> since 4c, <suggest-component> since 5a;
+    // the developer project's <app-screenshot/> is still not.)
+    const { event } = await turn(c, "/say Asked for it.\n<app-screenshot/>");
     expect(event.text).toBe("Asked for it.");
     const chat = await c.chat();
-    expect(chat.messages.at(-1)).toMatchObject({ role: "notice", text: 'Botling 2.0 cannot do this yet, so nothing happened: making a component ("weather").' });
+    expect(chat.messages.at(-1)).toMatchObject({ role: "notice", text: "Botling 2.0 cannot do this yet, so nothing happened: a screenshot of the app." });
   });
 
   it("a reaction-only reply shows no line and puts the bot's reaction on the line it names; the user can react too", async () => {

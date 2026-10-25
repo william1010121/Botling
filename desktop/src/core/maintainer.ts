@@ -524,7 +524,7 @@ export class MaintainerDesk {
     return true;
   }
 
-  private giveComponent(name: string, bot: Bot): boolean {
+  giveComponent(name: string, bot: Bot): boolean {
     const list = bot.components;
     if (!list || !this.deps.library.names.includes(name)) return false;
     const own = bot.ownComponentNames;
@@ -632,7 +632,7 @@ export class MaintainerDesk {
   }
 
   /** The bot a tag names (`componentHolder(named:)`). */
-  private holder(name: string): Bot | null {
+  holder(name: string): Bot | null {
     const wanted = name.trim().toLowerCase();
     const main = this.deps.mainBot();
     if (wanted === "main bot" || wanted === main.profile.name.toLowerCase()) return main;

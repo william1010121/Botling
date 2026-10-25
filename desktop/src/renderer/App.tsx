@@ -16,6 +16,7 @@ import { RightPanel, RightToggle } from "./RightPanel";
 import { BotMenu, DeleteGroupDialog, GroupFace, GroupForm, GroupRow, NewBotForm, RemoveDialog, SubagentRows, useMinuteClock } from "./Rail";
 import { Icon } from "./icons";
 import { WebPane, WebPanel, WebRail } from "./Web";
+import { SpecFrame } from "./SpecFrame";
 
 export function App({ client, store }: { client: Client; store: WorkspaceStore }) {
   const view = useSyncExternalStore(store.subscribe, store.getView);
@@ -75,6 +76,8 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
   }, [toggleRight, toggleRail, startSearch]);
   const chat = view.chat;
   const results = useMemo<ResultView[]>(() => (chat ? resultLinks(chat.messages) : []), [chat]);
+  // The spec open in the right panel, when it is made from a line of the chat on screen.
+  const openSpec = view.spec && chat?.messages.some((message) => message.specs?.some((chip) => chip.id === view.spec!.id)) ? view.spec : null;
   const watching = view.subagent?.id ?? null;
   const bot = useMemo(() => view.bots.find((candidate) => candidate.id === chat?.botId) ?? null, [view.bots, chat?.botId]);
 
@@ -289,7 +292,9 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
         <WebPanel site={site} onOpen={(conversationId) => openWeb(site.id, conversationId)} onAsk={(conversationId) => askMainBot(site.id, conversationId)}
           onNew={() => void client.request({ type: "web.new", site: site.id }).catch(fail)} />
       )}
-      {bot && !site && (
+      {/* The open component spec takes the right panel's place, while its chat is shown (1.x's `openSpec(in:)`). */}
+      {bot && !site && openSpec && <SpecFrame client={client} spec={openSpec} lang={view.settings?.effectiveLanguage ?? null} onError={fail} />}
+      {bot && !site && !openSpec && (
         <RightPanel
           bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}
           status={{ key: status(bot), text: statusText(bot) }}
@@ -318,7 +323,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
           onExpand={toggleRight}
         />
       )}
-      {bot && !site && <RightToggle collapsed={collapsed} onToggle={toggleRight} />}
+      {bot && !site && !openSpec && <RightToggle collapsed={collapsed} onToggle={toggleRight} />}
       {menu && <BotMenu bot={menu.bot} at={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)}
         onRemove={() => { if (menu.bot.role === "group") setDeletingGroup(menu.bot); else setRemoving(menu.bot); setMenu(null); }}
         pinned={pinned.includes(menu.bot.id)} onTogglePin={() => { togglePin(menu.bot.id); setMenu(null); }}
@@ -758,6 +763,22 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
             problem: action.problem === true, ...(typeof action.pinID === "string" ? { pinId: action.pinID } : {}) }).catch(onError);
           return;
         }
+        // A reply made into a component, and its spec's chip and card (Phase 5a).
+        case "makeComponent":
+          if (chat && typeof action.messageID === "string") {
+            void client.request({ type: "spec.make", botId: chat.botId, messageId: action.messageID, ...(typeof action.purpose === "string" && action.purpose.trim() ? { purpose: action.purpose.slice(0, 4_000) } : {}) }).catch(onError);
+          }
+          return;
+        case "pressSpec":
+        case "openSpec":
+          if (typeof action.id === "string") void client.request({ type: "spec.act", specId: action.id, action: { kind: action.type === "pressSpec" ? "press" : "open" } }).catch(onError);
+          return;
+        case "specCommand":
+          if (typeof action.id === "string" && typeof action.command === "string" && typeof action.folder === "string") {
+            void client.request({ type: "spec.act", specId: action.id, action: { kind: "command", command: action.command, folder: action.folder,
+              ...(typeof action.detail === "string" ? { detail: action.detail } : {}), ...flags(action, ["approve", "force"]) } }).catch(onError);
+          }
+          return;
         case "componentRevert":
           if (typeof action.name === "string") void client.request({ type: "component.revert", name: action.name.slice(0, 200) }).catch(onError);
           return;

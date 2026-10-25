@@ -2,8 +2,8 @@
 // side builds in ChatPayload.swift. Here the same state is built from the contract's views, so the
 // page runs unchanged. What 2.0 has no data for yet (components, pins, heads, tasks, Catch-up) is
 // left out, which the page treats as "none".
-import type { BotView, CardView, CatchUpView, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, SubagentView, TaskView } from "../contract";
-import type { ComponentInfo, DisplayView as WebDisplay, PinSize, PinView as WebPin, CatchUpView as WebCatchUp, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView } from "../../../Web/src/types";
+import type { BotView, CardView, CatchUpView, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, SpecStateView, SubagentView, TaskView } from "../contract";
+import type { SpecState, ComponentInfo, DisplayView as WebDisplay, PinSize, PinView as WebPin, CatchUpView as WebCatchUp, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
 import { avatarURL, faceURL, type Look } from "./avatars";
 
@@ -143,7 +143,12 @@ export function pinView(view: PinView): WebPin {
   };
 }
 
-/** The library as the page needs it: nobody is changing a component in 2.0 yet (no Maintainer), and it has no history. */
+/** The open spec as the right panel's page draws it (Web/src's `SpecState`). */
+export function specState(view: SpecStateView, lang: string | null = null): SpecState {
+  return { ...view, components: componentInfos(view.components), ...(lang ? { lang } : {}) } as SpecState;
+}
+
+/** The library as the page needs it: being changed by Maintainer now, an earlier version to go back to. */
 export function componentInfos(components: Record<string, ComponentInfoView>): Record<string, ComponentInfo> {
   return Object.fromEntries(Object.entries(components).map(([name, info]) => [name, {
     template: info.template, version: info.version, working: !!info.working, updated: info.updated, hasPrevious: !!info.hasPrevious,
@@ -244,6 +249,11 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       // Replies before your latest line fold their finished subagents away (still in their steps).
       earlier: index < lastYours && !!steps?.length ? true : null,
       displays: message.displays?.length ? message.displays.map(displayView) : null,
+      // Components made from it (Phase 5a): a chip, then the component itself with "Edit spec".
+      specs: message.specs?.length ? message.specs.map((chip) => ({ id: chip.id, name: chip.name, status: chip.status, suggested: chip.suggested, open: chip.open,
+        component: chip.component, display: chip.display ? displayView(chip.display) : null, filling: chip.filling })) : null,
+      component: message.component ?? null,
+      feedback: message.feedback ?? null,
     };
   });
   // Another bot answering here (called in with @) while the chat's own bot is not at work: its typing bubble.
@@ -271,6 +281,8 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     floating: (chat.floating ?? []).map((view) => ({ botID: bot.id, botName: bot.name, pin: pinView(view), global: null, blocked: null })),
     pinChoices: chat.pinChoices ?? [],
     board,
+    // "Make into component" on replies (1.x: every chat but a subagent's).
+    makeComponents: true,
     catchUp: chat.catchUp ? catchUpView(chat.catchUp, chat.tasks ?? []) : null,
     intervalSummaries: (chat.intervalSummaries ?? []).map((view) => catchUpView(view, chat.tasks ?? [])),
   };

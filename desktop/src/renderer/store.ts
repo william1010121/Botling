@@ -4,7 +4,7 @@
 // takes a fresh snapshot instead of patching on guesses. Events that arrive while a snapshot is
 // on its way are buffered and replayed if newer than it. Chat events for other bots are not
 // kept (their chats are fetched when shown); `bot.updated` is kept for every bot.
-import type { TeamRunView, WebStateView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
+import type { SpecStateView, TeamRunView, WebStateView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
 
 /** A turn under way and its steps so far (with two heads, two can run at once). */
 export interface RunState { turnId: string; messageId: string; live: StepView[] }
@@ -52,6 +52,8 @@ export interface WorkspaceView {
   waiting: WaitingView;
   /** The web AIs: their sites, conversations and what their pages show. */
   web: WebStateView | null;
+  /** The component spec open in the right panel (Phase 5a), if any. */
+  spec?: SpecStateView | null;
   /** The temporary teams at work (the main bot's Now card). */
   teams: TeamRunView[];
 }
@@ -59,7 +61,7 @@ export interface WorkspaceView {
 type Snapshot = ResultOf<"chat.snapshot">;
 
 export class WorkspaceStore {
-  private view: WorkspaceView = { ready: false, bots: [], imported: null, chat: null, subagent: null, resyncs: 0, components: {}, board: false, plugins: null, settings: null, waiting: { items: [], doing: {} }, web: null, teams: [] };
+  private view: WorkspaceView = { ready: false, bots: [], imported: null, chat: null, subagent: null, resyncs: 0, components: {}, board: false, plugins: null, settings: null, waiting: { items: [], doing: {} }, web: null, teams: [], spec: null };
   private epoch: string | null = null;
   private seq = 0;
   private syncing = false;
@@ -115,7 +117,7 @@ export class WorkspaceStore {
       const subagent = this.view.subagent && snapshot.chat?.botId === this.view.chat?.botId ? this.view.subagent : null;
       const chat = snapshot.chat ? { ...snapshot.chat, runs: (snapshot.chat.runs ?? []).map((run) => ({ turnId: run.turnId, messageId: run.messageId, live: run.live })) } : null;
       const board = this.view.board && chat?.botId === this.view.chat?.botId;
-      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board, plugins: snapshot.plugins ?? null, settings: snapshot.settings ?? this.view.settings, waiting: snapshot.waiting ?? this.view.waiting, web: snapshot.web ?? this.view.web, teams: snapshot.teams ?? this.view.teams });
+      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board, plugins: snapshot.plugins ?? null, settings: snapshot.settings ?? this.view.settings, waiting: snapshot.waiting ?? this.view.waiting, web: snapshot.web ?? this.view.web, teams: snapshot.teams ?? this.view.teams, spec: snapshot.spec ?? null });
     } finally {
       this.syncing = false;
     }
@@ -163,6 +165,7 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
   if (event.type === "plugins.updated") return { ...view, plugins: event.plugins };
   if (event.type === "settings.updated") return { ...view, settings: event.settings };
   if (event.type === "waiting.updated") return { ...view, waiting: event.waiting };
+  if (event.type === "spec.updated") return { ...view, spec: event.spec };
   if (event.type === "web.updated") return { ...view, web: event.web };
   if (event.type === "teams.updated") return { ...view, teams: event.teams };
   if (event.type === "bot.removed") return { ...view, bots: view.bots.filter((bot) => bot.id !== event.botId) };

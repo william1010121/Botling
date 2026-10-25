@@ -166,7 +166,8 @@ describe("Maintainer in the core", () => {
     expect(await c.call({ type: "component.report", botId: MAIN, name: "test", text: "Make it blue", images: [], rect: null, problem: false })).toEqual({ sent: true });
     const first = await until(async () => (await c.chat(MAINTAINER)).messages.find((m: any) => m.role === "relay"));
     expect(first.text).toBe(phase5.relays[0].text);
-    await until(async () => (await c.call({ type: "chat.snapshot" })).components.test?.working === true);
+    // (Maintainer's fake turn ends at once: the working state is seen in the events.)
+    await until(() => c.of("components.updated").some((e: any) => e.event.components.test?.working === true));
     // Pictures only: they go along as the relay's attachments, and the head reads their paths.
     const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
     await until(async () => !(await c.chat(MAINTAINER)).running);

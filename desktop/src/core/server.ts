@@ -14,6 +14,7 @@ import { writeFileAtomic } from "./durable/atomic";
 import { rmSync } from "node:fs";
 import { PendingFiles, servedType, writeIncoming } from "./attachments";
 import { safeName } from "./components/library";
+import { SpecDesk } from "./spec-desk";
 import { appliedCodexWorkers, applySetting, codexWorkersJSON, launchSettings, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, memoryItemsAt, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
 import { TeamDesk, loadTeams, prepareTeamsPlugin, type TeamSpec } from "./teams";
@@ -21,7 +22,7 @@ import { answerLabel } from "./attachments";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
   type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView,
-  type SettingsChange, type SettingsView, type WebStateView, type TeamRunView,
+  type SettingsChange, type SettingsView, type WebStateView, type TeamRunView, type SpecAction,
 } from "../contract";
 import { Bot, NO_LONGER_NEEDED, type SessionStart, type SessionStartCodex } from "./bot";
 import type { HeadConfig } from "./agent/head";
@@ -125,6 +126,8 @@ export class Core {
   /** Files waiting in each bot's input box. */
   readonly pending: PendingFiles;
   readonly maintainer: MaintainerDesk;
+  /** Components made from replies (Phase 5a, 1.x's Workspace+Specs). */
+  readonly specs: SpecDesk;
   private lastPlugins = "";
   /** Whether the first chat.snapshot was held already (`firstSnapshotDelayMs`). */
   private snapshotHeld = false;
@@ -164,7 +167,7 @@ export class Core {
       return [own, ...others];
     });
     this.componentStamp = this.components.library.stamp;
-    this.components.commands.onChange = (card) => { for (const bot of this.bots.values()) bot.cardChanged(card); };
+    this.components.commands.onChange = (card) => { for (const bot of this.bots.values()) bot.cardChanged(card); this.specs?.cardChanged(card); };
     this.ledger = new ProcessLedger(join(options.dataDir, "children.json"));
     const leftovers = this.ledger.endLeftovers();
     if (leftovers.length) this.log(`ended agent process groups an earlier core left running: ${leftovers.join(", ")}`);
@@ -223,6 +226,9 @@ export class Core {
           : profile.id === MAINTAINER_ID ? () => this.maintainer.approvedFolders() : undefined,
         components: this.components,
         onRequests: (bot, requests) => this.maintainer.handle(bot, this.projectRequests(bot, requests)),
+        // A reply's spec chips and its own component (Phase 5a).
+        lineExtras: (bot, record) => this.specs?.lineExtras(bot, record) ?? {},
+        specsChanged: (bot) => this.specs?.specsChanged(bot),
         replyFilter: (): ((text: string) => Promise<string>) | null => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
         replied: (bot, record) => this.replied(bot, record),
         plugins: () => ({ dirs: this.plugins.registry.claudeDirectories(), env: this.plugins.registry.secretEnvironment() }),
@@ -283,6 +289,21 @@ export class Core {
       plugins: () => this.plugins,
       rescan: () => this.scanComponents(),
       log: (line) => this.log(`maintainer: ${line}`),
+    });
+    this.specs = new SpecDesk({
+      // Every chat a spec can be in (`chatsWithPins`).
+      chats: () => [...this.order.flatMap((id) => (this.removed.has(id) ? [] : [this.bots.get(id)!])), ...this.groups.groups.flatMap((group) => this.groups.chat(group.id) ?? [])],
+      library: this.components.library,
+      commands: this.components.commands,
+      maintainer: this.maintainer,
+      maintainerBot: () => this.bots.get(MAINTAINER_ID) ?? null,
+      member: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
+      isGroup: (bot) => !!this.groups.group(bot.id),
+      bots: () => this.order.filter((id) => id !== MAINTAINER_ID && !this.removed.has(id)).map((id) => this.bots.get(id)!),
+      emit: (spec) => this.event({ type: "spec.updated", spec }),
+      componentsChanged: () => this.componentsTick(),
+      clock: () => ({}),
+      log: (line) => this.log(`specs: ${line}`),
     });
     const host = options.plugins ?? null;
     this.plugins = new Plugins({
@@ -383,7 +404,10 @@ export class Core {
     const catalogChanged = this.components.library.rescan();
     if (catalogChanged) for (const bot of this.bots.values()) bot.componentsChanged();
     // Components bots asked Maintainer for that are in the library now go on their lists.
-    if (catalogChanged || before !== this.components.library.names.join("\n")) this.maintainer.deliverAsked();
+    if (catalogChanged || before !== this.components.library.names.join("\n")) {
+      this.maintainer.deliverAsked();
+      this.specs.finishBuilds();
+    }
     if (this.components.library.stamp !== this.componentStamp) {
       this.componentStamp = this.components.library.stamp;
       this.event({ type: "components.updated", components: this.componentInfos() });
@@ -412,6 +436,25 @@ export class Core {
       for (const file of [...pictures, ...(shot ? [shot] : [])]) rmSync(file, { force: true });
       this.componentsTick();
     }
+  }
+
+  /** Something done with a spec (its chip under a reply, its panel); false when there is no such spec. */
+  private async specAct(id: string, action: SpecAction): Promise<boolean> {
+    const found = this.specs.locate(id.toUpperCase());
+    if (!found) return false;
+    const { chat, spec } = found;
+    switch (action.kind) {
+      case "press": this.specs.press(spec.id, chat); break;
+      case "open": this.specs.open(spec.id, chat); break;
+      case "edit": this.specs.editValue(spec.id, action.key, action.value, chat); break;
+      case "answer": this.specs.answer(spec.id, action.question, action.option, chat); break;
+      case "say": this.specs.say(spec.id, action.text, action.request ?? null, chat); break;
+      case "testRun": void this.specs.testRun(spec.id, chat, action.command, action.folder, !!action.approve); break;
+      case "command": void this.specs.runComponent(spec.id, chat, action); break;
+      case "build": this.specs.build(spec.id, chat); break;
+      case "cancel": this.specs.cancel(spec.id, chat); break;
+    }
+    return true;
   }
 
   /** Every library component as the page draws it. */
@@ -735,6 +778,9 @@ export class Core {
       if (request.kind === "team") { if (main) later.push(() => this.teams.start(request.name, request.task)); }
       else if (request.kind === "newBot") { if (main || bot.id === MAINTAINER_ID) later.push(() => this.botRequested(request.name, request.job, main ? null : bot.profile.name)); }
       else if (request.kind === "openQuestion") { if (main) later.push(() => this.showOpenQuestion(request.from)); }
+      // A bot's <suggest-component>: a chip under its reply; Maintainer's <component-spec>: into that spec (`Workspace.handle`).
+      else if (request.kind === "suggestComponent") later.push(() => this.specs.suggest(request.name, request.draft, this.bots.get(bot.id) ?? bot));
+      else if (request.kind === "componentSpec") { if (bot.id === MAINTAINER_ID) later.push(() => this.specs.applyUpdate(request.id, request.json, bot.lines().findLast((line) => line.role === "bot")?.text ?? "")); }
       else rest.push(request);
     }
     if (later.length) setImmediate(() => { for (const act of later) { try { act(); } catch (error) { this.log(`request: ${(error as Error).message}`); } } });
@@ -885,6 +931,9 @@ export class Core {
     if (bot.id === MAIN_BOT_ID) this.deliverInboxes();
     if (bot.id === MAINTAINER_ID) {
       this.maintainer.settle(record);
+      this.specs.finishBuilds();
+      // After the reply's own tags are acted on: a change from a spec panel that did not land is said there.
+      setImmediate(() => setImmediate(() => { this.specs.settleChanges(record, bot.subagentsAtWork); this.componentsTick(); }));
       this.componentsTick();
     }
   }
@@ -1185,6 +1234,13 @@ export class Core {
       case "component.detail": return this.bot(cmd.botId).componentDetail(cmd.name, cmd.folder, cmd.values, cmd.card, cmd.command);
       case "component.save": return this.bot(cmd.botId).componentSave(cmd.messageId, cmd.index, cmd.data);
       case "component.report": return { sent: this.reportComponent(cmd) };
+      case "spec.make": {
+        const spec = this.specs.make(this.bot(cmd.botId), cmd.messageId, cmd.purpose ?? null);
+        return { specId: spec?.id ?? null };
+      }
+      case "spec.act": return { accepted: await this.specAct(cmd.specId, cmd.action) };
+      case "spec.close": this.specs.close(); return {};
+      case "spec.wide": this.specs.setWide(cmd.wide); return {};
       case "component.revert": {
         const problem = this.components.library.revert(cmd.name);
         if (problem) this.bots.get(MAIN_BOT_ID)?.appNotice(`Couldn't revert component "${cmd.name}": ${problem}`);
@@ -1243,6 +1299,7 @@ export class Core {
       waiting: this.waiting(),
       web: this.webView(),
       teams: this.teamViews(),
+      spec: this.specs.openId ? this.specs.payload(this.specs.openId) : null,
     };
   }
 
