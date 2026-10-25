@@ -44,6 +44,9 @@ for(const mode of ['receipt','crash'] as const)test(`A3 real signed ZIP → expl
  const binary=join(target,'Contents/MacOS/Botling 2');mkdirSync(home);mkdirSync(join(data,'core'),{recursive:true});
  writeFileSync(join(data,'core/settings.json'),JSON.stringify({updateCheckEnabled:false}));
  writeFileSync(join(data,'core/review-schema'),'old-flushed');
+ // Actual safeStorage decryptString failure under Chromium's mock keychain, never login keychain.
+ const sealed=JSON.stringify({review:{token:Buffer.from('synthetic-invalid-ciphertext').toString('base64')}});
+ writeFileSync(join(data,'core/plugin-secrets.json'),sealed);
  const plugin=join(data,'core/plugins/review');mkdirSync(join(plugin,'dist'),{recursive:true});
  writeFileSync(join(plugin,'package.json'),JSON.stringify({name:'review',version:'1.0.0',engines:{ccb:'^2.0.0'},ccb:{host:'dist/host.mjs',contributes:{commands:[{id:'review.ping',title:'Ping'}]}}}));
  writeFileSync(join(plugin,'dist/host.mjs'),'export function activate(ccb){ccb.commands.register("review.ping",()=>"real host after commit");}');
@@ -92,6 +95,8 @@ for(const mode of ['receipt','crash'] as const)test(`A3 real signed ZIP → expl
    expect(readFileSync(join(data,'core/review-schema'),'utf8')).toBe('old-flushed');
   }
   await expect.poll(async()=> (await post(page,{type:'plugins.command',id:'review.ping'}))?.result?.result,{timeout:30000}).toBe('real host after commit');
+  await expect.poll(async()=> (await post(page,{type:'plugins.list'}))?.result?.secretsProblem,{timeout:10000}).toContain('could not be opened');
+  expect(readFileSync(join(data,'core/plugin-secrets.json'),'utf8')).toBe(sealed);
   expect((await post(page,{type:'boot.commit'})).ok).toBe(false); // core-only, never renderer authority
   await until(()=>!alive(helperPid),{timeout:10000});
   await recoverUpdates(data,target);
@@ -99,13 +104,14 @@ for(const mode of ['receipt','crash'] as const)test(`A3 real signed ZIP → expl
    mkdirSync(evidence,{recursive:true});writeFileSync(join(evidence,'cleanup-race-observation.json'),JSON.stringify({names:readdirSync(root),pending:existsSync(join(data,'update-pending.json')),metadata:Object.fromEntries(['result','owner.json','helper.pid','new.pid'].map(n=>[n,existsSync(join(root,n))?readFileSync(join(root,n),'utf8'):null]))},null,2));
   }
   mkdirSync(evidence,{recursive:true});writeFileSync(join(evidence,'cleanup-diagnostics-'+mode+'.json'),JSON.stringify(readdirSync(join(data,'update-diagnostics')).map(n=>JSON.parse(readFileSync(join(data,'update-diagnostics',n),'utf8'))),null,2));
+  await until(()=>readdirSync(base).every(n=>!n.startsWith('.botling-update-')) && (!existsSync(join(data,'update-cleanup')) || readdirSync(join(data,'update-cleanup')).length===0),{timeout:10000,what:'completed native garbage collection'});
   expect(readdirSync(base).filter(n=>n.startsWith('.botling-update-'))).toEqual([]);expect(existsSync(join(data,'update-pending.json'))).toBe(false);
   execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',target]);
   const survivors=pids(target);expect(survivors.length).toBeGreaterThan(0);
   await browser.close();browser=null;
   for(const pid of survivors)try{process.kill(pid,'SIGTERM');}catch{}
   await until(()=>pids(target).length===0,{timeout:30000});
-  mkdirSync(evidence,{recursive:true});writeFileSync(join(evidence,`packaged-update-${mode}.json`),JSON.stringify({mode,zip,manifest,publicKey,oldVersion:before.result.current,newVersion:after.result.current,explicitRestart:true,oldSIGTERMExit:old.exitCode,helperPid,candidatePid,result,realMainReceipt:mode==='receipt',realLaunchServicesRecovery:mode==='crash',dataRestored:mode==='crash',bundleSignatureValid:true,cleanup:true,remainingProcesses:pids(target),trustInjection:'VerifiedInstaller constructor in test driver; packaged trust remains null',forcedCrash:mode==='crash'?'SIGKILL before receipt':null},null,2)+'\n');
+  mkdirSync(evidence,{recursive:true});writeFileSync(join(evidence,`packaged-update-${mode}.json`),JSON.stringify({mode,zip,manifest,publicKey,oldVersion:before.result.current,newVersion:after.result.current,explicitRestart:true,oldSIGTERMExit:old.exitCode,helperPid,candidatePid,result,realMainReceipt:mode==='receipt',realLaunchServicesRecovery:mode==='crash',dataRestored:mode==='crash',bundleSignatureValid:true,actualSafeStorageFailureNonfatal:true,ciphertextPreserved:true,cleanup:true,remainingProcesses:pids(target),trustInjection:'VerifiedInstaller constructor in test driver; packaged trust remains null',forcedCrash:mode==='crash'?'SIGKILL before receipt':null},null,2)+'\n');
  }catch(error){
   mkdirSync(evidence,{recursive:true});
   const roots=readdirSync(base).filter(n=>n.startsWith('.botling-update-'));

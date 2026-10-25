@@ -995,6 +995,12 @@ safety checks. DiskImages refuses mount points on the existing external volume, 
 validation uses a temporary read-only virtual mount and detaches it; all image bytes,
 extracted files, test data and caches stay under `.cache`. Earlier failed runs are retained in the logs.
 
+Claude review corrections (A1–A7 and B1–B6, 2026-10-25): early swap failures now persist a result and reopen an available bundle after old shutdown; healthy slow boots have no short receipt deadline. Rollback restores the flushed data snapshot, and external startup work waits for commit. Cleanup protects active transactions/collectors, resumes partial collection, keeps five bounded diagnostics, and uses native asynchronous removal outside window startup. Preview bodies stream with ranges and a response sandbox; widths retain pending commits, slider drafts preview locally, key acknowledgements expire/reset, and ordinary links use a separate route with cheap core authorization for results.
+
+Final correction validation: **425 unit tests** (45 files, 2 workers), **70 full Electron E2E tests twice consecutively**, typecheck, and **6 packaged tests**. The packaged transactions stage the real ZIP using a throwaway signed manifest and the production installer class in the test driver: explicit restart, actual old-app SIGTERM exit 0, real main/core/renderer receipt and commit, then a separate forced SIGKILL before receipt followed by bundle/data rollback and actual `open -n` recovery. Both finish with no test processes or update stages. Actual safeStorage rejection under the mock keychain is nonfatal and preserves sealed bytes; real login-keychain Deny was not exercised. Production trust remains null; no live production release/feed or protected installed location was tested.
+
+Review logs (including failing-before-fix regressions), transaction manifests/results, hashes and inspected synthetic screenshots are in `desktop/.cache/evidence/review/`. The real packaged run exposed partial/stalled recursive bundle cleanup; native removal plus atomic collection and moving it off startup resolved the failure. No installed/shared app was restarted or changed, and nothing was pushed, merged or released.
+
 ## Gaps vs the Swift app (1.x)
 
 Not in 2.0 yet, roughly in order of how much they matter:
