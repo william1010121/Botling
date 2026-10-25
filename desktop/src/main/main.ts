@@ -234,9 +234,31 @@ async function pickFiles(botId: string, sender: WebContents): Promise<unknown> {
   return core.call({ type: "files.add", botId, paths: paths.slice(0, 50) });
 }
 
+/**
+ * "Add project": main's folder picker (1.x's NSOpenPanel, "Add as project"), then the core makes it a
+ * project (or finds the one it already is). Tests (unpackaged only) answer with BOTLING_TEST_PICK_FOLDER.
+ */
+async function pickProject(sender: WebContents): Promise<unknown> {
+  let folder: string | undefined;
+  if (!app.isPackaged && process.env.BOTLING_TEST_PICK_FOLDER !== undefined) {
+    folder = process.env.BOTLING_TEST_PICK_FOLDER || undefined;
+  } else {
+    const owner = BrowserWindow.fromWebContents(sender);
+    const options: Electron.OpenDialogOptions = {
+      properties: ["openDirectory", "createDirectory"], buttonLabel: "Add as project",
+      message: "Pick a project folder; Botling will give it a manager.",
+    };
+    const answer = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options);
+    folder = answer.canceled ? undefined : answer.filePaths[0];
+  }
+  if (!folder) return { botId: null, added: false };
+  return core.call({ type: "projects.add", folder });
+}
+
 async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown> {
   switch (cmd.type) {
     case "files.pick": return pickFiles(cmd.botId, sender);
+    case "projects.pick": return pickProject(sender);
     case "card.page": return { url: addPage(cmd.html, cmd.panel === true) };
     case "accounts.list": return { accounts: accounts() };
     case "site.open": return { windowId: openSite(cmd.accountId, cmd.url) };

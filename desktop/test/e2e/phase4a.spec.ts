@@ -186,3 +186,47 @@ test("Settings: language, bot look and avatar size reach the chat page; a summar
     await app.close();
   }
 });
+
+test("projects: Add project picks a folder and shows its chat; the right panel gathers what waits on you", async () => {
+  const dataDir = tempDir("e2e-4a-projects");
+  const folder = join(tempDir("e2e-4a-folder"), "Garden");
+  mkdirSync(folder, { recursive: true });
+  const { app, page, chat } = await launch({ dataDir, env: { BOTLING_TEST_PICK_FOLDER: folder, BOTLING_WAITING_SCAN_MS: "200" } });
+  try {
+    await page.setViewportSize({ width: 1120, height: 820 });
+    const panel = page.locator(".detail-panel");
+    await expect(panel.locator(".detail-name")).toHaveText("Main bot");
+    await page.getByRole("button", { name: "+ Add project" }).click();
+    // The new project sits above Maintainer and its chat is on screen.
+    const row = page.locator(".bot-row", { hasText: "Garden" });
+    await expect(row).toHaveAttribute("aria-current", "page");
+    const names = await page.locator(".bot-row .bot-name").allTextContents();
+    expect(names.indexOf("Garden")).toBe(names.indexOf("Maintainer") - 1);
+    await expect(panel.locator(".detail-name")).toHaveText("Garden");
+    expect(JSON.parse(readFileSync(join(dataDir, "core", "projects.json"), "utf8"))[0]).toMatchObject({ name: "Garden", folder: pathToFileURL(folder).href + "/" });
+    // Picking it again finds the same project.
+    await page.locator(".bot-row", { hasText: "Main bot" }).click();
+    await page.getByRole("button", { name: "+ Add project" }).click();
+    await expect(row).toHaveAttribute("aria-current", "page");
+    expect(await page.locator(".bot-row", { hasText: "Garden" }).count()).toBe(1);
+    // Its memory says what it is doing and what waits on you.
+    writeFileSync(join(folder, ".bot", "memory.md"), "## Current status\nok\n## In progress\n- planting tulips\n## Waiting on you\n- Which colour of tulips?\n## Decided\n");
+    await expect(panel.locator(".now-doing")).toHaveText("planting tulips");
+    await expect(row.locator(".bot-dot.waiting")).toBeVisible();
+    await page.locator(".bot-row", { hasText: "Main bot" }).click();
+    const item = panel.locator(".waiting-item");
+    await expect(item).toHaveText(/Which colour of tulips\?/);
+    await shot(page, "waiting-on-you");
+    // Opening it shows that bot's chat; ignoring it takes it off the list and the dot away.
+    await item.locator(".waiting-open").click();
+    await expect(row).toHaveAttribute("aria-current", "page");
+    await page.locator(".bot-row", { hasText: "Main bot" }).click();
+    await panel.getByRole("button", { name: "Ignore" }).click();
+    await expect(item).toHaveCount(0);
+    await expect(row.locator(".bot-dot.waiting")).toHaveCount(0);
+    expect(JSON.parse(readFileSync(join(dataDir, "core", "settings.json"), "utf8")).ignoredWaiting).toHaveLength(1);
+    await expect(chat.locator(".composer")).toBeVisible();
+  } finally {
+    await app.close();
+  }
+});

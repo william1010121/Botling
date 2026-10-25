@@ -12,6 +12,7 @@ import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { PluginsButton } from "./Plugins";
 import { SettingsSheet } from "./Settings";
+import { RightPanel } from "./RightPanel";
 
 export function App({ client, store }: { client: Client; store: WorkspaceStore }) {
   const view = useSyncExternalStore(store.subscribe, store.getView);
@@ -30,6 +31,12 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
     setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
   }, []);
 
+  // "Add project": main's folder picker; the new (or existing) project's chat is shown.
+  const addProject = useCallback(() => {
+    setError(null);
+    void client.request({ type: "projects.pick" }).then((result) => { if (result.botId) void store.select(result.botId); }, fail);
+  }, [client, store, fail]);
+
   // Reading a chat clears its unread count.
   useEffect(() => {
     if (bot && bot.unread > 0) void client.request({ type: "chat.read", botId: bot.id }).catch(() => {});
@@ -46,10 +53,14 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
               bot={candidate}
               look={view.settings?.botLook ?? "original"}
               selected={candidate.id === chat?.botId}
+              waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
               onSelect={() => { setError(null); void store.select(candidate.id); }}
             />
           ))}
         </nav>
+        <div className="rail-add">
+          <button type="button" className="rail-button" onClick={addProject}>+ Add project</button>
+        </div>
         <PluginsButton client={client} plugins={view.plugins} />
         <div className="rail-settings">
           <button type="button" className={`rail-button${settingsOpen ? " on" : ""}`} onClick={() => setSettingsOpen(true)}>Settings</button>
@@ -88,6 +99,14 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} />
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
+      {bot && (
+        <RightPanel
+          bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}
+          status={{ key: status(bot), text: statusText(bot) }}
+          onSelect={(botId) => { setError(null); void store.select(botId); }}
+          onIgnore={(item) => void client.request({ type: "waiting.ignore", botId: item.botId, text: item.text }).catch(fail)}
+        />
+      )}
       {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} plugins={view.plugins} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
@@ -108,9 +127,9 @@ function statusText(bot: BotView): string {
   return "Asleep";
 }
 
-function BotRow({ bot, selected, onSelect, look }: { bot: BotView; selected: boolean; onSelect: () => void; look: "original" | "cute" }) {
+function BotRow({ bot, selected, onSelect, look, waiting }: { bot: BotView; selected: boolean; onSelect: () => void; look: "original" | "cute"; waiting: boolean }) {
   const asleep = bot.phase === "asleep" && !bot.working;
-  const label = [bot.name, statusText(bot), bot.approvals ? `${bot.approvals} waiting on you` : null, bot.unread && !selected ? `${bot.unread} unread` : null].filter(Boolean).join(", ");
+  const label = [bot.name, statusText(bot), bot.approvals ? `${bot.approvals} waiting on you` : waiting ? "waiting on you" : null, bot.unread && !selected ? `${bot.unread} unread` : null].filter(Boolean).join(", ");
   return (
     <button className={`bot-row${selected ? " selected" : ""}${asleep ? " asleep" : ""}`} data-bot={bot.id} aria-current={selected ? "page" : undefined} aria-label={label} onClick={onSelect}>
       <img className="bot-avatar" src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
@@ -118,6 +137,7 @@ function BotRow({ bot, selected, onSelect, look }: { bot: BotView; selected: boo
       <span className="bot-gap" />
       {bot.working && <span className="bot-dot working" aria-hidden="true" />}
       {bot.approvals > 0 && <span className="badge waiting" aria-hidden="true">{bot.approvals}</span>}
+      {!bot.approvals && waiting && !bot.working && <span className="bot-dot waiting" aria-hidden="true" />}
       {bot.unread > 0 && !selected && <span className="badge" aria-hidden="true">{bot.unread}</span>}
     </button>
   );
