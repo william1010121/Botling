@@ -4,10 +4,10 @@
 // ccb-latex plugin, bundled in).
 import "./shim";
 import "./component-frames";
+import { imeOwnsKey } from "./input-ime";
 import "../../../../Web/src/main";
 import { installMessageWidth } from "./message-width";
 import { EditorView } from "@codemirror/view";
-import { isComposingEnter, isComposingKey } from "../../../../Web/src/ime";
 import { CardBroker, type CardTarget } from "../broker";
 import type { FrameExtras } from "../payload";
 import { APP_ORIGIN, type FrameMessage, type ShellMessage } from "./protocol";
@@ -161,6 +161,8 @@ window.addEventListener("message", (event: MessageEvent) => {
     void setPlugins(message.specs);
   } else if (message.botling === "hostReply") {
     window.ccb.hostReply(message.callID, message.ok, message.value);
+  } else if (message.botling === "recoverFocus") {
+    takeFocusBack();
   } else if (message.botling === "focus") {
     window.ccb.focus();
   } else if (message.botling === "spec") {
@@ -200,70 +202,109 @@ function keepTyped(early: { text: string; cursor: number }) {
   view.dispatch({ changes: { from: 0, insert: early.text }, selection: { anchor: Math.min(early.cursor, early.text.length) }, userEvent: "input.type" });
 }
 
-// Recover only an involuntary loss during this page's launch. Ordinary app switches keep the
-// browser's focused editor; they do not open a synthetic keyboard handoff. Explicit navigation
-// cancels recovery, including Tab to another control and programmatic focus into feedback.
-const launchUntil = Date.now() + 3_000;
+// A loss opens a short recovery window, even when a slow welcome/editor replacement occurs long
+// after module evaluation. Pointer/Tab intent cancels it. No editing keys cross origins.
+const RECOVERY_MS = 3_000;
 let composerIntended = true;
-let lostComposer = true;
+let recovering = true;
+let recoveryUntil = Date.now() + RECOVERY_MS;
+let lastEditor = composerView()?.contentDOM ?? null;
+let editorHadFocus = false;
+const pendingText = new Map<string, string>();
+const chatKey = () => document.documentElement.dataset.chat ?? "";
 const inBox = (target: EventTarget | null) => !!(target as HTMLElement | null)?.closest?.(".composer .cm-content");
+const emptyFocus = () => document.activeElement === document.body || document.activeElement === document.documentElement;
+function announce() {
+  toShell({ botling: "composerIntent", value: composerIntended, recoveryUntil: recovering ? recoveryUntil : 0,
+    startedAt: performance.timeOrigin });
+}
 function intendComposer(value: boolean) {
   composerIntended = value;
-  if (!value) lostComposer = false;
-  toShell({ botling: "composerIntent", value });
+  if (!value) { recovering = false; recoveryUntil = 0; }
+  announce();
 }
-document.addEventListener("pointerdown", event => { if (!inBox(event.target)) intendComposer(false); }, true);
+function noteLoss() {
+  if (!composerIntended || recovering) return;
+  recovering = true;
+  editorHadFocus = false;
+  recoveryUntil = Date.now() + RECOVERY_MS;
+  announce();
+}
+function detectLoss() {
+  const editor = composerView()?.contentDOM ?? null;
+  const replaced = lastEditor !== editor;
+  lastEditor = editor;
+  if (emptyFocus() && (editorHadFocus || replaced)) noteLoss();
+}
+function flushText(): boolean {
+  const view = composerView();
+  if (!view) return false;
+  const key = chatKey();
+  const text = (pendingText.get("") ?? "") + (key ? pendingText.get(key) ?? "" : "");
+  if (text) {
+    pendingText.delete(""); pendingText.delete(key);
+    view.dispatch(view.state.replaceSelection(text), { userEvent: "input.type" });
+  }
+  return true;
+}
+function takeFocusBack(): boolean {
+  detectLoss();
+  if (!composerIntended || !recovering || Date.now() >= recoveryUntil || !emptyFocus() || !document.hasFocus()) return false;
+  if (!flushText()) return false;
+  composerView()?.focus();
+  return true;
+}
+document.addEventListener("pointerdown", event => {
+  if (!inBox(event.target)) intendComposer(false);
+  else {
+    composerIntended = true;
+    if (emptyFocus()) { recovering = false; noteLoss(); }
+  }
+}, true);
 document.addEventListener("keydown", event => {
   if (event.key === "Tab" || event.key === "Escape") intendComposer(false);
 }, true);
 document.addEventListener("focusout", event => {
-  if (inBox(event.target) && !event.relatedTarget && composerIntended && Date.now() < launchUntil) lostComposer = true;
+  if (inBox(event.target) && !event.relatedTarget) noteLoss();
 }, true);
 document.addEventListener("focusin", event => {
   if (event.target === document.body || event.target === document.documentElement) return;
-  intendComposer(inBox(event.target));
-  if (inBox(event.target)) lostComposer = false;
+  if (inBox(event.target)) {
+    flushText();
+    composerIntended = true; recovering = false; recoveryUntil = 0; editorHadFocus = true;
+    lastEditor = composerView()?.contentDOM ?? null;
+    announce();
+  } else intendComposer(false);
 }, true);
-function takeFocusBack(): boolean {
-  if (!composerIntended || !lostComposer || Date.now() >= launchUntil) return false;
-  const active = document.activeElement;
-  if (active && active !== document.body && active !== document.documentElement) return false;
-  lostComposer = false;
-  composerView()?.focus();
-  return true;
-}
-// Synchronous restoration lets the original trusted input reach the editor. There is no delayed
-// key/ack queue, so arrows, paste, undo and composition cannot overtake forwarded text.
+// DOM removal can omit focusout entirely. Observe replacement and empty-body focus directly,
+// without polling or treating ordinary window blur as a keyboard handoff.
+new MutationObserver(() => { detectLoss(); takeFocusBack(); }).observe(document.body, { childList: true, subtree: true });
 window.addEventListener("focus", takeFocusBack);
 document.addEventListener("keydown", event => {
-  if (event.key === "Tab" || event.key === "Escape" || isComposingKey(event) || isComposingEnter(event) || composerView()?.composing) return;
+  if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.key === "Tab" || event.key === "Escape"
+      || imeOwnsKey(event) || composerView()?.composing) return;
+  // Printable text is handled at its original keypress, with the default cancelled before focus
+  // changes. Relying on keydown's focus change to redirect native text can lose or duplicate it.
+  if (Array.from(event.key).length === 1) return;
   if (!takeFocusBack()) return;
-  const view = composerView();
-  if (!view) return;
-  // The keydown started on this document's body, before recovery. Give CodeMirror its keymap
-  // opportunity now; otherwise retain the original trusted default (text, paste, native editing).
-  const key = new KeyboardEvent("keydown", {
-    key: event.key, code: event.code, shiftKey: event.shiftKey, altKey: event.altKey,
-    metaKey: event.metaKey, ctrlKey: event.ctrlKey, bubbles: true, cancelable: true,
-  });
-  view.contentDOM.dispatchEvent(key);
-  if (key.defaultPrevented) { event.preventDefault(); event.stopImmediatePropagation(); }
-}, true);
-// If launch focus moved to the shell before Return's keydown, Chromium delivers its original
-// keypress here after synchronous recovery. Let the same keymap handle it before its native
-// newline default. The window IME guard sees this trusted keypress first, too.
-let composerEnterDown = false;
-document.addEventListener("keydown", event => { composerEnterDown = event.key === "Enter" && inBox(event.target); }, true);
-document.addEventListener("keyup", event => { if (event.key === "Enter") composerEnterDown = false; }, true);
-document.addEventListener("keypress", event => {
-  if (event.key !== "Enter" || composerEnterDown || Date.now() >= launchUntil || !composerIntended || !inBox(event.target)
-      || isComposingKey(event) || isComposingEnter(event) || composerView()?.composing) return;
-  const key = new KeyboardEvent("keydown", { key: event.key, code: event.code, shiftKey: event.shiftKey, altKey: event.altKey,
-    metaKey: event.metaKey, ctrlKey: event.ctrlKey, bubbles: true, cancelable: true });
+  const key = new KeyboardEvent("keydown", { key: event.key, code: event.code, shiftKey: event.shiftKey,
+    bubbles: true, cancelable: true });
   composerView()?.contentDOM.dispatchEvent(key);
   if (key.defaultPrevented) { event.preventDefault(); event.stopImmediatePropagation(); }
 }, true);
-intendComposer(true);
+document.addEventListener("keypress", event => {
+  if (!event.isTrusted || event.defaultPrevented || event.metaKey || event.ctrlKey || imeOwnsKey(event) || composerView()?.composing
+      || !emptyFocus() || Array.from(event.key).length !== 1 || /[\u0000-\u001f\u007f]/u.test(event.key)) return;
+  detectLoss();
+  if (!composerIntended || !recovering || Date.now() >= recoveryUntil) return;
+  event.preventDefault(); event.stopImmediatePropagation();
+  const key = chatKey();
+  pendingText.set(key, (pendingText.get(key) ?? "") + event.key);
+  // Apply the prefix synchronously before later native edits; if the editor is being replaced,
+  // its mutation callback flushes the text once that same chat has an editor again.
+  if (flushText()) takeFocusBack();
+}, true);
+announce();
 
 // Escape stops a reply being written, as in a terminal.
 document.addEventListener("keydown", (event) => {

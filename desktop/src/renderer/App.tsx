@@ -568,46 +568,55 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
   }, [client]);
   useEffect(() => { if (ready.current) pushPlugins(); }, [pushPlugins, view.plugins]);
 
-  // Restore launch focus before native input, rather than forwarding a partial keyboard across
-  // origins. Recovery expires after launch and stops immediately when the user chooses a control.
+  // The frame owns loss detection and text input. The shell only restores its window before
+  // typing, never serializes a key, and keeps explicit shell targets authoritative.
   useEffect(() => {
-    let launchUntil = Date.now() + 3_000;
+    let recoveryUntil = Date.now() + 3_000;
     let composerIntended = true;
     let shellTargetChosen = false;
+    let lastShellIntentAt = 0;
+    let frameStartedAt = 0;
+    let focusTimer: ReturnType<typeof setTimeout> | undefined;
     const element = frame.current;
     const recoverFocus = () => {
-      if (!composerIntended || shellTargetChosen || Date.now() >= launchUntil || !document.hasFocus()) return;
+      if (!composerIntended || shellTargetChosen || Date.now() >= recoveryUntil || !document.hasFocus()) return;
       const active = document.activeElement;
       if (active !== document.body && active !== document.documentElement && active !== element) return;
       element?.contentWindow?.focus();
+      const message: ShellMessage = { botling: "recoverFocus" };
+      element?.contentWindow?.postMessage(message, CHAT_ORIGIN);
     };
-    const loaded = () => { launchUntil = Date.now() + 3_000; recoverFocus(); };
+    const focusChanged = () => { clearTimeout(focusTimer); focusTimer = setTimeout(recoverFocus, 0); };
+    const loaded = () => {
+      // New document time precedes its scripts/load. An old shell click must not disable the new
+      // frame; a new click/Tab while it loads must still win, even if its intent arrives later.
+      shellTargetChosen = lastShellIntentAt >= frameStartedAt;
+      focusChanged();
+    };
     const intent = (event: MessageEvent) => {
       if (event.source !== element?.contentWindow || event.origin !== CHAT_ORIGIN || event.data?.botling !== "composerIntent") return;
+      if (typeof event.data.startedAt !== "number" || event.data.startedAt < frameStartedAt) return;
+      if (event.data.startedAt > frameStartedAt) {
+        frameStartedAt = event.data.startedAt;
+        shellTargetChosen = lastShellIntentAt >= frameStartedAt;
+      }
       composerIntended = event.data.value === true;
+      recoveryUntil = typeof event.data.recoveryUntil === "number" ? event.data.recoveryUntil : 0;
+      if (recoveryUntil) focusChanged();
     };
-    const pointer = () => { shellTargetChosen = true; };
-    const key = (event: KeyboardEvent) => {
-      if (event.key === "Tab" || event.key === "Escape") { shellTargetChosen = true; return; }
-      // Chromium can drop iframe focus without a parent focus event during launch. Restoring it
-      // here redirects the original trusted default; no key is serialized or replayed.
-      if (!event.isComposing && event.keyCode !== 229) recoverFocus();
-    };
+    const chooseShell = () => { shellTargetChosen = true; lastShellIntentAt = performance.timeOrigin + performance.now(); };
+    const key = (event: KeyboardEvent) => { if (event.key === "Tab" || event.key === "Escape") chooseShell(); };
     element?.addEventListener("load", loaded);
     window.addEventListener("message", intent);
-    window.addEventListener("pointerdown", pointer, true);
+    window.addEventListener("pointerdown", chooseShell, true);
     window.addEventListener("keydown", key, true);
-    // Chromium ignores a nested cross-frame focus() while its native focus transition is still
-    // running. Restore on the next task, checking current intent again so Tab/click always win.
-    let focusTimer: ReturnType<typeof setTimeout> | undefined;
-    const focusChanged = () => { clearTimeout(focusTimer); focusTimer = setTimeout(recoverFocus, 0); };
     window.addEventListener("focus", focusChanged);
     window.addEventListener("focusin", focusChanged);
     return () => {
       clearTimeout(focusTimer);
       element?.removeEventListener("load", loaded);
       window.removeEventListener("message", intent);
-      window.removeEventListener("pointerdown", pointer, true);
+      window.removeEventListener("pointerdown", chooseShell, true);
       window.removeEventListener("keydown", key, true);
       window.removeEventListener("focus", focusChanged);
       window.removeEventListener("focusin", focusChanged);

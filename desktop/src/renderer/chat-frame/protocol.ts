@@ -24,7 +24,7 @@ export type FrameMessage =
   | { botling: "messageWidth"; value: number | null }
   | { botling: "messageWidthDrag"; active: boolean }
   /** Launch focus recovery belongs only to the composer until the user chooses another control. */
-  | { botling: "composerIntent"; value: boolean }
+  | { botling: "composerIntent"; value: boolean; recoveryUntil: number; startedAt: number }
   /** A component frame's page, to be served from botling-card://page/ (component-frames.ts). */
   | { botling: "page"; id: number; html: string };
 
@@ -46,6 +46,8 @@ export type ShellMessage =
   | { botling: "detailReply"; requestID: number; ok: boolean; value: string }
   /** The cursor back in the input box (after the left column's search; `ccb.focus`). */
   | { botling: "focus" }
+  /** Ask the frame to recover only its own still-intended, recently lost composer. */
+  | { botling: "recoverFocus" }
   /** Pointer events over the shell after a width drag leaves the chat iframe. */
   | { botling: "messageWidthPointer"; kind: "move" | "up" | "cancel"; pointerId: number; x: number }
   /** "Jump to chat" on a task's card in the right panel (`ccb.jumpToTask`). */
