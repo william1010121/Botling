@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -9,6 +9,25 @@ import { payload, verifyManifest } from "../../scripts/release-manifest.mjs";
 import { acknowledgeUpdateBoot, recoverUpdates, SWAP_SCRIPT, VerifiedInstaller, writableApp } from "../../src/main/update-install";
 import { settingsView } from "../../src/core/settings";
 import { tempDir, until } from "../helpers";
+
+// These are shell/filesystem tests, not LaunchServices tests. Stub the opener in every
+// owned helper immediately before spawn, including VerifiedInstaller.restart's real entrypoint.
+// Failure paths must remain silent too; real packaged reopen stays behind its separate opt-in.
+vi.mock('node:child_process',async original=>{
+ const actual=await original<typeof import('node:child_process')>();
+ const files=await import('node:fs'),paths=await import('node:path');
+ return {...actual,spawn:(command:string,args:string[]=[],options?:any)=>{
+  const file=args[0];
+  if(command==='/bin/sh'&&file&&paths.basename(file)==='swap.sh'){
+   const real=files.realpathSync(file),owned=paths.resolve('.cache/test-data')+paths.sep;
+   if(!real.startsWith(owned))throw new Error('Refuse a unit helper outside the synthetic test directory');
+   const script=files.readFileSync(real,'utf8');
+   if(!script.startsWith('#!/bin/sh')||!script.includes('/usr/bin/open'))throw new Error('Unexpected unit swap helper');
+   files.writeFileSync(real,script.replaceAll('/usr/bin/open','/usr/bin/true'));
+  }
+  return actual.spawn(command,args,options);
+ }};
+});
 
 const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
