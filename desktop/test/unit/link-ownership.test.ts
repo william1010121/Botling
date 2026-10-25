@@ -47,3 +47,8 @@ it('E2 user links include group guest/notice lines while components retain exact
  expect((await c.call({type:'link.authorize',botId:group,url:'https://example.org/main-group',messageId:guestId})).linked).toBe(false);
  expect((await c.call({type:'link.authorize',botId:group,url:'file:///guest-group.html',messageId:guestId})).linked).toBe(true);
 });
+
+it('F6 legacy pins inherit their pin bot author without borrowing guest links',async()=>{
+ const data=tempDir('legacy-pin'),pin=randomUUID().toUpperCase();mkdirSync(join(data,'main'));writeFileSync(join(data,'main/pins.json'),JSON.stringify([{id:pin,name:'todo',data:'{}',refresh:'manual',minutes:15,size:'2x2',makingLive:false}]));writeFileSync(join(data,'main/chat.json'),JSON.stringify([swiftLine({id:randomUUID(),role:'bot',text:'[own](https://example.org/pin-own)'}),swiftLine({id:randomUUID(),role:'bot',sourceID:GUEST,text:'[guest](https://example.org/pin-guest)'})]));const c=new CoreHarness(data);running.push(c);
+ expect((await c.call({type:'link.authorize',botId:MAIN,pinId:pin,url:'https://example.org/pin-own'})).linked).toBe(true);expect((await c.call({type:'link.authorize',botId:MAIN,pinId:pin,url:'https://example.org/pin-guest'})).linked).toBe(false);
+});
