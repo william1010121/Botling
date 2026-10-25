@@ -20,6 +20,7 @@ test('F0 hidden recovery stays invisible and preserves the frontmost app',async(
  mkdirSync(root);writeFileSync(join(root,'owner.json'),JSON.stringify({target,dataDir:data,token}));writeFileSync(join(root,'result'),'failed:19');
  const proof=new FrontmostProof(750),startedAt=Date.now();
  let phase='before',stop=false,app:ElectronApplication|undefined,closing:Promise<void>|undefined,failure:Error|undefined,launchTask:ReturnType<typeof launch>|undefined;
+ const finalizationErrors:{stage:string;message:string;stack?:string}[]=[];
  let runtime:any=null,journal:any[]=[],completed=false;let receipt:(()=>ProcessReceipt)|undefined;let abort!:()=>void;
  const failed=new Promise<void>(resolve=>{abort=resolve;});
  const matchingPids=async()=>{const {stdout}=await exec('/bin/ps',['-axww','-o','pid=,comm=,args='],{maxBuffer:4*1024*1024});return stdout.split('\n').flatMap(line=>{const match=/^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(line);return match?.[2]===executable&&match[3].split(/\s+/).includes(argument)?[Number(match[1])]:[];});};
@@ -30,9 +31,9 @@ test('F0 hidden recovery stays invisible and preserves the frontmost app',async(
   const end=Date.now()+3000;while((await matchingPids()).length&&Date.now()<end)await pause(50);
   for(const pid of await matchingPids()){try{process.kill(pid,'SIGKILL');}catch{}}
  })();
- const checkpoint=(status:string,remainingPids:number[]=[])=>writeProbeCheckpoint(join(evidence,'f0-proof.json'),{
+ const checkpoint=(status:string,remainingPids:number[]|null=null)=>writeProbeCheckpoint(join(evidence,'f0-proof.json'),{
   passed:completed&&!failure,status,sourceCommit:process.env.BOTLING_TEST_SOURCE_COMMIT,startedAt,at:Date.now(),runtime,baseline:proof.baseline,samples:proof.samples,windows:proof.windows,journal,
-  failure:failure?{message:failure.message,stack:failure.stack}:null,remainingPids,scope:'one hidden recovery window; other constructors static-only',sampleBoundMs:750,requestedSamplePauseMs:100,JSONLAttempted:false,
+  failure:failure?{message:failure.message,stack:failure.stack}:null,remainingPids,finalizationErrors,scope:'one hidden recovery window; other constructors static-only',sampleBoundMs:750,requestedSamplePauseMs:100,JSONLAttempted:false,
  },receipt);
  const fail=(error:unknown)=>{if(!failure){failure=error instanceof Error?error:new Error(String(error));try{checkpoint('failed');}catch(recordError){process.stderr.write('F0 original failure: '+failure.message+'; checkpoint error: '+String(recordError)+'\n');}abort();void closeOwn().catch(()=>{});}};
  const check=()=>{if(failure)throw failure;};
@@ -70,8 +71,35 @@ test('F0 hidden recovery stays invisible and preserves the frontmost app',async(
   stop=true;await monitor;check();proof.complete();expect(await matchingPids()).toEqual([]);completed=true;
  }catch(error){fail(error);throw error;}
  finally{
-  await closeOwn();stop=true;await monitor?.catch(()=>{});await launchTask?.catch(()=>{});
-  const remaining=await matchingPids();
-  try{checkpoint(completed?'complete':'failed',remaining);}finally{rmSync(root,{recursive:true,force:true});rmSync(data,{recursive:true,force:true});}
+  let remaining:number[]|null=null;
+  const recordFinalizationError=(stage:string,error:unknown)=>{
+   const cause=error instanceof Error?error:new Error(String(error));
+   finalizationErrors.push({stage,message:cause.message,stack:cause.stack});failure??=cause;
+  };
+  try{
+   try{await closeOwn();}catch(error){recordFinalizationError('shutdown',error);}
+   finally{
+    stop=true;
+    await monitor?.catch(error=>recordFinalizationError('monitor',error));
+    await launchTask?.catch(error=>recordFinalizationError('launch',error));
+   }
+  }finally{
+   try{
+    try{
+     remaining=await matchingPids();
+     if(remaining.length)recordFinalizationError('inventory',new Error('Isolated test processes remain: '+remaining.join(',')));
+    }catch(error){recordFinalizationError('inventory',error);}
+   }finally{
+    try{
+     try{rmSync(root,{recursive:true,force:true});}catch(error){recordFinalizationError('stage-cleanup',error);}
+     finally{try{rmSync(data,{recursive:true,force:true});}catch(error){recordFinalizationError('data-cleanup',error);}}
+    }finally{
+     // Persist after cleanup so its errors are included. Always attempt this even if shutdown failed.
+     try{checkpoint(completed&&!failure?'complete':'failed',remaining);}catch(error){recordFinalizationError('checkpoint',error);}
+    }
+   }
+  }
+  // A teardown failure must fail the test, but never replace its earlier runtime error.
+  if(failure)throw failure;
  }
 });
