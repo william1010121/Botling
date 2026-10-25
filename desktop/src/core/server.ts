@@ -199,6 +199,8 @@ export class Core {
     const editorModel = this.settingsFile()?.componentEditorModel ?? this.settingsFile()?.componentEditor;
     const { editedEditor } = prepareLibrary(options.dataDir, typeof editorModel === "string" && ["sonnet", "opus", "haiku"].includes(editorModel) ? editorModel : "sonnet");
     if (editedEditor) this.log("ccb-core/claude/agents/component-editor.md was edited by hand; it is left as it is");
+    // The library has the app's own preview card now (seeded just above).
+    if (this.components.library.rescan()) this.componentStamp = this.components.library.stamp;
     // The temporary teams: the ccb-teams plugin (team files from before plugins move into it once).
     prepareTeamsPlugin(join(options.dataDir, "plugins"), join(options.dataDir, "teams"));
     try {
@@ -1325,7 +1327,7 @@ First write a test that shows this, then fix it.`;
         finally { for (const file of [...pictures, ...(shot ? [shot] : [])]) rmSync(file, { force: true }); }
       }
       case "spec.make": {
-        const spec = this.specs.make(this.bot(cmd.botId), cmd.messageId, cmd.purpose ?? null);
+        const spec = this.specs.make(this.bot(cmd.botId), cmd.messageId, cmd.purpose ?? null, cmd.preview ?? null);
         return { specId: spec?.id ?? null };
       }
       case "spec.act": return { accepted: await this.specAct(cmd.specId, cmd.action) };

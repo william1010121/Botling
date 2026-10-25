@@ -89,6 +89,7 @@ import {
   routineStatus, routineTitle, scheduledRoutine, type Routine, type ScheduledRoutine,
 } from "./routines";
 import { codexWorkerDefaults } from "./settings";
+import { PAGE_COMPONENT, previewCards } from "./page-preview";
 import { totalTokens, type RateLimits, type TokenUsage } from "./usage";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
 import type { ProjectLock } from "./store/lock";
@@ -616,6 +617,9 @@ export class Bot {
     const partner = this.partner;
     const lookup = partner ? { get: (id: string) => this.subagents.get(id) ?? partner.subagents.get(id) } : this.subagents;
     const view = messageView(record, this.approvals.get(record.id) ?? partner?.approvals.get(record.id), lookup, this.owner.displayViews(record));
+    // The result pages it links to, as preview cards, when the library has the card (Phase 5c).
+    const previews = this.owner.previews(record);
+    if (previews) view.previews = previews.map((data) => ({ name: PAGE_COMPONENT, data }));
     // Specs made from it and the component it already is (Phase 5a), from the spec desk.
     const extras = this.owner.options.lineExtras?.(this.owner, record);
     if (extras?.specs?.length) view.specs = extras.specs;
@@ -3310,6 +3314,11 @@ export class Bot {
       notes.push(`(App: Your last reply had ${tags} with no JSON inside, and ${names.length === 1 ? "that component's" : "those components'"} usage has no "Command:" line, so nothing was drawn in the chat (the user saw no card there). A "Board command:" is not run in the chat. Put the data as JSON inside the tag, <show name="${names[0]}">{…}</show>, in the shape its usage gives, or use command="…" on the tag.)`);
     }
     return notes;
+  }
+
+  /** The preview cards' data for the result pages a line links to (`ChatPayload.previews`); null: none. */
+  previews(record: ChatRecord): string[] | null {
+    return previewCards(record, !!this.context?.library.names.includes(PAGE_COMPONENT));
   }
 
   /** A line's components as the page draws them (`ChatPayload.display`). */

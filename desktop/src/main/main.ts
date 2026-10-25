@@ -1,6 +1,6 @@
 // Electron main: thin. It owns windows, sessions and protocols, checks every IPC message (who sent
 // it and what it is), and relays the rest to the core process. It runs no agents and keeps no chat.
-import { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
 import { join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync, existsSync } from "node:fs";
@@ -12,7 +12,8 @@ import { FEED, Updater } from "./updates";
 import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
 import { WebPages } from "./web";
-import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP } from "./card-page";
+import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES } from "./card-page";
+import { PAGE_COMPONENT, previewFile } from "../core/preview-url";
 import { randomBytes } from "node:crypto";
 import {
   AccountView, MAIN_COMMANDS, PROTOCOL_VERSION, RENDERER_COMMANDS, errorResponse, okResponse, parseInbound,
@@ -50,6 +51,8 @@ const APP_ORIGIN = "app://botling";
 const CARD_PREFIX = "botling-card://card/";
 /** Component pages (Web/src's `componentPage`) the chat page hands over for its sandboxed frames. */
 const PAGE_PREFIX = "botling-card://page/";
+/** Result pages for preview cards (Phase 5c; core/page-preview.ts). */
+const PREVIEW_PREFIX = "botling-card://preview/";
 /**
  * The reused Web/src chat page, in a frame of the app page, on an origin of its own (Phase 4a): it
  * runs agent markdown and plugins' web parts, so it must not share the app page's origin (which has
@@ -357,7 +360,22 @@ const openedResults: string[] = [];
  */
 async function openResult(botId: string, url: string): Promise<{ opened: boolean }> {
   const { results } = await core.call({ type: "results.list", botId }) as { results: { url: string }[] };
-  if (!results.some((result) => result.url === url)) throw Object.assign(new Error("That link is not one of this bot's results."), { code: "not_found" });
+  // cardData canonicalizes file URLs (spaces, non-ASCII and #); compare their decoded paths too.
+  const local = (value: string): string | null => {
+    try { return value.startsWith("file:") ? resolve(fileURLToPath(value)) : null; } catch { return null; }
+  };
+  const requested = local(url);
+  let allowed = results.some((result) => result.url === url || (requested !== null && local(result.url) === requested));
+  if (!allowed && requested !== null) {
+    // An explicit <show> need not also have a Markdown link. Only this bot's actual preview cards
+    // authorize their own page; a component cannot use ccb.open to name any other local file.
+    const snapshot = await core.call({ type: "chat.snapshot", botId });
+    allowed = snapshot.chat?.messages.some((message) => (message.role === "bot" || message.role === "notice") && message.displays?.some((display) => {
+      if (display.name !== PAGE_COMPONENT) return false;
+      try { return (JSON.parse(display.data) as { url?: unknown }).url === url; } catch { return false; }
+    })) ?? false;
+  }
+  if (!allowed) throw Object.assign(new Error("That link is not one of this bot's results."), { code: "not_found" });
   const external = process.env.BOTLING_NO_EXTERNAL === "1";
   if (/^(https?|mailto):/i.test(url)) {
     openedResults.push(url);
@@ -474,6 +492,10 @@ app.on("web-contents-created", (_, contents: WebContents) => {
       allowed = parent === mainFrame && (!initiator || initiator === mainFrame);
     } else if (details.url.startsWith(CARD_PREFIX) || details.url.startsWith(PAGE_PREFIX)) {
       allowed = (!initiator || initiator === mainFrame || chatFrame(initiator)) && (parent === mainFrame || chatFrame(parent));
+    } else if (details.url.startsWith(PREVIEW_PREFIX)) {
+      // A result page in a preview card: only as a component page's own child, put there by that page (Phase 5c).
+      const componentPage = (frame: Electron.WebFrameMain | null | undefined) => !!frame && frame.url.startsWith(PAGE_PREFIX) && chatFrame(frame.parent);
+      allowed = componentPage(parent) && (!initiator || initiator === parent);
     }
     if (!allowed) {
       details.preventDefault();
@@ -560,6 +582,22 @@ function serveApp() {
   });
   protocol.handle("botling-card", async (request) => {
     const url = new URL(request.url);
+    if (url.host === "preview") {
+      // A result page (or a file beside it) for a preview card's frame: only inside an artifacts folder, through symlinks.
+      const file = previewFile(request.url);
+      if (!file) return new Response("Not found", { status: 404 });
+      try {
+        const body = readFileSync(file);
+        const dot = file.lastIndexOf(".");
+        const type = PREVIEW_TYPES[dot >= 0 ? file.slice(dot + 1).toLowerCase() : ""] ?? "application/octet-stream";
+        const text = type.startsWith("text/") || type === "application/javascript" || type === "application/json" || type === "image/svg+xml";
+        // Pages bots write often name no charset: plain UTF-8 says so (Chinese would turn to mojibake otherwise).
+        const utf8 = text && (() => { try { new TextDecoder("utf-8", { fatal: true }).decode(body); return true; } catch { return false; } })();
+        return new Response(body, { headers: { "Content-Type": utf8 ? `${type}; charset=utf-8` : type, "Content-Security-Policy": PREVIEW_CSP, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" } });
+      } catch {
+        return new Response("Not found", { status: 404 });
+      }
+    }
     if (url.host === "page") {
       const page = pages.get(url.pathname.slice(1));
       if (page === undefined) return new Response("Not found", { status: 404 });
@@ -602,6 +640,9 @@ function shotWindow(size: { width: number; height: number }): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  // The app is dark whatever the system says, as 1.x's windows (`preferredColorScheme(.dark)`): pages and component
+  // frames that ask (prefers-color-scheme) draw their dark look (Phase 5c).
+  nativeTheme.themeSource = "dark";
   hardenSession(session.defaultSession);
   serveApp();
   if (shotMode) {

@@ -3,9 +3,14 @@
 // asked, what is taken from its answer, how it is started), the engine switch's dividers, and the usage page's
 // numbers and words (rate limits, tokens, spending).
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { desktop } from "../helpers";
+import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { desktop, tempDir } from "../helpers";
+import { cardData, linkedCards, previewCards, previewFile, previewURL } from "../../src/core/page-preview";
+import { prepareLibrary } from "../../src/core/maintainer";
+import { Command } from "../../src/contract";
+import { draftSpec, replyPages } from "../../src/core/specs";
+import { OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT, PREVIEW_TEMPLATE } from "../../src/core/components/builtins";
 import { BRIEF_DENIED_TOOLS, BRIEF_LIMIT, BRIEF_TIMEOUT_MS, BRIEF_TOOLS, briefConfig, briefFrom, briefRequest } from "../../src/core/component-brief";
 import { headArguments } from "../../src/core/agent/head";
 import { parseLine } from "../../src/core/agent/stream";
@@ -97,5 +102,89 @@ describe("usage (RateLimits.swift, Spending, RateLimitText)", () => {
     }
     for (const { count, text } of G.usage.tokenCount) expect(tokenCount(count)).toBe(text);
     for (const { amount, text } of G.usage.dollars) expect(dollars(amount)).toBe(text);
+  });
+});
+
+describe("result pages' preview cards (PagePreview.swift, ComponentSpecs.draft(from:page:))", () => {
+  const P = G.preview;
+  // The same files under a folder of this test's own; Swift's paths, scheme and change dates put in for ours.
+  const root = realpathSync(tempDir("5c-preview"));
+  for (const [file, text] of [["p/.bot/artifacts/report.html", "<!doctype html><h1>報告</h1><ul><li>One</li><li>Two</li></ul>"], ["p/.bot/artifacts/sub/chart.HTM", "<p>chart</p>"],
+    ["p/site/index.html", "<p>site</p>"], ["p/.bot/artifacts/notes.txt", "notes"], ["p/.bot/artifacts/My Report 2.html", "<p>two</p>"]] as const) {
+    mkdirSync(dirname(join(root, file)), { recursive: true });
+    writeFileSync(join(root, file), text);
+  }
+  mkdirSync(join(root, "p/.bot/artifacts/folder.html"), { recursive: true });
+  const ours = (text: string) => text.replaceAll(P.root, root).replaceAll("ccb-preview://page", "botling-card://preview").replace(/\?v=\d+/g, "");
+  const same = (text: string) => text.replace(/\?v=\d+/g, "");
+
+  it("gives the card 1.x's data: path, url, name, title, missing, and where its frame loads the page from", () => {
+    for (const { data, card } of P.cards) expect(same(cardData(ours(data)))).toBe(ours(card));
+  });
+
+  it("draws a card for each result page a message links to (at most three, each once, not one a card shows already)", () => {
+    for (const { text, cards, skipping } of P.linked) {
+      expect(linkedCards(ours(text)).map(same)).toEqual(cards.map(ours));
+      expect(linkedCards(ours(text), [join(root, "p/.bot/artifacts/report.html")]).map(same)).toEqual(skipping.map(ours));
+    }
+  });
+
+  it("makes a spec from a preview card as 1.x: named after the page, its sample the card, the page's words for Maintainer", () => {
+    const page = join(root, "p/.bot/artifacts/My Report 2.html");
+    const record = { id: "00000000-0000-4000-8000-0000000000C1", role: "bot", text: ours("Here: [競品比較](file://" + P.root + "/p/.bot/artifacts/report.html)"), date: 800_000_000 } as never;
+    const library = { names: ["網頁預覽卡片"] } as never;
+    const spec = draftSpec(record, "Shop", join(root, "p"), library, 0, page);
+    expect({ name: spec.name, page: spec.page, shownAs: spec.shownAs ?? null, existing: spec.existing ?? null, command: spec.command ?? null, samples: spec.samples.map((entry) => ({ label: entry.label, data: same(entry.data) })) })
+      .toEqual({ ...P.spec, page: ours(P.spec.page), samples: P.spec.samples.map((entry: any) => ({ label: entry.label, data: ours(entry.data) })) });
+    expect(replyPages(record, page)).toEqual(P.pages.map((entry: any) => ({ path: ours(entry.path), text: entry.text })));
+  });
+
+  it("ships 1.x's own card: its template and about.md, and the earlier copies it replaces", () => {
+    expect(PREVIEW_TEMPLATE).toBe(P.template);
+    expect(PREVIEW_ABOUT).toBe(P.about);
+    expect(OLDER_PREVIEW_TEMPLATES).toEqual(P.olderTemplates);
+  });
+
+  it("seeds the shipped preview, upgrades old shipped templates, and preserves hand edits", () => {
+    const dir = tempDir("5c-seeding");
+    const card = join(dir, "plugins/ccb-components/components/網頁預覽卡片");
+    prepareLibrary(dir);
+    expect(readFileSync(join(card, "template.html"), "utf8")).toBe(PREVIEW_TEMPLATE);
+    for (const old of OLDER_PREVIEW_TEMPLATES) {
+      writeFileSync(join(card, "template.html"), old);
+      prepareLibrary(dir);
+      expect(readFileSync(join(card, "template.html"), "utf8")).toBe(PREVIEW_TEMPLATE);
+    }
+    writeFileSync(join(card, "template.html"), "<p>My card</p>");
+    writeFileSync(join(card, "about.md"), "My own usage");
+    prepareLibrary(dir);
+    expect(readFileSync(join(card, "template.html"), "utf8")).toBe("<p>My card</p>");
+    expect(readFileSync(join(card, "about.md"), "utf8")).toBe("My own usage");
+  });
+
+  it("previews only bot/notice links with the library present, omitting a page already explicitly shown", () => {
+    const path = join(root, "p/.bot/artifacts/report.html");
+    const text = `[Report](file://${path})`;
+    for (const role of ["bot", "notice"]) expect(previewCards({ role, text }, true)).toHaveLength(1);
+    expect(previewCards({ role: "user", text }, true)).toBeNull();
+    expect(previewCards({ role: "bot", text }, false)).toBeNull();
+    expect(previewCards({ role: "bot", text, displays: [{ name: "網頁預覽卡片", data: JSON.stringify({ path }) }] }, true)).toBeNull();
+    const command = { type: "spec.make", botId: "main", messageId: "reply" };
+    for (const preview of [-1, 0.5, 3]) expect(Command.safeParse({ ...command, preview }).success).toBe(false);
+    for (const preview of [0, 1, 2]) expect(Command.safeParse({ ...command, preview }).success).toBe(true);
+  });
+
+  it("serves only files inside an artifacts folder, through symlinks; a page encoded or climbing out is refused", () => {
+    const page = join(root, "p/.bot/artifacts/report.html");
+    expect(previewFile(previewURL(page, 5))).toBe(page);
+    expect(previewFile(previewURL(join(root, "p/.bot/artifacts/My Report 2.html")))).toBe(join(root, "p/.bot/artifacts/My Report 2.html"));
+    expect(previewFile(previewURL(join(root, "p/site/index.html")))).toBeNull();
+    symlinkSync(join(root, "p/site/index.html"), join(root, "p/.bot/artifacts/escape.html"));
+    expect(previewFile(previewURL(join(root, "p/.bot/artifacts/escape.html")))).toBeNull();
+    expect(previewFile(`botling-card://preview${root}/p/.bot/artifacts/../../site/index.html`)).toBeNull();
+    expect(previewFile(`botling-card://preview${root}/p/.bot/artifacts/%2E%2E/%2E%2E/site/index.html`)).toBeNull();
+    expect(previewFile(`botling-card://other${page}`)).toBeNull();
+    expect(previewFile(previewURL(join(root, "p/.bot/artifacts/none.html")))).toBeNull();
+    expect(previewFile(previewURL(join(root, "p/.bot/artifacts/folder.html")))).toBeNull();
   });
 });

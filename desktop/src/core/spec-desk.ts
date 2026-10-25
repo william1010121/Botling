@@ -16,6 +16,7 @@ import type { ComponentInfoView, DisplayView, SpecChipView, SpecStateView } from
 import type { MaintainerDesk } from "./maintainer";
 import { preview as previewOf } from "./bot";
 import { briefRequest } from "./component-brief";
+import { pageOfCard } from "./page-preview";
 import {
   answerOpenQuestions, answerQuestion, buildRequest, changeRequest, clip, draftRequest, draftSpec, editSpecValue, filledData, fillRequest, firstBuildRequest,
   isFilling, lastCommand, nextVersion, outputMatches, preferredSample, replyPages, sayRequest, shortTime, slug, specCard, updateSpec, type ComponentSpec,
@@ -115,18 +116,28 @@ export class SpecDesk {
     return spec.status === "draft" && !spec.asked && spec.existing === undefined && spec.built === undefined;
   }
 
-  /** The reply's "Make into component" (`makeComponent`): the chip, and Maintainer builds the first version now. */
-  make(chat: Bot, messageId: string, purpose: string | null): ComponentSpec | null {
+  /**
+   * The reply's "Make into component", or a result page's preview card's (`preview`: which card) (`makeComponent`):
+   * the chip, and Maintainer builds the first version now.
+   */
+  make(chat: Bot, messageId: string, purpose: string | null, preview: number | null = null): ComponentSpec | null {
     const record = chat.lines().find((line) => line.id === messageId);
     if (!record || (record.role !== "bot" && record.role !== "notice")) return null;
-    const found = chat.specs.find((spec) => spec.messageID === messageId && spec.page === undefined);
+    let page: string | undefined;
+    if (preview !== null) {
+      const card = chat.previews(record)?.[preview];
+      const path = card ? pageOfCard(card) : null;
+      if (!path) return null;
+      page = path;
+    }
+    const found = chat.specs.find((spec) => spec.messageID === messageId && spec.page === page);
     if (found) {
       if (found.existing !== undefined) this.open(found.id, chat);
       else if (SpecDesk.unstarted(found)) this.start(found.id, chat);
       return chat.specs.find((spec) => spec.id === found.id) ?? null;
     }
     const writer = this.writerOf(record, chat);
-    const spec = draftSpec(record, this.name(writer), this.commandFolder(record, chat), this.library, toSwiftDate());
+    const spec = draftSpec(record, this.name(writer), this.commandFolder(record, chat), this.library, toSwiftDate(), page ?? null);
     const words = purpose?.trim();
     if (words) spec.purpose = words;
     chat.editSpecs((specs) => { specs.push(spec); });

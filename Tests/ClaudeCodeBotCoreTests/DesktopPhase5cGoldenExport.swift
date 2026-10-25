@@ -125,11 +125,54 @@ struct DesktopPhase5cGoldenExport {
         let counts = [0, 812, 999, 1_000, 1_049, 1_050, 34_500, 999_949, 999_950, 1_000_000, 1_250_000, 12_345_678]
         let amounts = [0, 0.004, 0.005, 0.015, 1.234, 12.5, 100]
 
+        // Result pages' preview cards: the card's data, the cards a message's links make, a spec from one, and
+        // the app's own card (template and about.md). Paths are under `root`, which the test puts its own in for.
+        let root = FileManager.default.temporaryDirectory.appending(path: "ccb-5c-preview-\(UUID().uuidString)").resolvingSymlinksInPath()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for (file, text) in [("p/.bot/artifacts/report.html", "<!doctype html><h1>報告</h1><ul><li>One</li><li>Two</li></ul>"), ("p/.bot/artifacts/sub/chart.HTM", "<p>chart</p>"),
+                             ("p/site/index.html", "<p>site</p>"), ("p/.bot/artifacts/notes.txt", "notes"), ("p/.bot/artifacts/My Report 2.html", "<p>two</p>")] {
+            let url = root.appending(path: file)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(text.utf8).write(to: url)
+        }
+        try FileManager.default.createDirectory(at: root.appending(path: "p/.bot/artifacts/folder.html"), withIntermediateDirectories: true)
+        let r = root.path
+        let cardInputs = [
+            "{\"path\":\"\(r)/p/.bot/artifacts/report.html\",\"title\":\"競品比較\"}",
+            "{\"url\":\"file://\(r)/p/.bot/artifacts/sub/chart.HTM\"}",
+            "{\"path\":\"\(r)/p/.bot/artifacts/missing.html\",\"title\":\"  \"}",
+            "{\"path\":\"\(r)/p/.bot/artifacts/notes.txt\",\"shot\":\"x\"}",
+            "{\"path\":\"\(r)/p/.bot/artifacts/folder.html\"}",
+            "{\"path\":\"relative/x.html\",\"title\":\"Rel\"}",
+            "{\"title\":\"none\"}",
+            "[1, 2]",
+            "not json",
+        ]
+        let cards = cardInputs.map { ["data": $0, "card": PagePreview.cardData($0)] }
+        let linkTexts = [
+            "See [競品比較](file://\(r)/p/.bot/artifacts/report.html) and [chart](file://\(r)/p/.bot/artifacts/sub/chart.HTM).",
+            "[again](file://\(r)/p/.bot/artifacts/report.html) [twice](file://\(r)/p/.bot/artifacts/report.html) [site](file://\(r)/p/site/index.html) [gone](file://\(r)/p/.bot/artifacts/gone.html)",
+            "[a](file://\(r)/p/.bot/artifacts/report.html) [b](file://\(r)/p/.bot/artifacts/sub/chart.HTM) [c](file://\(r)/p/.bot/artifacts/My%20Report%202.html) [d](file://\(r)/p/.bot/artifacts/report.html)",
+            "[web](https://example.com/artifacts/x.html) [multi\nline](file://\(r)/p/.bot/artifacts/report.html)",
+        ]
+        let linked = linkTexts.map { ["text": $0, "cards": PagePreview.linkedCards(in: $0), "skipping": PagePreview.linkedCards(in: $0, skipping: [root.appending(path: "p/.bot/artifacts/report.html")])] as [String: Any] }
+        let pageReply = ChatMessage(role: .bot, text: "Here: [競品比較](file://\(r)/p/.bot/artifacts/report.html)", date: date)
+        let library = Workspace(root: root.appending(path: "ccb"), launcher: FakeLauncher().launcher) { profile, store in Bot(profile: profile, launcher: FakeLauncher().launcher, store: store) }.components
+        let pageSpec = ComponentSpecs.draft(from: pageReply, bot: "Shop", folder: URL(filePath: "\(r)/p"), library: library, page: "\(r)/p/.bot/artifacts/My Report 2.html")
+        let previews: [String: Any] = [
+            "root": r, "cards": cards, "linked": linked,
+            "spec": ["name": pageSpec.name, "page": pageSpec.page ?? NSNull(), "shownAs": pageSpec.shownAs ?? NSNull(), "existing": pageSpec.existing ?? NSNull(), "command": pageSpec.command ?? NSNull(),
+                     "samples": pageSpec.samples.map { ["label": $0.label, "data": $0.data] }],
+            "pages": ComponentSpecs.pages(of: pageReply, page: "\(r)/p/.bot/artifacts/My Report 2.html").map { ["path": $0.path, "text": $0.text] },
+            "template": ComponentDefaults.previewTemplate, "about": ComponentDefaults.previewAbout, "olderTemplates": ComponentDefaults.olderPreviewTemplates,
+        ]
+
         let export: [String: Any] = [
             "about": "Written by Tests/ClaudeCodeBotCoreTests/DesktopPhase5cGoldenExport.swift from the Swift app's own code.",
             "brief": ["when": when, "preview": preview, "folder": folder, "requests": requests, "briefs": briefs, "arguments": arguments,
                       "timeout": ComponentBrief.timeout, "limit": ComponentBrief.limit, "tools": ComponentBrief.tools, "denied": ComponentBrief.deniedTools],
             "engine": dividers,
+            "preview": previews,
             "usage": ["now": now.timeIntervalSinceReferenceDate, "seen": seen.timeIntervalSinceReferenceDate, "claudeLimits": claudeLimits, "claudeUsage": usages,
                       "codexLimits": codexLimits, "codexTokens": codexTokens, "spending": steps, "texts": texts, "stale": stale,
                       "tokenCount": counts.map { ["count": $0, "text": Workspace.tokenCount($0)] }, "dollars": amounts.map { ["amount": $0, "text": Workspace.dollars($0)] }],

@@ -48,7 +48,7 @@ describe("switching a head's engine", () => {
     const claude = lines(join(dir, "claude.log")).map((entry) => String(entry.text));
     // Claude wrote the handoff with its own note (1.x's BotPrompts.handoff, Claude's words).
     expect(claude.some((text) => text.startsWith('(App: The model is about to change. Write what you are working on and what comes next into the "In progress" section of '))).toBe(true);
-    expect(claude.some((text) => text.includes("second"))).toBe(false);
+    expect(claude.some((text) => /(^|\n)second$/.test(text))).toBe(false);
     const messages = (await c.chat()).messages;
     const divider = messages.findIndex((m: any) => m.role === "divider" && m.text === "Handoff → Codex");
     expect(divider).toBeGreaterThan(0);

@@ -193,3 +193,42 @@ describe("component specs (Workspace+Specs.swift)", () => {
     expect(existing).toMatchObject({ existing: "disk", status: "draft", preview: "disk", fields: [{ name: "used", type: "int", by: "app" }] });
   });
 });
+
+describe("result pages (Phase 5c, 1.x's PagePreview and makeComponent(from:preview:))", () => {
+  it("a reply's links to result pages are preview cards under it; Make into component on one makes a spec from that page", async () => {
+    const dir = tempDir("specs-pages");
+    const c = core(dir);
+    const artifacts = join(dir, "work", ".bot", "artifacts");
+    mkdirSync(artifacts, { recursive: true });
+    writeFileSync(join(artifacts, "report.html"), "<!doctype html><h1>Sales</h1><ul><li>North 12</li><li>South 9</li></ul>");
+    writeFileSync(join(artifacts, "other.html"), "<p>Other</p>");
+    await say(c, MAIN, `/say Done: [Sales report](file://${artifacts}/report.html) and [other](file://${artifacts}/other.html), not [this](file://${dir}/x.html).`);
+    const line = await until(async () => (await c.chat()).messages.findLast((m: any) => m.role === "bot"));
+    expect(line.previews).toHaveLength(2);
+    const card = JSON.parse(line.previews[0].data);
+    expect(line.previews[0].name).toBe("網頁預覽卡片");
+    expect(card).toMatchObject({ path: join(artifacts, "report.html"), title: "Sales report", name: "report.html", missing: false, url: `file://${artifacts}/report.html` });
+    expect(card.src).toMatch(new RegExp(`^botling-card://preview${artifacts.replaceAll("/", "\\/").replaceAll(".", "\\.")}/report\\.html\\?v=\\d+$`));
+    // The app's own card is in the library (seeded as 1.x does).
+    expect((await c.call({ type: "chat.snapshot" })).components["網頁預覽卡片"]).toBeTruthy();
+    const { specId } = await c.call({ type: "spec.make", botId: MAIN, messageId: line.id, preview: 0 });
+    const spec = JSON.parse(readFileSync(join(dir, "main", "specs.json"), "utf8")).find((entry: any) => entry.id === specId);
+    expect(spec).toMatchObject({ name: "report", page: join(artifacts, "report.html"), shownAs: "網頁預覽卡片", samples: [{ label: "This page", kind: "page" }] });
+    // Maintainer gets the page's own words with the request.
+    const relay = await until(async () => (await c.chat(MAINTAINER)).messages.find((m: any) => m.role === "relay" && m.text.includes(specId)));
+    expect(relay.text).toContain(`${join(artifacts, "report.html")}`);
+    expect(relay.text).toMatch(/says:\nSales\n+- North 12\n+- South 9/);
+    // Pressed again: the same spec. The reply itself: a spec of its own. A card that is not there: nothing.
+    expect((await c.call({ type: "spec.make", botId: MAIN, messageId: line.id, preview: 0 })).specId).toBe(specId);
+    expect((await c.call({ type: "spec.make", botId: MAIN, messageId: line.id, preview: 2 })).specId).toBeNull();
+    const second = await c.call({ type: "spec.make", botId: MAIN, messageId: line.id, preview: 1 });
+    expect(second.specId).not.toBe(specId);
+    const saved = JSON.parse(readFileSync(join(dir, "main", "specs.json"), "utf8"));
+    expect(saved.find((entry: any) => entry.id === second.specId)).toMatchObject({ name: "other", page: join(artifacts, "other.html") });
+    const relay2 = await until(async () => (await c.chat(MAINTAINER)).messages.find((m: any) => m.role === "relay" && m.text.includes(second.specId)));
+    expect(relay2.text).toContain(`The result page it links, ${join(artifacts, "other.html")}, says:\nOther`);
+    const reply = await c.call({ type: "spec.make", botId: MAIN, messageId: line.id });
+    expect(reply.specId).not.toBe(specId);
+    expect(reply.specId).not.toBe(second.specId);
+  });
+});

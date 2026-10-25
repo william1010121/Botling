@@ -836,7 +836,7 @@ CCB_DESKTOP_PHASE5_EXPORT=$PWD/desktop/test/fixtures/phase5-golden.json TZ=UTC \
   first build goes without one, as 1.x does when there is no session.
 - **A component that lands before Maintainer names it in `<component-spec>` finishes the build** (1.x would
   wait for its template to change again: the editor's work usually comes before Maintainer's answer).
-- **Specs from a result page's preview card are not offered** (2.0 does not draw those cards yet).
+- **Specs from result-page preview cards** were deferred here; implemented in Phase 5c below.
 - **The spec panel takes the right panel's place** while its chat is shown (340 pt, wide 560).
 - **The column follows 1.x**: the main bot, Maintainer, the pinned rows, then groups, projects and bots with
   the newest line first (Phase 4c had Maintainer last and no sorting).
@@ -895,6 +895,37 @@ e2e suite twice in a row after the last change).
 - **SIGTERM is how the smoke test quits the app** (Electron turns it into a normal quit with before-quit):
   an Apple event (`osascript quit`) would ask for Automation permission.
 
+## Phase 5c: result pages made into components
+
+A bot or notice linking to an existing `.html`/`.htm` file inside an `artifacts` folder now gets
+up to three live preview cards beneath the reply (each page once; no duplicate for an explicit
+`<show name="網頁預覽卡片">`). The shipped card is seeded into the library; older shipped templates
+are upgraded, while hand edits are kept. Its Open button uses the result-opening path, including
+explicit `<show>` pages without a Markdown link and encoded filenames. Main checks that the file
+is linked or actually shown by that chat before opening it.
+
+Make into component on a preview selects that page for a spec. Repeated presses reuse its spec;
+another page and the whole reply get their own specs. Maintainer receives the selected page's
+words first, then the existing build/fill flow draws the new component under the original reply.
+`MessageView.previews` and `spec.make.preview` (0–2) are optional contract additions.
+
+Preview frames remain sandboxed without same-origin access or the app bridge. The preview
+protocol serves regular files only, inside a real `artifacts` folder after resolving symlinks;
+relative images/scripts can load there. Pages may use HTTPS resources, but cannot frame another
+page, submit forms, read app/file URLs, or navigate themselves to another preview.
+
+Evidence: `unit/phase5c.test.ts`, `unit/specs.test.ts`, and preview cases in `e2e/phase5c.spec.ts`
+cover golden card data, seeding, page selection/deduplication, a rendered page with its script and
+image, Open authorization, completion to a filled component, and hostile-page isolation.
+The focused pass covered **95 unique unit tests and 7 Electron e2e tests**, plus typecheck.
+Two unit cwd assertions needed canonical cache paths in the local test harness; no product fix
+was needed for those assertions. The inherited Swift golden fixture was reused, not regenerated.
+This was development-runtime validation; full integration validation and packaging are separate.
+
+Remaining differences: previews run the live page rather than a cached PageShot; explicit pages
+outside `artifacts` have no embedded preview; Open still uses the system application rather than
+1.x's dedicated result window. Media byte-range serving and Windows/Linux are unverified.
+
 ## Gaps vs the Swift app (1.x)
 
 Not in 2.0 yet, roughly in order of how much they matter:
@@ -922,10 +953,9 @@ Not in 2.0 yet, roughly in order of how much they matter:
 - **The main bot's world, still missing**: 1.x's own result window, the Dock count, a guest's background work kept with its copy. (The column sorted by newest line, a group's "Waiting on
   you", the strip's "In the group", "In the summary" and helping lines: Phase 5a.)
   (Pinned bots, search, the folded column, Tasks and group chats: Phase 4c.)
-- **Components and plugins, still missing**: a spec's brief from the writer's session, specs from result
-  pages, a component's full version history in the app (Revert is there), "Show in all bots" floats (each chat floats its own), "making
+- **Components and plugins, still missing**: a spec's brief from the writer's session, a component's full version history in the app (Revert is there), "Show in all bots" floats (each chat floats its own), "making
   it live" (a Board command handed to Maintainer), SF Symbol icons (emoji icons work),
-  `ccb.open` of pages (pictures open in the page's lightbox),
+  a dedicated window for `ccb.open` pages (they use the system application; pictures open in the page's lightbox),
   the plugin library's revert/remove and version history in the app, installs from npm or archives,
   `claude plugin validate` before a Claude part is used, plugins' MCP tools on the allowed list,
   browser tools for bots, the component editor's model setting (sonnet unless settings.json

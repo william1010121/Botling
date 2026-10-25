@@ -30,6 +30,8 @@ import { join, resolve } from "node:path";
 import type { Bot } from "./bot";
 import type { ComponentLibrary } from "./components/library";
 import { COMPONENT_LIMIT, safeName } from "./components/library";
+import { OLDER_PREVIEW_TEMPLATES, PREVIEW_ABOUT, PREVIEW_TEMPLATE } from "./components/builtins";
+import { PAGE_COMPONENT } from "./specs";
 import { writeFileAtomic } from "./durable/atomic";
 import { componentEditorAgent, pluginGuide } from "./maintainer-text";
 import { checkPlugin, ENGINE_RANGE, PERMISSIONS, title, type PluginManifest } from "./plugins/manifest";
@@ -90,6 +92,13 @@ export function prepareLibrary(root: string, model = "sonnet"): { editedEditor: 
   const components = join(library, "ccb-components", "package.json");
   if (!existsSync(components)) {
     writeFileAtomic(components, builtInManifest("ccb-components", "Component library", "Components shown in the chat (choices and so on). One folder per component: template.html and about.md.", [], { components: "components" }));
+  }
+  // The app's own preview card (1.x's `seedDefaults`): written when missing, or over an earlier shipped copy nobody edited.
+  const preview = join(library, "ccb-components", "components", PAGE_COMPONENT);
+  mkdirSync(preview, { recursive: true });
+  for (const [file, text, older] of [["template.html", PREVIEW_TEMPLATE, OLDER_PREVIEW_TEMPLATES], ["about.md", PREVIEW_ABOUT, []]] as const) {
+    const current = readText(join(preview, file));
+    if (current === null || (older as readonly string[]).includes(current)) writeFileAtomic(join(preview, file), text);
   }
   const core = join(library, "ccb-core");
   const editor = join(core, "claude", "agents", "component-editor.md");

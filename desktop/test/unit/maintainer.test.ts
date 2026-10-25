@@ -139,14 +139,14 @@ describe("Maintainer in the core", () => {
     // No "cannot do this yet" notice any more.
     expect((await c.chat()).messages.some((m: any) => m.text.includes("cannot do this yet"))).toBe(false);
     const relay = await until(async () => (await c.chat(MAINTAINER)).messages.find((m: any) => m.role === "relay"));
-    expect(relay.text).toMatch(/^Main bot wants a new component "weather": a weather card for today \(App: Main bot has 0 \/ 20 components\. Check the library first: if a component there already does this, build nothing and reply with <give-component bot="Main bot">its name<\/give-component>\. Otherwise build it; once it is in the library the app adds it to Main bot's list\. If you will not or cannot do it, say why and end your reply with <component-declined id="[0-9a-f]{8}">why, in one sentence for Main bot<\/component-declined>; the app passes it on to Main bot\.\)$/);
+    expect(relay.text).toMatch(/^Main bot wants a new component "weather": a weather card for today \(App: Main bot has 1 \/ 20 components\. Check the library first: if a component there already does this, build nothing and reply with <give-component bot="Main bot">its name<\/give-component>\. Otherwise build it; once it is in the library the app adds it to Main bot's list\. If you will not or cannot do it, say why and end your reply with <component-declined id="[0-9a-f]{8}">why, in one sentence for Main bot<\/component-declined>; the app passes it on to Main bot\.\)$/);
     await until(() => lines(join(dir, "claude-input.log")).some((entry) => entry.text.includes("(From the main bot) Main bot wants a new component \"weather\"")));
     // The library is a git repo now (made before the first job).
     expect(existsSync(join(dir, "plugins", ".git"))).toBe(true);
     // Maintainer built it: it lands in the library; the main bot gets it on its list and is woken to answer with it.
     component(dir, "weather", "Weather card: today's weather.\nData: {\"sky\":\"sun\"}");
     await until(async () => (await c.chat()).messages.some((m: any) => m.role === "notice" && m.text === "Maintainer added Weather card (weather) to your components."), { timeout: 10_000 });
-    expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).components).toEqual(["weather"]);
+    expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).components).toEqual(["網頁預覽卡片", "weather"]);
     await until(() => lines(join(dir, "claude-input.log")).some((entry) => entry.text.includes("(App: Maintainer added the component \"weather\" to your list (your request: a weather card for today).")));
     // A request Maintainer declines goes back to the bot, with why.
     await say(c, MAIN, "/say <component name=\"radar\">a rain radar</component>");

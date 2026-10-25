@@ -142,7 +142,8 @@ describe("timing as 1.x", () => {
     expect(second.messageId).toBe(first.messageId);
     expect((await finishedFor(c, first.turnId)).event).toMatchObject({ status: "done", text: "Codex says: first (also heard: second)" });
     expect(codexInputs(dir, "steer")).toEqual([expect.stringMatching(/^second/)]);
-    expect(codexInputs(dir).filter((text) => text.includes("second"))).toEqual([]);
+    // (Not a turn of its own: no input ends with it. Its components note says "every 2 seconds".)
+    expect(codexInputs(dir).filter((text) => /(^|\n)second$/.test(text))).toEqual([]);
     const shown = (await c.chat()).messages.filter((m: any) => m.role !== "divider" && m.role !== "notice").map((m: any) => [m.role, m.text]);
     expect(shown).toEqual([["user", "first"], ["user", "second"], ["bot", "Codex says: first (also heard: second)"]]);
   });

@@ -1,6 +1,7 @@
 // What every bot shares about components: the library, the command runs and their approvals, and
 // the pictures a component's data names (served to its sandboxed frame by token, never by path).
 // Plus the views the page draws (`ChatPayload.display`, `ChatPayload.pin(view:)`).
+import { cardData, PAGE_COMPONENT } from "../page-preview";
 import { createHash } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -92,9 +93,11 @@ export function displayCommand(display: Display, role: string, library: Componen
 /** A component in a message, with its command's run when its data comes from one (`ChatPayload.display(_:card:…)`). */
 export function displayView(context: ComponentsContext, display: Display, card: string, role: string, folder: string, pinned: boolean | null): DisplayData {
   const { library, commands, images } = context;
-  const urls = images.urls(display.data);
+  // The preview card's data gets what the app adds (`PagePreview.cardData`): where its frame loads the page from.
+  const data = display.name === PAGE_COMPONENT ? cardData(display.data) : display.data;
+  const urls = images.urls(data);
   const view: DisplayData = {
-    name: display.name, data: display.data, at: typeof display.at === "number" ? display.at : null, command: null, folder: null, detail: null, card: null,
+    name: display.name, data, at: typeof display.at === "number" ? display.at : null, command: null, folder: null, detail: null, card: null,
     status: null, error: null, ranAt: null, images: Object.keys(urls).length ? urls : null, pinned, every: null,
   };
   const detail = role === "bot" ? library.detailCommand(display.name) : null;

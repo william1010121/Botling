@@ -256,6 +256,8 @@ export const MessageView = z.strictObject({
   decisionId: id.optional(),
   /** Components it shows (`<show>`). */
   displays: z.array(DisplayView).max(20).optional(),
+  /** The result pages it links to, as 「網頁預覽卡片」 cards under its text (Phase 5c, 1.x's `previews`). */
+  previews: z.array(z.strictObject({ name: z.string().max(200), data: z.string().max(20_000) })).max(3).optional(),
   /** The bot that said it, when it is not this chat's own (a bot called in with @, a group's member; 1.x's `sourceID`). */
   sourceId: BotId.optional(),
   /** Component specs made from it (Phase 5a). */
@@ -812,7 +814,7 @@ export const Command = z.discriminatedUnion("type", [
     rect: z.strictObject({ x: z.number(), y: z.number(), width: z.number().positive().max(10_000), height: z.number().positive().max(10_000) }).nullable(),
     problem: z.boolean(), pinId: id.optional(), screenshot: z.string().max(FILE_DATA_LIMIT).optional() }),
   /** "Make into component" on a reply (1.x's `makeComponent`): Maintainer builds the first version now. */
-  z.strictObject({ type: z.literal("spec.make"), botId, messageId: id, purpose: z.string().max(4_000).optional() }),
+  z.strictObject({ type: z.literal("spec.make"), botId, messageId: id, purpose: z.string().max(4_000).optional(), preview: z.number().int().nonnegative().max(2).optional() }),
   /** Something done with a spec (its chip, its panel); the spec is found by its id. */
   z.strictObject({ type: z.literal("spec.act"), specId: id, action: SpecAction }),
   /** The spec panel folds back to the chip (`closeSpec`), or is made wide (`setSpecPanelWide`). */

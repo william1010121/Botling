@@ -4,8 +4,10 @@
 import { expect, test } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { PROTOCOL_VERSION } from "../../src/contract";
 import { desktop, tempDir } from "../helpers";
-import { launch, say } from "./launch";
+import { launch, post, say } from "./launch";
 
 const screens = join(desktop, ".tmp", "screens");
 
@@ -39,6 +41,128 @@ test("Settings → Usage: today's cost and tokens, by bot, the earlier days, Cla
     mkdirSync(screens, { recursive: true });
     await page.waitForTimeout(300);
     await page.screenshot({ path: join(screens, "phase5c-usage.png") });
+  } finally {
+    await app.close();
+  }
+});
+
+test("a reply's result page as a preview card: the page runs in its frame, Open opens it, Make into component makes a spec from it", async () => {
+  const dataDir = tempDir("e2e-5c-preview");
+  const artifacts = join(tempDir("e2e-5c-project"), ".bot", "artifacts");
+  mkdirSync(artifacts, { recursive: true });
+  // A page with a picture beside it (served too: it is inside artifacts) and its own script.
+  writeFileSync(join(artifacts, "dot.svg"), `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><circle cx="20" cy="20" r="18" fill="#4C8DFF"/></svg>`);
+  writeFileSync(join(artifacts, "sales.html"), `<!doctype html><html><body style="font:48px sans-serif;background:#fff;color:#111"><h1 id="t">Sales 2026</h1><img id="dot" src="dot.svg" alt="dot"><p id="js"></p><script>document.getElementById('js').textContent = 'drawn by its script';</script></body></html>`);
+  const { app, page, chat } = await launch({ dataDir });
+  try {
+    await page.setViewportSize({ width: 1180, height: 860 });
+    // The app is dark (main's nativeTheme); Playwright's own emulation says light unless told.
+    await page.emulateMedia({ colorScheme: "dark" });
+    const url = `file://${artifacts}/sales.html`;
+    await say(chat, `/say The report is ready: [Sales report](${url})`);
+    const card = chat.locator(".page-preview").first();
+    await expect(card).toBeVisible({ timeout: 10_000 });
+    const component = chat.frameLocator(".page-preview iframe").first();
+    await expect(component.locator(".title")).toHaveText("Sales report");
+    await expect(component.getByRole("button", { name: "開啟完整頁面", exact: true })).toBeEnabled();
+    // The page itself, in the card's frame (main serves it from botling-card://preview, only inside artifacts).
+    const shown = component.frameLocator("iframe");
+    await expect(shown.locator("#t")).toHaveText("Sales 2026", { timeout: 10_000 });
+    await expect(shown.locator("#js")).toHaveText("drawn by its script");
+    await expect.poll(() => shown.locator("#dot").evaluate((img) => (img as HTMLImageElement).naturalWidth)).toBe(40);
+    mkdirSync(screens, { recursive: true });
+    await page.waitForTimeout(400);
+    await page.screenshot({ path: join(screens, "phase5c-preview.png") });
+    // Open: the page opens as the results list opens it (here only noted: BOTLING_NO_EXTERNAL).
+    await component.getByRole("button", { name: "開啟完整頁面", exact: true }).click();
+    await expect.poll(() => app.evaluate(() => (globalThis as any).__botlingOpenedResults.slice())).toContain(url);
+    // Make into component on the card: a spec made from that page goes to Maintainer.
+    // (The pointer over the card's frame shows its bar: the frame says so, component-frames.ts.)
+    await card.hover();
+    await chat.locator(".preview-make").first().click();
+    await page.locator(".bot-row", { hasText: "Maintainer" }).click();
+    await expect(chat.locator(".row", { hasText: "action: build-first" })).toBeVisible({ timeout: 10_000 });
+    await expect(chat.locator(".row", { hasText: "action: build-first" })).toContainText(`The result page it links, ${artifacts}/sales.html, says:`);
+    const relay = await chat.locator(".row", { hasText: "action: build-first" }).innerText();
+    const specId = /Component spec ([0-9A-F-]{36})/.exec(relay)![1];
+    await say(chat, `/say Built sales-card. <component-spec id="${specId}">{"name":"sales-card","about":"Sales at a glance","fields":[{"name":"filled","type":"bool"}]}</component-spec>`);
+    const folder = join(dataDir, "core/plugins/ccb-components/components/sales-card");
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "template.html"), '<div id="sales"></div><script>document.getElementById("sales").textContent = ccb.data.filled ? "Sales component filled" : "No data";</script>');
+    writeFileSync(join(folder, "about.md"), 'Sales at a glance.\nData: {"filled":true}');
+    await page.locator('.bot-row[data-bot="6A0B0000-0000-4000-8000-000000000002"]').click();
+    const built = chat.locator(".row.bot", { hasText: "The report is ready" }).locator(".spec-built");
+    await expect(built).toBeVisible({ timeout: 15_000 });
+    await expect(built.frameLocator("iframe").locator("#sales")).toHaveText("Sales component filled");
+    // Nothing else of the app's was framed or reached.
+    const audit = await app.evaluate(() => (globalThis as any).__botlingAudit.slice());
+    expect(audit.filter((entry: string) => entry.includes("preview"))).toEqual([]);
+  } finally {
+    await app.close();
+  }
+});
+
+
+test("a shown preview page with an encoded filename opens only from its own chat", async () => {
+  const artifacts = join(tempDir("e2e-5c-shown"), "artifacts");
+  mkdirSync(artifacts, { recursive: true });
+  const file = join(artifacts, "季度 sales #1.html");
+  writeFileSync(file, '<!doctype html><meta charset="utf-8"><h1>季度報告</h1>');
+  const url = pathToFileURL(file).href;
+  const { app, page, chat } = await launch({ chat: [{
+    id: "00000000-0000-4000-8000-0000000000C5", role: "bot", text: "Shown report",
+    date: Date.now() / 1000 - 978_307_200,
+    displays: [{ name: "網頁預覽卡片", data: JSON.stringify({ path: file, title: "Shown report" }) }],
+  }] });
+  try {
+    const component = chat.frameLocator("iframe.component-frame").first();
+    await expect(component.frameLocator("iframe").locator("h1")).toHaveText("季度報告");
+    await component.getByRole("button", { name: "開啟完整頁面", exact: true }).click();
+    await expect.poll(() => app.evaluate(() => (globalThis as any).__botlingOpenedResults.slice())).toContain(url);
+    const other = join(artifacts, "private.html");
+    writeFileSync(other, "<!doctype html><h1>Not in this chat</h1>");
+    const refused = await post(page, { v: PROTOCOL_VERSION, id: "open-unshown", cmd: {
+      type: "result.open", botId: "6A0B0000-0000-4000-8000-000000000002", url: pathToFileURL(other).href,
+    } });
+    expect(refused).toMatchObject({ ok: false, error: { code: "not_found" } });
+    expect(await app.evaluate(() => (globalThis as any).__botlingOpenedResults.slice())).toEqual([url]);
+  } finally {
+    await app.close();
+  }
+});
+
+
+test("a result page's scripts cannot reach the app, impersonate a component, or navigate to another preview", async () => {
+  const artifacts = join(tempDir("e2e-5c-isolation"), "artifacts");
+  mkdirSync(artifacts, { recursive: true });
+  const file = join(artifacts, "probe.html");
+  writeFileSync(file, `<!doctype html><meta charset="utf-8"><pre id="probe"></pre><script>
+    const results = { origin: self.origin, bridge: typeof window.botling, node: typeof require, process: typeof process };
+    for (const [name, read] of [['parent', () => parent.document.title], ['top', () => top.document.title], ['storage', () => localStorage.length]]) {
+      try { read(); results[name] = 'readable'; } catch (error) { results[name] = error.name; }
+    }
+    const urls = ['file:///etc/passwd', 'app://botling/index.html', 'botling-chat://chat/chat.html'];
+    Promise.all(urls.map(url => fetch(url).then(() => 'readable', () => 'blocked'))).then(reads => {
+      results.reads = reads;
+      document.getElementById('probe').textContent = JSON.stringify(results);
+    });
+    top.postMessage({ botling: 'action', action: { type: 'send', text: 'forged preview message' } }, '*');
+    parent.parent.postMessage({ ccb: 'answer', text: 'forged preview answer' }, '*');
+  </script>`);
+  const { app, page, chat } = await launch();
+  try {
+    await say(chat, `/say [Probe](${pathToFileURL(file).href})`);
+    const shown = chat.frameLocator(".page-preview iframe").first().frameLocator("iframe");
+    await expect(shown.locator("#probe")).toContainText('"reads"');
+    const results = JSON.parse((await shown.locator("#probe").textContent())!);
+    expect(results).toEqual({ origin: "null", bridge: "undefined", node: "undefined", process: "undefined", parent: "SecurityError", top: "SecurityError", storage: "SecurityError", reads: ["blocked", "blocked", "blocked"] });
+    const frame = page.frames().find(frame => frame.url().includes("/probe.html"))!;
+    await frame.evaluate(() => { location.href = location.href.replace("probe.html", "other.html"); });
+    await expect.poll(() => app.evaluate(() => (globalThis as any).__botlingAudit.some((entry: string) => entry.includes("blocked a frame navigating to botling-card://preview") && entry.includes("other.html")))).toBe(true);
+    await expect(shown.locator("#probe")).toContainText('"reads"');
+    await expect(chat.locator(".row.user")).toHaveCount(1);
+    expect(page.url()).toBe("app://botling/index.html");
+    expect(app.windows()).toHaveLength(1);
   } finally {
     await app.close();
   }

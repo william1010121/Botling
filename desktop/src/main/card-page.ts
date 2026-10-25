@@ -32,7 +32,8 @@ export const COMPONENT_CSP = [
   "font-src data:",
   "media-src data: blob:",
   "connect-src 'none'",
-  "frame-src 'none'",
+  // Only result pages (the 「網頁預覽卡片」 card's frame, Phase 5c): main serves files inside an artifacts folder there.
+  "frame-src botling-card://preview",
   "child-src 'none'",
   "worker-src 'none'",
   "form-action 'none'",
@@ -80,6 +81,37 @@ const style = `<style>
 export function cardPage(html: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${CARD_CSP}">${style}${runtime}</head><body>${html}</body></html>`;
 }
+
+/**
+ * A result page in a preview card's frame (1.x served it to WebKit with no policy): its own files and pictures
+ * beside it (inside its artifacts folder), inline scripts and styles, and what it loads from https (charts and
+ * fonts from a CDN). No frames, forms, plain http or other app URLs. The frame is still sandboxed (opaque origin).
+ */
+export const PREVIEW_CSP = [
+  "default-src botling-card://preview",
+  "object-src 'none'",
+  "script-src 'unsafe-inline' 'unsafe-eval' botling-card://preview https:",
+  "style-src 'unsafe-inline' botling-card://preview https:",
+  "img-src botling-card://preview data: blob: https:",
+  "font-src botling-card://preview data: https:",
+  "media-src botling-card://preview data: blob: https:",
+  "connect-src https:",
+  "frame-src 'none'",
+  "child-src 'none'",
+  "worker-src 'none'",
+  "form-action 'none'",
+  "base-uri 'none'",
+].join("; ");
+
+/** Types a result page and the files beside it are served as (1.x's PagePreview.mimeTypes). */
+export const PREVIEW_TYPES: Record<string, string> = {
+  html: "text/html", htm: "text/html", css: "text/css", js: "application/javascript", mjs: "application/javascript", json: "application/json",
+  txt: "text/plain", csv: "text/plain", svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+  webp: "image/webp", ico: "image/x-icon", heic: "image/heic", heif: "image/heif", avif: "image/avif", bmp: "image/bmp", tif: "image/tiff",
+  tiff: "image/tiff", mp4: "video/mp4", m4v: "video/x-m4v", mov: "video/quicktime", webm: "video/webm", ogv: "video/ogg", mp3: "audio/mpeg",
+  m4a: "audio/mp4", aac: "audio/aac", wav: "audio/wav", ogg: "audio/ogg", oga: "audio/ogg", opus: "audio/ogg", flac: "audio/flac",
+  aiff: "audio/aiff", aif: "audio/aiff", woff: "font/woff", woff2: "font/woff2", ttf: "font/ttf", otf: "font/otf", wasm: "application/wasm",
+};
 
 /**
  * A plugin panel's page (its web part in a sandboxed frame): as COMPONENT_CSP, plus `blob:` scripts so

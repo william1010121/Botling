@@ -249,6 +249,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
       // Replies before your latest line fold their finished subagents away (still in their steps).
       earlier: index < lastYours && !!steps?.length ? true : null,
       displays: message.displays?.length ? message.displays.map(displayView) : null,
+      previews: message.previews?.length ? message.previews.map((preview) => ({ name: preview.name, data: preview.data })) : null,
       // Components made from it (Phase 5a): a chip, then the component itself with "Edit spec".
       specs: message.specs?.length ? message.specs.map((chip) => ({ id: chip.id, name: chip.name, status: chip.status, suggested: chip.suggested, open: chip.open,
         component: chip.component, display: chip.display ? displayView(chip.display) : null, filling: chip.filling })) : null,

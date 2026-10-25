@@ -11,6 +11,8 @@ import { characterCount, characterPrefix, type Clock } from "./briefing";
 import { BUILT_INS, safeName, type ComponentLibrary } from "./components/library";
 import { clampMinutes, DEFAULT_MINUTES, type PinRefresh } from "./components/pins";
 import { parseReply, type Display } from "./reply";
+import { cardData as pageCardData } from "./page-preview";
+import { PAGE_COMPONENT } from "./preview-url";
 import { newId, type ChatRecord } from "./store/records";
 
 export type SpecOrigin = "user" | "maintainer" | "app";
@@ -212,27 +214,32 @@ export function lastCommand(record: ChatRecord): string | null {
 
 const shownOf = (record: ChatRecord): Display[] => ((record.displays ?? []) as Display[]);
 const isBuiltIn = (name: string) => BUILT_INS.includes(name);
-export const PAGE_COMPONENT = "網頁預覽卡片";
+export { PAGE_COMPONENT };
 
 /**
  * What the app can tell from a reply alone (`draft(from:…)`): the data a component in it was drawn with
  * (its fields and a sample), the command that gave that card its data, a name and the bot's folder.
  */
-export function draftSpec(record: ChatRecord, bot: string, folder: string, library: ComponentLibrary | null, createdAt: number): ComponentSpec {
+export function draftSpec(record: ChatRecord, bot: string, folder: string, library: ComponentLibrary | null, createdAt: number, page: string | null = null): ComponentSpec {
   const names = new Set(library?.names ?? []);
   const shown = shownOf(record).filter((display) => !isBuiltIn(display.name));
-  const existing = shown.find((display) => names.has(display.name))?.name;
+  // From a result page's preview card (Phase 5c): named after the page, its sample the card.
+  const existing = page === null ? shown.find((display) => names.has(display.name))?.name : undefined;
   const first = shown[0];
-  const command = first?.command;
+  const command = page === null ? first?.command : undefined;
   const ran = command ?? lastCommand(record) ?? undefined;
-  const name = existing ?? (first ? slug(first.name) : ran ? slug(ran) : slug(record.text));
+  const name = existing ?? (page !== null ? slug(basename(page).replaceAll(".html", "")) : first ? slug(first.name) : ran ? slug(ran) : slug(record.text));
   const spec = newSpec({ messageID: record.id, name: name || "component", folder, bots: [bot], createdAt });
   if (existing) spec.existing = existing;
+  if (page !== null) spec.page = page;
   if (command) spec.command = command;
   if (first && first.data !== "null") {
     spec.fields = fieldsFromJSON(first.data);
     spec.samples = [sample("reply", first.data)];
     if (names.has(first.name)) spec.shownAs = first.name;
+  } else if (page !== null) {
+    spec.samples = [sample("page", pageCardData(jsonString({ path: page })))];
+    if (names.has(PAGE_COMPONENT)) spec.shownAs = PAGE_COMPONENT;
   } else {
     spec.samples = [sample("reply", jsonString({ text: record.text.trim() }))];
   }
@@ -445,7 +452,7 @@ const PER_MESSAGE = 3;
 export interface ReplyPage { path: string; text: string }
 
 /** A path from what a bot wrote: `/abs/path`, `~/path` or a `file://` URL (`PagePreview.fileURL(from:)`). */
-function filePath(text: string): string | null {
+export function filePath(text: string): string | null {
   const value = text.trim();
   if (value.toLowerCase().startsWith("file:")) { try { return resolve(fileURLToPath(value)); } catch { return null; } }
   if (value.startsWith("~/")) return resolve(process.env.HOME ?? "/", value.slice(2));
@@ -460,7 +467,7 @@ export function isArtifactPage(path: string): boolean {
 }
 
 /** The page a preview card's data names (`PagePreview.page(inCard:)`). */
-function pageInCard(data: string): string | null {
+export function pageInCard(data: string): string | null {
   try {
     const object = JSON.parse(data) as Record<string, unknown>;
     const given = typeof object.path === "string" ? object.path : typeof object.url === "string" ? object.url : null;

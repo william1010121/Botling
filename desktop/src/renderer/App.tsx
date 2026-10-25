@@ -768,10 +768,16 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
             problem: action.problem === true, ...(typeof action.pinID === "string" ? { pinId: action.pinID } : {}) }).catch(onError);
           return;
         }
+        // A link or a component's ccb.open(url): opened as the results list opens it, main checks it is one of this chat's (Phase 5c).
+        case "openURL":
+          if (chat && typeof action.url === "string" && action.url) void client.request({ type: "result.open", botId: chat.botId, url: action.url.slice(0, 8_000) }).catch(onError);
+          return;
         // A reply made into a component, and its spec's chip and card (Phase 5a).
         case "makeComponent":
           if (chat && typeof action.messageID === "string") {
-            void client.request({ type: "spec.make", botId: chat.botId, messageId: action.messageID, ...(typeof action.purpose === "string" && action.purpose.trim() ? { purpose: action.purpose.slice(0, 4_000) } : {}) }).catch(onError);
+            void client.request({ type: "spec.make", botId: chat.botId, messageId: action.messageID, ...(typeof action.purpose === "string" && action.purpose.trim() ? { purpose: action.purpose.slice(0, 4_000) } : {}),
+              // One of its result pages' preview cards (Phase 5c).
+              ...(typeof action.preview === "number" && Number.isInteger(action.preview) && action.preview >= 0 && action.preview <= 2 ? { preview: action.preview } : {}) }).catch(onError);
           }
           return;
         case "pressSpec":
