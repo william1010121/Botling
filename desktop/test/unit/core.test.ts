@@ -171,3 +171,26 @@ describe("core process", () => {
     expect(readFileSync(join(dir, "main", "chat.json"), "utf8")).toBe("{ half a fi");
   });
 });
+
+it('A5 blocks work and plugin activation before update receipt commit', async () => {
+  const dir=tempDir('pending-update'),plugin=join(dir,'plugins/boot-web');mkdirSync(join(plugin,'dist'),{recursive:true});
+  writeFileSync(join(plugin,'package.json'),JSON.stringify({name:'boot-web',version:'1.0.0',engines:{ccb:'^2.0.0'},ccb:{web:'dist/web.js'}}));
+  writeFileSync(join(plugin,'dist/web.js'),'export function activate(){}');
+  const c = core(dir, { BOTLING_UPDATE_PENDING: '1' });
+  await c.call({ type: 'chat.snapshot' });
+  expect((await c.call({type:'plugins.web'})).specs).toEqual([]);
+  await expect(c.call({ type: 'chat.send', botId: MAIN, text: 'must wait' })).rejects.toThrow('boot receipt');
+  await expect(c.call({ type: 'boot.commit' })).resolves.toEqual({});
+  expect((await c.call({type:'plugins.web'})).specs.some((s:any)=>s.name==='boot-web')).toBe(true);
+  const sent = await c.call({ type: 'chat.send', botId: MAIN, text: 'now allowed' });
+  expect(sent.turnId).toBeTruthy();
+});
+
+it('A5 defers external project archive/routine/lock writes until commit', async()=>{
+ const base=tempDir('pending-project'),data=join(base,'data'),project=join(base,'project');mkdirSync(data);mkdirSync(project);
+ writeFileSync(join(data,'projects.json'),JSON.stringify([{id:'12345678-0000-4000-8000-000000000001',name:'Synthetic',folder:project,avatar:'circle'}]));
+ const c=core(data,{BOTLING_UPDATE_PENDING:'1'});const state=await c.call({type:'chat.snapshot'});
+ expect(state.bots.some((b:any)=>b.name==='Synthetic')).toBe(true);
+ const {readdirSync}=await import('node:fs');expect(readdirSync(project)).toEqual([]);
+ await c.call({type:'boot.commit'});expect(readdirSync(project)).toContain('.bot');
+});

@@ -36,7 +36,7 @@ module.exports = {
   npmRebuild: false,
   nodeGypRebuild: false,
   buildDependenciesFromSource: false,
-  extraMetadata: { main: "out/main/main.cjs" },
+  extraMetadata: { main: "out/main/main.cjs", botlingUpdates: env.BOTLING_UNSIGNED_UPDATES === "1" ? "unsigned-updates" : "verified-updates" },
   // Electron's fuses, flipped in the binary before it is signed (https://www.electronjs.org/docs/latest/tutorial/fuses).
   electronFuses: {
     runAsNode: false, // the core and the plugin host are utility processes; Maintainer's check is `--check-plugin`
@@ -83,5 +83,5 @@ module.exports = {
     synopsis: "Bots that work in your projects",
     executableName: "botling2",
   },
-  artifactName: "Botling-2-${version}-${os}-${arch}.${ext}",
+  artifactName: "Botling-2-${version}-${os}-${arch}" + (env.BOTLING_UNSIGNED_UPDATES === "1" ? "-unsigned-updates" : "") + ".${ext}",
 };

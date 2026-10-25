@@ -24,12 +24,14 @@ export type FrameMessage =
   | { botling: "messageWidth"; value: number | null }
   | { botling: "messageWidthDrag"; active: boolean }
   /** The forwarded edit is applied; focus can return once all edits have arrived. */
-  | { botling: "keyHandled" }
+  | { botling: "keyHandled"; id: number }
   /** A component frame's page, to be served from botling-card://page/ (component-frames.ts). */
   | { botling: "page"; id: number; html: string };
 
 /** Shell → frame. */
 export type ShellMessage =
+  | { botling: "widthRejected"; value: number | null; actual: number | null }
+  | { botling: "widthPreview"; value: number | null | undefined }
   | { botling: "state"; state: ChatState; extras: FrameExtras; messageColumnWidth?: number | null }
   | { botling: "response"; id: number; ok: boolean; error?: string }
   /** The composer's Both/Claude/Codex pick was saved (`ccb.answerWithSaved`). */
@@ -43,7 +45,7 @@ export type ShellMessage =
   /** A component's `ccb.runDetail` answer (`ccb.detailReply`). */
   | { botling: "detailReply"; requestID: number; ok: boolean; value: string }
   /** A key that reached the app page while focus was passing between it and the chat frame, for the input box. */
-  | { botling: "key"; key: string; code: string; shiftKey: boolean; altKey: boolean }
+  | { botling: "key"; id: number; key: string; code: string; shiftKey: boolean; altKey: boolean }
   /** The cursor back in the input box (after the left column's search; `ccb.focus`). */
   | { botling: "focus" }
   /** Pointer events over the shell after a width drag leaves the chat iframe. */

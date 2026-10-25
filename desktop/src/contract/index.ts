@@ -620,6 +620,7 @@ export const UpdateView = z.strictObject({
   error: z.string().max(2_000).nullable(),
   installError: z.string().max(2_000).nullable().optional(),
   readyVersion: z.string().max(100).nullable().optional(),
+  recoveryError: z.string().max(2_000).nullable().optional(),
 });
 export type UpdateView = z.infer<typeof UpdateView>;
 
@@ -730,6 +731,7 @@ export const WebBounds = z.strictObject({
 });
 
 export const Command = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("boot.commit") }),
   /** Every bot, and (with `botId`) that bot's chat. Main bot when `botId` is left out. */
   z.strictObject({ type: z.literal("chat.snapshot"), botId: botId.optional() }),
   /** A message; while a reply is being written it joins or follows that turn (as 1.x steers). `replyTo`: a line it answers. */
@@ -775,6 +777,9 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("results.list"), botId }),
   /** Main only: opens one of a bot's results (a web link in the browser, a local page with its app). */
   z.strictObject({ type: z.literal("result.open"), botId, url: z.string().min(1).max(4_000) }),
+  z.strictObject({ type: z.literal("link.open"), botId, url: z.string().min(1).max(4_000) }),
+  /** Core-only membership lookup: no chat payload or component rendering. */
+  z.strictObject({ type: z.literal("link.authorize"), botId, url: z.string().min(1).max(4_000) }),
   z.strictObject({ type: z.literal("chat.read"), botId }),
   z.strictObject({ type: z.literal("turn.stop"), botId, turnId: id }),
   /** Resolves when the turn ends. Cancelling the request stops the wait, never the turn. */
@@ -953,11 +958,11 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
-  "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open",
+  "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "component.report", "chat.feedback", "updates.check", "updates.open", "updates.stage", "updates.restart"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "link.open", "component.report", "chat.feedback", "updates.check", "updates.open", "updates.stage", "updates.restart"]);
 
 /** A temporary team at work (1.x's `TeamRun`): its title, the task, when it started (ms since 1970). */
 export const TeamRunView = z.strictObject({ id, name: z.string().max(200), title: z.string().max(200), task: z.string().max(4_000), startedAt: z.number() });
@@ -1020,6 +1025,8 @@ export interface Results {
   "bots.remove": { removed: boolean };
   "results.list": { results: ResultView[] };
   "result.open": { opened: boolean };
+  "link.open": { opened: boolean };
+  "link.authorize": { result: boolean; linked: boolean };
   /** `stoppedBy`: a plugin's beforeSend hook stopped it (`messageId` is the notice saying so, `turnId` null). */
   "chat.send": { messageId: string; turnId: string | null; stoppedBy?: string };
   "heads.set": { engines: ("claude" | "codex")[] };
@@ -1075,6 +1082,7 @@ export interface Results {
   "updates.open": { opened: boolean };
   "updates.stage": UpdateView;
   "updates.restart": { restarting: boolean };
+  "boot.commit": Record<string, never>;
   "bot.settings": BotSettingsView;
   "bot.configure": BotSettingsView;
   "plugins.loaded": Record<string, never>;

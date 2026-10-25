@@ -3,6 +3,8 @@ import { MESSAGE_WIDTH_DEFAULT, MESSAGE_WIDTH_MIN, MESSAGE_WIDTH_MAX, messageWid
 /** Desktop-only controls; Web/src and the 1.x chat surface stay unchanged. */
 export function installMessageWidth(save: (value: number | null) => void, dragging: (active: boolean) => void) {
   let chosen: number | null = null;
+  let pending: { value: number | null } | null = null;
+  let preview: number | null | undefined;
   let chatId: string | null = null;
   let drag: { pointer: number; x: number; width: number; side: number; handle: HTMLElement; before: number | null } | null = null;
   const handles: HTMLElement[] = [];
@@ -10,7 +12,7 @@ export function installMessageWidth(save: (value: number | null) => void, draggi
     document.documentElement.style.setProperty("--message-column-width", `${value ?? MESSAGE_WIDTH_DEFAULT}px`);
     for (const handle of handles) handle.setAttribute("aria-valuenow", String(value ?? MESSAGE_WIDTH_DEFAULT));
   };
-  const commit = (value: number | null) => { chosen = value; paint(value); save(value); };
+  const commit = (value: number | null) => { chosen = value; pending = { value }; paint(value); save(value); };
   const cancel = () => {
     const active = drag;
     if (!active) return;
@@ -85,10 +87,18 @@ export function installMessageWidth(save: (value: number | null) => void, draggi
       else if (kind === "move") move(pointer, x);
       else up(pointer, x);
     },
+    rejected(value: number | null, actual: number | null) {
+      if (pending?.value !== value) return;
+      pending = null; chosen = messageWidth(actual); if (!drag) paint(chosen);
+    },
+    preview(value: number | null | undefined) { preview = value; if (!drag) paint(preview === undefined ? chosen : preview); },
     set(value: number | null, id: string) {
       if (chatId !== id) cancel();
       chatId = id;
-      if (!drag) { chosen = messageWidth(value); paint(chosen); }
+      const received = messageWidth(value);
+      if (pending && received === pending.value) pending = null;
+      if (!drag && !pending) chosen = received;
+      if (!drag) paint(preview === undefined ? chosen : preview);
     },
   };
 }

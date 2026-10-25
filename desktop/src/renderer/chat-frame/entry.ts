@@ -148,6 +148,10 @@ window.addEventListener("message", (event: MessageEvent) => {
     document.documentElement.dataset.chat = message.state.botID;
     addStop();
     decorate(message.extras);
+  } else if (message.botling === "widthRejected") {
+    column.rejected(message.value, message.actual);
+  } else if (message.botling === "widthPreview") {
+    column.preview(message.value);
   } else if (message.botling === "messageWidthPointer") {
     column.pointer(message.kind, message.pointerId, message.x);
   } else if (message.botling === "answerWithSaved") {
@@ -158,7 +162,7 @@ window.addEventListener("message", (event: MessageEvent) => {
     window.ccb.hostReply(message.callID, message.ok, message.value);
   } else if (message.botling === "key") {
     typeStrayKey(message);
-    toShell({ botling: "keyHandled" });
+    toShell({ botling: "keyHandled", id: message.id });
   } else if (message.botling === "focus") {
     window.ccb.focus();
   } else if (message.botling === "spec") {

@@ -29,6 +29,8 @@ import {
   type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView,
   type SettingsChange, type SettingsView, type WebStateView, type TeamRunView, type SpecAction,
 } from "../contract";
+import { filePath, pageInCard } from "./specs";
+import { PAGE_COMPONENT } from "./preview-url";
 import { Bot, NO_LONGER_NEEDED, type SessionStart, type SessionStartCodex } from "./bot";
 import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
@@ -59,6 +61,8 @@ import type { ChatRecord } from "./store/records";
 
 export interface CoreOptions {
   dataDir: string;
+  /** Update candidate: startup writes are snapshotted; external work waits for commit. */
+  deferStartup?: boolean;
   /** How long a bot answering in another chat waits for a busy one and may take (tests shorten it; 1.x's `groupTiming`). */
   groupTiming?: typeof GROUP_TIMING;
   /** How to run a bot's head for a session. */
@@ -117,6 +121,7 @@ export type BotMaking = { kind: "made"; botId: string } | { kind: "existing"; bo
 export class Core {
   readonly epoch = randomUUID().slice(0, 18);
   private seq = 0;
+  private activated = false;
   private bots = new Map<string, Bot>();
   private order: string[] = [];
   private inflight = new Map<string, AbortController>();
@@ -224,6 +229,7 @@ export class Core {
     const build = (profile: BotProfile, group = false): Bot => {
       const bot: Bot = new Bot({
         profile,
+        deferStartup: options.deferStartup && !this.activated,
         headConfig: options.headConfig,
         codexConfig: codexConfig ? (p, session) => codexConfig(p, session, threads) : null,
         claimWaitMs: options.claimWaitMs,
@@ -404,6 +410,14 @@ export class Core {
     });
     // What the snapshot shows already is no event (an event comes only when something changes).
     this.lastPlugins = JSON.stringify(this.plugins.view());
+    if (!options.deferStartup) this.activate();
+  }
+
+  private activate() {
+    if (this.activated) return;
+    this.activated = true;
+    for (const bot of this.bots.values()) bot.activateStartup();
+    const options = this.options;
     void this.plugins.start().catch((error) => this.log(`plugins: ${(error as Error).message}`));
     // Checking a wall-clock time every 30 s (rather than sleeping until it) survives the computer
     // sleeping; a time missed while the app was closed runs once later that day (1.x).
@@ -1216,7 +1230,11 @@ First write a test that shows this, then fix it.`;
   }
 
   private async handle(cmd: Command, signal: AbortSignal): Promise<unknown> {
+    if (!this.activated && !new Set<string>(["boot.commit", "chat.snapshot", "settings.get", "plugins.list", "plugins.web", "plugins.file", "results.list", "waiting.list", "bot.settings", "usage.view", "attachment.file", "card.image", "web.state", "link.authorize"]).has(cmd.type)) {
+      throw new ContractError("conflict", "Waiting for the update boot receipt to commit. Please try again shortly.");
+    }
     switch (cmd.type) {
+      case "boot.commit": { const first = !this.activated; this.activate(); if (first) this.event({type:"plugins.updated",plugins:this.plugins.view()}); return {}; }
       case "web.open": {
         const site = this.webSite(cmd.site);
         if (cmd.conversationId) {
@@ -1257,7 +1275,7 @@ First write a test that shows this, then fix it.`;
       case "plugins.command": return { result: await this.plugins.command(cmd.id) ?? null };
       case "plugins.panel": return this.plugins.panel(cmd.name, cmd.panel);
       case "plugins.call": return { result: await this.plugins.call(cmd.name, cmd.method, cmd.params) ?? null };
-      case "plugins.web": return { specs: this.plugins.webSpecs() };
+      case "plugins.web": return { specs: this.activated ? this.plugins.webSpecs() : [] };
       case "settings.get": return this.settingsNow();
       case "projects.add": return this.addProject(cmd.folder);
       case "bots.create": {
@@ -1279,6 +1297,18 @@ First write a test that shows this, then fix it.`;
         if (!(await this.groups.delete(cmd.groupId))) throw new ContractError("not_found", "No such group.");
         return {};
       case "subagent.settle": return this.bot(cmd.botId).settleSubagent(cmd.subagentId, cmd.settled);
+      case "link.authorize": {
+        const same = (url: string) => url === cmd.url || (filePath(url) !== null && filePath(url) === filePath(cmd.url));
+        let linked = false;
+        for (const line of this.bot(cmd.botId).lines()) {
+          const result = line.role === "bot" || line.role === "notice";
+          const match = [...line.text.matchAll(/\[[^\]\n]+\]\(([^)\s]+)\)/g)].some(value => same(value[1]!));
+          const shown = result && line.displays?.some(display => display.name === PAGE_COMPONENT && same(pageInCard(display.data) ?? ""));
+          if (result && (match || shown)) return {result:true,linked:true};
+          linked ||= match;
+        }
+        return {result:false,linked};
+      }
       case "results.list": return { results: this.bot(cmd.botId).results().slice(0, 200) };
       case "waiting.list": return this.waiting();
       case "waiting.ignore": return this.ignoreWaiting(cmd.botId, cmd.text);

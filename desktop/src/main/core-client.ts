@@ -44,6 +44,11 @@ export class CoreClient {
     });
   }
 
+  async commitUpdateBoot(): Promise<void> {
+    this.options.env.BOTLING_UPDATE_PENDING = "0";
+    await this.call({ type: "boot.commit" });
+  }
+
   /** Pids of the plugin hosts running now (for tests). */
   get hostPids(): number[] { return [...this.hosts.values()].map((host) => host.pid ?? -1); }
   /** Process groups plugins started in the running hosts (for tests). */

@@ -3,7 +3,7 @@ import { UpdateActions } from "./Updates";
 // and words, for what 2.0's core does. Everything here is global (settings.json) except "This bot",
 // which is the shown bot's own bot.json (1.x keeps those on the bot's page beside the chat). Each
 // control shows what the core saved: a change goes out, the answer (or `settings.updated`) comes back.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsView, UpdateView, UsageView } from "../contract";
 import { asOf, countdown, dollars, isEmpty, percent, resetDay, staleSince, tokenCount, type Limits } from "./usage-text";
 import { MESSAGE_WIDTH_DEFAULT, MESSAGE_WIDTH_MIN, MESSAGE_WIDTH_MAX } from "../contract/message-width";
@@ -43,7 +43,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, onClo
   useEffect(() => { if (!settings) void client.request({ type: "settings.get" }).then(setShown, (failure) => setProblem(why(failure))); }, [client, settings]);
   const change = useCallback((next: SettingsChange) => {
     setProblem(null);
-    void client.request({ type: "settings.set", change: next }).then(setShown, (failure) => setProblem(why(failure)));
+    return client.request({ type: "settings.set", change: next }).then(value => { setShown(value); return true; }, failure => { setProblem(why(failure)); return false; });
   }, [client]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
@@ -245,15 +245,36 @@ function TextSetting({ label, value, placeholder, onSave, disabled }: { label: s
   return <input type="text" aria-label={label} value={draft} placeholder={placeholder} disabled={disabled} onChange={(event) => setDraft(event.target.value)} onBlur={save} onKeyDown={(event) => { if (event.key === "Enter") save(); }} />;
 }
 
-function Appearance({ settings, change }: { settings: SettingsView; change: (next: SettingsChange) => void }) {
-  const width = settings.messageColumnWidth ?? MESSAGE_WIDTH_DEFAULT;
+function previewWidth(value: number | null | undefined) {
+  (document.getElementById("chat-frame") as HTMLIFrameElement | null)?.contentWindow?.postMessage({botling:"widthPreview",value}, "botling-chat://chat");
+}
+function Appearance({ settings, change }: { settings: SettingsView; change: (next: SettingsChange) => Promise<boolean> }) {
+  const input = useRef<HTMLInputElement>(null);
+  const latest = useRef(settings.messageColumnWidth); latest.current = settings.messageColumnWidth;
+  const editing = useRef<{before: number | null; value: number} | null>(null);
+  const pending = useRef<number | undefined>(undefined);
+  const [draft,setDraft] = useState<number | null>(null);
+  const cancel = useCallback(() => { editing.current=null;pending.current=undefined;setDraft(null);previewWidth(undefined); },[]);
+  // External updates win over an unfinished local drag, while unrelated settings pushes do not.
+  const previous = useRef(settings.messageColumnWidth);
+  useEffect(() => { if (previous.current !== settings.messageColumnWidth) { previous.current=settings.messageColumnWidth;cancel(); } },[settings.messageColumnWidth,cancel]);
+  useEffect(() => () => previewWidth(undefined),[]);
+  const commit = useCallback(() => {
+    const edit=editing.current;if(!edit)return;editing.current=null;pending.current=edit.value;
+    void change({key:"messageColumnWidth",value:edit.value}).then(ok=>{if(!ok)cancel();});
+  },[change,cancel]);
+  useEffect(() => { const el=input.current;el?.addEventListener("change",commit);return()=>el?.removeEventListener("change",commit); },[commit]);
+  const width=draft ?? settings.messageColumnWidth ?? MESSAGE_WIDTH_DEFAULT;
   return <Group title="Message column" note="Applies to every chat and its input box. Drag either column edge to resize; double-click an edge to reset. Narrow windows fit automatically.">
-    <Row label="Message column width" hint={`${width} px${settings.messageColumnWidth === null ? " (default)" : ""}`}>
-      <input type="range" aria-label="Message column width" min={MESSAGE_WIDTH_MIN} max={MESSAGE_WIDTH_MAX} value={width}
-        onChange={(event) => change({ key: "messageColumnWidth", value: Number(event.target.value) })} />
+    <Row label="Message column width" hint={`${width} px${settings.messageColumnWidth === null && draft===null ? " (default)" : ""}`}>
+      <input ref={input} type="range" aria-label="Message column width" min={MESSAGE_WIDTH_MIN} max={MESSAGE_WIDTH_MAX} value={width}
+        onInput={event=>{const value=Number(event.currentTarget.value);editing.current={before:editing.current?.before ?? latest.current,value};setDraft(value);previewWidth(value);}}
+        onChange={()=>{}} onPointerUp={commit} onPointerCancel={cancel} onBlur={commit}
+        onKeyUp={event=>{if(["ArrowLeft","ArrowRight","Home","End"].includes(event.key))commit();}}
+        onKeyDown={event=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();cancel();}}} />
     </Row>
-    <div className="settings-actions"><button type="button" disabled={settings.messageColumnWidth === null}
-      onClick={() => change({ key: "messageColumnWidth", value: null })}>Use default width</button></div>
+    <div className="settings-actions"><button type="button" disabled={settings.messageColumnWidth === null && draft===null}
+      onClick={()=>{cancel();void change({key:"messageColumnWidth",value:null});}}>Use default width</button></div>
   </Group>;
 }
 

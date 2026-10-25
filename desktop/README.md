@@ -47,7 +47,9 @@ from `desktop/node_modules`), so `cd Web && npm run build` and its output are un
 See [First open / 首次開啟](../docs/first-open.md) for macOS 15 **System Settings → Privacy & Security → Open Anyway**, the app-scoped quarantine command, and Windows SmartScreen.
 
 Updates check GitHub Releases `v2.*` by default (an explicit Settings opt-out is kept).
-**Download and verify** authenticates an Ed25519 manifest, ZIP SHA-256 and exact size before extraction or app modification. **Restart to update** is a separate required click; ordinary quit never installs. A bounded shell helper waits for the old process to exit, swaps sibling bundles, and retains `previous.app` until the new version has a loaded, ready renderer and responsive core. Crash/no receipt within 30 seconds restores the old bundle. macOS only; read-only/translocated apps must be moved into Applications. Only the verified extracted app has quarantine removed.
+**Download and verify** authenticates an Ed25519 manifest, ZIP SHA-256 and exact size before extraction or app modification. **Restart to update** is a separate required click; ordinary quit never installs. A shell helper waits for the old process to flush and exit, snapshots its data, swaps sibling bundles, and retains `previous.app` until the new version has a loaded, ready renderer and responsive core. Exit/crash before the receipt restores both the old bundle and its flushed data. A slow healthy process or keychain prompt has no short rollback deadline. Plugins, routines and user work start only after commit; SIGTERM uses normal flush shutdown with a five-second helper grace. macOS only; read-only/translocated apps must be moved into Applications. Only the verified extracted app has quarantine removed.
+
+Non-`--dir` packaging refuses missing trust unless `--unsigned-updates` is explicitly supplied. Development ZIP/DMG filenames and packaged metadata are marked `unsigned-updates`; this is separate from Apple ad-hoc signing.
 
 Release trust is deliberately **unconfigured** (`release-config.json`: `publicKey: null`): this checkout cannot self-install updates. No production key has been created. A maintainer must explicitly run the following once (not part of build):
 
@@ -66,18 +68,24 @@ node scripts/release-sign.mjs sign 2.0.1 dist/Botling-2-2.0.1-mac-arm64.zip
 
 Upload that ZIP and its adjacent `Botling-2-2.0.1-mac-arm64.zip.manifest.json` to the same `v2.0.1` GitHub release. The script refuses a key different from release-config.json. Manifest fields are `version`, lowercase hex `sha256`, byte `size`, and base64 `signature`. Ed25519 signs UTF-8 `JSON.stringify([version, sha256, size])` without newline. The ZIP must contain only `Botling 2.app/…`, with matching bundle ID/version. Signing this manifest does not replace Apple notarization or establish trust in the first download. Future key rotation requires a build already trusted by the old key.
 
-Focused updater tests use disposable keys, a loopback fake release server, and fake app bundles under `desktop/.tmp`; they never update an installed app. A complete packaged-update integration run remains separate.
+Focused updater tests use disposable keys, a loopback release server, and fake app bundles under `desktop/.cache/test-data`; they never update an installed app. The packaged transaction test also stages the real built ZIP using throwaway signed manifests in disposable locations; production trust remains unconfigured. The test driver supplies trust/transport only to the production `VerifiedInstaller` class; the real packaged app writes its receipt and LaunchServices reopens the restored older bundle. It does not exercise a live production feed or enable production trust.
+
+Startup migrations currently seed/upgrade the component/plugin library, move legacy team data, recover chat/approval/subagent state, and create archives/routines. Before candidate launch the helper snapshots the flushed app data (including Electron profiles); rollback restores it after candidate shutdown. Project archives, routine files, locks, plugin activation, scans, schedules, and user work wait for commit. Normal failed/stale stages are reclaimed with at most five bounded diagnostic records. A failed data/bundle restore retains its recovery copies. Candidate stdout/stderr are not redirected to a growing boot log.
+
+The staged bundle is renamed out and back as a preflight; the live app is never moved for that probe. This verifies the staged bundle/filesystem, not App Management permission for a protected installed app. Actual swap errors retain/reopen an available bundle and are reported on startup. Protected-location behavior remains untested without an installation there.
 
 ## Run it
 
-All bulky things stay on the external drive. Before `npm install` set:
+Keep build, test and download caches beside the checkout (choose a volume with enough free space):
 
 ```sh
-export npm_config_cache=/Volumes/My-SSD/botling-work/.npm-cache
-export electron_config_cache=/Volumes/My-SSD/botling-work/.electron-cache   # note: not ELECTRON_CACHE
-export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1                                   # Electron tests need no browsers
-export TMPDIR=/Volumes/My-SSD/botling-work/tmp
-cd desktop && npm install
+cd desktop
+mkdir -p .cache/npm .cache/electron .cache/tmp
+export npm_config_cache="$PWD/.cache/npm"
+export electron_config_cache="$PWD/.cache/electron"  # not ELECTRON_CACHE
+export TMPDIR="$PWD/.cache/tmp"
+export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+npm install
 ```
 
 | Command | What it does |
@@ -90,8 +98,8 @@ cd desktop && npm install
 | `npm run test:live:codex` | One real Codex turn and one real two-head claim (three turns; Codex gets a throwaway `CODEX_HOME` with a copy of `auth.json` only). |
 | `npm run test:live:3a` | Phase 3a's real checks: claude hearing a message mid-turn, a monitored command through `codex app-server`'s `command/exec`, a Catch-up summary by `codex exec` (same throwaway `CODEX_HOME`). |
 | `npm run typecheck` | `tsc --noEmit`. |
-| `npm run dist:mac` | Build out/, then electron-builder: `dist/mac-arm64/Botling 2.app`, `dist/Botling-2-<version>-mac-arm64.zip` and `dist/Botling-2-<version>-mac-arm64.dmg` (ad-hoc signed unless a Developer ID is given, below). `dist:dir` only the unpacked app; `dist:win`, `dist:linux` are configured but never run here. |
-| `npm run test:packaged` | The packaged app's smoke test (after `dist:mac`; `BOTLING_PACKAGED_APP=<…/Botling 2.app>` for another copy). |
+| `npm run dist:mac -- --unsigned-updates` | Build out/, then electron-builder: `dist/mac-arm64/Botling 2.app`, `dist/Botling-2-<version>-mac-arm64-unsigned-updates.zip` and `dist/Botling-2-<version>-mac-arm64-unsigned-updates.dmg` (ad-hoc signed unless a Developer ID is given, below). `dist:dir` only the unpacked app; `dist:win`, `dist:linux` are configured but never run here. |
+| `npm run test:packaged` | Packaged smoke, delivery, and real swap/receipt/rollback tests (after `npm run dist:mac -- --unsigned-updates` and `npm run test:packaged:fixture`; `BOTLING_PACKAGED_APP=<…/Botling 2.app>` for another copy). |
 
 Since Phase 3b the build also writes `out/host/host.mjs` (Web/host/src/host.ts, bundled as Web/build.mjs
 bundles it for 1.x) and `out/host/check-plugin.cjs` (the plugin check, the command Maintainer runs).
@@ -522,7 +530,7 @@ code (since Phase 3a also CatchUp.swift's prompt/instructions/arguments and Comp
 
 ```sh
 CCB_DESKTOP_PROMPT_EXPORT=$PWD/desktop/test/fixtures/prompts-golden.json TZ=UTC \
-  swift test --scratch-path /Volumes/My-SSD/botling-work/swift-build --filter DesktopPromptGoldenExport
+  swift test --scratch-path desktop/.cache/swift-build --filter DesktopPromptGoldenExport
 ```
 
 ### Decisions (Phase 2a)
@@ -764,7 +772,7 @@ waiting for the plugin to load — it passed 6 times alone and in the next full 
 
 ```sh
 CCB_DESKTOP_TEAMS_EXPORT=$PWD/desktop/test/fixtures/teams-golden.json TZ=UTC \
-  swift test --scratch-path /Volumes/My-SSD/botling-work/swift-build --filter DesktopTeamsGoldenExport
+  swift test --scratch-path desktop/.cache/swift-build --filter DesktopTeamsGoldenExport
 ```
 
 ### Decisions (Phase 4b)
@@ -809,7 +817,7 @@ e2e suite twice in a row after the last change, and again in earlier full runs d
 
 ```sh
 CCB_DESKTOP_GROUPS_EXPORT=$PWD/desktop/test/fixtures/groups-golden.json TZ=UTC \
-  swift test --scratch-path /Volumes/My-SSD/botling-work/swift-build --filter DesktopGroupsGoldenExport
+  swift test --scratch-path desktop/.cache/swift-build --filter DesktopGroupsGoldenExport
 ```
 
 ### Decisions (Phase 4c)
@@ -853,7 +861,7 @@ suite twice in a row after the last change).
 
 ```sh
 CCB_DESKTOP_PHASE5_EXPORT=$PWD/desktop/test/fixtures/phase5-golden.json TZ=UTC \
-  swift test --scratch-path /Volumes/My-SSD/botling-work/swift-build --filter DesktopPhase5GoldenExport
+  swift test --scratch-path desktop/.cache/swift-build --filter DesktopPhase5GoldenExport
 ```
 
 ### Decisions (Phase 5a)
@@ -947,7 +955,7 @@ This was development-runtime validation; full integration validation and packagi
 
 Remaining differences: previews run the live page rather than a cached PageShot; explicit pages
 outside `artifacts` have no embedded preview; Open still uses the system application rather than
-1.x's dedicated result window. Media byte-range serving and Windows/Linux are unverified.
+1.x's dedicated result window. macOS media ranges and a synthetic WAV seek are covered by the review regressions; Windows/Linux remain unverified.
 
 ## Phase 5c: cumulative macOS integration
 
@@ -960,7 +968,7 @@ Cross-origin keys forwarded during a focus handoff now acknowledge each edit bef
 this prevents a later native key overtaking a forwarded one. The delayed-delivery regression checks
 letters, Backspace and Return without retyping or refilling the input.
 
-`npm run dist:mac` now also produces an arm64 DMG with the app and an Applications shortcut.
+`npm run dist:mac -- --unsigned-updates` now also produces an arm64 DMG with the app and an Applications shortcut.
 Without an Apple certificate, both the app and DMG container are ad-hoc signed; neither is
 notarized. The ZIP remains the self-update payload: release discovery ignores DMGs when choosing
 an installable asset, regardless of asset order. No DMG update blockmap is emitted.
@@ -968,10 +976,9 @@ First-open guidance is in `docs/first-open.md`.
 
 The shipped `release-config.json` still has `publicKey: null`. Production installation therefore
 fails closed; no production key was generated and no live update feed/install was validated.
-Signing/rollback tests use throwaway keys and synthetic bundles. No build was installed or
-released. Deferred 2.0.1 summarize-notification and drag/drop issues are outside this work.
+Signing/rollback tests use throwaway keys; the review adds real disposable packaged transactions. No installed/shared app was modified and no release was published. Deferred 2.0.1 summarize-notification and drag/drop issues are outside this work.
 
-Cumulative macOS arm64 validation (2026-10-25): typecheck; **414 unit tests** (45 files,
+Initial cumulative macOS arm64 validation before Claude review (2026-10-25): typecheck; **414 unit tests** (45 files,
 2 workers); **63 Electron e2e tests twice consecutively** after the input-order fix; **4 packaged
 tests**. The focused input regression failed without the fix, then its composer/Maintainer set
 passed three repetitions (21 checks). The packaged pass checks fuses/ASAR, plugin check and host,
@@ -985,8 +992,8 @@ Synthetic screenshots include `.cache/test-data/screens/phase5c-component-built.
 `.cache/width-screens/` and `.cache/test-data/screens/phase5b-packaged.png`; these were inspected.
 The test-data helper uses canonical cache paths rather than a symlink, preserving updater path
 safety checks. DiskImages refuses mount points on the existing external volume, so delivery
-validation uses a temporary read-only virtual `/Volumes` mount and detaches it; all image bytes,
-extracted files, test data and caches stay on My-SSD. Earlier failed runs are retained in the logs.
+validation uses a temporary read-only virtual mount and detaches it; all image bytes,
+extracted files, test data and caches stay under `.cache`. Earlier failed runs are retained in the logs.
 
 ## Gaps vs the Swift app (1.x)
 
@@ -1231,7 +1238,7 @@ same session before the next message; shots run the app itself in shot mode.
 Decided by the agent in Phase 5b (the user was away; each can be changed): electron-builder; product "Botling 2"
 beside 1.x; macOS arm64 zip first; ad-hoc signing without the hardened runtime until there is a Developer ID; the
 plugin check as the app's own `--check-plugin`; test-only variables dropped, not refused; the update check only
-reads and links, off by default, 2.x tags only; the smoke test drives the fused binary over CDP and quits it with
+reads 2.x tags, now on by default with a Settings opt-out (Phase 5c adds verified installation); the smoke test drives the fused binary over CDP and quits it with
 SIGTERM.
 
 Still open:

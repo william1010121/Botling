@@ -5,12 +5,18 @@
 // Caches stay beside the checkout unless set: electron-builder's (ELECTRON_BUILDER_CACHE) and
 // Electron's downloads (electron_config_cache) default to desktop/.cache/, never ~/Library/Caches.
 import { spawnSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const desktop = join(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
+const { publicKey } = JSON.parse(readFileSync(join(desktop, "release-config.json"), "utf8"));
+if (!args.includes("--dir") && !publicKey && !args.includes("--unsigned-updates")) {
+  console.error("Distribution requires configured update trust; for a development artifact explicitly pass --unsigned-updates.");
+  process.exit(1);
+}
+process.env.BOTLING_UNSIGNED_UPDATES = publicKey ? "0" : "1";
 process.env.ELECTRON_BUILDER_CACHE ||= join(desktop, ".cache", "electron-builder");
 process.env.electron_config_cache ||= join(desktop, ".cache", "electron");
 // Never sign with some certificate that happens to be in the keychain: only one named by CSC_LINK/CSC_NAME.

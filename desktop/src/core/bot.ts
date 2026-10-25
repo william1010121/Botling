@@ -156,6 +156,8 @@ export interface BotOptions {
   quitTidyMs?: number;
   /** Give a new, empty chat the welcome lines (the main bot of a fresh install). */
   welcome?: boolean;
+  /** Candidate startup must not modify external project notes until its update commits. */
+  deferStartup?: boolean;
   /** A project bot's hold on its project folder (null: it needs none). */
   lock?: ProjectLock | null;
   /** The main bot's routines get the project list (`Workspace.projectBriefing`). */
@@ -302,6 +304,7 @@ export class Bot {
   readonly engine: Engine;
   /** Its heads (bot.json `heads`, 1.x's format). Kept by the primary; a partner reads it. */
   private headsSettings: Heads;
+  private startupActive = false;
   /** The other head of a two-head bot (on the primary only). */
   partner: Bot | null = null;
   private conductor: Conductor;
@@ -417,13 +420,19 @@ export class Bot {
     this.load();
     // Subagents that were running when the app went away went with their process.
     if (this.subagents.stopRunning()) this.saveSubagents();
-    if (!this.problem && !primary) archiveAll(this.paths.archive, this.records);
+    if (!options.deferStartup) this.activateStartup();
     if (!primary) {
-      this.checkLock();
       if (hasTwo(this.headsSettings)) this.makePartner();
-      this.setUpRoutines();
       this.giveFirstComponents();
     }
+  }
+
+  activateStartup() {
+    if (this.startupActive) return;
+    this.startupActive = true;
+    if (!this.problem && !this.options.primary) archiveAll(this.paths.archive, this.records);
+    if (!this.options.primary) { this.checkLock(); this.setUpRoutines(); }
+    this.partner?.activateStartup();
   }
 
   private storeAlwaysAllowed() {

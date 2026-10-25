@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { tempDir, until } from "../helpers";
 import { checkPlugin, compatible } from "../../src/core/plugins/manifest";
 import { PluginRegistry, swiftPrettyJSON } from "../../src/core/plugins/registry";
-import { MemorySecretStore, SealedSecretStore, testSealer } from "../../src/core/plugins/secrets";
+import { MemorySecretStore, SealedSecretStore, PortSealer, testSealer } from "../../src/core/plugins/secrets";
 import { PluginHostClient } from "../../src/core/plugins/host-client";
 
 function plugin(root: string, name: string, options: { version?: string; engines?: string; ccb?: unknown; web?: string | null; host?: string } = {}) {
@@ -226,3 +226,15 @@ describe("the plugin host client", () => {
 });
 
 void chmodSync;
+
+
+it('A2 keychain API denial is a nonfatal warning and preserves sealed bytes', async()=>{
+ const dir=tempDir('keychain-denied'),file=join(dir,'plugin-secrets.json');
+ const original=JSON.stringify({synthetic:{token:'synthetic-ciphertext'}});writeFileSync(file,original);
+ const sealer=new PortSealer(message=>sealer.answer({id:message.id,ok:false,error:'User denied keychain access'}));
+ const store=new SealedSecretStore(file,sealer);await expect(store.load()).resolves.toBeUndefined();
+ expect(store.get('synthetic','token')).toBeNull();expect(store.has('synthetic','token')).toBe(true);
+ expect(store.problem).toContain('User denied keychain access');expect(readFileSync(file,'utf8')).toBe(original);
+ await expect(store.set('synthetic','other','no plaintext persistence')).rejects.toThrow('User denied keychain access');
+ expect(readFileSync(file,'utf8')).toBe(original);
+});

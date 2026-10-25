@@ -88,6 +88,7 @@ export function cardPage(html: string): string {
  * fonts from a CDN). No frames, forms, plain http or other app URLs. The frame is still sandboxed (opaque origin).
  */
 export const PREVIEW_CSP = [
+  "sandbox allow-scripts",
   "default-src botling-card://preview",
   "object-src 'none'",
   "script-src 'unsafe-inline' 'unsafe-eval' botling-card://preview https:",

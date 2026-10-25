@@ -1,5 +1,7 @@
 [Botling 2: First open / 首次開啟](https://github.com/william1010121/Botling/blob/bot/electron-2-0/docs/first-open.md) — macOS 15 Open Anyway / Windows SmartScreen.
 
+Botling 2 update checks are **on by default**, with a Settings opt-out. Automatic installation requires configured release trust; current development artifacts explicitly mark unsigned updates.
+
 ## What's new in 1.19.0
 
 - **Catch-up summaries.** Unread bot replies fold into one Catch-up card with a short summary

@@ -9,7 +9,8 @@ import { isRequested as isShotRequested, withProbe } from "../core/component-sho
 import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { scrubEnvironment } from "./packaged";
 import { FEED, Updater } from "./updates";
-import { VerifiedInstaller, acknowledgeUpdateBoot } from "./update-install";
+import { previewResponse } from "./preview-response";
+import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates } from "./update-install";
 declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
@@ -39,7 +40,7 @@ const rendererDir = join(root, "out", "renderer");
 /** `--component-shot` (Phase 5a): draw one component and exit; no core, no data folder of the app's. */
 const shotMode = isShotRequested(process.argv);
 const dataDir = shotMode ? mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "botling-shot-"))
-  : resolve(process.env.BOTLING_DATA_DIR ?? (app.isPackaged ? join(app.getPath("appData"), "Botling 2") : join(root, ".data")));
+  : resolve(process.argv.find(arg => arg.startsWith("--botling-update-data="))?.slice("--botling-update-data=".length) || process.env.BOTLING_DATA_DIR || (app.isPackaged ? join(app.getPath("appData"), "Botling 2") : join(root, ".data")));
 mkdirSync(dataDir, { recursive: true });
 // Everything Electron keeps (partitions, caches, logs) lives under the data dir, never the default.
 app.setPath("userData", join(dataDir, "electron"));
@@ -129,16 +130,18 @@ let lastEpoch: string | null = null;
  */
 const updatesFile = join(dataDir, "updates.json");
 const installedApp = dirname(dirname(dirname(process.execPath)));
+let recoveryError: string | null = null;
 const installer = new VerifiedInstaller({
   current: app.getVersion(), appPath: installedApp, dataDir,
   publicKey: __UPDATE_PUBLIC_KEY__, platform: app.isPackaged ? process.platform : "development", arch: process.arch,
   fetch: (url) => net.fetch(url, { signal: AbortSignal.timeout(120_000) }),
+  launchArgs: process.argv.filter(arg => arg === "--use-mock-keychain" || /^--remote-debugging-port=\d+$/.test(arg)),
 });
 const updater = new Updater({
   current: app.getVersion(),
   platform: process.platform,
   arch: process.arch,
-  installStatus: () => ({ installError: installer.unavailable(), readyVersion: installer.ready }),
+  installStatus: () => ({ installError: installer.unavailable(), readyVersion: installer.ready, recoveryError }),
   enabled: async () => ((await core.call({ type: "settings.get" })) as { updateCheck?: boolean }).updateCheck === true,
   fetchFeed: async () => {
     const test = !app.isPackaged ? process.env.BOTLING_TEST_UPDATE_FEED : undefined;
@@ -178,6 +181,7 @@ function coreEnvironment(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
   env.BOTLING_DATA_DIR = join(dataDir, "core");
+  env.BOTLING_UPDATE_PENDING = process.argv.some(arg => arg.startsWith("--botling-update-token=")) ? "1" : "0";
   // Maintainer's component-shot command: this build in shot mode (1.x: "'<botling>' --component-shot").
   const quoted = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
   const self = `env -u ELECTRON_RUN_AS_NODE ${quoted(process.execPath)}${app.isPackaged ? "" : ` ${quoted(root)}`}`;
@@ -368,23 +372,17 @@ const openedResults: string[] = [];
  * document, and is shown in Finder otherwise (never run).
  */
 async function openResult(botId: string, url: string): Promise<{ opened: boolean }> {
-  const { results } = await core.call({ type: "results.list", botId }) as { results: { url: string }[] };
-  // cardData canonicalizes file URLs (spaces, non-ASCII and #); compare their decoded paths too.
-  const local = (value: string): string | null => {
-    try { return value.startsWith("file:") ? resolve(fileURLToPath(value)) : null; } catch { return null; }
-  };
-  const requested = local(url);
-  let allowed = results.some((result) => result.url === url || (requested !== null && local(result.url) === requested));
-  if (!allowed && requested !== null) {
-    // An explicit <show> need not also have a Markdown link. Only this bot's actual preview cards
-    // authorize their own page; a component cannot use ccb.open to name any other local file.
-    const snapshot = await core.call({ type: "chat.snapshot", botId });
-    allowed = snapshot.chat?.messages.some((message) => (message.role === "bot" || message.role === "notice") && message.displays?.some((display) => {
-      if (display.name !== PAGE_COMPONENT) return false;
-      try { return (JSON.parse(display.data) as { url?: unknown }).url === url; } catch { return false; }
-    })) ?? false;
-  }
-  if (!allowed) throw Object.assign(new Error("That link is not one of this bot's results."), { code: "not_found" });
+  const access = await core.call({type:"link.authorize",botId,url});
+  if (!access.result) throw Object.assign(new Error("That link is not one of this bot's results."), { code: "not_found" });
+  return openLink(url);
+}
+async function openOrdinaryLink(botId: string, url: string): Promise<{opened:boolean}> {
+  const access = await core.call({type:"link.authorize",botId,url});
+  if (access.result) return openLink(url);
+  if (!/^(https?|mailto):/i.test(url) && !access.linked) throw Object.assign(new Error("That link is not in this chat."),{code:"not_found"});
+  return openLink(url);
+}
+async function openLink(url: string): Promise<{opened:boolean}> {
   const external = process.env.BOTLING_NO_EXTERNAL === "1";
   if (/^(https?|mailto):/i.test(url)) {
     openedResults.push(url);
@@ -442,6 +440,7 @@ async function withScreenshot(cmd: Extract<Command, { type: "chat.feedback" }>, 
 async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown> {
   switch (cmd.type) {
     case "result.open": return openResult(cmd.botId, cmd.url);
+    case "link.open": return openOrdinaryLink(cmd.botId, cmd.url);
     case "updates.check": return updater.check(cmd.manual);
     case "updates.stage": {
       const state = await updater.check(true);
@@ -450,7 +449,7 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
       return updater.view(state.enabled);
     }
     case "updates.restart": {
-      installer.restart(process.pid);
+      await installer.restart(process.pid);
       // Let the explicit click's response reach the renderer before normal core shutdown.
       setImmediate(() => app.quit());
       return { restarting: true };
@@ -608,13 +607,7 @@ function serveApp() {
       const file = previewFile(request.url);
       if (!file) return new Response("Not found", { status: 404 });
       try {
-        const body = readFileSync(file);
-        const dot = file.lastIndexOf(".");
-        const type = PREVIEW_TYPES[dot >= 0 ? file.slice(dot + 1).toLowerCase() : ""] ?? "application/octet-stream";
-        const text = type.startsWith("text/") || type === "application/javascript" || type === "application/json" || type === "image/svg+xml";
-        // Pages bots write often name no charset: plain UTF-8 says so (Chinese would turn to mojibake otherwise).
-        const utf8 = text && (() => { try { new TextDecoder("utf-8", { fatal: true }).decode(body); return true; } catch { return false; } })();
-        return new Response(body, { headers: { "Content-Type": utf8 ? `${type}; charset=utf-8` : type, "Content-Security-Policy": PREVIEW_CSP, "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" } });
+        return await previewResponse(file, request);
       } catch {
         return new Response("Not found", { status: 404 });
       }
@@ -660,7 +653,7 @@ function shotWindow(size: { width: number; height: number }): BrowserWindow {
   return window;
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // The app is dark whatever the system says, as 1.x's windows (`preferredColorScheme(.dark)`): pages and component
   // frames that ask (prefers-color-scheme) draw their dark look (Phase 5c).
   nativeTheme.themeSource = "dark";
@@ -677,17 +670,31 @@ app.whenReady().then(() => {
       });
     return;
   }
+  recoveryError = await recoverUpdates(dataDir, installedApp, false);
+  const sweep = setInterval(() => { void recoverUpdates(dataDir, installedApp).then(error => { recoveryError = error; }); }, 30_000);
+  sweep.unref();
   core.start();
   createWindow();
+  void recoverUpdates(dataDir, installedApp).then(error => { recoveryError = error; });
   mainWindow?.webContents.once("did-finish-load", () => {
     if (!process.argv.some((arg) => arg.startsWith("--botling-update-token="))) return;
     // A loaded HTML file alone is not a healthy boot: React must receive the core's first state.
     void (async () => {
       await core.call({ type: "settings.get" });
-      const deadline = Date.now() + 20_000;
-      while (mainWindow && !mainWindow.isDestroyed() && Date.now() < deadline) {
+      while (mainWindow && !mainWindow.isDestroyed()) {
         const ready = await mainWindow.webContents.executeJavaScript(`Boolean(document.querySelector('.shell[data-ready="1"]'))`);
-        if (ready) { acknowledgeUpdateBoot(dataDir, installedApp, app.getVersion(), process.argv); return; }
+        if (ready && acknowledgeUpdateBoot(dataDir, installedApp, app.getVersion(), process.argv)) {
+          const pending = JSON.parse(readFileSync(join(dataDir, "update-pending.json"), "utf8"));
+          while (mainWindow && !mainWindow.isDestroyed()) {
+            if (existsSync(join(pending.root, "result")) && readFileSync(join(pending.root, "result"), "utf8").trim() === "booted") {
+              await core.commitUpdateBoot();
+              writeFileSync(join(pending.root, "activated.ok"), pending.token, {mode:0o600});
+              return;
+            }
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+          return;
+        }
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     })().catch(() => {});
@@ -703,6 +710,7 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin" || process.env.BOTLING_QUIT_ON_CLOSE === "1") app.quit();
 });
 
+process.on("SIGTERM", () => app.quit());
 let stopping = false;
 app.on("before-quit", (event) => {
   if (stopping) return;
@@ -711,8 +719,7 @@ app.on("before-quit", (event) => {
   // Cookies are written to disk lazily; make sure each account's are there before exiting.
   const flushes = [...openedSessions].map((opened) => opened.cookies.flushStore().catch(() => {}));
   web.closeAll();
-  installer.discard();
-  void Promise.all([core.stop(), ...flushes]).finally(() => app.exit(0));
+  void Promise.all([core.stop(), installer.discard(), ...flushes]).finally(() => app.exit(0));
 });
 
 // For tests: which pid the core has.

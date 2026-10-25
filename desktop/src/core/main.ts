@@ -154,6 +154,7 @@ function groupTiming(text: string | undefined) {
 
 const core = new Core({
   dataDir,
+  deferStartup: process.env.BOTLING_UPDATE_PENDING === "1",
   headConfig,
   // Whether claude kept a session's transcript (only whether one is there). The fake CLI keeps one only under a
   // CLAUDE_CONFIG_DIR a test gives it: without one, a test never looks in the user's own ~/.claude.

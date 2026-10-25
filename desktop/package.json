@@ -20,7 +20,8 @@
     "dist:dir": "node scripts/package.mjs --dir",
     "dist:win": "node scripts/package.mjs --win",
     "dist:linux": "node scripts/package.mjs --linux",
-    "test:packaged": "playwright test -c playwright.packaged.config.ts"
+    "test:packaged": "playwright test -c playwright.packaged.config.ts",
+    "test:packaged:fixture": "node build.mjs && node test/packaged/build-older.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "6.9.0",

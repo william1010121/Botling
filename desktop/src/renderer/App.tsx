@@ -577,18 +577,24 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     let lastInput = 0;
     let lastPointer = 0;
     let chatLostAt = 0;
-    let pendingKeys = 0;
+    const pendingKeys = new Set<number>();
+    let nextKey = 0;
+    let ackTimer: ReturnType<typeof setTimeout> | undefined;
+    const resetKeys = () => { pendingKeys.clear(); clearTimeout(ackTimer); };
+    const recoverFocus = () => {
+      if (lastPointer <= chatLostAt && (document.activeElement === document.body || document.activeElement === document.documentElement)) {
+        frame.current?.contentWindow?.focus();
+        frame.current?.contentWindow?.postMessage({botling:"focus"}, CHAT_ORIGIN);
+      }
+    };
+    const loaded = () => { resetKeys(); recoverFocus(); };
+    const element = frame.current;
+    element?.addEventListener("load", loaded);
     const keyHandled = (event: MessageEvent) => {
       const target = frame.current;
       if (!target?.contentWindow || event.source !== target.contentWindow || event.origin !== CHAT_ORIGIN
-        || event.data?.botling !== "keyHandled" || pendingKeys === 0) return;
-      pendingKeys--;
-      if (pendingKeys === 0 && lastPointer <= chatLostAt
-        && (document.activeElement === document.body || document.activeElement === document.documentElement)) {
-        target.contentWindow.focus();
-        const message: ShellMessage = { botling: "focus" };
-        target.contentWindow.postMessage(message, CHAT_ORIGIN);
-      }
+        || event.data?.botling !== "keyHandled" || !pendingKeys.delete(event.data.id)) return;
+      if (pendingKeys.size === 0) { clearTimeout(ackTimer); recoverFocus(); }
     };
     const input = () => { lastInput = Date.now(); };
     const pointer = () => { lastInput = Date.now(); lastPointer = Date.now(); };
@@ -602,19 +608,21 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       lastInput = Date.now();
       event.preventDefault();
       event.stopImmediatePropagation();
-      const message: ShellMessage = { botling: "key", key: event.key, code: event.code, shiftKey: event.shiftKey, altKey: event.altKey };
+      const message: ShellMessage = { botling: "key", id: ++nextKey, key: event.key, code: event.code, shiftKey: event.shiftKey, altKey: event.altKey };
       // Preserve event order across origins: native keys stay here until all forwarded edits land.
-      pendingKeys++;
+      pendingKeys.add(message.id);
+      clearTimeout(ackTimer);
+      ackTimer = setTimeout(() => { resetKeys(); recoverFocus(); }, 2000);
       target.contentWindow.postMessage(message, CHAT_ORIGIN);
     };
     const onBlur = () => { chatHadFocus = document.activeElement === frame.current; };
     const onFocusIn = () => { if (chatHadFocus || document.activeElement === document.body) chatLostAt = Date.now(); };
     const onFocus = () => {
       const target = frame.current;
-      if (!target || !chatHadFocus || pendingKeys > 0 || Date.now() - lastInput < 500) return;
+      if (!target || !chatHadFocus || pendingKeys.size > 0 || Date.now() - lastInput < 500) return;
       const active = document.activeElement;
       if (active && active !== document.body && active !== target) return;
-      setTimeout(() => { if (pendingKeys === 0 && Date.now() - lastInput >= 500 && document.hasFocus()) target.contentWindow?.focus(); }, 0);
+      setTimeout(() => { if (pendingKeys.size === 0 && Date.now() - lastInput >= 500 && document.hasFocus()) target.contentWindow?.focus(); }, 0);
     };
     window.addEventListener("pointerdown", pointer, true);
     window.addEventListener("message", keyHandled);
@@ -625,6 +633,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     window.addEventListener("focus", onFocusIn);
     return () => {
       window.removeEventListener("pointerdown", pointer, true);
+      resetKeys(); element?.removeEventListener("load", loaded);
       window.removeEventListener("message", keyHandled);
       window.removeEventListener("keydown", strayKey, true);
       window.removeEventListener("keydown", input, true);
@@ -664,7 +673,11 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       }
       if (message.botling === "messageWidth") {
         // The contract validates the number again in main and core; a card cannot impersonate this frame.
-        void client.request({ type: "settings.set", change: { key: "messageColumnWidth", value: message.value } }).catch((failure) => { onError(failure); push(); });
+        void client.request({ type: "settings.set", change: { key: "messageColumnWidth", value: message.value } }).catch((failure) => {
+          onError(failure);
+          frame.current?.contentWindow?.postMessage({botling:"widthRejected",value:message.value,actual:store.getView().settings?.messageColumnWidth ?? null} satisfies ShellMessage, CHAT_ORIGIN);
+          push();
+        });
         return;
       }
       if (message.botling === "stop") {
@@ -820,8 +833,9 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
           return;
         }
         // A link or a component's ccb.open(url): opened as the results list opens it, main checks it is one of this chat's (Phase 5c).
+        case "openExternal":
         case "openURL":
-          if (chat && typeof action.url === "string" && action.url) void client.request({ type: "result.open", botId: chat.botId, url: action.url.slice(0, 8_000) }).catch(onError);
+          if (chat && typeof action.url === "string" && action.url) void client.request({ type: "link.open", botId: chat.botId, url: action.url.slice(0, 8_000) }).catch(onError);
           return;
         // A reply made into a component, and its spec's chip and card (Phase 5a).
         case "makeComponent":

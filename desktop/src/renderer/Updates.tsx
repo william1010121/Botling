@@ -7,7 +7,7 @@ export function UpdateBanner({ client, enabled }: { client: Client; enabled: boo
   const [state, setState] = useState<UpdateView | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
   useEffect(() => {
-    if (!enabled) { setState(null); return; }
+    if (enabled === undefined) return;
     let live = true;
     const check = () => { void client.request({ type: "updates.check", manual: false }).then((view) => { if (live) setState(view); }, () => {}); };
     check();
@@ -15,6 +15,9 @@ export function UpdateBanner({ client, enabled }: { client: Client; enabled: boo
     return () => { live = false; clearInterval(timer); };
   }, [client, enabled]);
   const newer = state?.enabled ? state.newer : null;
+  if (state?.recoveryError && dismissed !== state.recoveryError) return <div className="update-bar" role="alert" aria-label="Update recovery">
+    <span>{state.recoveryError}</span><button type="button" onClick={() => setDismissed(state.recoveryError!)}>Dismiss</button>
+  </div>;
   if (!newer || dismissed === newer.version) return null;
   return (
     <div className="update-bar" role="status" aria-label="Update">
