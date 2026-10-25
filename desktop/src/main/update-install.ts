@@ -387,9 +387,17 @@ async function sweepUpdates(dataDir:string,target:string,collect:boolean):Promis
  const clearPending=async(root:string)=>{try{if((await smallJSON(pendingFile)).root===root)await fs.rm(pendingFile,{force:true});}catch{}};
  if(pending&&pending.target!==target&&validRoot(pending.root,pending.target)){
   let owner;try{owner=await smallJSON(join(pending.root,'owner.json'));}catch{}
-  if(owner?.target===pending.target&&owner.dataDir===dataDir)await sweepUpdates(dataDir,pending.target,collect);
+  if(owner?.target===pending.target&&owner.dataDir===dataDir){await sweepUpdates(dataDir,pending.target,collect);try{pending=await smallJSON(pendingFile);}catch{pending=null;}}
  }
+ let pendingCollection=false;
  if(pending&&!existsSync(pending.root)){
+  for(const name of await fs.readdir(claims).catch(()=>[] as string[])){
+   if(!/^\.botling-update-gc-[a-z0-9-]+\.json$/.test(name))continue;
+   let claim;try{claim=await smallJSON(join(claims,name));}catch{continue;}
+   if(claim.target===pending.target&&claim.dataDir===dataDir&&(claim.source===basename(pending.root)||(!claim.source&&processAlive(claim.collectorPid))))pendingCollection=true;
+  }
+ }
+ if(pending&&!existsSync(pending.root)&&!pendingCollection){
   await recordIssue(issueFor(dataDir,target,pending.root,24,pending.token));
   if(collect)await clearPending(pending.root);
  }
@@ -430,6 +438,7 @@ async function sweepUpdates(dataDir:string,target:string,collect:boolean):Promis
   const file=join(claims,name);let c;try{c=await smallJSON(file);}catch{continue;}
   if(validClaim(c))await collectClaim(c,file);
  }
+ if(collect&&pendingCollection&&pending&&!existsSync(pending.root))await clearPending(pending.root);
  for(const name of await fs.readdir(dirname(target)).catch(()=>[] as string[])){
   if(!name.startsWith('.botling-update-')||name.startsWith('.botling-update-gc-'))continue;
   const root=join(dirname(target),name);if(!validRoot(root,target))continue;

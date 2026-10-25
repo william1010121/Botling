@@ -70,10 +70,10 @@ it('GC joins an active foreign collector instead of returning before its deletio
  const release=join(f.base,'release'),started=join(f.base,'started'),lease=join(claims,'.botling-update-gc-c.json');
  const worker=join(f.base,'collector.sh');writeFileSync(worker,`#!/bin/sh\necho started > '${started}'\nwhile [ ! -f '${release}' ]; do sleep 0.02; done\n/bin/rm -rf '${gc}'; /bin/rm -f '${lease}'\n`);
  const child=spawn('/bin/sh',[worker],{stdio:'ignore'});cleanups.push(()=>{child.kill('SIGKILL');});const ended=once(child,'exit');
- writeFileSync(lease,JSON.stringify({root:'.botling-update-gc-c',target:f.target,dataDir:f.data,result:'failed:13',failure:'failed',collectorPid:child.pid}));
+ writeFileSync(lease,JSON.stringify({root:'.botling-update-gc-c',target:f.target,dataDir:f.data,source:'.botling-update-c',result:'failed:13',failure:'failed',collectorPid:child.pid}));
  await until(()=>existsSync(started));let done=false;const collecting=recoverUpdates(f.data,f.target).then(()=>{done=true;});
- try{await new Promise(r=>setTimeout(r,100));expect(done).toBe(false);}finally{writeFileSync(release,'release');await ended;await collecting;}
- expect(existsSync(gc)).toBe(false);
+ try{await new Promise(r=>setTimeout(r,100));expect(done).toBe(false);expect(existsSync(join(f.data,'update-pending.json'))).toBe(true);}finally{writeFileSync(release,'release');await ended;await collecting;}
+ expect(existsSync(gc)).toBe(false);expect(existsSync(join(f.data,'update-pending.json'))).toBe(false);
 });
 
 it('C3 empty and absent directory overrides default to the synthetic HOME',()=>{
