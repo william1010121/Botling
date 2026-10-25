@@ -296,6 +296,10 @@ export class Bot {
   private briefing = true;
   private crashes = 0;
   private restartTimer: NodeJS.Timeout | null = null;
+  /** Its next message starts its process again in the same session (1.x's `restart(_:)`, e.g. "may read …"). */
+  private restartPending = false;
+  /** A head ended for such a restart: its session carries on. */
+  private restarting: AgentHead | null = null;
   private idleTimer: NodeJS.Timeout | null = null;
   private alwaysAllowed: string[];
   private unread: number;
@@ -1533,11 +1537,30 @@ export class Bot {
     void this.deliver(turn, head);
   }
 
+  /**
+   * Its process starts again, in the same session, before its next message (1.x's `restart(_:)` for
+   * "may read <folder>": a folder you allowed is one more `--add-dir`). Asleep, the next wake has it anyway.
+   */
+  restartBeforeNextMessage() {
+    if (this.options.primary) { this.options.primary.restartBeforeNextMessage(); return; }
+    if (this.head?.running) this.restartPending = true;
+  }
+
   /** Writes the turn's message to a head (starting one, in a new session, if the bot is asleep). */
   private async deliver(turn: Turn, given?: AgentHead) {
     // A stopped turn's head may still be ending it: its result line must not land in this turn.
     while (this.draining) await this.draining.promise;
     if (this.turn !== turn || !turn.open) return;
+    const old = this.head;
+    if (!given && this.restartPending && old?.running && !this.subagents.running.length && !this.managedPending) {
+      this.restartPending = false;
+      this.restarting = old;
+      this.log("starting its process again before this message");
+      old.finish();
+      const exited = await Promise.race([old.exited.then(() => true), sleep(5_000).then(() => false)]);
+      if (!exited) await old.terminate(1_000);
+      if (this.turn !== turn || !turn.open) return;
+    }
     const waking = !given && !this.head?.running;
     let head: AgentHead;
     try {
@@ -2285,7 +2308,10 @@ export class Bot {
     this.deferred = null;
     if (deferred?.open) this.finishTurn(deferred, "failed", `The agent exited (${why}) before it began this message.`);
     this.log(`head exited (${why})${exit.expected ? "" : " unexpectedly"}`);
-    if (exit.expected) {
+    if (exit.expected && this.restarting === head) {
+      // Ended to start again before a message: the same session goes on (`--resume`).
+      this.restarting = null;
+    } else if (exit.expected) {
       // It went to sleep: the next wake is a new session, briefed from memory.md and the chat.
       this.newSession();
     } else if (!this.shuttingDown) {

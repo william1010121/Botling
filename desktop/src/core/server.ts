@@ -203,7 +203,9 @@ export class Core {
         // The main bot wakes with the project list (`mainBot.wakeNote`) and may write every inbox (`--add-dir`).
         // …and where the web AIs' saved conversations are (`webBriefing`).
         wakeNote: profile.role === "main" ? () => [this.projectBriefing(), webBriefing(this.web)].filter(Boolean).join("\n\n") : undefined,
-        addDirs: profile.role === "main" ? () => this.profiles.filter((other) => other.role !== "main" && !other.problem).map((other) => join(other.folder, ".bot")) : undefined,
+        addDirs: profile.role === "main" ? () => this.profiles.filter((other) => other.role !== "main" && !other.problem).map((other) => join(other.folder, ".bot"))
+          // Maintainer: the folders you let it read (<need-folder>).
+          : profile.id === MAINTAINER_ID ? () => this.maintainer.approvedFolders() : undefined,
         components: this.components,
         onRequests: (bot, requests) => this.maintainer.handle(bot, this.projectRequests(bot, requests)),
         replyFilter: (): ((text: string) => Promise<string>) | null => this.plugins.afterReplyFilter(() => this.botInfo(bot)),

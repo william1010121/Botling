@@ -174,6 +174,43 @@ describe("Maintainer in the core", () => {
     await until(async () => (await c.chat(MAINTAINER)).messages.some((m: any) => m.role === "relay" && m.text === "Main bot's request for Botling: a word counter in the input box"));
   });
 
+  it("<need-folder>: you are asked once in Maintainer's chat; allowed, it reads the folder (--add-dir, same session); a folder inside is allowed at once", async () => {
+    const dir = tempDir("maintainer");
+    const outside = tempDir("outside-folder");
+    const c = core(dir);
+    await say(c, MAINTAINER, `/say To turn it into a plugin I need to read it. <need-folder>${outside}/</need-folder>`);
+    const question = await until(async () => (await c.chat(MAINTAINER)).messages.find((m: any) => m.role === "notice" && m.choices?.length));
+    expect(question.text).toBe(`Maintainer wants to read "${outside}". It will only read, never change files there. Allow it?`);
+    expect(question.choices.map((choice: any) => [choice.label, choice.detail ?? null])).toEqual([["Allow", "Won't ask again"], ["Don't allow", null]]);
+    const before = lines(join(dir, "claude-start.log")).at(-1);
+    expect(before.args).not.toContain(outside);
+    expect(await c.call({ type: "chat.choose", botId: MAINTAINER, messageId: question.id, index: 0 })).toEqual({ accepted: true });
+    expect(JSON.parse(readFileSync(join(dir, "folders.json"), "utf8"))).toEqual([outside]);
+    const agreed = `(App) The user agreed: you can now read ${outside} (read only, do not change files there). Carry on with what you were doing.`;
+    await until(async () => (await c.chat(MAINTAINER)).messages.some((m: any) => m.role === "relay" && m.text === agreed));
+    // Its process started again before that message, in the same session, with the folder.
+    const after = await until(() => lines(join(dir, "claude-start.log")).find((start) => start.args.includes(outside)), { what: "a start with the folder" });
+    expect(after.pid).not.toBe(before.pid);
+    expect(after.session).toBe(before.session);
+    expect(after.resume).toBe(true);
+    expect(after.args[after.args.indexOf(outside) - 1]).toBe("--add-dir");
+    await until(async () => !(await c.chat(MAINTAINER)).running);
+    // Inside a folder allowed before: at once.
+    await say(c, MAINTAINER, `/say <need-folder>${outside}/src</need-folder>`);
+    await until(async () => (await c.chat(MAINTAINER)).messages.some((m: any) => m.role === "relay" && m.text === `(App) ${join(outside, "src")} was already allowed before; you can read it directly.`));
+    // Don't allow: told so, nothing kept.
+    const other = tempDir("outside-other");
+    await until(async () => !(await c.chat(MAINTAINER)).running);
+    await say(c, MAINTAINER, `/say <need-folder>${other}</need-folder>`);
+    const second = await until(async () => (await c.chat(MAINTAINER)).messages.findLast((m: any) => m.role === "notice" && m.choices?.length && m.chosen == null));
+    await c.call({ type: "chat.choose", botId: MAINTAINER, messageId: second.id, index: 1 });
+    await until(async () => (await c.chat(MAINTAINER)).messages.some((m: any) => m.role === "relay" && m.text === `(App) The user did not allow you to read ${other}. Find another way, or explain that it can't be done.`));
+    expect(JSON.parse(readFileSync(join(dir, "folders.json"), "utf8"))).toEqual([outside]);
+    // Only Maintainer asks for folders: anyone else's tag is left alone (1.x), no notice.
+    await say(c, MAIN, `/say <need-folder>${other}</need-folder>`);
+    expect((await c.chat()).messages.some((m: any) => m.role === "notice" && /folder/.test(m.text))).toBe(false);
+  });
+
   it("<install> asks the user first; only Install puts it into the library (committed); a plugin that fails the checks is not offered", async () => {
     const dir = tempDir("maintainer");
     const source = join(tempDir("outside"), "counter");

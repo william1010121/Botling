@@ -15,8 +15,12 @@
 //   Swift strings) and the component editor agent (ccb-core:component-editor, a Claude Code plugin agent
 //   handed to claude with --plugin-dir).
 //
-// 2.0 gaps: Maintainer cannot be given other folders to read (<need-folder> is answered "not yet");
-// component specs, reports, design flows and component shots are not ported; installs take a folder or
+// - <need-folder> (Phase 4c): Maintainer asks to read a folder outside the library; you are asked once in
+//   its chat (Allow / Don't allow); allowed folders are kept in folders.json, given to its head as
+//   `--add-dir` (its process starts again in the same session before its next message), and a folder
+//   inside one allowed before is allowed at once (`requestFolder`, `answerFolder`).
+//
+// 2.0 gaps: component specs, reports, design flows and component shots are not ported; installs take a folder or
 // a git URL (npm packages and archives: not yet).
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -285,6 +289,20 @@ const firstLine = (text: string) => text.split(/\r?\n/)[0] ?? text;
 export const arrivalLead = (name: string, changed: boolean) =>
   "(App: Maintainer " + (changed ? `changed the component "${name}" as you asked` : `added the component "${name}" to your list`);
 
+/** What Maintainer is told of your answer to a folder question (`Workspace.folderAnswer`). */
+export function folderAnswer(folder: string, allowed: boolean): string {
+  return allowed
+    ? `(App) The user agreed: you can now read ${folder} (read only, do not change files there). Carry on with what you were doing.`
+    : `(App) The user did not allow you to read ${folder}. Find another way, or explain that it can't be done.`;
+}
+
+/** A path as 1.x reads `<need-folder>`'s (`expandingTildeInPath`, `standardizedFileURL`). */
+export function standardFolder(path: string): string {
+  const expanded = path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
+  const folder = resolve("/", expanded);
+  return folder.length > 1 ? folder.replace(/\/+$/, "") : folder;
+}
+
 export class MaintainerDesk {
   readonly git: LibraryGit;
   private asks: ComponentAsk[] = [];
@@ -332,8 +350,8 @@ export class MaintainerDesk {
           if (isMaintainer) later.push(() => this.decline(request.id, request.reason));
           break;
         case "folder":
-          if (isMaintainer) later.push(() => from.queueNote("(App) Botling 2.0 cannot let you read folders outside the plugin library yet; find another way, or tell the user in one sentence."));
-          left.push(request);
+          // Only Maintainer asks for folders (1.x leaves anyone else's tag alone).
+          if (isMaintainer) later.push(() => this.requestFolder(request.path));
           break;
         default:
           left.push(request);
@@ -341,6 +359,51 @@ export class MaintainerDesk {
     }
     if (later.length) setImmediate(() => { for (const act of later) { try { act(); } catch (error) { this.deps.log(`request: ${(error as Error).message}`); } } });
     return left;
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // Folders outside the library
+
+  private get foldersFile() { return join(this.deps.root, "folders.json"); }
+
+  /** Folders you let Maintainer read (folders.json: a list of paths, as 1.x keeps it). */
+  approvedFolders(): string[] {
+    try {
+      const value = JSON.parse(readFileSync(this.foldersFile, "utf8"));
+      return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && entry.startsWith("/")) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private allowed(folder: string): boolean {
+    return this.approvedFolders().some((approved) => folder === approved || folder.startsWith(approved.endsWith("/") ? approved : approved + "/"));
+  }
+
+  /** Maintainer asked to read `path` (`requestFolder`): you are asked once, in its chat; a folder allowed before, or one inside it, at once. */
+  requestFolder(path: string) {
+    const maintainer = this.maintainer;
+    if (!maintainer || !path.trim()) return;
+    const folder = standardFolder(path.trim());
+    if (this.allowed(folder)) {
+      try { maintainer.relay(`(App) ${folder} was already allowed before; you can read it directly.`); } catch (error) { this.deps.log(`folder: ${(error as Error).message}`); }
+      return;
+    }
+    maintainer.appNotice(`Maintainer wants to read "${folder}". It will only read, never change files there. Allow it?`,
+      [{ label: "Allow", detail: "Won't ask again" }, { label: "Don't allow" }],
+      (index) => this.answerFolder(folder, index === 0),
+      { sourceID: MAINTAINER_ID });
+  }
+
+  /** Your answer to a folder question (`answerFolder`): kept, and its process starts again with the folder before it carries on. */
+  private answerFolder(folder: string, allowed: boolean) {
+    const maintainer = this.maintainer;
+    if (!maintainer) return;
+    if (allowed && !this.allowed(folder)) {
+      writeFileAtomic(this.foldersFile, JSON.stringify([...this.approvedFolders(), folder]));
+      maintainer.restartBeforeNextMessage();
+    }
+    try { maintainer.relay(folderAnswer(folder, allowed)); } catch (error) { this.deps.log(`folder: ${(error as Error).message}`); }
   }
 
   // ------------------------------------------------------------------------------------------
