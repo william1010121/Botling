@@ -1,20 +1,26 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { chmodSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ClaudeHead, type HeadExit } from "../../src/core/agent/head";
 import { CodexHead, CodexThreads } from "../../src/core/agent/codex";
+import { AgentTurn, type TurnOutcome } from "../../src/core/agent/runner";
+import { askModels } from "../../src/core/agent/codex-models";
+import { codexSummarizer } from "../../src/core/catchup";
+import { codexClassifier } from "../../src/core/promise-check";
 import { fakeCli, fakeCodex, tempDir, until } from "../helpers";
 
 const heads: (ClaudeHead | CodexHead)[] = [];
-afterEach(async () => { for (const head of heads.splice(0)) { await head.terminate(100); await head.exited; } });
+afterEach(async () => {
+  for (const head of heads.splice(0)) { await head.terminate(100); await head.exited; }
+  vi.unstubAllEnvs();
+});
 
 function guiHome() {
   const home = tempDir("gui-cli home ");
   const env = {
     HOME: home, PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
     CODEX_HOME: join(home, "existing-codex"), CLAUDE_CONFIG_DIR: join(home, "existing-claude"),
-    CLAUDECODE: "nested", ELECTRON_RUN_AS_NODE: "1",
   };
   for (const folder of [env.CODEX_HOME, env.CLAUDE_CONFIG_DIR]) {
     mkdirSync(folder); writeFileSync(join(folder, "keep.txt"), "existing config, untouched");
@@ -25,18 +31,20 @@ function guiHome() {
   return { home, env };
 }
 
-function install(home: string, command: "claude" | "codex") {
-  const file = join(home, command === "claude" ? ".local/bin/claude" : ".npm-global/bin/codex");
+function install(home: string, command: "claude" | "codex", file = join(home, command === "claude" ? ".local/bin/claude" : ".npm-global/bin/codex")) {
   mkdirSync(dirname(file), { recursive: true });
   const fixture = command === "claude" ? fakeCli : fakeCodex;
   writeFileSync(file, `#!/usr/bin/env node\nimport { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(join(home, `${command}-launch.json`))}, JSON.stringify({ home: process.env.HOME, codex: process.env.CODEX_HOME, claude: process.env.CLAUDE_CONFIG_DIR, nested: process.env.CLAUDECODE, electron: process.env.ELECTRON_RUN_AS_NODE }));\nawait import(${JSON.stringify(pathToFileURL(fixture).href)});\n`);
   chmodSync(file, 0o755);
+  return file;
 }
 
 describe.skipIf(process.platform === "win32")("CLI launch from Finder's minimal PATH", () => {
   for (const engine of ["claude", "codex"] as const) {
     it(`starts the ${engine} head from its user install and completes a protocol turn`, async () => {
       const { home, env } = guiHome();
+      vi.stubEnv("CLAUDECODE", "nested");
+      vi.stubEnv("ELECTRON_RUN_AS_NODE", "1");
       install(home, engine);
       const items: any[] = [];
       let exit: HeadExit | undefined;
@@ -54,5 +62,55 @@ describe.skipIf(process.platform === "win32")("CLI launch from Finder's minimal 
       expect(JSON.parse(readFileSync(join(home, `${engine}-launch.json`), "utf8"))).toEqual({ home, codex: env.CODEX_HOME, claude: env.CLAUDE_CONFIG_DIR });
       for (const folder of [env.CODEX_HOME, env.CLAUDE_CONFIG_DIR]) expect(readFileSync(join(folder, "keep.txt"), "utf8")).toBe("existing config, untouched");
     });
+
+    it(`reports a missing explicit ${engine} path once, with launcher guidance, without falling back`, async () => {
+      const { home, env } = guiHome();
+      install(home, engine); // A valid default must not override a broken explicit path.
+      const exits: HeadExit[] = [];
+      const common = { command: join(home, `missing-${engine}`), cwd: home, env, sessionId: "missing", resume: false };
+      const handlers = { onItem: () => {}, onExit: (value: HeadExit) => exits.push(value) };
+      const head = engine === "claude"
+        ? new ClaudeHead({ ...common, allowedTools: [] }, handlers)
+        : new CodexHead({ ...common, threads: new CodexThreads(join(home, "threads")), instructions: "", workerInstructions: null }, handlers);
+      heads.push(head);
+      head.start();
+      await head.exited;
+      expect(exits).toHaveLength(1);
+      expect(exits[0]).toMatchObject({ expected: false, silent: true });
+      expect(exits[0].stderr).toContain(`BOTLING_${engine.toUpperCase()}_PATH`);
+      expect(exits[0].stderr).toContain("absolute executable path in the app launcher");
+      expect(exits[0].stderr).toContain("Node.js");
+    });
   }
+
+  it("uses the inherited PATH before a standard install, including paths with spaces", async () => {
+    const { home, env } = guiHome();
+    // Reordering PATH would run this failing default instead of the selected custom install.
+    const fallback = install(home, "claude");
+    writeFileSync(fallback, "#!/bin/sh\nexit 23\n");
+    const preferred = join(home, "custom bin/claude");
+    install(home, "claude", preferred);
+    env.PATH = `${dirname(preferred)}:${env.PATH}`;
+    let outcome: TurnOutcome | undefined;
+    const turn = new AgentTurn({ command: "claude", cwd: home, env }, { onDelta: () => {}, onFinish: value => { outcome = value; } });
+    try {
+      turn.start("hello");
+      await until(() => outcome, { timeout: 3000 });
+      expect(outcome).toMatchObject({ status: "done", text: "You said: hello" });
+    } finally { await turn.stop(); await turn.exited; }
+  });
+
+  it("starts Codex model discovery through the same npm entry point and Node PATH", async () => {
+    const { home, env } = guiHome();
+    install(home, "codex");
+    const models = await askModels({ file: "codex", env }, 3000);
+    expect(models.length).toBeGreaterThan(0);
+  });
+
+  it("starts Codex's summary and completion subprocesses under the same minimal PATH", async () => {
+    const { home, env } = guiHome();
+    install(home, "codex");
+    expect(await codexSummarizer({ file: "codex", env }, 3000)("hello", "test-model", "en")).toEqual(["Nothing to say."]);
+    expect(await codexClassifier({ file: "codex", env }, "test-model", home, 3000)("hello")).toMatchObject({ verdict: "COMPLETE" });
+  });
 });

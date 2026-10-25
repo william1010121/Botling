@@ -11,6 +11,8 @@
 //   user config, tools or plugins), as 1.x's: 1–5 bullets citing their sources
 //   ([[source:UUID]], [[source:UUID|quote]], [[task:UUID]]), which the page links back.
 import { spawn } from "node:child_process";
+import { childEnvironment } from "./agent/runner";
+import { resolveExecutable } from "./process/executable";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -157,8 +159,9 @@ export function codexSummarizer(command: { file: string; prefixArgs?: string[]; 
       if (error) reject(error); else resolve(bullets!);
     };
     try { writeFileSync(join(folder, "schema.json"), SUMMARY_SCHEMA); } catch (error) { done(error as Error); return; }
-    const child = spawn(command.file, [...(command.prefixArgs ?? []), ...summaryArguments(prompt, folder, model, language)], {
-      cwd: folder, env: { ...process.env, ...command.env }, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32",
+    const env = childEnvironment(command.env);
+    const child = spawn(resolveExecutable(command.file, env), [...(command.prefixArgs ?? []), ...summaryArguments(prompt, folder, model, language)], {
+      cwd: folder, env, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32",
     });
     let output = "";
     let settled = false;

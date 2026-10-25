@@ -1,6 +1,8 @@
 // The models the local Codex offers (1.x's `CodexModels`): asked of `codex app-server` (`model/list`)
 // once per app run, so the Codex model menu lists what this Codex and this account have.
 import { spawn } from "node:child_process";
+import { childEnvironment } from "./runner";
+import { resolveExecutable } from "../process/executable";
 
 export interface CodexModel { id: string; name: string; isDefault: boolean; efforts: string[] | null }
 
@@ -27,7 +29,8 @@ export function askModels(command: { file: string; prefixArgs?: string[]; env?: 
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(command.file, [...(command.prefixArgs ?? []), "app-server"], { env: { ...process.env, ...command.env }, stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
+      const env = childEnvironment(command.env);
+      child = spawn(resolveExecutable(command.file, env), [...(command.prefixArgs ?? []), "app-server"], { env, stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
     } catch { resolve([]); return; }
     let buffer = "";
     let done = false;

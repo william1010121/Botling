@@ -32,6 +32,7 @@ import { join } from "node:path";
 import { writeFileAtomic } from "../durable/atomic";
 import { processTreeAdapter, type ManagedProcess, type ProcessTreeAdapter, type TerminateResult } from "../process/tree";
 import { childEnvironment } from "./runner";
+import { cliStartError, resolveExecutable } from "../process/executable";
 import { activity, type StreamItem } from "./stream";
 import type { HeadExit, HeadHandlers } from "./head";
 import tools from "./codex-tools.json";
@@ -1245,7 +1246,8 @@ export class CodexHead {
   }
 
   start() {
-    const managed = this.adapter.spawn(this.config.command, [...(this.config.prefixArgs ?? []), "app-server"], { cwd: this.config.cwd, env: childEnvironment(this.config.env) });
+    const env = childEnvironment(this.config.env);
+    const managed = this.adapter.spawn(resolveExecutable(this.config.command, env), [...(this.config.prefixArgs ?? []), "app-server"], { cwd: this.config.cwd, env });
     this.process = managed;
     this.running = true;
     const child = managed.child;
@@ -1266,7 +1268,7 @@ export class CodexHead {
       const why = [this.failure, this.stderrTail.trim(), extra].filter(Boolean).join("\n");
       this.handlers.onExit({ code: this.failure ? 1 : code, signal, stderr: why, expected: this.expected, silent: !this.printed });
     };
-    child.once("error", (error) => report(null, null, `Could not start ${this.config.command}: ${error.message}`));
+    child.once("error", (error) => report(null, null, cliStartError("codex", this.config.command, error)));
     child.once("close", (code, signal) => report(code, signal));
     this.perform(this.session.start());
   }

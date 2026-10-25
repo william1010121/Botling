@@ -10,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { imageMediaType } from "../attachments";
 import { processTreeAdapter, type ManagedProcess, type ProcessTreeAdapter, type TerminateResult } from "../process/tree";
 import { childEnvironment } from "./runner";
+import { cliStartError, resolveExecutable } from "../process/executable";
 import { parseLine, type StreamItem } from "./stream";
 
 export interface HeadConfig {
@@ -114,7 +115,8 @@ export class ClaudeHead {
 
   start() {
     const args = [...(this.config.prefixArgs ?? []), ...headArguments(this.config)];
-    const managed = this.adapter.spawn(this.config.command, args, { cwd: this.config.cwd, env: childEnvironment(this.config.env) });
+    const env = childEnvironment(this.config.env);
+    const managed = this.adapter.spawn(resolveExecutable(this.config.command, env), args, { cwd: this.config.cwd, env });
     this.process = managed;
     this.running = true;
     const child = managed.child;
@@ -134,7 +136,7 @@ export class ClaudeHead {
       this.exitedResolve();
       this.handlers.onExit({ code, signal, stderr: `${this.stderrTail}${extra}`.trim(), expected: this.expected, silent: !this.printed });
     };
-    child.once("error", (error) => report(null, null, `Could not start ${this.config.command}: ${error.message}`));
+    child.once("error", (error) => report(null, null, cliStartError("claude", this.config.command, error)));
     child.once("close", (code, signal) => report(code, signal));
   }
 

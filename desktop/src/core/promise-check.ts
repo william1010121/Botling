@@ -4,6 +4,8 @@
 // what it found. Off unless Settings → Engines → Completion verification is on. The strings are 1.x's,
 // checked character for character (test/unit/phase5.test.ts).
 import { spawn } from "node:child_process";
+import { childEnvironment } from "./agent/runner";
+import { resolveExecutable } from "./process/executable";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -268,8 +270,9 @@ export function codexClassifier(command: { file: string; prefixArgs?: string[]; 
     let folder: string;
     try { folder = mkdtempSync(join(tmp, "botling-completion-")); writeFileSync(join(folder, "schema.json"), JUDGMENT_SCHEMA); } catch { reject(new ClassifierFailure(FAILURES.provider)); return; }
     const done = (error: Error | null, judgment?: Judgment) => { rmSync(folder, { recursive: true, force: true }); if (error) reject(error); else resolve(judgment!); };
-    const child = spawn(command.file, [...(command.prefixArgs ?? []), ...classifierArguments(message, folder, model)], {
-      cwd: folder, env: { ...process.env, ...command.env }, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32",
+    const env = childEnvironment(command.env);
+    const child = spawn(resolveExecutable(command.file, env), [...(command.prefixArgs ?? []), ...classifierArguments(message, folder, model)], {
+      cwd: folder, env, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32",
     });
     let output = "";
     let settled = false;

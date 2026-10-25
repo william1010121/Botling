@@ -2,6 +2,7 @@
 // process tree) on request. After `stop()` returns, no further delta or finish callback fires for
 // this turn — late output from a dying process is dropped here, not by the UI.
 import { processTreeAdapter, type ManagedProcess, type ProcessTreeAdapter, type TerminateResult } from "../process/tree";
+import { cliStartError, executableEnvironment, resolveExecutable } from "../process/executable";
 
 export interface AgentConfig {
   /** Executable to run: `claude`, or a fake CLI script for tests. */
@@ -43,7 +44,7 @@ export function childEnvironment(extra: Record<string, string | undefined> = {})
     if (value === undefined) delete env[key];
     else env[key] = value;
   }
-  return env;
+  return executableEnvironment(env);
 }
 
 /**
@@ -148,14 +149,15 @@ export class AgentTurn {
 
   start(prompt: string) {
     const args = [...(this.config.prefixArgs ?? []), ...claudeArguments(this.config)];
-    const managed = this.adapter.spawn(this.config.command, args, { cwd: this.config.cwd, env: childEnvironment(this.config.env) });
+    const env = childEnvironment(this.config.env);
+    const managed = this.adapter.spawn(resolveExecutable(this.config.command, env), args, { cwd: this.config.cwd, env });
     this.process = managed;
     const child = managed.child;
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => { if (!this.stopped) this.reader.push(chunk); });
     child.stderr.on("data", (chunk: string) => { this.stderrTail = (this.stderrTail + chunk).slice(-2_000); });
-    child.once("error", (error) => { this.exitedResolve(); this.end({ status: "failed", text: this.reader.soFar, error: `Could not start ${this.config.command}: ${error.message}` }); });
+    child.once("error", (error) => { this.exitedResolve(); this.end({ status: "failed", text: this.reader.soFar, error: cliStartError("claude", this.config.command, error) }); });
     child.once("close", (code, signal) => {
       this.exitedResolve();
       // A turn without a result line: the CLI crashed or quit.

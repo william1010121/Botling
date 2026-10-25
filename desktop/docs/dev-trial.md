@@ -14,6 +14,38 @@ Copy all three items into a new writable folder on your work volume, then manual
 
 If opened directly without the shortcut, this artifact still disables automatic import and uses the separate **Botling 2 Dev Trial** application-data profile. However, the shortcut is required to keep all trial state on the work volume and isolate Claude/Codex configuration. Closing the app keeps trial data; nothing deletes it automatically.
 
+## CLI launch requirements (source fix for the next cumulative build)
+
+Claude and Codex are external installations, not bundled with Botling. Finder/LaunchServices may
+provide only `/usr/bin:/bin:/usr/sbin:/sbin`; the core now searches the inherited absolute PATH
+entries first, then stable user install directories (`~/.local/bin`, `~/.npm-global/bin`, Volta,
+asdf/mise shims, nvm current, fnm default and Nix profiles), Homebrew and system directories.
+The expanded PATH also reaches the CLI's subprocesses: npm entry points need a separately
+installed `node` interpreter. In particular, macOS Nix's `/etc/profiles/per-user/<account>/bin`
+is included. No shell startup files are sourced and no credentials or CLI configuration are copied.
+
+For an installation outside these locations, the installed app launcher may supply an absolute
+`BOTLING_CLAUDE_PATH` and/or `BOTLING_CODEX_PATH`; explicit paths are authoritative and do not
+fall back to another CLI if broken. Supply a PATH containing `node` as well for a custom npm/Node
+installation. The launcher's HOME must identify the intended user; CLI symlink targets, Node and
+the bot's working directory must exist and be accessible. No user shell command is required for
+the standard install locations above.
+
+Keep the existing `BOTLING_DATA_DIR`, `BOTLING_IMPORT_FROM`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`
+and `TMPDIR` values when integrating this fix. Executable discovery does not change login state:
+an isolated trial config still requires its own existing login. The imported development launcher
+also requires its external volume, referenced app binary and `core/import.json` to be available.
+This source change does not edit that installed launcher, import data, install or restart the app.
+
+Source validation on 2026-10-26: the two head regressions first failed with `spawn claude ENOENT`
+and `spawn codex ENOENT`. After the fix, 45 targeted checks across CLI launch, stream handling,
+Codex protocol, catch-up, trial launch and packaged environment tests passed; TypeScript checking
+passed. With the real installed binaries, minimal GUI PATH and synthetic config directories,
+`claude --version` returned `2.1.310 (Claude Code)` and `codex --version` returned `codex-cli 0.163.0`.
+The explicit npm Codex entry point changed from exit 127 (`env: node: No such file or directory`)
+to exit 0. These are background startup checks, not evidence of live model access or of this fix
+being installed in the running app. Cumulative integration and packaging remain separate work.
+
 ## 已知問題 / Known limitations
 
 - **啟動、切回視窗或焦點切換時可能掉字／漏第一個字元。**先點輸入框再打字，送出前核對內容；這不是已修好的保證。舊輸入路徑保留。新的 stable editor host 尚未啟用，獨立 input adapter 提交不在這份包內，延後後續版本。
