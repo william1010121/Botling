@@ -163,6 +163,7 @@ const core = new Core({
   waitingScanMs: number(process.env.BOTLING_WAITING_SCAN_MS, 5_000),
   plugins: { node, hostScript, sealer },
   checkCommand,
+  shotCommand: process.env.BOTLING_SHOT_COMMAND || null,
   // Tests: hold the first chat.snapshot this long, so the page shows its input box before its first state.
   firstSnapshotDelayMs: number(process.env.BOTLING_TEST_FIRST_SNAPSHOT_MS, 0),
   // The app's copy of the web AIs' page readers (build.mjs copies 1.x's Resources/web-extractors).

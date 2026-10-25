@@ -20,7 +20,7 @@
 //   `--add-dir` (its process starts again in the same session before its next message), and a folder
 //   inside one allowed before is allowed at once (`requestFolder`, `answerFolder`).
 //
-// 2.0 gaps: component specs, reports, design flows and component shots are not ported; installs take a folder or
+// Since Phase 5a: specs (spec-desk.ts), reports, revert and component shots (main/shot.ts). 2.0 gaps: design flows; installs take a folder or
 // a git URL (npm packages and archives: not yet).
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";

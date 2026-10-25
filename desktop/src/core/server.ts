@@ -92,6 +92,8 @@ export interface CoreOptions {
   plugins?: { node: HostCommand | null; hostScript: string; sealer: Sealer | null; timing?: HostTiming } | null;
   /** Maintainer's `ccb plugin check` command (null: none this time). */
   checkCommand?: string | null;
+  /** The component-shot command Maintainer is given (Phase 5a; null: none, it reads the template). */
+  shotCommand?: string | null;
   /** Tests: how long the first chat.snapshot is held (the page then shows its input box before any state). */
   firstSnapshotDelayMs?: number;
   /** The app's own copy of the web AIs' page readers (1.x's Resources/web-extractors); null: none. */
@@ -195,7 +197,7 @@ export class Core {
     installExtractors(join(options.dataDir, "plugins"), options.webExtractors ?? null, () => builtInManifest(EXTRACTORS_PLUGIN, "Web page readers",
       `Reads the conversation on a web AI's page (${(options.webSites ?? webSites()).map((site) => site.name).join(", ")}) into text for the main bot. One script per site; README.md has the contract.`, []));
     this.web = new WebShelf(join(options.dataDir, "web"), options.webSites ?? webSites(), () => this.webChanged());
-    const profiles = [...loaded.profiles, maintainerProfile(options.dataDir, maintainerInstructions(join(options.dataDir, "plugins"), options.checkCommand ?? null, null))];
+    const profiles = [...loaded.profiles, maintainerProfile(options.dataDir, maintainerInstructions(join(options.dataDir, "plugins"), options.checkCommand ?? null, options.shotCommand ?? null))];
     const oneX: OneXCheck = options.oneX ?? { folder: null, process: DEFAULT_ONE_X_PROCESS };
     const threads = new CodexThreads(join(options.dataDir, "codex-threads"));
     const codexConfig = options.codexConfig;

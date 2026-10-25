@@ -3,7 +3,10 @@
 import { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
 import { join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isRequested as isShotRequested, withProbe } from "../core/component-shot";
+import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { CoreClient } from "./core-client";
 import { WebPages } from "./web";
 import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP } from "./card-page";
@@ -15,7 +18,10 @@ import {
 
 const root = resolve(__dirname, "..", ".."); // desktop/
 const rendererDir = join(root, "out", "renderer");
-const dataDir = resolve(process.env.BOTLING_DATA_DIR ?? (app.isPackaged ? join(app.getPath("appData"), "Botling 2") : join(root, ".data")));
+/** `--component-shot` (Phase 5a): draw one component and exit; no core, no data folder of the app's. */
+const shotMode = isShotRequested(process.argv);
+const dataDir = shotMode ? mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "botling-shot-"))
+  : resolve(process.env.BOTLING_DATA_DIR ?? (app.isPackaged ? join(app.getPath("appData"), "Botling 2") : join(root, ".data")));
 mkdirSync(dataDir, { recursive: true });
 // Everything Electron keeps (partitions, caches, logs) lives under the data dir, never the default.
 app.setPath("userData", join(dataDir, "electron"));
@@ -66,7 +72,7 @@ protocol.registerSchemesAsPrivileged([
   { scheme: "botling-chat", privileges: { standard: true, secure: true } },
 ]);
 
-if (!app.requestSingleInstanceLock({ dataDir })) {
+if (!shotMode && !app.requestSingleInstanceLock({ dataDir })) {
   app.quit();
 }
 
@@ -112,6 +118,9 @@ function coreEnvironment(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
   env.BOTLING_DATA_DIR = join(dataDir, "core");
+  // Maintainer's component-shot command: this build in shot mode (1.x: "'<botling>' --component-shot").
+  const quoted = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
+  env.BOTLING_SHOT_COMMAND ??= `env -u ELECTRON_RUN_AS_NODE ${quoted(process.execPath)}${app.isPackaged ? "" : ` ${quoted(root)}`} --component-shot`;
   env.BOTLING_FAKE_CLI ??= join(root, "test", "fixtures", "fake-claude.mjs");
   env.BOTLING_FAKE_CODEX ??= join(root, "test", "fixtures", "fake-codex.mjs");
   // A packaged app imports the user's Botling 1.x folder on its first start (read-only). A
@@ -235,7 +244,8 @@ const pages = new Map<string, { html: string; panel: boolean }>();
 const PAGE_LIMIT = 400;
 function addPage(html: string, panel = false): string {
   const token = randomBytes(18).toString("hex");
-  pages.set(token, { html, panel });
+  // A component shot measures every component page: the probe goes first in its head.
+  pages.set(token, { html: shotMode && !panel ? withProbe(html) : html, panel });
   while (pages.size > PAGE_LIMIT) pages.delete(pages.keys().next().value!);
   return `${PAGE_PREFIX}${token}`;
 }
@@ -468,6 +478,9 @@ function serveApp() {
   protocol.handle("app", async (request) => {
     const url = new URL(request.url);
     if (url.host !== "botling") return new Response("Not found", { status: 404 });
+    // The component shot's host page (shot mode only).
+    if (shotMode && url.pathname === "/shot.html") return new Response(SHOT_HTML, { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": APP_CSP.replace("img-src 'self' data:", "img-src 'self' data: blob:") } });
+    if (shotMode && url.pathname === "/shot.js") return new Response(SHOT_JS(PROTOCOL_VERSION), { headers: { "Content-Type": "text/javascript; charset=utf-8" } });
     const file = normalize(join(rendererDir, decodeURIComponent(url.pathname)));
     // The chat page and its files are the chat origin's, not the app's.
     if (!file.startsWith(rendererDir + sep) || CHAT_FILES.test(url.pathname)) return new Response("Not found", { status: 404 });
@@ -513,9 +526,33 @@ function serveApp() {
   });
 }
 
+/** A hidden window of the shot's, an app window (its host page talks to main as the app page does). */
+function shotWindow(size: { width: number; height: number }): BrowserWindow {
+  const window = new BrowserWindow({
+    width: size.width, height: size.height, useContentSize: true, show: false, paintWhenInitiallyHidden: true, backgroundColor: "#0E0E10",
+    webPreferences: { preload: join(root, "out", "preload", "preload.cjs"), sandbox: true, contextIsolation: true, nodeIntegration: false, offscreen: true },
+  });
+  appContents.add(window.webContents.id);
+  const id = window.webContents.id;
+  window.on("closed", () => { appContents.delete(id); });
+  mainWindow = window;
+  return window;
+}
+
 app.whenReady().then(() => {
   hardenSession(session.defaultSession);
   serveApp();
+  if (shotMode) {
+    const giveUp = setTimeout(() => { process.stderr.write("Gave up: drawing took over 3 minutes.\n"); app.exit(3); }, 180_000);
+    void runShot(process.argv, shotWindow, (text) => process.stdout.write(text + "\n"), (text) => process.stderr.write(text + "\n"))
+      .then((code) => code, (error) => { process.stderr.write(`It could not draw: ${(error as Error).message}\n`); return 3; })
+      .then((code) => {
+        clearTimeout(giveUp);
+        try { rmSync(dataDir, { recursive: true, force: true, maxRetries: 3 }); } catch { /* Chromium may still write its profile there */ }
+        app.exit(code);
+      });
+    return;
+  }
   core.start();
   createWindow();
   app.on("activate", () => { if (!mainWindow) createWindow(); });
@@ -525,6 +562,7 @@ app.on("second-instance", () => { mainWindow?.show(); mainWindow?.focus(); });
 
 // Closing the window does not stop work: the core keeps running (macOS convention). Quitting does.
 app.on("window-all-closed", () => {
+  if (shotMode) return;
   if (process.platform !== "darwin" || process.env.BOTLING_QUIT_ON_CLOSE === "1") app.quit();
 });
 
@@ -541,5 +579,6 @@ app.on("before-quit", (event) => {
 
 // For tests: which pid the core has.
 (globalThis as unknown as { __botlingCorePid: () => number | undefined }).__botlingCorePid = () => core.pid;
+(globalThis as unknown as { __botlingShotCommand: string | undefined }).__botlingShotCommand = shotMode ? undefined : coreEnvironment().BOTLING_SHOT_COMMAND;
 (globalThis as unknown as { __botlingHostPids: () => number[] }).__botlingHostPids = () => core.hostPids;
 void PROTOCOL_VERSION;
