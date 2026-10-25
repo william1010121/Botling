@@ -613,6 +613,23 @@ export const UpdateView = z.strictObject({
   error: z.string().max(2_000).nullable(),
 });
 export type UpdateView = z.infer<typeof UpdateView>;
+
+/** Tokens (1.x's `TokenUsage`). */
+const TokensView = z.strictObject({ input: z.number().int().nonnegative(), output: z.number().int().nonnegative(), cacheWrite: z.number().int().nonnegative(), cacheRead: z.number().int().nonnegative() });
+/** One limit: 0…1 used, when it starts over and when the reading came (ms since 1970). */
+const LimitWindowView = z.strictObject({ used: z.number().min(0).max(1), resetsAt: z.number().nullable(), seen: z.number() });
+const LimitsView = z.strictObject({ fiveHour: LimitWindowView.nullable(), week: LimitWindowView.nullable() });
+/** What the bots used (Phase 5c; 1.x's usage page): today, by bot, the days before, and each CLI's subscription limits. */
+export const UsageView = z.strictObject({
+  day: z.string().max(20),
+  spent: z.number().nonnegative(),
+  tokens: TokensView,
+  byBot: z.array(z.strictObject({ name: z.string().max(200), spent: z.number().nonnegative(), tokens: z.number().int().nonnegative() })).max(500),
+  history: z.array(z.strictObject({ day: z.string().max(20), spent: z.number().nonnegative(), tokens: z.number().int().nonnegative() })).max(31),
+  claude: LimitsView,
+  codex: LimitsView,
+});
+export type UsageView = z.infer<typeof UsageView>;
 /** A bot's own choices (bot.json): its heads, its model and effort, its subagents' model, Codex's model. */
 export const BotSettingsView = z.strictObject({
   botId: id,
@@ -718,7 +735,7 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("files.remove"), botId, id }),
   /** Main only: a file the chat shows (an attachment of one of the bot's lines, or one waiting: `pending:<id>`). */
   z.strictObject({ type: z.literal("attachment.file"), botId, ref: z.string().min(1).max(5_000) }),
-  /** One head or two (Claude, Codex). The bot's first head stays. */
+  /** One head or two (Claude, Codex). Leaving out the head it runs on runs it on the other, through a handoff (Phase 5c). */
   z.strictObject({ type: z.literal("heads.set"), botId, engines: z.array(Engine).min(1).max(2) }),
   /** Who new messages go to (the composer's Both / Claude / Codex). */
   z.strictObject({ type: z.literal("heads.answerWith"), botId, to: AnswerTarget }),
@@ -860,6 +877,8 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("settings.set"), change: SettingsChange }),
   /** Main: look at GitHub Releases (`manual`: now, even when the check is off or was done lately). */
   z.strictObject({ type: z.literal("updates.check"), manual: z.boolean() }),
+  /** What the bots used today and before, and the subscriptions' limits (Settings → Usage). */
+  z.strictObject({ type: z.literal("usage.view") }),
   /** Main: open the newer release's page in the browser (only a release page of the app's own repository). */
   z.strictObject({ type: z.literal("updates.open") }),
   /** A bot's own choices (bot.json). */
@@ -924,7 +943,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open",
-  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open",
+  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "usage.view",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
 export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "component.report", "chat.feedback", "updates.check", "updates.open"]);
@@ -1041,6 +1060,7 @@ export interface Results {
   "waiting.ignore": WaitingView;
   "settings.set": SettingsView;
   "updates.check": UpdateView;
+  "usage.view": UsageView;
   "updates.open": { opened: boolean };
   "bot.settings": BotSettingsView;
   "bot.configure": BotSettingsView;

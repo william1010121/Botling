@@ -3,18 +3,20 @@
 // which is the shown bot's own bot.json (1.x keeps those on the bot's page beside the chat). Each
 // control shows what the core saved: a change goes out, the answer (or `settings.updated`) comes back.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsView, UpdateView } from "../contract";
+import type { BotSettingsView, BotView, PluginsView, SettingsChange, SettingsView, UpdateView, UsageView } from "../contract";
+import { asOf, countdown, dollars, isEmpty, percent, resetDay, staleSince, tokenCount, type Limits } from "./usage-text";
 import { Client, RequestFailed } from "./client";
 import { PanelFrame, PluginsPanel } from "./Plugins";
 import { faceURL } from "./avatars";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
-type Section = "general" | "engines" | "bot" | "permissions" | "plugins" | "updates" | "developer";
+type Section = "general" | "engines" | "bot" | "usage" | "permissions" | "plugins" | "updates" | "developer";
 const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
   { id: "engines", title: "Engines and subagents", terms: "claude subagents model prompt cache hour codex workers config effort fast completion verification component editor" },
   { id: "bot", title: "This bot", terms: "engine heads claude codex model effort subagents" },
+  { id: "usage", title: "Usage", terms: "usage cost tokens spending today by bot earlier days subscription limits rate 5 hours week claude codex" },
   { id: "permissions", title: "Reports and results", terms: "publish artifact local html results reports" },
   { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },
   { id: "updates", title: "Updates", terms: "updates version release github check new" },
@@ -71,6 +73,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, onClo
             {shown && current?.id === "general" && <General settings={shown} change={change} bot={bot} />}
             {shown && current?.id === "engines" && <Engines settings={shown} change={change} />}
             {current?.id === "bot" && bot && <ThisBot client={client} bot={bot} onProblem={setProblem} />}
+            {current?.id === "usage" && <Usage client={client} />}
             {shown && current?.id === "permissions" && <Results settings={shown} change={change} />}
             {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} />}
             {shown && current?.id === "updates" && <Updates client={client} settings={shown} change={change} />}
@@ -79,6 +82,68 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, onClo
         </section>
       </div>
     </div>
+  );
+}
+
+/**
+ * Settings → Usage (1.x's usage page, Phase 5c): cost and tokens today, the subscriptions' limits as Claude and
+ * Codex last reported them (they come with bots' turns only), by bot, and the days before. Read again each minute.
+ */
+function Usage({ client }: { client: Client }) {
+  const [usage, setUsage] = useState<UsageView | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const load = () => { setNow(Date.now()); void client.request({ type: "usage.view" }).then(setUsage, () => {}); };
+    load();
+    const timer = setInterval(load, 60_000);
+    return () => clearInterval(timer);
+  }, [client]);
+  if (!usage) return null;
+  const tokens = usage.tokens;
+  const total = tokens.input + tokens.output + tokens.cacheWrite + tokens.cacheRead;
+  return (
+    <>
+      <Group title="Usage today" note={`In ${tokenCount(tokens.input)} · out ${tokenCount(tokens.output)} · cache write ${tokenCount(tokens.cacheWrite)} · cache read ${tokenCount(tokens.cacheRead)}`}>
+        <Row label="Cost"><span className="usage-number">{dollars(usage.spent)}</span></Row>
+        <Row label="Tokens"><span className="usage-number">{tokenCount(total)}</span></Row>
+      </Group>
+      <Group title="Subscription limits">
+        <LimitRow name="Claude" limits={usage.claude} now={now} />
+        {!isEmpty(usage.codex) && <LimitRow name="Codex" limits={usage.codex} now={now} />}
+      </Group>
+      <Group title="By bot">
+        {!usage.byBot.length && <Row label="No bot has used anything today." />}
+        {usage.byBot.map((bot) => <UsageRow key={bot.name} name={bot.name} spent={bot.spent} tokens={bot.tokens} />)}
+      </Group>
+      {usage.history.length > 0 && (
+        <Group title="Earlier days">
+          {[...usage.history].reverse().map((day) => <UsageRow key={day.day} name={day.day} spent={day.spent} tokens={day.tokens} />)}
+        </Group>
+      )}
+    </>
+  );
+}
+
+function UsageRow({ name, spent, tokens }: { name: string; spent: number; tokens: number }) {
+  return (
+    <Row label={name}>
+      <span className="usage-line"><span className="usage-faint">{tokenCount(tokens)} tokens</span><span className="usage-number usage-cost">{dollars(spent)}</span></span>
+    </Row>
+  );
+}
+
+/** One subscription's 5-hour and weekly use, with when each starts over (1.x's LimitRow). */
+function LimitRow({ name, limits, now }: { name: string; limits: Limits; now: number }) {
+  const since = staleSince(limits, now);
+  return (
+    <Row label={name}>
+      <span className="usage-limits" aria-label={`${name} limits`}>
+        {isEmpty(limits) && <span className="usage-faint">no data</span>}
+        {limits.fiveHour && <span>5 hours {percent(limits.fiveHour, now)} · {countdown(limits.fiveHour, now)}</span>}
+        {limits.week && <span className="usage-faint">Week {percent(limits.week, now)} · {resetDay(limits.week, now)}</span>}
+        {since !== null && <span className="usage-stale">{asOf(since, now)}</span>}
+      </span>
+    </Row>
   );
 }
 
@@ -140,7 +205,7 @@ function Group({ title, children, note }: { title: string; children: React.React
   );
 }
 
-function Row({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
+function Row({ label, children, hint }: { label: string; children?: React.ReactNode; hint?: string }) {
   return (
     <div className="settings-row">
       <div className="settings-label">{label}{hint && <div className="settings-hint">{hint}</div>}</div>

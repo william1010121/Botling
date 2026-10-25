@@ -1,0 +1,705 @@
+{
+  "about" : "Written by Tests/ClaudeCodeBotCoreTests/DesktopPhase5cGoldenExport.swift from the Swift app's own code.",
+  "brief" : {
+    "arguments" : [
+      "-p",
+      "--input-format",
+      "stream-json",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--resume",
+      "0b07e11c-0000-4000-8000-0000000000ab",
+      "--model",
+      "sonnet",
+      "--permission-mode",
+      "acceptEdits",
+      "--allowedTools",
+      "Read,Grep,Glob",
+      "--append-system-prompt",
+      "This is a read-only copy of your session, asked by the Botling app for a component brief. Change nothing.",
+      "--fork-session",
+      "--no-session-persistence",
+      "--disallowedTools",
+      "Bash,Write,Edit,NotebookEdit,Agent,Task,WebFetch,WebSearch,AskUserQuestion",
+      "--effort",
+      "high"
+    ],
+    "briefs" : [
+      {
+        "answer" : "<component-brief>\n1. Purpose: tests\n</component-brief>",
+        "brief" : "1. Purpose: tests"
+      },
+      {
+        "answer" : "Sure.\n<component-brief>  only this  </component-brief> trailing",
+        "brief" : "only this"
+      },
+      {
+        "answer" : "<component-brief>unclosed brief",
+        "brief" : "unclosed brief"
+      },
+      {
+        "answer" : "no tag at all\n",
+        "brief" : "no tag at all"
+      },
+      {
+        "answer" : "<component-brief> \n </component-brief>",
+        "brief" : null
+      },
+      {
+        "answer" : "",
+        "brief" : null
+      },
+      {
+        "answer" : "<component-brief>xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</component-brief>",
+        "brief" : "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+      }
+    ],
+    "denied" : [
+      "Bash",
+      "Write",
+      "Edit",
+      "NotebookEdit",
+      "Agent",
+      "Task",
+      "WebFetch",
+      "WebSearch",
+      "AskUserQuestion"
+    ],
+    "folder" : "/Users/me/work/Shop",
+    "limit" : 8000,
+    "preview" : "Your 3 tests:",
+    "requests" : [
+      {
+        "asked" : null,
+        "text" : "(App: The user pressed \"Make into component\" on your reply from 6:13 am (\"Your 3 tests:\"). Maintainer, who builds the app's chat components, will make it into a component that shows that reply's kind of content. Write Maintainer a brief. Do not do the work again: change nothing and run nothing; answer from what you already know in this conversation (you may Read a file to check a name or path).\nAnswer with only <component-brief>…</component-brief>, in English (keep the user's own words as they are), holding:\n1. Purpose: what the component is for, in one or two sentences.\n2. The user's message: the user's own message that led to that reply, verbatim.\n3. Fields: each data field it should show (name, type, an example value), each marked as one of:\n   - From command: a CLI command gets it. Give the exact command(s) you ran for it (or would run), run in /Users/me/work/Shop, and how the output maps to the field.\n   - Optional (bot only): only a bot can write it (explanations, advice, a \"next step\"); shown only when a bot fills it.\n4. Board command: when some fields are From command, one command (or a short script outline) that prints JSON with just those fields; else \"none\".\nNo words outside the tag.)"
+      },
+      {
+        "asked" : "",
+        "text" : "(App: The user pressed \"Make into component\" on your reply from 6:13 am (\"Your 3 tests:\"). Maintainer, who builds the app's chat components, will make it into a component that shows that reply's kind of content. Write Maintainer a brief. Do not do the work again: change nothing and run nothing; answer from what you already know in this conversation (you may Read a file to check a name or path).\nAnswer with only <component-brief>…</component-brief>, in English (keep the user's own words as they are), holding:\n1. Purpose: what the component is for, in one or two sentences.\n2. The user's message: the user's own message that led to that reply, verbatim.\n3. Fields: each data field it should show (name, type, an example value), each marked as one of:\n   - From command: a CLI command gets it. Give the exact command(s) you ran for it (or would run), run in /Users/me/work/Shop, and how the output maps to the field.\n   - Optional (bot only): only a bot can write it (explanations, advice, a \"next step\"); shown only when a bot fills it.\n4. Board command: when some fields are From command, one command (or a short script outline) that prints JSON with just those fields; else \"none\".\nNo words outside the tag.)"
+      },
+      {
+        "asked" : "show me the tests",
+        "text" : "(App: The user pressed \"Make into component\" on your reply from 6:13 am (\"Your 3 tests:\"). Maintainer, who builds the app's chat components, will make it into a component that shows that reply's kind of content. Write Maintainer a brief. Do not do the work again: change nothing and run nothing; answer from what you already know in this conversation (you may Read a file to check a name or path).\nThe user's message that led to it, as the app has it:\nshow me the tests\nAnswer with only <component-brief>…</component-brief>, in English (keep the user's own words as they are), holding:\n1. Purpose: what the component is for, in one or two sentences.\n2. The user's message: the user's own message that led to that reply, verbatim.\n3. Fields: each data field it should show (name, type, an example value), each marked as one of:\n   - From command: a CLI command gets it. Give the exact command(s) you ran for it (or would run), run in /Users/me/work/Shop, and how the output maps to the field.\n   - Optional (bot only): only a bot can write it (explanations, advice, a \"next step\"); shown only when a bot fills it.\n4. Board command: when some fields are From command, one command (or a short script outline) that prints JSON with just those fields; else \"none\".\nNo words outside the tag.)"
+      },
+      {
+        "asked" : "測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests ",
+        "text" : "(App: The user pressed \"Make into component\" on your reply from 6:13 am (\"Your 3 tests:\"). Maintainer, who builds the app's chat components, will make it into a component that shows that reply's kind of content. Write Maintainer a brief. Do not do the work again: change nothing and run nothing; answer from what you already know in this conversation (you may Read a file to check a name or path).\nThe user's message that led to it, as the app has it:\n測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 tests 測試 …\nAnswer with only <component-brief>…</component-brief>, in English (keep the user's own words as they are), holding:\n1. Purpose: what the component is for, in one or two sentences.\n2. The user's message: the user's own message that led to that reply, verbatim.\n3. Fields: each data field it should show (name, type, an example value), each marked as one of:\n   - From command: a CLI command gets it. Give the exact command(s) you ran for it (or would run), run in /Users/me/work/Shop, and how the output maps to the field.\n   - Optional (bot only): only a bot can write it (explanations, advice, a \"next step\"); shown only when a bot fills it.\n4. Board command: when some fields are From command, one command (or a short script outline) that prints JSON with just those fields; else \"none\".\nNo words outside the tag.)"
+      }
+    ],
+    "timeout" : 120,
+    "tools" : [
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "when" : "6:13 am"
+  },
+  "engine" : {
+    "handoffClaude" : "Handoff → Claude",
+    "handoffCodex" : "Handoff → Codex",
+    "switchedClaude" : "Switched to Claude",
+    "switchedCodex" : "Switched to Codex",
+    "toldCodex" : "running on Codex"
+  },
+  "usage" : {
+    "claudeLimits" : [
+      {
+        "limits" : {
+          "fiveHour" : {
+            "resetsAt" : 821692800,
+            "seen" : 700000000,
+            "used" : 0.46999999999999997
+          },
+          "week" : {
+            "resetsAt" : null,
+            "seen" : 700000000,
+            "used" : 1
+          }
+        },
+        "line" : {
+          "rate_limit_info" : {
+            "status" : "allowed",
+            "unifiedWindows" : {
+              "five_hour" : {
+                "resetsAt" : 1800000000,
+                "utilization" : 0.46999999999999997
+              },
+              "seven_day" : {
+                "utilization" : 1.5
+              }
+            }
+          },
+          "type" : "rate_limit_event"
+        }
+      },
+      {
+        "limits" : {
+          "fiveHour" : null,
+          "week" : {
+            "resetsAt" : 821692800,
+            "seen" : 700000000,
+            "used" : 1
+          }
+        },
+        "line" : {
+          "rate_limit_info" : {
+            "rateLimitType" : "seven_day",
+            "resetsAt" : 1800000000,
+            "status" : "rejected"
+          },
+          "type" : "rate_limit_event"
+        }
+      },
+      {
+        "limits" : {
+          "fiveHour" : {
+            "resetsAt" : 721692800.5,
+            "seen" : 700000000,
+            "used" : 0
+          },
+          "week" : null
+        },
+        "line" : {
+          "rate_limit_info" : {
+            "rateLimitType" : "five_hour",
+            "resetsAt" : 1700000000.5,
+            "status" : "allowed",
+            "utilization" : -0.20000000000000001
+          },
+          "type" : "rate_limit_event"
+        }
+      },
+      {
+        "limits" : null,
+        "line" : {
+          "rate_limit_info" : {
+            "rateLimitType" : "five_hour",
+            "status" : "allowed"
+          },
+          "type" : "rate_limit_event"
+        }
+      },
+      {
+        "limits" : null,
+        "line" : {
+          "total_cost_usd" : 0.25,
+          "type" : "result"
+        }
+      }
+    ],
+    "claudeUsage" : [
+      {
+        "line" : "{\"type\":\"result\",\"subtype\":\"success\",\"total_cost_usd\":0.125,\"usage\":{\"input_tokens\":10,\"output_tokens\":20,\"cache_creation_input_tokens\":30,\"cache_read_input_tokens\":40}}",
+        "usage" : {
+          "tokens" : {
+            "cacheRead" : 40,
+            "cacheWrite" : 30,
+            "input" : 10,
+            "output" : 20
+          },
+          "totalCost" : 0.125
+        }
+      },
+      {
+        "line" : "{\"type\":\"result\",\"subtype\":\"success\",\"total_cost_usd\":1}",
+        "usage" : {
+          "tokens" : {
+            "cacheRead" : 0,
+            "cacheWrite" : 0,
+            "input" : 0,
+            "output" : 0
+          },
+          "totalCost" : 1
+        }
+      },
+      {
+        "line" : "{\"type\":\"result\",\"subtype\":\"success\"}",
+        "usage" : null
+      },
+      {
+        "line" : "{\"type\":\"assistant\",\"total_cost_usd\":1}",
+        "usage" : null
+      }
+    ],
+    "codexLimits" : [
+      {
+        "limits" : {
+          "fiveHour" : {
+            "resetsAt" : 821692800,
+            "seen" : 700000000,
+            "used" : 0.070000000000000007
+          },
+          "week" : {
+            "resetsAt" : null,
+            "seen" : 700000000,
+            "used" : 1
+          }
+        },
+        "snapshot" : {
+          "primary" : {
+            "resetsAt" : 1800000000,
+            "usedPercent" : 7,
+            "windowDurationMins" : 300
+          },
+          "secondary" : {
+            "usedPercent" : 131,
+            "windowDurationMins" : 10080
+          }
+        }
+      },
+      {
+        "limits" : {
+          "fiveHour" : {
+            "resetsAt" : null,
+            "seen" : 700000000,
+            "used" : 0.050000000000000003
+          },
+          "week" : null
+        },
+        "snapshot" : {
+          "secondary" : {
+            "usedPercent" : 5
+          }
+        }
+      },
+      {
+        "limits" : {
+          "fiveHour" : null,
+          "week" : null
+        },
+        "snapshot" : {
+          "primary" : {
+            "windowDurationMins" : 300
+          }
+        }
+      }
+    ],
+    "codexTokens" : [
+      {
+        "breakdown" : {
+          "cachedInputTokens" : 1500,
+          "inputTokens" : 2000,
+          "outputTokens" : 250
+        },
+        "tokens" : {
+          "cacheRead" : 1500,
+          "cacheWrite" : 0,
+          "input" : 500,
+          "output" : 250
+        }
+      },
+      {
+        "breakdown" : {
+          "cachedInputTokens" : 50,
+          "cacheWriteInputTokens" : 7,
+          "inputTokens" : 10
+        },
+        "tokens" : {
+          "cacheRead" : 50,
+          "cacheWrite" : 7,
+          "input" : 0,
+          "output" : 0
+        }
+      },
+      {
+        "breakdown" : {
+
+        },
+        "tokens" : {
+          "cacheRead" : 0,
+          "cacheWrite" : 0,
+          "input" : 0,
+          "output" : 0
+        }
+      }
+    ],
+    "dollars" : [
+      {
+        "amount" : 0,
+        "text" : "$0.00"
+      },
+      {
+        "amount" : 0.0040000000000000001,
+        "text" : "$0.00"
+      },
+      {
+        "amount" : 0.0050000000000000001,
+        "text" : "$0.01"
+      },
+      {
+        "amount" : 0.014999999999999999,
+        "text" : "$0.01"
+      },
+      {
+        "amount" : 1.234,
+        "text" : "$1.23"
+      },
+      {
+        "amount" : 12.5,
+        "text" : "$12.50"
+      },
+      {
+        "amount" : 100,
+        "text" : "$100.00"
+      }
+    ],
+    "now" : 800000000,
+    "seen" : 700000000,
+    "spending" : [
+      {
+        "amount" : 0.5,
+        "at" : 814000000,
+        "bot" : "Main bot",
+        "spending" : {
+          "byBot" : {
+            "Main bot" : 0.5
+          },
+          "day" : "2026-10-18",
+          "history" : [
+
+          ],
+          "spent" : 0.5,
+          "tokens" : {
+            "cacheRead" : 4,
+            "cacheWrite" : 3,
+            "input" : 1,
+            "output" : 2
+          },
+          "tokensByBot" : {
+            "Main bot" : {
+              "cacheRead" : 4,
+              "cacheWrite" : 3,
+              "input" : 1,
+              "output" : 2
+            }
+          }
+        },
+        "tokens" : {
+          "cacheRead" : 4,
+          "cacheWrite" : 3,
+          "input" : 1,
+          "output" : 2
+        }
+      },
+      {
+        "amount" : 0,
+        "at" : 814000100,
+        "bot" : "Shop",
+        "spending" : {
+          "byBot" : {
+            "Main bot" : 0.5
+          },
+          "day" : "2026-10-18",
+          "history" : [
+
+          ],
+          "spent" : 0.5,
+          "tokens" : {
+            "cacheRead" : 4,
+            "cacheWrite" : 3,
+            "input" : 1,
+            "output" : 2
+          },
+          "tokensByBot" : {
+            "Main bot" : {
+              "cacheRead" : 4,
+              "cacheWrite" : 3,
+              "input" : 1,
+              "output" : 2
+            }
+          }
+        },
+        "tokens" : {
+          "cacheRead" : 0,
+          "cacheWrite" : 0,
+          "input" : 0,
+          "output" : 0
+        }
+      },
+      {
+        "amount" : 0,
+        "at" : 814000200,
+        "bot" : "Shop",
+        "spending" : {
+          "byBot" : {
+            "Main bot" : 0.5
+          },
+          "day" : "2026-10-18",
+          "history" : [
+
+          ],
+          "spent" : 0.5,
+          "tokens" : {
+            "cacheRead" : 4,
+            "cacheWrite" : 3,
+            "input" : 6,
+            "output" : 2
+          },
+          "tokensByBot" : {
+            "Main bot" : {
+              "cacheRead" : 4,
+              "cacheWrite" : 3,
+              "input" : 1,
+              "output" : 2
+            },
+            "Shop" : {
+              "cacheRead" : 0,
+              "cacheWrite" : 0,
+              "input" : 5,
+              "output" : 0
+            }
+          }
+        },
+        "tokens" : {
+          "cacheRead" : 0,
+          "cacheWrite" : 0,
+          "input" : 5,
+          "output" : 0
+        }
+      },
+      {
+        "amount" : 0.25,
+        "at" : 814100000,
+        "bot" : "Main bot",
+        "spending" : {
+          "byBot" : {
+            "Main bot" : 0.25
+          },
+          "day" : "2026-10-19",
+          "history" : [
+            {
+              "day" : "2026-10-18",
+              "spent" : 0.5,
+              "tokens" : {
+                "cacheRead" : 4,
+                "cacheWrite" : 3,
+                "input" : 6,
+                "output" : 2
+              }
+            }
+          ],
+          "spent" : 0.25,
+          "tokens" : {
+            "cacheRead" : 0,
+            "cacheWrite" : 0,
+            "input" : 0,
+            "output" : 9
+          },
+          "tokensByBot" : {
+            "Main bot" : {
+              "cacheRead" : 0,
+              "cacheWrite" : 0,
+              "input" : 0,
+              "output" : 9
+            }
+          }
+        },
+        "tokens" : {
+          "cacheRead" : 0,
+          "cacheWrite" : 0,
+          "input" : 0,
+          "output" : 9
+        }
+      }
+    ],
+    "stale" : [
+      {
+        "limits" : {
+          "fiveHour" : {
+            "resetsAt" : null,
+            "seen" : 800000000,
+            "used" : 0.10000000000000001
+          },
+          "week" : {
+            "resetsAt" : null,
+            "seen" : 800000000,
+            "used" : 0.20000000000000001
+          }
+        },
+        "staleSince" : null
+      },
+      {
+        "limits" : {
+          "fiveHour" : {
+            "resetsAt" : null,
+            "seen" : 799999460,
+            "used" : 0.10000000000000001
+          },
+          "week" : {
+            "resetsAt" : null,
+            "seen" : 799999999,
+            "used" : 0.20000000000000001
+          }
+        },
+        "staleSince" : null
+      },
+      {
+        "limits" : {
+          "fiveHour" : {
+            "resetsAt" : null,
+            "seen" : 799999400,
+            "used" : 0.10000000000000001
+          },
+          "week" : {
+            "resetsAt" : null,
+            "seen" : 799999999,
+            "used" : 0.20000000000000001
+          }
+        },
+        "staleSince" : 799999400
+      },
+      {
+        "limits" : {
+          "fiveHour" : {
+            "resetsAt" : null,
+            "seen" : 799999940,
+            "used" : 0.10000000000000001
+          },
+          "week" : {
+            "resetsAt" : null,
+            "seen" : 799996400,
+            "used" : 0.20000000000000001
+          }
+        },
+        "staleSince" : 799996400
+      }
+    ],
+    "texts" : [
+      {
+        "asOf" : "as of 0 min ago",
+        "countdown" : "in 2h 13m",
+        "label" : "in2h13m",
+        "percent" : "42%",
+        "resetDay" : "8:26 AM",
+        "window" : {
+          "resetsAt" : 800007980,
+          "seen" : 800000000,
+          "used" : 0.41999999999999998
+        }
+      },
+      {
+        "asOf" : "as of 25 min ago",
+        "countdown" : "in 8m",
+        "label" : "in8m",
+        "percent" : "1%",
+        "resetDay" : "6:20 AM",
+        "window" : {
+          "resetsAt" : 800000421,
+          "seen" : 799998500,
+          "used" : 0.0050000000000000001
+        }
+      },
+      {
+        "asOf" : "as of 3 h ago",
+        "countdown" : "in 1m",
+        "label" : "in1m",
+        "percent" : "100%",
+        "resetDay" : "6:13 AM",
+        "window" : {
+          "resetsAt" : 800000005,
+          "seen" : 799989200,
+          "used" : 0.995
+        }
+      },
+      {
+        "asOf" : "as of 3 days ago",
+        "countdown" : "in 1h 0m",
+        "label" : "today",
+        "percent" : "18%",
+        "resetDay" : "7:13 AM",
+        "window" : {
+          "resetsAt" : 800003600,
+          "seen" : 799740800,
+          "used" : 0.17999999999999999
+        }
+      },
+      {
+        "asOf" : "as of 0 min ago",
+        "countdown" : "in 72h 10m",
+        "label" : "days",
+        "percent" : "31%",
+        "resetDay" : "Tue 6:23 AM",
+        "window" : {
+          "resetsAt" : 800259800,
+          "seen" : 800000000,
+          "used" : 0.31
+        }
+      },
+      {
+        "asOf" : "as of 0 min ago",
+        "countdown" : "reset",
+        "label" : "reset",
+        "percent" : "–",
+        "resetDay" : "reset",
+        "window" : {
+          "resetsAt" : 799999999,
+          "seen" : 800000000,
+          "used" : 0.90000000000000002
+        }
+      },
+      {
+        "asOf" : "as of 0 min ago",
+        "countdown" : "",
+        "label" : "noReset",
+        "percent" : "50%",
+        "resetDay" : "",
+        "window" : {
+          "resetsAt" : null,
+          "seen" : 800000000,
+          "used" : 0.5
+        }
+      }
+    ],
+    "tokenCount" : [
+      {
+        "count" : 0,
+        "text" : "0"
+      },
+      {
+        "count" : 812,
+        "text" : "812"
+      },
+      {
+        "count" : 999,
+        "text" : "999"
+      },
+      {
+        "count" : 1000,
+        "text" : "1.0K"
+      },
+      {
+        "count" : 1049,
+        "text" : "1.0K"
+      },
+      {
+        "count" : 1050,
+        "text" : "1.1K"
+      },
+      {
+        "count" : 34500,
+        "text" : "34.5K"
+      },
+      {
+        "count" : 999949,
+        "text" : "999.9K"
+      },
+      {
+        "count" : 999950,
+        "text" : "1000.0K"
+      },
+      {
+        "count" : 1000000,
+        "text" : "1.0M"
+      },
+      {
+        "count" : 1250000,
+        "text" : "1.2M"
+      },
+      {
+        "count" : 12345678,
+        "text" : "12.3M"
+      }
+    ]
+  }
+}

@@ -23,7 +23,7 @@
 //   coordinator when it ends (`app_monitor_result`, monitors.ts), never replaying one after a restart.
 //
 // Not ported (2.0 gaps, see desktop/README.md): the component-editor role, Codex's reviewer (auto mode),
-// Codex's own native subagents (off in a coordinator anyway), rate limits and token usage,
+// Codex's own native subagents (off in a coordinator anyway),
 // images in messages.
 import type { WorkerDependency } from "../promise-check";
 import { randomUUID } from "node:crypto";
@@ -38,6 +38,7 @@ import tools from "./codex-tools.json";
 import { RoutineError, ScheduledRoutineStore } from "../routines";
 import { bounded, isActive as monitorActive, loadMonitors, MONITOR_OUTPUT_LIMIT, monitorPayload, monitorSummary, reconcile, saveMonitors, type CommandMonitor } from "./monitors";
 import { toSwiftDate } from "../store/records";
+import { codexRateLimits, codexTokens, isEmptyLimits, minusTokens, noTokens, totalTokens, type TokenUsage } from "../usage";
 
 /** What a Codex head gives the bot besides claude's items. */
 export type CodexItem =
@@ -117,6 +118,8 @@ interface Worker {
   id: string; name: string; instructions: string; ownershipInstructions?: string; role?: string;
   thread?: string; turnId: string | null; run: number; active: boolean; loaded: boolean; cancelled: boolean;
   messages: string[]; said: { text: string; phase: string | null }[]; completedTurns: Set<string>;
+  /** Its thread's tokens so far, and at the start of the run under way (Phase 5c). */
+  tokens?: TokenUsage; tokensAtRunStart?: TokenUsage;
 }
 
 interface Result {
@@ -172,6 +175,9 @@ export class CodexSession {
   private calls = new Map<number, Call>();
   threadId: string | null = null;
   private turn: Turn | null = null;
+  /** The coordinator thread's tokens so far, and when the last turn ended (Phase 5c, 1.x's `tokensTotal`). */
+  private tokensTotal: TokenUsage = noTokens();
+  private tokensAtTurnStart: TokenUsage = noTokens();
   private inbox: Input[] = [];
   private approvals = new Map<string, Approval>();
   private changedFiles = new Map<string, string[]>();
@@ -362,6 +368,12 @@ export class CodexSession {
   }
 
   private notification(method: string, params: any): CodexOutput[] {
+    // Codex's own limits (not a thread's): kept apart from Claude's (`.codexRateLimits`).
+    if (method === "account/rateLimits/updated") {
+      if (!params.rateLimits || typeof params.rateLimits !== "object") return [];
+      const limits = codexRateLimits(params.rateLimits);
+      return isEmptyLimits(limits) ? [] : [this.item({ kind: "rateLimits", engine: "codex", limits })];
+    }
     const thread = typeof params.threadId === "string" ? params.threadId : null;
     if (thread && this.threadId && thread !== this.threadId) {
       const worker = [...this.workers.values()].find((w) => w.thread === thread);
@@ -385,6 +397,9 @@ export class CodexSession {
       }
       case "turn/completed":
         return params.turn ? this.turnCompleted(params.turn) : [];
+      case "thread/tokenUsage/updated":
+        if (params.tokenUsage?.total && typeof params.tokenUsage.total === "object") this.tokensTotal = codexTokens(params.tokenUsage.total);
+        return [];
       default:
         return [];
     }
@@ -500,6 +515,10 @@ export class CodexSession {
     const monitor = this.activeMonitor ? this.monitors.get(this.activeMonitor) ?? null : null;
     this.activeMonitor = null;
     const out: CodexOutput[] = [];
+    // What this turn used: the thread's tokens since the last turn ended (`tokensAtTurnStart`).
+    const used = minusTokens(this.tokensTotal, this.tokensAtTurnStart);
+    this.tokensAtTurnStart = this.tokensTotal;
+    if (totalTokens(used) > 0) out.push(this.item({ kind: "usage", totalCost: 0, tokens: used }));
     const final = current.said.findLast((said) => said.phase !== "commentary")?.text.trim() ?? "";
     switch (finished.status) {
       case "interrupted":
@@ -936,6 +955,7 @@ export class CodexSession {
         if (!worker.active || worker.cancelled || typeof id !== "string" || worker.completedTurns.has(id) || (worker.turnId && worker.turnId !== id)) return [];
         worker.completedTurns.add(id);
         worker.turnId = null;
+        const usage = this.workerUsage(worker);
         let status: string = typeof ended.status === "string" ? ended.status : "failed";
         const said = worker.said.findLast((s) => s.phase !== "commentary")?.text.trim() ?? "";
         let report = status === "failed" ? (typeof ended.error?.message === "string" ? ended.error.message : said || "Worker failed.") : said;
@@ -948,11 +968,11 @@ export class CodexSession {
           const text = worker.messages.join("\n\n");
           worker.messages = [];
           worker.run += 1;
-          return this.startWorkerTurn(task, text);
+          return [...usage, ...this.startWorkerTurn(task, text)];
         }
         worker.active = false;
         this.results.push({ task, name: worker.name, thread: worker.thread, turn: id, run: worker.run, status, report, reconciliationAttempt: 0, reconciled: false });
-        const out: CodexOutput[] = [this.item({ kind: "subagentEnded", id: task, status: status === "interrupted" ? "killed" : status, summary: report })];
+        const out: CodexOutput[] = [...usage, this.item({ kind: "subagentEnded", id: task, status: status === "interrupted" ? "killed" : status, summary: report })];
         if (!this.turn) out.push(...this.next());
         out.push(...this.pendingChanged());
         return out;
@@ -962,9 +982,20 @@ export class CodexSession {
         if (!id || !this.approvals.delete(id)) return [];
         return [this.item({ kind: "permissionCancelled", requestId: id })];
       }
+      case "thread/tokenUsage/updated":
+        if (params.tokenUsage?.total && typeof params.tokenUsage.total === "object") worker.tokens = codexTokens(params.tokenUsage.total);
+        return [];
       default:
         return [];
     }
+  }
+
+  /** What a worker's run used since it started (or since the last count). */
+  private workerUsage(worker: Worker): CodexOutput[] {
+    const now = worker.tokens ?? noTokens();
+    const used = minusTokens(now, worker.tokensAtRunStart ?? noTokens());
+    worker.tokensAtRunStart = now;
+    return totalTokens(used) > 0 ? [this.item({ kind: "usage", totalCost: 0, tokens: used })] : [];
   }
 
   private failWorker(task: string, report: string): CodexOutput[] {

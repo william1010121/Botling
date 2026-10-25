@@ -89,6 +89,7 @@ import {
   routineStatus, routineTitle, scheduledRoutine, type Routine, type ScheduledRoutine,
 } from "./routines";
 import { codexWorkerDefaults } from "./settings";
+import { totalTokens, type RateLimits, type TokenUsage } from "./usage";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
 import type { ProjectLock } from "./store/lock";
 import {
@@ -162,6 +163,10 @@ export interface BotOptions {
   components?: ComponentsContext | null;
   /** The requests in a reply (<component>, <plugin>, <install>, …) the app acts on; the rest come back (a notice says 2.0 cannot do them yet). */
   onRequests?: (bot: Bot, requests: BotRequest[]) => BotRequest[];
+  /** What a turn spent (dollars, Claude's; Codex: 0) and used (tokens), by the bot's name (1.x's `onSpend`, `onTokens`). */
+  usage?: (bot: string, spent: number, tokens: TokenUsage) => void;
+  /** A subscription's limits as a head reported them (`onRateLimits`, `onCodexRateLimits`). */
+  rateLimits?: (engine: Engine, limits: RateLimits) => void;
   /** Plugins' afterReply hooks, when any plugin has one: may change a reply after it shows (null: none). */
   replyFilter?: () => ((text: string) => Promise<string>) | null;
   /** A reply showed (plugins' `bots.onReply`; Maintainer's requests settle). */
@@ -345,6 +350,8 @@ export class Bot {
   private restartReason: { told: string; shown: string } | null = null;
   /** A head ended for such a restart: its session carries on. */
   private restarting: AgentHead | null = null;
+  /** What its process has cost so far (claude's `total_cost_usd`, a running total; 1.x's `sessionCost`). */
+  private sessionCost = 0;
   /** Its head runs on another CLI from its next message on (1.x's `switchEngine`): a handoff through memory.md first. */
   private switchTo: Engine | null = null;
   /** Writing that handoff (1.x's `.switching(.writing)`). */
@@ -2099,6 +2106,7 @@ export class Bot {
     }
     head.start();
     this.head = head;
+    this.sessionCost = 0;
     if (head.pid > 0) this.options.ledger.record(head.pid);
     this.log(`head started pid ${head.pid} session ${this.session.sessionId}${resume ? " (resumed)" : " (new)"}`);
     this.store.saveHead(this.session);
@@ -2171,6 +2179,14 @@ export class Bot {
       return;
     }
     if (item.kind === "controlResponse") return;
+    if (item.kind === "usage") {
+      // Claude's cost is a running total for its process: this turn's is the difference.
+      const spent = Math.max(0, item.totalCost - this.sessionCost);
+      this.sessionCost = Math.max(this.sessionCost, item.totalCost);
+      if (spent > 0 || totalTokens(item.tokens) > 0) this.options.usage?.(this.owner.profile.name, spent, item.tokens);
+      return;
+    }
+    if (item.kind === "rateLimits") { this.options.rateLimits?.(item.engine, item.limits); return; }
     if (item.kind === "command") {
       // The other head's words, read too late for the turn they were meant for: claude answers them
       // in a turn of its own, the app's (its words show; <no-reply/> shows nothing). A message of

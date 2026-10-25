@@ -102,9 +102,19 @@ function ask(method, params) {
     out({ method, id, params });
   });
 }
+// FAKE_CODEX_USAGE=1 (Phase 5c): each turn's thread reports its running token total, and the account its limits.
+const tokenTotals = new Map();
 function complete(thread, turn, status = "completed", error = null) {
   const state = threads.get(thread);
   if (state?.turn?.id === turn) state.turn = null;
+  if (process.env.FAKE_CODEX_USAGE === "1") {
+    const total = tokenTotals.get(thread) ?? { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 };
+    total.inputTokens += 2000; total.cachedInputTokens += 1500; total.outputTokens += 250;
+    tokenTotals.set(thread, total);
+    notify("thread/tokenUsage/updated", { threadId: thread, turnId: turn, tokenUsage: { total: { ...total, totalTokens: total.inputTokens + total.outputTokens }, last: total } });
+    const now = Math.floor(Date.now() / 1000);
+    notify("account/rateLimits/updated", { rateLimits: { primary: { usedPercent: 7, windowDurationMins: 300, resetsAt: now + 4 * 3600 }, secondary: { usedPercent: 31, windowDurationMins: 10080, resetsAt: now + 5 * 86400 } } });
+  }
   notify("turn/completed", { threadId: thread, turn: { id: turn, status, error, items: [] } });
 }
 

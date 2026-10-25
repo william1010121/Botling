@@ -77,7 +77,18 @@ if (resumed && process.env.FAKE_CLAUDE_FORGET === "1") {
 const out = (value) => process.stdout.write(JSON.stringify(value) + "\n");
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const delta = (text) => out({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } });
-const result = (text, ok = true, subtype = ok ? "success" : "error_during_execution") => out({ type: "result", subtype, is_error: !ok, result: text, session_id: session, total_cost_usd: 0 });
+// FAKE_CLAUDE_USAGE=1 (Phase 5c): each result says a running cost (0.01 more each turn) and its tokens, and a
+// rate_limit_event comes before it, as a subscription account's claude writes them.
+let turns = 0;
+const result = (text, ok = true, subtype = ok ? "success" : "error_during_execution") => {
+  turns += 1;
+  if (process.env.FAKE_CLAUDE_USAGE === "1") {
+    const now = Math.floor(Date.now() / 1000);
+    out({ type: "rate_limit_event", rate_limit_info: { status: "allowed", rateLimitType: "five_hour", utilization: 0.42, resetsAt: now + 2 * 3600 + 780, unifiedWindows: { five_hour: { utilization: 0.42, resetsAt: now + 2 * 3600 + 780 }, seven_day: { utilization: 0.18, resetsAt: now + 3 * 86400 } } } });
+    return out({ type: "result", subtype, is_error: !ok, result: text, session_id: session, total_cost_usd: 0.01 * turns, usage: { input_tokens: 1200, output_tokens: 300, cache_creation_input_tokens: 500, cache_read_input_tokens: 4000 } });
+  }
+  out({ type: "result", subtype, is_error: !ok, result: text, session_id: session, total_cost_usd: 0 });
+};
 
 if (envMode === "stubborn") process.on("SIGTERM", () => {});
 

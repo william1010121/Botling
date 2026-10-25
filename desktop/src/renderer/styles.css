@@ -160,6 +160,13 @@ button { font: inherit; color: inherit; }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .settings-row:last-child { border-bottom: 0; }
 .settings-hint { color: var(--faint); font-size: 11.5px; margin-top: 2px; }
+/* Settings → Usage (Phase 5c, 1.x's usage page). */
+.usage-number { font-variant-numeric: tabular-nums; }
+.usage-faint { color: var(--muted); font-variant-numeric: tabular-nums; }
+.usage-line { display: flex; gap: 12px; align-items: baseline; }
+.usage-cost { min-width: 72px; text-align: right; }
+.usage-limits { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-variant-numeric: tabular-nums; }
+.usage-stale { color: var(--faint); font-size: 11px; }
 .settings-control { display: flex; align-items: center; gap: 8px; }
 .settings-control select, .settings-control input[type="text"], .settings-control input[type="number"], .settings-prompt textarea {
   background: var(--ground); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px; font-size: 12.5px;

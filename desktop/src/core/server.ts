@@ -38,6 +38,7 @@ import { BotStore, readJSON } from "./store/bot-store";
 import { DEFAULT_ONE_X_PROCESS, ProjectLock, type OneXCheck } from "./store/lock";
 import { ProcessLedger } from "./process/ledger";
 import { briefConfig, writeBrief } from "./component-brief";
+import { UsageBook, usageView } from "./usage";
 import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/importer";
 import { isOpenQuestion, MAIN_BOT_ID } from "./store/records";
 import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
@@ -120,6 +121,8 @@ export class Core {
   private order: string[] = [];
   private inflight = new Map<string, AbortController>();
   private readonly ledger: ProcessLedger;
+  /** What the bots used and the subscriptions' limits (spending.json, rate-limits.json, codex-rate-limits.json; Phase 5c). */
+  private readonly usage: UsageBook;
   private imported: ImportView | null = null;
   private routineClock: NodeJS.Timeout | null = null;
   private readonly catchUps: CatchUps;
@@ -185,6 +188,7 @@ export class Core {
     this.componentStamp = this.components.library.stamp;
     this.components.commands.onChange = (card) => { for (const bot of this.bots.values()) bot.cardChanged(card); this.specs?.cardChanged(card); };
     this.ledger = new ProcessLedger(join(options.dataDir, "children.json"));
+    this.usage = new UsageBook(options.dataDir);
     const leftovers = this.ledger.endLeftovers();
     if (leftovers.length) this.log(`ended agent process groups an earlier core left running: ${leftovers.join(", ")}`);
     this.importOnce();
@@ -242,6 +246,9 @@ export class Core {
           : profile.id === MAINTAINER_ID ? () => this.maintainer.approvedFolders() : undefined,
         components: this.components,
         onRequests: (bot, requests) => this.maintainer.handle(bot, this.projectRequests(bot, requests)),
+        // What each turn used, by bot, and the subscriptions' limits (1.x's `record`, `note`).
+        usage: (name, spent, tokens) => this.usage.record(spent, tokens, name),
+        rateLimits: (engine, limits) => this.usage.note(engine, limits),
         // The completion judge, while Settings has it on (`configureCompletionVerification`).
         promiseCheck: () => {
           const classify = this.options.classifier;
@@ -1288,6 +1295,7 @@ First write a test that shows this, then fix it.`;
       case "plugins.notice": this.plugins.webNotice(cmd.name, cmd.text); return {};
       case "plugins.file": return this.plugins.webFile(cmd.name, cmd.path);
       case "heads.set": return this.bot(cmd.botId).setHeads(cmd.engines);
+      case "usage.view": return usageView(this.usage.view());
       case "heads.answerWith": return this.bot(cmd.botId).setAnswerWith(cmd.to);
       case "handoff.stop": return this.bot(cmd.botId).stopHandoff(cmd.handoffId);
       case "rounds.stop": return this.bot(cmd.botId).stopRounds();

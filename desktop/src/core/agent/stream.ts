@@ -2,6 +2,8 @@
 // line means (text, a tool call and its result, a permission request, the end of a turn), as
 // plain items. Ported from the Swift app's `StreamEvent` (activity titles, permission summaries).
 
+import { claudeRateLimits, claudeUsage, type RateLimits, type TokenUsage } from "../usage";
+
 export type StreamItem =
   | { kind: "init"; sessionId: string }
   /** A piece of the reply's text (`--include-partial-messages`). */
@@ -30,7 +32,11 @@ export type StreamItem =
   /** A message sent with a `uuid` (`command_lifecycle`): read into claude's queue, or its own turn starts. */
   | { kind: "command"; id: string; state: "queued" | "started" }
   /** The turn ended. */
-  | { kind: "result"; ok: boolean; text: string; error: string; subtype: string };
+  | { kind: "result"; ok: boolean; text: string; error: string; subtype: string }
+  /** The session's cost so far (dollars; Codex: 0) and this turn's tokens (Phase 5c, 1.x's `.usage`). */
+  | { kind: "usage"; totalCost: number; tokens: TokenUsage }
+  /** The subscription's limits as the CLI last reported them (`.rateLimits`, `.codexRateLimits`). */
+  | { kind: "rateLimits"; engine: "claude" | "codex"; limits: RateLimits };
 
 /** An Agent call's structured result (`LaunchResult`): its agentId, and whether it went on in the background. */
 export interface Launch { agentId: string | null; background: boolean }
@@ -195,11 +201,16 @@ export function parseLine(line: string): StreamItem[] {
       const requestId = message.response?.request_id;
       return typeof requestId === "string" ? [{ kind: "controlResponse", requestId }] : [];
     }
+    case "rate_limit_event": {
+      const limits = claudeRateLimits(message);
+      return limits ? [{ kind: "rateLimits", engine: "claude", limits }] : [];
+    }
     case "result": {
+      const usage = claudeUsage(message);
       const failed = message.is_error === true || (typeof message.subtype === "string" && message.subtype !== "success");
       const text = typeof message.result === "string" ? message.result : "";
-      return [{
-        kind: "result", ok: !failed, text, subtype: String(message.subtype ?? ""),
+      return [...(usage ? [{ kind: "usage" as const, ...usage }] : []), {
+        kind: "result" as const, ok: !failed, text, subtype: String(message.subtype ?? ""),
         error: failed ? String(message.result ?? message.subtype ?? "The agent reported an error.").slice(0, 2_000) : "",
       }];
     }
