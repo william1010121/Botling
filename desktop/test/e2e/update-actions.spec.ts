@@ -1,3 +1,4 @@
+import {backgroundPages,requireFocusOptIn} from "../hidden";
 import {electronExecutable} from "../electron-runtime";
 // Isolated renderer behavior: bundles only Updates.tsx, runs no core/CLIs or installed app.
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
@@ -19,13 +20,14 @@ const client={request:async(cmd)=>{window.calls.push(cmd.type);if(cmd.type==='up
 return <UpdateActions client={client} state={state} onChange={setState}/>}; createRoot(document.getElementById('root')).render(<App/>);`);
   await build({ entryPoints: [entry], outfile: join(base, "ui.js"), bundle: true, platform: "browser", jsx: "automatic", nodePaths: [join(desktop, "node_modules")] });
   writeFileSync(join(base, "index.html"), '<!doctype html><meta charset="utf-8"><div id="root"></div><script src="ui.js"></script>');
-  writeFileSync(join(base, "main.cjs"), `const {app,BrowserWindow}=require('electron');const path=require('node:path');
+  writeFileSync(join(base, "main.cjs"), `const {app,BrowserWindow}=require('electron');if(process.env.BOTLING_HIDDEN==='1'&&process.platform==='darwin')app.setActivationPolicy('prohibited');const path=require('node:path');
 app.setPath('userData',path.join(__dirname,'profile'));app.setPath('sessionData',path.join(__dirname,'profile'));app.setPath('crashDumps',path.join(__dirname,'crashes'));app.setPath('logs',path.join(__dirname,'logs'));app.commandLine.appendSwitch('use-mock-keychain');
 app.whenReady().then(()=>{const w=new BrowserWindow({show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});w.loadFile(path.join(__dirname,'index.html'))}); app.on('window-all-closed',()=>app.quit());`);
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined && key !== "ELECTRON_RUN_AS_NODE") env[key] = value;
+  env.BOTLING_HIDDEN="1";requireFocusOptIn(env);
   app = await electron.launch({ executablePath:electronExecutable(), args: [join(base, "main.cjs")], env, cwd: desktop });
-  page = await app.firstWindow();
+  page = await app.firstWindow();await backgroundPages(app,page);
   await expect(page.getByRole("button", { name: "Download and verify" })).toBeVisible();
 });
 test.afterEach(async () => { await app?.close(); });

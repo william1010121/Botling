@@ -144,13 +144,18 @@ snapshot_data() {
 }
 reopen() {
   # Only variables actually present in the launch environment are forwarded.
+  [ "\${BOTLING_HIDDEN+x}" != x ] || set -- --env "BOTLING_HIDDEN=$BOTLING_HIDDEN" "$@"
   [ "\${HOME+x}" != x ] || set -- --env "HOME=$HOME" "$@"
   [ "\${TMPDIR+x}" != x ] || set -- --env "TMPDIR=$TMPDIR" "$@"
   [ "\${BOTLING_IMPORT_FROM+x}" != x ] || set -- --env "BOTLING_IMPORT_FROM=$BOTLING_IMPORT_FROM" "$@"
   [ "\${BOTLING_1X_DIR+x}" != x ] || set -- --env "BOTLING_1X_DIR=$BOTLING_1X_DIR" "$@"
   [ "\${CODEX_HOME+x}" != x ] || set -- --env "CODEX_HOME=$CODEX_HOME" "$@"
   [ "\${CLAUDE_CONFIG_DIR+x}" != x ] || set -- --env "CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR" "$@"
-  /usr/bin/open -n "$available" --env "BOTLING_DATA_DIR=$data" "$@" >/dev/null 2>&1
+  if [ "\${BOTLING_HIDDEN-}" = 1 ]; then
+    /usr/bin/open -g -n "$available" --env "BOTLING_DATA_DIR=$data" "$@" >/dev/null 2>&1
+  else
+    /usr/bin/open -n "$available" --env "BOTLING_DATA_DIR=$data" "$@" >/dev/null 2>&1
+  fi
 }
 finish() {
   code=$?

@@ -8,6 +8,7 @@ import { homedir, tmpdir } from "node:os";
 import { isRequested as isShotRequested, withProbe } from "../core/component-shot";
 import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { scrubEnvironment } from "./packaged";
+import {configureHiddenApp,hidden} from "./hidden-mode";
 import { FEED, Updater } from "./updates";
 import { previewResponse } from "./preview-response";
 import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates, runningAppBundles } from "./update-install";
@@ -25,6 +26,7 @@ import {
   type Command, type EventEnvelope, type ResponseEnvelope,
 } from "../contract";
 
+configureHiddenApp(app);
 const root = resolve(__dirname, "..", ".."); // desktop/ (packaged: Resources/app.asar)
 // A packaged build ignores the variables tests steer the app with (src/main/packaged.ts), before anything reads them.
 const scrubbed = scrubEnvironment(process.env, app.isPackaged);
@@ -252,13 +254,14 @@ function openSite(accountId: string, url: string): number {
   openedSessions.add(siteSession);
   const window = new BrowserWindow({
     width: 1000, height: 760, title: `${account.name} — ${new URL(url).host}`,
-    backgroundColor: "#0E0E10",
+    backgroundColor: "#0E0E10", show:false,
     webPreferences: {
       session: siteSession, sandbox: true, contextIsolation: true, nodeIntegration: false,
       nodeIntegrationInSubFrames: false, webSecurity: true, allowRunningInsecureContent: false,
       // No preload: a website has no Botling API at all.
     },
   });
+  window.once("ready-to-show",()=>{if(!hidden)window.show();});
   void window.loadURL(url);
   return window.id;
 }
@@ -542,7 +545,7 @@ function createWindow() {
   appContents.add(window.webContents.id);
   const id = window.webContents.id;
   window.on("closed", () => { appContents.delete(id); if (mainWindow === window) mainWindow = null; });
-  window.once("ready-to-show", () => { if (process.env.BOTLING_HIDDEN !== "1") window.show(); });
+  window.once("ready-to-show", () => { if (!hidden) window.show(); });
   void window.loadURL(`${APP_ORIGIN}/index.html`);
   mainWindow = window;
   return window;
@@ -682,7 +685,8 @@ app.whenReady().then(async () => {
     recoveryMode=true;
     if(issue.code!==27)issue=issueFor(issue.dataDir,issue.target,issue.root,issue.code,issue.id.slice(0,issue.id.lastIndexOf(':')),issue.at);
     const previousWindow=mainWindow;
-    const window=new BrowserWindow({width:900,height:700,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
+    const window=new BrowserWindow({width:900,height:700,show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
+    window.once("ready-to-show",()=>{if(!hidden)window.show();});
     mainWindow=window;let acting=false;
     // Keep a window alive while replacing the gated candidate UI (also with quit-on-close).
     if(previousWindow&&!previousWindow.isDestroyed())previousWindow.destroy();
@@ -760,7 +764,7 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("second-instance", () => { mainWindow?.show(); mainWindow?.focus(); });
+app.on("second-instance", () => { if(!hidden){mainWindow?.show(); mainWindow?.focus();} });
 
 // Closing the window does not stop work: the core keeps running (macOS convention). Quitting does.
 app.on("window-all-closed", () => {

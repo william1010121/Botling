@@ -17,7 +17,7 @@ describe("packaged environment", () => {
     };
     const dropped = scrubEnvironment(env, true);
     expect(env).toEqual({
-      BOTLING_AGENT: "claude", BOTLING_HARMLESS: "0",
+      BOTLING_AGENT: "claude", BOTLING_HARMLESS: "0", BOTLING_HIDDEN:"1",
       BOTLING_DATA_DIR: "/data", BOTLING_IMPORT_FROM: "", BOTLING_CLAUDE_PATH: "/bin/claude", BOTLING_CODEX_PATH: "/bin/codex",
       BOTLING_IDLE_MS: "1000", BOTLING_NODE_PATH: "/opt/node", PATH: "/usr/bin", HOME: "/Users/x",
     });
@@ -34,7 +34,7 @@ describe("packaged environment", () => {
   });
 
   it("knows the test-only names", () => {
-    for (const key of ["BOTLING_TEST_ANYTHING", "FAKE_ANYTHING", "BOTLING_FAKE_CLI", "BOTLING_HIDDEN"]) expect(isTestOnly(key), key).toBe(true);
-    for (const key of ["BOTLING_DATA_DIR", "BOTLING_MODEL", "BOTLING_CODEX_EFFORT", "PATH"]) expect(isTestOnly(key), key).toBe(false);
+    for (const key of ["BOTLING_TEST_ANYTHING", "FAKE_ANYTHING", "BOTLING_FAKE_CLI"]) expect(isTestOnly(key), key).toBe(true);
+    for (const key of ["BOTLING_HIDDEN", "BOTLING_DATA_DIR", "BOTLING_MODEL", "BOTLING_CODEX_EFFORT", "PATH"]) expect(isTestOnly(key), key).toBe(false);
   });
 });

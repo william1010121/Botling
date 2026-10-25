@@ -74,7 +74,7 @@ test("boots to the chat page, starts the plugin host as a utility process, ignor
   }));
   writeFileSync(join(plugin, "dist", "host.mjs"), `export function activate(ccb) { ccb.commands.register("smoke.ping", () => "pong from " + process.versions.electron); }\n`);
   const env = {
-    ...isolated(base),
+    ...isolated(base), BOTLING_HIDDEN:"1",
     BOTLING_DATA_DIR: dataDir,
     // Test-only steering a packaged build must ignore (src/main/packaged.ts).
     BOTLING_AGENT: "fake", BOTLING_TEST_WEB_SITES: JSON.stringify([{ id: "x", name: "X", url: "http://127.0.0.1:9/" }]),
@@ -162,7 +162,7 @@ function isolated(base: string): NodeJS.ProcessEnv {
   writeFileSync(stub, `#!/bin/sh\necho "$0 $*" >> '${join(base, "agent-calls.log")}'\nexit 1\n`);
   chmodSync(stub, 0o755);
   return {
-    PATH: `${bin}:/usr/bin:/bin`, HOME: join(base, "home"), TMPDIR: base, LANG: "en_US.UTF-8",
+    BOTLING_HIDDEN:"1", PATH: `${bin}:/usr/bin:/bin`, HOME: join(base, "home"), TMPDIR: base, LANG: "en_US.UTF-8",
     BOTLING_IMPORT_FROM: "", BOTLING_1X_DIR: "", BOTLING_CLAUDE_PATH: stub, BOTLING_CODEX_PATH: stub, BOTLING_LANGUAGES: "en-US",
   };
 }

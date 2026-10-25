@@ -12,7 +12,7 @@ import { launch } from "./launch";
 
 const electron = electronExecutable();
 function shot(args: string[]) {
-  const env = { ...process.env };
+  const env:Record<string,string|undefined> = { ...process.env, BOTLING_HIDDEN:"1" };
   delete env.ELECTRON_RUN_AS_NODE;
   return spawnSync(electron, [desktop, "--component-shot", ...args], { encoding: "utf8", env, timeout: 120_000 });
 }

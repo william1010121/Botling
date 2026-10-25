@@ -53,7 +53,7 @@ for(const mode of ['receipt','crash'] as const)test(`A3 real signed ZIP → expl
  execFileSync('/usr/bin/ditto',[older,target]);
  const reserve=socketServer().listen(0,'127.0.0.1');await once(reserve,'listening');const port=(reserve.address() as any).port;await new Promise<void>(r=>reserve.close(()=>r()));
  const args=['--use-mock-keychain',`--remote-debugging-port=${port}`];
- const env={PATH:'/usr/bin:/bin',HOME:home,TMPDIR:base,BOTLING_DATA_DIR:data,BOTLING_IMPORT_FROM:'',BOTLING_1X_DIR:'',BOTLING_CLAUDE_PATH:'/usr/bin/false',BOTLING_CODEX_PATH:'/usr/bin/false',CODEX_HOME:join(home,'codex'),CLAUDE_CONFIG_DIR:join(home,'claude'),BOTLING_LANGUAGES:'en-US'};
+ const env={BOTLING_HIDDEN:'1',PATH:'/usr/bin:/bin',HOME:home,TMPDIR:base,BOTLING_DATA_DIR:data,BOTLING_IMPORT_FROM:'',BOTLING_1X_DIR:'',BOTLING_CLAUDE_PATH:'/usr/bin/false',BOTLING_CODEX_PATH:'/usr/bin/false',CODEX_HOME:join(home,'codex'),CLAUDE_CONFIG_DIR:join(home,'claude'),BOTLING_LANGUAGES:'en-US'};
  // Helper inherits these synthetic paths. No CLI is run in either version.
  const old=spawn(binary,args,{env,stdio:'ignore'});
  let browser:Browser|null=null,helperPid=0,candidatePid=0,root='';

@@ -31,7 +31,7 @@ test('C7 candidate commits after receipt when helper is killed before its decisi
   const script=SWAP_SCRIPT.replace('    # Commit marker precedes',()=>`    printf stopped > '${gate}'\n    kill -STOP "$$"\n    # Commit marker precedes`);
   expect(script).toContain('kill -STOP "$$"');const file=join(root,'test-swap.sh');writeFileSync(file,script);
   const reserve=tcpServer().listen(0,'127.0.0.1');await once(reserve,'listening');const port=(reserve.address() as any).port;await new Promise<void>(r=>reserve.close(()=>r()));
-  const env={PATH:'/usr/bin:/bin',HOME:home,TMPDIR:base,BOTLING_DATA_DIR:data,BOTLING_IMPORT_FROM:'',BOTLING_1X_DIR:'',BOTLING_CLAUDE_PATH:'/usr/bin/false',BOTLING_CODEX_PATH:'/usr/bin/false'};
+  const env={BOTLING_HIDDEN:'1',PATH:'/usr/bin:/bin',HOME:home,TMPDIR:base,BOTLING_DATA_DIR:data,BOTLING_IMPORT_FROM:'',BOTLING_1X_DIR:'',BOTLING_CLAUDE_PATH:'/usr/bin/false',BOTLING_CODEX_PATH:'/usr/bin/false'};
   helper=spawn('/bin/sh',[file,'99999999',target,join(root,'Botling 2.app'),join(root,'previous.app'),join(root,'boot.ok'),token,'Botling 2','0','0.1',data,'1200','50','--use-mock-keychain',`--remote-debugging-port=${port}`],{env,stdio:'ignore'});
   const exited=once(helper,'exit');await until(()=>existsSync(gate),{timeout:30000,what:'helper stopped after real main receipt'});
   expect(readFileSync(join(root,'boot.ok'),'utf8')).toBe(token);candidate=Number(readFileSync(join(root,'new.pid'),'utf8'));

@@ -1,3 +1,4 @@
+import {backgroundPages,requireFocusOptIn} from "../hidden";
 import {electronExecutable} from "../electron-runtime";
 import { _electron as electron, type ElectronApplication, type Frame, type FrameLocator, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -27,11 +28,13 @@ export async function launch(options: { dataDir?: string; env?: Record<string, s
     ...(options.importFrom ? { BOTLING_IMPORT_FROM: options.importFrom } : {}),
     ...options.env,
   });
+  requireFocusOptIn(env);
   delete env.ELECTRON_RUN_AS_NODE;
   if (!options.importFrom) delete env.BOTLING_IMPORT_FROM;
   const app = await electron.launch({ executablePath:electronExecutable(), args: [desktop,...(options.args??[])], env, cwd: desktop });
   try {
   const page = await app.firstWindow();
+  if(env.BOTLING_HIDDEN==="1")await backgroundPages(app,page);
   const chat = page.frameLocator("#chat-frame");
   // A test of the first second types as soon as the input box is there (before any state).
   if (options.waitForState === false) return { app, page, chat, dataDir };
