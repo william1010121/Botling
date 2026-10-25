@@ -27,3 +27,11 @@ it('D8 a guest component inherits exactly its reply author and cannot borrow the
  expect(await access('https://example.org/user')).toEqual({result:false,linked:false});
  expect(await access('https://example.org/guest',String(lines[3].id))).toEqual({result:false,linked:false});
 });
+
+it('D8 generated preview reply context keeps its own author authority without stored displays',async()=>{
+ const data=tempDir('link-auto-preview');mkdirSync(join(data,'main'));const host=randomUUID(),guest=randomUUID(),url='file:///synthetic/artifacts/generated.html';
+ writeFileSync(join(data,'main/chat.json'),JSON.stringify([swiftLine({id:host,role:'bot',text:`[report](${url})`}),swiftLine({id:guest,role:'bot',sourceID:GUEST,text:'[guest](https://example.org/guest-auto)'})]));
+ const c=new CoreHarness(data);running.push(c);
+ expect(await c.call({type:'link.authorize',botId:MAIN,url,messageId:host})).toEqual({result:true,linked:true});
+ expect(await c.call({type:'link.authorize',botId:MAIN,url,messageId:guest})).toEqual({result:true,linked:false});
+});

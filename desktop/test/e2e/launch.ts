@@ -38,6 +38,13 @@ export async function launch(options: { dataDir?: string; env?: Record<string, s
   await chat.locator(".composer").waitFor();
   // The page has its first state (the chat a test means is the one shown).
   await chat.locator("html[data-chat]").waitFor({ state: "attached" });
+  // Feature tests start after the initial welcome iframe has loaded and sized itself. Its load
+  // can take native focus mid-keypress. Launch-race tests explicitly use waitForState:false.
+  const welcome=chat.locator('[data-card="c-counter"] iframe');
+  if(await welcome.count()){
+    await chat.frameLocator('[data-card="c-counter"] iframe').locator('#n').waitFor();
+    await until(async()=>await welcome.evaluate(el=>(el as HTMLIFrameElement).style.height!=='80px'),{what:'welcome card load/size handshake'});
+  }
   return { app, page, chat, dataDir };
 }
 
@@ -62,6 +69,8 @@ export async function say(chat: FrameLocator, text: string) {
     if (index > 0) await keyboard.press("Shift+Enter");
     if (line) await keyboard.type(line);
   }
+  const actual=await box.evaluate(el=>[...el.querySelectorAll('.cm-line')].map(line=>line.textContent).join('\n'));
+  if(actual!==text)throw new Error(`Native typing changed before send: expected ${JSON.stringify(text)}, received ${JSON.stringify(actual)}`);
   await keyboard.press("Enter");
 }
 

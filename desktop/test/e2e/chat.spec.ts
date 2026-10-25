@@ -2,7 +2,9 @@
 // with the chat drawn by the reused Web/src chat page in its frame.
 import { expect, test } from "@playwright/test";
 import { join } from "node:path";
-import { alive, pidsIn, sleep, tempDir, until } from "../helpers";
+import {readFileSync,writeFileSync,mkdirSync,existsSync} from "node:fs";
+import {pathToFileURL} from "node:url";
+import { alive, pidsIn, sleep, tempDir, until, desktop, fakeCli } from "../helpers";
 import { audit, chatFrame, launch, post, say } from "./launch";
 
 test("sends a message and streams the reply into the chat", async () => {
@@ -46,11 +48,16 @@ test("Stop ends the reply; a head that ignores it has its process tree ended; no
   }
 });
 
-test("reloading the window does not stop or restart the running turn", async () => {
-  const { app, page, chat } = await launch({ env: { FAKE_CLAUDE_MODE: "slow" } });
+for(const startup of [0,5500])test(`reloading the window preserves the running turn (head startup ${startup}ms)`, async () => {
+  const dataDir=tempDir('reload-startup'),marker=join(dataDir,'startup.json'),wrapper=join(dataDir,'fake-head.mjs');
+  writeFileSync(wrapper,`import {writeFileSync} from 'node:fs'; const start=Date.now();writeFileSync(${JSON.stringify(marker)},JSON.stringify({start,ready:false}));await new Promise(r=>setTimeout(r,${startup}));writeFileSync(${JSON.stringify(marker)},JSON.stringify({start,ready:true,at:Date.now()}));await import(${JSON.stringify(pathToFileURL(fakeCli).href)});`);
+  const { app, page, chat } = await launch({dataDir, env: { FAKE_CLAUDE_MODE: "slow",BOTLING_FAKE_CLI:wrapper } });
+  let stderr='';app.process().stderr?.on('data',b=>{stderr=(stderr+b).slice(-65536);});
   try {
     await say(chat, "keep going");
-    await expect(chat.locator(".row.bot[data-id]").last().locator(".markdown")).toContainText("word3");
+    // A shell-ready window is not a ready CLI. Bound initial head startup separately from reload.
+    await expect(chat.locator(".row.bot[data-id]").last().locator(".markdown")).toContainText("word3",{timeout:20_000});
+    expect(JSON.parse(readFileSync(marker,"utf8")).ready).toBe(true);
     const before = await chat.locator(".row.bot[data-id]").count();
     await page.reload();
     await page.waitForSelector('.shell[data-ready="1"]');
@@ -59,8 +66,15 @@ test("reloading the window does not stop or restart the running turn", async () 
     await expect(chat.locator(".row.bot[data-id]")).toHaveCount(before); // No second turn was started.
     const length = (await reply.locator(".markdown").textContent())!.length;
     await expect.poll(async () => (await reply.locator(".markdown").textContent())!.length).toBeGreaterThan(length);
-    await chat.getByRole("button", { name: "Stop" }).click();
-    await expect(reply).toHaveAttribute("data-state", "stopped");
+    if(startup===0){
+      // Retain the original reload/Stop contract. The additional slow-start case measures only
+      // startup and reload continuity, then closes through real app shutdown in finally.
+      await chat.getByRole("button", { name: "Stop" }).click();
+      await expect(reply).toHaveAttribute("data-state", "stopped");
+    }
+  } catch(error){
+    const folder=join(desktop,'.cache/evidence/review-d');mkdirSync(folder,{recursive:true});
+    writeFileSync(join(folder,`reload-startup-${startup}-failure.json`),JSON.stringify({error:String(error),stack:error instanceof Error?error.stack:null,stderr,marker:existsSync(marker)?JSON.parse(readFileSync(marker,'utf8')):null,head:existsSync(join(dataDir,'core/main/head.json'))?JSON.parse(readFileSync(join(dataDir,'core/main/head.json'),'utf8')):null},null,2));throw error;
   } finally {
     await app.close();
   }

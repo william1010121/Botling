@@ -1302,7 +1302,8 @@ First write a test that shows this, then fix it.`;
         const context=cmd.messageId?lines.find(line=>line.id===cmd.messageId):null;
         // A component inherits its own reply's author, never a guest's links merely because they
         // appear in the same host/group chat. Notices can echo user text and grant no authority.
-        if(cmd.messageId&&(!context||context.role!=="bot"||(!context.displays?.length&&!context.cards?.length)))return {result:false,linked:false};
+        if(cmd.messageId&&(!context||context.role!=="bot"))return {result:false,linked:false};
+        // Automatically generated preview frames come from Markdown, without stored displays.
         const author=(line:typeof lines[number])=>typeof line.sourceID==='string'?line.sourceID.toUpperCase():cmd.botId;
         const owner=context?author(context):cmd.botId;
         const same=(url:string)=>url===cmd.url||(filePath(url)!==null&&filePath(url)===filePath(cmd.url));
