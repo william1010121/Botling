@@ -332,7 +332,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
         faceOf={(candidate) => faceURL(candidate, view.settings?.botLook ?? "original", {})} />}
       {deletingGroup && <DeleteGroupDialog group={deletingGroup} onCancel={() => setDeletingGroup(null)} onDelete={() => deleteGroup(deletingGroup)} />}
       {removing && <RemoveDialog bot={removing} onCancel={() => setRemoving(null)} onRemove={() => removeBot(removing)} />}
-      {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} plugins={view.plugins} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} bots={view.bots} plugins={view.plugins} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }
@@ -517,6 +517,8 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     const { state, extras } = current.subagent ? subagentState(bot, current.subagent) : chatState(bot, chat, new Date(), quoted, {
       components: current.components, board: current.board, look: current.settings?.botLook ?? "original",
       lang: current.settings?.effectiveLanguage ?? null, chatAvatarSize: current.settings?.chatAvatarSize ?? null, bots: current.bots,
+      // Developer mode with Botling's source among the projects: replies get "not right" (`feedback`).
+      feedback: !!current.settings?.developerMode && current.bots.some((candidate) => candidate.id === current.settings?.developerProject && candidate.role === "manager"),
     });
     const message: ShellMessage = { botling: "state", state, extras };
     target.postMessage(message, CHAT_ORIGIN);
@@ -779,6 +781,18 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
               ...(typeof action.detail === "string" ? { detail: action.detail } : {}), ...flags(action, ["approve", "force"]) } }).catch(onError);
           }
           return;
+        // "Not right" on a reply (developer mode): main adds the chat frame as you saw it.
+        case "feedback": {
+          if (!chat || typeof action.messageID !== "string" || typeof action.text !== "string" || !paced("feedback")) return;
+          const images = Array.isArray(action.images) ? (action.images as unknown[]).flatMap((entry) => {
+            const image = entry as { name?: unknown; base64?: unknown };
+            return typeof image?.name === "string" && typeof image.base64 === "string" && image.base64 ? [{ name: image.name.slice(0, 255) || "picture.png", base64: image.base64 }] : [];
+          }).slice(0, 10) : [];
+          const box = frame.current?.getBoundingClientRect();
+          const rect = box && box.width > 0 && box.height > 0 ? { x: box.left, y: box.top, width: box.width, height: box.height } : null;
+          void client.request({ type: "chat.feedback", botId: chat.botId, messageId: action.messageID, text: action.text.slice(0, 20_000), images, rect }).catch(onError);
+          return;
+        }
         case "componentRevert":
           if (typeof action.name === "string") void client.request({ type: "component.revert", name: action.name.slice(0, 200) }).catch(onError);
           return;

@@ -10,13 +10,14 @@ import { faceURL } from "./avatars";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
-type Section = "general" | "engines" | "bot" | "permissions" | "plugins";
+type Section = "general" | "engines" | "bot" | "permissions" | "plugins" | "developer";
 const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
   { id: "engines", title: "Engines and subagents", terms: "claude subagents model prompt cache hour codex workers config effort fast completion verification component editor" },
   { id: "bot", title: "This bot", terms: "engine heads claude codex model effort subagents" },
   { id: "permissions", title: "Reports and results", terms: "publish artifact local html results reports" },
   { id: "plugins", title: "Plugins", terms: "plugins extensions settings secrets commands panels" },
+  { id: "developer", title: "Developer", terms: "developer mode source project feedback not right" },
 ];
 
 const LANGUAGES: { id: SettingsView["language"]; label: string }[] = [
@@ -27,7 +28,7 @@ const MODELS = [{ id: "haiku", label: "Haiku" }, { id: "sonnet", label: "Sonnet"
 const EFFORTS = [{ id: "low", label: "Low" }, { id: "medium", label: "Medium" }, { id: "high", label: "High" }, { id: "xhigh", label: "Extra high" }, { id: "max", label: "Max" }] as const;
 const STALL = [5, 10, 15, 30, 60, 0];
 
-export function SettingsSheet({ client, settings, bot, plugins, onClose }: { client: Client; settings: SettingsView | null; bot: BotView | null; plugins: PluginsView | null; onClose: () => void }) {
+export function SettingsSheet({ client, settings, bot, bots = [], plugins, onClose }: { client: Client; settings: SettingsView | null; bot: BotView | null; bots?: BotView[]; plugins: PluginsView | null; onClose: () => void }) {
   const [section, setSection] = useState<Section>("general");
   const [search, setSearch] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
@@ -71,10 +72,31 @@ export function SettingsSheet({ client, settings, bot, plugins, onClose }: { cli
             {current?.id === "bot" && bot && <ThisBot client={client} bot={bot} onProblem={setProblem} />}
             {shown && current?.id === "permissions" && <Results settings={shown} change={change} />}
             {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} />}
+            {shown && current?.id === "developer" && <Developer settings={shown} change={change} bots={bots} />}
           </div>
         </section>
       </div>
     </div>
+  );
+}
+
+/**
+ * Developer mode (1.x's Settings → Developer): one project is Botling's own source and gets what you flag as
+ * "not right" in any chat, with the chat around it. (1.x's build installs and app screenshots are not in 2.0.)
+ */
+function Developer({ settings, change, bots }: { settings: SettingsView; change: (next: SettingsChange) => void; bots: BotView[] }) {
+  const projects = bots.filter((candidate) => candidate.role === "manager" && candidate.id !== "DEC0DE00-0000-4000-8000-00000000DEC0");
+  return (
+    <Group title="Developer mode" note="Feedback (“not right” on a reply) goes to this project with the chat around it, to become a test and a fix. Every report is also kept in feedback.md.">
+      <Toggle label="Developer mode" checked={settings.developerMode} onChange={(value) => change({ key: "developerMode", value })} />
+      <Row label="Botling's source" hint={projects.length ? undefined : "Add the project that holds Botling's source first."}>
+        <select aria-label="Botling's source" value={settings.developerProject ?? ""} disabled={!settings.developerMode || !projects.length}
+          onChange={(event) => change({ key: "developerProject", value: event.target.value || null })}>
+          <option value="">Pick a project…</option>
+          {projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+        </select>
+      </Row>
+    </Group>
   );
 }
 

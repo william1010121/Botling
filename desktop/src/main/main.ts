@@ -334,10 +334,25 @@ async function reportComponent(cmd: Extract<Command, { type: "component.report" 
   return core.call({ ...rest, ...(screenshot ? { screenshot } : {}) });
 }
 
+/** "Not right" on a reply: the chat as you saw it (its frame's rect), then the core sends the report. */
+async function withScreenshot(cmd: Extract<Command, { type: "chat.feedback" }>, sender: WebContents): Promise<unknown> {
+  const { screenshot: _ignored, ...rest } = cmd;
+  let screenshot: string | undefined;
+  try {
+    const rect = cmd.rect ? { x: Math.max(0, Math.round(cmd.rect.x)), y: Math.max(0, Math.round(cmd.rect.y)), width: Math.max(1, Math.round(cmd.rect.width)), height: Math.max(1, Math.round(cmd.rect.height)) } : undefined;
+    const image = await sender.capturePage(rect);
+    if (!image.isEmpty()) screenshot = image.toPNG().toString("base64");
+  } catch (error) {
+    note(`feedback: no screenshot (${(error as Error).message})`);
+  }
+  return core.call({ ...rest, ...(screenshot ? { screenshot } : {}) });
+}
+
 async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown> {
   switch (cmd.type) {
     case "result.open": return openResult(cmd.botId, cmd.url);
     case "component.report": return reportComponent(cmd, sender);
+    case "chat.feedback": return withScreenshot(cmd, sender);
     case "files.pick": return pickFiles(cmd.botId, sender);
     case "projects.pick": return pickProject(sender);
     case "card.page": return { url: addPage(cmd.html, cmd.panel === true) };

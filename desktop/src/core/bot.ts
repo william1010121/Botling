@@ -55,6 +55,7 @@ import { dirname, join, resolve as resolvePathOf } from "node:path";
 import { fileURLToPath } from "node:url";
 import { answerLabel, attachmentList, attachmentsFolder, imageMediaType, keep } from "./attachments";
 import { readSpec, sameSpec, type ComponentSpec } from "./specs";
+import { parseFeedback } from "./feedback";
 import {
   ContractError, type RoutineView, type BotView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
   type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks, type SpecChipView,
@@ -577,6 +578,12 @@ export class Bot {
     const extras = this.owner.options.lineExtras?.(this.owner, record);
     if (extras?.specs?.length) view.specs = extras.specs;
     if (extras?.component) view.component = extras.component;
+    // A "not right" report shows short (1.x's `FeedbackNote`, read back from the text for older ones).
+    if (record.role === "relay") {
+      const note = record.feedback && typeof record.feedback === "object" ? record.feedback as { about?: unknown; words?: unknown } : null;
+      const feedback = note && typeof note.about === "string" && typeof note.words === "string" ? { about: note.about, words: note.words } : parseFeedback(record.text);
+      if (feedback) view.feedback = { about: feedback.about.slice(0, 400), words: feedback.words.slice(0, 20_000) };
+    }
     return view;
   }
 

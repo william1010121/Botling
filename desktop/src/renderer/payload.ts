@@ -187,7 +187,7 @@ export function mentionNames(bot: BotView, bots: BotView[]): { mentions: string[
 }
 
 export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyingTo: ChatState["replyingTo"] = null,
-  { components = {}, board = false, lang = null, chatAvatarSize = null, look = "original", bots = [] }: { components?: Record<string, ComponentInfoView>; board?: boolean; bots?: BotView[] } & PageLook = {}): { state: ChatState; extras: FrameExtras } {
+  { components = {}, board = false, lang = null, chatAvatarSize = null, look = "original", bots = [], feedback = false }: { components?: Record<string, ComponentInfoView>; board?: boolean; bots?: BotView[]; feedback?: boolean } & PageLook = {}): { state: ChatState; extras: FrameExtras } {
   const face = avatarURL(bot.avatar);
   // A line another bot said here (called in with @): its name and face (`speaker`).
   const guestOf = (message: { role: string; sourceId?: string }) => (message.role === "bot" && message.sourceId ? bots.find((other) => other.id === message.sourceId) ?? null : null);
@@ -283,6 +283,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     board,
     // "Make into component" on replies (1.x: every chat but a subagent's).
     makeComponents: true,
+    feedback,
     catchUp: chat.catchUp ? catchUpView(chat.catchUp, chat.tasks ?? []) : null,
     intervalSummaries: (chat.intervalSummaries ?? []).map((view) => catchUpView(view, chat.tasks ?? [])),
   };

@@ -15,6 +15,9 @@ import { rmSync } from "node:fs";
 import { PendingFiles, servedType, writeIncoming } from "./attachments";
 import { safeName } from "./components/library";
 import { SpecDesk } from "./spec-desk";
+import { appendFeedback, FEEDBACK_NO_WORDS } from "./feedback";
+import { archiveEntry } from "./briefing";
+import { fileURLToPath } from "node:url";
 import { appliedCodexWorkers, applySetting, codexWorkersJSON, launchSettings, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, memoryItemsAt, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
 import { TeamDesk, loadTeams, prepareTeamsPlugin, type TeamSpec } from "./teams";
@@ -454,6 +457,47 @@ export class Core {
       case "build": this.specs.build(spec.id, chat); break;
       case "cancel": this.specs.cancel(spec.id, chat); break;
     }
+    return true;
+  }
+
+  /** The project that is Botling's own source, while developer mode is on (`developerProject`). */
+  developerProject(): Bot | null {
+    const view = settingsView(readSettings(Layout.settings(this.options.dataDir)));
+    if (!view.developerMode || !view.developerProject) return null;
+    const profile = this.profiles.find((candidate) => candidate.id === view.developerProject && candidate.role === "manager" && candidate.id !== MAINTAINER_ID);
+    return profile && !this.removed.has(profile.id) ? this.bots.get(profile.id) ?? null : null;
+  }
+
+  /**
+   * You flagged a reply as not right (`reportFeedback`): it goes to the developer project with the chat around
+   * it, to become a test and a fix; the screenshot (the chat as you saw it) and your pictures are kept in its
+   * attachments and listed. Every report is also kept in <data>/feedback.md.
+   */
+  reportFeedback(text: string, messageId: string, chat: Bot, screenshot: string | null, files: string[]): boolean {
+    const developer = this.developerProject();
+    const lines = chat.lines();
+    const index = lines.findIndex((line) => line.id === messageId);
+    if (!developer || index < 0) return false;
+    const message = lines[index]!;
+    const around = lines.slice(Math.max(0, index - 12), index + 1).flatMap((line) => archiveEntry(line) ?? []).join("\n");
+    const steps = message.steps ? "\n\nWhat it did on the way: " + (message.steps as { title?: string }[]).map((step) => step.title ?? "").join(" → ") : "";
+    const words = text.trim();
+    const pictures: string[] = [];
+    if (screenshot) pictures.push("The first attachment is a screenshot of the chat as the user saw it, centered on that reply.");
+    if (files.length) pictures.push(`With it the user added ${files.length} picture${files.length === 1 ? "" : "s"} of their own.`);
+    const seen = pictures.length ? "\n\n" + pictures.join(" ") : "";
+    const name = chat.profile.name;
+    const report = `Feedback: the user flagged a reply of ${name} as not right.
+What is wrong, in their words: ${words || FEEDBACK_NO_WORDS}
+
+The chat up to that reply, oldest first:
+${around}${steps}${seen}
+
+First write a test that shows this, then fix it.`;
+    developer.relay(report, { files: [...(screenshot ? [screenshot] : []), ...files], feedback: { about: name, words } });
+    const kept = (developer.lines().findLast((line) => line.role === "relay")?.attachments ?? []).map((file) => { try { return fileURLToPath(file.url); } catch { return file.url; } });
+    appendFeedback(kept.length ? report + "\n\nAttachments:\n" + kept.map((path) => "- " + path).join("\n") : report, this.options.dataDir);
+    chat.appNotice(`Sent to ${developer.profile.name} as feedback.`, undefined, undefined, { sourceID: developer.id });
     return true;
   }
 
@@ -1234,6 +1278,13 @@ export class Core {
       case "component.detail": return this.bot(cmd.botId).componentDetail(cmd.name, cmd.folder, cmd.values, cmd.card, cmd.command);
       case "component.save": return this.bot(cmd.botId).componentSave(cmd.messageId, cmd.index, cmd.data);
       case "component.report": return { sent: this.reportComponent(cmd) };
+      case "chat.feedback": {
+        const incoming = join(this.options.dataDir, "incoming");
+        const pictures = cmd.images.flatMap((image) => writeIncoming(incoming, image.name, image.base64) ?? []);
+        const shot = cmd.screenshot ? writeIncoming(incoming, "feedback.png", cmd.screenshot) : null;
+        try { return { sent: this.reportFeedback(cmd.text, cmd.messageId, this.bot(cmd.botId), shot, pictures) }; }
+        finally { for (const file of [...pictures, ...(shot ? [shot] : [])]) rmSync(file, { force: true }); }
+      }
       case "spec.make": {
         const spec = this.specs.make(this.bot(cmd.botId), cmd.messageId, cmd.purpose ?? null);
         return { specId: spec?.id ?? null };

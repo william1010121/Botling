@@ -72,7 +72,34 @@ struct DesktopPhase5GoldenExport {
         var out: [String: Any] = [:]
         out["reports"] = reports(workspace: workspace, root: root)
         out["specs"] = specs(workspace: workspace, root: root)
+        out["feedback"] = feedback(workspace: workspace, root: root)
         return out
+    }
+
+    /// "Not right" on a reply in developer mode (`reportFeedback`): what the developer project's manager gets.
+    @MainActor static func feedback(workspace: Workspace, root: URL) -> [String: Any] {
+        guard let shop = workspace.projects.first(where: { $0.name == "Shop" }) else { return [:] }
+        let chat = workspace.mainBot
+        let date = Date(timeIntervalSinceReferenceDate: 800_000_100)
+        var asked = ChatMessage(id: UUID(uuidString: "00000000-0000-4000-8000-0000000000C1")!, role: .user, text: "How many tests failed?", date: date)
+        asked.attachments = nil
+        var answer = ChatMessage(id: UUID(uuidString: "00000000-0000-4000-8000-0000000000C2")!, role: .bot, text: "None failed.", date: date.addingTimeInterval(5))
+        answer.steps = [Step(id: "a", kind: .tool, tool: "Bash", title: "Run the tests", detail: "npm test"), Step(id: "b", kind: .text, title: "Thinking")]
+        chat.post(asked, unread: false)
+        chat.post(answer, unread: false)
+        let noDeveloper = workspace.reportFeedback("x", on: answer.id, in: chat)
+        workspace.setDeveloperMode(true, project: shop.id)
+        let picture = root.appending(path: "mine.png")
+        try? Data([0x89, 0x50, 0x4E, 0x47]).write(to: picture)
+        let sent = workspace.reportFeedback("  It says none but one failed  ", on: answer.id, in: chat, screenshot: picture, files: [picture])
+        let manager = workspace.bot(for: shop)
+        let relay = manager?.messages.last { $0.role == .relay }
+        let empty = workspace.reportFeedback("", on: asked.id, in: chat)
+        let second = manager?.messages.last { $0.role == .relay }
+        return ["noDeveloper": noDeveloper, "sent": sent, "relay": relay?.text ?? NSNull(), "note": relay?.feedback.map { ["about": $0.about, "words": $0.words] } ?? NSNull(),
+                "empty": empty, "relayEmpty": second?.text ?? NSNull(), "notice": chat.messages.last { $0.role == .notice }?.text ?? NSNull(),
+                "messages": (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(chat.messages))) ?? NSNull(),
+                "parsed": [FeedbackNote.parse(relay?.text ?? "").map { ["about": $0.about, "words": $0.words] } ?? NSNull(), FeedbackNote.parse(second?.text ?? "").map { ["about": $0.about, "words": $0.words] } ?? NSNull()]]
     }
 
     /// Specs: the pure parts (`ComponentSpecs`), then one made through the workspace end to end.

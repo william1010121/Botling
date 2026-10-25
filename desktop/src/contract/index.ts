@@ -557,6 +557,9 @@ export const SettingsView = z.strictObject({
   railCollapsed: z.boolean(),
   /** Bots pinned to the top of the left column, in the order they were pinned (1.x's `pinnedBots`). */
   pinnedBots: z.array(BotId).max(200),
+  /** Developer mode (1.x's `developerMode`): the project that is Botling's own source gets what you flag as "not right". Phase 5a. */
+  developerMode: z.boolean(),
+  developerProject: BotId.nullable(),
 });
 export type SettingsView = z.infer<typeof SettingsView>;
 /** One change on the Settings page (null: back to the default). */
@@ -581,6 +584,8 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("resultPublishing"), value: z.enum(["artifactUnlessSensitive", "localOnly", "artifactAlways"]) }),
   z.strictObject({ key: z.literal("stallReminderMinutes"), value: z.number().int().min(0).max(1_440) }),
   z.strictObject({ key: z.literal("rightPanelCollapsed"), value: z.boolean() }),
+  z.strictObject({ key: z.literal("developerMode"), value: z.boolean() }),
+  z.strictObject({ key: z.literal("developerProject"), value: BotId.nullable() }),
   z.strictObject({ key: z.literal("railCollapsed"), value: z.boolean() }),
   z.strictObject({ key: z.literal("pinnedBots"), value: z.array(BotId).max(200) }),
 ]);
@@ -773,6 +778,14 @@ export const Command = z.discriminatedUnion("type", [
   /** The spec panel folds back to the chip (`closeSpec`), or is made wide (`setSpecPanelWide`). */
   z.strictObject({ type: z.literal("spec.close") }),
   z.strictObject({ type: z.literal("spec.wide"), wide: z.boolean() }),
+  /**
+   * "Not right" on a reply, in developer mode (1.x's `reportFeedback`): your words and pictures go to the
+   * developer project with the chat around it. Main adds the chat frame as you saw it (`rect`, app page coordinates).
+   */
+  z.strictObject({ type: z.literal("chat.feedback"), botId, messageId: id, text: z.string().max(20_000),
+    images: z.array(z.strictObject({ name: z.string().min(1).max(255), base64: z.string().min(1).max(FILE_DATA_LIMIT) })).max(10),
+    rect: z.strictObject({ x: z.number(), y: z.number(), width: z.number().positive().max(10_000), height: z.number().positive().max(10_000) }).nullable(),
+    screenshot: z.string().max(FILE_DATA_LIMIT).optional() }),
   /** Puts back a component's version from before its last change (git; 1.x's `revert`). */
   z.strictObject({ type: z.literal("component.revert"), name: z.string().min(1).max(200) }),
   /** Pins a line's component (`messageId`+`index`) or one from the picker (`name`). `id` is the page's. */
@@ -876,7 +889,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.react", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "catchup.retry", "catchup.interval",
-  "component.command", "component.detail", "component.save", "component.report", "component.revert", "spec.make", "spec.act", "spec.close", "spec.wide", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
+  "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore",
@@ -885,7 +898,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "groups.create", "groups.edit", "groups.delete",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "component.report"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "component.report", "chat.feedback"]);
 
 /** A temporary team at work (1.x's `TeamRun`): its title, the task, when it started (ms since 1970). */
 export const TeamRunView = z.strictObject({ id, name: z.string().max(200), title: z.string().max(200), task: z.string().max(4_000), startedAt: z.number() });
@@ -970,6 +983,7 @@ export interface Results {
   "component.detail": { ok: boolean; value: string };
   "component.save": { saved: boolean };
   "component.report": { sent: boolean };
+  "chat.feedback": { sent: boolean };
   "component.revert": { reverted: boolean; problem: string | null };
   "spec.make": { specId: string | null };
   "spec.act": { accepted: boolean };
