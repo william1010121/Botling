@@ -25,6 +25,8 @@ export type FrameMessage =
   | { botling: "messageWidthDrag"; active: boolean }
   /** The forwarded edit is applied; focus can return once all edits have arrived. */
   | { botling: "keyHandled"; id: number }
+  /** Native input after an involuntary refocus joins the shell queue until its idle barrier. */
+  | { botling:"handoffKey"; key:string; code:string; shiftKey:boolean; altKey:boolean }
   /** A component frame's page, to be served from botling-card://page/ (component-frames.ts). */
   | { botling: "page"; id: number; html: string };
 

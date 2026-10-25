@@ -580,9 +580,10 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     const pendingKeys = new Set<number>();
     let nextKey = 0;
     let ackTimer: ReturnType<typeof setTimeout> | undefined;
-    const resetKeys = () => { pendingKeys.clear(); clearTimeout(ackTimer); };
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const resetKeys = () => { pendingKeys.clear(); clearTimeout(ackTimer); clearTimeout(idleTimer); };
     const recoverFocus = () => {
-      if (lastPointer <= chatLostAt && (document.activeElement === document.body || document.activeElement === document.documentElement)) {
+      if (lastPointer <= chatLostAt && (document.activeElement === frame.current || document.activeElement === document.body || document.activeElement === document.documentElement)) {
         frame.current?.contentWindow?.focus();
         frame.current?.contentWindow?.postMessage({botling:"focus"}, CHAT_ORIGIN);
       }
@@ -590,30 +591,38 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     const loaded = () => { resetKeys(); recoverFocus(); };
     const element = frame.current;
     element?.addEventListener("load", loaded);
+    const settleKeys = () => {
+      clearTimeout(idleTimer);
+      idleTimer=setTimeout(()=>{if(pendingKeys.size===0)recoverFocus();},500);
+    };
+    const forwardKey = (key:{key:string;code:string;shiftKey:boolean;altKey:boolean}) => {
+      const target=frame.current?.contentWindow;if(!target)return;
+      lastInput=Date.now();chatLostAt=lastInput;
+      const message:ShellMessage={botling:"key",id:++nextKey,...key};
+      pendingKeys.add(message.id);clearTimeout(idleTimer);clearTimeout(ackTimer);
+      ackTimer=setTimeout(()=>{resetKeys();recoverFocus();},2000);
+      target.postMessage(message,CHAT_ORIGIN);
+    };
     const keyHandled = (event: MessageEvent) => {
       const target = frame.current;
-      if (!target?.contentWindow || event.source !== target.contentWindow || event.origin !== CHAT_ORIGIN
-        || event.data?.botling !== "keyHandled" || !pendingKeys.delete(event.data.id)) return;
-      if (pendingKeys.size === 0) { clearTimeout(ackTimer); recoverFocus(); }
+      if (!target?.contentWindow || event.source !== target.contentWindow || event.origin !== CHAT_ORIGIN) return;
+      if(event.data?.botling==='handoffKey'){
+        const key=event.data;
+        if(typeof key.key==='string'&&typeof key.code==='string'&&(key.key.length===1||key.key==='Enter'||key.key==='Backspace'))forwardKey({key:key.key,code:key.code,shiftKey:key.shiftKey===true,altKey:key.altKey===true});
+        return;
+      }
+      if(event.data?.botling!=="keyHandled"||!pendingKeys.delete(event.data.id))return;
+      if(pendingKeys.size===0){clearTimeout(ackTimer);settleKeys();}
     };
     const input = () => { lastInput = Date.now(); };
     const pointer = () => { lastInput = Date.now(); lastPointer = Date.now(); };
-    // A key that lands on this page's body while focus passes between it and the chat frame (it can
-    // move out and back by itself as the window opens) would go nowhere: it goes to the input box.
+    // All edits in a focus handoff share this FIFO, even if Chromium focuses the composer early.
     const strayKey = (event: KeyboardEvent) => {
-      const target = frame.current;
-      if (!target?.contentWindow || (event.target !== document.body && event.target !== document.documentElement)) return;
+      if (!frame.current?.contentWindow || (event.target !== document.body && event.target !== document.documentElement)) return;
       if (!chatLostAt || Date.now() - chatLostAt > 3_000 || lastPointer > chatLostAt) return;
       if (event.metaKey || event.ctrlKey || event.isComposing || (event.key.length !== 1 && event.key !== "Enter" && event.key !== "Backspace")) return;
-      lastInput = Date.now();
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      const message: ShellMessage = { botling: "key", id: ++nextKey, key: event.key, code: event.code, shiftKey: event.shiftKey, altKey: event.altKey };
-      // Preserve event order across origins: native keys stay here until all forwarded edits land.
-      pendingKeys.add(message.id);
-      clearTimeout(ackTimer);
-      ackTimer = setTimeout(() => { resetKeys(); recoverFocus(); }, 2000);
-      target.contentWindow.postMessage(message, CHAT_ORIGIN);
+      event.preventDefault();event.stopImmediatePropagation();
+      forwardKey({key:event.key,code:event.code,shiftKey:event.shiftKey,altKey:event.altKey});
     };
     const onBlur = () => { chatHadFocus = document.activeElement === frame.current; };
     const onFocusIn = () => { if (chatHadFocus || document.activeElement === document.body) chatLostAt = Date.now(); };

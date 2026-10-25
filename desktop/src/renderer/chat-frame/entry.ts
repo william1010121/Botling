@@ -164,6 +164,7 @@ window.addEventListener("message", (event: MessageEvent) => {
     typeStrayKey(message);
     toShell({ botling: "keyHandled", id: message.id });
   } else if (message.botling === "focus") {
+    handoffKeys=false;
     window.ccb.focus();
   } else if (message.botling === "spec") {
     window.ccb.setSpec(message.spec);
@@ -211,28 +212,37 @@ function keepTyped(early: { text: string; cursor: number }) {
  */
 const REFOCUS_MS = 3_000;
 let lostAt = 0;
+let handoffKeys = false;
 let userMovedAt = 0;
 const inBox = (target: EventTarget | null) => !!(target as HTMLElement | null)?.closest?.(".composer .cm-content");
 // A click elsewhere in the page moves focus on purpose (a click into the box does not count).
-document.addEventListener("pointerdown", (event) => { if (!inBox(event.target)) { userMovedAt = Date.now(); lostAt = 0; } }, true);
-document.addEventListener("keydown", (event) => { if (event.key === "Tab" || event.key === "Escape") userMovedAt = Date.now(); }, true);
+document.addEventListener("pointerdown", (event) => { handoffKeys=false; if (!inBox(event.target)) { userMovedAt = Date.now(); lostAt = 0; } }, true);
+document.addEventListener("keydown", (event) => { if (event.key === "Tab" || event.key === "Escape") {userMovedAt = Date.now();handoffKeys=false;} }, true);
 document.addEventListener("focusout", (event) => {
   if (!inBox(event.target) || event.relatedTarget) return;
   if (Date.now() - userMovedAt < 300) return;
-  lostAt = Date.now();
+  lostAt = Date.now();handoffKeys=true;
 }, true);
 document.addEventListener("focusin", (event) => {
   if (!inBox(event.target)) lostAt = 0;
 }, true);
 function takeFocusBack(): boolean {
-  if (!lostAt || Date.now() - lostAt > REFOCUS_MS) return false;
+  if (handoffKeys || !lostAt || Date.now() - lostAt > REFOCUS_MS) return false;
   const active = document.activeElement;
   if (active && active !== document.body && active !== document.documentElement) { lostAt = 0; return false; }
   lostAt = 0;
   composerView()?.focus();
   return true;
 }
+window.addEventListener("blur",()=>{if(inBox(document.activeElement)&&Date.now()-userMovedAt>=300)handoffKeys=true;});
 window.addEventListener("focus", () => { setTimeout(takeFocusBack, 0); });
+// A card/browser can restore focus without waiting for the shell's outstanding edit. Route native
+// keys through that same sender until its idle acknowledgement, preserving FIFO across origins.
+document.addEventListener("keydown",event=>{
+ if(!handoffKeys||!event.isTrusted||event.isComposing||event.metaKey||event.ctrlKey||(event.key.length!==1&&event.key!=="Enter"&&event.key!=="Backspace"))return;
+ event.preventDefault();event.stopImmediatePropagation();
+ toShell({botling:"handoffKey",key:event.key,code:event.code,shiftKey:event.shiftKey,altKey:event.altKey});
+},true);
 document.addEventListener("keydown", (event) => {
   if (event.key === "Tab" || event.key === "Escape" || event.metaKey || event.ctrlKey) return;
   // A letter's text goes to whatever has focus once this returns: the box, now. A key the box acts on
