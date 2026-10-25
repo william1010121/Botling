@@ -171,6 +171,8 @@ export interface BotOptions {
   addDirs?: () => string[];
   /** Another bot answering in its chat right now (a call-in's speaker). */
   guest?: () => string | null;
+  /** What its row shows beyond its own (a group's chat: the group and its members). */
+  viewExtras?: () => Partial<BotView>;
   /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
   launch?: () => { subagentHourCache: boolean };
 }
@@ -708,6 +710,17 @@ export class Bot {
     this.add(copy);
   }
 
+  /** A group chat's new name (`editGroup`). */
+  rename(name: string) {
+    this.options.profile.name = name;
+    this.updated();
+  }
+
+  /** Files you sent with a line that is not a message to it (a group's), copied where they stay (1.x's `keep`). */
+  keepFiles(files: string[]): { url: string; kind: string }[] {
+    return files.flatMap((file) => keep(file, attachmentsFolder(this.profile)) ?? []).map((kept) => ({ url: kept.url, kind: kept.kind }));
+  }
+
   /** A guest's reactions on this chat's lines (`applyReactions(actor: "guest:…")`). */
   guestReactions(actions: { messageId: string; emoji: string; present: boolean }[], actor: string) {
     for (const action of actions) {
@@ -908,6 +921,7 @@ export class Bot {
       subagentRows: this.subagentRows(),
       guest: this.options.guest?.() ?? null,
       openTasks: this.owner.tasks.tasks.filter((card) => card.state === "running" || card.state === "waiting").length,
+      ...(this.options.viewExtras?.() ?? {}),
     };
   }
 

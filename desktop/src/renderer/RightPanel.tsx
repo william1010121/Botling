@@ -31,6 +31,8 @@ export interface RightPanelProps {
   onSelectTask: (id: string) => void;
   onJumpToTask: (messageId: string, taskId: string) => void;
   onAskForReport: (task: TaskView, replyTo: string | null) => void;
+  /** A group's "Rename, add or take out members". */
+  onEditGroup: () => void;
   collapsed: boolean;
   onSelect: (botId: string) => void;
   onIgnore: (item: WaitingItemView) => void;
@@ -45,7 +47,43 @@ export interface RightPanelProps {
 const isArtifact = (url: string) => /^https:\/\/(www\.)?claude\.ai\/(code\/)?artifact\/[^/]+/i.test(url);
 
 export function RightPanel(props: RightPanelProps) {
-  return props.collapsed ? <RightStrip {...props} /> : <OpenPanel {...props} />;
+  if (props.collapsed) return <RightStrip {...props} />;
+  return props.bot.role === "group" ? <GroupPanel {...props} /> : <OpenPanel {...props} />;
+}
+
+/** The right column for a group (1.x's GroupPanel): who is in it, and what was handed in. */
+function GroupPanel({ bot, bots, look, results, onSelect, onOpenResult, onEditGroup }: RightPanelProps) {
+  const members = (bot.members ?? []).map((id) => bots.find((candidate) => candidate.id === id)).filter((member): member is BotView => !!member);
+  return (
+    <aside className="detail-panel" aria-label="Details">
+      <div className="detail-head">
+        <span className="detail-name">{bot.name}</span>
+        <span className="bot-gap" />
+        <button type="button" className="group-edit" title="Rename, add or take out members" aria-label="Edit group" onClick={onEditGroup}><Icon name="sliders" size={14} /></button>
+      </div>
+      <section className="detail-section">
+        <h3>In the group</h3>
+        <div className="now-card group-members-card">
+          {members.map((member) => (
+            <button key={member.id} type="button" className="group-member" data-bot={member.id} onClick={() => onSelect(member.id)}>
+              <img src={faceURL(member, look, { asleep: member.phase === "asleep" && !member.working, working: member.working })} alt="" />
+              <span className="group-member-name">{member.name}</span>
+              {bot.guest === member.id && <span className="group-member-writing">writing…</span>}
+            </button>
+          ))}
+          <p className="group-hint">Without @, everyone here reads your message in turn and answers only if it concerns them. @name talks to one of them.</p>
+        </div>
+      </section>
+      {results.length > 0 && (
+        <section className="detail-section results-section">
+          <h3>Just done</h3>
+          <div className="result-list">
+            {results.slice(0, 3).map((result) => <ResultRow key={`${result.label}\u0000${result.url}`} result={result} onOpen={onOpenResult} />)}
+          </div>
+        </section>
+      )}
+    </aside>
+  );
 }
 
 function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching, tasks, messages, selectedTask, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSelectTask, onJumpToTask, onAskForReport }: RightPanelProps) {

@@ -184,6 +184,24 @@ export function importFrom1x(sourceDir: string, targetDir: string): ImportReport
     report.messages += messages;
   }
 
+  // Group chats (Phase 4c): groups.json and each group's chat files (groups/<ID>/), as 1.x keeps them.
+  const groupsFile = read(join(source, "groups.json"));
+  if (groupsFile) {
+    let groups: unknown;
+    try { groups = JSON.parse(groupsFile.toString("utf8")); } catch { groups = null; }
+    if (Array.isArray(groups)) {
+      write(join(target, "groups.json"), groupsFile);
+      for (const group of groups) {
+        const id = (group as { id?: unknown })?.id;
+        if (typeof id !== "string" || !/^[0-9A-Fa-f-]{36}$/.test(id)) continue;
+        const messages = copyChat(join(source, "groups", id), join(target, "groups", id.toUpperCase()));
+        report.messages += messages;
+      }
+    } else {
+      report.skipped.push(`${join(source, "groups.json")}: not a list of groups, left out`);
+    }
+  }
+
   const settings = read(Layout.settings(source));
   if (settings) {
     try {

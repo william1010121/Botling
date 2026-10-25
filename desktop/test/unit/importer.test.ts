@@ -1,7 +1,7 @@
 // The first-launch import from a Botling 1.x folder: what comes over, what is left, and that the
 // source is only read (made read-only for the test, and compared byte for byte and by mtime).
 import { afterEach, describe, expect, it } from "vitest";
-import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -122,6 +122,25 @@ describe("import from 1.x", () => {
     expect(report.skipped.join("\n")).toMatch(/icon\.png: not a text file/);
     expect(needsImport(target)).toBe(false);
     expect(() => importFrom1x(source, join(source, "inside"))).toThrow(/separate/);
+  });
+
+  it("1.x's group chats come over: groups.json and each group's chat (Phase 4c)", async () => {
+    const dir = tempDir("import");
+    const { source } = writeSwiftFixture(dir);
+    const group = "6B000000-0000-4000-8000-0000000000AA";
+    writeFileSync(join(source, "groups.json"), JSON.stringify([{ id: group, name: "Team", members: [MAIN, IDS.manager] }]));
+    mkdirSync(join(source, "groups", group), { recursive: true });
+    writeFileSync(join(source, "groups", group, "chat.json"), JSON.stringify([
+      { id: "6B000000-0000-4000-8000-0000000000A1", role: "user", text: "hello all", date: 800_000_000 },
+      { id: "6B000000-0000-4000-8000-0000000000A2", role: "bot", text: "Hi!", date: 800_000_001, sourceID: MAIN },
+    ]));
+    sources.push(source);
+    const target = join(dir, "botling2");
+    const core = new CoreHarness(target, { BOTLING_IMPORT_FROM: source });
+    harnesses.push(core);
+    const snapshot = await core.call({ type: "chat.snapshot", botId: group });
+    expect(snapshot.bots.find((bot: { id: string }) => bot.id === group)).toMatchObject({ role: "group", name: "Team", members: [MAIN, IDS.manager] });
+    expect(snapshot.chat.messages.map((m: { text: string; sourceId?: string }) => [m.text, m.sourceId ?? null])).toEqual([["hello all", null], ["Hi!", MAIN]]);
   });
 
   it("the core imports on its first start only, and shows the imported bots and chats", async () => {

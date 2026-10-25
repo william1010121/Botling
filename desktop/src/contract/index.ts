@@ -30,7 +30,7 @@ import shared from "../../../Web/src/contract.json";
  * 9: temporary teams, bots of their own (New bot, removing a bot or project), subagent rows and
  *    settling them, the right panel's Results and its folded strip.
  */
-export const PROTOCOL_VERSION = 9 as const;
+export const PROTOCOL_VERSION = 10 as const;
 
 /** The most a card's `ccb.save` keeps, shared with the Swift app (`ComponentState.limit`). */
 export const CARD_SAVE_LIMIT: number = (shared as { saveLimit: number }).saveLimit;
@@ -295,7 +295,7 @@ export const BotView = z.strictObject({
   id: BotId,
   name: z.string().max(200),
   /** main: the front desk; manager: works in a project folder; bot: a bot of its own. */
-  role: z.enum(["main", "manager", "bot"]),
+  role: z.enum(["main", "manager", "bot", "group"]),
   /** An avatar shape (`AvatarShape` in the Swift app: circle, square, …). */
   avatar: z.string().max(40),
   folder: z.string().max(4_000),
@@ -319,6 +319,8 @@ export const BotView = z.strictObject({
   guest: BotId.nullable().optional(),
   /** Its tasks running or waiting on you ("3 tasks" beside its name; 1.x's `openTaskCount`). */
   openTasks: z.number().int().nonnegative().optional(),
+  /** A group chat's members, in turn order. */
+  members: z.array(BotId).max(200).optional(),
 });
 export type BotView = z.infer<typeof BotView>;
 
@@ -621,6 +623,10 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("bots.create"), name: z.string().min(1).max(400), job: z.string().min(1).max(4_000) }),
   /** Removes a bot of its own or a project from the left column and stops it. Its folders stay on disk. */
   z.strictObject({ type: z.literal("bots.remove"), botId }),
+  /** Group chats (1.x's GroupChat.swift): made with a name and its members, changed, deleted with its conversation. */
+  z.strictObject({ type: z.literal("groups.create"), name: z.string().min(1).max(400), members: z.array(BotId).min(1).max(200) }),
+  z.strictObject({ type: z.literal("groups.edit"), groupId: BotId, name: z.string().min(1).max(400), members: z.array(BotId).min(1).max(200) }),
+  z.strictObject({ type: z.literal("groups.delete"), groupId: BotId }),
   /** The links handed over in a bot's chat, newest first (the right panel's Results). */
   z.strictObject({ type: z.literal("results.list"), botId }),
   /** Main only: opens one of a bot's results (a web link in the browser, a local page with its app). */
@@ -768,6 +774,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open",
+  "groups.create", "groups.edit", "groups.delete",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
 export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open"]);
@@ -827,6 +834,9 @@ export interface Results {
   "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView; waiting?: WaitingView; web?: WebStateView; teams?: TeamRunView[] };
   "subagent.settle": { changed: boolean };
   "bots.create": { botId: string; created: boolean };
+  "groups.create": { groupId: string };
+  "groups.edit": Record<string, never>;
+  "groups.delete": Record<string, never>;
   "bots.remove": { removed: boolean };
   "results.list": { results: ResultView[] };
   "result.open": { opened: boolean };

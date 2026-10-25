@@ -75,4 +75,39 @@ describe("call-ins and bots' @ (CallIn.swift, BotMentions.swift)", () => {
     await until(async () => (await c.chat()).messages.some((m: any) => m.text === "Not sent with @: this reply names more than one bot at the start of a line. Name one bot per reply."), { what: "the notice" });
     expect(JSON.parse(readFileSync(join(dir, "bot-mentions.json"), "utf8"))).toHaveLength(1);
   });
+
+  it("a group chat: everyone in turn (PASS stays quiet), @name one of them, a pick goes back; edit and delete (GroupChat.swift)", async () => {
+    const dir = tempDir("group");
+    const folder = join(tempDir("group-shop"), "Shop");
+    mkdirSync(folder, { recursive: true });
+    const c = core(dir);
+    const { botId: shop } = await c.call({ type: "projects.add", folder });
+    const { groupId } = await c.call({ type: "groups.create", name: "  Team\nsecond line", members: [shop, MAIN, "00000000-0000-4000-8000-0000000000FF"] });
+    expect(JSON.parse(readFileSync(join(dir, "groups.json"), "utf8"))).toEqual([{ id: groupId, name: "Team", members: [MAIN, shop] }]);
+    const snapshot = await c.call({ type: "chat.snapshot", botId: groupId });
+    expect(snapshot.bots.find((bot: any) => bot.id === groupId)).toMatchObject({ role: "group", name: "Team", members: [MAIN, shop] });
+    // Everyone in turn: the main bot (the front desk) answers, Shop says PASS (nothing shows).
+    await c.call({ type: "chat.send", botId: groupId, text: "hello all" });
+    await until(async () => (await c.chat(groupId)).messages.some((m: any) => m.sourceId === MAIN && m.text === "Main bot here: hello all"));
+    await until(() => texts(dir).some((text) => text.includes(`(App: Group chat "Team". In it are the user and the bots "Shop"; you are "Main bot".`)));
+    await until(() => texts(dir).some((text) => text.includes(`(App: Group chat "Team". In it are the user and the bots "Main bot"; you are "Shop".`) && text.includes("Otherwise reply with exactly PASS")));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect((await c.chat(groupId)).messages.filter((m: any) => m.role === "bot").map((m: any) => m.text)).toEqual(["Main bot here: hello all"]);
+    // Their own chats do not show the group's talk.
+    expect((await c.chat(shop)).messages.filter((m: any) => m.role !== "divider")).toEqual([]);
+    // @Shop: only Shop, as named; its question's pick goes back to it.
+    await c.call({ type: "chat.send", botId: groupId, text: "@Shop /guestsay Which one?\\n<choices>\\n- Red\\n- Blue\\n</choices>" });
+    const question = await until(async () => (await c.chat(groupId)).messages.find((m: any) => m.sourceId === shop && m.choices?.length));
+    expect(await c.call({ type: "chat.choose", botId: groupId, messageId: question.id, index: 0 })).toEqual({ accepted: true });
+    await until(async () => (await c.chat(groupId)).messages.some((m: any) => m.sourceId === shop && m.text === "Shop here: The user picked: Red"));
+    // Renamed, Shop taken out: said in the chat.
+    await c.call({ type: "groups.edit", groupId, name: "Desk", members: [MAIN] });
+    await until(async () => (await c.chat(groupId)).messages.some((m: any) => m.role === "notice" && m.text === 'Renamed to "Desk". Took out Shop.'));
+    // Deleted: its conversation goes, the bots keep theirs.
+    await c.call({ type: "groups.delete", groupId });
+    await until(() => c.of("bot.removed").some((e: any) => e.event.botId === groupId));
+    expect(existsSync(join(dir, "groups", groupId))).toBe(false);
+    expect(JSON.parse(readFileSync(join(dir, "groups.json"), "utf8"))).toEqual([]);
+    await expect(c.call({ type: "chat.snapshot", botId: groupId })).rejects.toThrow(/not_found/);
+  });
 });

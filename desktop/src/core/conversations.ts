@@ -78,7 +78,12 @@ export class Conversations {
     this.mentionLog = new BotMentionLog(join(deps.dataDir, "bot-mentions.json"));
   }
 
-  private get timing() { return this.deps.timing ?? GROUP_TIMING; }
+  /** How long a guest waits for a busy bot and may take (`groupTiming`). */
+  get groupTiming() { return this.deps.timing ?? GROUP_TIMING; }
+  private get timing() { return this.groupTiming; }
+
+  /** Everyone who can answer outside their own chat, in turn order (`everyMember`). */
+  members(): Member[] { return this.deps.members(); }
 
   /** Who a member id is (`speakerName(for:)`). */
   speakerName = (id: string): string | null => this.deps.members().find((member) => member.id === id)?.name ?? null;

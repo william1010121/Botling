@@ -35,6 +35,7 @@ import { isOpenQuestion, MAIN_BOT_ID } from "./store/records";
 import { Layout, loadProfiles, projectProfile, type BotProfile } from "./store/workspace";
 import { unsupportedRequest, type BotRequest } from "./reply";
 import { Conversations } from "./conversations";
+import { GroupChats } from "./group-chats";
 import { answeredNote, pickedNote, type GROUP_TIMING } from "./groups";
 import { CatchUpCache, CatchUps, catchUpSettings, type CatchUpViewData, type Summarizer } from "./catchup";
 import { ComponentsContext } from "./components/service";
@@ -134,6 +135,8 @@ export class Core {
   readonly teams: TeamDesk;
   /** Bots answering in chats that are not their own: call-ins and bots' @ (Phase 4c). */
   readonly conversations: Conversations;
+  /** Group chats (Phase 4c): a name and members; each group's chat is a bot that never runs. */
+  readonly groups: GroupChats;
   /** Bots taken out of the left column: what they still say goes nowhere. */
   private removed = new Set<string>();
   /** Bots plugins made that you removed (`plugin/name`, lower case; removed-bots.json), so they stay removed. */
@@ -188,6 +191,11 @@ export class Core {
     const codexConfig = options.codexConfig;
     this.profiles = profiles;
     this.newBot = (profile) => {
+      const bot = build(profile);
+      this.bots.set(profile.id, bot);
+      return bot;
+    };
+    const build = (profile: BotProfile, group = false): Bot => {
       const bot: Bot = new Bot({
         profile,
         headConfig: options.headConfig,
@@ -195,7 +203,7 @@ export class Core {
         claimWaitMs: options.claimWaitMs,
         prompts: (engine, heads) => this.prompts(profile, engine, heads),
         // A project's manager works in the user's own folder, shared with 1.x: one Botling at a time.
-        lock: profile.role === "manager" && !profile.problem ? new ProjectLock(profile.folder, options.dataDir, oneX) : null,
+        lock: profile.role === "manager" && !profile.problem && !group ? new ProjectLock(profile.folder, options.dataDir, oneX) : null,
         tidyTimeoutMs: options.tidyTimeoutMs,
         quitTidyMs: options.quitTidyMs,
         ledger: this.ledger,
@@ -220,8 +228,9 @@ export class Core {
         launch: () => launchSettings(readSettings(Layout.settings(this.options.dataDir))),
         // (Asked while the bots are made, before the conversations exist.)
         guest: () => this.conversations?.speakers.get(profile.id) ?? null,
+        // A group's chat shows as a group with its members.
+        ...(group ? { viewExtras: () => ({ role: "group" as const, members: this.groups?.members(this.groups.group(profile.id) ?? { id: "", name: "", members: [] }).map((member) => member.id) ?? [] }) } : {}),
       });
-      this.bots.set(profile.id, bot);
       return bot;
     };
     for (const profile of profiles) {
@@ -247,6 +256,20 @@ export class Core {
       refreshWaiting: () => this.refreshWaiting(),
       log: (line) => this.log(line),
       timing: options.groupTiming,
+    });
+    this.groups = new GroupChats({
+      root: options.dataDir,
+      members: () => this.conversations.members(),
+      bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
+      mainBotId: MAIN_BOT_ID,
+      conversations: this.conversations,
+      makeChat: (profile) => build(profile, true),
+      afterMainTurn: () => this.deliverInboxes(),
+      changed: (id, removed) => {
+        if (removed) this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "bot.removed", botId: id } });
+        else this.groups.chat(id)?.refresh();
+      },
+      log: (line) => this.log(line),
     });
     this.maintainer = new MaintainerDesk({
       root: options.dataDir,
@@ -840,6 +863,15 @@ export class Core {
 
   private async sendWith(bot: Bot, text: string, options: { replyTo?: string; to?: "both" | "claude" | "codex"; files: string[] }): Promise<ResultOf<"chat.send">> {
     if (!text.trim() && !options.files.length) throw new ContractError("bad_request", "Nothing to send.");
+    // You wrote in a group (`postToGroup`, after the plugins' beforeSend).
+    if (this.groups.group(bot.id)) {
+      const outcome = await this.plugins.beforeSend(this.botInfo(bot), text);
+      if ("stoppedBy" in outcome) {
+        const messageId = bot.appNotice(`Plugin "${outcome.stoppedBy}" stopped this message: ${text}`);
+        return { messageId, turnId: null, stoppedBy: outcome.stoppedBy };
+      }
+      return { ...this.groups.post(bot.id, outcome.send.slice(0, 100_000) || text, options.files, options.replyTo), turnId: null };
+    }
     const outcome = await this.plugins.beforeSend(this.botInfo(bot), text);
     if ("stoppedBy" in outcome) {
       const plugin = this.plugins.registry.plugin(outcome.stoppedBy);
@@ -957,10 +989,17 @@ export class Core {
       .finally(() => this.inflight.delete(message.id));
   }
 
-  /** Your pick on a called-in bot's line goes back to it (`answerCallIn`); null: not such a line. */
+  /** Your pick on a called-in bot's line goes back to it (`answerCallIn`), or in a group to that member (`answerInGroup`); null: not such a line. */
   private calledInPick(botId: string, messageId: string, index: number): { accepted: boolean } | null {
     const chat = this.bot(botId);
     const record = chat.line(messageId);
+    if (record && this.groups.group(botId) && record.role === "bot" && typeof record.sourceID === "string") {
+      const label = record.choices?.[index]?.label;
+      if (!isOpenQuestion(record) || label === undefined) return { accepted: false };
+      if (!this.groups.answer(botId, record, pickedNote(label))) { chat.settleAppQuestion(messageId, { answer: NO_LONGER_NEEDED }); return { accepted: false }; }
+      chat.settleAppQuestion(messageId, { chosen: index });
+      return { accepted: true };
+    }
     if (!record || !this.conversations.isCalledIn(record, chat.id)) return null;
     const label = record.choices?.[index]?.label;
     if (!isOpenQuestion(record) || label === undefined) return { accepted: false };
@@ -976,6 +1015,13 @@ export class Core {
   private calledInAnswer(botId: string, messageId: string, text: string, files: number): { accepted: boolean } | null {
     const chat = this.bot(botId);
     const record = chat.line(messageId);
+    if (record && this.groups.group(botId) && record.role === "bot" && typeof record.sourceID === "string" && record.choices?.length) {
+      const shown = answerLabel(text.trim(), files);
+      if (!shown || !isOpenQuestion(record)) return { accepted: false };
+      if (!this.groups.answer(botId, record, answeredNote(shown))) { chat.settleAppQuestion(messageId, { answer: NO_LONGER_NEEDED }); return { accepted: false }; }
+      chat.settleAppQuestion(messageId, { answer: shown });
+      return { accepted: true };
+    }
     if (!record || !this.conversations.isCalledIn(record, chat.id) || !record.choices?.length) return null;
     const shown = answerLabel(text.trim(), files);
     if (!shown || !isOpenQuestion(record)) return { accepted: false };
@@ -988,7 +1034,7 @@ export class Core {
   }
 
   private bot(id: string): Bot {
-    const bot = this.bots.get(id);
+    const bot = this.bots.get(id) ?? this.groups.chat(id);
     if (!bot) throw new ContractError("not_found", "No such bot.");
     return bot;
   }
@@ -1045,6 +1091,17 @@ export class Core {
         return { botId: made.botId, created: made.kind === "made" };
       }
       case "bots.remove": return this.removeBot(cmd.botId);
+      case "groups.create": {
+        const group = this.groups.create(cmd.name, cmd.members);
+        if (!group) throw new ContractError("bad_request", "A group needs a name and at least one member.");
+        return { groupId: group.id };
+      }
+      case "groups.edit":
+        if (!this.groups.edit(cmd.groupId, cmd.name, cmd.members)) throw new ContractError(this.groups.group(cmd.groupId) ? "bad_request" : "not_found", "No such group, or no name or member.");
+        return {};
+      case "groups.delete":
+        if (!(await this.groups.delete(cmd.groupId))) throw new ContractError("not_found", "No such group.");
+        return {};
       case "subagent.settle": return this.bot(cmd.botId).settleSubagent(cmd.subagentId, cmd.settled);
       case "results.list": return { results: this.bot(cmd.botId).results().slice(0, 200) };
       case "waiting.list": return this.waiting();
@@ -1118,12 +1175,16 @@ export class Core {
   }
 
   snapshot(botId?: string): ResultOf<"chat.snapshot"> {
-    const bot = this.bots.get(botId ?? MAIN_BOT_ID);
+    const bot = this.bots.get(botId ?? MAIN_BOT_ID) ?? (botId ? this.groups.chat(botId) ?? undefined : undefined);
     if (botId && !bot) throw new ContractError("not_found", "No such bot.");
+    // The groups before Maintainer (who stays last).
+    const views = this.order.map((id) => this.bots.get(id)!.view());
+    const at = views.findIndex((view) => view.id === MAINTAINER_ID);
+    views.splice(at < 0 ? views.length : at, 0, ...this.groups.groups.flatMap((group) => this.groups.chat(group.id)?.view() ?? []));
     return {
       epoch: this.epoch,
       seq: this.seq,
-      bots: this.order.map((id) => this.bots.get(id)!.view()),
+      bots: views,
       imported: this.imported,
       chat: bot ? { ...bot.snapshot(), ...this.summaries(bot), pendingFiles: this.pending.views(bot.id) } : null,
       components: this.componentInfos(),

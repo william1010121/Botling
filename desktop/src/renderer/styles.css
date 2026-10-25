@@ -180,7 +180,7 @@ button { font: inherit; color: inherit; }
 .plugins-list ul { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; }
 
 /* "Add project" and "New bot" under the bots (SidePanels.swift's bottom row). */
-.rail-add { padding: 0 10px 6px; display: flex; gap: 2px; }
+.rail-add { padding: 0 10px 6px; display: flex; flex-wrap: wrap; gap: 2px; }
 .rail-add .rail-button { width: auto; flex: 0 1 auto; white-space: nowrap; }
 .rail-add .new-bot-button { margin-left: auto; }
 
@@ -506,3 +506,26 @@ button { font: inherit; color: inherit; }
 .done-mark.done { color: #4CC38A; }
 .done-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .done-time { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+/* Phase 4c: group chats (1.x's GroupRow, GroupForm, GroupPanel). */
+.group-face { flex-shrink: 0; border-radius: 50%; background: var(--chip); color: var(--text); display: inline-flex; align-items: center; justify-content: center; }
+.group-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.group-members { font-size: 12px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.group-writing { font-size: 12px; color: #8DB5FF; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.group-form { width: 360px; display: flex; flex-direction: column; gap: 12px; }
+.group-form h2 { margin: 0; font-size: 15px; }
+.group-name-input { height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--ground); color: var(--text); font-size: 13px; outline: none; }
+.group-who { font-size: 12px; color: var(--faint); }
+.group-pick { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.group-member-pick { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+.group-member-pick img { width: 20px; height: 20px; }
+.dialog-primary { background: var(--blue); color: #fff; border: 0; border-radius: 8px; padding: 5px 14px; font-size: 13px; cursor: pointer; }
+.dialog-primary:disabled { opacity: 0.45; cursor: default; }
+.group-edit { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.group-edit:hover { background: var(--hover); color: var(--text); }
+.group-members-card { gap: 8px; }
+.group-member { display: flex; align-items: center; gap: 10px; background: none; border: 0; padding: 2px 0; cursor: pointer; text-align: left; font-size: 13.5px; }
+.group-member img { width: 24px; height: 24px; }
+.group-member-name { flex: 1; }
+.group-member-writing { font-size: 12px; color: #8DB5FF; }
+.group-hint { margin: 4px 0 0; font-size: 12px; color: var(--faint); line-height: 1.45; }

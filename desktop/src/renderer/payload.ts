@@ -90,6 +90,7 @@ function reactions(message: MessageView): WebMessage["reactions"] {
 }
 
 export function placeholder(bot: BotView): string {
+  if (bot.role === "group") return "Message everyone, or @name one bot…";
   return bot.role === "main" ? "Make a wish, or ask how things are going…" : `Message ${bot.name}…`;
 }
 
@@ -158,7 +159,12 @@ const OFFERED = ["6A0B0000-0000-4000-8000-000000000002", "DEC0DE00-0000-4000-800
 
 /** The bots you can @ in `bot`'s chat (`callInView`): the main bot and Maintainer first, then every other bot. */
 export function mentionNames(bot: BotView, bots: BotView[]): { mentions: string[]; allMentions: string[] } {
-  const callable = bots.filter((other) => other.id !== bot.id);
+  // In a group, @ names its members (`group.names`).
+  if (bot.role === "group") {
+    const names = (bot.members ?? []).map((id) => bots.find((other) => other.id === id)?.name).filter((name): name is string => !!name);
+    return { mentions: names, allMentions: names };
+  }
+  const callable = bots.filter((other) => other.id !== bot.id && other.role !== "group");
   const first = callable.filter((other) => OFFERED.includes(other.id));
   const rest = callable.filter((other) => !OFFERED.includes(other.id));
   return { mentions: first.map((other) => other.name), allMentions: [...first, ...rest].map((other) => other.name) };
