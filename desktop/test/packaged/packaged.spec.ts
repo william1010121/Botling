@@ -113,6 +113,21 @@ test("boots to the chat page, starts the plugin host as a utility process, ignor
     // Nothing went to the default places: no 1.x import, no Application Support folder in HOME.
     expect(existsSync(join(dataDir, "core", "import.json")) ? JSON.parse(readFileSync(join(dataDir, "core", "import.json"), "utf8")) : null).toBeNull();
     expect(existsSync(join(base, "home", "Library", "Application Support", "Botling 2"))).toBe(false);
+    // Cards render content (Phase 5c). The welcome line's card is a sandboxed botling-card:// frame that
+    // loads a moment after the chat page; Phase 5b's screenshot was taken before it had, so it showed an
+    // empty box. Its page is drawn, it has sized itself (a frame still at its first 80px never loaded),
+    // and ccb.save goes through the broker to the core and back into the card.
+    const counter = chat.frameLocator('[data-card="c-counter"] iframe');
+    await expect(counter.getByRole("button", { name: "Count: 0" })).toBeVisible({ timeout: 30_000 });
+    await expect(counter.getByRole("button", { name: "Say hello" })).toBeVisible();
+    await expect(counter.getByText("This card runs in a sandboxed frame.")).toBeVisible();
+    await expect.poll(() => chat.locator('[data-card="c-counter"] iframe').evaluate((frame) => (frame as HTMLIFrameElement).style.height), { timeout: 10_000 }).not.toBe("80px");
+    await counter.getByRole("button", { name: "Count: 0" }).click();
+    await expect(counter.getByRole("button", { name: "Count: 1" })).toBeVisible();
+    await expect.poll(() => {
+      const saved = JSON.parse(readFileSync(join(dataDir, "core", "main", "chat.json"), "utf8")) as { cards?: { id: string; data: string | null }[] }[];
+      return saved.flatMap((message) => message.cards ?? []).find((card) => card.id === "c-counter")?.data ?? null;
+    }, { timeout: 10_000 }).toBe('{"count":1}');
     mkdirSync(join(desktop, ".tmp", "screens"), { recursive: true });
     await page.screenshot({ path: join(desktop, ".tmp", "screens", "phase5b-packaged.png") });
     await browser.close().catch(() => {});
