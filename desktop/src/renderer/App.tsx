@@ -29,20 +29,47 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
   const [creating, setCreating] = useState(false);
   const [menu, setMenu] = useState<{ bot: BotView; x: number; y: number } | null>(null);
   const [removing, setRemoving] = useState<BotView | null>(null);
+  /** The task card pressed open in the right panel (`selectedTask`); pressed again, it closes. */
+  const [selectedTask, setSelectedTask] = useState<string | null>(null);
+  const selectTask = useCallback((id: string) => setSelectedTask((current) => (current === id ? null : id)), []);
   const now = useMinuteClock();
   const collapsed = view.settings?.rightPanelCollapsed ?? false;
   const toggleRight = useCallback(() => {
     void client.request({ type: "settings.set", change: { key: "rightPanelCollapsed", value: !(store.getView().settings?.rightPanelCollapsed ?? false) } }).catch(() => {});
   }, [client, store]);
-  // ⌘, (Ctrl+, elsewhere) opens Settings, as in 1.x; ⌃⌘I folds or opens the right panel.
+  // The left column: folded into a strip of faces (⌃⌘S), its search (⌘K) and the pinned bots (1.x's RailView).
+  const railCollapsed = view.settings?.railCollapsed ?? false;
+  const toggleRail = useCallback((collapse?: boolean) => {
+    const next = collapse ?? !(store.getView().settings?.railCollapsed ?? false);
+    void client.request({ type: "settings.set", change: { key: "railCollapsed", value: next } }).catch(() => {});
+  }, [client, store]);
+  const [query, setQuery] = useState("");
+  const search = useRef<HTMLInputElement>(null);
+  const startSearch = useCallback(() => {
+    if (store.getView().settings?.railCollapsed) toggleRail(false);
+    // After the open column (and its field) is drawn.
+    setTimeout(() => search.current?.focus(), 50);
+  }, [store, toggleRail]);
+  const pinned = useMemo(() => {
+    const ids = view.settings?.pinnedBots ?? [];
+    return ids.filter((id) => view.bots.some((candidate) => candidate.id === id && candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID));
+  }, [view.settings?.pinnedBots, view.bots]);
+  const togglePin = useCallback((botId: string) => {
+    const now = (store.getView().settings?.pinnedBots ?? []).filter((id) => store.getView().bots.some((candidate) => candidate.id === id));
+    const next = now.includes(botId) ? now.filter((id) => id !== botId) : [...now, botId];
+    void client.request({ type: "settings.set", change: { key: "pinnedBots", value: next } }).catch(() => {});
+  }, [client, store]);
+  // ⌘, (Ctrl+, elsewhere) opens Settings, as in 1.x; ⌃⌘I folds or opens the right panel; ⌃⌘S the left column; ⌘K searches it.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "," && (event.metaKey || event.ctrlKey)) { event.preventDefault(); setSettingsOpen(true); }
       if ((event.key === "i" || event.key === "I") && event.metaKey && event.ctrlKey) { event.preventDefault(); toggleRight(); }
+      if ((event.key === "s" || event.key === "S") && event.metaKey && event.ctrlKey) { event.preventDefault(); toggleRail(); }
+      if ((event.key === "k" || event.key === "K") && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey) { event.preventDefault(); startSearch(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggleRight]);
+  }, [toggleRight, toggleRail, startSearch]);
   const chat = view.chat;
   const results = useMemo<ResultView[]>(() => (chat ? resultLinks(chat.messages) : []), [chat]);
   const watching = view.subagent?.id ?? null;
@@ -112,6 +139,8 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
     void client.request({ type: "result.open", botId: chat.botId, url: result.url }).catch(fail);
   }, [client, chat, fail]);
 
+  useEffect(() => { setSelectedTask(null); }, [chat?.botId]);
+
   // Reading a chat clears its unread count.
   useEffect(() => {
     if (bot && bot.unread > 0) void client.request({ type: "chat.read", botId: bot.id }).catch(() => {});
@@ -119,26 +148,60 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
 
   return (
     <div className="shell" data-ready={view.ready ? "1" : "0"}>
+      {railCollapsed ? (
+        <RailStrip bots={view.bots} pinned={pinned} look={view.settings?.botLook ?? "original"} shown={!site && !watching ? chat?.botId ?? null : null}
+          waiting={(id) => view.waiting.items.some((item) => item.botId === id)}
+          onSelect={selectBot} onMenu={(candidate, x, y) => setMenu({ bot: candidate, x, y })}
+          onExpand={() => toggleRail(false)} onAddProject={addProject} onNewBot={() => { toggleRail(false); setMakingBot(true); }}
+          onSettings={() => setSettingsOpen(true)} />
+      ) : (
       <aside className="rail">
-        <div className="rail-top drag" />
+        <div className="rail-top drag"><RailToggle collapsed={false} onToggle={() => toggleRail(true)} /></div>
+        <div className="rail-search">
+          <Icon name="search" size={13} className="rail-search-icon" />
+          <input ref={search} type="search" placeholder="Search" aria-label="Search bots" value={query} onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") { event.preventDefault(); setQuery(""); search.current?.blur(); focusComposer(); }
+              if (event.key === "Enter") { const first = searchHits(view.bots, pinned, query)[0]; if (first) { selectBot(first.id); setQuery(""); focusComposer(); } }
+            }} />
+          {!query && <span className="rail-search-key" aria-hidden="true">⌘K</span>}
+        </div>
         <nav className="bots" aria-label="Bots">
-          {view.bots.map((candidate) => (
-            <div key={candidate.id} className="bot-entry">
-              <BotRow
-                bot={candidate}
-                look={view.settings?.botLook ?? "original"}
-                selected={!site && candidate.id === chat?.botId && !watching}
-                waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
-                onSelect={() => selectBot(candidate.id)}
-                onMenu={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? (x, y) => setMenu({ bot: candidate, x, y }) : undefined}
-              />
-              <SubagentRows bot={candidate} now={now} watching={chat?.botId === candidate.id ? watching : null}
-                onOpen={(row) => openSubagent(candidate.id, row)} onSettle={(row) => settleSubagent(candidate.id, row, true)} />
-            </div>
-          ))}
-          {view.web && view.web.sites.length > 0 && (
-            <WebRail web={view.web} shown={site?.id ?? null} onOpen={openWeb}
-              onSettle={(siteId, conversationId) => void client.request({ type: "web.settle", site: siteId, conversationId }).catch(fail)} />
+          {query.trim() ? (() => {
+            const hits = searchHits(view.bots, pinned, query);
+            if (!hits.length) return <div className="rail-empty">No bots match</div>;
+            return hits.map((candidate) => (
+              <div key={candidate.id} className="bot-entry">
+                <BotRow bot={candidate} look={view.settings?.botLook ?? "original"} selected={!site && candidate.id === chat?.botId && !watching}
+                  waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
+                  onSelect={() => { selectBot(candidate.id); setQuery(""); focusComposer(); }} />
+              </div>
+            ));
+          })() : (
+            <>
+              {railOrder(view.bots, pinned).map(({ bot: candidate, section }) => (
+                <div key={candidate.id} className="bot-entry">
+                  {section === "pinned" && <h4 className="rail-section">Pinned</h4>}
+                  {section === "rest" && pinned.length > 0 && <div className="rail-rule" />}
+                  <BotRow
+                    bot={candidate}
+                    look={view.settings?.botLook ?? "original"}
+                    selected={!site && candidate.id === chat?.botId && !watching}
+                    waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
+                    onSelect={() => selectBot(candidate.id)}
+                    pinned={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? pinned.includes(candidate.id) : undefined}
+                    onTogglePin={() => togglePin(candidate.id)}
+                    onMenu={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? (x, y) => setMenu({ bot: candidate, x, y }) : undefined}
+                  />
+                  <SubagentRows bot={candidate} now={now} watching={chat?.botId === candidate.id ? watching : null}
+                    onOpen={(row) => openSubagent(candidate.id, row)} onSettle={(row) => settleSubagent(candidate.id, row, true)} />
+                </div>
+              ))}
+              {view.web && view.web.sites.length > 0 && (
+                <WebRail web={view.web} shown={site?.id ?? null} onOpen={openWeb}
+                  onSettle={(siteId, conversationId) => void client.request({ type: "web.settle", site: siteId, conversationId }).catch(fail)} />
+              )}
+            </>
           )}
         </nav>
         {makingBot && <NewBotForm onDone={createBot} busy={creating} />}
@@ -157,6 +220,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
           </div>
         )}
       </aside>
+      )}
       <section className="chat-pane">
         {site && (
           <>
@@ -189,7 +253,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
             <button type="button" onClick={() => void client.request({ type: "rounds.stop", botId: bot.id }).catch(fail)}>Stop now</button>
           </div>
         )}
-        <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} />
+        <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} onSelectTask={selectTask} />
         </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
@@ -202,6 +266,19 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
           bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}
           status={{ key: status(bot), text: statusText(bot) }}
           results={results} teams={view.teams} watching={watching} collapsed={collapsed}
+          tasks={chat?.botId === bot.id ? chat.tasks ?? [] : []} messages={chat?.botId === bot.id ? chat.messages : []}
+          selectedTask={selectedTask} onSelectTask={selectTask}
+          onJumpToTask={(messageId, taskId) => {
+            const target = (document.getElementById("chat-frame") as HTMLIFrameElement | null)?.contentWindow;
+            const message: ShellMessage = { botling: "jumpToTask", messageID: messageId, taskID: taskId };
+            target?.postMessage(message, CHAT_ORIGIN);
+          }}
+          onAskForReport={(task, replyTo) => {
+            // "Ask it to report" (`askForReport`): a short message of yours to the task's owner, on the task's card.
+            const two = bot.heads.length > 1;
+            void client.request({ type: "chat.send", botId: bot.id, text: `How is "${task.name}" going? Please report where it stands.`,
+              ...(replyTo ? { replyTo } : {}), ...(two && task.owner ? { to: task.owner } : {}) }).catch(fail);
+          }}
           onSelect={selectBot}
           onIgnore={(item) => void client.request({ type: "waiting.ignore", botId: item.botId, text: item.text }).catch(fail)}
           onOpenResult={openResult}
@@ -212,7 +289,8 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
         />
       )}
       {bot && !site && <RightToggle collapsed={collapsed} onToggle={toggleRight} />}
-      {menu && <BotMenu bot={menu.bot} at={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)} onRemove={() => { setRemoving(menu.bot); setMenu(null); }} />}
+      {menu && <BotMenu bot={menu.bot} at={{ x: menu.x, y: menu.y }} onClose={() => setMenu(null)} onRemove={() => { setRemoving(menu.bot); setMenu(null); }}
+        pinned={pinned.includes(menu.bot.id)} onTogglePin={() => { togglePin(menu.bot.id); setMenu(null); }} />}
       {removing && <RemoveDialog bot={removing} onCancel={() => setRemoving(null)} onRemove={() => removeBot(removing)} />}
       {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} plugins={view.plugins} onClose={() => setSettingsOpen(false)} />}
     </div>
@@ -234,25 +312,137 @@ function statusText(bot: BotView): string {
   return "Asleep";
 }
 
-function BotRow({ bot, selected, onSelect, look, waiting, onMenu }: { bot: BotView; selected: boolean; onSelect: () => void; look: "original" | "cute"; waiting: boolean; onMenu?: (x: number, y: number) => void }) {
+function BotRow({ bot, selected, onSelect, look, waiting, onMenu, pinned, onTogglePin }: {
+  bot: BotView; selected: boolean; onSelect: () => void; look: "original" | "cute"; waiting: boolean; onMenu?: (x: number, y: number) => void;
+  /** Undefined for a row that cannot be pinned (the main bot, Maintainer). */
+  pinned?: boolean; onTogglePin?: () => void;
+}) {
   const asleep = bot.phase === "asleep" && !bot.working;
-  const label = [bot.name, statusText(bot), bot.approvals ? `${bot.approvals} waiting on you` : waiting ? "waiting on you" : null, bot.unread && !selected ? `${bot.unread} unread` : null].filter(Boolean).join(", ");
+  const tasks = bot.openTasks ?? 0;
+  const label = [bot.name, statusText(bot), bot.approvals ? `${bot.approvals} waiting on you` : waiting ? "waiting on you" : null, bot.unread && !selected ? `${bot.unread} unread` : null,
+    tasks ? `${tasks} task${tasks === 1 ? "" : "s"} under way` : null, pinned ? "pinned" : null].filter(Boolean).join(", ");
   return (
-    <button className={`bot-row${selected ? " selected" : ""}${asleep ? " asleep" : ""}`} data-bot={bot.id} aria-current={selected ? "page" : undefined} aria-label={label} onClick={onSelect}
-      onContextMenu={onMenu ? (event) => { event.preventDefault(); onMenu(event.clientX, event.clientY); } : undefined}>
-      <img className="bot-avatar" src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
-      <span className={`bot-name${bot.role === "main" ? " main" : ""}`}>{bot.name}</span>
-      <span className="bot-gap" />
-      {bot.working && <span className="bot-dot working" aria-hidden="true" />}
-      {bot.approvals > 0 && <span className="badge waiting" aria-hidden="true">{bot.approvals}</span>}
-      {!bot.approvals && waiting && !bot.working && <span className="bot-dot waiting" aria-hidden="true" />}
-      {bot.unread > 0 && !selected && <span className="badge" aria-hidden="true">{bot.unread}</span>}
+    <div className={`bot-row-wrap${pinned !== undefined ? " pinnable" : ""}`}>
+      <button className={`bot-row${selected ? " selected" : ""}${asleep ? " asleep" : ""}`} data-bot={bot.id} aria-current={selected ? "page" : undefined} aria-label={label} onClick={onSelect}
+        onContextMenu={onMenu ? (event) => { event.preventDefault(); onMenu(event.clientX, event.clientY); } : undefined}>
+        <img className="bot-avatar" src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
+        <span className={`bot-name${bot.role === "main" ? " main" : ""}`}>{bot.name}</span>
+        <span className="bot-gap" />
+        {tasks > 0 && <span className="task-count" aria-hidden="true">{tasks} task{tasks === 1 ? "" : "s"}</span>}
+        {bot.working && <span className="bot-dot working" aria-hidden="true" />}
+        {bot.approvals > 0 && <span className="badge waiting" aria-hidden="true">{bot.approvals}</span>}
+        {!bot.approvals && waiting && !bot.working && <span className="bot-dot waiting" aria-hidden="true" />}
+        {bot.unread > 0 && !selected && <span className="badge" aria-hidden="true">{bot.unread}</span>}
+      </button>
+      {pinned !== undefined && onTogglePin && (
+        // The pin glyph at the row's end while the pointer is on it (1.x's BotRow).
+        <button type="button" className={`bot-pin${pinned ? " on" : ""}`} onClick={onTogglePin} title={pinned ? "Unpin" : "Pin to the top"} aria-label={pinned ? `Unpin ${bot.name}` : `Pin ${bot.name}`}>
+          <Icon name={pinned ? "pinSlash" : "pin"} size={12} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** The left column's rows: the main bot, then the pinned ones in the order they were pinned, then the rest as listed (Maintainer last). */
+function railOrder(bots: BotView[], pinned: string[]): { bot: BotView; section: "main" | "pinned" | "rest" | null }[] {
+  const main = bots.filter((bot) => bot.role === "main");
+  const top = pinned.map((id) => bots.find((bot) => bot.id === id)).filter((bot): bot is BotView => !!bot);
+  const rest = bots.filter((bot) => bot.role !== "main" && !pinned.includes(bot.id));
+  return [
+    ...main.map((bot) => ({ bot, section: null })),
+    ...top.map((bot, index) => ({ bot, section: index === 0 ? "pinned" as const : null })),
+    ...rest.map((bot, index) => ({ bot, section: index === 0 ? "rest" as const : null })),
+  ];
+}
+
+/** `RailLayout.matches`: the name, or a project's folder name, contains the query, ignoring case and accents. */
+export function railMatches(query: string, name: string, folder: string | null): boolean {
+  const fold = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+  const wanted = fold(query.trim());
+  if (!wanted) return true;
+  return fold(name).includes(wanted) || (folder !== null && fold(folder).includes(wanted));
+}
+
+/** The rows the search keeps, in the order the column shows them (the main bot, the pinned rows, the rest). */
+function searchHits(bots: BotView[], pinned: string[], query: string): BotView[] {
+  return railOrder(bots, pinned).map((entry) => entry.bot)
+    .filter((bot) => railMatches(query, bot.name, bot.role === "manager" ? bot.folder.split("/").filter(Boolean).pop() ?? null : null));
+}
+
+/** The cursor back in the chat's input box (after the search). */
+function focusComposer() {
+  const target = (document.getElementById("chat-frame") as HTMLIFrameElement | null)?.contentWindow;
+  if (!target) return;
+  target.focus();
+  const message: ShellMessage = { botling: "focus" };
+  target.postMessage(message, CHAT_ORIGIN);
+}
+
+/** The button that folds the left column into a strip of faces and opens it again (1.x's RailToggle, ⌃⌘S). */
+function RailToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+  const label = collapsed ? "Expand sidebar" : "Collapse sidebar";
+  return (
+    <button type="button" className={`rail-toggle${collapsed ? "" : " on"}`} onClick={onToggle} title={`${label} (⌃⌘S)`} aria-label={label} aria-pressed={!collapsed}>
+      <Icon name="sidebarLeft" size={14} />
     </button>
   );
 }
 
+/** The left column folded (1.x's RailStrip): faces only, the pinned ones first; hover for name and status. */
+function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExpand, onAddProject, onNewBot, onSettings }: {
+  bots: BotView[]; pinned: string[]; look: "original" | "cute"; shown: string | null; waiting: (id: string) => boolean;
+  onSelect: (id: string) => void; onMenu: (bot: BotView, x: number, y: number) => void; onExpand: () => void; onAddProject: () => void; onNewBot: () => void; onSettings: () => void;
+}) {
+  const [tip, setTip] = useState<{ bot: BotView; y: number } | null>(null);
+  const [adding, setAdding] = useState(false);
+  const order = railOrder(bots, pinned);
+  const pinnedCount = pinned.length;
+  return (
+    <aside className="rail-strip" aria-label="Bots (folded)">
+      <div className="rail-top drag"><RailToggle collapsed onToggle={onExpand} /></div>
+      <nav className="strip-bots" aria-label="Bots">
+        {order.map(({ bot }, index) => {
+          const asleep = bot.phase === "asleep" && !bot.working;
+          const unread = bot.unread > 0 && bot.id !== shown;
+          const parts = [statusText(bot), waiting(bot.id) ? "waiting on you" : null, unread ? `${bot.unread > 99 ? "99+" : bot.unread} unread` : null].filter(Boolean);
+          return (
+            <div key={bot.id} className="strip-entry">
+              {index === 1 && <div className="strip-rule" />}
+              {pinnedCount > 0 && index === 1 + pinnedCount && <div className="strip-rule short" />}
+              <button type="button" className={`strip-bot${bot.id === shown ? " selected" : ""}${asleep ? " asleep" : ""}${bot.working ? " working" : ""}`} data-bot={bot.id}
+                aria-label={[bot.name, ...parts].join(", ")} onClick={() => onSelect(bot.id)}
+                onMouseEnter={(event) => setTip({ bot, y: event.currentTarget.getBoundingClientRect().top + 20 })} onMouseLeave={() => setTip(null)}
+                onContextMenu={bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID ? (event) => { event.preventDefault(); onMenu(bot, event.clientX, event.clientY); } : undefined}>
+                <img src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
+                {unread && <span className="strip-unread" aria-hidden="true" />}
+              </button>
+            </div>
+          );
+        })}
+      </nav>
+      {tip && (
+        <div className="rail-tip" role="tooltip" style={{ top: tip.y }}>
+          <div className="rail-tip-title">{tip.bot.name}</div>
+          <div className="rail-tip-detail">{[statusText(tip.bot), waiting(tip.bot.id) ? "waiting on you" : null, tip.bot.unread > 0 && tip.bot.id !== shown ? `${tip.bot.unread > 99 ? "99+" : tip.bot.unread} unread` : null].filter(Boolean).join(" · ")}</div>
+        </div>
+      )}
+      <div className="strip-add">
+        <button type="button" className="strip-plus" title="Add a project or a bot" aria-label="Add a project or a bot" aria-expanded={adding} onClick={() => setAdding(!adding)}><Icon name="plus" size={13} /></button>
+        {adding && (
+          <div className="strip-add-menu" role="menu">
+            <button type="button" role="menuitem" onClick={() => { setAdding(false); onAddProject(); }}>Add project…</button>
+            <button type="button" role="menuitem" onClick={() => { setAdding(false); onNewBot(); }}>New bot…</button>
+          </div>
+        )}
+      </div>
+      <button type="button" className="strip-gear" title="Settings" aria-label="Settings" onClick={onSettings}><Icon name="gear" size={14} /></button>
+    </aside>
+  );
+}
+
 /** The reused chat page, in a frame. */
-function ChatFrame({ client, store, onError, onSent }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void }) {
+function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void; onSelectTask: (id: string) => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const ready = useRef(false);
   const view = useSyncExternalStore(store.subscribe, store.getView);
@@ -277,7 +467,7 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
     }
     const { state, extras } = current.subagent ? subagentState(bot, current.subagent) : chatState(bot, chat, new Date(), quoted, {
       components: current.components, board: current.board, look: current.settings?.botLook ?? "original",
-      lang: current.settings?.effectiveLanguage ?? null, chatAvatarSize: current.settings?.chatAvatarSize ?? null,
+      lang: current.settings?.effectiveLanguage ?? null, chatAvatarSize: current.settings?.chatAvatarSize ?? null, bots: current.bots,
     });
     const message: ShellMessage = { botling: "state", state, extras };
     target.postMessage(message, CHAT_ORIGIN);
@@ -306,8 +496,25 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
   useEffect(() => {
     let chatHadFocus = false;
     let lastInput = 0;
+    let lastPointer = 0;
+    let chatLostAt = 0;
     const input = () => { lastInput = Date.now(); };
+    const pointer = () => { lastInput = Date.now(); lastPointer = Date.now(); };
+    // A key that lands on this page's body while focus passes between it and the chat frame (it can
+    // move out and back by itself as the window opens) would go nowhere: it goes to the input box.
+    const strayKey = (event: KeyboardEvent) => {
+      const target = frame.current;
+      if (!target?.contentWindow || (event.target !== document.body && event.target !== document.documentElement)) return;
+      if (!chatLostAt || Date.now() - chatLostAt > 3_000 || lastPointer > chatLostAt) return;
+      if (event.metaKey || event.ctrlKey || event.isComposing || (event.key.length !== 1 && event.key !== "Enter" && event.key !== "Backspace")) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const message: ShellMessage = { botling: "key", key: event.key, code: event.code, shiftKey: event.shiftKey, altKey: event.altKey };
+      target.contentWindow.focus();
+      target.contentWindow.postMessage(message, CHAT_ORIGIN);
+    };
     const onBlur = () => { chatHadFocus = document.activeElement === frame.current; };
+    const onFocusIn = () => { if (chatHadFocus || document.activeElement === document.body) chatLostAt = Date.now(); };
     const onFocus = () => {
       const target = frame.current;
       if (!target || !chatHadFocus || Date.now() - lastInput < 500) return;
@@ -315,15 +522,19 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
       if (active && active !== document.body && active !== target) return;
       setTimeout(() => { if (Date.now() - lastInput >= 500 && document.hasFocus()) target.contentWindow?.focus(); }, 0);
     };
-    window.addEventListener("pointerdown", input, true);
+    window.addEventListener("pointerdown", pointer, true);
+    window.addEventListener("keydown", strayKey, true);
     window.addEventListener("keydown", input, true);
     window.addEventListener("blur", onBlur);
     window.addEventListener("focus", onFocus);
+    window.addEventListener("focus", onFocusIn);
     return () => {
-      window.removeEventListener("pointerdown", input, true);
+      window.removeEventListener("pointerdown", pointer, true);
+      window.removeEventListener("keydown", strayKey, true);
       window.removeEventListener("keydown", input, true);
       window.removeEventListener("blur", onBlur);
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("focus", onFocusIn);
     };
   }, []);
 
@@ -447,6 +658,10 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
           return;
         case "cancelReply":
           setReplying(null);
+          return;
+        // A task chip under a reply: its card opens in the right panel.
+        case "selectTask":
+          if (typeof action.id === "string") onSelectTask(action.id);
           return;
         case "openSubagent": {
           if (!chat || typeof action.id !== "string") return;
@@ -588,7 +803,7 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [client, onError, onSent, push, pushPlugins, store]);
+  }, [client, onError, onSent, onSelectTask, push, pushPlugins, store]);
 
   return <iframe id="chat-frame" ref={frame} src={CHAT_PAGE} title="Chat" />;
 }

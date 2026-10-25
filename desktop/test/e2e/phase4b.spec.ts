@@ -48,11 +48,13 @@ test("New bot, subagent rows and Settled, Results, the folded strip, removing a 
     await sub.locator(".subagent-open").click();
     await expect(sub).toHaveClass(/selected/);
     await expect(page.locator(`.bot-row[data-bot="${MAIN}"]`)).not.toHaveClass(/selected/);
-    // Results: a link the main bot hands over is under "Just done"; main opens it (only this chat's links).
+    // Results: a link the main bot hands over is listed; main opens it (only this chat's links).
     await page.locator(`.bot-row[data-bot="${MAIN}"]`).click();
     await say(chat, "/say Here it is: [Weekly report](https://example.com/report) and [Notes](https://example.com/notes)");
     const results = page.locator(".results-section");
-    await expect(results.locator("h3")).toHaveText("Just done");
+    // Its finished tasks are "Just done" since Phase 4c, so the links are "Results" (1.x: "Just done" only without them).
+    await expect(page.locator(".done-section h3")).toHaveText("Just done");
+    await expect(results.locator("h3")).toHaveText("Results");
     await expect(results.locator(".result-row")).toHaveText(["Weekly report", "Notes"]);
     await results.locator(".result-row", { hasText: "Weekly report" }).click();
     await expect.poll(() => app.evaluate(() => (globalThis as any).__botlingOpenedResults.slice())).toEqual(["https://example.com/report"]);

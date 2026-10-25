@@ -48,10 +48,20 @@ export function chatFrame(page: Page): Promise<Frame> {
 /** Types a message in the chat page's input box and sends it with Return. */
 export async function say(chat: FrameLocator, text: string) {
   const box = chat.getByRole("textbox", { name: "Message" });
-  // Typed once: words typed before the page's first state are kept (composer-race.spec.ts).
+  // Typed once: words typed before the page's first state are kept (composer-race.spec.ts). Typed as
+  // a person types, key by key (Shift-Return for a new line), then Return. Text put in at once
+  // (Playwright's fill, insertText) was lost about one start in a hundred: as the window opens, a
+  // card's frame in the chat loads (it posts its size) and focus leaves the input box for a moment;
+  // text inserted then reached nothing, while keys are handed back to the box (chat-frame/entry.ts,
+  // and since Phase 4c the app page passes on keys that land on it).
   await box.click();
-  await box.fill(text);
-  await box.press("Enter");
+  const keyboard = box.page().keyboard;
+  const lines = text.split("\n");
+  for (const [index, line] of lines.entries()) {
+    if (index > 0) await keyboard.press("Shift+Enter");
+    if (line) await keyboard.type(line);
+  }
+  await keyboard.press("Enter");
 }
 
 /** Posts a raw envelope through the preload bridge and returns the response with that id. */

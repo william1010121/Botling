@@ -36,4 +36,10 @@ export type ShellMessage =
   /** A web part's `ccb.host.call` was answered (`ccb.hostReply`). */
   | { botling: "hostReply"; callID: number; ok: boolean; value: unknown }
   /** A component's `ccb.runDetail` answer (`ccb.detailReply`). */
-  | { botling: "detailReply"; requestID: number; ok: boolean; value: string };
+  | { botling: "detailReply"; requestID: number; ok: boolean; value: string }
+  /** A key that reached the app page while focus was passing between it and the chat frame, for the input box. */
+  | { botling: "key"; key: string; code: string; shiftKey: boolean; altKey: boolean }
+  /** The cursor back in the input box (after the left column's search; `ccb.focus`). */
+  | { botling: "focus" }
+  /** "Jump to chat" on a task's card in the right panel (`ccb.jumpToTask`). */
+  | { botling: "jumpToTask"; messageID: string; taskID: string };

@@ -84,7 +84,7 @@ export function NewBotForm({ onDone, busy }: { onDone: (made: { name: string; jo
 }
 
 /** A row's menu (1.x's contextMenu): "Remove bot…" for a bot of its own, "Remove project…" for a project. */
-export function BotMenu({ bot, at, onRemove, onClose }: { bot: BotView; at: { x: number; y: number }; onRemove: () => void; onClose: () => void }) {
+export function BotMenu({ bot, at, onRemove, onClose, pinned, onTogglePin }: { bot: BotView; at: { x: number; y: number }; onRemove: () => void; onClose: () => void; pinned: boolean; onTogglePin: () => void }) {
   useEffect(() => {
     const close = (event: Event) => { if (!(event.target instanceof Element && event.target.closest(".bot-menu"))) onClose(); };
     const key = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
@@ -95,6 +95,8 @@ export function BotMenu({ bot, at, onRemove, onClose }: { bot: BotView; at: { x:
   }, [onClose]);
   return (
     <div className="bot-menu" role="menu" style={{ left: at.x, top: at.y }}>
+      <button type="button" role="menuitem" className="bot-menu-item" onClick={onTogglePin}>{pinned ? "Unpin" : "Pin"}</button>
+      <div className="bot-menu-rule" />
       <button type="button" role="menuitem" className="bot-menu-item destructive" onClick={onRemove}>{bot.role === "bot" ? "Remove bot…" : "Remove project…"}</button>
     </div>
   );

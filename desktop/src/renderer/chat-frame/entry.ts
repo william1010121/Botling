@@ -151,6 +151,12 @@ window.addEventListener("message", (event: MessageEvent) => {
     void setPlugins(message.specs);
   } else if (message.botling === "hostReply") {
     window.ccb.hostReply(message.callID, message.ok, message.value);
+  } else if (message.botling === "key") {
+    typeStrayKey(message);
+  } else if (message.botling === "focus") {
+    window.ccb.focus();
+  } else if (message.botling === "jumpToTask") {
+    window.ccb.jumpToTask(message.messageID, message.taskID);
   } else if (message.botling === "detailReply") {
     window.ccb.detailReply(message.requestID, message.ok, message.value);
   } else if (message.botling === "response") {
@@ -228,6 +234,18 @@ document.addEventListener("keydown", (event) => {
     key: event.key, code: event.code, shiftKey: event.shiftKey, altKey: event.altKey, bubbles: true, cancelable: true,
   }));
 }, true);
+
+/** A key that reached the app page while focus passed between it and this page: it goes to the input box. */
+function typeStrayKey(key: { key: string; code: string; shiftKey: boolean; altKey: boolean }) {
+  const view = composerView();
+  if (!view) return;
+  view.focus();
+  if (key.key.length === 1) {
+    view.dispatch(view.state.replaceSelection(key.key), { userEvent: "input.type" });
+    return;
+  }
+  view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: key.key, code: key.code, shiftKey: key.shiftKey, altKey: key.altKey, bubbles: true, cancelable: true }));
+}
 
 // Escape stops a reply being written, as in a terminal.
 document.addEventListener("keydown", (event) => {

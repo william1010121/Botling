@@ -15,6 +15,11 @@ const paths: Record<string, string> = {
   sliders: "M3 5h4M10 5h3M3 11h2M8 11h5M7 3.5v3M5 9.5v3",
   check: "M4 8.4l2.6 2.6L12 5.4",
   xmark: "M4.5 4.5l7 7M11.5 4.5l-7 7",
+  sidebarLeft: "M2.5 3.5h11a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1zM6 3.5v9M3 6h1.4M3 8h1.4",
+  pin: "M6 2.5h4l-.6 4 2.1 2.2H4.5l2.1-2.2zM8 8.7v4.8",
+  pinSlash: "M6 2.5h4l-.6 4 2.1 2.2H4.5l2.1-2.2zM8 8.7v4.8M3 3l10 10",
+  search: "M7 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM10 10l3 3",
+  gear: "M8 5.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M3.6 12.4l1.1-1.1M11.3 4.7l1.1-1.1",
 };
 
 export type IconName = keyof typeof paths;

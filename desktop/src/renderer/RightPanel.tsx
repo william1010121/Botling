@@ -7,7 +7,7 @@
 // the face with its status dot (hover for the Now card), an icon per section with a count, each
 // opening that section beside the strip, and the bot's settings at the bottom.
 import { useEffect, useState } from "react";
-import { settledRows, type BotView, type ResultView, type SubagentRowView, type TeamRunView, type WaitingItemView, type WaitingView } from "../contract";
+import { settledRows, type BotView, type MessageView, type ResultView, type SubagentRowView, type TaskView, type TeamRunView, type WaitingItemView, type WaitingView } from "../contract";
 import { avatarURL, faceURL } from "./avatars";
 import { Icon, SubagentMark } from "./icons";
 import { OwnerMark, useMinuteClock } from "./Rail";
@@ -24,6 +24,13 @@ export interface RightPanelProps {
   teams: TeamRunView[];
   /** The subagent shown in the chat's place, if any. */
   watching: string | null;
+  /** The bot's task cards and its chat's lines (for "Jump to chat"), and the card pressed open. */
+  tasks: TaskView[];
+  messages: MessageView[];
+  selectedTask: string | null;
+  onSelectTask: (id: string) => void;
+  onJumpToTask: (messageId: string, taskId: string) => void;
+  onAskForReport: (task: TaskView, replyTo: string | null) => void;
   collapsed: boolean;
   onSelect: (botId: string) => void;
   onIgnore: (item: WaitingItemView) => void;
@@ -41,22 +48,29 @@ export function RightPanel(props: RightPanelProps) {
   return props.collapsed ? <RightStrip {...props} /> : <OpenPanel {...props} />;
 }
 
-function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle }: RightPanelProps) {
+function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching, tasks, messages, selectedTask, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSelectTask, onJumpToTask, onAskForReport }: RightPanelProps) {
   const doing = bot.role === "manager" ? waiting.doing[bot.id] : undefined;
   const items = bot.role === "main" ? waiting.items : [];
   const settled = settledRows(bot.subagentRows);
   const now = useMinuteClock();
+  const active = activeTasks(tasks);
+  const open = openTask(tasks, selectedTask);
+  const waitingTasks = tasks.filter((task) => task.state === "waiting");
+  const finished = finishedTasks(tasks);
+  const card = (task: TaskView) => (
+    <TaskCard key={task.id} task={task} now={now} stale={isStale(task, bot.working, now)} messages={messages}
+      onSelect={onSelectTask} onJump={onJumpToTask} onReport={onAskForReport} />
+  );
   return (
     <aside className="detail-panel" aria-label="Details">
       <div className="detail-head">
         <img className="detail-avatar" src={faceURL(bot, look, { asleep: bot.phase === "asleep" && !bot.working, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
         <span className="detail-name">{bot.name}</span>
       </div>
-      <section className="detail-section">
-        <h3>Now</h3>
+      <section className="detail-section tasks-section">
+        <h3>Tasks</h3>
         <div className="now-card">
           <div className="now-line"><span className="now-dot" data-status={status.key} aria-hidden="true" />{status.text}</div>
-          {doing && <div className="now-doing">{doing}</div>}
           {bot.role === "main" && teams.map((run) => (
             <div key={run.id} className="team-run" title={run.task} data-team={run.name}>
               <img className="team-face" src={avatarURL("cloud")} alt="" />
@@ -65,16 +79,48 @@ function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching,
             </div>
           ))}
         </div>
+        <div className="task-list">
+          {/* A finished task pressed (in Just done, on a chip) shows open on top. */}
+          {open && !active.some((task) => task.id === open.id) && card(open)}
+          {active.slice(0, 6).map((task) => (task.id === open?.id ? card(task)
+            : <TaskRow key={task.id} task={task} now={now} stale={isStale(task, bot.working, now)} onSelect={onSelectTask} />))}
+          {active.length === 0 && (doing ? <div className="now-doing">{doing}</div> : <div className="task-none">Nothing under way</div>)}
+        </div>
       </section>
-      {items.length > 0 && (
+      {(items.length > 0 || waitingTasks.length > 0) && (
         <section className="detail-section">
           <h3>Waiting on you</h3>
-          <WaitingList items={items} bots={bots} look={look} onSelect={onSelect} onIgnore={onIgnore} />
+          {waitingTasks.length > 0 && (
+            <div className="waiting-tasks">
+              {waitingTasks.map((task) => (
+                <button key={task.id} type="button" className="waiting-task" data-task={task.id} onClick={() => onSelectTask(task.id)}>
+                  <span className="task-dot" data-state="waiting" aria-hidden="true" />
+                  <span className="waiting-task-text"><span className="waiting-task-name">{task.name}</span><span className="waiting-task-why">{task.blocked ?? task.now ?? "your reply"}</span></span>
+                  <span className="waiting-chevron" aria-hidden="true">›</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {items.length > 0 && <WaitingList items={items} bots={bots} look={look} onSelect={onSelect} onIgnore={onIgnore} />}
+        </section>
+      )}
+      {finished.length > 0 && (
+        <section className="detail-section done-section">
+          <h3>Just done</h3>
+          <div className="done-tasks">
+            {finished.map((task) => (
+              <button key={task.id} type="button" className="done-task" data-task={task.id} onClick={() => onSelectTask(task.id)}>
+                <span className={`done-mark ${task.state}`} aria-hidden="true">{task.state === "done" ? "✓" : "■"}</span>
+                <span className="done-name">{task.name}</span>
+                <span className="done-time">{taskTime(task.updatedAt, now)}</span>
+              </button>
+            ))}
+          </div>
         </section>
       )}
       {results.length > 0 && (
         <section className="detail-section results-section">
-          <h3>{bot.role === "main" ? "Just done" : "Results"}</h3>
+          <h3>{bot.role === "main" && finished.length === 0 ? "Just done" : "Results"}</h3>
           <div className="result-list">
             {results.slice(0, 3).map((result) => <ResultRow key={`${result.label}\u0000${result.url}`} result={result} onOpen={onOpenResult} />)}
           </div>
@@ -87,6 +133,110 @@ function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching,
         </section>
       )}
     </aside>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Tasks (1.x 1.20's TaskPanel.swift)
+
+/** A running task with no news for this long, nothing of it at work, the bot idle: "May be stuck". */
+const STALE_MS = 10 * 60_000;
+const isStale = (task: TaskView, working: boolean, now: number) => task.state === "running" && !working && !task.atWork && now - new Date(task.updatedAt).getTime() >= STALE_MS;
+
+/** Tasks under way: running (and just sent) first, newest first, then those waiting on you (`TaskSection.active`). */
+export function activeTasks(tasks: TaskView[]): TaskView[] {
+  return tasks.filter((task) => task.state === "pending" || task.state === "running" || task.state === "waiting")
+    .sort((a, b) => ((a.state === "waiting" ? 1 : 0) - (b.state === "waiting" ? 1 : 0)) || (new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()));
+}
+
+/** The task shown open: the one pressed, else the latest running one (`TaskSection.open`). */
+export function openTask(tasks: TaskView[], selected: string | null): TaskView | null {
+  if (selected) { const task = tasks.find((candidate) => candidate.id === selected); if (task) return task; }
+  return tasks.filter((task) => task.state === "running").reduce<TaskView | null>((latest, task) => (!latest || new Date(task.updatedAt) > new Date(latest.updatedAt) ? task : latest), null);
+}
+
+/** The latest finished tasks (`DoneTaskRows.finished`). */
+export function finishedTasks(tasks: TaskView[], limit = 3): TaskView[] {
+  return tasks.filter((task) => task.state === "done" || task.state === "stopped")
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()).slice(0, limit);
+}
+
+/** "00:24" today, "Yesterday", else the short date (`TaskLook.time`). */
+function taskTime(iso: string, now: number): string {
+  const date = new Date(iso);
+  const today = new Date(now);
+  if (date.toDateString() === today.toDateString()) return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const yesterday = new Date(now - 86_400_000);
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/** How a task stands, in a line (`TaskRowView.line`). */
+function taskLine(task: TaskView, stale: boolean, now: number): string {
+  if (stale) return `May be stuck · No news for ${Math.floor((now - new Date(task.updatedAt).getTime()) / 60_000)} min`;
+  switch (task.state) {
+    case "pending": return "New message · waiting for a head";
+    case "waiting": return `Waiting on you: ${task.blocked ?? task.now ?? "your reply"}`;
+    case "running": return task.now ? `Now: ${task.now}` : "Running";
+    case "done": return "Done";
+    case "stopped": return "Stopped";
+  }
+}
+
+const headName = (engine: string) => (engine === "codex" ? "Codex" : "Claude");
+
+/** Its state dot, its name and the head that owns it (`TaskHeader`). */
+function TaskHeader({ task, stale, bold }: { task: TaskView; stale: boolean; bold: boolean }) {
+  return (
+    <span className="task-header">
+      <span className="task-dot" data-state={stale ? "stale" : task.state} aria-hidden="true" />
+      <span className={`task-name${bold ? " bold" : ""}`}>{task.name}</span>
+      {task.state === "pending" ? <span className="task-claiming">Claiming…</span>
+        : task.owner ? <span className="task-owner"><span className="task-owner-dot" data-head={task.owner} aria-hidden="true" />{headName(task.owner)}</span> : null}
+    </span>
+  );
+}
+
+/** A task not open: one line on how it stands; pressed, it opens (`TaskRowView`). */
+function TaskRow({ task, now, stale, onSelect }: { task: TaskView; now: number; stale: boolean; onSelect: (id: string) => void }) {
+  const line = taskLine(task, stale, now);
+  return (
+    <button type="button" className="task-row" data-task={task.id} data-state={stale ? "stale" : task.state} onClick={() => onSelect(task.id)} aria-label={`Task ${task.name}: ${line}`}>
+      <TaskHeader task={task} stale={stale} bold={false} />
+      <span className="task-line">{line}</span>
+    </button>
+  );
+}
+
+/** The open task: what it does now, what comes next and what blocks it, when it started, the way to its latest line (`TaskCardView`). */
+function TaskCard({ task, now, stale, messages, onSelect, onJump, onReport }: {
+  task: TaskView; now: number; stale: boolean; messages: MessageView[];
+  onSelect: (id: string) => void; onJump: (messageId: string, taskId: string) => void; onReport: (task: TaskView, replyTo: string | null) => void;
+}) {
+  const mine = new Set(task.messageIds);
+  const latest = messages.findLast((message) => mine.has(message.id) && message.role !== "user")?.id ?? messages.findLast((message) => mine.has(message.id))?.id ?? null;
+  const started = messages.find((message) => mine.has(message.id))?.time ?? task.updatedAt;
+  const active = task.state === "pending" || task.state === "running" || task.state === "waiting";
+  const field = (label: string, value: string | null, waiting = false) => (
+    <div className="task-field"><span className="task-field-label">{label}</span><span className={`task-field-value${value ? "" : " empty"}${waiting ? " waiting" : ""}`}>{value ?? "—"}</span></div>
+  );
+  return (
+    <div className="task-card" data-task={task.id} data-state={stale ? "stale" : task.state} data-active={active ? "1" : "0"}>
+      <button type="button" className="task-card-head" title="Close" onClick={() => onSelect(task.id)}><TaskHeader task={task} stale={stale} bold /></button>
+      {field("Now", task.now ?? (task.state === "pending" ? "New message · waiting for a head" : null))}
+      {field("Next", task.next)}
+      {field("Blocked", task.blocked, task.state === "waiting")}
+      {stale && (
+        <div className="task-stale">
+          <span>May be stuck</span>
+          <button type="button" className="task-report" onClick={() => onReport(task, latest)}>Ask it to report</button>
+        </div>
+      )}
+      <div className="task-foot">
+        <span>Started {taskTime(started, now)} · updated {taskTime(task.updatedAt, now)}</span>
+        {latest && <button type="button" className="task-jump" onClick={() => onJump(latest, task.id)}>Jump to chat ↗</button>}
+      </div>
+    </div>
   );
 }
 
