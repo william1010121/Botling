@@ -153,15 +153,15 @@ for (const mode of ["state", "229", "ended"] as const) test(`IME candidate Space
       window.addEventListener("keydown", event => (window as any).__candidateKeys.push({ trusted: event.isTrusted, composing: event.isComposing, code: event.keyCode }), true);
     }, mode);
     const cdp = await page.context().newCDPSession(page);
-    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: " ", code: "Space", windowsVirtualKeyCode: mode === "229" ? 229 : 32 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: " ", code: "Space", text: " ", windowsVirtualKeyCode: mode === "229" ? 229 : 32 });
     await page.waitForTimeout(100);
     // Exact text: Playwright's toHaveText(string) hides the erroneous trailing space.
-    expect(await box.textContent()).toBe("中文");
+    expect(await box.textContent()).toBe("中文 ");
     expect(await box.evaluate(() => (window as any).__candidateKeys[0])).toMatchObject({ trusted: true, composing: false, code: mode === "229" ? 229 : 32 });
-    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 229 });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", text: "\r", windowsVirtualKeyCode: 229 });
     await page.waitForTimeout(100);
     await expect(chat.locator(".row.user")).toHaveCount(0);
-    expect(await box.textContent()).toBe("中文");
+    expect(await box.textContent()).toBe("中文 ");
     await box.evaluate(element => element.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "中文" })));
     await cdp.detach();
   } finally { await app.close(); }
@@ -367,4 +367,100 @@ for (const delay of [350, 3_100]) test(`native Electron window blur leaves resel
     await page.keyboard.press("Enter");
     await expect(chat.locator(".row.user .user-bubble")).toHaveText(["aXb"]);
   } finally { await app.close(); }
+});
+
+for (const delay of [0, 3_200]) test(`silent editor DOM swap retains the first printable text (${delay}ms)`, async () => {
+  const {app,page,chat}=await launch();
+  try {
+    const box=chat.getByRole('textbox',{name:'Message'});
+    await box.click();
+    await page.waitForTimeout(delay);
+    await box.evaluate(element=>{
+      // Removing the focused subtree can omit focusout during a renderer replacement.
+      window.addEventListener('focusout',event=>event.stopImmediatePropagation(),{capture:true,once:true});
+      const editor=element.closest('.cm-editor')!,host=editor.parentElement!;
+      editor.remove();host.append(editor);
+    });
+    await page.keyboard.type('Prefix ab');
+    await page.keyboard.press('ArrowLeft');await page.keyboard.type('X');
+    await expect(box).toHaveText('Prefix aXb');
+  }finally{await app.close();}
+});
+
+test('printable body input waits for the replacement editor and preserves order',async()=>{
+  const {app,page,chat}=await launch();
+  try{
+    const box=chat.getByRole('textbox',{name:'Message'});await box.click();
+    const frame=await chatFrame(page);
+    await box.evaluate(element=>{
+      window.addEventListener('focusout',event=>event.stopImmediatePropagation(),{capture:true,once:true});
+      const editor=element.closest('.cm-editor')!;
+      (window as any).__editorReplacement={editor,host:editor.parentElement};editor.remove();
+    });
+    await page.keyboard.type('Prefix ');
+    await frame.evaluate(()=>{const {editor,host}=(window as any).__editorReplacement;host.append(editor);});
+    await page.keyboard.type('ab');await page.keyboard.press('ArrowLeft');await page.keyboard.type('X');
+    await expect(box).toHaveText('Prefix aXb');
+  }finally{await app.close();}
+});
+
+test('one CmdShiftM inserts one formula when native focus restoration is delayed',async()=>{
+  const {app,page,chat}=await launch();
+  try{
+    const box=chat.getByRole('textbox',{name:'Message'});await box.click();
+    await page.keyboard.down('Meta');await page.keyboard.down('Shift');
+    await box.evaluate(element=>{
+      // Native cross-frame activation may not focus the contentDOM in the original keydown task.
+      (element as HTMLElement).focus=()=>{};(element as HTMLElement).blur();
+    });
+    await page.keyboard.press('m');
+    await page.keyboard.up('Shift');await page.keyboard.up('Meta');
+    await expect(box).toHaveText('$$');
+    await box.evaluate(element=>{delete (element as any).focus;});
+  }finally{await app.close();}
+});
+
+test('launch focus recovery honors a prevented original Return',async()=>{
+  const {app,page,chat}=await launch();
+  try{
+    const box=chat.getByRole('textbox',{name:'Message'});await box.click();await box.fill('keep draft');
+    await box.evaluate(element=>{
+      window.addEventListener('keydown',event=>{if(event.isTrusted&&event.key==='Enter')event.preventDefault();},true);
+      (element as HTMLElement).blur();
+    });
+    await page.keyboard.press('Enter');await page.waitForTimeout(150);
+    await expect(chat.locator('.row.user')).toHaveCount(0);await expect(box).toHaveText('keep draft');
+  }finally{await app.close();}
+});
+
+test('iframe reload resets an earlier shell click before native typing',async()=>{
+  const {app,page,chat}=await launch();
+  try{
+    const box=chat.getByRole('textbox',{name:'Message'});
+    await page.getByRole('searchbox',{name:'Search bots'}).click();
+    await box.click();
+    await page.locator('#chat-frame').evaluate(element=>{const frame=element as HTMLIFrameElement;frame.src=frame.src;});
+    await chat.locator('html[data-chat]').waitFor({state:'attached'});
+    await expect(box).toBeFocused();
+    await page.keyboard.type('Prefix ab');await page.keyboard.press('ArrowLeft');await page.keyboard.type('X');
+    await expect(box).toHaveText('Prefix aXb');
+  }finally{await app.close();}
+});
+
+test('iframe load preserves a new explicit shell target',async()=>{
+  const {app,page,chat}=await launch();
+  try{
+    await page.evaluate(()=>{
+      document.addEventListener('load',event=>{
+        if((event.target as HTMLElement)?.id!=='chat-frame')return;
+        const search=document.querySelector<HTMLInputElement>('[aria-label="Search bots"]')!;
+        search.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));search.focus();
+      },true);
+    });
+    await page.locator('#chat-frame').evaluate(element=>{const frame=element as HTMLIFrameElement;frame.src=frame.src;});
+    await chat.locator('html[data-chat]').waitFor({state:'attached'});
+    const search=page.getByRole('searchbox',{name:'Search bots'});
+    await page.keyboard.type('Main');await page.waitForTimeout(200);
+    await expect(search).toBeFocused();await expect(search).toHaveValue('Main');
+  }finally{await app.close();}
 });
