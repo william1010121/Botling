@@ -7,6 +7,7 @@ import { askModels, cachedModels } from "./agent/codex-models";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { Core } from "./server";
+import { claudeSessionExists } from "./claude-files";
 import type { SessionStart, SessionStartCodex } from "./bot";
 import { DEFAULT_ONE_X_PROCESS } from "./store/lock";
 import type { HeadConfig } from "./agent/head";
@@ -154,6 +155,10 @@ function groupTiming(text: string | undefined) {
 const core = new Core({
   dataDir,
   headConfig,
+  // Whether claude kept a session's transcript (only whether one is there). The fake CLI keeps one only under a
+  // CLAUDE_CONFIG_DIR a test gives it: without one, a test never looks in the user's own ~/.claude.
+  claudeSessionExists: (process.env.BOTLING_AGENT ?? "fake") === "claude" || process.env.CLAUDE_CONFIG_DIR ? (session, folder) => claudeSessionExists(session, folder) : () => false,
+  briefTimeoutMs: number(process.env.BOTLING_BRIEF_TIMEOUT_MS, 120_000),
   codexConfig,
   claimWaitMs: number(process.env.BOTLING_CLAIM_WAIT_MS, 20_000),
   // How long a bot answering in another chat waits for a busy one and may take ("busy,named,answer,named" in ms; 1.x's `groupTiming`).

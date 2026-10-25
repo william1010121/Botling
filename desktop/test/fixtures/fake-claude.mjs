@@ -122,6 +122,13 @@ let initSent = false;
 function init() {
   if (initSent) return;
   initSent = true;
+  // Like claude, it keeps the session's transcript under CLAUDE_CONFIG_DIR (only when a test gives one, and
+  // not with --no-session-persistence); Phase 5c's brief looks whether it is there.
+  if (process.env.CLAUDE_CONFIG_DIR && !args.includes("--no-session-persistence") && !args.includes("--fork-session")) {
+    const folder = join(process.env.CLAUDE_CONFIG_DIR, "projects", process.cwd().replace(/[^A-Za-z0-9]/g, "-"));
+    mkdirSync(folder, { recursive: true });
+    appendFileSync(join(folder, `${session.toLowerCase()}.jsonl`), JSON.stringify({ type: "fake", session }) + "\n");
+  }
   out({ type: "system", subtype: "init", session_id: session, tools: [], model: "fake", permissionMode: flag("--permission-mode") ?? "default" });
 }
 
@@ -256,6 +263,13 @@ async function turn(job) {
     await sleep(Number(process.env.FAKE_CLAUDE_SLOW_TIDY_MS ?? 0));
     const text = await stream("OK");
     result(text);
+    return;
+  }
+  // "Make into component" (Phase 5c, 1.x's ComponentBrief): a copy of the session writes Maintainer a brief.
+  if (prompt.startsWith('(App: The user pressed "Make into component"')) {
+    await sleep(Number(process.env.FAKE_CLAUDE_BRIEF_MS ?? 0));
+    const asked = /The user's message that led to it, as the app has it:\n([^\n]*)/.exec(prompt)?.[1] ?? "";
+    result(await stream(process.env.FAKE_CLAUDE_BRIEF ?? `Thinking it over.\n<component-brief>\n1. Purpose: a fake brief (fork=${args.includes("--fork-session")}, kept=${!args.includes("--no-session-persistence")}).\n2. The user's message: ${asked}\n3. Fields: total (number, 3) — From command: wc -l notes.txt\n4. Board command: wc -l notes.txt\n</component-brief>`));
     return;
   }
   // A switch of engine (Phase 5c, 1.x's handoff/resume notes): the handoff goes into memory's "In

@@ -41,6 +41,12 @@ export interface HeadConfig {
   pluginDirs?: string[];
   /** false: nothing is asked about (a temporary team, 1.x's `asksPermission` off): no permission prompt tool. */
   askPermission?: boolean;
+  /** With `resume`: go on in a copy of that session (`--fork-session`), leaving it as it was. */
+  forkSession?: boolean;
+  /** false: its transcript is not kept (`--no-session-persistence`). */
+  persistSession?: boolean;
+  /** Tools it may not use at all (`--disallowedTools`, beside AskUserQuestion when it asks). */
+  disallowedTools?: string[];
 }
 
 /** claude's arguments for a long-lived head (cf. `ClaudeAgentProcess.arguments`). */
@@ -50,12 +56,13 @@ export function headArguments(config: HeadConfig): string[] {
     config.resume ? "--resume" : "--session-id", config.sessionId,
     "--permission-mode", config.harmless ? "default" : "acceptEdits",
   ];
-  if (config.askPermission !== false) {
-    // Approvals are asked on stdout and answered on stdin.
-    args.push("--permission-prompt-tool", "stdio");
-    // Bots ask in the chat; AskUserQuestion would arrive as a permission request with no way to answer it.
-    args.push("--disallowedTools", "AskUserQuestion");
-  }
+  if (config.forkSession && config.resume) args.push("--fork-session");
+  if (config.persistSession === false && !config.harmless) args.push("--no-session-persistence");
+  // Approvals are asked on stdout and answered on stdin.
+  if (config.askPermission !== false) args.push("--permission-prompt-tool", "stdio");
+  // Bots ask in the chat; AskUserQuestion would arrive as a permission request with no way to answer it.
+  const disallowed = [...new Set([...(config.askPermission !== false ? ["AskUserQuestion"] : []), ...(config.disallowedTools ?? [])])];
+  if (disallowed.length) args.push("--disallowedTools", disallowed.join(","));
   const allowed = config.harmless ? [] : config.allowedTools;
   if (allowed.length) args.push("--allowedTools", allowed.join(","));
   if (config.model) args.push("--model", config.model);

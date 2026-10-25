@@ -35,6 +35,62 @@ async function say(c: CoreHarness, botId: string, text: string) {
 const reply = async (c: CoreHarness, text: string) => (await c.chat()).messages.findLast((m: any) => m.role === "bot" && m.text === text);
 
 describe("component specs (Workspace+Specs.swift)", () => {
+  it("Make into component with the writer's session still there: a read-only fork writes Maintainer a brief first (1.x's ComponentBrief)", async () => {
+    const dir = tempDir("specs-brief");
+    const config = join(dir, "claude-config");
+    const c = core(dir, { CLAUDE_CONFIG_DIR: config, FAKE_CLAUDE_LOG: join(dir, "start.log"), FAKE_CLAUDE_BRIEF_MS: "200" });
+    await say(c, MAIN, "/say Your 3 tests: 2 passed, 1 failed.");
+    const line = await reply(c, "Your 3 tests: 2 passed, 1 failed.");
+    const session = String(line.session ?? JSON.parse(readFileSync(join(dir, "main", "chat.json"), "utf8")).find((m: any) => m.id === line.id).session).toLowerCase();
+    const { specId } = await c.call({ type: "spec.make", botId: MAIN, messageId: line.id });
+    // While the fork writes, the spec says so; Maintainer has nothing yet.
+    const asked = await until(() => { try { const spec = JSON.parse(readFileSync(join(dir, "main", "specs.json"), "utf8"))[0]; return spec?.conversation?.length ? spec : null; } catch { return null; } });
+    expect(asked.conversation).toEqual([{ kind: "event", text: "Asked a copy of Main bot's session for a brief for Maintainer" }]);
+    const relay = await until(async () => (await c.chat(MAINTAINER)).messages.find((m: any) => m.role === "relay"), { timeout: 10_000, what: "the request with its brief" });
+    expect(relay.text).toContain(`(Component spec ${specId}; action: build-first)`);
+    expect(relay.text).toContain("Main bot's brief for you (written by a copy of the session that wrote the reply, so it knows what it did and which commands it ran):\n1. Purpose: a fake brief (fork=true, kept=false).\n2. The user's message: /say Your 3 tests: 2 passed, 1 failed.");
+    expect(relay.text).not.toContain("Thinking it over.");
+    const spec = JSON.parse(readFileSync(join(dir, "main", "specs.json"), "utf8"))[0];
+    expect(spec.brief).toMatch(/^1\. Purpose: a fake brief/);
+    expect(spec.conversation.map((entry: any) => entry.text)).toEqual(["Asked a copy of Main bot's session for a brief for Maintainer", "Sent to Maintainer with Main bot's brief to build the first version"]);
+    // The fork: the bot's own session resumed as a copy, read-only, nothing kept, asking nothing (1.x's launch).
+    const starts = lines(join(dir, "start.log")).filter((start) => start.args.includes("--fork-session"));
+    expect(starts).toHaveLength(1);
+    const args = starts[0].args as string[];
+    expect(args[args.indexOf("--resume") + 1]).toBe(session);
+    expect(args).toContain("--no-session-persistence");
+    expect(args[args.indexOf("--allowedTools") + 1]).toBe("Read,Grep,Glob");
+    expect(args[args.indexOf("--disallowedTools") + 1]).toBe("Bash,Write,Edit,NotebookEdit,Agent,Task,WebFetch,WebSearch,AskUserQuestion");
+    expect(args).not.toContain("--permission-prompt-tool");
+    expect(args[args.indexOf("--append-system-prompt") + 1]).toBe("This is a read-only copy of your session, asked by the Botling app for a component brief. Change nothing.");
+    // What it was asked (1.x's words), and nothing showed in the bot's own chat.
+    const prompt = texts(dir).find((text) => text.startsWith('(App: The user pressed "Make into component" on your reply from '))!;
+    expect(prompt).toContain('("Your 3 tests: 2 passed, 1 failed."). Maintainer, who builds the app\'s chat components');
+    expect(prompt).toContain("The user's message that led to it, as the app has it:\n/say Your 3 tests: 2 passed, 1 failed.\nAnswer with only <component-brief>");
+    expect((await c.chat()).messages.filter((m: any) => m.role === "bot").map((m: any) => m.text)).toEqual(["Your 3 tests: 2 passed, 1 failed."]);
+  });
+
+  it("no brief when claude no longer has the session, or the fork gives none: the request goes without one", async () => {
+    const dir = tempDir("specs-nobrief");
+    const config = join(dir, "claude-config");
+    const c = core(dir, { CLAUDE_CONFIG_DIR: config, FAKE_CLAUDE_BRIEF: "<component-brief>  </component-brief>" });
+    await say(c, MAIN, "/say First list.");
+    await say(c, MAIN, "/say Second list.");
+    const first = await reply(c, "First list.");
+    const { specId } = await c.call({ type: "spec.make", botId: MAIN, messageId: first.id });
+    const relay = await until(async () => (await c.chat(MAINTAINER)).messages.find((m: any) => m.role === "relay" && m.text.includes(specId)), { timeout: 10_000 });
+    expect(relay.text).not.toContain("brief for you");
+    expect(JSON.parse(readFileSync(join(dir, "main", "specs.json"), "utf8"))[0].conversation.map((entry: any) => entry.text))
+      .toEqual(["Asked a copy of Main bot's session for a brief for Maintainer", "Main bot gave no brief; sent to Maintainer to build the first version"]);
+    // The transcript gone: not even asked.
+    const { rmSync } = await import("node:fs");
+    rmSync(join(config, "projects"), { recursive: true, force: true });
+    const second = await reply(c, "Second list.");
+    await c.call({ type: "spec.make", botId: MAIN, messageId: second.id });
+    const specs = await until(() => { const saved = JSON.parse(readFileSync(join(dir, "main", "specs.json"), "utf8")); return saved.length === 2 ? saved : null; });
+    expect(specs[1].conversation).toEqual([{ kind: "event", text: "Sent to Maintainer to build the first version" }]);
+  });
+
   it("Make into component: Maintainer builds the first version; it lands, goes on the bot's list, and the bot draws it under its reply", async () => {
     const dir = tempDir("specs");
     const c = core(dir);
