@@ -259,9 +259,9 @@ export function importFrom1x(sourceDir: string, targetDir: string): ImportReport
     }
   }
   if (webFiles) report.skipped.push("web AIs' sign-ins (sign in again in each site; their saved conversations came over)");
-  for (const folder of ["runs", "teams"]) {
-    if (existsSync(join(source, folder))) report.skipped.push(`${folder}/ (not used by 2.0 yet)`);
-  }
+  // Past teams' folders stay in 1.x; the teams themselves are the ccb-teams plugin's agents (imported above).
+  if (existsSync(join(source, "runs"))) report.skipped.push("runs/ (past temporary teams' folders; they stay in 1.x)");
+  if (existsSync(join(source, "teams"))) report.skipped.push("teams/ (1.x's old team files; the teams are the ccb-teams plugin's)");
 
   write(Layout.projectsFile(target), JSON.stringify(projects));
   // Last: its presence means the import finished.
