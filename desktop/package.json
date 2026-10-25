@@ -15,7 +15,12 @@
     "test:e2e": "node build.mjs && playwright test",
     "test:live": "node build.mjs && BOTLING_LIVE_CLAUDE=1 vitest run test/live",
     "test:live:codex": "node build.mjs && BOTLING_LIVE_CODEX=1 vitest run test/live/codex.test.ts",
-    "test:live:3a": "node build.mjs && BOTLING_LIVE_PHASE3A=1 vitest run test/live/phase3a.test.ts"
+    "test:live:3a": "node build.mjs && BOTLING_LIVE_PHASE3A=1 vitest run test/live/phase3a.test.ts",
+    "dist:mac": "node scripts/package.mjs --mac",
+    "dist:dir": "node scripts/package.mjs --dir",
+    "dist:win": "node scripts/package.mjs --win",
+    "dist:linux": "node scripts/package.mjs --linux",
+    "test:packaged": "playwright test -c playwright.packaged.config.ts"
   },
   "dependencies": {
     "@codemirror/commands": "6.9.0",
@@ -28,12 +33,15 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
+    "@electron/fuses": "1.8.0",
     "@playwright/test": "1.64.0",
     "@types/markdown-it": "14.1.2",
     "@types/node": "24.13.6",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "electron": "44.9.3",
+    "electron-builder": "26.17.0",
     "esbuild": "0.28.2",
     "typescript": "5.9.3",
     "vitest": "4.1.12"

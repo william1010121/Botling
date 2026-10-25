@@ -4,3 +4,5 @@ out/
 .tmp/
 test-results/
 playwright-report/
+.cache/
+dist/
