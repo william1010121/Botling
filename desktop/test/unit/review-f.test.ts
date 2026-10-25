@@ -4,7 +4,9 @@ import {join,dirname} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import * as state from '../../src/main/update-state';
 import {Command} from '../../src/contract';
-import {tempDir} from '../helpers';
+import {tempDir,until} from '../helpers';
+import {spawn} from 'node:child_process';
+import {once} from 'node:events';
 const bases:string[]=[];afterEach(()=>{for(const b of bases.splice(0))rmSync(b,{recursive:true,force:true});});
 function fixture(code=19){const base=tempDir('review-f'),data=join(base,'data'),target=join(base,'Botling 2.app'),root=join(base,'.botling-update-f'),token=randomUUID();bases.push(base);for(const p of [data,target,root])mkdirSync(p,{recursive:true});mkdirSync(join(data,'core/main'),{recursive:true});writeFileSync(join(data,'core/settings.json'),'{}');writeFileSync(join(data,'core/main/chat.json'),'[]');writeFileSync(join(root,'owner.json'),JSON.stringify({target,dataDir:data,token}));writeFileSync(join(root,'result'),'failed:'+code);return{base,data,target,root,token,issue:state.issueFor(data,target,root,code,token)};}
 function snapshot(f:ReturnType<typeof fixture>){cpSync(f.data,join(f.root,'data-before'),{recursive:true});writeFileSync(join(f.root,'snapshot.complete'),'complete');}
@@ -18,3 +20,47 @@ it('F6 does not rewrite an unchanged recovery failure record on repeated startup
 it('F6 detects a local data symlink into an absent volume without following it into mkdir',()=>{const f=fixture(),link=join(f.base,'linked-data');symlinkSync('/Volumes/definitely-not-mounted-botling-test/data',link);expect(state.dataVolumeError(link)).toMatch(/volume.*unavailable/i);expect(existsSync('/Volumes/definitely-not-mounted-botling-test')).toBe(false);});
 it('F1 Settings can enumerate and explicitly manage retained copies',()=>{expect(Command.safeParse({type:'updates.copies'}).success).toBe(true);expect(Command.safeParse({type:'updates.deleteCopy',id:'a'.repeat(64)}).success).toBe(true);});
 it('F4 canceled/error recovery renders reuse the same window identity',async()=>{const mod=await import('../../src/main/recovery-window').catch(()=>null);expect(mod).not.toBeNull();let created=0;const host=new mod!.RecoveryWindowHost();const factory=()=>({id:++created,isDestroyed:()=>false});expect(host.get(factory)).toBe(host.get(factory));expect(created).toBe(1);});
+it('F1 success keeps data discoverable at an old app location and only removes a proven obsolete previous app',async()=>{
+ const {rememberRetained,retainedUpdateCopies,canRemovePrevious}=await import('../../src/main/update-copies');const {recoverUpdates}=await import('../../src/main/update-install');
+ const f=fixture(0);snapshot(f);mkdirSync(join(f.root,'previous.app'));writeFileSync(join(f.root,'result'),'booted');writeFileSync(join(f.root,'activated.ok'),f.token);
+ expect(await canRemovePrevious(f.issue,[f.target])).toBe(false);
+ writeFileSync(join(f.data,'update-last-boot.json'),JSON.stringify({token:f.token,activated:true}));
+ expect(await canRemovePrevious(f.issue,[join(f.root,'previous.app'),f.target])).toBe(false);
+ expect(await canRemovePrevious(f.issue,[f.target])).toBe(true);
+ await rememberRetained(f.data,f.root,f.target);const moved=join(f.base,'moved/Botling 2.app');mkdirSync(moved,{recursive:true});
+ const copies=await retainedUpdateCopies(f.data,moved,[]);expect(copies.map(c=>c.role)).toContain('snapshot');expect(copies.find(c=>c.role==='snapshot')!.bytes).toBeGreaterThan(0);
+ // Actual collection with no running good target conservatively keeps previous.app and data.
+ await recoverUpdates(f.data,f.target);expect(existsSync(join(f.root,'data-before'))).toBe(true);expect(existsSync(join(f.root,'previous.app'))).toBe(true);
+});
+it('F1 Settings deletes only the selected owner-derived copy, keeps newer data, and refuses unknown ids',async()=>{
+ const {retainedUpdateCopies,deleteRetainedUpdateCopy}=await import('../../src/main/update-copies');const f=fixture(0);snapshot(f);writeFileSync(join(f.root,'result'),'booted');
+ const after=f.data+'.update-after-'+f.token;cpSync(f.data,after,{recursive:true});writeFileSync(join(after,'core/main/chat.json'),'[{"id":"newer"}]');
+ const copies=await retainedUpdateCopies(f.data,f.target,[]),before=copies.find(c=>c.role==='snapshot')!;
+ expect(copies.find(c=>c.role==='newer')!.path).toBe(after);await expect(deleteRetainedUpdateCopy(f.data,f.target,'0'.repeat(64),[])).rejects.toThrow(/changed/);
+ await deleteRetainedUpdateCopy(f.data,f.target,before.id,[]);expect(existsSync(before.path)).toBe(false);expect(existsSync(after)).toBe(true);
+});
+it('F2 a legacy pre-candidate failure needs complete path provenance; directory existence alone is insufficient',async()=>{
+ const f=fixture(22);await expect(state.validateRestoredData(f.issue)).rejects.toThrow(/original|match/);
+ writeFileSync(join(f.root,'recovery.json'),JSON.stringify({dataDir:f.data,before:join(f.root,'data-before')}));await expect(state.validateRestoredData(f.issue)).resolves.toEqual(expect.any(String));
+ writeFileSync(join(f.root,'new.pid'),'99999999');await expect(state.validateRestoredData(f.issue)).rejects.toThrow(/original|match/);
+});
+it('F2 captures persistent provenance before creating data and preserves it through invalid-receipt recovery',async()=>{
+ const f=fixture(25);rmSync(join(f.data,'core'),{recursive:true});expect(state.persistentDataIdentity(f.data)).toBeUndefined();mkdirSync(join(f.data,'core'));writeFileSync(join(f.data,'core/settings.json'),'{}');
+ const identity=state.persistentDataIdentity(f.data);expect(identity).toBeTruthy();rmSync(join(f.root,'result'));rmSync(f.root,{recursive:true});
+ expect(await state.commitUpdateReceipt(f.data,f.target,'2.0.1',['--botling-update-token='+f.token],identity)).toBe('blocked');
+ const issue=state.blockingRecovery(f.data,f.target)!;expect(issue.originalDataIdentity).toBe(identity);await state.completeRecovery(f.data,f.target,issue.id);expect(state.blockingRecovery(f.data,f.target)).toBeNull();
+});
+it('F3 core bytes remain meaningful: same-length changed messages fail despite ignored Finder files',async()=>{
+ const f=fixture();writeFileSync(join(f.data,'core/main/chat.json'),'[{"a":1}]');snapshot(f);writeFileSync(join(f.data,'core/main/chat.json'),'[{"a":2}]');await expect(state.validateRestoredData(f.issue)).rejects.toThrow(/match/);
+});
+it('F3 busy recovery rendering exposes progress and suppresses actionable links',()=>{const f=fixture();const html=state.recoveryHTML(f.issue,undefined,[],'Comparing core data');expect(html).toContain('role="status"');expect(html).toContain('Comparing core data');expect(html).not.toContain('href="botling-recovery:');});
+it('F4 a closed recovery window is recreated once, while canceled/error redraws preserve the live identity',async()=>{const {RecoveryWindowHost}=await import('../../src/main/recovery-window');let dead=false,created=0;const host=new RecoveryWindowHost<{id:number;isDestroyed():boolean}>();const create=()=>({id:++created,isDestroyed:()=>dead});host.get(create);dead=true;host.get(create);expect(created).toBe(2);dead=false;expect(host.get(create).id).toBe(2);});
+it('F6 a new failure remains visible after an earlier failure was dismissed',async()=>{const f=fixture(14);await state.recordIssue(f.issue);await state.dismissRecovery(f.data,f.issue.id);expect(state.visibleRecovery(f.data).recoveryError).toBeNull();const newer=state.issueFor(f.data,f.target,f.root,12,'new-token',f.issue.at+1);await state.recordIssue(newer);expect(state.visibleRecovery(f.data).recoveryId).toBe(newer.id);});
+
+it('F1 native collection removes only a nonrunning previous app after real commit and activation evidence',async()=>{
+ const {recoverUpdates}=await import('../../src/main/update-install');const f=fixture(0);snapshot(f);mkdirSync(join(f.root,'previous.app'));writeFileSync(join(f.root,'result'),'booted');writeFileSync(join(f.root,'activated.ok'),f.token);writeFileSync(join(f.data,'update-last-boot.json'),JSON.stringify({token:f.token,activated:true}));
+ const exe=join(f.target,'Contents/MacOS/SyntheticSleep');mkdirSync(dirname(exe),{recursive:true});cpSync('/bin/sleep',exe);const child=spawn(exe,['30'],{stdio:'ignore'}),ended=once(child,'exit');
+ try{const {runningAppBundles}=await import('../../src/main/update-install');await until(async()=>(await runningAppBundles()).includes(f.target));await recoverUpdates(f.data,f.target);expect(existsSync(join(f.root,'previous.app'))).toBe(false);expect(existsSync(join(f.root,'data-before/core/settings.json'))).toBe(true);expect(existsSync(join(f.data,'update-retained'))).toBe(true);}
+ finally{child.kill('SIGTERM');await ended;}
+});
+it('F1 active transactions and a missing live core cannot authorize copy deletion',async()=>{const {retainedUpdateCopies,deleteRetainedUpdateCopy}=await import('../../src/main/update-copies');const f=fixture(0);snapshot(f);writeFileSync(join(f.root,'helper.pid'),String(process.pid));let copies=await retainedUpdateCopies(f.data,f.target,[]);expect(copies.every(copy=>!copy.deletable)).toBe(true);await expect(deleteRetainedUpdateCopy(f.data,f.target,copies[0]!.id,[])).rejects.toThrow(/running/);rmSync(join(f.root,'helper.pid'));copies=await retainedUpdateCopies(f.data,f.target,[]);rmSync(join(f.data,'core'),{recursive:true});await expect(deleteRetainedUpdateCopy(f.data,f.target,copies[0]!.id,[])).rejects.toThrow(/unavailable/);expect(existsSync(join(f.root,'data-before'))).toBe(true);});

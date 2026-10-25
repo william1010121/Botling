@@ -1,4 +1,4 @@
-import { UpdateActions } from "./Updates";
+import { UpdateActions,RecoveryCopies } from "./Updates";
 // The Settings window (1.x's SettingsWindow.swift) as a sheet over the app: its sections in 1.x's order
 // and words, for what 2.0's core does. Everything here is global (settings.json) except "This bot",
 // which is the shown bot's own bot.json (1.x keeps those on the bot's page beside the chat). Each
@@ -167,7 +167,7 @@ function Updates({ client, settings, change }: { client: Client; settings: Setti
     : state?.checkedAt ? `Botling ${state.current} is the newest (looked ${new Date(state.checkedAt).toLocaleString()}).`
     : `This is Botling ${state?.current ?? "2"}; not looked yet.`;
   return (
-    <Group title="Updates" note="Botling checks GitHub Releases every 6 hours by default. Downloads must match an Ed25519-signed version, SHA-256 and size. The app changes only after Restart to update; the previous copy is retained until the new version boots.">
+    <Group title="Updates" note="Botling checks GitHub Releases every 6 hours by default. Downloads must match an Ed25519-signed version, SHA-256 and size. The app changes only after Restart to update; the previous app may be removed after the new version commits and activates. User-data copies remain until you explicitly delete them below.">
       <Toggle label="Check for updates" hint="GitHub Releases; installation requires your restart click" checked={settings.updateCheck} onChange={(value) => change({ key: "updateCheck", value })} />
       <Row label="Status" hint={line}>
         <span className="settings-actions">
@@ -176,6 +176,7 @@ function Updates({ client, settings, change }: { client: Client; settings: Setti
           {found && <button type="button" onClick={() => void client.request({ type: "updates.open" }).catch(() => {})}>Open release page</button>}
         </span>
       </Row>
+      <RecoveryCopies client={client} />
     </Group>
   );
 }

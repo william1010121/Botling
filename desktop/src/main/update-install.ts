@@ -11,6 +11,7 @@ import { execFile, spawn } from "node:child_process";
 import { compareVersions, parseVersion, RELEASE_PAGE } from "./updates";
 import { trustKey, verifyManifest, type Manifest } from "../../scripts/release-manifest.mjs";
 import {readSmallJSON,validRoot,processAlive,issueFor,recordIssue,visibleRecovery,writeRecord,recoveryAccepted,recoveryCode,UPDATE_RECORDS} from "./update-state";
+import {rememberRetained,canRemovePrevious} from "./update-copies";
 import type { ReleaseView } from "../contract";
 
 export interface InstallOptions {
@@ -136,7 +137,7 @@ snapshot_data() {
   for entry in "$data"/* "$data"/.[!.]* "$data"/..?*; do
     [ -e "$entry" ] || [ -L "$entry" ] || continue
     name="\${entry##*/}"
-    case "$name" in update-pending.json|update-recovery.json|update-dismissed.json|update-recovered.json|update-last-boot.json|update-orphan-commit.json|update-cleanup|update-diagnostics) continue;; esac
+    case "$name" in update-pending.json|update-recovery.json|update-dismissed.json|update-recovered.json|update-last-boot.json|update-orphan-commit.json|update-cleanup|update-diagnostics|update-retained) continue;; esac
     if [ "$name" = electron ] && [ -d "$entry" ] && [ ! -L "$entry" ]; then copy_profile "$entry" "$root/data-before/electron" || return 1
     else copy_one "$entry" "$root/data-before/$name" || return 1; fi
   done
@@ -188,7 +189,7 @@ finish() {
     elif ! space_for "$root/data-before" "\${data%/*}"; then code=19
     elif ! /usr/bin/ditto "$root/data-before" "$restore"; then
       code=19
-    elif ! /bin/rm -rf "$restore/update-pending.json" "$restore/update-recovery.json" "$restore/update-dismissed.json" "$restore/update-recovered.json" "$restore/update-last-boot.json" "$restore/update-orphan-commit.json" "$restore/update-cleanup" "$restore/update-diagnostics"; then code=19
+    elif ! /bin/rm -rf "$restore/update-pending.json" "$restore/update-recovery.json" "$restore/update-dismissed.json" "$restore/update-recovered.json" "$restore/update-last-boot.json" "$restore/update-orphan-commit.json" "$restore/update-cleanup" "$restore/update-diagnostics" "$restore/update-retained"; then code=19
     elif [ -e "$data" ] && ! /bin/mv "$data" "$after"; then code=20
     elif ! /bin/mv "$restore" "$data"; then
       if [ -e "$after" ]; then /bin/mv "$after" "$data" || true; fi
@@ -215,7 +216,7 @@ done
 n=0
 while kill -0 "$parent" 2>/dev/null; do n=$((n+1)); [ "$n" -lt "$parent_attempts" ] || exit 10; /bin/sleep 0.1; done
 [ ! -e "$previous" ] || exit 11
-if [ -n "$data" ] && [ -d "$data" ]; then snapshot_data || exit 18; snapshot=1; fi
+if [ -n "$data" ] && [ -d "$data" ]; then /usr/bin/stat -f '%d:%i' "$data" > "$root/original-data.identity" || exit 18; snapshot_data || exit 18; snapshot=1; fi
 /bin/mv "$target" "$previous" || exit 14
 moved=1
 /bin/mv "$staged" "$target" || exit 12
@@ -425,9 +426,11 @@ async function sweepUpdates(dataDir:string,target:string,collect:boolean):Promis
    removals.push(await removeTree(path));
   }
   const token=c.token;
+  const issue=issueFor(dataDir,target,root,0,token);
+  if(await canRemovePrevious(issue,running)&&!processAlive(await readText(join(root,'helper.pid'))))removals.push(await removeTree(join(root,'previous.app')));
   const protectedCopy=['data-before','previous.app','failed.app'].some(name=>existsSync(join(root,name)))||
    typeof token==='string'&&['after','restore'].some(kind=>existsSync(`${dataDir}.update-${kind}-${token}`));
-  if(protectedCopy)await writeRecord(join(root,'retained.json'),{at:Date.now(),dataDir,target,token,result:c.result});
+  if(protectedCopy){await rememberRetained(dataDir,root,target);await writeRecord(join(root,'retained.json'),{at:Date.now(),dataDir,target,token,result:c.result});}
   else if(!running.some(bundle=>bundle===root||bundle.startsWith(root+sep)))removals.push(await removeTree(root));
   return removals;
  }
@@ -480,7 +483,7 @@ async function sweepUpdates(dataDir:string,target:string,collect:boolean):Promis
   if(result==='booted'&&processAlive(candidate)&&!existsSync(join(root,'activated.ok')))continue;
   if(!result&&(processAlive(owner?.pid)||processAlive(candidate)))continue;
   let tail='';try{const f=await fs.open(join(root,'boot.log'),constants.O_RDONLY|constants.O_NOFOLLOW);try{const stat=await f.stat(),bytes=Buffer.alloc(Math.min(8192,stat.size));await f.read(bytes,0,bytes.length,Math.max(0,stat.size-bytes.length));tail=bytes.toString('base64');}finally{await f.close();}}catch{}
-  if(existsSync(join(root,'retained.json'))){await clearPending(root);continue;}
+  if(existsSync(join(root,'retained.json'))){await rememberRetained(dataDir,root,target);if(await canRemovePrevious(issueFor(dataDir,target,root,0,token),await runningAppBundles()))await removeTree(join(root,'previous.app'));await clearPending(root);continue;}
   const garbageName='.botling-update-gc-'+createHash('sha256').update(root).digest('hex').slice(0,32),file=join(claims,garbageName+'.json');
   const claim={root:garbageName,source:name,target,dataDir,result:result||'orphan',helper,cleanupPid:Number(await readText(join(root,'cleanup.pid'))),collectorPid:process.pid,token,tailBase64:tail,failure:code?issueFor(dataDir,target,root,code,token).message:null};
   if(!existsSync(dataDir)){await prune(root,claim);continue;}

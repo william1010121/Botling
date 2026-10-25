@@ -625,6 +625,9 @@ export const UpdateView = z.strictObject({
 });
 export type UpdateView = z.infer<typeof UpdateView>;
 
+/** Recovery copies are local and retained until a specific, confirmed deletion. */
+export interface RetainedUpdateCopy {id:string;path:string;bytes:number;kind:'data'|'app';role:'snapshot'|'newer'|'restore'|'previous-app'|'failed-app';deletable:boolean;reason:string|null}
+
 /** Tokens (1.x's `TokenUsage`). */
 const TokensView = z.strictObject({ input: z.number().int().nonnegative(), output: z.number().int().nonnegative(), cacheWrite: z.number().int().nonnegative(), cacheRead: z.number().int().nonnegative() });
 /** One limit: 0…1 used, when it starts over and when the reading came (ms since 1970). */
@@ -898,6 +901,8 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("updates.open") }),
   z.strictObject({ type: z.literal("updates.stage") }),
   z.strictObject({ type: z.literal("updates.restart") }),
+  z.strictObject({type:z.literal("updates.copies")}),
+  z.strictObject({type:z.literal("updates.deleteCopy"),id:z.string().regex(/^[a-f0-9]{64}$/)}),
   z.strictObject({ type: z.literal("updates.dismiss"), id:z.string().min(1).max(200) }),
   /** A bot's own choices (bot.json). */
   z.strictObject({ type: z.literal("bot.settings"), botId }),
@@ -961,10 +966,10 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
-  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.dismiss", "usage.view",
+  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss", "usage.view",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "link.open", "component.report", "chat.feedback", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.dismiss"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "link.open", "component.report", "chat.feedback", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss"]);
 
 /** A temporary team at work (1.x's `TeamRun`): its title, the task, when it started (ms since 1970). */
 export const TeamRunView = z.strictObject({ id, name: z.string().max(200), title: z.string().max(200), task: z.string().max(4_000), startedAt: z.number() });
@@ -1085,6 +1090,8 @@ export interface Results {
   "updates.stage": UpdateView;
   "updates.restart": { restarting: boolean };
   "updates.dismiss": {dismissed:boolean};
+  "updates.copies": RetainedUpdateCopy[];
+  "updates.deleteCopy": {deleted:boolean};
   "boot.commit": Record<string, never>;
   "bot.settings": BotSettingsView;
   "bot.configure": BotSettingsView;

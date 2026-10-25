@@ -113,7 +113,7 @@ for(const mode of ['receipt','crash'] as const)test(`A3 real signed ZIP → expl
   expect(readdirSync(join(data,'update-cleanup'))).toEqual([]);
   const cleanupLogs=readdirSync(join(data,'update-diagnostics')).map(n=>JSON.parse(readFileSync(join(data,'update-diagnostics',n),'utf8')));
   expect(cleanupLogs.some(log=>log.phase==='complete'&&log.nativePid>0&&log.completedAt>=log.startedAt&&log.removals.every((item:any)=>item.completedAt<=log.completedAt))).toBe(true);
-  expect(existsSync(join(root,'retained.json'))).toBe(true);expect(existsSync(join(root,'data-before'))).toBe(true);expect(existsSync(join(root,'download.zip'))).toBe(false);if(mode==='receipt')expect(existsSync(join(root,'previous.app'))).toBe(true);expect(existsSync(join(data,'update-pending.json'))).toBe(false);
+  expect(existsSync(join(root,'retained.json'))).toBe(true);expect(existsSync(join(root,'data-before'))).toBe(true);expect(existsSync(join(root,'download.zip'))).toBe(false);if(mode==='receipt')expect(existsSync(join(root,'previous.app'))).toBe(false);expect(existsSync(join(data,'update-pending.json'))).toBe(false);
   execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',target]);
   const survivors=pids(target);expect(survivors.length).toBeGreaterThan(0);
   await browser.close();browser=null;

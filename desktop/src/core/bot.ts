@@ -3276,7 +3276,11 @@ export class Bot {
 
   /** One of its pins, by id (null: not this bot's). */
   pin(id: string | undefined): PinRecord | null {
-    return id ? this.owner.pins.find((pin) => pin.id === id) ?? null : null;
+    const pin=id ? this.owner.pins.find((pin) => pin.id === id) ?? null : null;
+    // Before author provenance was stored, pins belonged to their host bot. Never borrow a
+    // guest/notice author from current chat contents when upgrading that legacy record.
+    if(pin&&typeof pin.linkAuthor!=="string"){pin.linkAuthor=this.owner.id;this.owner.savePins();}
+    return pin;
   }
 
   hasPin(id: string): boolean { return !!this.pin(id); }

@@ -42,7 +42,7 @@ test('C7 candidate commits after receipt when helper is killed before its decisi
   await until(()=>existsSync(join(data,'update-last-boot.json')));
   expect(JSON.parse(readFileSync(join(data,'update-last-boot.json'),'utf8'))).toMatchObject({token,activated:true,orphan:true});
   await recoverUpdates(data,target);
-  expect(existsSync(join(root,'retained.json'))).toBe(true);expect(existsSync(join(root,'previous.app'))).toBe(true);expect(existsSync(join(root,'data-before'))).toBe(true);expect(existsSync(join(data,'update-pending.json'))).toBe(false);
+  expect(existsSync(join(root,'retained.json'))).toBe(true);expect(existsSync(join(root,'previous.app'))).toBe(false);expect(existsSync(join(root,'data-before'))).toBe(true);expect(existsSync(join(data,'update-pending.json'))).toBe(false);
   mkdirSync(join(desktop,'.cache/evidence/review-d'),{recursive:true});writeFileSync(join(desktop,'.cache/evidence/review-d/orphan-receipt.json'),JSON.stringify({helperKilledBeforeDecision:true,receipt:token,candidate,manifest,result:'booted',coreMutationAfterOrphan:true},null,2));
  }finally{
   await browser?.close().catch(()=>{});helper?.kill('SIGKILL');for(const pid of [...pids(),candidate])if(pid)try{process.kill(pid,'SIGTERM');}catch{}

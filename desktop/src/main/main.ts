@@ -12,7 +12,9 @@ import {configureHiddenApp,hidden} from "./hidden-mode";
 import { FEED, Updater } from "./updates";
 import { previewResponse } from "./preview-response";
 import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates, runningAppBundles } from "./update-install";
-import {blockingRecovery,dataVolumeError,recoveryCopies,deleteRecoveryCopies,commitUpdateReceipt,completeRecovery,dismissRecovery,issueFor,recoveryHTML,visibleRecovery,writeRecord} from "./update-state";
+import {blockingRecovery,persistentDataIdentity,dataVolumeError,recoveryCopies,deleteRecoveryCopies,commitUpdateReceipt,completeRecovery,dismissRecovery,issueFor,recoveryHTML,visibleRecovery,writeRecord} from "./update-state";
+import {RecoveryWindowHost} from "./recovery-window";
+import {retainedUpdateCopies,deleteRetainedUpdateCopy} from "./update-copies";
 import {directoryDefaults} from "./main-environment";
 declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
@@ -47,6 +49,7 @@ const dataDir = shotMode ? mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "bot
   : resolve(process.argv.find(arg => arg.startsWith("--botling-update-data="))?.slice("--botling-update-data=".length) || process.env.BOTLING_DATA_DIR || (app.isPackaged ? join(app.getPath("appData"), "Botling 2") : join(root, ".data")));
 const installedApp = dirname(dirname(dirname(process.execPath)));
 const volumeRecovery = () => {const error=dataVolumeError(dataDir);return error?{...issueFor(dataDir,installedApp,dirname(installedApp),27),blocked:true,message:error}:null;};
+const originalDataIdentity=!dataVolumeError(dataDir)?persistentDataIdentity(dataDir):undefined; // Captured before mkdir/profile/core can create data.
 const startupRecovery = shotMode ? null : volumeRecovery() || blockingRecovery(dataDir,installedApp);
 if(!startupRecovery)mkdirSync(dataDir, { recursive: true });
 const profileDir = startupRecovery ? mkdtempSync(join(process.env.TMPDIR || tmpdir(), "botling-recovery-ui-")) : join(dataDir,"electron");
@@ -448,6 +451,17 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
     case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId,cmd.pinId);
     case "updates.dismiss": { await dismissRecovery(dataDir,cmd.id); return {dismissed:true}; }
     case "updates.check": return updater.check(cmd.manual);
+    case "updates.copies": return retainedUpdateCopies(dataDir,installedApp,await runningAppBundles());
+    case "updates.deleteCopy": {
+      const copy=(await retainedUpdateCopies(dataDir,installedApp,await runningAppBundles())).find(copy=>copy.id===cmd.id);
+      if(!copy)throw new Error("The recovery copy changed. Refresh the list.");
+      if(!copy.deletable)throw new Error(copy.reason!);
+      const confirmation=await dialog.showMessageBox(BrowserWindow.fromWebContents(sender)!,{type:'warning',buttons:['Keep copy','Permanently delete this copy'],defaultId:0,cancelId:0,
+        message:copy.role==='newer'?'Delete NEWER candidate user data?':'Delete this retained recovery copy?',
+        detail:copy.path+'\n'+copy.bytes.toLocaleString()+' bytes\n'+(copy.role==='newer'?'This is data written by the newer candidate, possibly containing messages absent from the older snapshot. ':'')+'This deletes only the selected copy and cannot be undone.'});
+      if(confirmation.response!==1)return{deleted:false};
+      await deleteRetainedUpdateCopy(dataDir,installedApp,cmd.id,await runningAppBundles());return{deleted:true};
+    }
     case "updates.stage": {
       const state = await updater.check(true);
       if (!state.newer) throw new Error("There is no newer release to download");
@@ -681,48 +695,62 @@ app.whenReady().then(async () => {
   const restartNormal = () => {
     app.relaunch({args:[...process.argv.slice(1).filter(arg=>!arg.startsWith('--botling-update-token=')&&!arg.startsWith('--botling-update-data=')),'--botling-update-data='+dataDir]});app.quit();
   };
-  const showRecovery = (issue: NonNullable<ReturnType<typeof blockingRecovery>>,error?:string) => {
-    recoveryMode=true;
-    if(issue.code!==27)issue=issueFor(issue.dataDir,issue.target,issue.root,issue.code,issue.id.slice(0,issue.id.lastIndexOf(':')),issue.at);
+  const recoveryHost=new RecoveryWindowHost<BrowserWindow>();
+  let recoveryIssue:NonNullable<ReturnType<typeof blockingRecovery>>;
+  let acting=false,renderGeneration=0;
+  let cachedCopies:Awaited<ReturnType<typeof recoveryCopies>>=[],copiesIssue='';
+  const renderRecovery=async(error?:string,busy?:string)=>{
+    const generation=++renderGeneration,issue=recoveryIssue;
+    const window=recoveryHost.get(makeRecoveryWindow);
+    if(!busy||copiesIssue!==issue.id){
+      if(!busy)await window.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(recoveryHTML(issue,error,cachedCopies,'Inspecting retained copies…')));
+      cachedCopies=await recoveryCopies(issue);copiesIssue=issue.id;
+    }
+    const copies=cachedCopies;
+    if(generation===renderGeneration&&!window.isDestroyed())await window.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(recoveryHTML(issue,error,copies,busy)));
+  };
+  function makeRecoveryWindow(){
     const previousWindow=mainWindow;
     const window=new BrowserWindow({width:900,height:700,show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
-    window.once("ready-to-show",()=>{if(!hidden)window.show();});
-    mainWindow=window;let acting=false;
-    // Keep a window alive while replacing the gated candidate UI (also with quit-on-close).
+    window.once("ready-to-show",()=>{if(!hidden)window.show();});mainWindow=window;
     if(previousWindow&&!previousWindow.isDestroyed())previousWindow.destroy();
     recoveryContents.add(window.webContents.id);const recoveryID=window.webContents.id;
     window.on("closed",()=>{recoveryContents.delete(recoveryID);if(mainWindow===window)mainWindow=null;});
     window.webContents.setWindowOpenHandler(()=>({action:'deny'}));
     window.webContents.on('will-navigate',(event,url)=>{
       event.preventDefault();if(acting)return;
-      let action:URL;try{action=new URL(url);}catch{return;}
+      const issue=recoveryIssue;let action:URL;try{action=new URL(url);}catch{return;}
       if(action.protocol!=='botling-recovery:'||action.hostname!=='action'||action.searchParams.get('id')!==issue.id)return;
       if(action.pathname==='/retry'&&issue.code===27){if(volumeRecovery())showRecovery(volumeRecovery()!);else restartNormal();return;}
       if(action.pathname==='/open'){
         const path=issue.paths?.find(p=>p.label!=='Current data'&&existsSync(p.path))?.path;
         if(path)void shell.openPath(path).catch(()=>{});return;
       }
-      if(action.pathname==='/delete'){
-        acting=true;
-        void (async()=>{
-          const copies=await recoveryCopies(issue);
-          const confirmation=await dialog.showMessageBox(window,{type:'warning',buttons:['Keep copies','Delete recovery copies'],defaultId:0,cancelId:0,message:'Permanently delete recovery copies?',detail:copies.map(copy=>copy.path+' ('+copy.bytes.toLocaleString()+' bytes)').join('\n')+'\nThis cannot be undone. The live data must match a complete retained copy. A running or only available previous app will be kept.'});
-          if(confirmation.response===1)await deleteRecoveryCopies(issue,await runningAppBundles());
-          showRecovery(issue);
-        })().catch(error=>showRecovery(issue,String(error.message||error)));return;
-      }
-      if(action.pathname!=='/continue')return;
-      acting=true;
-      const current=blockingRecovery(dataDir,installedApp);
-      // The helper may have completed a safe rollback while this read-only page was open.
-      const completion=!current&&existsSync(dataDir)&&!volumeRecovery()?Promise.resolve():completeRecovery(dataDir,installedApp,issue.id);
-      void completion.then(()=>{
-        // Relaunch the available bundle without candidate identity; a manual restore must start a
-        // normal core rather than reviving the failed updater's gated candidate session.
+      if(!['/continue','/delete'].includes(action.pathname))return;
+      acting=true;let lastProgress=0;
+      const progress=(message:string)=>{if(Date.now()-lastProgress>250){lastProgress=Date.now();void renderRecovery(undefined,message).catch(error=>note(String(error)));}};
+      void (async()=>{
+        if(action.pathname==='/delete'){
+          const copies=await recoveryCopies(issue),older=copies.filter(copy=>copy.role!=='newer');
+          const confirmation=await dialog.showMessageBox(window,{type:'warning',buttons:['Keep copies','Delete older recovery copies'],defaultId:0,cancelId:0,message:'Permanently delete older recovery copies?',detail:older.map(copy=>copy.path+' ('+copy.bytes.toLocaleString()+' bytes)').join('\n')+'\nNewer candidate data is kept. The live core data must be validated. A running or only available app is kept.'});
+          if(confirmation.response===1)await deleteRecoveryCopies(issue,await runningAppBundles(),false,progress);
+          // Newer candidate data requires its own confirmation identifying the exact path/size.
+          const newer=copies.find(copy=>copy.role==='newer');
+          if(newer){const choice=await dialog.showMessageBox(window,{type:'warning',buttons:['Keep newer data','Delete this NEWER data copy'],defaultId:0,cancelId:0,message:'Delete NEWER candidate user data?',detail:newer.path+'\n'+newer.bytes.toLocaleString()+' bytes\nThis may contain newer messages absent from the older snapshot. This cannot be undone.'});
+            if(choice.response===1){const copy=(await retainedUpdateCopies(dataDir,installedApp,await runningAppBundles())).find(copy=>copy.path===newer.path);if(!copy)throw new Error('The newer copy changed. Refresh the page.');await deleteRetainedUpdateCopy(dataDir,installedApp,copy.id,await runningAppBundles());}}
+          acting=false;showRecovery(issue);return;
+        }
+        const current=blockingRecovery(dataDir,installedApp);
+        if(current)await completeRecovery(dataDir,installedApp,issue.id,progress);
+        else if(!existsSync(dataDir)||volumeRecovery())throw new Error('The original data directory is unavailable.');
         restartNormal();
-      }).catch(error=>{showRecovery(blockingRecovery(dataDir,installedApp)||issue,String(error.message||error));});
-    });
-    void recoveryCopies(issue).then(copies=>{if(!window.isDestroyed())return window.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(recoveryHTML(issue,error,copies)));}).catch(error=>{if(!window.isDestroyed())void window.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(recoveryHTML(issue,String(error))));});
+      })().catch(error=>{acting=false;showRecovery(blockingRecovery(dataDir,installedApp)||issue,String(error.message||error));});
+    });return window;
+  }
+  const showRecovery = (issue: NonNullable<ReturnType<typeof blockingRecovery>>,error?:string) => {
+    recoveryMode=true;recoveryIssue=issue;
+    if(issue.code!==27)recoveryIssue={...issue,...issueFor(issue.dataDir,issue.target,issue.root,issue.code,issue.id.slice(0,issue.id.lastIndexOf(':')),issue.at)};
+    void renderRecovery(error).catch(error=>note('Recovery display: '+String(error)));
   };
   app.on("activate", () => { if (!mainWindow) {const blocked=volumeRecovery()||blockingRecovery(dataDir,installedApp);if(blocked)showRecovery(blocked);else if(recoveryMode)restartNormal();else createWindow();} });
   if(startupRecovery){showRecovery(startupRecovery);return;}
@@ -744,7 +772,7 @@ app.whenReady().then(async () => {
         if (ready && acknowledgeUpdateBoot(dataDir, installedApp, app.getVersion(), process.argv)) {
           const pending = JSON.parse(readFileSync(join(dataDir, "update-pending.json"), "utf8"));
           while (mainWindow && !mainWindow.isDestroyed()) {
-            const decision=await commitUpdateReceipt(dataDir,installedApp,app.getVersion(),process.argv);
+            const decision=await commitUpdateReceipt(dataDir,installedApp,app.getVersion(),process.argv,originalDataIdentity);
             if(decision==='committed'){
               await core.commitUpdateBoot();
               await writeRecord(join(dataDir,'update-last-boot.json'),{token:pending.token,receipt:readFileSync(join(pending.root,'boot.ok'),'utf8'),version:app.getVersion(),activated:true,orphan:existsSync(join(dataDir,'update-orphan-commit.json'))});
