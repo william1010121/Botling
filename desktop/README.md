@@ -30,7 +30,12 @@ string for string against the Swift code), the right panel's Tasks list, pinned 
 column's search (⌘K) and fold, and the root causes of two e2e flakes. Phase 5a done: Maintainer's rest
 (component specs and `<suggest-component>`, a card's reports, Revert from the library's git, component
 shots, the `/` component menu and its mention note), the Phase 4c leftovers, completion verification,
-the "not right" feedback relay, and Codex's worker return routes, model list and model switching.**
+the "not right" feedback relay, and Codex's worker return routes, model list and model switching. Phase 5b
+done (macOS): electron-builder makes a runnable arm64 `.app` and zip with Electron's fuses hardened, ad-hoc
+signed (ready for a Developer ID and notarization from the environment), test-only variables ignored, the
+plugin host as a utility process, Maintainer's plugin check as the app's own `--check-plugin`, a read-only
+update check against GitHub Releases (off by default), and a smoke test of the packaged app; Windows and
+Linux targets are configured only.**
 Not yet a replacement for the Swift app (see "Gaps vs the Swift app").
 It lives beside it: nothing under `Sources/` or `Web/` changed, and the Swift app does not use
 anything here. Web/src is *bundled from source* into the desktop's chat frame (its packages come
@@ -59,6 +64,8 @@ cd desktop && npm install
 | `npm run test:live:codex` | One real Codex turn and one real two-head claim (three turns; Codex gets a throwaway `CODEX_HOME` with a copy of `auth.json` only). |
 | `npm run test:live:3a` | Phase 3a's real checks: claude hearing a message mid-turn, a monitored command through `codex app-server`'s `command/exec`, a Catch-up summary by `codex exec` (same throwaway `CODEX_HOME`). |
 | `npm run typecheck` | `tsc --noEmit`. |
+| `npm run dist:mac` | Phase 5b: build out/, then electron-builder: `dist/mac-arm64/Botling 2.app` and `dist/Botling-2-<version>-mac-arm64.zip` (ad-hoc signed unless a Developer ID is given, below). `dist:dir` only the unpacked app; `dist:win`, `dist:linux` are configured but never run here. |
+| `npm run test:packaged` | The packaged app's smoke test (after `dist:mac`; `BOTLING_PACKAGED_APP=<…/Botling 2.app>` for another copy). |
 
 Since Phase 3b the build also writes `out/host/host.mjs` (Web/host/src/host.ts, bundled as Web/build.mjs
 bundles it for 1.x) and `out/host/check-plugin.cjs` (the plugin check, the command Maintainer runs).
@@ -95,7 +102,17 @@ Node, development only), `BOTLING_GIT_PATH` (git for the plugin library; default
 `/usr/bin/git` only when the developer tools are installed), `BOTLING_MOCK_KEYCHAIN=1` (safeStorage
 uses Chromium's mock keychain: the e2e tests set it, so they never touch the login keychain),
 `BOTLING_TEST_SEAL_KEY` (a headless core — the unit tests — seals secrets with this key instead of
-safeStorage; without it and without Electron, secrets cannot be kept).
+safeStorage; without it and without Electron, secrets cannot be kept). Since Phase 5b: `BOTLING_TEST_UPDATE_FEED`
+(a JSON file standing in for GitHub's releases list, unpackaged only), `BOTLING_CHECK_COMMAND` (set by main:
+the plugin check Maintainer is told to run, `'<electron>' [<desktop>] --check-plugin`).
+
+**A packaged build ignores the test-only variables** (`src/main/packaged.ts`, dropped before main reads
+anything, so the core never sees them either): every `BOTLING_TEST_*` and `FAKE_*`, `BOTLING_FAKE_CLI`,
+`BOTLING_FAKE_CODEX`, `BOTLING_MOCK_KEYCHAIN`, `BOTLING_NO_EXTERNAL`, `BOTLING_HIDDEN`, `BOTLING_QUIET`,
+`BOTLING_QUIT_ON_CLOSE`, `BOTLING_HARMLESS`, `BOTLING_HARMLESS_TOOLS`, `BOTLING_PLUGIN_HOST`,
+`BOTLING_PLAIN_SHELL`, `BOTLING_SHOT_COMMAND`, `BOTLING_CHECK_COMMAND` and `ELECTRON_RUN_AS_NODE`; it always
+runs the real CLIs as a real bot (`BOTLING_AGENT=claude`, `BOTLING_HARMLESS=0`, as 1.x). The rest (data
+folder, import source, CLI paths, models, timeouts) are the user's knobs and still apply.
 
 A bot gets two heads from bot.json's `heads` key in 1.x's format (`{"engines":["claude","codex"],
 "answerWith":"both"}`, kept by the import), or with the `heads.set` command (there is no Settings page
@@ -835,6 +852,49 @@ CCB_DESKTOP_PHASE5_EXPORT=$PWD/desktop/test/fixtures/phase5-golden.json TZ=UTC \
   TMPDIR, no core); a sandboxed frame's "Script error." is not replayed (Chromium shows a frame its own errors).
 - **The shot command is given with `env -u ELECTRON_RUN_AS_NODE`** so a shell that inherited it still starts Electron.
 
+## Phase 5b: what was built and how it was checked
+
+| Piece | What it does | Evidence |
+| --- | --- | --- |
+| Packaging (`electron-builder.config.cjs`, `scripts/package.mjs`) | electron-builder 26.17.0: `dist/mac-arm64/Botling 2.app` (313 MB) and an arm64 zip (127 MB); app id `io.github.william1010121.Botling2`, product "Botling 2", 1.x's icon (`Assets/`, read only). The asar holds only `out/` (bundles, renderer, page readers) and package.json: no node_modules, sources, maps or fixtures. Caches: `ELECTRON_BUILDER_CACHE` and `electron_config_cache` default to `desktop/.cache/` and the config's `electronDownload.cache` follows them (electron-builder otherwise downloads Electron into `~/Library/Caches/electron`) | `packaged/packaged.spec.ts` (asar listing, Info.plist) |
+| Fuses | RunAsNode off, cookie encryption on, NODE_OPTIONS off, `--inspect` off, embedded ASAR integrity on (electron-builder writes `ElectronAsarIntegrity`), only-load-from-asar on, file:// extra privileges off, browser-specific V8 snapshot off | `packaged.spec.ts` (`@electron/fuses` reads the wire), `npx @electron/fuses read --app …` |
+| Signing | No certificate: ad-hoc (`identity: "-"`), no hardened runtime (ad-hoc + hardened runtime fails library validation), no notarization, keychain auto-discovery off. With `CSC_LINK`/`CSC_NAME`: that Developer ID, hardened runtime with `build/entitlements.mac.plist` (JIT only), and notarization when `APPLE_API_KEY`+`APPLE_API_KEY_ID`+`APPLE_API_ISSUER`, `APPLE_ID`+`APPLE_APP_SPECIFIC_PASSWORD`+`APPLE_TEAM_ID` or `APPLE_KEYCHAIN`+`APPLE_KEYCHAIN_PROFILE` are set. Windows: `WIN_CSC_LINK`/`CSC_LINK` when given | `codesign --verify --deep --strict` in `packaged.spec.ts` (also on the app unzipped from the zip) |
+| Packaged runtime (`main/packaged.ts`, `main.ts`) | Test-only variables dropped (above); the real heads; the fake CLIs' paths not even set; `Botling --check-plugin <folder>` (1.x's flag, `core/plugins/check-report.ts`) is the plugin check Maintainer is given, since Electron can no longer run a script as Node; the plugin host is the utility process main starts (as in development since Phase 3b) | `unit/packaged.test.ts`, `e2e/shot.spec.ts` (`--check-plugin` and the command handed over), `packaged.spec.ts` |
+| Update check (`main/updates.ts`, Settings → Updates, `Updates.tsx`) | Main reads `api.github.com/repos/william1010121/Botling/releases` (read only) for a published release tagged `v2.x.y` or later newer than this build (prereleases only for a prerelease build; the 1.x releases never count), with this platform's zip named when it has one; at most every 6 hours, Check now any time; the result is kept in `<data>/updates.json`. The app shows "Botling X is available." under the header with Open release page (the browser, only a page of that repository) and Later. Nothing is downloaded or installed. Off by default | `unit/updates.test.ts` (versions, which releases count, throttle, failures), `e2e/updates.spec.ts` (local feed), `packaged.spec.ts` (off: nothing looked up), screenshot `phase5b-update.png` |
+| Packaged smoke test (`playwright.packaged.config.ts`, `test/packaged/`) | Starts the packaged binary as a user would (fuses stop Playwright's Electron launcher) with `--remote-debugging-port=0` and `--use-mock-keychain`, a throwaway data folder and HOME in `desktop/.tmp`, stand-ins for `claude`/`codex` that only log, no 1.x import; reaches the app page over CDP: it boots to the main bot's chat with its input box, the plugin host (a utility process) answers a plugin's command, test-only variables (a fake agent, a test web site, a shot command, a Node plugin host, an update feed) are ignored, no CLI ran, nothing went to HOME; SIGTERM quits with code 0 and leaves no process | `npm run test:packaged` (3 tests), screenshot `phase5b-packaged.png` |
+| Windows and Linux | Targets only: NSIS (x64, arm64), AppImage and deb (x64, arm64), `botling2` on Linux | not built, not run |
+
+Tests after Phase 5b: unit 344 (vitest), e2e 51 (Playwright/Electron), packaged 3, typecheck, all green (the full
+e2e suite twice in a row after the last change).
+
+### Decisions (Phase 5b)
+
+- **electron-builder 26.17.0** (a month old; 27 is alpha), its own `electronFuses` step (fuses flipped before
+  signing), `@electron/fuses` 1.8.0 and `@electron/asar` 3.4.1 pinned for the smoke test (both already came with it).
+- **Product "Botling 2", app id `io.github.william1010121.Botling2`**: beside 1.x (`…ClaudeCodeBot`), never
+  instead of it; the data folder stays `<appData>/Botling 2`. Version from package.json (`2.0.0-dev.0`).
+- **macOS 13 or later, arm64 only** for now (the user's machine); x64/universal is one line in the config.
+- **Ad-hoc signing without the hardened runtime** when there is no certificate (the hardened runtime is
+  turned on with a real identity only). Gatekeeper will still say an ad-hoc app from the internet is
+  damaged/unverified: such a zip is for this machine or for people who clear the quarantine themselves.
+- **RunAsNode off means no Electron as Node in a packaged build**: the core and the plugin host were already
+  utility processes; the one remaining `ELECTRON_RUN_AS_NODE` user, Maintainer's plugin check, became the
+  app's own `--check-plugin` (in development too, so both run the same path). The fake CLIs still use
+  Electron as Node, which is fine: they are development's only.
+- **A packaged app drops test-only variables rather than refusing to start**, and logs which (`[packaged]
+  ignored …`). `BOTLING_SHOT_COMMAND`/`BOTLING_CHECK_COMMAND` count as test-only: Maintainer is always handed
+  this build's own command.
+- **The update check only reads and links**, off by default: no signature to verify a download against
+  (ad-hoc, no Developer ID), and Squirrel.Mac (electron-updater's macOS path) needs a signed app. Once there
+  is a Developer ID, electron-updater with a `latest-mac.yml` feed is the next step. Only tags `v2.*` or
+  later count, so 1.x's releases (v1.19.0 …) are never offered to 2.0.
+- **The protocol stays version 10**: `updates.check`/`updates.open` and `settings.updateCheck` were added;
+  the app page and main ship together.
+- **The smoke test drives the packaged app over CDP** (`--remote-debugging-port`, a Chromium switch, not a
+  fuse), so the real fused binary is what is tested; the full e2e suite stays on the development build.
+- **SIGTERM is how the smoke test quits the app** (Electron turns it into a normal quit with before-quit):
+  an Apple event (`osascript quit`) would ask for Automation permission.
+
 ## Gaps vs the Swift app (1.x)
 
 Not in 2.0 yet, roughly in order of how much they matter:
@@ -869,13 +929,20 @@ Not in 2.0 yet, roughly in order of how much they matter:
   the plugin library's revert/remove and version history in the app, installs from npm or archives,
   `claude plugin validate` before a Claude part is used, plugins' MCP tools on the allowed list,
   browser tools for bots, the component editor's model setting (sonnet unless settings.json
-  says), the Codex Maintainer's editor role, and a
-  packaged build's Node for the plugin host (development uses Electron run as Node).
+  says), and the Codex Maintainer's editor role. (A packaged build's plugin host: a utility process, Phase 5b.)
 - **Composer**: drafts across restarts. (The `/` component menu: Phase 5a. Attachments, steering, replies to a
   message, reactions, words typed in the first second and @ mentions are in.)
 - **Settings**: auto mode, spending and rate limits, Doctor; the React chrome's own words are English
   (the chat page follows the language setting).
-- **Packaging and updates** (electron-builder, fuses, signing, notarization, an updater).
+- **Packaging and updates, still missing** (Phase 5b did macOS arm64): a Developer ID signature and
+  notarization (configured, never run: no certificate here), so no installable download for others and no
+  self-updating (only the read-only check); a DMG; x64/universal macOS; the full e2e suite against the
+  packaged build (it runs on the development build; the packaged app has its smoke test); a plugin's own
+  child processes are not ended with a utility-process plugin host (no process group of its own); the
+  packaged app with real `claude`/`codex` (the smoke test uses stand-ins, never the user's data).
+- **Windows and Linux builds**: the targets are in the config, nothing was built or run (no machine);
+  unverified: NSIS install, ASAR integrity on Windows, the icon conversion from the PNG, AppImage/deb,
+  the Chromium sandbox on Linux, and everything in "Windows" below.
 - **Windows** (nothing has run there; see spike 4).
 - **Web AIs, still missing**: reading the page's traffic and the "Page reader may be out of date"
   check, captures and "Send to Maintainer", web-laas, a bot's `file://` link to a saved conversation
@@ -917,12 +984,19 @@ Not in 2.0 yet, roughly in order of how much they matter:
   script). Since Phase 1b the chat itself is Web/src's page with its own chat.css; the React
   chrome's colours (`src/renderer/styles.css`) are Theme.swift's.
 
-## What's next (proposed, after Phase 5a)
+## What's next (proposed, after Phase 5b)
 
-1. **Packaging and updates** (electron-builder, fuses, signing, an updater; a Node for the plugin host),
-   then **Windows**.
-2. **Smaller parity**: switching a head's engine through a memory handoff, the spec brief, specs from
+1. **Windows** (spike 4 on a Windows 11 machine or VM: build `dist:win`, run the suite, Job Objects,
+   zsh-less command shells), then Linux.
+2. **Real signing** once there is a Developer ID: notarize, then electron-updater (Squirrel.Mac) with a
+   release feed, a DMG.
+3. **Smaller parity**: switching a head's engine through a memory handoff, the spec brief, specs from
    result pages, developer mode's build installs and screenshots, Codex rate limits and token use.
+
+## What was next after Phase 5a (kept for reference)
+
+1. ~~Packaging and updates~~ — done for macOS (Phase 5b); **Windows** next.
+2. Smaller parity (as above).
 
 ## What was next after Phase 4c (kept for reference)
 
@@ -977,7 +1051,7 @@ Not in 2.0 yet, roughly in order of how much they matter:
 10. **Windows 11 VM**: run the suite; Job Object helper; native vs WSL CLI backend switch
     (decided: native host, swappable backend).
 
-Packaging (not done): electron-builder `dir` target for a macOS dev build, Electron fuses
+Packaging (done in Phase 5b, kept for reference): electron-builder `dir` target for a macOS dev build, Electron fuses
 (RunAsNode off, NodeOptions off, cookie encryption on, ASAR integrity, only-load-from-ASAR), code
 signing/notarization, then Windows installer signing.
 
@@ -997,7 +1071,7 @@ signing/notarization, then Windows installer signing.
 - **Descendants that escape the process group** (`setsid`) survive Stop on macOS/Linux, as today.
 - **Lock staleness**: a live lock holder stalled past 10 s can have its lock broken; transactions
   are tiny, but a frozen process (debugger, SIGSTOP) could in theory cause a double claim.
-- **Bundle size / memory**: not measured. The unpacked Electron 44 runtime is ~310 MB on macOS arm64 (before packaging/compression).
+- **Bundle size / memory**: memory not measured. The packaged app is 313 MB unpacked (Electron 44 is ~310 MB of it) and its arm64 zip 127 MB (Phase 5b).
 - **Real sites and OAuth**: some providers refuse embedded browsers; WebKit cookies will not carry
   over (users re-login).
 - **Linux**: the Chromium sandbox needs user namespaces or the SUID helper; Wayland window
@@ -1064,7 +1138,15 @@ session; a component that lands before Maintainer names it finishes the build; t
 the judge does not hold hand-backs; developer mode is only the feedback relay; model switches restart in the
 same session before the next message; shots run the app itself in shot mode.
 
+Decided by the agent in Phase 5b (the user was away; each can be changed): electron-builder; product "Botling 2"
+beside 1.x; macOS arm64 zip first; ad-hoc signing without the hardened runtime until there is a Developer ID; the
+plugin check as the app's own `--check-plugin`; test-only variables dropped, not refused; the update check only
+reads and links, off by default, 2.x tags only; the smoke test drives the fused binary over CDP and quits it with
+SIGTERM.
+
 Still open:
+- A Developer ID certificate (and an App Store Connect API key) to sign and notarize, which also unlocks
+  real self-updating.
 - One real `claude` call to confirm the approval round trip, and one as a real bot (tools on) to
   see the app prompt's choices/task lines from real claude.
 - Is a 15 s tidy on quit acceptable (1.x waits for it), or should quitting skip it?
