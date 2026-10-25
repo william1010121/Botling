@@ -603,7 +603,7 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("updateCheck"), value: z.boolean() }),
 ]);
 export type SettingsChange = z.infer<typeof SettingsChange>;
-/** A newer Botling 2 on GitHub Releases (Phase 5b): only told about and linked, never downloaded or installed. */
+/** A newer Botling 2 on GitHub Releases; installation requires a signed manifest and explicit restart. */
 export const ReleaseView = z.strictObject({
   version: z.string().max(100), name: z.string().max(400), url: z.string().max(2_000), publishedAt: z.string().max(100).nullable(),
   /** This platform's download on the release page, when it has one. */
@@ -618,6 +618,8 @@ export const UpdateView = z.strictObject({
   newer: ReleaseView.nullable(),
   checkedAt: z.number().nullable(),
   error: z.string().max(2_000).nullable(),
+  installError: z.string().max(2_000).nullable().optional(),
+  readyVersion: z.string().max(100).nullable().optional(),
 });
 export type UpdateView = z.infer<typeof UpdateView>;
 
@@ -888,6 +890,8 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("usage.view") }),
   /** Main: open the newer release's page in the browser (only a release page of the app's own repository). */
   z.strictObject({ type: z.literal("updates.open") }),
+  z.strictObject({ type: z.literal("updates.stage") }),
+  z.strictObject({ type: z.literal("updates.restart") }),
   /** A bot's own choices (bot.json). */
   z.strictObject({ type: z.literal("bot.settings"), botId }),
   /** Changes a bot's model, effort, subagents' model or Codex model (null: the default); a running head keeps its own until it next wakes. */
@@ -950,10 +954,10 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open",
-  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "usage.view",
+  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "component.report", "chat.feedback", "updates.check", "updates.open"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "component.report", "chat.feedback", "updates.check", "updates.open", "updates.stage", "updates.restart"]);
 
 /** A temporary team at work (1.x's `TeamRun`): its title, the task, when it started (ms since 1970). */
 export const TeamRunView = z.strictObject({ id, name: z.string().max(200), title: z.string().max(200), task: z.string().max(4_000), startedAt: z.number() });
@@ -1069,6 +1073,8 @@ export interface Results {
   "updates.check": UpdateView;
   "usage.view": UsageView;
   "updates.open": { opened: boolean };
+  "updates.stage": UpdateView;
+  "updates.restart": { restarting: boolean };
   "bot.settings": BotSettingsView;
   "bot.configure": BotSettingsView;
   "plugins.loaded": Record<string, never>;

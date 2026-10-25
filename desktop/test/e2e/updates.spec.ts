@@ -1,4 +1,4 @@
-// Phase 5b: the update check in the app — off by default (nothing fetched), Settings → Updates turns it on,
+// Update discovery defaults on; the unconfigured trust key refuses self-installation.
 // a newer Botling 2 shows under the header and its release page opens (only noted in tests). The feed is a
 // local copy of GitHub's JSON (BOTLING_TEST_UPDATE_FEED, unpackaged builds only).
 import { expect, test } from "@playwright/test";
@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { desktop, tempDir } from "../helpers";
 import { launch } from "./launch";
 
-test("off by default; on, a newer release is shown and its page opened; Later hides it", async () => {
+test("on by default; a newer release is shown, unconfigured installation is blocked, Later hides it", async () => {
   const base = tempDir("e2e-updates");
   const feed = join(base, "releases.json");
   const page_ = (tag: string) => `https://github.com/william1010121/Botling/releases/tag/${tag}`;
@@ -18,18 +18,16 @@ test("off by default; on, a newer release is shown and its page opened; Later hi
   const dataDir = join(base, "data");
   const { app, page } = await launch({ dataDir, env: { BOTLING_TEST_UPDATE_FEED: feed } });
   try {
-    await page.waitForTimeout(500);
-    await expect(page.locator(".update-bar")).toHaveCount(0);
-    expect(existsSync(join(dataDir, "updates.json"))).toBe(false);
+    const bar = page.getByRole("status", { name: "Update", exact: true });
+    await expect(bar).toContainText("Botling 2.0.1 is available.");
+    await expect(bar.getByRole("button", { name: "Download and verify" })).toBeDisabled();
+    await expect(bar).toContainText("Update trust is not configured");
     await page.getByRole("button", { name: "Settings" }).click();
     const sheet = page.getByRole("dialog", { name: "Settings" });
     await sheet.getByRole("button", { name: "Updates" }).click();
-    await expect(sheet.getByText("not looked yet")).toBeVisible();
-    await sheet.getByRole("switch", { name: "Check for updates" }).click();
     await expect(sheet.getByRole("switch", { name: "Check for updates" })).toBeChecked();
     await expect(sheet.getByText("Botling 2.0.1 is available (Botling-2-2.0.1-mac-arm64.zip).")).toBeVisible();
     await sheet.getByRole("button", { name: "Done" }).click();
-    const bar = page.getByRole("status", { name: "Update" });
     await expect(bar).toContainText("Botling 2.0.1 is available.");
     await bar.getByRole("button", { name: "Open release page" }).click();
     await expect.poll(() => app.evaluate(() => (globalThis as any).__botlingOpenedReleases.slice())).toEqual([page_("v2.0.1")]);

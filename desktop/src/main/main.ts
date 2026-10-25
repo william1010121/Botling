@@ -1,7 +1,7 @@
 // Electron main: thin. It owns windows, sessions and protocols, checks every IPC message (who sent
 // it and what it is), and relays the rest to the core process. It runs no agents and keeps no chat.
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
-import { join, normalize, resolve, sep } from "node:path";
+import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +9,8 @@ import { isRequested as isShotRequested, withProbe } from "../core/component-sho
 import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { scrubEnvironment } from "./packaged";
 import { FEED, Updater } from "./updates";
+import { VerifiedInstaller, acknowledgeUpdateBoot } from "./update-install";
+declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
 import { WebPages } from "./web";
@@ -122,14 +124,21 @@ const core = new CoreClient({
 let lastEpoch: string | null = null;
 
 /**
- * The update check (main/updates.ts): GitHub Releases, read only, off unless Settings turns it on.
+ * GitHub Releases discovery, enabled by default. Installation is verified and requires a click.
  * Tests (unpackaged only) point it at a JSON file with BOTLING_TEST_UPDATE_FEED.
  */
 const updatesFile = join(dataDir, "updates.json");
+const installedApp = dirname(dirname(dirname(process.execPath)));
+const installer = new VerifiedInstaller({
+  current: app.getVersion(), appPath: installedApp, dataDir,
+  publicKey: __UPDATE_PUBLIC_KEY__, platform: app.isPackaged ? process.platform : "development", arch: process.arch,
+  fetch: (url) => net.fetch(url, { signal: AbortSignal.timeout(120_000) }),
+});
 const updater = new Updater({
   current: app.getVersion(),
   platform: process.platform,
   arch: process.arch,
+  installStatus: () => ({ installError: installer.unavailable(), readyVersion: installer.ready }),
   enabled: async () => ((await core.call({ type: "settings.get" })) as { updateCheck?: boolean }).updateCheck === true,
   fetchFeed: async () => {
     const test = !app.isPackaged ? process.env.BOTLING_TEST_UPDATE_FEED : undefined;
@@ -434,6 +443,18 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
   switch (cmd.type) {
     case "result.open": return openResult(cmd.botId, cmd.url);
     case "updates.check": return updater.check(cmd.manual);
+    case "updates.stage": {
+      const state = await updater.check(true);
+      if (!state.newer) throw new Error("There is no newer release to download");
+      await installer.stage(state.newer);
+      return updater.view(state.enabled);
+    }
+    case "updates.restart": {
+      installer.restart(process.pid);
+      // Let the explicit click's response reach the renderer before normal core shutdown.
+      setImmediate(() => app.quit());
+      return { restarting: true };
+    }
     case "updates.open": {
       const page = updater.releasePage();
       if (!page) throw Object.assign(new Error("There is no newer release to open."), { code: "not_found" });
@@ -658,6 +679,19 @@ app.whenReady().then(() => {
   }
   core.start();
   createWindow();
+  mainWindow?.webContents.once("did-finish-load", () => {
+    if (!process.argv.some((arg) => arg.startsWith("--botling-update-token="))) return;
+    // A loaded HTML file alone is not a healthy boot: React must receive the core's first state.
+    void (async () => {
+      await core.call({ type: "settings.get" });
+      const deadline = Date.now() + 20_000;
+      while (mainWindow && !mainWindow.isDestroyed() && Date.now() < deadline) {
+        const ready = await mainWindow.webContents.executeJavaScript(`Boolean(document.querySelector('.shell[data-ready="1"]'))`);
+        if (ready) { acknowledgeUpdateBoot(dataDir, installedApp, app.getVersion(), process.argv); return; }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    })().catch(() => {});
+  });
   app.on("activate", () => { if (!mainWindow) createWindow(); });
 });
 
@@ -677,6 +711,7 @@ app.on("before-quit", (event) => {
   // Cookies are written to disk lazily; make sure each account's are there before exiting.
   const flushes = [...openedSessions].map((opened) => opened.cookies.flushStore().catch(() => {}));
   web.closeAll();
+  installer.discard();
   void Promise.all([core.stop(), ...flushes]).finally(() => app.exit(0));
 });
 

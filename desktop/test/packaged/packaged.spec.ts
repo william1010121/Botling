@@ -62,6 +62,9 @@ test("--check-plugin runs in the packaged app (no Electron as Node)", () => {
 test("boots to the chat page, starts the plugin host as a utility process, ignores test-only variables and quits cleanly", async () => {
   const base = tempDir("pkg-smoke");
   const dataDir = join(base, "data");
+  // Explicitly opt out so this smoke test never contacts real GitHub (production defaults on).
+  mkdirSync(join(dataDir, "core"), { recursive: true });
+  writeFileSync(join(dataDir, "core", "settings.json"), JSON.stringify({ updateCheckEnabled: false }));
   // A plugin with a program part, so the plugin host has something to run.
   const plugin = join(dataDir, "core", "plugins", "smoke");
   mkdirSync(join(plugin, "dist"), { recursive: true });
@@ -106,7 +109,7 @@ test("boots to the chat page, starts the plugin host as a utility process, ignor
     // The web AIs are the real three, not the test page BOTLING_TEST_WEB_SITES named.
     await expect(page.locator(".web-site-row .web-site-name")).toHaveText(["Gemini", "ChatGPT", "Claude"]);
     expect(existsSync(join(base, "agent-calls.log"))).toBe(false);
-    // The update check is off by default: nothing was looked up.
+    // The explicitly saved opt-out is preserved: nothing was looked up.
     const updates = await post(page, { type: "updates.check", manual: false });
     expect(updates.result).toMatchObject({ current: expect.stringMatching(/^2\./), enabled: false, newer: null, checkedAt: null });
     expect(existsSync(join(dataDir, "updates.json"))).toBe(false);

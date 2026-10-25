@@ -7,12 +7,18 @@
 // own build output (Sources/ClaudeCodeBot/Resources) is never touched.
 import { build } from "esbuild";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { createPublicKey } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, "out");
 const watch = process.argv.includes("--watch");
+// Trust is embedded at build time; runtime environment variables cannot replace it.
+const releaseConfig = JSON.parse(readFileSync(join(here, "release-config.json"), "utf8"));
+const updatePublicKey = releaseConfig.publicKey ?? null;
+if (updatePublicKey && createPublicKey(updatePublicKey).asymmetricKeyType !== "ed25519") throw new Error("Release public key must be Ed25519");
+if (process.env.BOTLING_RELEASE_BUILD === "1" && !updatePublicKey) throw new Error("Release build requires an explicit Ed25519 public key in release-config.json");
 rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, "renderer"), { recursive: true });
 
@@ -37,7 +43,7 @@ for (const character of ["claude", "gpt"]) {
 
 const node = { bundle: true, platform: "node", format: "cjs", target: "node22", sourcemap: "linked", legalComments: "eof" };
 await Promise.all([
-  build({ ...node, entryPoints: [join(here, "src/main/main.ts")], outfile: join(out, "main/main.cjs"), external: ["electron"] }),
+  build({ ...node, entryPoints: [join(here, "src/main/main.ts")], outfile: join(out, "main/main.cjs"), external: ["electron"], define: { __UPDATE_PUBLIC_KEY__: JSON.stringify(updatePublicKey) } }),
   build({ ...node, entryPoints: [join(here, "src/preload/preload.ts")], outfile: join(out, "preload/preload.cjs"), external: ["electron"] }),
   build({ ...node, entryPoints: [join(here, "src/core/main.ts")], outfile: join(out, "core/main.cjs") }),
   // The plugin host: Web/host/src/host.ts unchanged, bundled as Web/build.mjs bundles it for 1.x

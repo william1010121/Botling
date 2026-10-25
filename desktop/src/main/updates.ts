@@ -1,12 +1,4 @@
-// The update check (Phase 5b): main looks at GitHub Releases of william1010121/Botling for a newer
-// Botling 2 and the app page says so, with a link to the release page. It only reads: nothing is
-// downloaded, installed or replaced. That is on purpose: builds are ad-hoc signed (no Developer ID),
-// so there is no signature an updater could check a download against, and macOS's own updater
-// (Squirrel.Mac) refuses unsigned apps anyway. The user downloads from the page the browser opens.
-//
-// Which releases count: published (not drafts), tagged `v<major>.<minor>.<patch>[-pre]` with major 2 or
-// more (the repository's 1.x releases are the Swift app's), prereleases only for a prerelease build.
-// The check is off by default (Settings → General → Updates); on, it runs at most every 6 hours.
+// GitHub Releases 2.x discovery. Verification and installation live in update-install.ts.
 import type { ReleaseView, UpdateView } from "../contract";
 
 export const REPOSITORY = "william1010121/Botling";
@@ -64,7 +56,7 @@ export function pickUpdate(releases: unknown, current: string, platform: string,
     if (!raw || typeof raw !== "object" || raw.draft === true) continue;
     if (typeof raw.tag_name !== "string" || typeof raw.html_url !== "string") continue;
     const version = parseVersion(raw.tag_name);
-    if (!version || version.major < 2) continue;
+    if (!version || version.major !== 2) continue;
     if ((raw.prerelease === true || version.pre.length) && !mine.pre.length) continue;
     if (!raw.html_url.startsWith(RELEASE_PAGE) || raw.html_url.length > 2_000) continue;
     if (compareVersions(version, mine) <= 0) continue;
@@ -97,6 +89,7 @@ export interface UpdaterOptions {
   load: () => { checkedAt: number; newer: ReleaseView | null } | null;
   save: (state: { checkedAt: number; newer: ReleaseView | null }) => void;
   now?: () => number;
+  installStatus?: () => { installError: string | null; readyVersion: string | null };
 }
 
 export class Updater {
@@ -109,7 +102,7 @@ export class Updater {
   view(enabled: boolean): UpdateView {
     const saved = this.options.load();
     const newer = saved?.newer && this.stillNewer(saved.newer) ? saved.newer : null;
-    return { current: this.options.current, enabled, newer, checkedAt: saved?.checkedAt ?? null, error: this.error };
+    return { current: this.options.current, enabled, newer, checkedAt: saved?.checkedAt ?? null, error: this.error, ...this.options.installStatus?.() };
   }
 
   /** Checks when on and due (or always when `manual`); one check at a time. */

@@ -79,7 +79,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     pinnedBots: [...new Set(readSettingsList(raw.pinnedBots).filter((id) => /^[0-9A-Fa-f-]{36}$/.test(id)).map((id) => id.toUpperCase()))].slice(0, 200),
     developerMode: bool(raw.developerMode, false),
     developerProject: typeof raw.developerProjectID === "string" && /^[0-9A-Fa-f-]{36}$/.test(raw.developerProjectID) ? raw.developerProjectID.toUpperCase() : null,
-    updateCheck: bool(raw.updateCheckEnabled, false),
+    updateCheck: bool(raw.updateCheckEnabled, true),
   };
 }
 
