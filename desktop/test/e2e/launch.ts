@@ -1,4 +1,6 @@
 import {backgroundPages,requireFocusOptIn} from "../hidden";
+import {prepareTraceFixture,type TraceFixture} from "../synthetic-trace";
+import {isChatURL} from "../chat-url";
 import {electronExecutable} from "../electron-runtime";
 import { _electron as electron, type ElectronApplication, type Frame, type FrameLocator, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -10,7 +12,7 @@ export interface Launched { app: ElectronApplication; page: Page; chat: FrameLoc
 /** The main bot's id (the Swift app's `Workspace.mainBotID`). */
 export const MAIN = "6A0B0000-0000-4000-8000-000000000002";
 
-export async function launch(options: { dataDir?: string; env?: Record<string, string>; chat?: unknown[]; importFrom?: string; waitForState?: boolean; args?: string[] } = {}): Promise<Launched> {
+export async function launch(options: { dataDir?: string; env?: Record<string, string>; chat?: unknown[]; importFrom?: string; waitForState?: boolean; args?: string[]; trace?:TraceFixture } = {}): Promise<Launched> {
   const dataDir = options.dataDir ?? tempDir("e2e");
   if (options.chat) {
     // The main bot's chat, in the Swift app's chat.json format.
@@ -31,10 +33,11 @@ export async function launch(options: { dataDir?: string; env?: Record<string, s
   requireFocusOptIn(env);
   delete env.ELECTRON_RUN_AS_NODE;
   if (!options.importFrom) delete env.BOTLING_IMPORT_FROM;
+  prepareTraceFixture(dataDir,env,options.trace);
   const app = await electron.launch({ executablePath:electronExecutable(), args: [desktop,...(options.args??[])], env, cwd: desktop });
   try {
   const page = await app.firstWindow();
-  if(env.BOTLING_HIDDEN==="1")await backgroundPages(app,page);
+  if(env.BOTLING_HIDDEN==="1")await backgroundPages(app,page,options.trace?.focusEmulation!==false);
   const chat = page.frameLocator("#chat-frame");
   // A test of the first second types as soon as the input box is there (before any state).
   if (options.waitForState === false) return { app, page, chat, dataDir };
@@ -59,7 +62,7 @@ export async function waitForWelcome(chat:FrameLocator):Promise<void>{
 
 /** The chat frame itself (for evaluate). */
 export function chatFrame(page: Page): Promise<Frame> {
-  return until(() => page.frames().find((frame) => frame.url().endsWith("/chat.html")) ?? null, { what: "the chat frame" });
+  return until(() => page.frames().find((frame) => isChatURL(frame.url())) ?? null, { what: "the chat frame" });
 }
 
 /** Types a message in the chat page's input box and sends it with Return. */

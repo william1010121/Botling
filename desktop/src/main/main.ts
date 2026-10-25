@@ -15,6 +15,8 @@ import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates, runningAppBun
 import {blockingRecovery,persistentDataIdentity,dataVolumeError,recoveryCopies,deleteRecoveryCopies,commitUpdateReceipt,completeRecovery,dismissRecovery,issueFor,recoveryHTML,visibleRecovery,writeRecord} from "./update-state";
 import {RecoveryWindowHost} from "./recovery-window";
 import {retainedUpdateCopies,deleteRetainedUpdateCopy} from "./update-copies";
+import {InputTraceWriter,syntheticTraceContext,acceptTraceIPC} from "./input-trace";
+import {TEST_TRACE_ARGUMENT,TEST_TRACE_CHANNEL} from "../test-trace";
 import {directoryDefaults} from "./main-environment";
 declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
@@ -51,6 +53,8 @@ const installedApp = dirname(dirname(dirname(process.execPath)));
 const volumeRecovery = () => {const error=dataVolumeError(dataDir);return error?{...issueFor(dataDir,installedApp,dirname(installedApp),27),blocked:true,message:error}:null;};
 const originalDataIdentity=!dataVolumeError(dataDir)?persistentDataIdentity(dataDir):undefined; // Captured before mkdir/profile/core can create data.
 const startupRecovery = shotMode ? null : volumeRecovery() || blockingRecovery(dataDir,installedApp);
+const traceContext=!shotMode&&!startupRecovery?syntheticTraceContext({packaged:app.isPackaged,dataDir,syntheticBase:join(root,".cache/test-data"),env:process.env}):null;
+let traceWriter:InputTraceWriter|null=null;
 if(!startupRecovery)mkdirSync(dataDir, { recursive: true });
 const profileDir = startupRecovery ? mkdtempSync(join(process.env.TMPDIR || tmpdir(), "botling-recovery-ui-")) : join(dataDir,"electron");
 // Everything Electron keeps (partitions, caches, logs) lives under the data dir, never the default.
@@ -278,6 +282,13 @@ function fromAppFrame(event: IpcMainEvent): boolean {
   if (!ok) note(`refused IPC from ${frame?.url ?? "an unknown frame"} (contents ${event.sender.id})`);
   return ok;
 }
+
+// A separate diagnostic channel: renderer arguments cannot grant main persistence authority.
+ipcMain.on(TEST_TRACE_CHANNEL,(event,record:unknown)=>acceptTraceIPC(traceWriter,()=>{
+  const frame=event.senderFrame;if(!frame)return null;
+  return{owned:appContents.has(event.sender.id),isMainFrame:frame===event.sender.mainFrame,
+    url:frame.url,contentsId:event.sender.id,processId:frame.processId,routingId:frame.routingId};
+},record));
 
 ipcMain.on("botling:post", (event, raw: unknown) => {
   if (!fromAppFrame(event)) return;
@@ -545,6 +556,9 @@ app.on("web-contents-created", (_, contents: WebContents) => {
   });
 });
 
+function traceFrameIdentity(frame:{processId:number;routingId:number;frameTreeNodeId:number}|null){
+  try{return frame?{processId:frame.processId,routingId:frame.routingId,frameTreeNodeId:frame.frameTreeNodeId}:null;}catch{return null;}
+}
 function createWindow() {
   const window = new BrowserWindow({
     width: 1120, height: 820, minWidth: 640, minHeight: 480,
@@ -552,12 +566,20 @@ function createWindow() {
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
       preload: join(root, "out", "preload", "preload.cjs"),
+      additionalArguments:traceWriter?[TEST_TRACE_ARGUMENT]:[],
       sandbox: true, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false,
       webSecurity: true, allowRunningInsecureContent: false, navigateOnDragDrop: false, spellcheck: false,
     },
   });
   appContents.add(window.webContents.id);
   const id = window.webContents.id;
+  window.on('focus',()=>traceWriter?.observe('native.window.focus',{contentsId:id}));
+  window.on('blur',()=>traceWriter?.observe('native.window.blur',{contentsId:id}));
+  window.webContents.on('focus',()=>traceWriter?.observe('native.contents.focus',{contentsId:id}));
+  window.webContents.on('blur',()=>traceWriter?.observe('native.contents.blur',{contentsId:id}));
+  window.webContents.on('did-start-navigation',(details)=>traceWriter?.observe('native.navigation.start',{contentsId:id,url:details.url.slice(0,2048),isMainFrame:details.isMainFrame,frame:traceFrameIdentity(details.frame)}));
+  window.webContents.on('did-frame-finish-load',(_event,isMainFrame,processId,routingId)=>traceWriter?.observe('native.frame.loaded',{contentsId:id,isMainFrame,processId,routingId}));
+  window.webContents.on('did-finish-load',()=>traceWriter?.observe('native.document.loaded',{contentsId:id}));
   window.on("closed", () => { appContents.delete(id); if (mainWindow === window) mainWindow = null; });
   window.once("ready-to-show", () => { if (!hidden) window.show(); });
   void window.loadURL(`${APP_ORIGIN}/index.html`);
@@ -757,6 +779,7 @@ app.whenReady().then(async () => {
   await recoverUpdates(dataDir, installedApp, false);
   const blocked=blockingRecovery(dataDir,installedApp);
   if(blocked){showRecovery(blocked);return;}
+  if(traceContext){try{traceWriter=await InputTraceWriter.open(traceContext);}catch(error){note('Synthetic trace disabled: '+String(error));}}
   const collect=()=>void recoverUpdates(dataDir,installedApp).catch(error=>note('Update cleanup: '+String(error)));
   const sweep=setInterval(collect,30_000);sweep.unref();
   core.start();
@@ -809,7 +832,11 @@ app.on("before-quit", (event) => {
   // Cookies are written to disk lazily; make sure each account's are there before exiting.
   const flushes = [...openedSessions].map((opened) => opened.cookies.flushStore().catch(() => {}));
   web.closeAll();
-  void Promise.all([core.stop(), installer.discard(), ...flushes]).finally(() => {if(startupRecovery)rmSync(profileDir,{recursive:true,force:true});app.exit(0);});
+  void Promise.allSettled([core.stop(), installer.discard(), ...flushes]).then(async () => {
+    ipcMain.removeAllListeners(TEST_TRACE_CHANNEL);
+    try{await traceWriter?.close();}catch(error){note('Synthetic trace flush failed: '+String(error));}
+    if(startupRecovery)rmSync(profileDir,{recursive:true,force:true});app.exit(0);
+  });
 });
 
 // For tests: which pid the core has.
