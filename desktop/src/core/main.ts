@@ -143,6 +143,8 @@ const core = new Core({
   waitingScanMs: number(process.env.BOTLING_WAITING_SCAN_MS, 5_000),
   plugins: { node, hostScript, sealer },
   checkCommand,
+  // Tests: hold the first chat.snapshot this long, so the page shows its input box before its first state.
+  firstSnapshotDelayMs: number(process.env.BOTLING_TEST_FIRST_SNAPSHOT_MS, 0),
   languages: process.env.BOTLING_LANGUAGES ? process.env.BOTLING_LANGUAGES.split(",").filter(Boolean) : undefined,
   // 1.x's data folder, to tell whether it has a project open; only when named (packaged: ~/.claudecodebot).
   oneX: {

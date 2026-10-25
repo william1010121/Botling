@@ -5,6 +5,7 @@
 import "./shim";
 import "./component-frames";
 import "../../../../Web/src/main";
+import { EditorView } from "@codemirror/view";
 import { CardBroker, type CardTarget } from "../broker";
 import type { FrameExtras } from "../payload";
 import { APP_ORIGIN, type FrameMessage, type ShellMessage } from "./protocol";
@@ -134,7 +135,11 @@ window.addEventListener("message", (event: MessageEvent) => {
   const message = event.data as ShellMessage | null;
   if (!message || typeof message !== "object") return;
   if (message.botling === "state") {
+    // Words typed before the first state (the first second after the window opens) would be replaced
+    // by that chat's draft (empty) when the box switches to it: they are put back.
+    const early = document.documentElement.dataset.chat === undefined ? typedSoFar() : null;
     window.ccb.setState(message.state);
+    if (early) keepTyped(early);
     // Which chat the page shows (the input box keeps a draft per chat, so typing before the first
     // state would be replaced by that chat's draft); tests wait for it.
     document.documentElement.dataset.chat = message.state.botID;
@@ -156,6 +161,65 @@ window.addEventListener("message", (event: MessageEvent) => {
     else entry.reject(new Error(message.error ?? "refused"));
   }
 });
+
+// ---------------------------------------------------------------------------------------------
+// The input box before the first state (Web/src's Composer keeps drafts per chat only once it knows
+// the chat; what was typed before is not anyone's draft yet).
+
+function composerView(): EditorView | null {
+  const dom = document.querySelector<HTMLElement>(".composer .cm-editor");
+  return dom ? EditorView.findFromDOM(dom) : null;
+}
+
+function typedSoFar(): { text: string; cursor: number } | null {
+  const view = composerView();
+  const text = view?.state.doc.toString() ?? "";
+  return view && text ? { text, cursor: view.state.selection.main.head } : null;
+}
+
+function keepTyped(early: { text: string; cursor: number }) {
+  const view = composerView();
+  if (!view || view.state.doc.toString() !== "") return;
+  // As typing (not marked remote), so the box keeps it as this chat's draft.
+  view.dispatch({ changes: { from: 0, insert: early.text }, selection: { anchor: Math.min(early.cursor, early.text.length) }, userEvent: "input.type" });
+}
+
+/**
+ * Focus taken from the input box by nothing you did: as the window finishes opening (a card's frame
+ * loading in the chat seen doing it), Chromium moves focus out of the chat page and back, and the
+ * box is left without it, so the next keys would go nowhere. Within a few seconds of that, and with no
+ * click or Tab in between, the box takes focus back (when the page gets focus again, or at the next
+ * key, which then lands in the box).
+ */
+const REFOCUS_MS = 3_000;
+let lostAt = 0;
+let userMovedAt = 0;
+const inBox = (target: EventTarget | null) => !!(target as HTMLElement | null)?.closest?.(".composer .cm-content");
+// A click elsewhere in the page moves focus on purpose (a click into the box does not count).
+document.addEventListener("pointerdown", (event) => { if (!inBox(event.target)) { userMovedAt = Date.now(); lostAt = 0; } }, true);
+document.addEventListener("keydown", (event) => { if (event.key === "Tab" || event.key === "Escape") userMovedAt = Date.now(); }, true);
+document.addEventListener("focusout", (event) => {
+  if (!inBox(event.target) || event.relatedTarget) return;
+  if (Date.now() - userMovedAt < 300) return;
+  lostAt = Date.now();
+}, true);
+document.addEventListener("focusin", (event) => {
+  if (!inBox(event.target)) lostAt = 0;
+}, true);
+function takeFocusBack(): boolean {
+  if (!lostAt || Date.now() - lostAt > REFOCUS_MS) return false;
+  const active = document.activeElement;
+  if (active && active !== document.body && active !== document.documentElement) { lostAt = 0; return false; }
+  lostAt = 0;
+  composerView()?.focus();
+  return true;
+}
+window.addEventListener("focus", () => { setTimeout(takeFocusBack, 0); });
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Tab" || event.key === "Escape" || event.metaKey || event.ctrlKey) return;
+  // The key's text goes to whatever has focus once this returns: the box, now.
+  takeFocusBack();
+}, true);
 
 // Escape stops a reply being written, as in a terminal.
 document.addEventListener("keydown", (event) => {

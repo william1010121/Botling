@@ -75,6 +75,8 @@ export interface CoreOptions {
   plugins?: { node: HostCommand | null; hostScript: string; sealer: Sealer | null; timing?: HostTiming } | null;
   /** Maintainer's `ccb plugin check` command (null: none this time). */
   checkCommand?: string | null;
+  /** Tests: how long the first chat.snapshot is held (the page then shows its input box before any state). */
+  firstSnapshotDelayMs?: number;
 }
 
 export class Core {
@@ -107,6 +109,8 @@ export class Core {
   readonly pending: PendingFiles;
   readonly maintainer: MaintainerDesk;
   private lastPlugins = "";
+  /** Whether the first chat.snapshot was held already (`firstSnapshotDelayMs`). */
+  private snapshotHeld = false;
 
   constructor(private options: CoreOptions) {
     mkdirSync(options.dataDir, { recursive: true });
@@ -673,7 +677,14 @@ export class Core {
 
   private async handle(cmd: Command, signal: AbortSignal): Promise<unknown> {
     switch (cmd.type) {
-      case "chat.snapshot": return this.snapshot(cmd.botId);
+      case "chat.snapshot": {
+        const delay = this.options.firstSnapshotDelayMs ?? 0;
+        if (delay > 0 && !this.snapshotHeld) {
+          this.snapshotHeld = true;
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+        return this.snapshot(cmd.botId);
+      }
       case "chat.send": return this.send(cmd.botId, cmd.text, { replyTo: cmd.replyTo, to: cmd.to });
       case "plugins.list": return this.plugins.view();
       case "plugins.enable": return this.plugins.setEnabled(cmd.name, cmd.enabled);

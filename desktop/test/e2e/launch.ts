@@ -8,7 +8,7 @@ export interface Launched { app: ElectronApplication; page: Page; chat: FrameLoc
 /** The main bot's id (the Swift app's `Workspace.mainBotID`). */
 export const MAIN = "6A0B0000-0000-4000-8000-000000000002";
 
-export async function launch(options: { dataDir?: string; env?: Record<string, string>; chat?: unknown[]; importFrom?: string } = {}): Promise<Launched> {
+export async function launch(options: { dataDir?: string; env?: Record<string, string>; chat?: unknown[]; importFrom?: string; waitForState?: boolean } = {}): Promise<Launched> {
   const dataDir = options.dataDir ?? tempDir("e2e");
   if (options.chat) {
     // The main bot's chat, in the Swift app's chat.json format.
@@ -28,11 +28,12 @@ export async function launch(options: { dataDir?: string; env?: Record<string, s
   if (!options.importFrom) delete env.BOTLING_IMPORT_FROM;
   const app = await electron.launch({ args: [desktop], env, cwd: desktop });
   const page = await app.firstWindow();
-  await page.waitForSelector('.shell[data-ready="1"]');
   const chat = page.frameLocator("#chat-frame");
+  // A test of the first second types as soon as the input box is there (before any state).
+  if (options.waitForState === false) return { app, page, chat, dataDir };
+  await page.waitForSelector('.shell[data-ready="1"]');
   await chat.locator(".composer").waitFor();
-  // The page has its first state: the input box switched to this chat (and its draft) already, so
-  // what a test types stays.
+  // The page has its first state (the chat a test means is the one shown).
   await chat.locator("html[data-chat]").waitFor({ state: "attached" });
   return { app, page, chat, dataDir };
 }
@@ -45,16 +46,9 @@ export function chatFrame(page: Page): Promise<Frame> {
 /** Types a message in the chat page's input box and sends it with Return. */
 export async function say(chat: FrameLocator, text: string) {
   const box = chat.getByRole("textbox", { name: "Message" });
-  // Right after the window opens, what was filled in is sometimes gone again before Return (the page
-  // is still taking its first states; seen in about one full run in two, also before Phase 4a's last
-  // changes): fill again until the box holds the words.
-  for (let attempt = 0; ; attempt++) {
-    await box.click();
-    await box.fill(text);
-    const typed = await box.evaluate((element) => (element.querySelector(".cm-placeholder") ? "" : element.textContent));
-    if (typed === text || attempt >= 4) break;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
+  // Typed once: words typed before the page's first state are kept (composer-race.spec.ts).
+  await box.click();
+  await box.fill(text);
   await box.press("Enter");
 }
 

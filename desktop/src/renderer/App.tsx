@@ -191,6 +191,34 @@ function ChatFrame({ client, store, onError, onSent }: { client: Client; store: 
   }, [client]);
   useEffect(() => { if (ready.current) pushPlugins(); }, [pushPlugins, view.plugins]);
 
+  // As the window finishes opening, Chromium may move focus from the chat frame to this page and
+  // leave it here: someone already typing in the chat's input box would type into nothing. When this
+  // page takes focus from the chat frame without anything you did here (no click, no key), focus goes
+  // back to the frame, whose page puts it back in the input box (chat-frame/entry.ts).
+  useEffect(() => {
+    let chatHadFocus = false;
+    let lastInput = 0;
+    const input = () => { lastInput = Date.now(); };
+    const onBlur = () => { chatHadFocus = document.activeElement === frame.current; };
+    const onFocus = () => {
+      const target = frame.current;
+      if (!target || !chatHadFocus || Date.now() - lastInput < 500) return;
+      const active = document.activeElement;
+      if (active && active !== document.body && active !== target) return;
+      setTimeout(() => { if (Date.now() - lastInput >= 500 && document.hasFocus()) target.contentWindow?.focus(); }, 0);
+    };
+    window.addEventListener("pointerdown", input, true);
+    window.addEventListener("keydown", input, true);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("pointerdown", input, true);
+      window.removeEventListener("keydown", input, true);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
+
   useEffect(() => {
     // A frame's calls (saves, Detail commands, its chip) are paced: 20 at once, then 10 a second.
     const buckets = new Map<string, { tokens: number; at: number }>();
