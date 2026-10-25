@@ -10,14 +10,17 @@ import { homedir } from "node:os";
 import { basename, join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
+import { writeFileAtomic } from "./durable/atomic";
 import { rmSync } from "node:fs";
 import { PendingFiles, servedType, writeIncoming } from "./attachments";
 import { applySetting, launchSettings, readSettings, readSettingsList, settingsView, writeSettings } from "./settings";
-import { childFolders, defaultName, firstLine, folderPath, memoryItemsAt, nextAvatar, prepareNotesFolder, projectFolders, saveProjectRow } from "./projects";
+import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, memoryItemsAt, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
+import { TeamDesk, loadTeams, prepareTeamsPlugin, type TeamSpec } from "./teams";
+import { answerLabel } from "./attachments";
 import {
   ContractError, PROTOCOL_VERSION, errorResponse, okResponse, parseInbound,
   type Command, type Event, type ImportView, type Outbound, type ResultOf, type WaitingView,
-  type SettingsChange, type SettingsView, type WebStateView,
+  type SettingsChange, type SettingsView, type WebStateView, type TeamRunView,
 } from "../contract";
 import { Bot, type SessionStart, type SessionStartCodex } from "./bot";
 import type { HeadConfig } from "./agent/head";
@@ -84,6 +87,9 @@ export interface CoreOptions {
   webSites?: WebSite[];
 }
 
+/** What asking for a bot came to (`Workspace.BotMaking`). */
+export type BotMaking = { kind: "made"; botId: string } | { kind: "existing"; botId: string } | { kind: "empty" } | { kind: "taken" } | { kind: "removedByUser" };
+
 export class Core {
   readonly epoch = randomUUID().slice(0, 18);
   private seq = 0;
@@ -103,7 +109,7 @@ export class Core {
   readonly plugins: Plugins;
   /** Every bot's profile, in the left column's order (Maintainer last). */
   private profiles: BotProfile[] = [];
-  private makeBot!: (profile: BotProfile) => Bot;
+  private newBot!: (profile: BotProfile) => Bot;
   /** "Add as project?" cards waiting for your pick, by their line in the main chat. */
   private projectQuestions = new Map<string, { folder: string; task: string }[]>();
   /** What waits on you as the windows were last told, and the timers that look again. */
@@ -120,6 +126,14 @@ export class Core {
   readonly web: WebShelf;
   private lastWeb = "";
   private webQueued = false;
+  /** The temporary teams at work (`runningTeams`). */
+  readonly teams: TeamDesk;
+  /** Bots taken out of the left column: what they still say goes nowhere. */
+  private removed = new Set<string>();
+  /** Bots plugins made that you removed (`plugin/name`, lower case; removed-bots.json), so they stay removed. */
+  private removedPluginBots = new Set<string>();
+  /** <open-question> copies in the main bot's chat: the copy's id → the question it copies. */
+  private copies = new Map<string, { botId: string; questionId: string }>();
 
   constructor(private options: CoreOptions) {
     mkdirSync(options.dataDir, { recursive: true });
@@ -152,6 +166,12 @@ export class Core {
     const editorModel = this.settingsFile()?.componentEditorModel ?? this.settingsFile()?.componentEditor;
     const { editedEditor } = prepareLibrary(options.dataDir, typeof editorModel === "string" && ["sonnet", "opus", "haiku"].includes(editorModel) ? editorModel : "sonnet");
     if (editedEditor) this.log("ccb-core/claude/agents/component-editor.md was edited by hand; it is left as it is");
+    // The temporary teams: the ccb-teams plugin (team files from before plugins move into it once).
+    prepareTeamsPlugin(join(options.dataDir, "plugins"), join(options.dataDir, "teams"));
+    try {
+      const removed = readJSON(join(options.dataDir, "removed-bots.json"));
+      if (Array.isArray(removed)) for (const key of removed) if (typeof key === "string") this.removedPluginBots.add(key);
+    } catch { /* none */ }
     // The web AIs' page readers: the plugin ccb-web-extractors (Maintainer's to fix), the app's copy as the fallback.
     installExtractors(join(options.dataDir, "plugins"), options.webExtractors ?? null, () => builtInManifest(EXTRACTORS_PLUGIN, "Web page readers",
       `Reads the conversation on a web AI's page (${(options.webSites ?? webSites()).map((site) => site.name).join(", ")}) into text for the main bot. One script per site; README.md has the contract.`, []));
@@ -161,7 +181,7 @@ export class Core {
     const threads = new CodexThreads(join(options.dataDir, "codex-threads"));
     const codexConfig = options.codexConfig;
     this.profiles = profiles;
-    this.makeBot = (profile) => {
+    this.newBot = (profile) => {
       const bot: Bot = new Bot({
         profile,
         headConfig: options.headConfig,
@@ -195,7 +215,7 @@ export class Core {
       return bot;
     };
     for (const profile of profiles) {
-      this.makeBot(profile);
+      this.newBot(profile);
       this.order.push(profile.id);
     }
     this.maintainer = new MaintainerDesk({
@@ -223,6 +243,15 @@ export class Core {
           try { bot?.send(text); } catch (error) { this.log(`plugin message to ${botId}: ${(error as Error).message}`); }
         },
         notice: (text) => this.bots.get(MAIN_BOT_ID)?.appNotice(text),
+        createBot: (plugin, title, name, job, avatar) => {
+          const made = this.makeBot(name, job, { avatar, by: `plugin "${title}"`, plugin });
+          if (made.kind === "empty") throw new Error("A bot needs a name and a job.");
+          if (made.kind === "taken") throw new Error(`The name "${name}" is taken (by another bot, a project, or the app).`);
+          if (made.kind === "removedByUser") throw new Error(`The user removed the bot "${name}"; it is not made again.`);
+          const bot = this.bots.get(made.botId);
+          if (!bot) throw new Error("The bot could not be started.");
+          return { ...this.botInfo(bot), created: made.kind === "made" };
+        },
         addRoutine: (botId, cron, task) => {
           const bot = this.bots.get(botId === "main" ? MAIN_BOT_ID : botId);
           if (!bot) return "no-bot";
@@ -237,6 +266,21 @@ export class Core {
         broken: (plugin, problem) => this.maintainer.broken(plugin, problem),
         log: (line) => this.log(line),
       },
+    });
+    this.teams = new TeamDesk({
+      root: options.dataDir,
+      // A team's head runs as bots' heads do (the real CLI, or the fake one), in its own folder, asking nothing.
+      config: (folder, spec, tools, session) => options.headConfig(
+        { id: "team", name: spec.title, role: "bot", avatar: "cloud", folder, memoryPath: ".bot/memory.md", storeDir: folder, tools, job: null, problem: null },
+        { sessionId: session.sessionId, resume: false, systemPrompt: session.systemPrompt, model: session.model, pluginDirs: this.plugins.registry.claudeDirectories(), pluginEnv: this.plugins.registry.secretEnvironment() },
+      ),
+      language: () => this.language(),
+      results: () => { const chosen = this.settings().results; return isResultPublishing(chosen) ? chosen : "artifactUnlessSensitive"; },
+      teams: () => this.teamSpecs(),
+      tell: (text) => this.bots.get(MAIN_BOT_ID)?.appNotice(text),
+      changed: () => this.event({ type: "teams.updated", teams: this.teamViews() }),
+      ledger: this.ledger,
+      log: (line) => this.log(line),
     });
     // What the snapshot shows already is no event (an event comes only when something changes).
     this.lastPlugins = JSON.stringify(this.plugins.view());
@@ -302,25 +346,191 @@ export class Core {
 
   /**
    * The project list the main bot wakes with and its routines get (`Workspace.projectBriefing`): each
-   * project's memory and inbox file, and a question waiting in its own chat. 2.0 has no teams, so
-   * their lines and the <open-question> note are left out.
+   * project's and bot's memory and inbox file and a question waiting in its own chat, Maintainer's, the
+   * <open-question> note when one asks, and the temporary teams it can start.
    */
   projectBriefing(): string {
-    const memory = (profile: BotProfile) => join(profile.folder, profile.memoryPath);
-    const inbox = (profile: BotProfile) => join(profile.folder, ".bot", "inbox.md");
-    const question = (profile: BotProfile) => {
-      const open = this.bots.get(profile.id)?.openQuestion();
-      return open ? `; open question in its chat: ${firstLine(open.text)}` : "";
-    };
-    const projects = this.profiles.filter((profile) => profile.role === "manager" && profile.id !== MAINTAINER_ID);
-    const own = this.profiles.filter((profile) => profile.role === "bot");
-    const maintainer = this.profiles.find((profile) => profile.id === MAINTAINER_ID);
-    const projectLines = projects.length
-      ? projects.map((profile) => `- ${profile.name} (folder ${profile.folder}): memory file ${memory(profile)}; inbox file ${inbox(profile)}${question(profile)}`).join("\n")
-      : "(No projects yet.)";
-    const botLines = own.length ? "\n(App: Bots of their own, which you reach the same way.)\n" + own.map((profile) => `- ${profile.name} (${firstLine(profile.job ?? "")}): memory file ${memory(profile)}; inbox file ${inbox(profile)}${question(profile)}`).join("\n") : "";
-    const maintainerLine = maintainer ? `\n- Maintainer (plugin-library extensions and in-chat components only): memory file ${memory(maintainer)}; inbox file ${inbox(maintainer)}${question(maintainer)}` : "";
-    return `(App: Project list. To check progress, read the memory file and do not wake the manager; to hand off work, append a line to the end of the inbox file.)\n${projectLines}${botLines}${maintainerLine}`;
+    const row = (profile: BotProfile, about: string): BriefingRow => ({
+      name: profile.name, about, memory: join(profile.folder, profile.memoryPath), inbox: join(profile.folder, ".bot", "inbox.md"),
+      question: this.bots.get(profile.id)?.openQuestion()?.text ?? null,
+    });
+    const maintainer = this.profiles.find((profile) => profile.id === MAINTAINER_ID) ?? maintainerProfile(this.options.dataDir, "");
+    return projectBriefingText({
+      projects: this.profiles.filter((profile) => profile.role === "manager" && profile.id !== MAINTAINER_ID).map((profile) => row(profile, `folder ${profile.folder}`)),
+      bots: this.profiles.filter((profile) => profile.role === "bot").map((profile) => row(profile, firstLine(profile.job ?? ""))),
+      maintainer: row(maintainer, "plugin-library extensions and in-chat components only"),
+      teams: this.teamSpecs(),
+    });
+  }
+
+  /** The teams there are now: agents in enabled plugins' Claude parts (`loadTeams`). */
+  teamSpecs(): TeamSpec[] {
+    return loadTeams(this.plugins.registry.agentFiles());
+  }
+
+  private teamViews(): TeamRunView[] {
+    return this.teams.running.slice(0, 50).map((run) => ({ id: run.id, name: run.spec.name.slice(0, 200), title: run.spec.title.slice(0, 200), task: run.task.slice(0, 4_000), startedAt: run.startedAt }));
+  }
+
+  /** An awake main bot hears about bots made or removed with its next message (`briefAwakeMainBot`). */
+  private briefAwakeMainBot() {
+    this.bots.get(MAIN_BOT_ID)?.queueNote("(App: The list of projects and bots changed.)\n" + this.projectBriefing());
+  }
+
+  /**
+   * Makes a bot of its own (`Workspace.makeBot`): a folder under <data>/bots/, a row in the left column,
+   * its own memory, inbox and routines like a manager. One by the same name (ignoring case) is given
+   * back as it is; a plugin gets back only one it made itself, and never one you removed. `setUp` sends
+   * it its job at once, so it introduces itself and writes its routines.
+   */
+  makeBot(rawName: string, rawJob: string, options: { avatar?: string; setUp?: boolean; by?: string | null; plugin?: string | null } = {}): BotMaking {
+    const name = botName(rawName);
+    const job = rawJob.trim();
+    if (!name || !job) return { kind: "empty" };
+    const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+    const existing = this.profiles.find((profile) => profile.role === "bot" && same(profile.name, name));
+    if (existing) return !options.plugin || existing.plugin === options.plugin ? { kind: "existing", botId: existing.id } : { kind: "taken" };
+    // A name that would pass for someone else in a group chat or in an @.
+    const others = ["Main bot", "Maintainer", "User", "App", "Notice", ...this.profiles.filter((profile) => profile.role === "manager").map((profile) => profile.name)];
+    if (others.some((other) => same(other, name))) return { kind: "taken" };
+    if (options.plugin && this.removedPluginBots.has(`${options.plugin}/${name}`.toLowerCase())) return { kind: "removedByUser" };
+    const id = randomUUID().toUpperCase();
+    const folder = Layout.standalone(this.options.dataDir, id);
+    mkdirSync(folder, { recursive: true });
+    const avatar = options.avatar && HANDED_OUT.includes(options.avatar) ? options.avatar : nextAvatar(this.profiles.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID).map((profile) => profile.avatar));
+    prepareNotesFolder(folder);
+    saveProjectRow(this.options.dataDir, { id, name, folder, avatar, job, ...(options.plugin ? { plugin: options.plugin } : {}) });
+    const profile = projectProfile(this.options.dataDir, { id, name, folder: folderURLText(folder), avatar, job, ...(options.plugin ? { plugin: options.plugin } : {}) });
+    this.attach(profile);
+    const main = this.bots.get(MAIN_BOT_ID)!;
+    main.appNotice(`${options.by ? `New bot "${name}" (made by ${options.by})` : `New bot "${name}"`}: ${firstLine(job)}`, undefined, undefined, { sourceID: id });
+    this.briefAwakeMainBot();
+    if (options.setUp) {
+      try {
+        this.bots.get(id)?.relay(`(App) You were just created. Your job: ${job}\nIf it should happen at fixed times, add those jobs to your routines file now; if it is a report, also do the first one now. Then introduce yourself to the user in one sentence.`);
+      } catch (error) { this.log(`new bot ${name}: ${(error as Error).message}`); }
+    }
+    this.log(`made the bot ${name} (${folder})`);
+    return { kind: "made", botId: id };
+  }
+
+  /** A new project's or bot's row in the left column, before Maintainer (who stays last). */
+  private attach(profile: BotProfile): Bot {
+    const at = this.profiles.findIndex((candidate) => candidate.id === MAINTAINER_ID);
+    this.profiles.splice(at < 0 ? this.profiles.length : at, 0, profile);
+    const bot = this.newBot(profile);
+    const orderAt = this.order.indexOf(MAINTAINER_ID);
+    this.order.splice(orderAt < 0 ? this.order.length : orderAt, 0, profile.id);
+    this.event({ type: "bot.updated", bot: bot.view() });
+    return bot;
+  }
+
+  /** The main bot's (or Maintainer's) <new-bot name="…">job</new-bot>: made and set up, or why not. */
+  private botRequested(name: string, job: string, by: string | null) {
+    const main = this.bots.get(MAIN_BOT_ID)!;
+    const made = this.makeBot(name, job, { setUp: true, by });
+    if (made.kind === "existing") {
+      const old = this.bots.get(made.botId)!;
+      main.appNotice(`There is already a bot called "${old.profile.name}"; nothing new was made. To change its job, tell it, or remove it from its menu first.`, undefined, undefined, { sourceID: made.botId });
+    } else if (made.kind === "taken") {
+      main.appNotice(`No bot was made: the name "${botName(name)}" is already used by a project or the app.`);
+    }
+  }
+
+  /**
+   * Takes a bot of its own (`Workspace.removeBot`) — or, in 2.0, a project — out of the left column and
+   * stops it. Nothing on disk is deleted: its folder (memory, results; a project's own files and .bot/)
+   * and its chat files stay. Its questions copied into the main bot's chat can no longer be answered.
+   */
+  async removeBot(id: string): Promise<{ removed: boolean }> {
+    const profile = this.profiles.find((candidate) => candidate.id === id);
+    if (!profile) throw new ContractError("not_found", "No such bot.");
+    if (profile.role === "main" || id === MAINTAINER_ID) throw new ContractError("forbidden", "The main bot and Maintainer cannot be removed.");
+    const bot = this.bots.get(id);
+    this.removed.add(id);
+    this.profiles = this.profiles.filter((candidate) => candidate.id !== id);
+    this.order = this.order.filter((candidate) => candidate !== id);
+    this.bots.delete(id);
+    removeProjectRow(this.options.dataDir, id);
+    if (profile.plugin) {
+      this.removedPluginBots.add(`${profile.plugin}/${profile.name}`.toLowerCase());
+      writeFileAtomic(join(this.options.dataDir, "removed-bots.json"), JSON.stringify([...this.removedPluginBots].sort()));
+    }
+    if (this.visiblePins?.botId === id) this.visiblePins = null;
+    const main = this.bots.get(MAIN_BOT_ID)!;
+    for (const [copy, source] of [...this.copies]) {
+      if (source.botId !== id) continue;
+      this.copies.delete(copy);
+      main.settleAppQuestion(copy, { answer: "No longer needed" });
+    }
+    for (const copy of main.openCopies(id)) main.settleAppQuestion(copy.id, { answer: "No longer needed" });
+    this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event: { type: "bot.removed", botId: id } });
+    this.briefAwakeMainBot();
+    this.refreshWaiting();
+    main.appNotice(profile.role === "bot"
+      ? `Removed the bot "${profile.name}". Its folder stays at ${profile.folder}.`
+      : `Removed the project "${profile.name}" from Botling. Its folder stays at ${profile.folder}, with its notes in .bot/.`);
+    this.log(`removed ${profile.role === "bot" ? "the bot" : "the project"} ${profile.name} (${profile.folder} kept)`);
+    // It stops at once (no tidy); its chat files stay where they are.
+    await bot?.shutdown({ tidy: false }).catch((error) => this.log(`stopping ${profile.name}: ${(error as Error).message}`));
+    return { removed: true };
+  }
+
+  /**
+   * The main bot's <open-question from="name"/> (`showOpenQuestion`): the card a project or bot already
+   * shows in its own chat shows here too, a copy kept in step with it; a pick or words on it go there.
+   */
+  private showOpenQuestion(name: string) {
+    const main = this.bots.get(MAIN_BOT_ID)!;
+    const wanted = name.replace(/^[\t ]+|[\t ]+$/g, "").toLowerCase();
+    const profile = this.profiles.find((candidate) => candidate.role !== "main" && candidate.name.toLowerCase() === wanted);
+    if (!profile) { main.queueNote(`(App: There is no project or bot called "${name}"; no card was shown.)`); return; }
+    const question = this.bots.get(profile.id)?.openQuestion();
+    if (!question) {
+      main.appNotice(`${profile.name} has no question waiting in its chat now.`, undefined, undefined, { sourceID: profile.id });
+      main.queueNote(`(App: ${profile.name} has no open card, so none was shown. Do not ask its question again yourself; if it still needs the user, it asks in its own chat.)`);
+      return;
+    }
+    const copy: string = main.appNotice(`${profile.name}: ${question.text}`, question.choices, (index) => this.pickOnCopy(copy, index), {
+      onAnswer: (text, files) => this.answerOnCopy(copy, text, files), sourceID: profile.id, sourceMessageID: question.id,
+    });
+    this.copies.set(copy, { botId: profile.id, questionId: question.id });
+    this.refreshWaiting();
+  }
+
+  /** A pick on a copy goes to the question it copies; one settled or gone meanwhile closes the copy. */
+  private pickOnCopy(copy: string, index: number) {
+    const source = this.copies.get(copy);
+    this.copies.delete(copy);
+    if (!source) return;
+    let accepted = false;
+    try { accepted = this.bots.get(source.botId)?.choose(source.questionId, index).accepted ?? false; } catch { /* gone */ }
+    if (!accepted) this.log(`a pick on a copy of ${source.botId}'s question found it settled`);
+    this.refreshWaiting();
+  }
+
+  /** Words on a copy answer the question it copies; both show the answer. */
+  private answerOnCopy(copy: string, text: string, files: string[]): boolean {
+    const source = this.copies.get(copy);
+    const bot = source ? this.bots.get(source.botId) : undefined;
+    if (!source || !bot) { this.bots.get(MAIN_BOT_ID)?.settleAppQuestion(copy, { answer: "No longer needed" }); return false; }
+    let accepted = false;
+    try { accepted = bot.answer(source.questionId, text, files).accepted; } catch { /* gone */ }
+    this.copies.delete(copy);
+    this.bots.get(MAIN_BOT_ID)?.settleAppQuestion(copy, accepted ? { answer: answerLabel(text, files.length) } : { answer: "No longer needed" });
+    this.refreshWaiting();
+    return true;
+  }
+
+  /** A bot's question was settled in its own chat: so is its copy (`closeCopies`). */
+  private closeCopiesOf(botId: string, messageId: string) {
+    for (const [copy, source] of [...this.copies]) {
+      if (source.botId !== botId || source.questionId !== messageId) continue;
+      const line = this.bots.get(botId)?.line(messageId);
+      if (line && line.chosen == null && line.answer == null) continue;
+      this.copies.delete(copy);
+      this.bots.get(MAIN_BOT_ID)?.settleAppQuestion(copy, line?.chosen != null ? { chosen: line.chosen } : { answer: line?.answer ?? "No longer needed" });
+    }
   }
 
   /** Hands what the main bot wrote into an inbox.md to that bot, emptying the file (`deliverInboxes`). */
@@ -404,14 +614,7 @@ export class Core {
     const row = { id, name: defaultName(folder), folder, avatar: nextAvatar(this.profiles.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID).map((profile) => profile.avatar)) };
     prepareNotesFolder(folder);
     saveProjectRow(this.options.dataDir, row);
-    const profile = projectProfile(this.options.dataDir, { id, name: row.name, folder: pathToFileURL(folder).href + "/", avatar: row.avatar });
-    // Before Maintainer, who stays last.
-    const at = this.profiles.findIndex((candidate) => candidate.id === MAINTAINER_ID);
-    this.profiles.splice(at < 0 ? this.profiles.length : at, 0, profile);
-    const bot = this.makeBot(profile);
-    const orderAt = this.order.indexOf(MAINTAINER_ID);
-    this.order.splice(orderAt < 0 ? this.order.length : orderAt, 0, id);
-    this.event({ type: "bot.updated", bot: bot.view() });
+    this.attach(projectProfile(this.options.dataDir, { id, name: row.name, folder: folderURLText(folder), avatar: row.avatar }));
     this.log(`added project ${row.name} (${folder})`);
     return { botId: id, added: true };
   }
@@ -421,6 +624,24 @@ export class Core {
    * `/**`), ones that are projects already get the task, the rest are asked about on one card.
    */
   private projectRequests(bot: Bot, requests: BotRequest[]): BotRequest[] {
+    // Teams, new bots and <open-question> (`Workspace.handle`): only the main bot pulls up teams and
+    // shows other bots' cards; it makes bots when you ask it, and Maintainer may too. From anyone else
+    // they are left out, as in 1.x. They act once the reply is in.
+    const main = bot.id === MAIN_BOT_ID;
+    const later: (() => void)[] = [];
+    const rest: BotRequest[] = [];
+    for (const request of requests) {
+      if (request.kind === "team") { if (main) later.push(() => this.teams.start(request.name, request.task)); }
+      else if (request.kind === "newBot") { if (main || bot.id === MAINTAINER_ID) later.push(() => this.botRequested(request.name, request.job, main ? null : bot.profile.name)); }
+      else if (request.kind === "openQuestion") { if (main) later.push(() => this.showOpenQuestion(request.from)); }
+      else rest.push(request);
+    }
+    if (later.length) setImmediate(() => { for (const act of later) { try { act(); } catch (error) { this.log(`request: ${(error as Error).message}`); } } });
+    return this.newProjectRequests(bot, rest);
+  }
+
+  /** The main bot's <new-project> requests: found, asked about on one card (the rest are passed on). */
+  private newProjectRequests(bot: Bot, requests: BotRequest[]): BotRequest[] {
     const asked = requests.filter((request): request is Extract<BotRequest, { kind: "newProject" }> => request.kind === "newProject");
     if (!asked.length || bot.id !== MAIN_BOT_ID) return requests;
     const main = bot;
@@ -639,7 +860,11 @@ export class Core {
   }
 
   private event(event: Event) {
+    // A removed bot (still stopping) is heard no more.
+    if (this.removed.size && (("botId" in event && this.removed.has(event.botId)) || (event.type === "bot.updated" && this.removed.has(event.bot.id)))) return;
     this.options.emit({ v: PROTOCOL_VERSION, epoch: this.epoch, seq: ++this.seq, event });
+    // A question copied into the main bot's chat was settled in its own: so is the copy.
+    if (this.copies.size && event.type === "message.updated") this.closeCopiesOf(event.botId, event.message.id);
     // A question asked or answered, a bot added: what waits on you may have changed.
     if (event.type === "message.added" || event.type === "message.updated" || event.type === "message.removed" || event.type === "bot.updated") this.waitingSoon();
     // Your line closes an interval: it may be summarized by itself (`summarizeClosedInterval`).
@@ -734,6 +959,15 @@ export class Core {
       case "plugins.web": return { specs: this.plugins.webSpecs() };
       case "settings.get": return this.settingsNow();
       case "projects.add": return this.addProject(cmd.folder);
+      case "bots.create": {
+        const made = this.makeBot(cmd.name, cmd.job, { setUp: true });
+        if (made.kind === "empty") throw new ContractError("bad_request", "A bot needs a name and a job.");
+        if (made.kind === "taken" || made.kind === "removedByUser") throw new ContractError("conflict", `No bot was made: the name "${botName(cmd.name)}" is already used by a project or the app.`);
+        return { botId: made.botId, created: made.kind === "made" };
+      }
+      case "bots.remove": return this.removeBot(cmd.botId);
+      case "subagent.settle": return this.bot(cmd.botId).settleSubagent(cmd.subagentId, cmd.settled);
+      case "results.list": return { results: this.bot(cmd.botId).results().slice(0, 200) };
       case "waiting.list": return this.waiting();
       case "waiting.ignore": return this.ignoreWaiting(cmd.botId, cmd.text);
       case "settings.set": return this.changeSetting(cmd.change);
@@ -818,6 +1052,7 @@ export class Core {
       settings: this.settingsNow(),
       waiting: this.waiting(),
       web: this.webView(),
+      teams: this.teamViews(),
     };
   }
 
@@ -902,6 +1137,6 @@ export class Core {
     if (this.pinClock) { clearInterval(this.pinClock); this.pinClock = null; }
     if (this.waitingClock) { clearInterval(this.waitingClock); this.waitingClock = null; }
     if (this.waitingTimer) { clearTimeout(this.waitingTimer); this.waitingTimer = null; }
-    await Promise.all([...this.bots.values()].map((bot) => bot.shutdown()).concat(this.plugins.shutdown()));
+    await Promise.all([...this.bots.values()].map((bot) => bot.shutdown()).concat(this.plugins.shutdown(), this.teams.shutdown()));
   }
 }

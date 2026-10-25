@@ -48,7 +48,7 @@ test.afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())
 
 async function openSite(app: ElectronApplication, from: Page, accountId: string, path: string): Promise<Page> {
   const opened = app.waitForEvent("window");
-  const response = await post(from, { v: 8, id: `open-${accountId}-${Date.now()}`, cmd: { type: "site.open", accountId, url: `${origin}${path}` } });
+  const response = await post(from, { v: 9, id: `open-${accountId}-${Date.now()}`, cmd: { type: "site.open", accountId, url: `${origin}${path}` } });
   expect(response).toMatchObject({ ok: true });
   const site = await opened;
   await site.waitForSelector("#out[data-done='1']");
@@ -64,7 +64,7 @@ async function read(app: ElectronApplication, from: Page, accountId: string) {
 
 test("accounts are isolated from each other and survive a restart", async () => {
   const first = await launch();
-  const accounts = await post(first.page, { v: 8, id: "list", cmd: { type: "accounts.list" } });
+  const accounts = await post(first.page, { v: 9, id: "list", cmd: { type: "accounts.list" } });
   expect(accounts.result.accounts.map((a: { id: string }) => a.id)).toEqual(["work", "personal"]);
 
   for (const [account, value] of [["work", "alpha"], ["personal", "beta"]] as const) {
@@ -83,7 +83,7 @@ test("accounts are isolated from each other and survive a restart", async () => 
     expect(await read(second.app, second.page, "work")).toEqual({ cookie: "alpha", local: "alpha", idb: "alpha", bridge: "undefined", require: "undefined" });
     expect(await read(second.app, second.page, "personal")).toEqual({ cookie: "beta", local: "beta", idb: "beta", bridge: "undefined", require: "undefined" });
     // An unknown account is refused, not silently given a fresh session.
-    expect(await post(second.page, { v: 8, id: "nope", cmd: { type: "site.open", accountId: "ghost", url: `${origin}/read` } })).toMatchObject({ ok: false, error: { code: "not_found" } });
+    expect(await post(second.page, { v: 9, id: "nope", cmd: { type: "site.open", accountId: "ghost", url: `${origin}/read` } })).toMatchObject({ ok: false, error: { code: "not_found" } });
   } finally {
     await second.app.close();
   }

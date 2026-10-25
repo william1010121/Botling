@@ -72,6 +72,7 @@ export function settingsView(raw: RawSettings, systemLanguage: (typeof LANGUAGES
     componentEditorModel: oneOf(BOT_MODELS, raw.componentEditorModel) ?? "sonnet",
     resultPublishing: oneOf(RESULT_PUBLISHING, raw.resultPublishingChoice) ?? "artifactUnlessSensitive",
     stallReminderMinutes: stall !== null && stall >= 0 ? stall : 15,
+    rightPanelCollapsed: bool(raw.rightPanelCollapsed, false),
   };
 }
 
@@ -107,6 +108,7 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
     case "componentEditorModel": set("componentEditorModel", change.value); break;
     case "resultPublishing": set("resultPublishingChoice", change.value); break;
     case "stallReminderMinutes": set("stallReminderMinutes", change.value); break;
+    case "rightPanelCollapsed": set("rightPanelCollapsed", change.value); break;
   }
   return next;
 }

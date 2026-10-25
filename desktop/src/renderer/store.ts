@@ -4,7 +4,7 @@
 // takes a fresh snapshot instead of patching on guesses. Events that arrive while a snapshot is
 // on its way are buffered and replayed if newer than it. Chat events for other bots are not
 // kept (their chats are fetched when shown); `bot.updated` is kept for every bot.
-import type { WebStateView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
+import type { TeamRunView, WebStateView, WaitingView, PendingFileView, PluginsView, SettingsView, BotView, CatchUpView, ComponentInfoView, PinChoiceView, PinView, Event, EventEnvelope, HeadsView, ImportView, MessageView, ResultOf, RunningView, StepView, SubagentView, TaskView } from "../contract";
 
 /** A turn under way and its steps so far (with two heads, two can run at once). */
 export interface RunState { turnId: string; messageId: string; live: StepView[] }
@@ -52,12 +52,14 @@ export interface WorkspaceView {
   waiting: WaitingView;
   /** The web AIs: their sites, conversations and what their pages show. */
   web: WebStateView | null;
+  /** The temporary teams at work (the main bot's Now card). */
+  teams: TeamRunView[];
 }
 
 type Snapshot = ResultOf<"chat.snapshot">;
 
 export class WorkspaceStore {
-  private view: WorkspaceView = { ready: false, bots: [], imported: null, chat: null, subagent: null, resyncs: 0, components: {}, board: false, plugins: null, settings: null, waiting: { items: [], doing: {} }, web: null };
+  private view: WorkspaceView = { ready: false, bots: [], imported: null, chat: null, subagent: null, resyncs: 0, components: {}, board: false, plugins: null, settings: null, waiting: { items: [], doing: {} }, web: null, teams: [] };
   private epoch: string | null = null;
   private seq = 0;
   private syncing = false;
@@ -113,7 +115,7 @@ export class WorkspaceStore {
       const subagent = this.view.subagent && snapshot.chat?.botId === this.view.chat?.botId ? this.view.subagent : null;
       const chat = snapshot.chat ? { ...snapshot.chat, runs: (snapshot.chat.runs ?? []).map((run) => ({ turnId: run.turnId, messageId: run.messageId, live: run.live })) } : null;
       const board = this.view.board && chat?.botId === this.view.chat?.botId;
-      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board, plugins: snapshot.plugins ?? null, settings: snapshot.settings ?? this.view.settings, waiting: snapshot.waiting ?? this.view.waiting, web: snapshot.web ?? this.view.web });
+      this.set({ ready: true, bots: snapshot.bots, imported: snapshot.imported, chat, subagent, resyncs: this.view.resyncs + 1, components: snapshot.components ?? {}, board, plugins: snapshot.plugins ?? null, settings: snapshot.settings ?? this.view.settings, waiting: snapshot.waiting ?? this.view.waiting, web: snapshot.web ?? this.view.web, teams: snapshot.teams ?? this.view.teams });
     } finally {
       this.syncing = false;
     }
@@ -143,6 +145,15 @@ export class WorkspaceStore {
       void this.resync();
       return;
     }
+    // A bot taken out of the column: its chat, if shown, gives way to the main bot's.
+    if (event.type === "bot.removed") {
+      if (this.selected === event.botId) {
+        this.wanted = undefined;
+        this.set({ ...this.view, bots: this.view.bots.filter((bot) => bot.id !== event.botId), subagent: null });
+        void this.resync();
+        return;
+      }
+    }
     this.set(apply(this.view, event));
   }
 }
@@ -153,6 +164,8 @@ export function apply(view: WorkspaceView, event: Event): WorkspaceView {
   if (event.type === "settings.updated") return { ...view, settings: event.settings };
   if (event.type === "waiting.updated") return { ...view, waiting: event.waiting };
   if (event.type === "web.updated") return { ...view, web: event.web };
+  if (event.type === "teams.updated") return { ...view, teams: event.teams };
+  if (event.type === "bot.removed") return { ...view, bots: view.bots.filter((bot) => bot.id !== event.botId) };
   if (event.type === "bot.updated") {
     const bots = view.bots.some((bot) => bot.id === event.bot.id)
       ? view.bots.map((bot) => (bot.id === event.bot.id ? event.bot : bot))

@@ -56,7 +56,7 @@ import { fileURLToPath } from "node:url";
 import { answerLabel, attachmentList, attachmentsFolder, imageMediaType, keep } from "./attachments";
 import {
   ContractError, type RoutineView, type BotView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
-  type StepView, type SubagentView, type TaskView, type BotSettingsView,
+  type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks,
 } from "../contract";
 import { ClaudeHead, type HeadConfig, type HeadExit } from "./agent/head";
 import { CodexHead, type CodexHeadConfig, type CodexItem } from "./agent/codex";
@@ -282,6 +282,10 @@ export class Bot {
   private mergeRaced = false;
   /** The app's own questions in this chat (installing a plugin): what a pick does. */
   private appQuestions = new Map<string, (index: number) => void>();
+  /** …and what words typed on one do instead of going to the bot (a copy of another bot's question). */
+  private appAnswers = new Map<string, (text: string, files: string[]) => boolean>();
+  /** The subagent rows as the windows last saw them (a change sends bot.updated). */
+  private lastRows = "";
   /** What the app tells it with its next message (`queueNote`). */
   private queuedNote: string | null = null;
   /** Work paused for the user's message (1.x's `pausedWork`): carried on once the user has been answered. */
@@ -577,13 +581,18 @@ export class Bot {
    * `choices` and `onPick` it is the app's own question (installing a plugin): a pick goes to `onPick`,
    * never to the bot; after a restart nobody waits for it, so it is closed ("No longer needed").
    */
-  appNotice(text: string, choices?: { label: string; recommended?: boolean }[], onPick?: (index: number) => void): string {
-    if (this.options.primary) return this.options.primary.appNotice(text, choices, onPick);
+  appNotice(text: string, choices?: { label: string; recommended?: boolean; detail?: string }[], onPick?: (index: number) => void,
+    more: { onAnswer?: (text: string, files: string[]) => boolean; sourceID?: string; sourceMessageID?: string } = {}): string {
+    if (this.options.primary) return this.options.primary.appNotice(text, choices, onPick, more);
     const record: ChatRecord = { id: newId(), role: "notice", text, date: toSwiftDate() };
-    if (choices?.length) record.choices = choices.map((choice) => ({ label: choice.label, recommended: !!choice.recommended }));
+    if (choices?.length) record.choices = choices.map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: !!choice.recommended }));
+    // 1.x's keys: the project or bot a line came from, and the question it is a copy of.
+    if (more.sourceID) record.sourceID = more.sourceID;
+    if (more.sourceMessageID) record.sourceMessageID = more.sourceMessageID;
     if (choices?.length && onPick) {
       record.appQuestion = true;
       this.appQuestions.set(record.id, onPick);
+      if (more.onAnswer) this.appAnswers.set(record.id, more.onAnswer);
     }
     this.add(record);
     this.bumpUnread();
@@ -616,15 +625,72 @@ export class Bot {
   }
 
   /** Its latest question still waiting for you (1.x's `openQuestion`), if any (not tool approvals). */
-  openQuestion(): { id: string; text: string } | null {
+  openQuestion(): { id: string; text: string; choices: { label: string; detail?: string; recommended: boolean }[] } | null {
     const owner = this.owner;
-    const record = owner.records.findLast((candidate) => isOpenQuestion(candidate) && !candidate.permissionTool);
-    return record ? { id: record.id, text: record.text } : null;
+    // The bot's own (1.x: role .bot), not the app's cards in its chat.
+    const record = owner.records.findLast((candidate) => candidate.role === "bot" && isOpenQuestion(candidate) && !candidate.permissionTool);
+    return record ? { id: record.id, text: record.text, choices: (record.choices ?? []).map((choice) => ({ label: choice.label, ...(choice.detail ? { detail: choice.detail } : {}), recommended: !!choice.recommended })) } : null;
+  }
+
+  /** A line of its chat as it stands (a question's pick or answer), or null. */
+  line(id: string): ChatRecord | null {
+    return this.owner.records.find((candidate) => candidate.id === id) ?? null;
+  }
+
+  /** Closes one of the app's own questions in this chat without a pick going anywhere: shows `chosen` or `answer` (1.x's `markChosen` / `markAnswered`). */
+  settleAppQuestion(id: string, outcome: { chosen?: number; answer?: string }): void {
+    if (this.options.primary) { this.options.primary.settleAppQuestion(id, outcome); return; }
+    const record = this.records.find((candidate) => candidate.id === id);
+    this.appQuestions.delete(id);
+    this.appAnswers.delete(id);
+    if (!record || !isOpenQuestion(record)) return;
+    if (outcome.chosen !== undefined && record.choices?.[outcome.chosen]) record.chosen = outcome.chosen;
+    else record.answer = outcome.answer ?? NO_LONGER_NEEDED;
+    this.changed(record);
+  }
+
+  /** The app's questions in this chat that are copies of `botId`'s questions (`sourceMessageID`), still open. */
+  openCopies(botId?: string): ChatRecord[] {
+    return this.records.filter((record) => record.role === "notice" && typeof record.sourceMessageID === "string" && isOpenQuestion(record) && (!botId || record.sourceID === botId));
+  }
+
+  /** Settles a subagent's row into the right panel's "Settled", or brings it back (`settleSubagent`). */
+  settleSubagent(id: string, settled: boolean): ResultOf<"subagent.settle"> {
+    if (this.options.primary) return this.options.primary.settleSubagent(id, settled);
+    for (const bot of [this as Bot, this.partner].filter((candidate): candidate is Bot => !!candidate)) {
+      if (!bot.subagents.get(id)) continue;
+      const changed = bot.subagents.settle(id, settled);
+      if (changed) { bot.saveSubagents(); this.rowsChanged(true); }
+      return { changed };
+    }
+    throw new ContractError("not_found", "No such subagent.");
+  }
+
+  /** Its subagents' rows (and its partner's, with the head that sent each). */
+  private subagentRows() {
+    const two = !!this.partner || this.sharesChat;
+    const rows = [...this.subagents.rows(two ? this.engine : null), ...(this.partner?.subagents.rows(this.partner.engine) ?? [])];
+    return rows.slice(-100);
+  }
+
+  /** The rows changed: the windows hear of it once (`force`: always). */
+  private rowsChanged(force = false) {
+    const primary = this.options.primary ?? this;
+    const text = JSON.stringify(primary.subagentRows());
+    if (!force && text === primary.lastRows) return;
+    primary.lastRows = text;
+    primary.updated();
   }
 
   /** Every question in its chat still waiting for you. */
   openQuestions(): { id: string; text: string }[] {
-    return this.owner.records.filter((candidate) => isOpenQuestion(candidate) && !candidate.permissionTool).map((record) => ({ id: record.id, text: record.text }));
+    // Copies of other bots' questions (<open-question>) are theirs, not this chat's.
+    return this.owner.records.filter((candidate) => isOpenQuestion(candidate) && !candidate.permissionTool && !candidate.sourceMessageID).map((record) => ({ id: record.id, text: record.text }));
+  }
+
+  /** The links handed over in this chat, newest first (`Bot.results`). */
+  results(): ResultView[] {
+    return resultLinks(this.records);
   }
 
   /** Told with its next message when it is awake (`Bot.queueNote`; a later note replaces an earlier one). An asleep bot reads it all at its wake. */
@@ -733,6 +799,8 @@ export class Bot {
       subagents: this.subagents.running.length + (partner?.subagents.running.length ?? 0),
       problem: (this.problem ?? this.profile.problem ?? this.lockProblem)?.slice(0, 2_000) ?? null,
       heads: this.headsSettings.engines,
+      job: this.profile.job?.slice(0, 4_000) ?? null,
+      subagentRows: this.subagentRows(),
     };
   }
 
@@ -1838,6 +1906,7 @@ export class Bot {
   private subagentChanged(subagent: SubagentRecord | undefined) {
     if (!subagent) return;
     this.saveSubagents();
+    this.rowsChanged();
     this.emit({ type: "subagent.updated", botId: this.id, subagent: subagentView(subagent, this.speaker, this.subagents) });
     const top = subagent.parentID ? this.subagents.get(subagent.parentID) ?? subagent : subagent;
     if (this.turn?.steps.some((step) => step.id === top.id)) this.emitSteps(this.turn);
@@ -2980,6 +3049,7 @@ export class Bot {
       const record = this.records.find((candidate) => candidate.id === messageId);
       if (!record || !isOpenQuestion(record) || !record.choices?.[index]) return { accepted: false };
       this.appQuestions.delete(messageId);
+      this.appAnswers.delete(messageId);
       record.chosen = index;
       this.changed(record);
       asked(index);
@@ -3049,6 +3119,15 @@ export class Bot {
     if (resolved !== null) return { accepted: resolved };
     if (this.partner?.records.some((candidate) => candidate.id === messageId)) return this.partner.answer(messageId, text, files);
     const words = text.trim();
+    // A copy of another bot's question: the words go to that bot's question (`Workspace.answer`).
+    const copied = this.appAnswers.get(messageId);
+    if (copied) {
+      const record = this.records.find((candidate) => candidate.id === messageId);
+      if (!record || !isOpenQuestion(record) || (!words && !files.length)) return { accepted: false };
+      const accepted = copied(words, files);
+      if (accepted) { this.appQuestions.delete(messageId); this.appAnswers.delete(messageId); }
+      return { accepted };
+    }
     const record = this.records.find((candidate) => candidate.id === messageId);
     // A component's answer on a line with no question: your words (and its pictures) go to the bot as a message (1.x).
     if (!record?.choices?.length && record?.displays?.length) {
@@ -3154,10 +3233,10 @@ export class Bot {
   }
 
   /** Ends the turn and the head (with its tree) and writes everything out; for quitting. An idle awake bot tidies first (1.x). */
-  async shutdown() {
-    const tidyMs = this.options.quitTidyMs ?? 15_000;
+  async shutdown({ tidy = true }: { tidy?: boolean } = {}) {
+    const tidyMs = tidy ? this.options.quitTidyMs ?? 15_000 : 0;
     if (this.claimHold) { clearTimeout(this.claimHold.timer); this.claimHold.turn.resolve("stopped"); this.claimHold = null; }
-    const partner = this.partner ? this.partner.shutdown() : Promise.resolve();
+    const partner = this.partner ? this.partner.shutdown({ tidy }) : Promise.resolve();
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this.clearIdle();
     this.shuttingDown = true;

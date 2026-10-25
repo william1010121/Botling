@@ -46,6 +46,8 @@ export interface BotProfile {
   problem: string | null;
   /** More of its system prompt, for a manager with a special job (Maintainer). */
   instructions?: string | null;
+  /** The plugin that made this bot of its own (`Project.plugin`), if one did. */
+  plugin?: string | null;
 }
 
 export function mainProfile(root: string): BotProfile {
@@ -77,6 +79,7 @@ export function projectProfile(root: string, project: ProjectRecord): BotProfile
     tools: job === null ? [...TOOLBOX, "Bash"] : TOOLBOX,
     job,
     problem,
+    ...(typeof project.plugin === "string" ? { plugin: project.plugin } : {}),
   };
 }
 

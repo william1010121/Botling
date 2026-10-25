@@ -6,9 +6,14 @@
 // Dates are Swift dates (seconds since 2001); keys 2.0 does not know are kept on each record.
 import type { Launch } from "./agent/stream";
 import { characterPrefix } from "./briefing";
-import { toSwiftDate, type StepRecord } from "./store/records";
+import { fromSwiftDate, toSwiftDate, type StepRecord } from "./store/records";
 
 export type SubagentStatus = "running" | "completed" | "failed" | "stopped";
+
+/** A row for the left column / "Settled" (the contract's SubagentRowView). */
+export interface SubagentRow { id: string; title: string; status: SubagentStatus; head: "claude" | "codex" | null; startedAt: number; endedAt: number | null; unsettledAt: number | null; settled: boolean; prompt: string }
+
+export { LISTED_AFTER_ENDING_MS, LISTED_AT_MOST, listedRows, settledRows } from "../contract";
 
 export interface SubagentRecord {
   id: string;
@@ -172,6 +177,36 @@ export class SubagentBook {
       if (step) { step.done = true; step.failed = status === "failed"; }
     }
     this.trim();
+  }
+
+  /**
+   * Settles it (`TraceBook.settle`): its row leaves the left column for "Settled" in the right panel; it
+   * does not stop it. `false` brings it back (an ended one stays listed for 10 minutes from now). 1.x keeps
+   * the time as `dismissedAt`. True when it changed.
+   */
+  settle(id: string, settled: boolean, now = toSwiftDate()): boolean {
+    const subagent = this.list.findLast((candidate) => candidate.id === id);
+    if (!subagent) return false;
+    const isSettled = typeof subagent.dismissedAt === "number";
+    if (settled === isSettled) return false;
+    if (settled) subagent.dismissedAt = now;
+    else { delete subagent.dismissedAt; subagent.unsettledAt = now; }
+    return true;
+  }
+
+  /** The rows the left column and "Settled" draw: the ones the bot sent itself (not a subagent's own). */
+  rows(head: "claude" | "codex" | null): SubagentRow[] {
+    return this.list.filter((subagent) => !subagent.parentID).map((subagent) => ({
+      id: subagent.id.slice(0, 200),
+      title: subagent.description.slice(0, 400),
+      status: subagent.status,
+      head,
+      startedAt: fromSwiftDate(subagent.startedAt),
+      endedAt: typeof subagent.endedAt === "number" ? fromSwiftDate(subagent.endedAt) : null,
+      unsettledAt: typeof subagent.unsettledAt === "number" ? fromSwiftDate(subagent.unsettledAt) : null,
+      settled: typeof subagent.dismissedAt === "number",
+      prompt: subagent.prompt.slice(0, 1_000),
+    }));
   }
 
   /** Its process went away: every one still at work stopped with it (`TraceBook.stopRunning`). */

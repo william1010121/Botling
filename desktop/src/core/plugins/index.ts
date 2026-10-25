@@ -28,6 +28,8 @@ export interface PluginWorld {
   send(botId: string, text: string): void;
   /** A line in the main bot's chat. */
   notice(text: string): void;
+  /** `bots.create` for a plugin (`makeBot` with its name): the bot's info and whether it is new; throws why not. */
+  createBot(plugin: string, title: string, name: string, job: string, avatar: string | undefined): BotInfo & { created: boolean };
   /** A routines.cron line (`routines.add`); false: no such bot, or not a valid schedule. */
   addRoutine(botId: string, cron: string, task: string): "added" | "no-bot" | "bad-schedule";
   /** The library changed: the app shows it. */
@@ -306,7 +308,9 @@ export class Plugins {
         const parsed = CreateParams.safeParse(params);
         const plugin = parsed.success ? this.loaded(parsed.data.plugin) : null;
         if (!plugin?.manifest.ccb?.permissions?.includes("bots")) throw new Error("Creating bots needs the \"bots\" permission in package.json.");
-        throw new Error("Botling 2.0 cannot make new bots yet.");
+        const raw = parsed.data as Record<string, unknown>;
+        const text = (key: string) => (typeof raw[key] === "string" ? (raw[key] as string).slice(0, 4_000) : "");
+        return world.createBot(plugin.manifest.name, plugin.manifest.displayName ?? plugin.manifest.name, text("name"), text("job"), text("avatar") || undefined);
       }
       case "routines.add": {
         const parsed = RoutineParams.safeParse(params);

@@ -26,8 +26,11 @@ import shared from "../../../Web/src/contract.json";
  *    program part's calls), a message a plugin stopped, Maintainer.
  * 7: the chat page on its own origin with plugins' web parts in it, attachments (files for the next
  *    message, a message with only files), settings, projects, the right panel and inboxes, the browser.
+ * 8: the main bot's world (projects.pick/add, what waits on you).
+ * 9: temporary teams, bots of their own (New bot, removing a bot or project), subagent rows and
+ *    settling them, the right panel's Results and its folded strip.
  */
-export const PROTOCOL_VERSION = 8 as const;
+export const PROTOCOL_VERSION = 9 as const;
 
 /** The most a card's `ccb.save` keeps, shared with the Swift app (`ComponentState.limit`). */
 export const CARD_SAVE_LIMIT: number = (shared as { saveLimit: number }).saveLimit;
@@ -37,6 +40,8 @@ const id = z.string().min(1).max(64).regex(/^[A-Za-z0-9_.:-]+$/);
 export const RequestId = id;
 /** A bot: the Swift app's ids (UUIDs, upper case) are kept, so imported chats keep theirs. */
 export const BotId = id;
+/** Maintainer's fixed id (1.x's `Workspace.maintainerID`): it cannot be removed. */
+export const MAINTAINER_BOT_ID = "DEC0DE00-0000-4000-8000-00000000DEC0";
 
 // ---------------------------------------------------------------------------------------------
 // Shared views
@@ -231,6 +236,58 @@ export const MessageView = z.strictObject({
 });
 export type MessageView = z.infer<typeof MessageView>;
 
+/** A subagent's row under its bot in the left column, or in the right panel's "Settled" (1.x's `Subagent`). Times are ms since 1970. */
+export const SubagentRowView = z.strictObject({
+  id: z.string().max(200),
+  title: z.string().max(400),
+  status: z.enum(["running", "completed", "failed", "stopped"]),
+  /** With two heads: the head that sent it. */
+  head: z.enum(["claude", "codex"]).nullable(),
+  startedAt: z.number(),
+  endedAt: z.number().nullable(),
+  /** Brought back from "Settled" then: an ended one stays listed for 10 minutes from it. */
+  unsettledAt: z.number().nullable(),
+  /** You settled it: it is in the right panel's "Settled", not the left column. */
+  settled: z.boolean(),
+  /** What it was asked (the row's tooltip). */
+  prompt: z.string().max(1_000),
+});
+export type SubagentRowView = z.infer<typeof SubagentRowView>;
+
+/** How long a finished subagent stays in the left column (`TraceBook.listedAfterEnding`), and the most rows listed under one bot. */
+export const LISTED_AFTER_ENDING_MS = 10 * 60_000;
+export const LISTED_AT_MOST = 4;
+
+/**
+ * `TraceBook.listed`: the rows the left column lists at `now` — running, or ended (or brought back from
+ * "Settled") less than 10 minutes ago, and not settled; running first, then newest first. `limit` null: all.
+ */
+export function listedRows<T extends Pick<SubagentRowView, "status" | "startedAt" | "endedAt" | "unsettledAt" | "settled">>(rows: T[], now: number, limit: number | null = LISTED_AT_MOST): T[] {
+  const shown = ordered(rows.filter((row) => {
+    if (row.settled) return false;
+    if (row.status === "running") return true;
+    if (row.endedAt === null) return false;
+    const since = Math.max(row.endedAt, row.unsettledAt ?? row.endedAt);
+    return now - since < LISTED_AFTER_ENDING_MS;
+  }), rows);
+  return limit === null ? shown : shown.slice(0, limit);
+}
+
+/** `TraceBook.settled`: the rows you settled, in the same order. */
+export function settledRows<T extends Pick<SubagentRowView, "status" | "startedAt" | "settled">>(rows: T[]): T[] {
+  return ordered(rows.filter((row) => row.settled), rows);
+}
+
+/** Running first, then newest first; later in the book counts as newer at the same start. */
+function ordered<T extends Pick<SubagentRowView, "status" | "startedAt">>(shown: T[], book: T[]): T[] {
+  return [...shown].sort((a, b) => {
+    const ra = a.status === "running", rb = b.status === "running";
+    if (ra !== rb) return ra ? -1 : 1;
+    if (a.startedAt !== b.startedAt) return b.startedAt - a.startedAt;
+    return book.indexOf(b) - book.indexOf(a);
+  });
+}
+
 /** A bot in the left column. */
 export const BotView = z.strictObject({
   id: BotId,
@@ -252,6 +309,10 @@ export const BotView = z.strictObject({
   problem: z.string().max(2_000).nullable(),
   /** Its heads, Claude first: one, or Claude and Codex in one chat. */
   heads: z.array(Engine).min(1).max(2),
+  /** A bot of its own's job (null for the main bot and managers). */
+  job: z.string().max(4_000).nullable(),
+  /** Its subagents sent off by the bot itself (not ones a subagent sent), newest kept. */
+  subagentRows: z.array(SubagentRowView).max(100),
 });
 export type BotView = z.infer<typeof BotView>;
 
@@ -392,6 +453,8 @@ export const SettingsView = z.strictObject({
   componentEditorModel: BotModel,
   resultPublishing: z.enum(["artifactUnlessSensitive", "localOnly", "artifactAlways"]),
   stallReminderMinutes: z.number().int().min(0).max(10_000),
+  /** The right panel folded into a strip of icons (1.x's `rightPanelCollapsed`). */
+  rightPanelCollapsed: z.boolean(),
 });
 export type SettingsView = z.infer<typeof SettingsView>;
 /** One change on the Settings page (null: back to the default). */
@@ -415,6 +478,7 @@ export const SettingsChange = z.discriminatedUnion("key", [
   z.strictObject({ key: z.literal("componentEditorModel"), value: BotModel }),
   z.strictObject({ key: z.literal("resultPublishing"), value: z.enum(["artifactUnlessSensitive", "localOnly", "artifactAlways"]) }),
   z.strictObject({ key: z.literal("stallReminderMinutes"), value: z.number().int().min(0).max(1_440) }),
+  z.strictObject({ key: z.literal("rightPanelCollapsed"), value: z.boolean() }),
 ]);
 export type SettingsChange = z.infer<typeof SettingsChange>;
 /** A bot's own choices (bot.json): its heads, its model and effort, its subagents' model, Codex's model. */
@@ -539,6 +603,16 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("chat.react"), botId, messageId: id, emoji: z.string().min(1).max(16), present: z.boolean() }),
   /** A subagent's own conversation (the Agent call's id). */
   z.strictObject({ type: z.literal("subagent.view"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/) }),
+  /** Settles a subagent's row out of the left column into the right panel's "Settled" (false: back). It keeps working. */
+  z.strictObject({ type: z.literal("subagent.settle"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/), settled: z.boolean() }),
+  /** "New bot": a bot of its own with a name and a job; it sets up its own routines (`createBot`, setUp). */
+  z.strictObject({ type: z.literal("bots.create"), name: z.string().min(1).max(400), job: z.string().min(1).max(4_000) }),
+  /** Removes a bot of its own or a project from the left column and stops it. Its folders stay on disk. */
+  z.strictObject({ type: z.literal("bots.remove"), botId }),
+  /** The links handed over in a bot's chat, newest first (the right panel's Results). */
+  z.strictObject({ type: z.literal("results.list"), botId }),
+  /** Main only: opens one of a bot's results (a web link in the browser, a local page with its app). */
+  z.strictObject({ type: z.literal("result.open"), botId, url: z.string().min(1).max(4_000) }),
   z.strictObject({ type: z.literal("chat.read"), botId }),
   z.strictObject({ type: z.literal("turn.stop"), botId, turnId: id }),
   /** Resolves when the turn ends. Cancelling the request stops the wait, never the turn. */
@@ -681,9 +755,39 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
+  "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open"]);
+
+/** A temporary team at work (1.x's `TeamRun`): its title, the task, when it started (ms since 1970). */
+export const TeamRunView = z.strictObject({ id, name: z.string().max(200), title: z.string().max(200), task: z.string().max(4_000), startedAt: z.number() });
+export type TeamRunView = z.infer<typeof TeamRunView>;
+
+/** A link handed over in a chat (`[label](url)`, 1.x's `Chip`). */
+export const ResultView = z.strictObject({ label: z.string().max(400), url: z.string().max(4_000) });
+export type ResultView = z.infer<typeof ResultView>;
+
+/**
+ * The links in a chat's lines (`Bot.results`): `[label](url)` in the bot's and the app's lines, newest
+ * first, each once (1.x's `RichText.chips`; a URL with a space or `)` is not one).
+ */
+export function resultLinks(lines: { role: string; text: string }[]): ResultView[] {
+  const seen = new Set<string>();
+  const out: ResultView[] = [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!;
+    if (line.role !== "bot" && line.role !== "notice") continue;
+    const found = [...line.text.matchAll(/\[([^\]\n]+)\]\(([^)\s]+)\)/g)].map((match) => ({ label: match[1]!, url: match[2]! }));
+    for (const chip of found) {
+      const key = `${chip.label}\u0000${chip.url}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ label: chip.label.slice(0, 400), url: chip.url.slice(0, 4_000) });
+    }
+  }
+  return out;
+}
 
 export interface ChatSnapshot {
   botId: string;
@@ -708,7 +812,12 @@ export interface ChatSnapshot {
 }
 
 export interface Results {
-  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView; waiting?: WaitingView; web?: WebStateView };
+  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView; waiting?: WaitingView; web?: WebStateView; teams?: TeamRunView[] };
+  "subagent.settle": { changed: boolean };
+  "bots.create": { botId: string; created: boolean };
+  "bots.remove": { removed: boolean };
+  "results.list": { results: ResultView[] };
+  "result.open": { opened: boolean };
   /** `stoppedBy`: a plugin's beforeSend hook stopped it (`messageId` is the notice saying so, `turnId` null). */
   "chat.send": { messageId: string; turnId: string | null; stoppedBy?: string };
   "heads.set": { engines: ("claude" | "codex")[] };
@@ -826,6 +935,10 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("routines.updated"), botId, routines: z.array(RoutineView).max(200), error: z.string().max(2_000).nullable() }),
   /** The web AIs' sites, conversations and what their pages show. */
   z.strictObject({ type: z.literal("web.updated"), web: WebStateView }),
+  /** A bot of its own or a project was taken out of the left column. */
+  z.strictObject({ type: z.literal("bot.removed"), botId }),
+  /** The temporary teams at work changed (one started or finished). */
+  z.strictObject({ type: z.literal("teams.updated"), teams: z.array(TeamRunView).max(50) }),
 ]);
 export type Event = z.infer<typeof Event>;
 

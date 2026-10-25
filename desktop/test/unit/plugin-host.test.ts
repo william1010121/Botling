@@ -105,7 +105,7 @@ describe("the plugin host", () => {
     const dir = tempDir("plugin-host");
     hostPlugin(dir, "news", `export function activate(ccb) {
       ccb.commands.register("news.token", () => ccb.settings.get("token"));
-      ccb.commands.register("news.make", async () => { try { await ccb.bots.create({ name: "Morning news", job: "x" }); return "made"; } catch (e) { return e.message; } });
+      ccb.commands.register("news.make", async () => { try { const bot = await ccb.bots.create({ name: "Morning news", job: "x" }); return bot.name + "/" + bot.role + "/" + bot.created; } catch (e) { return e.message; } });
       ccb.commands.register("news.say", () => { ccb.bots.send("main", "hello from a plugin"); return "sent"; });
     }`, { permissions: ["bots"], contributes: { settings: { token: { type: "string", title: "Token", secret: true }, greeting: { type: "string", title: "Greeting", default: "hi" } } } });
     hostPlugin(dir, "quiet", `export function activate(ccb) {
@@ -125,7 +125,15 @@ describe("the plugin host", () => {
     await until(async () => (await c.call({ type: "plugins.command", id: "news.token" })).result === "tok-123-plain", { timeout: 10_000 });
     await expect(c.call({ type: "plugins.setting", name: "news", key: "token", value: "x" })).rejects.toThrow(/plugins\.secret/);
     await expect(c.call({ type: "plugins.setting", name: "news", key: "greeting", value: 5 })).rejects.toThrow(/not a string/);
-    expect((await c.call({ type: "plugins.command", id: "news.make" })).result).toBe("Botling 2.0 cannot make new bots yet.");
+    // Since Phase 4b a plugin with the bots permission makes a bot of its own (1.x's makeBot with the plugin's
+    // name); asking again gives the same bot back; one you removed is not made again (removed-bots.json).
+    expect((await c.call({ type: "plugins.command", id: "news.make" })).result).toBe("Morning news/bot/true");
+    expect((await c.call({ type: "plugins.command", id: "news.make" })).result).toBe("Morning news/bot/false");
+    const made = (await c.call({ type: "chat.snapshot" })).bots.find((b: any) => b.name === "Morning news");
+    expect(JSON.parse(readFileSync(join(dir, "projects.json"), "utf8"))[0]).toMatchObject({ name: "Morning news", job: "x", plugin: "news" });
+    await c.call({ type: "bots.remove", botId: made.id });
+    expect((await c.call({ type: "plugins.command", id: "news.make" })).result).toBe('The user removed the bot "Morning news"; it is not made again.');
+    expect(JSON.parse(readFileSync(join(dir, "removed-bots.json"), "utf8"))).toEqual(["news/morning news"]);
     expect((await c.call({ type: "plugins.command", id: "quiet.make" })).result).toBe('Creating bots needs the "bots" permission in package.json.');
     await c.call({ type: "plugins.command", id: "quiet.say" });
     await c.call({ type: "plugins.command", id: "news.say" });

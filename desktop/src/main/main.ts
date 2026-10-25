@@ -2,7 +2,7 @@
 // it and what it is), and relays the rest to the core process. It runs no agents and keeps no chat.
 import { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
 import { join, normalize, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { CoreClient } from "./core-client";
 import { WebPages } from "./web";
@@ -280,8 +280,44 @@ async function pickProject(sender: WebContents): Promise<unknown> {
   return core.call({ type: "projects.add", folder });
 }
 
+/** Files a result may open with their own app (1.x opens a result page in a window of its own); anything else is shown in Finder. */
+const RESULT_TYPES = new Set([".html", ".htm", ".md", ".txt", ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".csv", ".json", ".mp4", ".mov", ".m4v", ".webm", ".mp3", ".m4a", ".wav"]);
+/** Tests: the results main opened (BOTLING_NO_EXTERNAL=1 opens nothing for real). */
+const openedResults: string[] = [];
+(globalThis as unknown as { __botlingOpenedResults: string[] }).__botlingOpenedResults = openedResults;
+
+/**
+ * One of a bot's results (the right panel's Results): only a link that is in that bot's chat. A web link
+ * opens in the browser; a local file opens with its app when it is a page, a picture, a video or a
+ * document, and is shown in Finder otherwise (never run).
+ */
+async function openResult(botId: string, url: string): Promise<{ opened: boolean }> {
+  const { results } = await core.call({ type: "results.list", botId }) as { results: { url: string }[] };
+  if (!results.some((result) => result.url === url)) throw Object.assign(new Error("That link is not one of this bot's results."), { code: "not_found" });
+  const external = process.env.BOTLING_NO_EXTERNAL === "1";
+  if (/^(https?|mailto):/i.test(url)) {
+    openedResults.push(url);
+    if (!external) await shell.openExternal(url);
+    return { opened: true };
+  }
+  let path: string;
+  try { path = url.startsWith("file:") ? fileURLToPath(url) : url.startsWith("/") ? url : ""; } catch { path = ""; }
+  if (!path || !existsSync(path)) throw Object.assign(new Error("That result's file is not there."), { code: "not_found" });
+  openedResults.push(url);
+  if (external) return { opened: true };
+  const dot = path.lastIndexOf(".");
+  if (RESULT_TYPES.has(dot >= 0 ? path.slice(dot).toLowerCase() : "")) {
+    const problem = await shell.openPath(path);
+    if (problem) throw new Error(problem);
+  } else {
+    shell.showItemInFolder(path);
+  }
+  return { opened: true };
+}
+
 async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown> {
   switch (cmd.type) {
+    case "result.open": return openResult(cmd.botId, cmd.url);
     case "files.pick": return pickFiles(cmd.botId, sender);
     case "projects.pick": return pickProject(sender);
     case "card.page": return { url: addPage(cmd.html, cmd.panel === true) };
