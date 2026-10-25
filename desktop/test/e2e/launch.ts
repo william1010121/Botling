@@ -19,6 +19,8 @@ export async function launch(options: { dataDir?: string; env?: Record<string, s
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
   Object.assign(env, {
     BOTLING_DATA_DIR: dataDir, BOTLING_AGENT: "fake", BOTLING_HIDDEN: "1", BOTLING_QUIET: "1", BOTLING_QUIT_ON_CLOSE: "1",
+    // A link a web AI's page opens outside the app is only noted, never handed to the real browser.
+    BOTLING_NO_EXTERNAL: "1",
     // The page's own words in English whatever this computer's language (settings.json may name another).
     BOTLING_LANGUAGES: "en-US",
     ...(options.importFrom ? { BOTLING_IMPORT_FROM: options.importFrom } : {}),

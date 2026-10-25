@@ -84,7 +84,8 @@ describe("import from 1.x", () => {
     expect(report.skipped.join("\n")).toMatch(/1 line\(s\) 1.x itself would not read/);
     expect(report.skipped.join("\n")).toMatch(/Broken|33333333.*not valid JSON/);
     expect(report.skipped.join("\n")).toMatch(/secret settings .*keychain/);
-    expect(report.skipped.join("\n")).toMatch(/web\//);
+    // The web AIs' saved conversations come over (Phase 4a, item 5).
+    expect(existsSync(join(target, "web", "gemini", "conversations.json"))).toBe(true);
     // The main bot's files, as they were (so 1.x and 2.0 read the same thing).
     expect(readFileSync(join(target, "main", "chat.json"), "utf8")).toBe(readFileSync(join(source, "main", "chat.json"), "utf8"));
     expect(readFileSync(join(target, "main", "memory.md"), "utf8")).toMatch(/short answers/);

@@ -9,6 +9,7 @@
 // - a bot of its own's notes (.bot/memory.md, inbox.md, routines.cron), into 2.0's bots/<ID>/,
 //   with its folder in projects.json pointed there;
 // - settings.json;
+// - the web AIs' saved conversations (`web/<site>/`: conversations.json and each conversation's .md);
 // - the plugin library (`plugins/`): every plugin's text files (manifests, bundled code, components,
 //   Claude parts) and Maintainer's notes (.bot/memory.md), into 2.0's own plugins folder; and
 //   plugins.json (which plugins are off, their settings, where outside ones came from) without any
@@ -16,7 +17,7 @@
 // What stays where it is: a project manager's working folder (the user's project, with its
 // .bot/memory.md — 2.0 works in the same folder, like 1.x), attachments, chat archives, result
 // pages and screenshots (messages keep pointing at them, read-only), the library's git history,
-// node_modules and binary files (pictures, fonts), web AIs' folders, the commands 1.x was allowed to
+// node_modules and binary files (pictures, fonts), web AIs' sign-ins (1.x's WebKit stores), the commands 1.x was allowed to
 // run (2.0 asks again), and claude's own sessions (2.0 starts new ones).
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -246,7 +247,19 @@ export function importFrom1x(sourceDir: string, targetDir: string): ImportReport
   const editorRecord = read(join(source, "component-editor.json"));
   if (editorRecord) write(join(target, "component-editor.json"), editorRecord);
   report.components = components;
-  for (const folder of ["web", "runs", "teams"]) {
+  // The web AIs' saved conversations: each site's list and its Markdown files (sign-ins stay in 1.x's WebKit stores).
+  let webFiles = 0;
+  for (const site of safeList(join(source, "web"))) {
+    const folder = join(source, "web", site);
+    if (!/^[a-z][a-z0-9-]{0,30}$/.test(site) || !statSync(folder).isDirectory()) continue;
+    for (const name of safeList(folder)) {
+      if (name !== "conversations.json" && !/^[^./][^/]*\.md$/.test(name)) continue;
+      const data = read(join(folder, name));
+      if (data) { write(join(target, "web", site, name), data); webFiles++; }
+    }
+  }
+  if (webFiles) report.skipped.push("web AIs' sign-ins (sign in again in each site; their saved conversations came over)");
+  for (const folder of ["runs", "teams"]) {
     if (existsSync(join(source, folder))) report.skipped.push(`${folder}/ (not used by 2.0 yet)`);
   }
 

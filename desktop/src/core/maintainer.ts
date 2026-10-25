@@ -49,7 +49,7 @@ export function maintainerProfile(root: string, instructions: string): BotProfil
 // The library's own files (`prepareComponentPlugin`, `prepareCorePlugin`, `writeLibraryGuide`)
 
 /** A plugin the app writes itself (`PluginManifest.builtIn(...).fileText`). */
-function builtInManifest(name: string, displayName: string, description: string, permissions: string[], extra: { claude?: string; components?: string } = {}): string {
+export function builtInManifest(name: string, displayName: string, description: string, permissions: string[], extra: { claude?: string; components?: string } = {}): string {
   const manifest: Record<string, unknown> = {
     name, displayName, version: "1.0.0", description, license: "GPL-3.0-or-later", engines: { ccb: ENGINE_RANGE },
     ccb: { permissions, ...(extra.claude ? { claude: extra.claude } : {}), ...(extra.components ? { contributes: { components: extra.components } } : {}) },

@@ -145,6 +145,8 @@ const core = new Core({
   checkCommand,
   // Tests: hold the first chat.snapshot this long, so the page shows its input box before its first state.
   firstSnapshotDelayMs: number(process.env.BOTLING_TEST_FIRST_SNAPSHOT_MS, 0),
+  // The app's copy of the web AIs' page readers (build.mjs copies 1.x's Resources/web-extractors).
+  webExtractors: join(__dirname, "..", "web-extractors"),
   languages: process.env.BOTLING_LANGUAGES ? process.env.BOTLING_LANGUAGES.split(",").filter(Boolean) : undefined,
   // 1.x's data folder, to tell whether it has a project open; only when named (packaged: ~/.claudecodebot).
   oneX: {

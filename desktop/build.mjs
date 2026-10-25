@@ -70,4 +70,11 @@ cpSync(join(katex, "katex.min.css"), join(out, "renderer/plugins/ccb-latex/katex
 for (const name of readdirSync(join(katex, "fonts")).filter((name) => name.endsWith(".woff2"))) {
   cpSync(join(katex, "fonts", name), join(out, "renderer/plugins/ccb-latex/fonts", name));
 }
+// The web AIs' page readers as 1.x ships them (Sources/ClaudeCodeBot/Resources/web-extractors, read
+// only): the core puts them in the plugin library's ccb-web-extractors and falls back to them.
+const extractors = join(here, "..", "Sources", "ClaudeCodeBot", "Resources", "web-extractors");
+mkdirSync(join(out, "web-extractors"), { recursive: true });
+for (const name of readdirSync(extractors).filter((name) => name.endsWith(".js") || name.endsWith(".md"))) {
+  cpSync(join(extractors, name), join(out, "web-extractors", name));
+}
 console.log("built out/");

@@ -1,10 +1,11 @@
 // Electron main: thin. It owns windows, sessions and protocols, checks every IPC message (who sent
 // it and what it is), and relays the rest to the core process. It runs no agents and keeps no chat.
-import { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, session, net, type WebContents, type Session, type IpcMainEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
 import { join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { CoreClient } from "./core-client";
+import { WebPages } from "./web";
 import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP } from "./card-page";
 import { randomBytes } from "node:crypto";
 import {
@@ -76,7 +77,15 @@ const core = new CoreClient({
   script: join(root, "out", "core", "main.cjs"),
   hostScript: join(root, "out", "host", "host-utility.mjs"),
   env: coreEnvironment(),
-  onEvent: broadcast,
+  onEvent: (event) => {
+    // The web AIs' pages are main's to show: it follows the core's view of them.
+    if (event.epoch !== lastEpoch) {
+      if (lastEpoch !== null) web.coreRestarted();
+      lastEpoch = event.epoch;
+    }
+    if (event.event.type === "web.updated") web.update(event.event.web);
+    broadcast(event);
+  },
   audit: note,
   seal: (op, text) => {
     // Plugins' secrets: sealed with the OS keychain's key (safeStorage); only the core asks, over its own port.
@@ -84,6 +93,20 @@ const core = new CoreClient({
     return op === "seal" ? safeStorage.encryptString(text).toString("base64") : safeStorage.decryptString(Buffer.from(text, "base64"));
   },
 });
+
+let lastEpoch: string | null = null;
+
+/** The web AIs (Gemini, ChatGPT, Claude): each in its own session, no Node, no preload (main/web.ts). */
+const web = new WebPages({
+  core,
+  note,
+  openExternal: (url) => {
+    if (!/^https?:\/\//i.test(url) || process.env.BOTLING_NO_EXTERNAL === "1") return;
+    void shell.openExternal(url).catch(() => {});
+  },
+  opened: (opened) => openedSessions.add(opened),
+});
+(globalThis as unknown as { __botlingWeb: WebPages }).__botlingWeb = web;
 
 function coreEnvironment(): Record<string, string> {
   const env: Record<string, string> = {};
@@ -96,6 +119,8 @@ function coreEnvironment(): Record<string, string> {
   if (env.BOTLING_IMPORT_FROM === undefined && app.isPackaged) env.BOTLING_IMPORT_FROM = join(app.getPath("home"), ".claudecodebot");
   // Where 1.x keeps its projects, to tell whether it has a project open (read-only; same rule).
   if (env.BOTLING_1X_DIR === undefined && app.isPackaged) env.BOTLING_1X_DIR = join(app.getPath("home"), ".claudecodebot");
+  // Tests show local pages as web AIs; a packaged app lists only the real sites.
+  if (app.isPackaged) delete env.BOTLING_TEST_WEB_SITES;
   // The bots reply in the system's language unless settings name one (`AppLanguage.preferred`).
   try { env.BOTLING_LANGUAGES ??= app.getPreferredSystemLanguages().join(","); } catch { /* Intl's locale then */ }
   return env;
@@ -262,6 +287,11 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
     case "card.page": return { url: addPage(cmd.html, cmd.panel === true) };
     case "accounts.list": return { accounts: accounts() };
     case "site.open": return { windowId: openSite(cmd.accountId, cmd.url) };
+    case "web.place": {
+      const owner = BrowserWindow.fromWebContents(sender);
+      if (!owner) throw new Error("No window.");
+      return { shown: await web.place(owner, cmd.site, cmd.bounds) };
+    }
     default: throw new Error(`main does not handle ${cmd.type}`);
   }
 }
@@ -434,6 +464,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   // Cookies are written to disk lazily; make sure each account's are there before exiting.
   const flushes = [...openedSessions].map((opened) => opened.cookies.flushStore().catch(() => {}));
+  web.closeAll();
   void Promise.all([core.stop(), ...flushes]).finally(() => app.exit(0));
 });
 

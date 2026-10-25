@@ -13,11 +13,15 @@ import { CHAT_ORIGIN, CHAT_PAGE, type FrameMessage, type ShellMessage } from "./
 import { PluginsButton } from "./Plugins";
 import { SettingsSheet } from "./Settings";
 import { RightPanel } from "./RightPanel";
+import { WebPane, WebPanel, WebRail } from "./Web";
 
 export function App({ client, store }: { client: Client; store: WorkspaceStore }) {
   const view = useSyncExternalStore(store.subscribe, store.getView);
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** The web AI shown in the chat column instead of a chat, if one is. */
+  const [webSite, setWebSite] = useState<string | null>(null);
+  const site = webSite ? view.web?.sites.find((candidate) => candidate.id === webSite) ?? null : null;
   // ⌘, (Ctrl+, elsewhere) opens Settings, as in 1.x.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === "," && (event.metaKey || event.ctrlKey)) { event.preventDefault(); setSettingsOpen(true); } };
@@ -30,6 +34,25 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
   const fail = useCallback((failure: unknown) => {
     setError(failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
   }, []);
+
+  /** A bot's chat again (and no site). */
+  const selectBot = useCallback((botId: string) => {
+    setError(null);
+    if (webSite) { setWebSite(null); void client.request({ type: "web.leave" }).catch(() => {}); }
+    void store.select(botId);
+  }, [client, store, webSite]);
+
+  // Web AIs: a site's own row (a fresh question unless it shows one), a conversation, New question, a row's ✓, Ask Main bot.
+  const openWeb = useCallback((siteId: string, conversationId?: string) => {
+    setError(null);
+    setWebSite(siteId);
+    store.watch(null);
+    void client.request({ type: "web.open", site: siteId, ...(conversationId ? { conversationId } : {}) }).catch(fail);
+  }, [client, store, fail]);
+  const askMainBot = useCallback((siteId: string, conversationId: string) => {
+    setError(null);
+    void client.request({ type: "web.ask", site: siteId, conversationId }).then((result) => { setWebSite(null); void store.select(result.botId); }, fail);
+  }, [client, store, fail]);
 
   // "Add project": main's folder picker; the new (or existing) project's chat is shown.
   const addProject = useCallback(() => {
@@ -52,11 +75,15 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
               key={candidate.id}
               bot={candidate}
               look={view.settings?.botLook ?? "original"}
-              selected={candidate.id === chat?.botId}
+              selected={!site && candidate.id === chat?.botId}
               waiting={view.waiting.items.some((item) => item.botId === candidate.id)}
-              onSelect={() => { setError(null); void store.select(candidate.id); }}
+              onSelect={() => selectBot(candidate.id)}
             />
           ))}
+          {view.web && view.web.sites.length > 0 && (
+            <WebRail web={view.web} shown={site?.id ?? null} onOpen={openWeb}
+              onSettle={(siteId, conversationId) => void client.request({ type: "web.settle", site: siteId, conversationId }).catch(fail)} />
+          )}
         </nav>
         <div className="rail-add">
           <button type="button" className="rail-button" onClick={addProject}>+ Add project</button>
@@ -72,6 +99,13 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
         )}
       </aside>
       <section className="chat-pane">
+        {site && (
+          <>
+            <header className="chat-header drag"><span className="chat-title">{site.name}</span></header>
+            <WebPane client={client} site={site} onError={fail} />
+          </>
+        )}
+        <div className="chat-column" hidden={!!site}>
         <header className="chat-header drag">
           {bot && <span className="chat-title">{bot.name}</span>}
           {bot && (bot.heads.length > 1 || bot.heads[0] === "codex") && (
@@ -97,13 +131,18 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
           </div>
         )}
         <ChatFrame client={client} store={store} onError={fail} onSent={() => setError(null)} />
+        </div>
         {error && error !== bot?.problem && <div className="banner bottom" role="alert">{error}</div>}
       </section>
-      {bot && (
+      {site && (
+        <WebPanel site={site} onOpen={(conversationId) => openWeb(site.id, conversationId)} onAsk={(conversationId) => askMainBot(site.id, conversationId)}
+          onNew={() => void client.request({ type: "web.new", site: site.id }).catch(fail)} />
+      )}
+      {bot && !site && (
         <RightPanel
           bot={bot} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"}
           status={{ key: status(bot), text: statusText(bot) }}
-          onSelect={(botId) => { setError(null); void store.select(botId); }}
+          onSelect={selectBot}
           onIgnore={(item) => void client.request({ type: "waiting.ignore", botId: item.botId, text: item.text }).catch(fail)}
         />
       )}
