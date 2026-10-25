@@ -76,7 +76,7 @@ import { extractCards, welcomeMessages } from "./cards";
 import type { ProcessLedger } from "./process/ledger";
 import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, RESUME_NOTE, profilePaths, withoutPartsNote, type BotPrompts } from "./prompts";
 import { masked, parseReply, saysNoReply, saysNothing, unsupportedRequest, type BotRequest } from "./reply";
-import { SubagentBook, readSubagent, SUBAGENT_TOOLS, toolCount, type SubagentRecord } from "./subagents";
+import { SubagentBook, readSubagent, SUBAGENT_TOOLS, toolCount, reportedOutputTokens, type SubagentRecord } from "./subagents";
 import { readTaskCard, TaskBook, type TaskCard } from "./tasks";
 import type { CatchUpChat } from "./catchup";
 import { displayCommand, displayView, pinView, type ComponentsContext, type DisplayData, type PinData } from "./components/service";
@@ -899,8 +899,8 @@ export class Bot {
 
   /** Its subagents' rows (and its partner's, with the head that sent each). */
   private subagentRows() {
-    const two = !!this.partner || this.sharesChat;
-    const rows = [...this.subagents.rows(two ? this.engine : null), ...(this.partner?.subagents.rows(this.partner.engine) ?? [])];
+    // 1.x shows the owning head's navigation avatar even for a single-head bot.
+    const rows = [...this.subagents.rows(this.engine), ...(this.partner?.subagents.rows(this.partner.engine) ?? [])];
     return rows.slice(-100);
   }
 
@@ -1120,7 +1120,7 @@ export class Bot {
       if (this.partner?.subagents.get(id)) return this.partner.subagentView(id);
       throw new ContractError("not_found", "No such subagent.");
     }
-    return { subagent: subagentView(subagent, this.speaker, this.subagents) };
+    return { subagent: subagentView(subagent, this.speaker, this.subagents, this.engine) };
   }
 
   /** "garden · Codex" in a bot with two heads; else its name. */
@@ -2362,6 +2362,12 @@ export class Bot {
         if (wasRunning && this.subagents.get(item.id)?.status !== "running") this.subagentEnded(item.id);
         return item.parent !== null;
       }
+      case "subagentRuntime":
+        if (this.subagents.runtime(item.id, item.runtime, item.model)) this.subagentChanged(this.subagents.get(item.id));
+        return true;
+      case "subagentOutput":
+        if (this.subagents.output(item.id, item.counter, item.tokens)) this.subagentChanged(this.subagents.get(item.id));
+        return true;
       case "subagentText":
         if (this.subagents.text(item.parent, item.text)) this.subagentChanged(this.subagents.get(item.parent));
         return true;
@@ -2392,7 +2398,7 @@ export class Bot {
     if (!subagent) return;
     this.saveSubagents();
     this.rowsChanged();
-    this.emit({ type: "subagent.updated", botId: this.id, subagent: subagentView(subagent, this.speaker, this.subagents) });
+    this.emit({ type: "subagent.updated", botId: this.id, subagent: subagentView(subagent, this.speaker, this.subagents, this.engine) });
     const top = subagent.parentID ? this.subagents.get(subagent.parentID) ?? subagent : subagent;
     if (this.turn?.steps.some((step) => step.id === top.id)) this.emitSteps(this.turn);
     for (let i = this.records.length - 1, seen = 0; i >= 0 && seen < 80; i--, seen++) {
@@ -4093,7 +4099,10 @@ export function taskView(card: TaskCard, running: Set<string>): TaskView {
 }
 
 /** `ChatPayload.make(subagent:)`'s data: its task, steps, words and report. */
-export function subagentView(subagent: SubagentRecord, owner: string, book: SubagentBook): SubagentView {
+export function subagentView(subagent: SubagentRecord, owner: string, book: SubagentBook, ownerEngine?: "claude" | "codex"): SubagentView {
+  const raw = subagent.runtime;
+  const runtime = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+  const text = (value: unknown) => typeof value === "string" && value.trim() ? clip(value.trim(), 200) : null;
   return {
     id: subagent.id.slice(0, 200),
     title: clip(subagent.description || "Subagent", 400) ?? "Subagent",
@@ -4101,6 +4110,10 @@ export function subagentView(subagent: SubagentRecord, owner: string, book: Suba
     status: subagent.status,
     type: clip(subagent.type, 200),
     model: clip(subagent.model, 200),
+    engine: runtime?.engine === "codex" || runtime?.engine === "claude" ? runtime.engine
+      : subagent.type === "codex-worker" || subagent.type === "codex" ? "codex" : ownerEngine ?? "claude",
+    runtime: runtime ? { reasoningEffort: text(runtime.reasoningEffort), serviceTier: text(runtime.serviceTier) } : null,
+    outputTokens: reportedOutputTokens(subagent),
     prompt: clip(subagent.prompt, 20_000) ?? "",
     steps: subagent.steps.slice(-500).map((step) => stepView(step, book)),
     result: clip(subagent.result, 20_000),

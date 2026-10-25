@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { LISTED_AT_MOST, listedRows, type BotView, type SubagentRowView } from "../contract";
 import { Icon, SubagentMark } from "./icons";
+import { faceURL, type Look } from "./avatars";
 
 /** The clock the column's time-based rows go by: a tick every 30 s (1.x's TimelineView). */
 export function useMinuteClock(): number {
@@ -16,14 +17,18 @@ export function useMinuteClock(): number {
   return now;
 }
 
-/** A head's letter beside a row of a bot with two heads (1.x's SubagentOwnerMark). */
-export function OwnerMark({ head }: { head: "claude" | "codex" | null }) {
+/** 1.x's SubagentOwnerMark: the parent's face, with its head identified in either look. */
+export function OwnerMark({ head, avatar, look = "original" }: { head: "claude" | "codex" | null; avatar: string; look?: Look }) {
   if (!head) return null;
-  return <span className="subagent-owner" title={head === "codex" ? "Codex" : "Claude"} aria-hidden="true">{head === "codex" ? "X" : "C"}</span>;
+  return <span className="subagent-owner" title={head === "codex" ? "Codex" : "Claude"} aria-hidden="true">
+    <img src={faceURL({ avatar }, look, { engine: head })} alt="" />
+    {look === "original" && <span className="subagent-owner-badge">{head === "codex" ? "X" : "C"}</span>}
+  </span>;
 }
 
-export function SubagentRows({ bot, now, watching, onOpen, onSettle }: {
+export function SubagentRows({ bot, look = "original", now, watching, onOpen, onSettle }: {
   bot: BotView;
+  look?: Look;
   now: number;
   /** The subagent shown in the chat's place, if one of this bot's is. */
   watching: string | null;
@@ -43,7 +48,7 @@ export function SubagentRows({ bot, now, watching, onOpen, onSettle }: {
           <button type="button" className="subagent-open" title={row.prompt} onClick={() => onOpen(row)}
             aria-label={`Subagent of ${bot.name}${row.head ? ` (${row.head === "codex" ? "Codex" : "Claude"})` : ""}: ${row.title || "Subagent"}, ${row.status}`}>
             <span className="subagent-arrow" aria-hidden="true"><Icon name="turnDownRight" size={11} /></span>
-            <OwnerMark head={row.head} />
+            <OwnerMark head={row.head} avatar={bot.avatar} look={look} />
             <span className="subagent-title">{row.title || "Subagent"}</span>
           </button>
           <button type="button" className="subagent-settle" onClick={() => onSettle(row)}

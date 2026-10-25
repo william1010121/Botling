@@ -4,6 +4,8 @@
 
 import { claudeRateLimits, claudeUsage, type RateLimits, type TokenUsage } from "../usage";
 
+import type { SubagentRuntime } from "../subagents";
+
 export type StreamItem =
   | { kind: "init"; sessionId: string }
   /** A piece of the reply's text (`--include-partial-messages`). */
@@ -19,6 +21,8 @@ export type StreamItem =
   | { kind: "subagentText"; parent: string; text: string }
   /** claude started a subagent (`task_started`, local_agent): it may run on in the background. */
   | { kind: "subagentStarted"; id: string; description: string; type: string | null; prompt: string; background: boolean }
+  | { kind: "subagentRuntime"; id: string; runtime: SubagentRuntime; model?: string }
+  | { kind: "subagentOutput"; id: string; counter: string; tokens: number }
   /** A subagent ended (`task_notification`): its status and report. */
   | { kind: "subagentEnded"; id: string; status: string; summary: string | null }
   /** A notification that is not a report: the subagent waits on its own background work. */
@@ -158,6 +162,15 @@ export function parseLine(line: string): StreamItem[] {
       const parent = typeof message.parent_tool_use_id === "string" ? message.parent_tool_use_id : null;
       const content: any[] = Array.isArray(message.message?.content) ? message.message.content : [];
       const items: StreamItem[] = [];
+      if (parent) {
+        const model = message.message?.model;
+        if (typeof model === "string" && model && !model.startsWith("<")) items.push({ kind: "subagentRuntime", id: parent, runtime: { engine: "claude" }, model });
+        const tokens = message.message?.usage?.output_tokens;
+        const id = message.message?.id;
+        if (typeof id === "string" && id && typeof tokens === "number" && Number.isSafeInteger(tokens) && tokens >= 0) {
+          items.push({ kind: "subagentOutput", id: parent, counter: `message:${id}`, tokens });
+        }
+      }
       for (const block of content) {
         if (block?.type === "tool_use" && typeof block.id === "string" && typeof block.name === "string") {
           const input = block.input && typeof block.input === "object" ? block.input : {};

@@ -265,6 +265,7 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     botName: bot.name,
     messages,
     working: runs.length > 0 || !!answering,
+    waitingForWorkers: bot.role !== "group" && runs.length === 0 && !answering && bot.subagents > 0,
     avatar: answering ? (look === "cute" ? faceURL(answering, "cute", { working: true }) : avatarURL(answering.avatar, "open"))
       : look === "cute" ? faceURL(bot, "cute", { working: runs.length > 0, waiting: bot.approvals > 0 }) : avatarURL(bot.avatar, "open"),
     ...(bots.length ? mentionNames(bot, bots) : {}),
@@ -349,7 +350,8 @@ export function subagentState(bot: BotView, subagent: SubagentView): { state: Ch
     slashCommands: [],
     subagent: {
       id: subagent.id, title: subagent.title, owner: subagent.owner, status: subagent.status, type: subagent.type,
-      engine: subagent.type === "codex-worker" ? "codex" : "claude", model: subagent.model,
+      engine: subagent.engine ?? (subagent.type === "codex-worker" || subagent.type === "codex" ? "codex" : bot.heads[0] ?? "claude"), model: subagent.model,
+      runtime: subagent.runtime ?? null, outputTokens: subagent.outputTokens ?? null,
       startedAt: new Date(subagent.startedAt).getTime(), endedAt: subagent.endedAt ? new Date(subagent.endedAt).getTime() : null,
     },
   };

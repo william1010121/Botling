@@ -371,3 +371,22 @@ describe("Codex head: command monitors after a restart (CommandMonitor.reconcile
     expect(JSON.parse(status.writes[0].result.contentItems[0].text)).toEqual({ monitors: [] });
   });
 });
+
+it("reports worker session metadata and attributable absolute output without using coordinator usage", () => {
+  const session = new CodexSession(config({ model: "coordinator", effort: "low", workerEffort: "high" }));
+  ready(session);
+  session.send("Review");
+  session.receive(JSON.stringify({ id: 3, result: { turn: { id: "t1" } } }));
+  const handed = new Out(session.receive(toolCall("app_handoff", { instructions: "Review the patch", name: "Review" })));
+  const task = receipt(handed).task_id;
+  const request = handed.writes.find((write) => write.method === "thread/start");
+  const started = new Out(session.receive(JSON.stringify({ id: request.id, result: { thread: { id: "worker-thread" }, model: "actual-worker", reasoningEffort: "medium", serviceTier: "priority" } })));
+  expect(started.of("subagentRuntime")).toMatchObject([{ id: task, model: "actual-worker", runtime: { engine: "codex", reasoningEffort: "medium", serviceTier: "priority" } }]);
+  const turn = started.writes.find((write) => write.method === "turn/start");
+  const accepted = new Out(session.receive(JSON.stringify({ id: turn.id, result: { turn: { id: "worker-turn" } } })));
+  expect(accepted.of("subagentRuntime")).toMatchObject([{ id: task, runtime: { reasoningEffort: "high", serviceTier: "priority" } }]);
+  const usage = new Out(session.receive(note("thread/tokenUsage/updated", { threadId: "worker-thread", tokenUsage: { total: { inputTokens: 900, outputTokens: 100 } } })));
+  expect(usage.of("subagentOutput")).toEqual([{ kind: "subagentOutput", id: task, counter: "thread:worker-thread", tokens: 100 }]);
+  expect(new Out(session.receive(note("thread/tokenUsage/updated", { threadId: COORD, tokenUsage: { total: { outputTokens: 9000 } } }))).of("subagentOutput")).toEqual([]);
+  expect(new Out(session.receive(note("thread/tokenUsage/updated", { threadId: "worker-thread", tokenUsage: { total: { outputTokens: true } } }))).of("subagentOutput")).toEqual([]);
+});

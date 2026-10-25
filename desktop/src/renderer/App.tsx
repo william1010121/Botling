@@ -228,7 +228,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
                     onTogglePin={() => togglePin(candidate.id)}
                     onMenu={candidate.role !== "main" && candidate.id !== MAINTAINER_BOT_ID ? (x, y) => setMenu({ bot: candidate, x, y }) : undefined}
                   />}
-                  <SubagentRows bot={candidate} now={now} watching={chat?.botId === candidate.id ? watching : null}
+                  <SubagentRows bot={candidate} look={view.settings?.botLook ?? "original"} now={now} watching={chat?.botId === candidate.id ? watching : null}
                     onOpen={(row) => openSubagent(candidate.id, row)} onSettle={(row) => settleSubagent(candidate.id, row, true)} />
                 </div>
               ))}

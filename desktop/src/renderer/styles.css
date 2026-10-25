@@ -230,8 +230,12 @@ button { font: inherit; color: inherit; }
 .subagent-arrow { color: var(--faint); display: inline-flex; flex-shrink: 0; }
 .subagent-title { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .subagent-owner {
-  width: 16px; height: 16px; flex-shrink: 0; border-radius: 50%; background: var(--chip); color: var(--text);
-  font-size: 9px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; flex-shrink: 0; position: relative; display: inline-flex; align-items: center; justify-content: center;
+}
+.subagent-owner img { width: 24px; height: 24px; object-fit: contain; }
+.subagent-owner-badge {
+  position: absolute; right: 0; bottom: 0; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--side); color: var(--text); font-size: 7px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center;
 }
 .subagent-settle { width: 24px; height: 30px; margin-right: 6px; flex-shrink: 0; background: none; border: 0; padding: 0; cursor: pointer; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
 .subagent-settle .settle-icon { display: none; align-items: center; position: relative; }

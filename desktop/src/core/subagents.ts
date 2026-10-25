@@ -15,6 +15,22 @@ export interface SubagentRow { id: string; title: string; status: SubagentStatus
 
 export { LISTED_AFTER_ENDING_MS, LISTED_AT_MOST, listedRows, settledRows } from "../contract";
 
+export interface SubagentRuntime {
+  engine?: "claude" | "codex" | null;
+  reasoningEffort?: string | null;
+  serviceTier?: string | null;
+}
+
+/** Swift's absolute output counters: malformed/missing is unknown, never parent usage. */
+export function reportedOutputTokens(subagent: SubagentRecord): number | null {
+  const counters = subagent.outputTokenCounters;
+  if (!counters || typeof counters !== "object" || Array.isArray(counters)) return null;
+  const values = Object.values(counters);
+  if (!values.length || values.some((value) => typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)) return null;
+  const total = (values as number[]).reduce((sum, value) => sum + value, 0);
+  return Number.isSafeInteger(total) ? total : null;
+}
+
 export interface SubagentRecord {
   id: string;
   description: string;
@@ -156,6 +172,27 @@ export class SubagentBook {
     if (item.type) record.type = item.type;
     this.list.push(record);
     this.trim();
+    return true;
+  }
+
+  /** Presentation metadata changes no status or task ownership. */
+  runtime(id: string, runtime: SubagentRuntime, model?: string): boolean {
+    const child = this.resolve(id);
+    if (!child) return false;
+    const changed = JSON.stringify(child.runtime) !== JSON.stringify(runtime) || (!!model && child.model !== model);
+    child.runtime = runtime;
+    if (model) child.model = model;
+    return changed;
+  }
+
+  output(id: string, counter: string, tokens: number): boolean {
+    const child = this.resolve(id);
+    if (!child || !counter || !Number.isSafeInteger(tokens) || tokens < 0) return false;
+    const previous = child.outputTokenCounters;
+    const counters = previous && typeof previous === "object" && !Array.isArray(previous) ? previous as Record<string, unknown> : {};
+    const before = counters[counter];
+    if (typeof before === "number" && before >= tokens) return false;
+    child.outputTokenCounters = { ...counters, [counter]: tokens };
     return true;
   }
 

@@ -112,6 +112,13 @@ export const SubagentView = z.strictObject({
   status: z.enum(["running", "completed", "failed", "stopped"]),
   type: z.string().max(200).nullable(),
   model: z.string().max(200).nullable(),
+  /** Captured child settings, never inferred from the coordinator's current preferences. */
+  engine: z.enum(["claude", "codex"]).nullable().optional(),
+  runtime: z.strictObject({
+    reasoningEffort: z.string().max(200).nullable(),
+    serviceTier: z.string().max(200).nullable(),
+  }).nullable().optional(),
+  outputTokens: z.number().nonnegative().nullable().optional(),
   /** The task it was given. */
   prompt: z.string().max(20_000),
   steps: z.array(StepView).max(500),
@@ -334,7 +341,7 @@ export const SubagentRowView = z.strictObject({
   id: z.string().max(200),
   title: z.string().max(400),
   status: z.enum(["running", "completed", "failed", "stopped"]),
-  /** With two heads: the head that sent it. */
+  /** The head that owns this child, including a bot with only one enabled head. */
   head: z.enum(["claude", "codex"]).nullable(),
   startedAt: z.number(),
   endedAt: z.number().nullable(),

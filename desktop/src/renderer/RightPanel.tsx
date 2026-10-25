@@ -193,7 +193,7 @@ function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching,
       {settled.length > 0 && (
         <section className="detail-section settled-section">
           <h3>Settled</h3>
-          <SettledList rows={settled} watching={watching} onOpen={onOpenSubagent} onUnsettle={onUnsettle} />
+          <SettledList avatar={bot.avatar} look={look} rows={settled} watching={watching} onOpen={onOpenSubagent} onUnsettle={onUnsettle} />
         </section>
       )}
     </aside>
@@ -344,7 +344,7 @@ function ResultRow({ result, onOpen, compact = false }: { result: ResultView; on
 }
 
 /** "Settled": the subagents you settled, five then "Show N more"; ↩ brings one back to the left column (1.x's SettledList). */
-function SettledList({ rows, watching, onOpen, onUnsettle }: { rows: SubagentRowView[]; watching: string | null; onOpen: (row: SubagentRowView) => void; onUnsettle: (row: SubagentRowView) => void }) {
+function SettledList({ avatar, look, rows, watching, onOpen, onUnsettle }: { avatar: string; look: "original" | "cute"; rows: SubagentRowView[]; watching: string | null; onOpen: (row: SubagentRowView) => void; onUnsettle: (row: SubagentRowView) => void }) {
   const [all, setAll] = useState(false);
   const more = Math.max(0, rows.length - 5);
   return (
@@ -353,7 +353,7 @@ function SettledList({ rows, watching, onOpen, onUnsettle }: { rows: SubagentRow
         <div key={row.id} className={`settled-row${watching === row.id ? " selected" : ""}`} data-subagent={row.id}>
           <button type="button" className="settled-open" title={row.prompt} onClick={() => onOpen(row)} aria-label={`Settled subagent: ${row.title}, ${row.status}`}>
             <span className="settled-mark"><SubagentMark status={row.status} /></span>
-            <OwnerMark head={row.head} />
+            <OwnerMark head={row.head} avatar={avatar} look={look} />
             <span className={`settled-title${row.status === "running" ? " running" : ""}`}>{row.title || "Subagent"}</span>
           </button>
           <button type="button" className="settled-back" title="Back to the left column" aria-label={`Bring ${row.title} back to the left column`} onClick={() => onUnsettle(row)}>
@@ -431,7 +431,7 @@ function RightStrip({ bot, bots, waiting, look, status, results, teams, watching
                     {results.slice(0, 12).map((result) => <ResultRow key={`${result.label}\u0000${result.url}`} result={result} compact onOpen={(chosen) => { setOpen(null); onOpenResult(chosen); }} />)}
                   </div>
                 )}
-                {section === "settled" && <SettledList rows={settled} watching={watching} onOpen={onOpenSubagent} onUnsettle={onUnsettle} />}
+                {section === "settled" && <SettledList avatar={bot.avatar} look={look} rows={settled} watching={watching} onOpen={onOpenSubagent} onUnsettle={onUnsettle} />}
               </div>
             </div>
           )}

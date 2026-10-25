@@ -116,6 +116,7 @@ interface Turn { id: string | null; waitingSteers: Input[]; interruptAsked: bool
 interface Approval { rpcId: unknown; kind: "command" | "fileChange" | { permissions: Record<string, unknown> }; thread: string | null }
 
 interface Worker {
+  runtime?: { engine: "codex"; reasoningEffort: string | null; serviceTier: string | null };
   id: string; name: string; instructions: string; ownershipInstructions?: string; role?: string;
   thread?: string; turnId: string | null; run: number; active: boolean; loaded: boolean; cancelled: boolean;
   messages: string[]; said: { text: string; phase: string | null }[]; completedTurns: Set<string>;
@@ -355,7 +356,15 @@ export class CodexSession {
         if (!worker || worker.run !== call.run || !worker.active || worker.cancelled || this.stopped) return [];
         if (error) return this.failWorker(call.task, `Could not start worker turn: ${message(error)}`);
         const id = result?.turn?.id;
-        return typeof id === "string" ? this.learnWorkerTurn(call.task, id) : [];
+        if (typeof id !== "string") return [];
+        const effort = this.config.workerEffort ?? this.config.effort;
+        // The successful turn/start accepted this explicit override. Otherwise keep thread settings.
+        const metadata: CodexOutput[] = [];
+        if (effort) {
+          worker.runtime = { engine: "codex", reasoningEffort: effort, serviceTier: worker.runtime?.serviceTier ?? null };
+          metadata.push(this.item({ kind: "subagentRuntime", id: call.task, runtime: worker.runtime }));
+        }
+        return [...metadata, ...this.learnWorkerTurn(call.task, id)];
       }
       case "workerSteer": {
         const worker = this.workers.get(call.task);
@@ -875,8 +884,12 @@ export class CodexSession {
     const resumed = !!worker.thread;
     worker.thread = thread;
     worker.loaded = !resumed;
-    if (resumed) return [this.refreshInstructions(this.config.workerInstructions ?? "Execute the assigned task yourself and do not delegate.", thread, { kind: "workerInstructions", task })];
-    return this.startWorkerTurn(task, worker.instructions);
+    const text = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : null;
+    worker.runtime = { engine: "codex", reasoningEffort: text(result.reasoningEffort), serviceTier: text(result.serviceTier) };
+    const model = text(result.model);
+    const metadata = this.item({ kind: "subagentRuntime", id: task, runtime: worker.runtime, ...(model ? { model } : {}) });
+    if (resumed) return [metadata, this.refreshInstructions(this.config.workerInstructions ?? "Execute the assigned task yourself and do not delegate.", thread, { kind: "workerInstructions", task })];
+    return [metadata, ...this.startWorkerTurn(task, worker.instructions)];
   }
 
   private startWorkerTurn(task: string, text: string): CodexOutput[] {
@@ -983,9 +996,12 @@ export class CodexSession {
         if (!id || !this.approvals.delete(id)) return [];
         return [this.item({ kind: "permissionCancelled", requestId: id })];
       }
-      case "thread/tokenUsage/updated":
+      case "thread/tokenUsage/updated": {
         if (params.tokenUsage?.total && typeof params.tokenUsage.total === "object") worker.tokens = codexTokens(params.tokenUsage.total);
-        return [];
+        const tokens = params.tokenUsage?.total?.outputTokens;
+        return worker.thread && typeof tokens === "number" && Number.isSafeInteger(tokens) && tokens >= 0
+          ? [this.item({ kind: "subagentOutput", id: task, counter: `thread:${worker.thread}`, tokens })] : [];
+      }
       default:
         return [];
     }

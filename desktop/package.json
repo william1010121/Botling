@@ -45,7 +45,8 @@
     "electron-builder": "26.17.0",
     "esbuild": "0.28.2",
     "typescript": "5.9.3",
-    "vitest": "4.1.12"
+    "vitest": "4.1.12",
+    "jsdom": "27.0.0"
   },
   "botlingDevTrial": true
 }
