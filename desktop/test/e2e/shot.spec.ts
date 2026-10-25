@@ -1,3 +1,4 @@
+import {electronExecutable} from "../electron-runtime";
 // Component shots (Phase 5a; 1.x's `botling --component-shot`): this build draws a component in its real
 // chat page — a reply, Board tiles, opened above the input box, floating — pictures each frame, judges it
 // and exits 0 without problems, 1 with them; Maintainer is given the command. Its contact sheet goes to
@@ -9,7 +10,7 @@ import { join } from "node:path";
 import { desktop, tempDir } from "../helpers";
 import { launch } from "./launch";
 
-const electron = require("electron") as unknown as string;
+const electron = electronExecutable();
 function shot(args: string[]) {
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;

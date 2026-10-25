@@ -1,3 +1,4 @@
+import {electronExecutable} from "../electron-runtime";
 import { _electron as electron, type ElectronApplication, type Frame, type FrameLocator, type Page } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -28,7 +29,7 @@ export async function launch(options: { dataDir?: string; env?: Record<string, s
   });
   delete env.ELECTRON_RUN_AS_NODE;
   if (!options.importFrom) delete env.BOTLING_IMPORT_FROM;
-  const app = await electron.launch({ args: [desktop], env, cwd: desktop });
+  const app = await electron.launch({ executablePath:electronExecutable(), args: [desktop], env, cwd: desktop });
   const page = await app.firstWindow();
   const chat = page.frameLocator("#chat-frame");
   // A test of the first second types as soon as the input box is there (before any state).

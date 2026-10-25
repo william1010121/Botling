@@ -1,3 +1,4 @@
+import {electronExecutable} from "../electron-runtime";
 // Isolated renderer behavior: bundles only Updates.tsx, runs no core/CLIs or installed app.
 import { _electron as electron, expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { build } from "esbuild";
@@ -23,7 +24,7 @@ app.setPath('userData',path.join(__dirname,'profile'));app.setPath('sessionData'
 app.whenReady().then(()=>{const w=new BrowserWindow({show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});w.loadFile(path.join(__dirname,'index.html'))}); app.on('window-all-closed',()=>app.quit());`);
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined && key !== "ELECTRON_RUN_AS_NODE") env[key] = value;
-  app = await electron.launch({ args: [join(base, "main.cjs")], env, cwd: desktop });
+  app = await electron.launch({ executablePath:electronExecutable(), args: [join(base, "main.cjs")], env, cwd: desktop });
   page = await app.firstWindow();
   await expect(page.getByRole("button", { name: "Download and verify" })).toBeVisible();
 });
