@@ -1,0 +1,7 @@
+import {expect,it} from 'vitest';
+import {FrontmostProof} from '../frontmost-proof';
+it('accepts only complete stable before/during/after samples with real hidden window evidence',()=>{const p=new FrontmostProof();let now=0;for(const phase of ['before','during','after'])for(let i=0;i<2;i++){p.sample('42\torg.synthetic',phase,now,now+10);now+=100;}for(let i=0;i<3;i++)p.window(now++,[{id:1,visible:false,focused:false}],[]);expect(()=>p.complete()).not.toThrow();});
+it('frontmost change stops regardless of any outside-user-click theory',()=>{const p=new FrontmostProof();p.sample('42\torg.synthetic','before',0,10);expect(()=>p.sample('43\torg.other','during',100,110)).toThrow(/cause unassigned/);});
+it('missing metadata and long sampling gaps fail closed',()=>{const p=new FrontmostProof();expect(()=>p.sample('','before',0,10)).toThrow(/Missing/);p.sample('42\torg.synthetic','before',0,10);expect(()=>p.sample('42\torg.synthetic','during',900,910)).toThrow(/gap/);});
+it('a visible/focused window or show/focus event is a failure',()=>{for(const state of [{id:1,visible:true,focused:false},{id:1,visible:false,focused:true}])expect(()=>new FrontmostProof().window(0,[state],[])).toThrow(/showed\/focused/);expect(()=>new FrontmostProof().window(0,[{id:1,visible:false,focused:false}],[{event:'show'}])).toThrow();});
+it('flags and sparse samples alone cannot complete proof',()=>{expect(()=>new FrontmostProof().complete()).toThrow(/Missing/);});

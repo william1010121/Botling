@@ -12,7 +12,7 @@ export interface Launched { app: ElectronApplication; page: Page; chat: FrameLoc
 /** The main bot's id (the Swift app's `Workspace.mainBotID`). */
 export const MAIN = "6A0B0000-0000-4000-8000-000000000002";
 
-export async function launch(options: { dataDir?: string; env?: Record<string, string>; chat?: unknown[]; importFrom?: string; waitForState?: boolean; args?: string[]; trace?:TraceFixture } = {}): Promise<Launched> {
+export async function launch(options: { dataDir?: string; env?: Record<string, string>; chat?: unknown[]; importFrom?: string; waitForState?: boolean; args?: string[]; trace?:TraceFixture; onLaunched?:(app:ElectronApplication)=>Promise<void> } = {}): Promise<Launched> {
   const dataDir = options.dataDir ?? tempDir("e2e");
   if (options.chat) {
     // The main bot's chat, in the Swift app's chat.json format.
@@ -36,6 +36,7 @@ export async function launch(options: { dataDir?: string; env?: Record<string, s
   prepareTraceFixture(dataDir,env,options.trace);
   const app = await electron.launch({ executablePath:electronExecutable(), args: [desktop,...(options.args??[])], env, cwd: desktop });
   try {
+  await options.onLaunched?.(app);
   const page = await app.firstWindow();
   if(env.BOTLING_HIDDEN==="1")await backgroundPages(app,page,options.trace?.focusEmulation!==false);
   const chat = page.frameLocator("#chat-frame");
