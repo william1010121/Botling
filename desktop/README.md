@@ -24,7 +24,10 @@ Phase 4b done: temporary teams (`<team>`, the ccb-teams plugin, a run per team i
 their own (New bot, `<new-bot>`, a plugin's `bots.create`), removing a bot or a project (nothing on
 disk is deleted), `<open-question>` copies, subagent rows in the left column with settling, the right
 panel's Results and Settled and its folded strip, and the team lines back in the main bot's project
-list (checked string for string against the Swift code).**
+list (checked string for string against the Swift code). Phase 4c done: new bots and projects on the
+app's engine defaults, `<need-folder>`, @ call-ins and bots' @, group chats (their prompts checked
+string for string against the Swift code), the right panel's Tasks list, pinned bots, the left
+column's search (⌘K) and fold, and the root causes of two e2e flakes.**
 Not yet a replacement for the Swift app (see "Gaps vs the Swift app").
 It lives beside it: nothing under `Sources/` or `Web/` changed, and the Swift app does not use
 anything here. Web/src is *bundled from source* into the desktop's chat frame (its packages come
@@ -221,6 +224,9 @@ Files: `src/contract/` (the typed contract), `src/core/` (core process: `server.
 <core>/plugins/ccb-teams/   1.x's: the temporary teams as Claude Code agents (claude/agents/<team>.md)
 <core>/runs/<yyyyMMdd-HHmmss>-<team>/   1.x's: a team's run (artifacts/ for its result page)
 <core>/removed-bots.json    1.x's: bots plugins made that you removed (`plugin/name`), not made again
+<core>/folders.json         1.x's: folders you let Maintainer read (<need-folder>), a list of paths
+<core>/bot-mentions.json    1.x's: the bot @s delivered (message, sender, recipient, body, ISO date), ≤ 500
+<core>/groups.json          1.x's: group chats ({id, name, members}); groups/<ID>/ each group's chat files
 ```
 
 bot.json keys 2.0 now writes too: `heads` and `engine` (1.x's); since Phase 3a `routineRuns` (when
@@ -233,7 +239,13 @@ Formats follow Swift's `JSONEncoder` as 1.x uses it: dates are **seconds since 2
 every key it does not know as it was, and adds its own (`turnID`, `state`, `cards`, `error`), which
 1.x's decoder ignores. Message ids are UUIDs (1.x fails a whole chat.json on one bad id).
 
-### The contract (`src/contract/index.ts`, protocol version 9)
+### The contract (`src/contract/index.ts`, protocol version 10)
+
+Version 10 (Phase 4c) adds: `groups.create`, `groups.edit`, `groups.delete`; `BotView.role` "group"
+with `BotView.members`, `BotView.guest` (a bot answering in its chat now) and `BotView.openTasks`;
+`MessageView.sourceId` (the bot that said a line that is not the chat's own); settings' `railCollapsed`
+and `pinnedBots`. A group's chat takes the chat commands (`chat.snapshot`, `chat.send`, `chat.choose`,
+`chat.answer`, `chat.read`) by its id.
 
 Version 9 (Phase 4b) adds: `bots.create` (New bot), `bots.remove`, `subagent.settle`, `results.list`,
 main-only `result.open`; `BotView.job` and `BotView.subagentRows` (`SubagentRowView`: id, title,
@@ -724,6 +736,50 @@ CCB_DESKTOP_TEAMS_EXPORT=$PWD/desktop/test/fixtures/teams-golden.json TZ=UTC \
 - **Rows in the left column are computed in the renderer** from the bot's rows (10 minutes after
   ending, every 30 s), so the core does not have to send an event when a row ages out.
 
+## Phase 4c: what was built and how it was checked
+
+| Piece | What it does | Evidence |
+| --- | --- | --- |
+| E2e flake 1: the plugin web part (`plugins/host-client.ts`) | Root cause: the chat page loads web parts as soon as it opens; on a busy computer their first `ccb.host.call` reached the plugin host before it had started or loaded the program part and failed ("does not handle"), so the plugin never said it loaded. A web part's call now waits (up to the load's own limit) until the host runs that plugin | `unit/plugin-host.test.ts` (a program part that takes 2.5 s to load, called at once: fails without the fix, passes with it) |
+| E2e flake 2: the first message (`App.tsx`, `chat-frame/entry.ts`, `e2e/launch.ts`) | Found with 100–300 back-to-back starts that each send at once (1–2 lost per hundred, logged with focus and key events in both pages): as the window opens, a card's frame in the chat loads (it posts its size) and focus leaves the input box for a moment; keys then landed on the app page's body or the chat page's, and text inserted at once (Playwright's `fill`, `insertText`) reached nothing. Keys that land on the app page meanwhile are now handed to the input box (the chat page already did this for its own body); `say()` types key by key as a person does | 200 starts: 0 lost with the fix (1 in 200 when text was still inserted at once); full e2e suite runs below |
+| Engine defaults (`settings.ts`, `server.ts`) | 1.x's `seedEngineDefaults`: a new project or bot gets the app's subagent model and Codex workers' choice in its bot.json; a change of either in Settings is written to every bot (and its other head), as 1.x's `setSubagentModelDefault` / `setCodexWorkerDefaults`; heads start on the bot's own values (no app-wide fallback any more) | `unit/phase4a.test.ts` (seeding, applying to all, a bot's own change kept until the next app change) |
+| `<need-folder>` (`maintainer.ts`) | Maintainer's request: "Maintainer wants to read "…". It will only read, never change files there. Allow it?" (Allow · Won't ask again / Don't allow) in its chat; allowed folders in folders.json and its `--add-dir`; its process starts again in the same session before its next message (1.x's `restart(.mayRead)`); a folder inside one allowed is allowed at once; 1.x's `folderAnswer` texts | `unit/maintainer.test.ts` (ask, allow, the restart with the same session and `--add-dir`, inside, don't allow, others' tags ignored) |
+| @ call-ins and bots' @ (`groups.ts`, `conversations.ts`) | 1.x's CallIn.swift and BotMentions.swift: @Name in a bot's chat calls that bot in (its turn hidden in its own chat, woken with its briefing if asleep), its line under its own name and face, its chat keeping "Called into X's chat with @: …" and the reply; the chat's bot gets `callInNote` and later `heardSinceLastTurn`; picks and words on a guest's line go back to it; a bot's line starting with @Name calls that bot in (tags not acting; one per reply; bot-mentions.json; at most 3 per message of yours; "Not sent with @: …" notices). The @ menu offers the main bot and Maintainer first, every bot after @@ (Web/src's own menu) | `unit/groups.test.ts` (**the call-in, bot call-in and 15 group prompts, the transcript, the reaction snapshot, mentions, line candidates, PASS, names equal to what Swift wrote**, `test/fixtures/groups-golden.json`), `unit/conversations.test.ts`, `e2e/phase4c.spec.ts`, screenshot `phase4c-callin.png` |
+| Group chats (`group-chats.ts`) | 1.x's GroupChat.swift: New group (a name, who is in it), a group row with who is writing or who is in it, Edit group… / Delete group… in its menu; a message with @names goes to them, else to everyone in turn (the main bot as the front desk, the others answer only about their own work or say PASS), each seeing what the ones before said; tags act for the main bot and named bots; "Did not answer this time: …"; renamed / added / taken out said in the chat; deleting removes its conversation (as 1.x); the right panel's "In the group" and Just done; 1.x's groups.json and groups/ come over in the import | `unit/conversations.test.ts`, `unit/importer.test.ts`, `e2e/phase4c.spec.ts`, screenshot `phase4c-group.png` |
+| The right panel's Tasks (`RightPanel.tsx`) | 1.x 1.20's TaskPanel: the status line, tasks under way (running first, newest first, then waiting), the open one (pressed, on a chip under a reply, or the latest running) as a card with Now / Next / Blocked, "May be stuck" and Ask it to report, Started · updated, Jump to chat; tasks waiting on you under Waiting on you; the latest three finished under Just done; "N tasks" beside a bot's name (running and waiting). Cards settle by themselves when the owner's turn ends without saying (ported in Phase 2a) | `e2e/phase4c.spec.ts`, screenshot `phase4c-tasks.png` |
+| The left column (`App.tsx`, `Rail.tsx`) | 1.x's RailView / RailStrip: a pin at a row's end on hover and Pin / Unpin in its menu (Pinned, in the order pinned; settings.json `pinnedBots`), the search field (⌘K; name or a project's folder name, case and accents ignored; Return opens the first, Esc goes back to the input box; "No bots match"), the fold into a strip of faces with hover tips, unread dots and a + menu (⌃⌘S; `railCollapsed`) | `e2e/phase4c.spec.ts`, screenshots `phase4c-pinned.png`, `phase4c-strip.png` |
+
+Tests after Phase 4c: unit 308 (vitest), e2e 44 (Playwright/Electron), typecheck, all green (the full
+e2e suite twice in a row after the last change, and again in earlier full runs during the phase).
+
+### How the groups' golden strings are made
+
+```sh
+CCB_DESKTOP_GROUPS_EXPORT=$PWD/desktop/test/fixtures/groups-golden.json TZ=UTC \
+  swift test --scratch-path /Volumes/My-SSD/botling-work/swift-build --filter DesktopGroupsGoldenExport
+```
+
+### Decisions (Phase 4c)
+
+- **Engine defaults are each bot's own, as 1.x**: heads no longer fall back to settings.json's subagent
+  model or workers' choice; a new bot is seeded and an app-wide change is written to every bot. A
+  running head keeps what it started with until it next wakes (as with a bot's own settings; 1.x
+  restarts it before the next message).
+- **Allowed folders are not imported** from 1.x (folders.json): Maintainer asks again, as for
+  component commands.
+- **A group chat is deleted with its folder** (1.x does), the one place 2.0 deletes chat files; the
+  bots' own chats and notes stay.
+- **The `/` component mention note is not added** to guests' prompts (2.0 has no `/` menu yet); the
+  prompts are otherwise 1.x's strings.
+- **Guest turns are hidden turns of the bot's own head** (like the tidy, but they may ask for tools,
+  whose questions show in the bot's own chat).
+- **Pinned rows sit right under the main bot**, then the rest in 2.0's order (Maintainer last);
+  1.x's newest-line sorting of the "Chats" list is not ported. Groups appear before Maintainer and
+  cannot be pinned (1.x keeps only projects' and bots' pins).
+- **Keys that reach the app page while focus passes between it and the chat page go to the input box**
+  (within 3 s, and only with no click on the page since).
+- **The e2e types key by key** (`say()`); text inserted at once stays a known gap for a moment at startup.
+
 ## Gaps vs the Swift app (1.x)
 
 Not in 2.0 yet, roughly in order of how much they matter:
@@ -740,20 +796,20 @@ Not in 2.0 yet, roughly in order of how much they matter:
   the left column and Settled: done in Phase 4b.)
 - **Prompts**: the handoff/resume prompts are ported but unused (no model switch yet). Codex-only
   prompts are not ported. (The team lines: back in Phase 4b.)
-- **Requests**: `<need-folder>`, component specs and suggestions, @ call-ins (a notice says so).
-  (Projects: Phase 4a; teams, new bots, `<open-question>`: Phase 4b; components, plugins and
-  installs: Phase 3b.)
+- **Requests**: component specs and suggestions (a notice says so). (Projects: Phase 4a; teams, new
+  bots, `<open-question>`: Phase 4b; components, plugins and installs: Phase 3b; `<need-folder>`, @
+  call-ins and bots' @: Phase 4c.)
 - **Teams, still missing**: their cost and rate limits (1.x records each team's spend), a team's
   Claude parts checked before use, the team list changing while the app runs beyond what each wake
-  reads, new bots and projects starting on the app's engine defaults (`seedEngineDefaults`).
-- The right panel's Tasks list (chips only), group chats, feedback relays, completion verification
+  reads. (Engine defaults for new bots and projects: Phase 4c.)
+- Feedback relays, completion verification
   (`<end>/<block>` are parsed, not judged); claude's own scheduling tools (CronCreate, ScheduleWakeup)
   as background-task chips; 1.x's Settings → Routines page (2.0 has the header's small panel; the
   `addRoutine` UI for a new daily job is missing); Catch-up on window focus (only on opening a chat).
-- **The main bot's world, still missing**: pinning bots (Pin / Unpin in a row's menu, the Pinned
-  section), group chats (New group, members, their conversation), the left column's search (⌘K) and
-  folded column, the right panel's Tasks list and "Just done" task rows, 1.x's own result window,
-  the Dock count.
+- **The main bot's world, still missing**: 1.x's own result window, the Dock count, the "Chats" list
+  sorted by newest line, a group's "Waiting on you" and the right strip's "In the group" section, the
+  task cards' "In the summary" tag and "helps" lines, a guest's background work kept with its copy.
+  (Pinned bots, search, the folded column, Tasks and group chats: Phase 4c.)
 - **Components and plugins, still missing**: component specs ("Make into component"), reports, revert and
   version history, the `/` component menu, "Show in all bots" floats (each chat floats its own), "making
   it live" (a Board command handed to Maintainer), SF Symbol icons (emoji icons work),
@@ -763,8 +819,8 @@ Not in 2.0 yet, roughly in order of how much they matter:
   browser tools for bots, the component editor's model setting (sonnet unless settings.json
   says), Maintainer reading other folders, component shots, the Codex Maintainer's editor role, and a
   packaged build's Node for the plugin host (development uses Electron run as Node).
-- **Composer**: drafts across restarts, @ mentions. (Attachments, steering, replies to a message,
-  reactions and words typed in the first second are in.)
+- **Composer**: drafts across restarts, the `/` component menu. (Attachments, steering, replies to a
+  message, reactions, words typed in the first second and @ mentions are in.)
 - **Settings**: auto mode, spending and rate limits, Doctor; the React chrome's own words are English
   (the chat page follows the language setting).
 - **Packaging and updates** (electron-builder, fuses, signing, notarization, an updater).
@@ -809,12 +865,20 @@ Not in 2.0 yet, roughly in order of how much they matter:
   script). Since Phase 1b the chat itself is Web/src's page with its own chat.css; the React
   chrome's colours (`src/renderer/styles.css`) are Theme.swift's.
 
-## What's next (proposed, after Phase 4b)
+## What's next (proposed, after Phase 4c)
 
-1. **Group chats and pinned bots** (1.x's GroupChat.swift, Pin / Unpin, the column's search and
-   folded rail), and the right panel's Tasks list.
-2. **Maintainer, rest** (component specs, reports, revert/history, shots, `<need-folder>`).
+1. **Maintainer, rest** (component specs and suggestions, reports, revert/history, shots, the `/`
+   component menu and its mention note in guests' prompts).
+2. **Completion verification and feedback relays**, and Codex's remaining parity (worker return
+   routes, the model list and switching models).
 3. **Packaging and updates**, then **Windows**, as below.
+
+## What was next after Phase 4b (kept for reference)
+
+1. ~~Group chats and pinned bots, the column's search and folded rail, the right panel's Tasks
+   list~~ — done (Phase 4c).
+2. **Maintainer, rest** (`<need-folder>` done in Phase 4c).
+3. **Packaging and updates**, then **Windows**.
 
 ## What was next after Phase 4a (kept for reference)
 
@@ -931,6 +995,13 @@ part of teams (left for later); projects can be removed too, non-destructively; 
 not tidy; teams run through the bots' head without asking; results open outside the app (pages,
 pictures, documents with their own app, anything else in Finder); `<open-question>` copies close on
 a restart; a bot's open question is its own lines only; the right panel keeps its width.
+
+Decided by the agent in Phase 4c (the user was away; each can be changed): engine defaults are each
+bot's own, seeded and applied to every bot as 1.x (no app-wide fallback); allowed folders are asked
+again rather than imported; a deleted group's chat folder is deleted as in 1.x; guests' prompts leave
+out the `/` mention note (no `/` menu yet); guest turns are hidden turns of the bot's own head; pinned
+rows sit under the main bot, groups before Maintainer and not pinnable, no newest-line sorting; keys
+reaching the app page during a focus hand-over go to the input box; the e2e types key by key.
 
 Still open:
 - One real `claude` call to confirm the approval round trip, and one as a real bot (tools on) to
