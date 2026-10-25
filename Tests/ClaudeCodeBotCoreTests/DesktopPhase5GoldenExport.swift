@@ -71,7 +71,105 @@ struct DesktopPhase5GoldenExport {
     @MainActor static func more(workspace: Workspace, root: URL) -> [String: Any] {
         var out: [String: Any] = [:]
         out["reports"] = reports(workspace: workspace, root: root)
+        out["specs"] = specs(workspace: workspace, root: root)
         return out
+    }
+
+    /// Specs: the pure parts (`ComponentSpecs`), then one made through the workspace end to end.
+    @MainActor static func specs(workspace: Workspace, root: URL) -> [String: Any] {
+        let date = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        func message(_ id: String, _ text: String, displays: [ComponentInstance]? = nil, steps: [Step]? = nil) -> ChatMessage {
+            var m = ChatMessage(id: UUID(uuidString: id)!, role: .bot, text: text, date: date)
+            m.displays = displays
+            m.steps = steps
+            return m
+        }
+        let folder = root.appending(path: "work/Shop")
+        let artifacts = folder.appending(path: ".bot/artifacts")
+        try? FileManager.default.createDirectory(at: artifacts, withIntermediateDirectories: true)
+        let page = artifacts.appending(path: "report.html")
+        try? Data("<html><head><title>T</title><style>p{}</style></head><body><h1>Sales &amp; costs</h1><p>Line one<br>two</p><ul><li>a</li><li>b &#x4E2D;</li></ul><table><tr><td>x</td><td>y</td></tr></table><script>var a=1</script></body></html>".utf8).write(to: page)
+        let messages: [(String, ChatMessage)] = [
+            ("text", message("00000000-0000-4000-8000-0000000000B1", "Your 3 tests: 2 passed, 1 failed (the cart total).")),
+            ("shown", message("00000000-0000-4000-8000-0000000000B2", "Here:", displays: [ComponentInstance(name: "my-chart", data: "{\"total\": 3, \"failures\": [{\"suite\": \"cart\", \"test\": \"total\"}], \"ok\": false, \"rate\": 0.5, \"at\": \"2026-10-24T10:00:00Z\"}", command: "npm test --json")])),
+            ("existing", message("00000000-0000-4000-8000-0000000000B3", "Status:", displays: [ComponentInstance(name: "test-status", data: "{\"passed\": 3}")])),
+            ("bash", message("00000000-0000-4000-8000-0000000000B4", "Done reading.", steps: [Step(id: "s1", kind: .tool, tool: "Bash", title: "Run", detail: "cat notes.txt"), Step(id: "s2", kind: .tool, tool: "Bash", title: "Run", detail: "git log -3", failed: true)])),
+            ("linked", message("00000000-0000-4000-8000-0000000000B5", "See [the report](\(page.absoluteString)) for details.")),
+        ]
+        var drafts: [[String: Any]] = []
+        for (label, m) in messages {
+            let spec = ComponentSpecs.draft(from: m, bot: "Shop", folder: folder, library: workspace.components)
+            drafts.append(["label": label, "message": (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(m))) ?? NSNull(),
+                           "spec": encoded(spec), "lastCommand": ComponentSpecs.lastCommand(in: m) ?? NSNull(),
+                           "pages": ComponentSpecs.pages(of: m).map { ["path": $0.path, "text": $0.text] }])
+        }
+        let pageDraft = ComponentSpecs.draft(from: messages[4].1, bot: "Shop", folder: folder, library: workspace.components, page: page.path)
+        drafts.append(["label": "page", "spec": encoded(pageDraft)])
+
+        let slugs = ["Show the Test Results now", "2 tests: 12 passed", "測試 results", "", "git diff --stat", "a-b_c d"].map { ["text": $0, "slug": ComponentSpecs.slug($0)] }
+        let jsons = ["{\"b\": 1, \"a\": \"x\"}", "[{\"z\": true, \"y\": 1.5}]", "[1, 2]", "nope", "{\"list\": [{\"n\": 1, \"m\": 2}], \"obj\": {}, \"when\": \"2026-01-02\", \"none\": null, \"strs\": [\"a\"]}"]
+            .map { ["json": $0, "fields": ComponentSpecs.fields(fromJSON: $0).map { ["name": $0.name, "type": $0.type] }] }
+        let parsed = ["total: int, failures: [suite, test]", "name", " a : , b:num ,, {x, y}: obj", ""].map { ["text": $0, "fields": ComponentSpecs.parseFields($0).map { ["name": $0.name, "type": $0.type] }] }
+        let matches = [("{\"total\": 1, \"failures\": []}", true), ("[{\"total\": 1, \"failures\": 2}]", true), ("{\"total\": 1}", false), ("plain", false)].map { json, _ in
+            ["output": json, "matches": ComponentSpecs.outputMatches(json, fields: [.init(name: "total", type: "int"), .init(name: "failures", type: "[…]")])] as [String: Any]
+        }
+
+        // A spec changed by the user and Maintainer, in order: each state after.
+        var spec = ComponentSpecs.draft(from: messages[1].1, bot: "Shop", folder: folder, library: workspace.components)
+        spec.purpose = "see the tests at a glance"
+        var steps: [[String: Any]] = []
+        func step(_ what: String, _ changed: Bool) { steps.append(["what": what, "changed": changed, "spec": encoded(spec)]) }
+        step("edit name", ComponentSpecs.edit("name", to: "Test Board!", in: &spec))
+        step("edit refresh", ComponentSpecs.edit("refresh", to: "interval", in: &spec))
+        step("edit minutes", ComponentSpecs.edit("minutes", to: "5000", in: &spec))
+        step("edit bots", ComponentSpecs.edit("bots", to: "Shop, main bot, shop,", in: &spec))
+        step("edit reuse", ComponentSpecs.edit("reuse", to: "yes", in: &spec))
+        step("edit fields", ComponentSpecs.edit("fields", to: "total: int, failures: [suite, test], extra", in: &spec))
+        step("edit same", ComponentSpecs.edit("about", to: "", in: &spec))
+        step("update", ComponentSpecs.update(&spec, with: "{\"about\": \"Test results at a glance\", \"fields\": [{\"name\": \"total\", \"type\": \"int\"}, \"passed: int\", {\"name\": \"\"}], \"minutes\": 10, \"reuse\": false, \"similar\": \"test-status\", \"samples\": [{\"label\": \"Failing run\", \"data\": {\"total\": 0}}, {\"label\": \"Empty\", \"data\": \"{}\"}], \"questions\": [{\"key\": \"refresh\", \"text\": \"How often?\", \"options\": [{\"label\": \"When shown\", \"value\": \"shown\"}, \"Only by hand\"], \"suggested\": 0}, {\"id\": \"live\", \"key\": \"reuse\", \"text\": \"Reuse it?\", \"options\": [{\"label\": \"Yes\", \"value\": true}, {\"label\": \"No\", \"value\": false}], \"suggested\": 5}, {\"text\": \"no options\", \"options\": []}]}", ))
+        step("update same", ComponentSpecs.update(&spec, with: "{\"about\": \"Test results at a glance\"}"))
+        step("answer", ComponentSpecs.answer("q1", option: 0, in: &spec))
+        step("answer open", { ComponentSpecs.answerOpenQuestions(in: &spec); return true }())
+        let summary = ComponentSpecs.summary(of: spec)
+        var built = spec
+        built.built = "test-board"
+        built.version = 2
+        built.testRun = ComponentSpec.TestRun(command: "npm test --json", folder: folder.path, output: String(repeating: "x", count: 700), matches: false)
+        let reply = messages[1].1
+        let pages = ComponentSpecs.pages(of: messages[4].1)
+        let requests: [String: Any] = [
+            "summaryBuilt": ComponentSpecs.summary(of: built),
+            "tagNote": ComponentSpecs.tagNote(spec),
+            "draft": ComponentSpecs.draftRequest(spec, reply: reply.text, pages: pages, ran: "cat x", from: "Shop"),
+            "draftPlain": ComponentSpecs.draftRequest(ComponentSpecs.draft(from: messages[0].1, bot: "Shop", folder: folder, library: workspace.components), reply: messages[0].1.text, from: "Shop"),
+            "firstBuildLive": ComponentSpecs.firstBuildRequest(spec, reply: reply.text, pages: pages, ran: nil, asked: "  show me the tests  ", brief: " The brief. ", from: "Shop"),
+            "firstBuildFilled": ComponentSpecs.firstBuildRequest(ComponentSpecs.draft(from: messages[0].1, bot: "Shop", folder: folder, library: workspace.components), reply: messages[0].1.text, ran: "npm test", from: "Main bot"),
+            "say": ComponentSpecs.sayRequest(spec, text: "make it red"),
+            "sayEmpty": ComponentSpecs.sayRequest(spec, text: ""),
+            "change0": ComponentSpecs.changeRequest(built, said: [], version: 3),
+            "change1": ComponentSpecs.changeRequest(built, said: [" bigger "], version: 3),
+            "change2": ComponentSpecs.changeRequest(built, said: ["bigger", "", "green"], version: 3),
+            "build": ComponentSpecs.buildRequest(spec),
+            "buildFilled": ComponentSpecs.buildRequest(ComponentSpecs.draft(from: messages[0].1, bot: "Shop", folder: folder, library: workspace.components)),
+            "board": ComponentSpecs.boardCommandRequest(component: "test-board", suggested: "npm test --json", folder: folder.path, bot: "Shop", brief: "brief"),
+            "boardNoBrief": ComponentSpecs.boardCommandRequest(component: "test-board", suggested: "npm test --json", folder: folder.path, bot: "Shop"),
+            "fill": ComponentSpecs.fillRequest(spec, component: "test-board", reply: reply, pages: [page.path], usage: "- test-board: shows tests"),
+            "fillNoReply": ComponentSpecs.fillRequest(ComponentSpecs.draft(from: messages[0].1, bot: "Shop", folder: folder, library: workspace.components), component: "x", reply: nil, usage: ""),
+            "purposeNone": ComponentSpecs.purposeLine(ComponentSpecs.draft(from: messages[0].1, bot: "Shop", folder: folder, library: workspace.components), from: "Shop"),
+            "headers": ComponentAction.allCases.map { $0.header("ID") },
+        ]
+        let fills = ["<show name=\"test-board\">{\"a\":1}</show>", "Sure <show name=\"other\">{\"b\":2}</show>", "<show name=\"test-board\">null</show>", "It does not fit.\nMore.", ""].map { answer -> [String: Any] in
+            switch ComponentSpecs.filledData(from: answer, component: "test-board") {
+            case let .success(data): return ["answer": answer, "data": data]
+            case let .failure(problem): return ["answer": answer, "problem": problem.text]
+            }
+        }
+        return ["drafts": drafts, "slugs": slugs, "jsons": jsons, "parsed": parsed, "matches": matches, "steps": steps, "summary": summary, "requests": requests, "fills": fills,
+                "folder": folder.path, "page": page.path, "pageText": ComponentSpecs.pageText(String(decoding: (try? Data(contentsOf: page)) ?? Data(), as: UTF8.self))]
+    }
+
+    static func encoded(_ spec: ComponentSpec) -> Any {
+        (try? JSONSerialization.jsonObject(with: JSONEncoder().encode(spec))) ?? NSNull()
     }
 
     /// "Report a problem…" and the change requests Maintainer gets (`problemReport`, `requestComponentChange`).
