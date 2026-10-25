@@ -20,3 +20,12 @@ contextBridge.exposeInMainWorld("botling", Object.freeze({
     return () => { listeners.delete(listener); };
   },
 }));
+
+// Main adds this argument only for unpackaged fake-agent runs with a verified synthetic data dir.
+// Main must independently gate/validate the writer; this capability never grants a core command.
+if (process.isMainFrame && process.argv.includes("--botling-test-trace=1")) {
+  contextBridge.exposeInMainWorld("__botlingTestTrace", Object.freeze({
+    protocol: 1,
+    emit(record: unknown) { ipcRenderer.send("botling:test-trace", record); },
+  }));
+}

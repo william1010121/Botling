@@ -2,6 +2,8 @@
 // fed with state by the app page. On top of it the desktop adds what the page does not have yet:
 // Phase 0's sandboxed cards in their bubbles, a Stop button in the input box, and KaTeX (the
 // ccb-latex plugin, bundled in).
+import { observeTraceEditor } from "./input-trace-chat";
+import { inputTrace } from "../input-trace";
 import "./shim";
 import "./component-frames";
 import { installInputRecovery } from "./input-focus";
@@ -14,6 +16,7 @@ import { APP_ORIGIN, type FrameMessage, type ShellMessage } from "./protocol";
 
 declare const __LATEX_SOURCE__: string;
 
+observeTraceEditor();
 const origin = APP_ORIGIN;
 const toShell = (message: FrameMessage) => window.parent.postMessage(message, origin);
 const column = installMessageWidth((value) => toShell({ botling: "messageWidth", value }), (active) => toShell({ botling: "messageWidthDrag", active }));
@@ -140,13 +143,18 @@ window.addEventListener("message", (event: MessageEvent) => {
   if (message.botling === "state") {
     // Words typed before the first state (the first second after the window opens) would be replaced
     // by that chat's draft (empty) when the box switches to it: they are put back.
+    inputTrace()?.mark("frame.state.receive", () => ({ traceId: message.traceId, chat: message.state.botID,
+      previousChat: document.documentElement.dataset.chat, ...inputTrace()!.snapshot() }));
     const early = document.documentElement.dataset.chat === undefined ? typedSoFar() : null;
+    inputTrace()?.mark("frame.early.snapshot", () => ({ early, ...inputTrace()!.snapshot() }));
     column.set(message.messageColumnWidth ?? null, message.state.botID);
     window.ccb.setState(message.state);
+    inputTrace()?.mark("frame.state.applied", () => inputTrace()!.snapshot());
     if (early) keepTyped(early);
     // Which chat the page shows (the input box keeps a draft per chat, so typing before the first
     // state would be replaced by that chat's draft); tests wait for it.
     document.documentElement.dataset.chat = message.state.botID;
+    inputTrace()?.mark("frame.state.complete", () => inputTrace()!.snapshot());
     addStop();
     decorate(message.extras);
   } else if (message.botling === "widthRejected") {
@@ -162,6 +170,7 @@ window.addEventListener("message", (event: MessageEvent) => {
   } else if (message.botling === "hostReply") {
     window.ccb.hostReply(message.callID, message.ok, message.value);
   } else if (message.botling === "recoverFocus") {
+    inputTrace()?.mark("frame.recover.receive", () => ({ traceId: message.traceId, ...inputTrace()!.snapshot() }));
     takeFocusBack();
   } else if (message.botling === "focus") {
     window.ccb.focus();
@@ -197,9 +206,11 @@ function typedSoFar(): { text: string; cursor: number } | null {
 
 function keepTyped(early: { text: string; cursor: number }) {
   const view = composerView();
+  inputTrace()?.mark("frame.keepTyped.before", () => ({ early, willRestore: !!view && view.state.doc.toString() === "", ...inputTrace()!.snapshot() }));
   if (!view || view.state.doc.toString() !== "") return;
   // As typing (not marked remote), so the box keeps it as this chat's draft.
   view.dispatch({ changes: { from: 0, insert: early.text }, selection: { anchor: Math.min(early.cursor, early.text.length) }, userEvent: "input.type" });
+  inputTrace()?.mark("frame.keepTyped.after", () => inputTrace()!.snapshot());
 }
 
 const takeFocusBack = installInputRecovery(composerView, toShell);

@@ -3,6 +3,8 @@
 // (chat-frame/), fed with the state ChatPayload.swift would build (payload.ts). The frame posts
 // what the user does (send, a pick on an approval, Stop); this page turns that into contract
 // commands. Only this page has the bridge to main.
+import { inputTrace } from "./input-trace";
+import { TEST_TRACE_QUERY } from "../test-trace";
 import { UpdateBanner } from "./Updates";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { MAINTAINER_BOT_ID, resultLinks, type BotView, type ResultOf, type ResultView, type SubagentRowView } from "../contract";
@@ -524,7 +526,9 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       // Developer mode with Botling's source among the projects: replies get "not right" (`feedback`).
       feedback: !!current.settings?.developerMode && current.bots.some((candidate) => candidate.id === current.settings?.developerProject && candidate.role === "manager"),
     });
-    const message: ShellMessage = { botling: "state", state, extras, messageColumnWidth: current.settings?.messageColumnWidth ?? null };
+    const traceId = inputTrace()?.mark("shell.state.send", () => ({ chat: state.botID, ...inputTrace()!.snapshot() }));
+    const message: ShellMessage = { botling: "state", state, extras, messageColumnWidth: current.settings?.messageColumnWidth ?? null,
+      ...(traceId ? { traceId } : {}) };
     target.postMessage(message, CHAT_ORIGIN);
   }, []);
 
@@ -577,17 +581,37 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     let lastShellIntentAt = 0;
     let frameStartedAt = 0;
     let focusTimer: ReturnType<typeof setTimeout> | undefined;
+    let traceTimerPending = false;
     const element = frame.current;
+    const mark = (event: string, extra: Record<string, unknown> = {}) => inputTrace()?.mark(event, () => ({
+      recoveryUntil, composerIntended, shellTargetChosen, lastShellIntentAt, frameStartedAt,
+      now: Date.now(), ...inputTrace()!.snapshot(), ...extra,
+    }));
     const recoverFocus = () => {
-      if (!composerIntended || shellTargetChosen || Date.now() >= recoveryUntil || !document.hasFocus()) return;
+      mark("shell.recover.check");
+      if (!composerIntended || shellTargetChosen || Date.now() >= recoveryUntil || !document.hasFocus()) {
+        mark("shell.recover.blocked"); return;
+      }
       const active = document.activeElement;
-      if (active !== document.body && active !== document.documentElement && active !== element) return;
+      if (active !== document.body && active !== document.documentElement && active !== element) {
+        mark("shell.recover.explicitTarget"); return;
+      }
+      mark("shell.recover.focus.before");
       element?.contentWindow?.focus();
-      const message: ShellMessage = { botling: "recoverFocus" };
+      mark("shell.recover.focus.after");
+      const traceId = mark("shell.recover.send");
+      const message: ShellMessage = { botling: "recoverFocus", ...(traceId ? { traceId } : {}) };
       element?.contentWindow?.postMessage(message, CHAT_ORIGIN);
     };
-    const focusChanged = () => { clearTimeout(focusTimer); focusTimer = setTimeout(recoverFocus, 0); };
+    const focusChanged = () => {
+      if (traceTimerPending) mark("shell.recover.timer.cancel");
+      clearTimeout(focusTimer);
+      const cause = mark("shell.recover.timer.schedule");
+      traceTimerPending = true;
+      focusTimer = setTimeout(() => { traceTimerPending = false; mark("shell.recover.timer.fire", { cause }); recoverFocus(); }, 0);
+    };
     const loaded = () => {
+      mark("shell.frame.load");
       // New document time precedes its scripts/load. An old shell click must not disable the new
       // frame; a new click/Tab while it loads must still win, even if its intent arrives later.
       shellTargetChosen = lastShellIntentAt >= frameStartedAt;
@@ -595,16 +619,24 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     };
     const intent = (event: MessageEvent) => {
       if (event.source !== element?.contentWindow || event.origin !== CHAT_ORIGIN || event.data?.botling !== "composerIntent") return;
-      if (typeof event.data.startedAt !== "number" || event.data.startedAt < frameStartedAt) return;
+      mark("shell.composerIntent.receive", { traceId: event.data.traceId, value: event.data.value,
+        receivedStartedAt: event.data.startedAt, receivedRecoveryUntil: event.data.recoveryUntil });
+      if (typeof event.data.startedAt !== "number" || event.data.startedAt < frameStartedAt) {
+        mark("shell.composerIntent.stale"); return;
+      }
       if (event.data.startedAt > frameStartedAt) {
         frameStartedAt = event.data.startedAt;
         shellTargetChosen = lastShellIntentAt >= frameStartedAt;
       }
       composerIntended = event.data.value === true;
       recoveryUntil = typeof event.data.recoveryUntil === "number" ? event.data.recoveryUntil : 0;
+      mark("shell.composerIntent.applied");
       if (recoveryUntil) focusChanged();
     };
-    const chooseShell = () => { shellTargetChosen = true; lastShellIntentAt = performance.timeOrigin + performance.now(); };
+    const chooseShell = () => {
+      shellTargetChosen = true; lastShellIntentAt = performance.timeOrigin + performance.now();
+      mark("shell.intent.explicit");
+    };
     const key = (event: KeyboardEvent) => { if (event.key === "Tab" || event.key === "Escape") chooseShell(); };
     element?.addEventListener("load", loaded);
     window.addEventListener("message", intent);
@@ -613,6 +645,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     window.addEventListener("focus", focusChanged);
     window.addEventListener("focusin", focusChanged);
     return () => {
+      if (traceTimerPending) mark("shell.recover.timer.cancel", { cleanup: true });
       clearTimeout(focusTimer);
       element?.removeEventListener("load", loaded);
       window.removeEventListener("message", intent);
@@ -956,7 +989,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     return () => window.removeEventListener("message", onMessage);
   }, [client, onError, onSent, onSelectTask, push, pushPlugins, store]);
 
-  return <iframe id="chat-frame" ref={frame} src={CHAT_PAGE} title="Chat" />;
+  return <iframe id="chat-frame" ref={frame} src={inputTrace() ? `${CHAT_PAGE}?${TEST_TRACE_QUERY}=1` : CHAT_PAGE} title="Chat" />;
 }
 
 /**

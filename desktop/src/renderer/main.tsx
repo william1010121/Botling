@@ -1,3 +1,4 @@
+import "./input-trace-shell";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { Client, type Bridge } from "./client";

@@ -1,6 +1,7 @@
 import type { EditorView } from "@codemirror/view";
 import type { FrameMessage } from "./protocol";
 import { imeOwnsKey } from "./input-ime";
+import { inputTrace } from "../input-trace";
 
 /** The chat document owns recovery. Kept separate so event/state ordering can be checked without
  * launching a browser. Native key routing and activation still require an authorized GUI check. */
@@ -20,16 +21,23 @@ export function installInputRecovery(
   const chatKey = () => document.documentElement.dataset.chat ?? "";
   const inBox = (target: EventTarget | null) => !!(target as HTMLElement | null)?.closest?.(".composer .cm-content");
   const emptyFocus = () => document.activeElement === document.body || document.activeElement === document.documentElement;
+  const mark = (event: string, extra: Record<string, unknown> = {}) => inputTrace()?.mark(event, () => ({
+    composerIntended, recovering, recoveryUntil, editorHadFocus, now: Date.now(),
+    lastEditor: inputTrace()!.node(lastEditor), pendingText: [...pendingText], ...inputTrace()!.snapshot(), ...extra,
+  }));
   function announce() {
+    const traceId = mark("frame.composerIntent.send");
     toShell({ botling: "composerIntent", value: composerIntended, recoveryUntil: recovering ? recoveryUntil : 0,
-      startedAt: performance.timeOrigin });
+      startedAt: performance.timeOrigin, ...(traceId ? { traceId } : {}) });
   }
   function intendComposer(value: boolean) {
+    mark("frame.intent.change", { value });
     composerIntended = value;
     if (!value) { recovering = false; recoveryUntil = 0; }
     announce();
   }
   function noteLoss() {
+    mark("frame.loss.observed");
     if (!composerIntended || recovering) return;
     recovering = true;
     editorHadFocus = false;
@@ -40,24 +48,32 @@ export function installInputRecovery(
     const editor = composerView()?.contentDOM ?? null;
     const replaced = lastEditor !== editor;
     lastEditor = editor;
+    if (replaced) mark("frame.editor.replaced", { editor: inputTrace()?.node(editor) });
     if (emptyFocus() && (editorHadFocus || replaced)) noteLoss();
   }
   function flushText(): boolean {
     const view = composerView();
-    if (!view) return false;
+    if (!view) { mark("frame.flush.noEditor"); return false; }
     const key = chatKey();
     const text = (pendingText.get("") ?? "") + (key ? pendingText.get(key) ?? "" : "");
     if (text) {
+      mark("frame.flush.before", { text });
       pendingText.delete(""); pendingText.delete(key);
       view.dispatch(view.state.replaceSelection(text), { userEvent: "input.type" });
+      mark("frame.flush.after");
     }
     return true;
   }
   function takeFocusBack(): boolean {
     detectLoss();
-    if (!composerIntended || !recovering || Date.now() >= recoveryUntil || !emptyFocus() || !document.hasFocus()) return false;
+    mark("frame.recover.check");
+    if (!composerIntended || !recovering || Date.now() >= recoveryUntil || !emptyFocus() || !document.hasFocus()) {
+      mark("frame.recover.blocked"); return false;
+    }
     if (!flushText()) return false;
+    mark("frame.recover.focus.before");
     composerView()?.focus();
+    mark("frame.recover.focus.after");
     return true;
   }
   document.addEventListener("pointerdown", event => {
@@ -106,6 +122,7 @@ export function installInputRecovery(
     event.preventDefault(); event.stopImmediatePropagation();
     const key = chatKey();
     pendingText.set(key, (pendingText.get(key) ?? "") + event.key);
+    mark("frame.bodyText.buffered", { key: event.key });
     // Apply the prefix synchronously before later native edits; if the editor is being replaced,
     // its mutation callback flushes the text once that same chat has an editor again.
     if (flushText()) takeFocusBack();
