@@ -32,7 +32,7 @@
 // — once that file exists (a test opens the gate when it has seen the worker at work).
 // FAKE_CODEX_INPUT: a file it appends {thread, kind, text} to for every turn input and steer.
 // FAKE_CODEX_LOG: a file it appends {pid, args, cwd} to per start.
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -48,6 +48,21 @@ if (process.argv[2] === "exec") {
   await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_CODEX_EXEC_MS ?? 20)));
   if (process.env.FAKE_CODEX_EXEC_FAIL === "1") { process.stdout.write(JSON.stringify({ type: "turn.failed", error: { message: "fake failure" } }) + "\n"); process.exit(1); }
   const prompt = args.at(-1) ?? "";
+  // The completion judge (its output file is judgment.json): FAKE_CODEX_JUDGE is "VERDICT:reason|VERDICT:reason|…",
+  // one per call (the last repeats; FAKE_CODEX_JUDGE_COUNT names the file that counts calls); else COMPLETE.
+  if (String(flag("--output-last-message")).endsWith("judgment.json")) {
+    const plan = (process.env.FAKE_CODEX_JUDGE ?? "COMPLETE:The reply did what was asked.").split("|");
+    let n = 0;
+    const counter = process.env.FAKE_CODEX_JUDGE_COUNT;
+    if (counter) { try { n = Number(readFileSync(counter, "utf8")) || 0; } catch { n = 0; } writeFileSync(counter, String(n + 1)); }
+    const [verdict, ...why] = plan[Math.min(n, plan.length - 1)].split(":");
+    const judgment = { verdict, reason: why.join(":") || "fake", wakeupID: null };
+    writeFileSync(flag("--output-last-message"), JSON.stringify(judgment));
+    for (const event of [{ type: "thread.started", thread_id: "fake" }, { type: "turn.started" }, { type: "item.completed", item: { id: "i0", type: "agent_message", text: JSON.stringify(judgment) } }, { type: "turn.completed", usage: {} }]) {
+      process.stdout.write(JSON.stringify(event) + "\n");
+    }
+    process.exit(0);
+  }
   const sources = [...prompt.matchAll(/^\[source:([0-9A-F-]{36})\] ([^:\n]+): (.*)$/gm)].slice(-3);
   const bullets = sources.length ? sources.map((m) => `${m[2]}: ${m[3].slice(0, 60)} [[source:${m[1]}]]`) : ["Nothing to say."];
   writeFileSync(flag("--output-last-message"), JSON.stringify({ bullets }));

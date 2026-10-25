@@ -1,6 +1,8 @@
 // The core process entry. Under Electron it runs as a utility process and talks over
 // `process.parentPort`; under plain Node (tests, a headless core) it talks JSON lines on stdio,
 // like the existing plugin host.
+import { tmpdir } from "node:os";
+import { CLASSIFIER_TIMEOUT_MS, codexClassifier } from "./promise-check";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { Core } from "./server";
@@ -97,6 +99,16 @@ function summarizer() {
   return script ? codexSummarizer({ file: process.execPath, prefixArgs: [script], env: { ELECTRON_RUN_AS_NODE: "1" } }, timeout) : null;
 }
 
+/** The completion judge (`PromiseCheck.codexClassifier`): the real Codex CLI, or the fake one's `exec`. */
+function classifier() {
+  const kind = process.env.BOTLING_AGENT ?? "fake";
+  const timeout = number(process.env.BOTLING_JUDGE_TIMEOUT_MS, CLASSIFIER_TIMEOUT_MS);
+  const tmp = process.env.TMPDIR ?? tmpdir();
+  if (kind === "claude") return (model: string) => codexClassifier({ file: process.env.BOTLING_CODEX_PATH ?? "codex" }, model, tmp, timeout);
+  const script = process.env.BOTLING_FAKE_CODEX;
+  return script ? (model: string) => codexClassifier({ file: process.execPath, prefixArgs: [script], env: { ELECTRON_RUN_AS_NODE: "1" } }, model, tmp, timeout) : null;
+}
+
 /**
  * Node for the plugin host: BOTLING_NODE_PATH, else the Node this core runs on — under Electron that is
  * Electron itself run as Node (development; packaged builds turn that fuse off, see the README's gaps).
@@ -146,6 +158,7 @@ const core = new Core({
   quitTidyMs: number(process.env.BOTLING_QUIT_TIDY_MS, 15_000),
   routineTickMs: number(process.env.BOTLING_ROUTINE_TICK_MS, 30_000),
   summarizer: summarizer(),
+  classifier: classifier(),
   componentScanMs: number(process.env.BOTLING_COMPONENT_SCAN_MS, 1_500),
   waitingScanMs: number(process.env.BOTLING_WAITING_SCAN_MS, 5_000),
   plugins: { node, hostScript, sealer },

@@ -233,7 +233,7 @@ function Engines({ settings, change }: { settings: SettingsView; change: (next: 
         </Row>
         <Toggle label="Fast mode" hint="service_tier = priority: faster replies, uses more of your limits" checked={!!workers.fast} disabled={following} onChange={(value) => change({ key: "codexWorkers", value: { ...workers, fast: value } })} />
       </Group>
-      <Group title="Completion verification" note="2.0 keeps this choice; checking whether a reply finished what it promised is not in 2.0 yet.">
+      <Group title="Completion verification" note="After a reply, an isolated Codex judge checks whether the authorized task is done; unfinished work is continued (twice without progress: paused). Uses your Codex login.">
         <Toggle label="Verify completion automatically" checked={settings.completionVerification} onChange={(value) => change({ key: "completionVerification", value })} />
         <Row label="Verification model" hint={`Current verification model: ${settings.completionVerificationModel}`}>
           <TextSetting label="Verification model" value={settings.completionVerificationModel} disabled={!settings.completionVerification} onSave={(value) => change({ key: "completionVerificationModel", value })} />

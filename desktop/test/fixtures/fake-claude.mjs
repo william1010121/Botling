@@ -269,6 +269,12 @@ async function turn(job) {
     result(text);
     return;
   }
+  // The completion judge found the task unfinished (1.x's follow-up): it says where it stands.
+  if (prompt.startsWith("(App: The completion judge found unfinished work") || prompt.startsWith("(App: Your terminal evidence is missing")) {
+    const text = await stream(process.env.FAKE_CLAUDE_CONTINUE ?? "Still working on the parser.");
+    result(text);
+    return;
+  }
   // A component made from its reply, to draw (Phase 5a's fill request): <show> with the data FAKE_CLAUDE_FILL names (else {"filled":true}).
   const fill = /^\(App: Draw the component "([^"]+)" for your reply/.exec(prompt);
   if (fill) {

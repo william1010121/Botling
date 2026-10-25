@@ -56,6 +56,7 @@ import { fileURLToPath } from "node:url";
 import { answerLabel, attachmentList, attachmentsFolder, imageMediaType, keep } from "./attachments";
 import { readSpec, sameSpec, type ComponentSpec } from "./specs";
 import { parseFeedback } from "./feedback";
+import { FOLLOW_UP, SUBAGENT_CALLBACK, TERMINAL_FOLLOW_UP, review, turnEnd, wakeupId, type Check, type ScheduledWakeup, type Signal, type TurnEnd, type WorkerDependency } from "./promise-check";
 import {
   ContractError, type RoutineView, type BotView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
   type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks, type SpecChipView,
@@ -179,6 +180,8 @@ export interface BotOptions {
   lineExtras?: (bot: Bot, record: ChatRecord) => { specs?: SpecChipView[]; component?: string };
   /** Its specs changed (the spec panel follows). */
   specsChanged?: (bot: Bot) => void;
+  /** The completion judge when Settings has it on (1.x's `promiseCheck`), with its model; null: off. */
+  promiseCheck?: () => { check: Check; model: string } | null;
   /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
   launch?: () => { subagentHourCache: boolean };
 }
@@ -187,6 +190,8 @@ type Origin = "user" | "app" | "background" | "tidy";
 type AgentHead = ClaudeHead | CodexHead;
 
 interface Turn {
+  /** The app's continuation after the completion judge found work unfinished (keeps its no-progress count). */
+  completionContinuation?: boolean;
   id: string;
   /** The reply's chat line id. */
   messageId: string;
@@ -256,6 +261,18 @@ export class Bot {
   readonly store: BotStore;
   readonly tasks: TaskBook;
   readonly subagents: SubagentBook;
+  // The completion judge's state for this head (1.x's `completion…` properties).
+  private completionAuthorization = "";
+  private completionRequiresTerminalSignal = false;
+  private completionSuspended = false;
+  private completionContinuing = false;
+  private completionNoProgress = 0;
+  private completionEpoch = 0;
+  private completionMessageId: string | null = null;
+  private completionEvidence: string[] = [];
+  private completionReplies: string[] = [];
+  private completedThrough: string | null = null;
+  private completedTasks: string[] = [];
   /** Components being made from its replies (specs.json, 1.x's format; the primary's). */
   private specList: ComponentSpec[] = [];
   /** The task each head last replied on (`headTask`): hand-offs it makes help that task. */
@@ -546,6 +563,11 @@ export class Bot {
         record.text += (record.text ? "\n\n" : "") + "(Interrupted: the core restarted during this reply. It was not sent again.)";
         changed = true;
       }
+      // A completion check under way when the core stopped did not finish.
+      if (record.completionVerification && typeof record.completionVerification === "object" && (record.completionVerification as { state?: string }).state === "checking") {
+        (record.completionVerification as { state: string }).state = "interrupted";
+        changed = true;
+      }
       // A tool question (or the app's own question) from before a restart has nobody waiting for it any more.
       if ((record.permissionTool || record.appQuestion) && isOpenQuestion(record)) {
         record.answer = NO_LONGER_NEEDED;
@@ -578,6 +600,12 @@ export class Bot {
     const extras = this.owner.options.lineExtras?.(this.owner, record);
     if (extras?.specs?.length) view.specs = extras.specs;
     if (extras?.component) view.component = extras.component;
+    const verification = record.completionVerification as { model?: unknown; state?: unknown; verdict?: unknown; reason?: unknown; continuationPaused?: unknown } | undefined;
+    if (verification && typeof verification.model === "string" && (verification.state === "checking" || verification.state === "judged" || verification.state === "interrupted")) {
+      view.completionVerification = { model: verification.model.slice(0, 200), state: verification.state,
+        verdict: typeof verification.verdict === "string" ? verification.verdict.slice(0, 40) : null, reason: typeof verification.reason === "string" ? verification.reason.slice(0, 2_000) : null,
+        continuationPaused: verification.continuationPaused === true ? true : null };
+    }
     // A "not right" report shows short (1.x's `FeedbackNote`, read back from the text for older ones).
     if (record.role === "relay") {
       const note = record.feedback && typeof record.feedback === "object" ? record.feedback as { about?: unknown; words?: unknown } : null;
@@ -1341,6 +1369,8 @@ export class Bot {
 
   /** "Stop now" on the rounds line: no more hand-offs for this message. */
   stopRounds(): ResultOf<"rounds.stop"> {
+    this.suspendCompletion();
+    this.partner?.suspendCompletion();
     const actions = this.conductor.stopAll();
     this.conduct(actions);
     return { stopped: actions.length > 0 };
@@ -1726,6 +1756,7 @@ export class Bot {
   private begin(turn: Turn, head?: AgentHead) {
     this.turn = turn;
     this.clearIdle();
+    this.noteCompletionTurn(turn);
     if (turn.origin !== "tidy") {
       this.emit({ type: "turn.started", botId: this.id, turnId: turn.id, messageId: turn.messageId });
       this.updated();
@@ -2315,7 +2346,176 @@ export class Bot {
     if (status === "done" && this.sharesChat) this.owner.headReplied(record, this.engine, tags.handoff, turn.conducted, turn.handoffId);
     else if (this.sharesChat) this.headStopped(this.engine);
     else if (tags.handoff) this.notice(`Botling 2.0 cannot hand work to ${displayName(tags.handoff.to)} for a bot with one head yet, so nothing happened.`);
+    if (status === "done") this.checkPromise(record, turn, parsed.completionSignals);
     this.next();
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // The completion judge (1.x's Bot.checkPromise, PromiseCheck.swift)
+
+  /** A turn begins: what it is authorized to do, and any judgment under way no longer counts. */
+  private noteCompletionTurn(turn: Turn) {
+    if (turn.origin === "tidy") return;
+    const continuing = turn.completionContinuation === true;
+    this.interruptCompletion();
+    this.completionEpoch += 1;
+    if (continuing) return;
+    this.completionNoProgress = 0;
+    this.completionContinuing = false;
+    this.completionEvidence = [];
+    this.completionReplies = [];
+    const fromUser = turn.origin === "user";
+    const text = turn.userId ? this.owner.records.find((record) => record.id === turn.userId)?.text ?? turn.words : turn.words;
+    if (fromUser && this.completionRequiresTerminalSignal) {
+      // A status question or approval does not silently finish the existing goal.
+      this.completionAuthorization += "\nLatest user instruction (supersedes conflicting earlier instructions):\n" + text;
+      this.completionSuspended = false;
+    } else if (fromUser || turn.conducted || !this.completionAuthorization) {
+      this.completionAuthorization = text;
+      this.completionRequiresTerminalSignal = false;
+      this.completionSuspended = false;
+    }
+  }
+
+  /** You stopped it: no judgment, no automatic continuation until you say more. */
+  private suspendCompletion() {
+    this.interruptCompletion();
+    this.completionEpoch += 1;
+    this.completionSuspended = true;
+    this.completionRequiresTerminalSignal = false;
+  }
+
+  private setVerification(id: string, verification: Record<string, unknown>) {
+    const owner = this.owner;
+    const record = owner.records.find((candidate) => candidate.id === id);
+    if (!record) return;
+    record.completionVerification = verification;
+    owner.changed(record);
+  }
+
+  private interruptCompletion() {
+    const id = this.completionMessageId;
+    if (!id) return;
+    const record = this.owner.records.find((candidate) => candidate.id === id);
+    const verification = record?.completionVerification as { state?: string } | undefined;
+    if (verification?.state === "checking") this.setVerification(id, { ...verification, state: "interrupted" });
+    this.completionMessageId = null;
+  }
+
+  /** The running Agent-tool subagents own work like workers do: their notification wakes this head. */
+  private completionSubagents(): WorkerDependency[] {
+    return this.subagents.running.filter((subagent) => subagent.type !== "codex-worker").map((subagent) => ({
+      id: subagent.agentID ?? subagent.id, run: 1, task: [subagent.name, subagent.description, subagent.prompt].filter((part): part is string => !!part).join("\n"),
+      state: "running" as const, callback: SUBAGENT_CALLBACK, taskTruncated: false,
+    }));
+  }
+
+  /** The scheduler as it stands (routines and the app's own schedules), never a reason to wait by itself. */
+  private completionWakeups(): ScheduledWakeup[] {
+    let view: ResultOf<"routines.list">;
+    try { view = this.owner.routinesView(); } catch { return []; }
+    if (view.error) return [];
+    return view.routines.flatMap((routine): ScheduledWakeup[] => {
+      if (!routine.next || !["pending", "enabled", "due"].includes(routine.status)) return [];
+      return [{ id: routine.kind === "legacy" ? wakeupId("routine:" + routine.id) : routine.id, task: routine.title, fireAt: routine.next.replace(/\.\d{3}Z$/, "Z"), callback: "app_routine", taskTruncated: false }];
+    }).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  }
+
+  /** Judges a finished normal turn (`checkPromise`): continue the same task, ask for terminal evidence, or say what it found. */
+  private checkPromise(record: ChatRecord, turn: Turn, signals: Signal[]) {
+    const judge = this.options.promiseCheck?.() ?? null;
+    if (!judge || this.completionSuspended || record.role !== "bot" || this.shuttingDown || this.guestTurn || this.approvals.size
+      || (turn.origin !== "user" && turn.origin !== "app") || this.queue.length) return;
+    const continued = this.completionContinuing;
+    this.completionContinuing = false;
+    const codex = this.head instanceof CodexHead ? this.head.completionDependencies : null;
+    const subagents = this.completionSubagents();
+    const workers = subagents.length ? [...(codex ?? []), ...subagents] : codex ?? undefined;
+    const evaluated = new Date();
+    const wakeups = this.completionWakeups();
+    const dependencies = this.owner.conductor.records.filter((handoff) => (handoff.state === "running" || handoff.state === "waiting") && handoff.from === this.engine)
+      .map((handoff) => `Handoff ${handoff.id} to ${handoff.to}, state ${handoff.state}: ${handoff.task}; result returns via conductor`);
+    const steps = ((record.steps ?? []) as { kind?: string; tool?: string; title?: string; detail?: string; done?: boolean; failed?: boolean; output?: string }[]).filter((step) => step.kind !== "text");
+    const actions = steps.map((step) => `${step.tool ?? step.kind}: ${step.title ?? ""}; input: ${step.detail ?? ""}; done: ${!!step.done}; failed: ${!!step.failed}; output: ${step.output ?? ""}`);
+    const lines = this.owner.records;
+    const instructions = lines.filter((line) => line.role === "user" || line.role === "relay");
+    const lastInstruction = instructions.at(-1)?.id ?? null;
+    const through = this.completedThrough ? instructions.findIndex((line) => line.id === this.completedThrough) : -1;
+    const open = through >= 0 ? instructions.slice(through + 1) : instructions;
+    const authorization = open.slice(-6).map((line) => `[${line.role}] ${line.text}`).join("\n");
+    const recent = lines.slice(-10).map((line) => `[${line.role}] ${line.text}`).join("\n");
+    let memory = "";
+    try { memory = readFileSync(this.paths.memoryFile, "utf8"); } catch { /* none yet */ }
+    const end: TurnEnd = turnEnd({
+      reply: record.text, workPending: dependencies.length > 0 || wakeups.length > 0 || !!workers?.length,
+      task: this.completionAuthorization, conversation: authorization + "\nRecent conversation:\n" + recent, dependencies, actions, memory,
+      terminalRequired: this.completionRequiresTerminalSignal, signals,
+      ...(workers ? { workerDependencies: workers } : {}), ...(this.completedTasks.length ? { completed: [...this.completedTasks] } : {}),
+      evaluatedAt: evaluated.toISOString().replace(/\.\d{3}Z$/, "Z"), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, scheduledWakeups: wakeups,
+    });
+    // A new tool id or another promise alone is not progress; genuine new results are.
+    const evidence = steps.filter((step) => step.done && !step.failed && step.output).map((step) => `${step.tool ?? ""}|${step.detail ?? ""}|${step.output ?? ""}`);
+    const progressed = evidence.some((entry) => !this.completionEvidence.includes(entry));
+    const identity = record.text.trim();
+    const freshReply = !this.completionReplies.includes(identity);
+    this.completionReplies = [...this.completionReplies, identity].slice(-128);
+    this.completionEvidence = [...this.completionEvidence, ...evidence.filter((entry) => !this.completionEvidence.includes(entry))].slice(-256);
+    const epoch = this.completionEpoch;
+    this.interruptCompletion();
+    this.completionMessageId = record.id;
+    this.setVerification(record.id, { model: judge.model, state: "checking" });
+    const handed = turn.conducted;
+    const handoffId = turn.handoffId;
+    void judge.check(end).then((judgment) => {
+      if (this.completionEpoch !== epoch || this.turn || this.queue.length || this.shuttingDown || this.approvals.size) {
+        if (this.completionMessageId === record.id) this.interruptCompletion();
+        return;
+      }
+      const reviewed = review(judgment, end);
+      const verdict = reviewed.verdict;
+      let reason = reviewed.reason;
+      this.completionMessageId = null;
+      this.setVerification(record.id, { model: judge.model, state: "judged", verdict, reason });
+      switch (verdict) {
+        case "CONTINUE": case "CONTINUE_ANALYSIS": case "NEEDS_TERMINAL_SIGNAL": {
+          // Only an automatic continuation that brought nothing new counts; two in a row pause.
+          if (progressed || (verdict === "CONTINUE_ANALYSIS" && freshReply)) this.completionNoProgress = 0;
+          else if (continued) this.completionNoProgress += 1;
+          if (this.completionNoProgress >= 2) {
+            this.setVerification(record.id, { model: judge.model, state: "judged", verdict, reason, continuationPaused: true });
+            this.notice("Automatic continuation paused: repeated turns produced no new results or substantive analysis. Authorized work remains unfinished; the last reply is not completion.");
+            return;
+          }
+          this.completionRequiresTerminalSignal = true;
+          if (!reason) reason = "The last reply leaves authorized work unperformed: " + [...end.reply].slice(0, 240).join("");
+          const reportOnly = verdict === "NEEDS_TERMINAL_SIGNAL";
+          this.notice((reportOnly ? "Checking terminal evidence: " : "Continuing the authorized task: ") + reason);
+          this.completionContinuing = true;
+          const next = this.newTurn("app", reportOnly ? TERMINAL_FOLLOW_UP : FOLLOW_UP, null);
+          next.completionContinuation = true;
+          if (handed) { next.conducted = true; next.handoffId = handoffId; }
+          this.route(next);
+          return;
+        }
+        case "COMPLETE": case "WAITING_USER": case "CANCELLED":
+          this.completionNoProgress = 0;
+          if (verdict !== "WAITING_USER") this.completionRequiresTerminalSignal = false;
+          if (verdict === "COMPLETE") {
+            // Its completion evidence is reported: later checks must not resurrect it.
+            const said = end.signals.find((signal) => signal.kind === "end")?.evidence ?? (reason || end.reply);
+            this.completedTasks = [...this.completedTasks, "Task: " + [...end.task].slice(0, 600).join("") + "\nReported complete: " + [...said].slice(0, 800).join("")].slice(-4);
+            this.completedThrough = lastInstruction;
+            this.completionAuthorization = "";
+          }
+          if (verdict === "WAITING_USER" && reason) this.notice("Blocked: " + reason);
+          return;
+        case "WAITING_DEPENDENCY": case "WAITING_TIMER":
+          if (verdict === "WAITING_TIMER") this.completionNoProgress = 0;
+          return;
+        default:
+          this.notice(`Completion could not be established (${verdict}): ${reason} The last reply was delivered; this is not a completed-work verdict.`);
+      }
+    }, (error) => this.log(`completion check: ${(error as Error).message}`));
   }
 
   /** claude waits on nothing once its turn ended: no approval stays open. */
@@ -2371,6 +2571,8 @@ export class Bot {
 
   /** `quitting`: no polite interrupt first (the app is going), the tree is ended at once. */
   async stop(turnId: string, { quitting = false } = {}): Promise<ResultOf<"turn.stop">> {
+    // Stopped by you: the judge does not continue it (1.x's explicit stop wins).
+    this.suspendCompletion();
     const turn = this.turn;
     if (!turn || turn.id !== turnId || turn.origin === "tidy") {
       // A message still waiting its turn: taken back (it never reached claude).

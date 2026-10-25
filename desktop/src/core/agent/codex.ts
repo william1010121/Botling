@@ -25,6 +25,7 @@
 // Not ported (2.0 gaps, see desktop/README.md): the component-editor role, Codex's reviewer (auto mode),
 // Codex's own native subagents (off in a coordinator anyway), rate limits and token usage,
 // images in messages.
+import type { WorkerDependency } from "../promise-check";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -717,6 +718,27 @@ export class CodexSession {
   }
 
   /** Workers at work now (for the bot's view and tests). */
+  /**
+   * Execution and queued callbacks in this live runtime, for the completion judge (`completionWorkerDependencies`);
+   * persisted flags and cards cannot establish liveness.
+   */
+  get completionDependencies(): WorkerDependency[] {
+    if (this.stopped) return [];
+    const running = [...this.workers.values()].filter((worker) => worker.active && !worker.cancelled)
+      .map((worker): WorkerDependency => ({ id: worker.id, run: worker.run, task: worker.ownershipInstructions ?? worker.instructions, state: "running", callback: "app_task_result", taskTruncated: false }));
+    const queued = this.results.flatMap((result): WorkerDependency[] => {
+      const worker = this.workers.get(result.task);
+      if (!worker || worker.active || worker.run !== result.run) return [];
+      return [{ id: worker.id, run: worker.run, task: worker.ownershipInstructions ?? worker.instructions, state: "reportQueued", callback: "app_task_result", outcome: result.status, taskTruncated: false }];
+    });
+    const commands = [...this.monitors.values()].flatMap((monitor): WorkerDependency[] => {
+      if (monitor.state !== "running" && monitor.wake !== "pending") return [];
+      return [{ id: monitor.id, run: 1, task: monitor.command, state: monitor.state === "running" ? "running" : "reportQueued", callback: "app_monitor_result",
+        ...(monitor.state === "running" ? {} : { outcome: monitor.state }), taskTruncated: false }];
+    });
+    return [...running, ...queued, ...commands];
+  }
+
   get runningWorkers(): string[] {
     return [...this.workers.values()].filter((worker) => worker.active && !worker.cancelled).map((worker) => worker.id);
   }
@@ -1302,6 +1324,11 @@ export class CodexHead {
   /** Workers at work now. */
   get workers(): string[] {
     return this.session.runningWorkers;
+  }
+
+  /** The live worker and monitor snapshot the completion judge reads. */
+  get completionDependencies(): WorkerDependency[] {
+    return this.session.completionDependencies;
   }
 
   cancelWorkers(ids?: Set<string>) {

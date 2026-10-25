@@ -262,6 +262,9 @@ export const MessageView = z.strictObject({
   specs: z.array(SpecChipView).max(20).optional(),
   /** The library component this reply already is ("Add to another bot…"). */
   component: z.string().max(200).optional(),
+  /** The app's completion check of this reply (1.x's `CompletionVerification`). */
+  completionVerification: z.strictObject({ model: z.string().max(200), state: z.enum(["checking", "judged", "interrupted"]), verdict: z.string().max(40).nullable(),
+    reason: z.string().max(2_000).nullable(), continuationPaused: z.boolean().nullable() }).optional(),
   /** A "not right" report to the developer project: shown short (1.x's `FeedbackNote`). */
   feedback: z.strictObject({ about: z.string().max(400), words: z.string().max(20_000) }).optional(),
 });

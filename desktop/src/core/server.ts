@@ -15,6 +15,7 @@ import { rmSync } from "node:fs";
 import { PendingFiles, servedType, writeIncoming } from "./attachments";
 import { safeName } from "./components/library";
 import { SpecDesk } from "./spec-desk";
+import { check, type Classifier } from "./promise-check";
 import { appendFeedback, FEEDBACK_NO_WORDS } from "./feedback";
 import { archiveEntry } from "./briefing";
 import { fileURLToPath } from "node:url";
@@ -81,6 +82,8 @@ export interface CoreOptions {
   routineTickMs?: number;
   /** Writes Catch-up summaries (an isolated `codex exec`); null: there is no summary service. */
   summarizer?: Summarizer | null;
+  /** The completion judge on Codex for a model (`completionClassifier`); null: none (the check stays off). */
+  classifier?: ((model: string) => Classifier) | null;
   /** How often the component library is looked at for changes on disk (0: never; 1.x: 1.5 s). */
   componentScanMs?: number;
   /** How often memory files are looked at for what waits on you (0: never; chat changes always look). */
@@ -229,6 +232,16 @@ export class Core {
           : profile.id === MAINTAINER_ID ? () => this.maintainer.approvedFolders() : undefined,
         components: this.components,
         onRequests: (bot, requests) => this.maintainer.handle(bot, this.projectRequests(bot, requests)),
+        // The completion judge, while Settings has it on (`configureCompletionVerification`).
+        promiseCheck: () => {
+          const classify = this.options.classifier;
+          if (!classify) return null;
+          const view = settingsView(readSettings(Layout.settings(this.options.dataDir)));
+          if (!view.completionVerification) return null;
+          const model = view.completionVerificationModel;
+          const classifier = classify(model);
+          return { model, check: (end) => check(end, classifier) };
+        },
         // A reply's spec chips and its own component (Phase 5a).
         lineExtras: (bot, record) => this.specs?.lineExtras(bot, record) ?? {},
         specsChanged: (bot) => this.specs?.specsChanged(bot),
