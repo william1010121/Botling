@@ -25,6 +25,8 @@ test('D3 recovery offers Open folder and explicit restored-data continuation; fr
   expect(relaunch.args).toContain('--botling-update-data='+data);expect(relaunch.args.some((a:string)=>a.startsWith('--botling-update-token='))).toBe(false);
   // Close the mocked restart instance, then actually launch the disposable app afresh.
   await run.app.evaluate(({app})=>app.exit(0));await run.app.close().catch(()=>{});run=await launch({dataDir:data});await expect(run.page.locator('.shell[data-ready="1"]')).toBeVisible();
+  const counter=run.chat.frameLocator('iframe[src^="botling-card://card/"]').getByRole('button',{name:'Count: 0'});
+  await expect(counter).toBeVisible();await counter.click();await expect(run.chat.frameLocator('iframe[src^="botling-card://card/"]').locator('#n')).toHaveText('1');
   await run.page.screenshot({path:join(desktop,'.cache/evidence/review-d/recovered-ui.png')});
  }finally{if(run){await run.app.evaluate(({app})=>app.exit(0)).catch(()=>{});await run.app.close().catch(()=>{});}rmSync(root,{recursive:true,force:true});}
 });
@@ -38,7 +40,7 @@ test('D4 missing live data is discovered before any directory/profile is created
   run=await launch({dataDir:data,waitForState:false});await expect(run.page.getByRole('heading',{name:'Update recovery required'})).toBeVisible();
   expect(existsSync(data)).toBe(false);await expect(run.page.getByRole('alert',{name:'Update recovery'})).toContainText(after);expect(await run.app.evaluate(()=>(globalThis as any).__botlingCorePid())).toBeUndefined();
   await run.page.screenshot({path:join(desktop,'.cache/evidence/review-d/missing-data-recovery.png')});
- }finally{await run?.app.close().catch(()=>{});rmSync(root,{recursive:true,force:true});}
+ }finally{await run?.app.close().catch(()=>{});rmSync(root,{recursive:true,force:true});rmSync(base,{recursive:true,force:true});}
 });
 
 test('D8 component links cannot borrow guest bot replies or user notices',async()=>{
