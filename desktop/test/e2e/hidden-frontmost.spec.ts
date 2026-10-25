@@ -9,6 +9,7 @@ import {desktop,tempDir} from '../helpers';
 import {electronExecutable} from '../electron-runtime';
 import {frontmost} from '../frontmost';
 import {FrontmostProof} from '../frontmost-proof';
+import {captureProcessReceipt,writeProbeCheckpoint,type ProcessReceipt} from '../probe-recorder';
 const exec=promisify(execFile),pause=(ms:number)=>new Promise(resolve=>setTimeout(resolve,ms));
 test.skip(process.env.BOTLING_TEST_VERIFY_HIDDEN!=='1','Single explicitly authorized F0 safety verification');
 test('F0 hidden recovery stays invisible and preserves the frontmost app',async()=>{
@@ -19,7 +20,7 @@ test('F0 hidden recovery stays invisible and preserves the frontmost app',async(
  mkdirSync(root);writeFileSync(join(root,'owner.json'),JSON.stringify({target,dataDir:data,token}));writeFileSync(join(root,'result'),'failed:19');
  const proof=new FrontmostProof(750),startedAt=Date.now();
  let phase='before',stop=false,app:ElectronApplication|undefined,closing:Promise<void>|undefined,failure:Error|undefined,launchTask:ReturnType<typeof launch>|undefined;
- let runtime:any=null,journal:any[]=[];let abort!:()=>void;
+ let runtime:any=null,journal:any[]=[],completed=false;let receipt:(()=>ProcessReceipt)|undefined;let abort!:()=>void;
  const failed=new Promise<void>(resolve=>{abort=resolve;});
  const matchingPids=async()=>{const {stdout}=await exec('/bin/ps',['-axww','-o','pid=,comm=,args='],{maxBuffer:4*1024*1024});return stdout.split('\n').flatMap(line=>{const match=/^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(line);return match?.[2]===executable&&match[3].split(/\s+/).includes(argument)?[Number(match[1])]:[];});};
  const closeOwn=()=>closing??=(async()=>{
@@ -29,21 +30,26 @@ test('F0 hidden recovery stays invisible and preserves the frontmost app',async(
   const end=Date.now()+3000;while((await matchingPids()).length&&Date.now()<end)await pause(50);
   for(const pid of await matchingPids()){try{process.kill(pid,'SIGKILL');}catch{}}
  })();
- const fail=(error:unknown)=>{if(!failure){failure=error instanceof Error?error:new Error(String(error));abort();void closeOwn().catch(()=>{});}};
+ const checkpoint=(status:string,remainingPids:number[]=[])=>writeProbeCheckpoint(join(evidence,'f0-proof.json'),{
+  passed:completed&&!failure,status,sourceCommit:process.env.BOTLING_TEST_SOURCE_COMMIT,startedAt,at:Date.now(),runtime,baseline:proof.baseline,samples:proof.samples,windows:proof.windows,journal,
+  failure:failure?{message:failure.message,stack:failure.stack}:null,remainingPids,scope:'one hidden recovery window; other constructors static-only',sampleBoundMs:750,requestedSamplePauseMs:100,JSONLAttempted:false,
+ },receipt);
+ const fail=(error:unknown)=>{if(!failure){failure=error instanceof Error?error:new Error(String(error));try{checkpoint('failed');}catch(recordError){process.stderr.write('F0 original failure: '+failure.message+'; checkpoint error: '+String(recordError)+'\n');}abort();void closeOwn().catch(()=>{});}};
  const check=()=>{if(failure)throw failure;};
  const guarded=async<T>(task:Promise<T>)=>Promise.race([task,failed.then(()=>{throw failure!;})]);
  let monitor:Promise<void>|undefined;
  try{
-  const initial=await frontmost(),initialAt=Date.now();proof.sample(initial,'before',initialAt,initialAt);
+  const initial=await frontmost(),initialAt=Date.now();proof.sample(initial,'before',initialAt,initialAt);checkpoint('running');
   monitor=(async()=>{while(!stop&&!failure){const at=Date.now(),samplePhase=phase;
    try{proof.sample(await frontmost(),samplePhase,at,Date.now());}catch(error){fail(error);break;}
    if(app&&!closing){try{const snapshot=await app.evaluate(({BrowserWindow})=>({states:BrowserWindow.getAllWindows().map(w=>({id:w.id,visible:w.isVisible(),focused:w.isFocused()})),journal:(globalThis as any).__f0NativeJournal??[]}));journal=snapshot.journal;proof.window(Date.now(),snapshot.states,journal);}catch(error){if(!closing)fail(error);}}
+   try{checkpoint(failure?'failed':'running');}catch(error){fail(error);break;}
    if(Date.now()-startedAt>15000){fail(new Error('Bounded F0 observation deadline exceeded'));break;}
    await pause(100);
   }})();
   await guarded(pause(300));check();phase='during';
   launchTask=launch({dataDir:data,waitForState:false,args:[argument],env:{BOTLING_HIDDEN:'1',BOTLING_TEST_TRACE:'0'},onLaunched:async own=>{
-   app=own;if(failure){await own.close();throw failure;}
+   app=own;receipt=captureProcessReceipt(own);if(failure){await own.close();throw failure;}
    runtime=await own.evaluate(({app,BrowserWindow})=>{
     const journal:any[]=[];(globalThis as any).__f0NativeJournal=journal;
     const watch=(window:InstanceType<typeof BrowserWindow>)=>{
@@ -61,12 +67,11 @@ test('F0 hidden recovery stays invisible and preserves the frontmost app',async(
   await guarded(pause(900));check();
   expect(await run.app.evaluate(()=>(globalThis as any).__botlingCorePid())).toBeUndefined();
   phase='shutdown';await closeOwn();check();phase='after';const afterDeadline=Date.now()+1800;while(proof.samples.filter(sample=>sample.phase==='after').length<2&&Date.now()<afterDeadline){await guarded(pause(50));check();}
-  stop=true;await monitor;check();proof.complete();expect(await matchingPids()).toEqual([]);
+  stop=true;await monitor;check();proof.complete();expect(await matchingPids()).toEqual([]);completed=true;
  }catch(error){fail(error);throw error;}
  finally{
   await closeOwn();stop=true;await monitor?.catch(()=>{});await launchTask?.catch(()=>{});
   const remaining=await matchingPids();
-  writeFileSync(join(evidence,'f0-proof.json'),JSON.stringify({passed:!failure,sourceCommit:process.env.BOTLING_TEST_SOURCE_COMMIT,startedAt,endedAt:Date.now(),runtime,baseline:proof.baseline,samples:proof.samples,windows:proof.windows,journal,failure:failure?{message:failure.message,stack:failure.stack}:null,remainingPids:remaining,exitCode:app?.process().exitCode,signalCode:app?.process().signalCode,scope:'one hidden recovery window; normal/account/shot constructors static-only; no native key/focus/activation/LaunchServices actions',sampleBoundMs:750,requestedSamplePauseMs:100,JSONLAttempted:false},null,2)+'\n');
-  rmSync(root,{recursive:true,force:true});rmSync(data,{recursive:true,force:true});
+  try{checkpoint(completed?'complete':'failed',remaining);}finally{rmSync(root,{recursive:true,force:true});rmSync(data,{recursive:true,force:true});}
  }
 });
