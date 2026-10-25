@@ -261,6 +261,13 @@ export class Bot {
   readonly store: BotStore;
   readonly tasks: TaskBook;
   readonly subagents: SubagentBook;
+  /**
+   * Worker return routes (1.x's `managedTaskHandoffs`, `managedHandbackIDs`): a Codex worker started for
+   * handed-over work owns that hand-off; the coordinator's turn that only accepted it does not hand back,
+   * the worker's report turn does.
+   */
+  private managedTaskHandoffs = new Map<string, string>();
+  private managedHandbacks = new Set<string>();
   // The completion judge's state for this head (1.x's `completion…` properties).
   private completionAuthorization = "";
   private completionRequiresTerminalSignal = false;
@@ -1371,6 +1378,8 @@ export class Bot {
   stopRounds(): ResultOf<"rounds.stop"> {
     this.suspendCompletion();
     this.partner?.suspendCompletion();
+    this.forgetReturnRoutes();
+    this.partner?.forgetReturnRoutes();
     const actions = this.conductor.stopAll();
     this.conduct(actions);
     return { stopped: actions.length > 0 };
@@ -1384,6 +1393,7 @@ export class Bot {
     this.conduct(this.conductor.stop(id));
     for (const bot of [this, this.partner]) {
       if (!bot) continue;
+      for (const stopped of chain) bot.forgetReturnRoutes(stopped);
       for (const waiting of bot.queue.filter((turn) => turn.handoffId && chain.includes(turn.handoffId))) void bot.stop(waiting.id);
       if (bot.turn?.handoffId && chain.includes(bot.turn.handoffId)) void bot.stop(bot.turn.id);
     }
@@ -1982,7 +1992,15 @@ export class Bot {
     if (item.kind === "routinesChanged") return this.routinesEdited();
     if (item.kind === "backgroundTurn") {
       // A Codex worker's report: the app's own turn on the coordinator, which claude-style turns start on their first line.
-      if (!this.turn && !this.ignoreResults) this.backgroundTurn(head);
+      if (!this.turn && !this.ignoreResults) {
+        const turn = this.backgroundTurn(head);
+        // The report of a worker that owns a hand-off goes back as that hand-off's reply (`managedWorkerReportStarted`).
+        const handoff = item.taskId ? this.managedTaskHandoffs.get(item.taskId) : undefined;
+        if (item.taskId && handoff) {
+          this.managedTaskHandoffs.delete(item.taskId);
+          if (this.managedHandbacks.delete(handoff)) { turn.conducted = true; turn.handoffId = handoff; }
+        }
+      }
       return;
     }
     if (item.kind === "init") {
@@ -2160,6 +2178,10 @@ export class Bot {
         return true;
       case "subagentStarted":
         if (this.subagents.started(item)) this.subagentChanged(this.subagents.get(item.id));
+        // A worker for handed-over work: its report carries the hand-back.
+        if (this.engine === "codex" && this.turn?.conducted && this.turn.handoffId && (item.type === "codex-worker" || item.type === "ccb-core:component-editor")) {
+          this.managedTaskHandoffs.set(item.id, this.turn.handoffId);
+        }
         return true;
       case "subagentEnded": {
         const ended = this.subagents.ended(item);
@@ -2254,7 +2276,7 @@ export class Bot {
       // Handed work done with nothing to say still goes back to the head that handed it.
       if (this.sharesChat) {
         const owner = this.owner;
-        owner.conduct(owner.conductor.replied(this.engine, "", null, turn.conducted, turn.handoffId));
+        owner.conduct(owner.conductor.replied(this.engine, "", null, this.takeHandback(turn), turn.handoffId));
         this.headStopped(this.engine);
       }
       // A finished subagent's result always reaches the user: ask once, then say it ourselves.
@@ -2343,11 +2365,27 @@ export class Bot {
     }
     this.afterTurn();
     // The other head hears the reply; a hand-off in it goes on (`headReplied`).
-    if (status === "done" && this.sharesChat) this.owner.headReplied(record, this.engine, tags.handoff, turn.conducted, turn.handoffId);
+    if (status === "done" && this.sharesChat) this.owner.headReplied(record, this.engine, tags.handoff, this.takeHandback(turn), turn.handoffId);
     else if (this.sharesChat) this.headStopped(this.engine);
     else if (tags.handoff) this.notice(`Botling 2.0 cannot hand work to ${displayName(tags.handoff.to)} for a bot with one head yet, so nothing happened.`);
     if (status === "done") this.checkPromise(record, turn, parsed.completionSignals);
     this.next();
+  }
+
+  /** Whether this turn hands its work back now (`takeHandback`): not while a worker it started for the hand-off owns it. */
+  private takeHandback(turn: Turn): boolean {
+    const id = turn.handoffId;
+    if (this.engine === "codex" && turn.conducted && id && [...this.managedTaskHandoffs.values()].includes(id)) {
+      this.managedHandbacks.add(id);
+      return false;
+    }
+    return turn.conducted;
+  }
+
+  /** The return routes of a hand-off that stopped (or of all of them) are gone. */
+  private forgetReturnRoutes(handoffId?: string) {
+    for (const [task, id] of [...this.managedTaskHandoffs]) if (!handoffId || id === handoffId) this.managedTaskHandoffs.delete(task);
+    if (handoffId) this.managedHandbacks.delete(handoffId); else this.managedHandbacks.clear();
   }
 
   // ------------------------------------------------------------------------------------------

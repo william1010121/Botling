@@ -116,6 +116,8 @@ function words(text) {
 
 /** Handed-over work ("/slow …" as the task) that works until it is interrupted or the user steers in. */
 const SLOW_HANDED = "\u0000slow";
+/** Handed-over work ("/worker <task>" as the task) that an app-managed worker does. */
+const WORKER_HANDED = "\u0000worker ";
 
 /** What it answers to work the other head handed over, or to its hand-back (null: neither). */
 function conductedReply(prompt) {
@@ -124,6 +126,7 @@ function conductedReply(prompt) {
     const on = /^\/handoff:(claude|codex) ([\s\S]*)$/.exec(handed[1]);
     if (on) return `Over to you. <handoff to="${on[1]}">${on[2]}</handoff>`;
     if (handed[1].startsWith("/slow")) return SLOW_HANDED;
+    if (handed[1].startsWith("/worker ")) return WORKER_HANDED + handed[1].slice(8);
     return handed[1].startsWith("/say ") ? handed[1].slice(5) : `Did it: ${handed[1]}`;
   }
   const back = /\(App: (?:Claude|Codex) finished what you handed over\. Its reply:\n([\s\S]*?)\n\nCarry on from there/.exec(prompt);
@@ -155,12 +158,13 @@ async function coordinatorTurn(thread, turn, text) {
     say(thread, turn, `Answered you: ${state.turn.steers.map((steer) => words(steer).all || steer).join(" | ")}`);
     return complete(thread, turn);
   }
-  if (conducted !== null) {
+  if (conducted !== null && !conducted.startsWith(WORKER_HANDED)) {
     await sleep(Number(process.env.FAKE_CODEX_TURN_MS ?? 30));
     say(thread, turn, conducted);
     return complete(thread, turn);
   }
-  const said = words(text);
+  const handedWorker = conducted?.startsWith(WORKER_HANDED) ? conducted.slice(WORKER_HANDED.length) : null;
+  const said = words(handedWorker !== null ? `/worker ${handedWorker}` : text);
   const solo = /^\/solo\b\s*/.exec(said.last);
   if (solo) {
     await sleep(Number(process.env.FAKE_CODEX_TURN_MS ?? 30));

@@ -299,6 +299,19 @@ describe("two heads in one chat", () => {
     expect(saved.helps).toMatchObject([{ head: "codex", text: "Check the diff" }]);
   });
 
+  it("work handed to Codex that it gives a worker goes back with the worker's report, not with the turn that accepted it (worker return routes)", async () => {
+    const dir = tempDir("heads");
+    const c = await twoHeads(dir);
+    await c.call({ type: "heads.answerWith", botId: MAIN, to: "claude" });
+    await c.call({ type: "chat.send", botId: MAIN, text: `/say Handing it over. <handoff to="codex">/worker build the parser</handoff>` });
+    const back = await until(async () => (await c.chat()).messages.find((m: any) => m.engine === "claude" && m.state === "done" && m.text.startsWith("Done:")), { timeout: 15_000, what: "the hand-back" });
+    expect(back.text).toBe("Done: The worker finished: Worker did: build the parser");
+    const codex = (await c.chat()).messages.filter((m: any) => m.engine === "codex").map((m: any) => m.text);
+    expect(codex[0]).toBe("A worker has it.");
+    // Only one hand-back: the accepting turn did not go back.
+    expect((await c.chat()).messages.filter((m: any) => m.engine === "claude" && m.text.startsWith("Done:"))).toHaveLength(1);
+  });
+
   it("your message pauses claude's handed-over work (1.x's pausing): answered first, then it carries on and the hand-back goes on", async () => {
     const dir = tempDir("heads");
     const c = await twoHeads(dir);
