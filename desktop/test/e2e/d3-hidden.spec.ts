@@ -23,7 +23,7 @@ function observeD3Document(){
  const inserted=(root:Node,event:string)=>{for(const frame of frames(root))emit(event,snapshot(frame));};
  new MutationObserver(records=>{for(const record of records){for(const n of record.removedNodes)inserted(n,'card.iframe.remove');for(const n of record.addedNodes)inserted(n,'card.iframe.insert');}}).observe(document,{childList:true,subtree:true});
  document.addEventListener('load',event=>{if((event.target as Element)?.nodeName==='IFRAME')emit('card.iframe.load',snapshot(event.target as HTMLIFrameElement));},true);
- for(const type of ['pointerdown','pointerup','click'])document.addEventListener(type,event=>{const target=(event.target as Element)?.closest?.('button,a');if(target)emit('dom.'+type,{trusted:event.isTrusted,id:target.id,text:target.textContent?.slice(0,140)});},true);
+ for(const type of ['pointerdown','pointerup','click'])document.addEventListener(type,event=>{const raw=event.target as Element|null,target=raw?.closest?.('button,a');emit('dom.'+type,{trusted:event.isTrusted,rawTag:raw?.nodeName,rawId:raw?.id,action:target?{id:target.id,text:target.textContent?.slice(0,140)}:null});},true);
  window.addEventListener('message',event=>{
   const value=event.data;if(!value||typeof value!=='object')return;
   if(value.ccb==='save'||value.ccbData||value.botling==='request'&&value.cmd?.type==='card.save'||value.botling==='response'){
@@ -81,6 +81,7 @@ test('D3 hidden recovery redraw reuses its window; fresh counter click is correl
      emit('window.observed',{id:window.id,contents:window.webContents.id,visible:window.isVisible(),focused:window.isFocused()});
      window.on('show',()=>emit('show',{id:window.id}));window.on('focus',()=>emit('focus',{id:window.id}));window.on('closed',()=>emit('window.closed',{id:window.id}));
      const wc=window.webContents,send=wc.send.bind(wc);wc.send=((channel:string,...args:any[])=>{const value=args[0];if(channel==='botling:message'&&(value?.event?.type==='card.updated'||ids.has(String(value?.id))))emit('core.reply',{payload:value});return send(channel,...args);}) as typeof wc.send;
+     wc.on('will-navigate',(_e,url)=>emit('frame.will-navigate',{url:url.startsWith('data:')?'data:recovery':url}));
      wc.on('did-frame-finish-load',(_e,main,processId,routingId)=>emit('frame.finish',{main,processId,routingId}));
      wc.on('did-frame-navigate',(_e,url,status,_text,main,processId,routingId)=>emit('frame.navigate',{url:url.startsWith('data:')?'data:recovery':url,main,status,processId,routingId}));
     };for(const window of BrowserWindow.getAllWindows())watch(window);app.on('browser-window-created',(_e,window)=>watch(window));
@@ -90,7 +91,14 @@ test('D3 hidden recovery redraw reuses its window; fresh counter click is correl
    expect(run.runtime.hidden).toBe('1');expect(run.runtime.agent).toBe('fake');expect(run.runtime.execPath).toBe(executable);
   }});launchTask=task;void task.catch(()=>{});return guarded(task);
  };
- const click=async(page:Awaited<ReturnType<typeof launch>>['page'],name:string)=>{const rect=await page.getByRole('link',{name,exact:true}).boundingBox();expect(rect).not.toBeNull();note('click.request',{name});await guarded(page.mouse.click(rect!.x+rect!.width/2,rect!.y+rect!.height/2));};
+ const click=async(page:Awaited<ReturnType<typeof launch>>['page'],name:string)=>{
+  const rect=await page.getByRole('link',{name,exact:true}).boundingBox();expect(rect).not.toBeNull();
+  const x=rect!.x+rect!.width/2,y=rect!.y+rect!.height/2;
+  const geometry=await page.evaluate(({x,y})=>{const hit=document.elementFromPoint(x,y),action=hit?.closest('a');return{viewport:{width:innerWidth,height:innerHeight},scroll:{x:scrollX,y:scrollY},hit:hit?{tag:hit.nodeName,id:hit.id,action:action?.textContent,href:action?.getAttribute('href')}:null,documentGeneration:performance.timeOrigin,body:document.body.innerText.slice(0,8192)};},{x,y});
+  note('click.request',{name,rect,point:{x,y},geometry});
+  if(x<0||y<0||x>=geometry.viewport.width||y>=geometry.viewport.height||geometry.hit?.action!==name)throw new Error('D3 recovery action is not the viewport hit target; no input dispatched. See recorded geometry.');
+  await guarded(page.mouse.click(x,y));
+ };
  try{
   const initial=await frontmost(),at=Date.now();proof.sample(initial,'before',at,at);checkpoint('running');
   monitor=(async()=>{while(!stop&&!failure){const at=Date.now(),samplePhase=phase;
