@@ -31,7 +31,7 @@ column's search (⌘K) and fold, and the root causes of two e2e flakes. Phase 5a
 (component specs and `<suggest-component>`, a card's reports, Revert from the library's git, component
 shots, the `/` component menu and its mention note), the Phase 4c leftovers, completion verification,
 the "not right" feedback relay, and Codex's worker return routes, model list and model switching. Phase 5b
-done (macOS): electron-builder makes a runnable arm64 `.app` and zip with Electron's fuses hardened, ad-hoc
+done (macOS): electron-builder makes a runnable arm64 `.app`, zip and DMG with Electron's fuses hardened, ad-hoc
 signed (ready for a Developer ID and notarization from the environment), test-only variables ignored, the
 plugin host as a utility process, Maintainer's plugin check as the app's own `--check-plugin`, an
 update check against GitHub Releases (on by default; signed self-updates described below), and a smoke test of the packaged app; Windows and
@@ -90,7 +90,7 @@ cd desktop && npm install
 | `npm run test:live:codex` | One real Codex turn and one real two-head claim (three turns; Codex gets a throwaway `CODEX_HOME` with a copy of `auth.json` only). |
 | `npm run test:live:3a` | Phase 3a's real checks: claude hearing a message mid-turn, a monitored command through `codex app-server`'s `command/exec`, a Catch-up summary by `codex exec` (same throwaway `CODEX_HOME`). |
 | `npm run typecheck` | `tsc --noEmit`. |
-| `npm run dist:mac` | Phase 5b: build out/, then electron-builder: `dist/mac-arm64/Botling 2.app` and `dist/Botling-2-<version>-mac-arm64.zip` (ad-hoc signed unless a Developer ID is given, below). `dist:dir` only the unpacked app; `dist:win`, `dist:linux` are configured but never run here. |
+| `npm run dist:mac` | Build out/, then electron-builder: `dist/mac-arm64/Botling 2.app`, `dist/Botling-2-<version>-mac-arm64.zip` and `dist/Botling-2-<version>-mac-arm64.dmg` (ad-hoc signed unless a Developer ID is given, below). `dist:dir` only the unpacked app; `dist:win`, `dist:linux` are configured but never run here. |
 | `npm run test:packaged` | The packaged app's smoke test (after `dist:mac`; `BOTLING_PACKAGED_APP=<…/Botling 2.app>` for another copy). |
 
 Since Phase 3b the build also writes `out/host/host.mjs` (Web/host/src/host.ts, bundled as Web/build.mjs
@@ -99,7 +99,7 @@ bundles it for 1.x) and `out/host/check-plugin.cjs` (the plugin check, the comma
 Data goes to `$BOTLING_DATA_DIR`, by default `desktop/.data/` in development (ignored by git) and
 `<appData>/Botling 2` when packaged. The core's part is `<data>/core/`, in the Swift app's layout
 (below); Electron's own profile, partitions and caches are under `<data>/electron/`. Tests use
-throwaway folders in `desktop/.tmp/` (`.tmp/screens/` keeps the screenshots `look.spec.ts` takes).
+throwaway folders in `desktop/.cache/test-data/` (`.tmp/screens/` keeps the screenshots `look.spec.ts` takes).
 
 Import: a **packaged** app imports `~/.claudecodebot` on its first start (read-only). A development
 run imports only what `BOTLING_IMPORT_FROM=/path/to/a/1.x/folder` names, so `npm run dev*` and the
@@ -882,7 +882,7 @@ CCB_DESKTOP_PHASE5_EXPORT=$PWD/desktop/test/fixtures/phase5-golden.json TZ=UTC \
 
 | Piece | What it does | Evidence |
 | --- | --- | --- |
-| Packaging (`electron-builder.config.cjs`, `scripts/package.mjs`) | electron-builder 26.17.0: `dist/mac-arm64/Botling 2.app` (313 MB) and an arm64 zip (127 MB); app id `io.github.william1010121.Botling2`, product "Botling 2", 1.x's icon (`Assets/`, read only). The asar holds only `out/` (bundles, renderer, page readers) and package.json: no node_modules, sources, maps or fixtures. Caches: `ELECTRON_BUILDER_CACHE` and `electron_config_cache` default to `desktop/.cache/` and the config's `electronDownload.cache` follows them (electron-builder otherwise downloads Electron into `~/Library/Caches/electron`) | `packaged/packaged.spec.ts` (asar listing, Info.plist) |
+| Packaging (`electron-builder.config.cjs`, `scripts/package.mjs`) | electron-builder 26.17.0: `dist/mac-arm64/Botling 2.app` (313 MB) and arm64 ZIP + DMG (Phase 5c); app id `io.github.william1010121.Botling2`, product "Botling 2", 1.x's icon (`Assets/`, read only). The asar holds only `out/` (bundles, renderer, page readers) and package.json: no node_modules, sources, maps or fixtures. Caches: `ELECTRON_BUILDER_CACHE` and `electron_config_cache` default to `desktop/.cache/` and the config's `electronDownload.cache` follows them (electron-builder otherwise downloads Electron into `~/Library/Caches/electron`) | `packaged/packaged.spec.ts` (asar listing, Info.plist) |
 | Fuses | RunAsNode off, cookie encryption on, NODE_OPTIONS off, `--inspect` off, embedded ASAR integrity on (electron-builder writes `ElectronAsarIntegrity`), only-load-from-asar on, file:// extra privileges off, browser-specific V8 snapshot off | `packaged.spec.ts` (`@electron/fuses` reads the wire), `npx @electron/fuses read --app …` |
 | Signing | No certificate: ad-hoc (`identity: "-"`), no hardened runtime (ad-hoc + hardened runtime fails library validation), no notarization, keychain auto-discovery off. With `CSC_LINK`/`CSC_NAME`: that Developer ID, hardened runtime with `build/entitlements.mac.plist` (JIT only), and notarization when `APPLE_API_KEY`+`APPLE_API_KEY_ID`+`APPLE_API_ISSUER`, `APPLE_ID`+`APPLE_APP_SPECIFIC_PASSWORD`+`APPLE_TEAM_ID` or `APPLE_KEYCHAIN`+`APPLE_KEYCHAIN_PROFILE` are set. Windows: `WIN_CSC_LINK`/`CSC_LINK` when given | `codesign --verify --deep --strict` in `packaged.spec.ts` (also on the app unzipped from the zip) |
 | Packaged runtime (`main/packaged.ts`, `main.ts`) | Test-only variables dropped (above); the real heads; the fake CLIs' paths not even set; `Botling --check-plugin <folder>` (1.x's flag, `core/plugins/check-report.ts`) is the plugin check Maintainer is given, since Electron can no longer run a script as Node; the plugin host is the utility process main starts (as in development since Phase 3b) | `unit/packaged.test.ts`, `e2e/shot.spec.ts` (`--check-plugin` and the command handed over), `packaged.spec.ts` |
@@ -949,6 +949,45 @@ Remaining differences: previews run the live page rather than a cached PageShot;
 outside `artifacts` have no embedded preview; Open still uses the system application rather than
 1.x's dedicated result window. Media byte-range serving and Windows/Linux are unverified.
 
+## Phase 5c: cumulative macOS integration
+
+The isolated integration starts at `595c38e`, retaining the earlier 5c plugin-child cleanup,
+engine handoff, ComponentBrief and Usage changes, then takes result pages, adjustable message
+width, and verified updates in that order. Both preview hover controls and width handles remain.
+The message width (360–1200 px, default 640) applies to the transcript, status and composer;
+resize either edge or use Settings → Appearance. It persists across chats and relaunches.
+Cross-origin keys forwarded during a focus handoff now acknowledge each edit before focus returns;
+this prevents a later native key overtaking a forwarded one. The delayed-delivery regression checks
+letters, Backspace and Return without retyping or refilling the input.
+
+`npm run dist:mac` now also produces an arm64 DMG with the app and an Applications shortcut.
+Without an Apple certificate, both the app and DMG container are ad-hoc signed; neither is
+notarized. The ZIP remains the self-update payload: release discovery ignores DMGs when choosing
+an installable asset, regardless of asset order. No DMG update blockmap is emitted.
+First-open guidance is in `docs/first-open.md`.
+
+The shipped `release-config.json` still has `publicKey: null`. Production installation therefore
+fails closed; no production key was generated and no live update feed/install was validated.
+Signing/rollback tests use throwaway keys and synthetic bundles. No build was installed or
+released. Deferred 2.0.1 summarize-notification and drag/drop issues are outside this work.
+
+Cumulative macOS arm64 validation (2026-10-25): typecheck; **414 unit tests** (45 files,
+2 workers); **63 Electron e2e tests twice consecutively** after the input-order fix; **4 packaged
+tests**. The focused input regression failed without the fix, then its composer/Maintainer set
+passed three repetitions (21 checks). The packaged pass checks fuses/ASAR, plugin check and host,
+loaded/saved welcome card, disabled update opt-out and unverified restart, clean SIGTERM shutdown,
+ZIP contents, DMG checksum/signature and a read-only mounted copy with the Applications shortcut.
+Both contained apps pass deep strict signature verification and match the built ASAR. The app
+and DMG container report ad-hoc signatures. No Apple certificate or notarization was used.
+
+Local evidence is in `desktop/.cache/evidence/` (commands, logs, signatures and artifact hashes).
+Synthetic screenshots include `.cache/test-data/screens/phase5c-component-built.png`,
+`.cache/width-screens/` and `.cache/test-data/screens/phase5b-packaged.png`; these were inspected.
+The test-data helper uses canonical cache paths rather than a symlink, preserving updater path
+safety checks. DiskImages refuses mount points on the existing external volume, so delivery
+validation uses a temporary read-only virtual `/Volumes` mount and detaches it; all image bytes,
+extracted files, test data and caches stay on My-SSD. Earlier failed runs are retained in the logs.
+
 ## Gaps vs the Swift app (1.x)
 
 Not in 2.0 yet, roughly in order of how much they matter:
@@ -988,7 +1027,7 @@ Not in 2.0 yet, roughly in order of how much they matter:
 - **Settings**: auto mode, spending and rate limits, Doctor; the React chrome's own words are English
   (the chat page follows the language setting).
 - **Packaging and updates, still missing** (Phase 5b did macOS arm64): a Developer ID signature and
-  notarization (configured, never run: no certificate here), so first-open guidance is needed; self-updating requires an explicitly configured Ed25519 release key (above); a DMG; x64/universal macOS; the full e2e suite against the
+  notarization (configured, never run: no certificate here), so first-open guidance is needed; self-updating requires an explicitly configured Ed25519 release key (above); x64/universal macOS; the full e2e suite against the
   packaged build (it runs on the development build; the packaged app has its smoke test); a plugin's own
   child processes are not ended with a utility-process plugin host (no process group of its own); the
   packaged app with real `claude`/`codex` (the smoke test uses stand-ins, never the user's data).
@@ -1040,7 +1079,7 @@ Not in 2.0 yet, roughly in order of how much they matter:
 
 1. **Windows** (spike 4 on a Windows 11 machine or VM: build `dist:win`, run the suite, Job Objects,
    zsh-less command shells), then Linux.
-2. **Real signing** once there is a Developer ID: notarize. Configure the Ed25519 release identity above before distributing self-updating builds; packaged integration and a DMG remain separate.
+2. **Real signing** once there is a Developer ID: notarize. Configure the Ed25519 release identity above before distributing self-updating builds; production release hosting remains separate; ad-hoc ZIP and DMG packaging is available.
 3. **Smaller parity**: switching a head's engine through a memory handoff, the spec brief, specs from
    result pages, developer mode's build installs and screenshots, Codex rate limits and token use.
 

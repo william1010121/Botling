@@ -62,7 +62,7 @@ export function pickUpdate(releases: unknown, current: string, platform: string,
     if (compareVersions(version, mine) <= 0) continue;
     if (best && compareVersions(version, best.version) <= 0) continue;
     const assets = Array.isArray(raw.assets) ? raw.assets as { name?: unknown }[] : [];
-    const asset = assets.map((entry) => entry?.name).find((name): name is string => typeof name === "string" && pattern.test(name)) ?? null;
+    const asset = assets.map((entry) => entry?.name).find((name): name is string => typeof name === "string" && pattern.test(name) && (platform !== "darwin" || name.endsWith(".zip"))) ?? null;
     best = {
       version,
       view: {

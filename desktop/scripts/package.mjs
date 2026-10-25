@@ -27,10 +27,18 @@ if (args.includes("--win")) platforms.push(Platform.WINDOWS);
 if (args.includes("--linux")) platforms.push(Platform.LINUX);
 if (!platforms.length) platforms.push(Platform.current());
 const config = (await import(join(desktop, "electron-builder.config.cjs"))).default;
-// The config's targets (macOS: an arm64 zip), or with --dir only the unpacked app (for this machine's arch).
+// The config's targets (macOS: an arm64 zip and DMG), or with --dir only the unpacked app (for this machine's arch).
 const targets = new Map();
 for (const platform of platforms) {
   for (const [key, archs] of (args.includes("--dir") ? platform.createTarget("dir") : platform.createTarget())) targets.set(key, archs);
 }
 const files = await build({ targets, config, projectDir: desktop, publish: "never" });
+// electron-builder signs DMGs only with a certificate; keep the local container signed too.
+// No DMG blockmap is emitted (the custom updater uses the ZIP), so this cannot stale update metadata.
+if (process.platform === "darwin" && !process.env.CSC_LINK && !process.env.CSC_NAME) {
+  for (const file of files.filter((file) => file.endsWith(".dmg"))) {
+    const signed = spawnSync("/usr/bin/codesign", ["--force", "--sign", "-", file], { stdio: "inherit" });
+    if (signed.status !== 0) process.exit(signed.status ?? 1);
+  }
+}
 for (const file of files) console.log(`built ${file}`);

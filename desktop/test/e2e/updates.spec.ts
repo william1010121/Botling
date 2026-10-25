@@ -13,7 +13,7 @@ test("on by default; a newer release is shown, unconfigured installation is bloc
   const page_ = (tag: string) => `https://github.com/william1010121/Botling/releases/tag/${tag}`;
   writeFileSync(feed, JSON.stringify([
     { tag_name: "v1.19.0", name: "Botling v1.19.0", html_url: page_("v1.19.0"), draft: false, prerelease: false, assets: [] },
-    { tag_name: "v2.0.1", name: "Botling 2.0.1", html_url: page_("v2.0.1"), draft: false, prerelease: false, published_at: "2026-10-20T00:00:00Z", assets: [{ name: "Botling-2-2.0.1-mac-arm64.zip" }] },
+    { tag_name: "v2.0.1", name: "Botling 2.0.1", html_url: page_("v2.0.1"), draft: false, prerelease: false, published_at: "2026-10-20T00:00:00Z", assets: [{ name: "Botling-2-2.0.1-mac-arm64.dmg" }, { name: "Botling-2-2.0.1-mac-arm64.zip" }] },
   ]));
   const dataDir = join(base, "data");
   const { app, page } = await launch({ dataDir, env: { BOTLING_TEST_UPDATE_FEED: feed } });

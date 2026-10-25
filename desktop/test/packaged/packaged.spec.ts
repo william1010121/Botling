@@ -111,7 +111,11 @@ test("boots to the chat page, starts the plugin host as a utility process, ignor
     expect(existsSync(join(base, "agent-calls.log"))).toBe(false);
     // The explicitly saved opt-out is preserved: nothing was looked up.
     const updates = await post(page, { type: "updates.check", manual: false });
-    expect(updates.result).toMatchObject({ current: expect.stringMatching(/^2\./), enabled: false, newer: null, checkedAt: null });
+    expect(updates.result).toMatchObject({ current: expect.stringMatching(/^2\./), enabled: false, newer: null, checkedAt: null,
+      installError: expect.stringContaining("Update trust is not configured"), readyVersion: null });
+    const restart = await post(page, { type: "updates.restart" });
+    expect(restart).toMatchObject({ ok: false, error: { message: expect.stringContaining("Download and verify") } });
+    expect(existsSync(join(dataDir, "update-pending.json"))).toBe(false);
     expect(existsSync(join(dataDir, "updates.json"))).toBe(false);
     // Nothing went to the default places: no 1.x import, no Application Support folder in HOME.
     expect(existsSync(join(dataDir, "core", "import.json")) ? JSON.parse(readFileSync(join(dataDir, "core", "import.json"), "utf8")) : null).toBeNull();

@@ -158,6 +158,7 @@ window.addEventListener("message", (event: MessageEvent) => {
     window.ccb.hostReply(message.callID, message.ok, message.value);
   } else if (message.botling === "key") {
     typeStrayKey(message);
+    toShell({ botling: "keyHandled" });
   } else if (message.botling === "focus") {
     window.ccb.focus();
   } else if (message.botling === "spec") {
@@ -246,7 +247,8 @@ document.addEventListener("keydown", (event) => {
 function typeStrayKey(key: { key: string; code: string; shiftKey: boolean; altKey: boolean }) {
   const view = composerView();
   if (!view) return;
-  view.focus();
+  // The shell retains focus until every forwarded edit is acknowledged. Focusing here lets
+  // a later native key overtake an earlier postMessage still queued for this frame.
   if (key.key.length === 1) {
     view.dispatch(view.state.replaceSelection(key.key), { userEvent: "input.type" });
     return;

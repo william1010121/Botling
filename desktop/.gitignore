@@ -1,8 +1,8 @@
-node_modules/
-out/
+node_modules
+out
 .data/
-.tmp/
+.tmp
 test-results/
 playwright-report/
 .cache/
-dist/
+dist

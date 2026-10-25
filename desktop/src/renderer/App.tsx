@@ -577,6 +577,19 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     let lastInput = 0;
     let lastPointer = 0;
     let chatLostAt = 0;
+    let pendingKeys = 0;
+    const keyHandled = (event: MessageEvent) => {
+      const target = frame.current;
+      if (!target?.contentWindow || event.source !== target.contentWindow || event.origin !== CHAT_ORIGIN
+        || event.data?.botling !== "keyHandled" || pendingKeys === 0) return;
+      pendingKeys--;
+      if (pendingKeys === 0 && lastPointer <= chatLostAt
+        && (document.activeElement === document.body || document.activeElement === document.documentElement)) {
+        target.contentWindow.focus();
+        const message: ShellMessage = { botling: "focus" };
+        target.contentWindow.postMessage(message, CHAT_ORIGIN);
+      }
+    };
     const input = () => { lastInput = Date.now(); };
     const pointer = () => { lastInput = Date.now(); lastPointer = Date.now(); };
     // A key that lands on this page's body while focus passes between it and the chat frame (it can
@@ -586,22 +599,25 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
       if (!target?.contentWindow || (event.target !== document.body && event.target !== document.documentElement)) return;
       if (!chatLostAt || Date.now() - chatLostAt > 3_000 || lastPointer > chatLostAt) return;
       if (event.metaKey || event.ctrlKey || event.isComposing || (event.key.length !== 1 && event.key !== "Enter" && event.key !== "Backspace")) return;
+      lastInput = Date.now();
       event.preventDefault();
       event.stopImmediatePropagation();
       const message: ShellMessage = { botling: "key", key: event.key, code: event.code, shiftKey: event.shiftKey, altKey: event.altKey };
-      target.contentWindow.focus();
+      // Preserve event order across origins: native keys stay here until all forwarded edits land.
+      pendingKeys++;
       target.contentWindow.postMessage(message, CHAT_ORIGIN);
     };
     const onBlur = () => { chatHadFocus = document.activeElement === frame.current; };
     const onFocusIn = () => { if (chatHadFocus || document.activeElement === document.body) chatLostAt = Date.now(); };
     const onFocus = () => {
       const target = frame.current;
-      if (!target || !chatHadFocus || Date.now() - lastInput < 500) return;
+      if (!target || !chatHadFocus || pendingKeys > 0 || Date.now() - lastInput < 500) return;
       const active = document.activeElement;
       if (active && active !== document.body && active !== target) return;
-      setTimeout(() => { if (Date.now() - lastInput >= 500 && document.hasFocus()) target.contentWindow?.focus(); }, 0);
+      setTimeout(() => { if (pendingKeys === 0 && Date.now() - lastInput >= 500 && document.hasFocus()) target.contentWindow?.focus(); }, 0);
     };
     window.addEventListener("pointerdown", pointer, true);
+    window.addEventListener("message", keyHandled);
     window.addEventListener("keydown", strayKey, true);
     window.addEventListener("keydown", input, true);
     window.addEventListener("blur", onBlur);
@@ -609,6 +625,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     window.addEventListener("focus", onFocusIn);
     return () => {
       window.removeEventListener("pointerdown", pointer, true);
+      window.removeEventListener("message", keyHandled);
       window.removeEventListener("keydown", strayKey, true);
       window.removeEventListener("keydown", input, true);
       window.removeEventListener("blur", onBlur);

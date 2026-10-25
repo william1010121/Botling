@@ -5,9 +5,9 @@ export const desktop = resolve(__dirname, "..");
 export const fakeCli = join(desktop, "test", "fixtures", "fake-claude.mjs");
 export const fakeCodex = join(desktop, "test", "fixtures", "fake-codex.mjs");
 
-/** A fresh temp folder inside desktop/.tmp (never the system temp, never ~). */
+/** A fresh temp folder inside desktop/.cache/test-data (never the system temp, never ~). */
 export function tempDir(name: string): string {
-  const base = join(desktop, ".tmp");
+  const base = join(desktop, ".cache", "test-data");
   mkdirSync(base, { recursive: true });
   return mkdtempSync(join(base, `${name}-`));
 }

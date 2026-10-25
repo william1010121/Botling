@@ -49,7 +49,7 @@ module.exports = {
     grantFileProtocolExtraPrivileges: false, // the app serves its pages from app://, never file://
   },
   mac: {
-    target: [{ target: "zip", arch: ["arm64"] }],
+    target: [{ target: "zip", arch: ["arm64"] }, { target: "dmg", arch: ["arm64"] }],
     category: "public.app-category.developer-tools",
     icon: join(assets, "AppIcon.icns"),
     darkModeSupport: true,
@@ -61,6 +61,13 @@ module.exports = {
     gatekeeperAssess: false,
     notarize,
     extendInfo: { NSHumanReadableCopyright: "Copyright © 2026 william1010121" },
+  },
+  dmg: {
+    // package.mjs ad-hoc signs the container when there is no certificate.
+    sign: macCertificate,
+    // Self-updates authenticate the ZIP; there is no DMG update blockmap to publish.
+    writeUpdateInfo: false,
+    contents: [{ x: 150, y: 180, type: "file" }, { x: 450, y: 180, type: "link", path: "/Applications" }],
   },
   // Windows and Linux: configured, not built or tried here (see the README's Phase 5b gaps).
   win: {

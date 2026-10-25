@@ -6,7 +6,7 @@
 
 ### macOS 15（Sequoia）
 
-1. 解壓縮，將 **Botling 2.app** 拖入「應用程式」（`/Applications`）。先退出下載檔或磁碟映像中的副本，再開啟「應用程式」中的 Botling 2。
+1. 開啟 DMG（或解壓縮 ZIP），將 **Botling 2.app** 拖入「應用程式」（`/Applications`）。先退出下載檔或磁碟映像中的副本，再開啟「應用程式」中的 Botling 2。
 2. 若看到 Apple 無法驗證開發者或無法檢查惡意軟體的提示，關閉提示，前往 **系統設定 → 隱私權與安全性**，向下捲至「安全性」。
 3. 在 Botling 2 的封鎖訊息旁按 **仍要打開（Open Anyway）**，依提示驗證身分，再按「打開」。若找不到按鈕，重新嘗試開啟 app，隨即回到此頁。macOS 15 請使用此設定頁面的流程。
 
@@ -32,7 +32,7 @@ Download a **2.x** build from [Botling Releases](https://github.com/william10101
 
 ### macOS 15 (Sequoia)
 
-1. Extract the download and move **Botling 2.app** into **Applications** (`/Applications`). Quit any copy running from the download or mounted image, then open the Applications copy.
+1. Open the DMG (or extract the ZIP) and move **Botling 2.app** into **Applications** (`/Applications`). Quit any copy running from the download or mounted image, then open the Applications copy.
 2. If macOS cannot verify the developer or check the app for malicious software, dismiss the message and go to **System Settings → Privacy & Security**. Scroll to **Security**.
 3. Click **Open Anyway** beside the Botling 2 message, authenticate if asked, and confirm **Open**. If the button is missing, try opening the app again and return to this page promptly. Use this Settings flow on macOS 15.
 

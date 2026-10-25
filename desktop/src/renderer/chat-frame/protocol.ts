@@ -1,5 +1,5 @@
 // What the app page (the React shell) and its chat frame (the reused Web/src chat page) say to
-// each other with postMessage. Both are the app's own code on the same origin; each side still
+// each other with postMessage. Both are the app's own code on distinct origins; each side still
 // checks who sent a message (`event.source`) and its origin, so a card frame inside the chat frame
 // cannot pass for either.
 import type { ChatState, SpecState } from "../../../../Web/src/types";
@@ -23,6 +23,8 @@ export type FrameMessage =
   /** Global message column setting, committed after a drag or reset. */
   | { botling: "messageWidth"; value: number | null }
   | { botling: "messageWidthDrag"; active: boolean }
+  /** The forwarded edit is applied; focus can return once all edits have arrived. */
+  | { botling: "keyHandled" }
   /** A component frame's page, to be served from botling-card://page/ (component-frames.ts). */
   | { botling: "page"; id: number; html: string };
 

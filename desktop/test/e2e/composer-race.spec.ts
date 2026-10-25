@@ -48,3 +48,48 @@ test("Return sends even right after focus left the box by itself", async () => {
     await app.close();
   }
 });
+
+// A shell-forwarded key may be delayed while later native keys are already arriving. Keep the
+// focus handoff behind all forwarded edits (including Backspace and Return), so none overtake it.
+test("keys forwarded during a focus handoff retain their order before typing resumes in the chat", async () => {
+  const { app, page, chat } = await launch();
+  try {
+    // Install before the chat's listener: hold actual cross-origin delivery, not native input.
+    await app.context().addInitScript(() => {
+      if (location.origin !== "botling-chat://chat") return;
+      const held: MessageEvent[] = [];
+      let holding = true;
+      window.addEventListener("message", event => {
+        if (holding && event.source === parent && event.data?.botling === "key") {
+          held.push(event); event.stopImmediatePropagation();
+        }
+      });
+      (window as any).__heldKeyCount = () => held.length;
+      (window as any).__releaseKeys = () => {
+        holding = false;
+        for (const event of held) window.dispatchEvent(new MessageEvent("message", { data: event.data, source: parent, origin: event.origin }));
+      };
+    });
+    await page.reload();
+    await chat.locator("html[data-chat]").waitFor({ state: "attached" });
+    const box = chat.getByRole("textbox", { name: "Message" });
+    await box.click();
+    await page.keyboard.type("Main");
+    const frame = page.frames().find(frame => frame.url().endsWith("/chat.html"))!;
+    await page.evaluate(() => {
+      // Recent shell keyboard activity suppresses its unrelated idle refocus timer.
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift", bubbles: true }));
+      document.body.tabIndex = -1;
+      window.focus(); document.body.focus();
+      window.dispatchEvent(new Event("focus"));
+    });
+    await page.keyboard.type("tainerx");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("Enter");
+    await expect.poll(() => frame.evaluate(() => (window as any).__heldKeyCount())).toBeGreaterThan(0);
+    // While delivery is held, later keys must stay on the same forwarding path.
+    await expect(box).toHaveText("Main");
+    await frame.evaluate(() => (window as any).__releaseKeys());
+    await expect(chat.locator(".row.user .user-bubble").last()).toHaveText("Maintainer");
+  } finally { await app.close(); }
+});

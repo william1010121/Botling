@@ -1,5 +1,5 @@
 // Phase 5b: the update check (src/main/updates.ts) — which GitHub releases count, the order of versions,
-// and when main looks (off by default, at most every 6 hours, Check now always).
+// and when main looks (on by default, at most every 6 hours, Check now always).
 import { describe, expect, it } from "vitest";
 import { CHECK_EVERY_MS, Updater, compareVersions, parseVersion, pickUpdate } from "../../src/main/updates";
 
@@ -33,6 +33,14 @@ describe("pickUpdate", () => {
       version: "2.0.2", name: "Botling v2.0.2", url: page("v2.0.2"), publishedAt: "2026-10-01T00:00:00Z", asset: "Botling-2-2.0.2-mac-arm64.zip",
     });
     expect(pickUpdate(feed, "2.0.0", "linux", "x64")?.asset).toBeNull();
+  });
+  it("uses the ZIP for macOS self-updates when a release also contains the install DMG", () => {
+    const dmg = { name: "Botling-2-2.0.2-mac-arm64.dmg" };
+    const zip = { name: "Botling-2-2.0.2-mac-arm64.zip" };
+    for (const assets of [[dmg, zip], [zip, dmg]]) {
+      expect(pickUpdate([release("v2.0.2", { assets })], "2.0.0", "darwin", "arm64")?.asset).toBe(zip.name);
+    }
+    expect(pickUpdate([release("v2.0.2", { assets: [dmg] })], "2.0.0", "darwin", "arm64")?.asset).toBeNull();
   });
   it("offers prereleases only to a prerelease build", () => {
     expect(pickUpdate(feed, "2.0.0-dev.0", "darwin", "arm64")?.version).toBe("2.0.3-rc.1");
