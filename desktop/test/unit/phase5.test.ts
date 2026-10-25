@@ -8,6 +8,8 @@ import { ComponentLibrary, componentMentions } from "../../src/core/components/l
 import { callInPrompt, groupPrompt, transcriptBefore, type Member } from "../../src/core/groups";
 import type { ChatRecord } from "../../src/core/store/records";
 import { slashLists } from "../../src/renderer/payload";
+import { problemReport } from "../../src/core/maintainer";
+import type { PinRecord } from "../../src/core/components/pins";
 import { tempDir } from "../helpers";
 
 const golden = JSON.parse(readFileSync(join(__dirname, "..", "fixtures", "phase5-golden.json"), "utf8"));
@@ -53,5 +55,17 @@ describe("the / menu and its mention note (ComponentMentions, mentionNote)", () 
     const bot = { components: ["test"] } as Parameters<typeof slashLists>[0];
     expect(slashLists(bot, golden.names)).toEqual({ slashComponents: ["test"], slashLibrary: ["choices", "test-status", "網頁預覽卡片"] });
     expect(slashLists({ ...bot, components: null }, golden.names)).toEqual({ slashComponents: golden.names, slashLibrary: [] });
+  });
+});
+
+describe("reports and change requests (Workspace+ComponentReport.swift, requestComponentChange)", () => {
+  it("a problem report says where the card is, how it refreshes, when its data is from and where its screenshot is", () => {
+    process.env.TZ = "UTC";
+    for (const { label, pin, report } of golden.more.reports.problems) {
+      const record = pin ? { id: "X", name: "test", data: "{}", size: "2x2", makingLive: false, refresh: pin.refresh, minutes: pin.minutes,
+        ...(pin.command ? { command: pin.command } : {}), ...(pin.seconds !== null ? { seconds: pin.seconds } : {}),
+        ...(pin.ranAt !== null ? { ranAt: pin.ranAt } : {}), ...(pin.savedAt !== null ? { savedAt: pin.savedAt } : {}) } as PinRecord : null;
+      expect([label, problemReport("It is cut off", "Shop", record, label === "shown" ? "/tmp/shot one.png" : null)]).toEqual([label, report]);
+    }
   });
 });

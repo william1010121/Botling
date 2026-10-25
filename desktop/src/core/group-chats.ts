@@ -144,7 +144,7 @@ export class GroupChats {
     if (!group || !chat) throw new Error("No such group.");
     const words = text.trim();
     const line: ChatRecord = { id: newId(), role: "user", text: words, date: toSwiftDate() };
-    if (files.length) line.attachments = chat.keepFiles(files);
+    if (files.length) line.attachments = chat.keepFiles(files).map(({ url, kind }) => ({ url, kind }));
     const quoted = replyTo ? chat.line(replyTo) : null;
     if (quoted) { line.replyTo = quoted.id; line.replyPreview = firstLineOf(quoted.text).slice(0, 200); }
     chat.post(line, { unread: false });

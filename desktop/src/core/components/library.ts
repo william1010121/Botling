@@ -76,10 +76,21 @@ export function safeName(name: string): string {
   return [...name.toLowerCase()].map((c) => (/[\p{L}\p{N}-]/u.test(c) ? c : "-")).join("").replace(/^-+|-+$/g, "");
 }
 
+/** The plugin library's git, as the library asks it about earlier versions (`PluginLibraryGit`). */
+export interface HistoryGit {
+  readonly folder: string;
+  hasPrevious(path: string): boolean;
+  revert(path: string, label: string): string | null;
+}
+
 export interface ComponentInfoData {
   template: string;
   version: number;
   updated: boolean;
+  /** Maintainer is changing it now. */
+  working: boolean;
+  /** There is an earlier version in git to go back to. */
+  hasPrevious: boolean;
   sizes: string[];
   icon: string | null;
   title: string | null;
@@ -91,6 +102,12 @@ export class ComponentLibrary {
   private aboutModified = new Map<string, number>();
   private versions = new Map<string, number>();
   private updated = new Set<string>();
+  /** Components being changed now, with what was asked (`working`). */
+  private working = new Map<string, string>();
+  /** Whether git has an earlier version of each, asked once per change (`previous`). */
+  private previous = new Map<string, boolean>();
+  /** The plugin library's git, for earlier versions; null when there is none. */
+  git: HistoryGit | null = null;
   /** Bumps whenever a template or about.md changes (for views to redraw). */
   stamp = 0;
 
@@ -163,7 +180,71 @@ export class ComponentLibrary {
   info(name: string): ComponentInfoData | null {
     const template = this.template(name);
     if (template === null) return null;
-    return { template, version: this.versions.get(name) ?? 0, updated: this.updated.has(name), sizes: this.sizes(name), icon: this.icon(name), title: this.shortTitle(name) };
+    return {
+      template, version: this.versions.get(name) ?? 0, updated: this.updated.has(name), working: this.working.has(name), hasPrevious: this.hasPrevious(name),
+      sizes: this.sizes(name), icon: this.icon(name), title: this.shortTitle(name),
+    };
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // Changing (Maintainer's work, git history)
+
+  /** Maintainer was asked to change `name`: shown as being worked on (`markWorking`). */
+  markWorking(name: string, change: string) {
+    const safe = safeName(name);
+    if (this.working.get(safe) === change) return;
+    this.working.set(safe, change);
+    this.stamp++;
+  }
+
+  /** `name` is built (a spec's component landed): no longer worked on (`doneWorking`). */
+  doneWorking(name: string) {
+    if (this.working.delete(safeName(name))) this.stamp++;
+  }
+
+  /** Maintainer finished its turn (`finishWorking`). */
+  finishWorking() {
+    if (!this.working.size) return;
+    this.rescan();
+    this.working.clear();
+    this.stamp++;
+  }
+
+  /** The library's git became ready (or changed under it): ask it again (`forgetHistory`). */
+  forgetHistory() {
+    this.previous.clear();
+    this.stamp++;
+  }
+
+  /** The component's folder relative to the plugin library, when it is inside it (`gitPath`). */
+  private gitPath(name: string): string | null {
+    if (!this.git) return null;
+    const base = this.git.folder.replace(/\/+$/, "") + "/";
+    const path = join(this.home(name), name);
+    return path.startsWith(base) ? path.slice(base.length) : null;
+  }
+
+  /** There is an earlier version in git to go back to (`hasPrevious`); asked once per change. */
+  hasPrevious(name: string): boolean {
+    const known = this.previous.get(name);
+    if (known !== undefined) return known;
+    const path = this.gitPath(name);
+    let answer = false;
+    try { answer = !!path && !!this.git?.hasPrevious(path); } catch { answer = false; }
+    this.previous.set(name, answer);
+    return answer;
+  }
+
+  /** Puts back the version from before the last change (git), then redraws (`revert`). Null when done, else why not. */
+  revert(name: string): string | null {
+    const path = this.gitPath(name);
+    if (!this.git || !path || !this.names.includes(name)) return "This component has no version history.";
+    const problem = this.git.revert(path, `component ${name}`);
+    this.updated.delete(name);
+    this.previous.delete(name);
+    this.rescan();
+    this.stamp++;
+    return problem;
   }
 
   /** When its files last changed (`stamp(of:)`): a request to change it is settled once this moves. */
@@ -204,12 +285,14 @@ export class ComponentLibrary {
           this.updated.add(name);
         }
         this.modified.set(name, template);
+        this.previous.delete(name);
         this.stamp++;
       }
       const about = this.mtime(join(home, name, "about.md"));
       if (this.aboutModified.get(name) !== about) {
         if (this.aboutModified.has(name)) catalogChanged = true;
         this.aboutModified.set(name, about);
+        this.previous.delete(name);
         this.stamp++;
       }
     }

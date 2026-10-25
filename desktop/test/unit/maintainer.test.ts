@@ -157,6 +157,45 @@ describe("Maintainer in the core", () => {
     await until(() => lines(join(dir, "claude-input.log")).some((entry) => entry.text.startsWith('(App: Maintainer did not add the component "radar" you asked for. Maintainer said: "No radar data source is available.".')));
   });
 
+  it("a card's report and change request reach Maintainer with the pictures (1.x's reportComponentProblem); Revert puts back the version before (git)", async () => {
+    const dir = tempDir("maintainer");
+    component(dir, "test", "A plain test card.");
+    const c = core(dir);
+    const phase5 = JSON.parse(readFileSync(join(__dirname, "..", "fixtures", "phase5-golden.json"), "utf8")).more.reports;
+    // A change asked from the card's menu, with words only: 1.x's request, word for word; it shows as being worked on.
+    expect(await c.call({ type: "component.report", botId: MAIN, name: "test", text: "Make it blue", images: [], rect: null, problem: false })).toEqual({ sent: true });
+    const first = await until(async () => (await c.chat(MAINTAINER)).messages.find((m: any) => m.role === "relay"));
+    expect(first.text).toBe(phase5.relays[0].text);
+    await until(async () => (await c.call({ type: "chat.snapshot" })).components.test?.working === true);
+    // Pictures only: they go along as the relay's attachments, and the head reads their paths.
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
+    await until(async () => !(await c.chat(MAINTAINER)).running);
+    await c.call({ type: "component.report", botId: MAIN, name: "test", text: "", images: [{ name: "look.png", base64: png }], rect: null, problem: false });
+    const second = await until(async () => (await c.chat(MAINTAINER)).messages.filter((m: any) => m.role === "relay")[1]);
+    expect(second.text).toBe(phase5.relays[1].text);
+    expect(second.attachments).toHaveLength(1);
+    await until(() => lines(join(dir, "claude-input.log")).some((entry) => entry.text.includes("see the attached picture (Attached: a picture") && entry.text.includes(join(dir, "plugins", ".bot", "attachments"))));
+    // "Report a problem…": the card's chat, and nothing at all without words or a picture.
+    await until(async () => !(await c.chat(MAINTAINER)).running);
+    expect(await c.call({ type: "component.report", botId: MAIN, name: "test", text: "  ", images: [], rect: null, problem: true })).toEqual({ sent: false });
+    await c.call({ type: "component.report", botId: MAIN, name: "test", text: "It is cut off", images: [], rect: null, problem: true });
+    const third = await until(async () => (await c.chat(MAINTAINER)).messages.filter((m: any) => m.role === "relay")[2]);
+    expect(third.text).toBe(`The user's request for the component "test": Problem reported from the card in Main bot's chat: It is cut off`);
+    // Its Maintainer's turn ended: no longer worked on. The library is a repo; a hand edit can be reverted.
+    await until(async () => !(await c.chat(MAINTAINER)).running);
+    await until(async () => (await c.call({ type: "chat.snapshot" })).components.test?.working === false);
+    const template = join(dir, "plugins", "ccb-components", "components", "test", "template.html");
+    writeFileSync(template, "<div>changed by hand</div>");
+    await until(async () => (await c.call({ type: "chat.snapshot" })).components.test?.hasPrevious === true, { what: "an earlier version" });
+    expect(await c.call({ type: "component.revert", name: "test" })).toEqual({ reverted: true, problem: null });
+    expect(readFileSync(template, "utf8")).toBe("<div>test</div>");
+    const log = execFileSync("git", ["log", "--format=%s"], { cwd: join(dir, "plugins"), encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" } });
+    expect(log.split("\n").slice(0, 2)).toEqual(["Revert component test to the previous version", "component test: uncommitted changes (saved automatically before reverting)"]);
+    // One with no history says so in the main bot's chat.
+    expect(await c.call({ type: "component.revert", name: "nothing-here" })).toEqual({ reverted: false, problem: "This component has no version history." });
+    await until(async () => (await c.chat()).messages.some((m: any) => m.role === "notice" && m.text === 'Couldn\'t revert component "nothing-here": This component has no version history.'));
+  });
+
   it("<component> for one already in the library goes on the list at once; <give-component> and <take-component>; <plugin>", async () => {
     const dir = tempDir("maintainer");
     component(dir, "status", "Status card: whether it is OK.");

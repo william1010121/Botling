@@ -173,6 +173,10 @@ export const ComponentInfoView = z.strictObject({
   template: z.string().max(1_000_000),
   version: z.number().int().nonnegative(),
   updated: z.boolean(),
+  /** Maintainer is changing it now (Phase 5a). */
+  working: z.boolean().optional(),
+  /** There is an earlier version in git to go back to (Phase 5a). */
+  hasPrevious: z.boolean().optional(),
   sizes: z.array(z.string().max(10)).max(16),
   icon: z.string().max(64).nullable(),
   title: z.string().max(200).nullable(),
@@ -673,6 +677,17 @@ export const Command = z.discriminatedUnion("type", [
   }),
   /** A component's `ccb.save(data)` in a chat line: kept in that line. */
   z.strictObject({ type: z.literal("component.save"), botId, messageId: id, index: z.number().int().nonnegative().max(19), data: z.string().max(CARD_SAVE_LIMIT) }),
+  /**
+   * A component card's ⋯ menu (Phase 5a): "Report a problem…" (`problem`, 1.x's `reportComponentProblem`) or
+   * a change asked of Maintainer, with pictures pasted on the box. Main takes the screenshot of `rect` (in
+   * the app page's coordinates) and adds it as `screenshot` (base64 PNG) before the core gets it.
+   */
+  z.strictObject({ type: z.literal("component.report"), botId, name: z.string().min(1).max(200), text: z.string().max(20_000),
+    images: z.array(z.strictObject({ name: z.string().min(1).max(255), base64: z.string().min(1).max(FILE_DATA_LIMIT) })).max(10),
+    rect: z.strictObject({ x: z.number(), y: z.number(), width: z.number().positive().max(10_000), height: z.number().positive().max(10_000) }).nullable(),
+    problem: z.boolean(), pinId: id.optional(), screenshot: z.string().max(FILE_DATA_LIMIT).optional() }),
+  /** Puts back a component's version from before its last change (git; 1.x's `revert`). */
+  z.strictObject({ type: z.literal("component.revert"), name: z.string().min(1).max(200) }),
   /** Pins a line's component (`messageId`+`index`) or one from the picker (`name`). `id` is the page's. */
   z.strictObject({
     type: z.literal("pin.add"), botId, id, messageId: id.optional(), index: z.number().int().nonnegative().max(19).optional(), name: z.string().max(200).optional(),
@@ -774,7 +789,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.react", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "catchup.retry", "catchup.interval",
-  "component.command", "component.detail", "component.save", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
+  "component.command", "component.detail", "component.save", "component.report", "component.revert", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
   "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore",
@@ -783,7 +798,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "groups.create", "groups.edit", "groups.delete",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "component.report"]);
 
 /** A temporary team at work (1.x's `TeamRun`): its title, the task, when it started (ms since 1970). */
 export const TeamRunView = z.strictObject({ id, name: z.string().max(200), title: z.string().max(200), task: z.string().max(4_000), startedAt: z.number() });
@@ -867,6 +882,8 @@ export interface Results {
   "component.command": { accepted: boolean };
   "component.detail": { ok: boolean; value: string };
   "component.save": { saved: boolean };
+  "component.report": { sent: boolean };
+  "component.revert": { reverted: boolean; problem: string | null };
   "pin.add": { pinned: boolean };
   "pin.change": { changed: boolean };
   "pin.arrange": { changed: boolean };

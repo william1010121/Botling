@@ -36,6 +36,7 @@ import { checkPlugin, ENGINE_RANGE, PERMISSIONS, title, type PluginManifest } fr
 import type { Plugins } from "./plugins";
 import { swiftPrettyJSON } from "./plugins/registry";
 import type { BotRequest } from "./reply";
+import type { PinRecord } from "./components/pins";
 import { MAINTAINER_ID } from "./store/records";
 import { Layout, TOOLBOX, type BotProfile } from "./store/workspace";
 
@@ -149,6 +150,51 @@ export class LibraryGit {
     return { ok: result.status === 0, output: `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() };
   }
 
+  /** Changes under `path` not committed yet (`isDirty`). */
+  isDirty(path: string): boolean {
+    return !!this.run(["status", "--porcelain", "--", path]).output;
+  }
+
+  /** Commits touching `path`, newest first (`commits`). */
+  commits(path: string): string[] {
+    const result = this.run(["log", "--format=%H", "--", path]);
+    return result.ok ? result.output.split("\n").filter(Boolean) : [];
+  }
+
+  /** There is an earlier version of `path` to go back to (`hasPrevious`). */
+  hasPrevious(path: string): boolean {
+    if (!this.git || !existsSync(join(this.folder, ".git"))) return false;
+    const count = this.commits(path).length;
+    return count >= 2 || (count >= 1 && this.isDirty(path));
+  }
+
+  /**
+   * Puts `path` back the way it was before its last change, as a new commit (`revert(_:label:)`). Changes
+   * not committed yet are committed first, so nothing is lost. Null when done, else why not.
+   */
+  revert(path: string, label: string): string | null {
+    if (!this.git) return "git not found, so it can't be reverted.";
+    if (this.isDirty(path)) {
+      this.run(["add", "-A", "--", path]);
+      this.run(["commit", "-q", "-m", `${label}: uncommitted changes (saved automatically before reverting)`, "--", path]);
+    }
+    const history = this.commits(path);
+    const last = history[0];
+    if (!last) return `"${label}" has no version history yet.`;
+    if (history.length < 2 && !this.run(["rev-parse", "--verify", "-q", `${last}^`]).ok) return `"${label}" has no previous version.`;
+    if (this.run(["cat-file", "-e", `${last}^:${path}`]).ok) {
+      this.run(["rm", "-r", "-q", "--cached", "--", path]);
+      rmSync(join(this.folder, path), { recursive: true, force: true });
+      if (!this.run(["checkout", `${last}^`, "--", path]).ok) return "Couldn't restore the previous version.";
+    } else if (!this.run(["rm", "-r", "-q", "--", path]).ok) {
+      // It did not exist before that change.
+      return "Couldn't restore the previous version.";
+    }
+    this.run(["add", "-A", "--", path]);
+    const commit = this.run(["commit", "-q", "-m", `Revert ${label} to the previous version`, "--", path]);
+    return commit.ok ? null : commit.output;
+  }
+
   /** Makes the library a repo with everything committed, the first time (before handing Maintainer work). */
   prepare() {
     if (this.prepared || !this.git) return;
@@ -160,7 +206,11 @@ export class LibraryGit {
     this.run(["init", "-q"]);
     this.run(["add", "-A"]);
     this.run(["commit", "-q", "-m", "Botling plugin library"]);
+    this.onPrepared?.();
   }
+
+  /** The repo was just made (the library asks about history again). */
+  onPrepared: (() => void) | null = null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -297,6 +347,38 @@ export function folderAnswer(folder: string, allowed: boolean): string {
 }
 
 /** A path as 1.x reads `<need-folder>`'s (`expandingTildeInPath`, `standardizedFileURL`). */
+/** How a pin refreshes, as Maintainer is told it (`refreshWords(of:)`). */
+function refreshWords(pin: PinRecord): string {
+  if (!pin.command) return "no command; keeps the data it was drawn with";
+  switch (pin.refresh) {
+    case "shown": return "refreshes when shown";
+    case "manual": return "refreshes only on ↻";
+    case "interval": return typeof pin.seconds === "number" ? `refreshes every ${pin.seconds} sec` : `refreshes every ${pin.minutes} min`;
+  }
+}
+
+/** "2026-10-24 18:54:12", in the user's time zone (`reportStamp`); `date` in Swift seconds. */
+export function reportStamp(date: number): string {
+  const d = new Date(Date.UTC(2001, 0, 1) + date * 1000);
+  const two = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+}
+
+/** The request a problem report makes (`problemReport`): where it came from, the user's words, then the card's refresh, when its data is from and its screenshot. */
+export function problemReport(text: string, chat: string, pin: PinRecord | null, screenshot: string | null): string {
+  const card: string[] = [];
+  if (pin) {
+    card.push(refreshWords(pin));
+    const when = pin.ranAt ?? pin.savedAt;
+    if (typeof when === "number") card.push(`data from ${reportStamp(when)}`);
+  }
+  const notes: string[] = [];
+  if (card.length) notes.push(`Card: ${card.join("; ")}.`);
+  if (screenshot) notes.push(`Screenshot of the card: ${screenshot}`);
+  const base = `Problem reported from the card in ${chat}'s chat: ${text}`;
+  return notes.length ? `${base} (${notes.join(" ")})` : base;
+}
+
 export function standardFolder(path: string): string {
   const expanded = path === "~" ? homedir() : path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
   const folder = resolve("/", expanded);
@@ -310,17 +392,20 @@ export class MaintainerDesk {
 
   constructor(private readonly deps: MaintainerDeps) {
     this.git = new LibraryGit(join(deps.root, "plugins"));
+    // The library asks the plugin library's git about earlier versions (`ComponentLibrary.git`).
+    deps.library.git = this.git;
+    this.git.onPrepared = () => deps.library.forgetHistory();
   }
 
   private get maintainer() { return this.deps.maintainer(); }
 
-  /** Gives Maintainer a job, the way the main bot hands work to a manager (`handToMaintainer`). */
-  handTo(text: string) {
+  /** Gives Maintainer a job, the way the main bot hands work to a manager (`handToMaintainer`); `files` go with it. */
+  handTo(text: string, files: string[] = []) {
     const maintainer = this.maintainer;
     if (!maintainer) { this.deps.log(`no Maintainer for: ${text.slice(0, 200)}`); return; }
     this.git.prepare();
     try {
-      maintainer.relay(text);
+      maintainer.relay(text, { files });
     } catch (error) {
       this.deps.log(`Maintainer could not take it: ${(error as Error).message}`);
     }
@@ -410,14 +495,33 @@ export class MaintainerDesk {
   // Components
 
   /** Someone asked for a component change (`requestComponentChange`): Maintainer hands it to a component editor. */
-  requestComponentChange(rawName: string, rawRequest: string, asker: string, bot: Bot | null) {
+  requestComponentChange(rawName: string, rawRequest: string, asker: string, bot: Bot | null, files: string[] = []) {
     const name = safeName(rawName);
     if (!name) return;
     const request = rawRequest.trim();
-    const said = request || "see the attached pictures";
+    // Pictures alone say it: what is wrong is in them.
+    const said = request || `see the attached picture${files.length === 1 ? "" : "s"}`;
+    this.deps.library.markWorking(name, said);
     const exists = this.deps.library.names.includes(name);
+    const pictures = files.length ? ` (Attached: ${files.length === 1 ? "a picture" : `${files.length} pictures`} of how it looks now or should look.)` : "";
+    // Which bot asked, and how full its own list is (the library has no cap).
     const note = this.askNote(name, request, exists, bot);
-    this.handTo(exists ? `${asker}'s request for the component "${name}": ${said}${note}` : `${asker} wants a new component "${name}": ${said}${note}`);
+    this.handTo(exists ? `${asker}'s request for the component "${name}": ${said}${pictures}${note}` : `${asker} wants a new component "${name}": ${said}${pictures}${note}`, files);
+  }
+
+  /**
+   * "Report a problem…" in a component card's ⋯ menu (`reportComponentProblem`): the user's words go to
+   * Maintainer by the same road as a bot's <component> request, with whose chat the card is in, how it
+   * refreshes, when its data is from, and the screenshot of the card (kept in that bot's attachments).
+   * Without words or a picture of the user's own nothing is sent. Returns whether it was sent.
+   */
+  reportProblem(name: string, rawText: string, bot: Bot, pin: PinRecord | null, screenshot: string | null, pictures: string[]): boolean {
+    const text = rawText.trim();
+    if (!text && !pictures.length) return false;
+    const kept = screenshot ? bot.keepFiles([screenshot])[0]?.path ?? null : null;
+    const said = text || `see the attached picture${pictures.length === 1 ? "" : "s"}`;
+    this.requestComponentChange(name, problemReport(said, bot.profile.name, pin, kept), "The user", null, [...(kept ? [kept] : []), ...pictures]);
+    return true;
   }
 
   private giveComponent(name: string, bot: Bot): boolean {
@@ -497,6 +601,8 @@ export class MaintainerDesk {
   settle(record: { role: string; choices?: unknown[]; chosen?: number; answer?: string }) {
     const maintainer = this.maintainer;
     if (!maintainer || (record.role !== "bot" && record.role !== "error")) return;
+    // Its turn ended: the components it was asked to change are no longer worked on (`finishWorking`).
+    this.deps.library.finishWorking();
     if (record.choices?.length && record.chosen === undefined && record.answer === undefined) return;
     if (maintainer.subagentsAtWork) return;
     // A component it just committed may not have been seen yet.

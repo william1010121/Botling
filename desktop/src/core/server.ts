@@ -13,6 +13,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { writeFileAtomic } from "./durable/atomic";
 import { rmSync } from "node:fs";
 import { PendingFiles, servedType, writeIncoming } from "./attachments";
+import { safeName } from "./components/library";
 import { appliedCodexWorkers, applySetting, codexWorkersJSON, launchSettings, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, memoryItemsAt, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
 import { TeamDesk, loadTeams, prepareTeamsPlugin, type TeamSpec } from "./teams";
@@ -368,6 +369,13 @@ export class Core {
     }
   }
 
+  /** The library's state changed in the app (being worked on, reverted): the page hears it now. */
+  componentsTick() {
+    if (this.components.library.stamp === this.componentStamp) return;
+    this.componentStamp = this.components.library.stamp;
+    this.event({ type: "components.updated", components: this.componentInfos() });
+  }
+
   /** A template or about.md changed on disk: the page draws it anew; bots hear what changed with their next message. */
   scanComponents() {
     this.plugins.scan();
@@ -379,6 +387,30 @@ export class Core {
     if (this.components.library.stamp !== this.componentStamp) {
       this.componentStamp = this.components.library.stamp;
       this.event({ type: "components.updated", components: this.componentInfos() });
+    }
+  }
+
+  /**
+   * A component card's report (1.x's ChatSurface `componentReport`): "Report a problem…" goes to Maintainer
+   * as the card's own bot's (a floating card may be another bot's), with its pin and the screenshot kept with
+   * that bot; otherwise the user's change request, the screenshot first among the pictures.
+   */
+  private reportComponent(cmd: Extract<Command, { type: "component.report" }>): boolean {
+    const incoming = join(this.options.dataDir, "incoming");
+    const pictures = cmd.images.flatMap((image) => writeIncoming(incoming, image.name, image.base64) ?? []);
+    const shot = cmd.screenshot ? writeIncoming(incoming, `${safeName(cmd.name) || "component"}.png`, cmd.screenshot) : null;
+    try {
+      if (cmd.problem) {
+        const owner = (cmd.pinId ? [...this.bots.values()].find((bot) => bot.hasPin(cmd.pinId!)) : undefined) ?? this.bot(cmd.botId);
+        return this.maintainer.reportProblem(cmd.name, cmd.text, owner, owner.pin(cmd.pinId) ?? owner.pinNamed(cmd.name), shot, pictures);
+      }
+      const files = [...(shot ? [shot] : []), ...pictures];
+      if (!cmd.text.trim() && !files.length) return false;
+      this.maintainer.requestComponentChange(cmd.name, cmd.text, "The user", null, files);
+      return true;
+    } finally {
+      for (const file of [...pictures, ...(shot ? [shot] : [])]) rmSync(file, { force: true });
+      this.componentsTick();
     }
   }
 
@@ -851,7 +883,10 @@ export class Core {
     this.conversations.receiveBotMention(record, bot);
     // What the main bot wrote into an inbox goes to that bot now (1.x: after every main-bot reply).
     if (bot.id === MAIN_BOT_ID) this.deliverInboxes();
-    if (bot.id === MAINTAINER_ID) this.maintainer.settle(record);
+    if (bot.id === MAINTAINER_ID) {
+      this.maintainer.settle(record);
+      this.componentsTick();
+    }
   }
 
   /** Your message through the plugins' beforeSend hooks first; one can change it or stop it (`Workspace.send`). */
@@ -1149,6 +1184,13 @@ export class Core {
       case "component.command": return this.bot(cmd.botId).componentCommand(cmd.messageId, cmd.index, cmd);
       case "component.detail": return this.bot(cmd.botId).componentDetail(cmd.name, cmd.folder, cmd.values, cmd.card, cmd.command);
       case "component.save": return this.bot(cmd.botId).componentSave(cmd.messageId, cmd.index, cmd.data);
+      case "component.report": return { sent: this.reportComponent(cmd) };
+      case "component.revert": {
+        const problem = this.components.library.revert(cmd.name);
+        if (problem) this.bots.get(MAIN_BOT_ID)?.appNotice(`Couldn't revert component "${cmd.name}": ${problem}`);
+        this.componentsTick();
+        return { reverted: !problem, problem };
+      }
       case "pin.add": return this.bot(cmd.botId).pinAdd(cmd.id, { messageId: cmd.messageId, index: cmd.index, name: cmd.name }, cmd.refresh, cmd.minutes, cmd.seconds);
       case "pin.change": return this.bot(cmd.botId).pinChange(cmd.id, cmd.change);
       case "pin.arrange": return this.bot(cmd.botId).pinArrange(cmd.places);

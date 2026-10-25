@@ -69,6 +69,35 @@ struct DesktopPhase5GoldenExport {
 
     /// The later parts (specs, reports, feedback, completion checks) add theirs here.
     @MainActor static func more(workspace: Workspace, root: URL) -> [String: Any] {
-        [:]
+        var out: [String: Any] = [:]
+        out["reports"] = reports(workspace: workspace, root: root)
+        return out
+    }
+
+    /// "Report a problem…" and the change requests Maintainer gets (`problemReport`, `requestComponentChange`).
+    @MainActor static func reports(workspace: Workspace, root: URL) -> [String: Any] {
+        let ran = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let pins: [(String, PinnedComponent?)] = [
+            ("none", nil),
+            ("noCommand", PinnedComponent(name: "test", data: "{}", savedAt: ran)),
+            ("shown", PinnedComponent(name: "test-status", command: "npm test --json", data: "{}", ranAt: ran)),
+            ("manual", PinnedComponent(name: "test-status", command: "npm test --json", data: "{}", refresh: .manual)),
+            ("minutes", PinnedComponent(name: "test-status", command: "npm test --json", data: "{}", ranAt: ran, refresh: .interval, minutes: 30)),
+            ("seconds", PinnedComponent(name: "test-status", command: "npm test --json", data: "{}", refresh: .interval, seconds: 5)),
+        ]
+        let problems = pins.map { label, pin in
+            ["label": label, "pin": pin.map { ["command": $0.command ?? NSNull(), "refresh": $0.refresh.rawValue, "minutes": $0.minutes, "seconds": $0.seconds ?? NSNull(),
+                                                "ranAt": $0.ranAt?.timeIntervalSinceReferenceDate ?? NSNull(), "savedAt": $0.savedAt?.timeIntervalSinceReferenceDate ?? NSNull()] as [String: Any] } ?? NSNull(),
+             "report": Workspace.problemReport("It is cut off", chat: "Shop", pin: pin, screenshot: label == "shown" ? URL(filePath: "/tmp/shot one.png") : nil)] as [String: Any]
+        }
+        // What Maintainer is handed: words, pictures only, a new component, with the list note of a bot.
+        let picture = root.appending(path: "look.png")
+        try? Data([0x89, 0x50, 0x4E, 0x47]).write(to: picture)
+        var relays: [[String: Any]] = []
+        for (name, request, files) in [("test", "Make it blue", [URL]()), ("test", "", [picture]), ("test-status", "add a total", [picture, picture]), ("brand-new", "a clock", [URL]())] {
+            workspace.requestComponentChange(name, request: request, from: "The user", files: files)
+            relays.append(["name": name, "request": request, "files": files.count, "text": workspace.maintainer.messages.last { $0.role == .relay }?.text ?? NSNull()])
+        }
+        return ["problems": problems, "relays": relays]
     }
 }

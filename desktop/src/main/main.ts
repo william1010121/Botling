@@ -315,9 +315,29 @@ async function openResult(botId: string, url: string): Promise<{ opened: boolean
   return { opened: true };
 }
 
+/**
+ * A component card's report: the card as it looks now (1.x's `snapshot(of:in:)`), taken from the app's
+ * window at `rect`, goes to the core with the user's words and pictures. A page cannot supply its own.
+ */
+async function reportComponent(cmd: Extract<Command, { type: "component.report" }>, sender: WebContents): Promise<unknown> {
+  const { screenshot: _ignored, ...rest } = cmd;
+  let screenshot: string | undefined;
+  if (cmd.rect) {
+    try {
+      const rect = { x: Math.max(0, Math.round(cmd.rect.x)), y: Math.max(0, Math.round(cmd.rect.y)), width: Math.max(1, Math.round(cmd.rect.width)), height: Math.max(1, Math.round(cmd.rect.height)) };
+      const image = await sender.capturePage(rect);
+      if (!image.isEmpty()) screenshot = image.toPNG().toString("base64");
+    } catch (error) {
+      note(`component report: no screenshot (${(error as Error).message})`);
+    }
+  }
+  return core.call({ ...rest, ...(screenshot ? { screenshot } : {}) });
+}
+
 async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown> {
   switch (cmd.type) {
     case "result.open": return openResult(cmd.botId, cmd.url);
+    case "component.report": return reportComponent(cmd, sender);
     case "files.pick": return pickFiles(cmd.botId, sender);
     case "projects.pick": return pickProject(sender);
     case "card.page": return { url: addPage(cmd.html, cmd.panel === true) };

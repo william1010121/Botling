@@ -619,16 +619,21 @@ export class Bot {
    * Work handed over by the app (`Bot.relay`): a "Handed to you" line, and the words to the head with
    * 1.x's relay prefix, as a message the reply answers.
    */
-  relay(text: string): ResultOf<"chat.send"> {
-    if (this.options.primary) return this.options.primary.relay(text);
+  relay(text: string, { files = [], feedback }: { files?: string[]; feedback?: { about: string; words: string } } = {}): ResultOf<"chat.send"> {
+    if (this.options.primary) return this.options.primary.relay(text, { files, ...(feedback ? { feedback } : {}) });
     this.refuseIfClosed();
     const words = text.trim();
     if (!words) throw new ContractError("bad_request", "Nothing to send.");
+    // Its files are kept in the bot's own attachments folder (pictures go to the head as pictures).
+    const kept = files.flatMap((file) => keep(file, attachmentsFolder(this.profile)) ?? []);
     const line: ChatRecord = { id: newId(), role: "relay", text: words, date: toSwiftDate() };
+    if (kept.length) line.attachments = kept.map((file) => ({ url: file.url, kind: file.kind }));
+    // A "not right" report shows short in the chat (1.x's `FeedbackNote`).
+    if (feedback) line.feedback = feedback;
     this.add(line);
     this.tasks.begin(line.id, words, this.engine, line.date);
     this.saveTasks();
-    const turn = this.deliverTo(this.engine, RELAY_PREFIX + words, line.id);
+    const turn = this.deliverTo(this.engine, RELAY_PREFIX + words + (kept.length ? `\n\n${attachmentList(kept.map((file) => file.path))}` : ""), line.id);
     return { messageId: turn.messageId, turnId: turn.id };
   }
 
@@ -719,8 +724,8 @@ export class Bot {
   }
 
   /** Files you sent with a line that is not a message to it (a group's), copied where they stay (1.x's `keep`). */
-  keepFiles(files: string[]): { url: string; kind: string }[] {
-    return files.flatMap((file) => keep(file, attachmentsFolder(this.profile)) ?? []).map((kept) => ({ url: kept.url, kind: kept.kind }));
+  keepFiles(files: string[]): { url: string; kind: string; path: string }[] {
+    return files.flatMap((file) => keep(file, attachmentsFolder(this.profile)) ?? []).map((kept) => ({ url: kept.url, kind: kept.kind, path: kept.path }));
   }
 
   /** A guest's reactions on this chat's lines (`applyReactions(actor: "guest:…")`). */
@@ -2774,6 +2779,18 @@ export class Bot {
     this.componentsMayHaveChanged = true;
     if (this.partner) this.partner.componentsMayHaveChanged = true;
     this.updated();
+  }
+
+  /** One of its pins, by id (null: not this bot's). */
+  pin(id: string | undefined): PinRecord | null {
+    return id ? this.owner.pins.find((pin) => pin.id === id) ?? null : null;
+  }
+
+  hasPin(id: string): boolean { return !!this.pin(id); }
+
+  /** Its pin of a component, by the component's name. */
+  pinNamed(name: string): PinRecord | null {
+    return this.owner.pins.find((pin) => pin.name === name) ?? null;
   }
 
   /** The notes that go, unseen, with your next message about its components (`componentStateNote`, `emptyShowNote`). */

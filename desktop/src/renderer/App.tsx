@@ -743,6 +743,24 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
             .then((result) => reply(result.ok, result.value), (failure) => reply(false, failure instanceof RequestFailed ? failure.error.message : String(failure)));
           return;
         }
+        // A card's ⋯ menu: "Report a problem…" or a change asked of Maintainer; main adds the card's screenshot.
+        case "componentReport": {
+          if (!chat || typeof action.name !== "string" || typeof action.text !== "string" || !paced(`report:${action.name}`)) return;
+          const images = Array.isArray(action.images) ? (action.images as unknown[]).flatMap((entry) => {
+            const image = entry as { name?: unknown; base64?: unknown };
+            return typeof image?.name === "string" && typeof image.base64 === "string" && image.base64 ? [{ name: image.name.slice(0, 255) || "picture.png", base64: image.base64 }] : [];
+          }).slice(0, 10) : [];
+          const raw = action.rect as { x?: unknown; y?: unknown; width?: unknown; height?: unknown } | null | undefined;
+          const box = frame.current?.getBoundingClientRect();
+          const rect = raw && box && [raw.x, raw.y, raw.width, raw.height].every((value) => typeof value === "number" && Number.isFinite(value)) && (raw.width as number) > 0 && (raw.height as number) > 0
+            ? { x: box.left + (raw.x as number), y: box.top + (raw.y as number), width: Math.min(raw.width as number, 10_000), height: Math.min(raw.height as number, 10_000) } : null;
+          void client.request({ type: "component.report", botId: chat.botId, name: action.name.slice(0, 200), text: action.text.slice(0, 20_000), images, rect,
+            problem: action.problem === true, ...(typeof action.pinID === "string" ? { pinId: action.pinID } : {}) }).catch(onError);
+          return;
+        }
+        case "componentRevert":
+          if (typeof action.name === "string") void client.request({ type: "component.revert", name: action.name.slice(0, 200) }).catch(onError);
+          return;
         case "componentSave":
           if (chat && typeof action.messageID === "string" && typeof action.index === "number" && typeof action.data === "string" && paced(`save:${action.messageID}/${action.index}`)) {
             void client.request({ type: "component.save", botId: chat.botId, messageId: action.messageID, index: action.index, data: action.data }).catch(onError);
