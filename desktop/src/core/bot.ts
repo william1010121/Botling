@@ -921,6 +921,7 @@ export class Bot {
       subagentRows: this.subagentRows(),
       guest: this.options.guest?.() ?? null,
       openTasks: this.owner.tasks.tasks.filter((card) => card.state === "running" || card.state === "waiting").length,
+      components: this.components,
       ...(this.options.viewExtras?.() ?? {}),
     };
   }

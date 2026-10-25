@@ -184,7 +184,7 @@ export class GroupChats {
       const bot = this.deps.bot(member.id);
       if (!group || !group.members.includes(member.id) || !bot || this.chat(id) !== chat) continue;
       const transcript = [...before, ...chat.lines().filter((line) => said.includes(line.id))];
-      const prompt = groupPrompt({ member, group: group.name, members: this.members(group), mainBotId: this.deps.mainBotId, addressed, chat: chat.lines(), transcript, newest, ask, speakerName: conversations.speakerName });
+      const prompt = groupPrompt({ member, group: group.name, members: this.members(group), mainBotId: this.deps.mainBotId, addressed, chat: chat.lines(), transcript, newest, ask, speakerName: conversations.speakerName, mentionNote: conversations.mentionNote });
       conversations.speak(id, member.id);
       let answer;
       try {

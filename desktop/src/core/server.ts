@@ -246,6 +246,7 @@ export class Core {
       }),
       bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
       mainBotId: MAIN_BOT_ID,
+      mentionNote: (text) => this.components.library.mentionNote(text),
       replyFilter: (bot) => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
       handle: (bot, requests) => {
         const left = this.maintainer.handle(bot, this.projectRequests(bot, requests));
@@ -882,7 +883,7 @@ export class Core {
     const words = outcome.send.slice(0, 100_000) || text;
     // Bots you named with @ are called in: they answer here too, after reading the chat (`Workspace.send`).
     const called = this.conversations.calledIn(words, bot.id);
-    const appNote = this.conversations.notes(bot, called);
+    const appNote = this.conversations.notes(bot, called, words);
     const sent = bot.send(words, { ...options, ...(appNote ? { appNote } : {}) });
     if (called.length) {
       const newest = bot.lines().findLast((line) => line.role === "user");

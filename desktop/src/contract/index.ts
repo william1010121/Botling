@@ -321,6 +321,8 @@ export const BotView = z.strictObject({
   openTasks: z.number().int().nonnegative().optional(),
   /** A group chat's members, in turn order. */
   members: z.array(BotId).max(200).optional(),
+  /** The bot's own component list (bot.json `components`); null: no list (a group has every component). Phase 5a. */
+  components: z.array(z.string().max(200)).max(500).nullable().optional(),
 });
 export type BotView = z.infer<typeof BotView>;
 

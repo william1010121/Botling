@@ -5,7 +5,6 @@
 // `components/` folder — the first launch imports 1.x's (store/importer.ts, read-only). A change
 // on disk (a template edited by hand) is picked up by `rescan`, and the page draws it anew.
 //
-// 2.0 has no Maintainer and no git history yet: the library is read, never written.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -146,6 +145,20 @@ export class ComponentLibrary {
     return this.names.filter((name) => of.includes(name)).map((name) => `- ${name}: ${this.about(name).trim().split("\n")[0] ?? ""}`).join("\n");
   }
 
+  /** The components `text` names with /Name (`mentioned(in:)`), in the order they are named. */
+  mentioned(text: string): string[] {
+    return componentMentions(text, this.names);
+  }
+
+  /** What goes to the bot, unseen, with a message that names components with / (`mentionNote(for:)`). */
+  mentionNote(text: string): string | null {
+    const named = this.mentioned(text);
+    if (!named.length) return null;
+    const one = named.length === 1;
+    const list = named.map((name) => `"${name}"`).join(", ");
+    return `(App: With / the user names the in-chat component${one ? "" : "s"} ${list}: they mean ${one ? "that component" : "those components"} of the app's chat. <show name="name">JSON</show> draws one; <component name="name">request</component> asks Maintainer to change one. How to use ${one ? "it" : "them"}:\n${this.catalog(named)})`;
+  }
+
   /** What the page needs to draw it (`ChatPayload.ComponentInfo`). */
   info(name: string): ComponentInfoData | null {
     const template = this.template(name);
@@ -202,6 +215,43 @@ export class ComponentLibrary {
     }
     return catalogChanged;
   }
+}
+
+/** Besides whitespace and non-ASCII text, what a `/name` may follow (`ComponentMentions.startsAfter`). */
+export const MENTION_STARTS_AFTER = "([{\"'";
+/** Besides ASCII letters and digits, what a name is made of (`ComponentMentions.nameCharacters`). */
+export const MENTION_NAME_CHARACTERS = "_-/";
+
+/**
+ * The names `text` has as `/name`, in the order they come (`ComponentMentions.names(in:among:)`). Longer
+ * names win, so a name that starts another is not read inside it. The slash starts a word (after
+ * whitespace, a bracket or quote, or non-ASCII text such as Chinese), so "用/網頁預覽卡片" counts but
+ * "a/choices" and "~/choices" do not; only ASCII letters, digits, _, - and / end a name.
+ */
+export function componentMentions(text: string, names: readonly string[]): string[] {
+  const lower = text.toLowerCase();
+  const wordCharacter = (c: string) => /^[A-Za-z0-9]$/.test(c) || MENTION_NAME_CHARACTERS.includes(c);
+  const startsAfter = (c: string) => /[^\x00-\x7f]/.test(c) || /\s/.test(c) || MENTION_STARTS_AFTER.includes(c);
+  const found: { at: number; name: string }[] = [];
+  const taken: [number, number][] = [];
+  const unique = [...new Set(names)].filter((name) => name).sort((a, b) => [...b].length - [...a].length);
+  for (const name of unique) {
+    const needle = "/" + name.toLowerCase();
+    let from = 0;
+    for (;;) {
+      const at = lower.indexOf(needle, from);
+      if (at < 0) break;
+      const end = at + needle.length;
+      from = end;
+      const before = at === 0 ? "" : String.fromCodePoint(lower.codePointAt(at - 1 - (at >= 2 && /[\udc00-\udfff]/.test(lower[at - 1]!) ? 1 : 0))!);
+      const startsWord = at === 0 || startsAfter(before);
+      const endsWord = end === lower.length || !wordCharacter(lower[end]!);
+      if (!startsWord || !endsWord || taken.some(([a, b]) => a < end && at < b)) continue;
+      taken.push([at, end]);
+      if (!found.some((entry) => entry.name === name)) found.push({ at, name });
+    }
+  }
+  return found.sort((a, b) => a.at - b.at).map((entry) => entry.name);
 }
 
 /** What a bot is told about components (`ComponentKnowledge`): its own with their whole usage, one line for each of the rest. */

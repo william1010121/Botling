@@ -61,6 +61,8 @@ export interface ConversationsDeps {
   /** Who is answering in a chat changed (the typing bubble under its own name). */
   speaking: (chatId: string) => void;
   refreshWaiting: () => void;
+  /** What a bot is told of components your words name with / (`components.mentionNote(for:)`). */
+  mentionNote?: (text: string) => string | null;
   log: (line: string) => void;
   timing?: typeof GROUP_TIMING;
 }
@@ -84,6 +86,9 @@ export class Conversations {
 
   /** Everyone who can answer outside their own chat, in turn order (`everyMember`). */
   members(): Member[] { return this.deps.members(); }
+
+  /** Components `text` names with / (`components.mentionNote(for:)`). */
+  mentionNote = (text: string): string | null => this.deps.mentionNote?.(text) ?? null;
 
   /** Who a member id is (`speakerName(for:)`). */
   speakerName = (id: string): string | null => this.deps.members().find((member) => member.id === id)?.name ?? null;
@@ -109,8 +114,8 @@ export class Conversations {
   }
 
   /** What goes to the chat's own bot, unseen, with your line: what guests said since, who else answers. */
-  notes(chat: Bot, called: Member[]): string | null {
-    const notes = [heardSinceLastTurn(chat.lines(), this.speakerName), callInNote(called)].filter((note): note is string => !!note);
+  notes(chat: Bot, called: Member[], words = ""): string | null {
+    const notes = [heardSinceLastTurn(chat.lines(), this.speakerName), callInNote(called), this.mentionNote(words)].filter((note): note is string => !!note);
     return notes.length ? notes.join("\n") : null;
   }
 
@@ -197,7 +202,7 @@ export class Conversations {
       if (!bot || !this.callable(chat.id).some((candidate) => candidate.id === member.id)) continue;
       const prompt = caller
         ? botCallInPrompt({ member, host, chat: chat.lines(), transcript: before, body: caller.body, speakerName: this.speakerName })
-        : callInPrompt({ member, host, chat: chat.lines(), transcript: before, newest, ask, speakerName: this.speakerName });
+        : callInPrompt({ member, host, chat: chat.lines(), transcript: before, newest, ask, speakerName: this.speakerName, mentionNote: this.mentionNote });
       this.speak(chat.id, member.id);
       const askedAt = toSwiftDate();
       const asked = ask ?? (caller ? `@${member.name} ${caller.body}` : (newest ? chat.lines().find((line) => line.id === newest)?.text : undefined) ?? "");

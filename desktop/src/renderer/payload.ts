@@ -154,6 +154,17 @@ export function componentInfos(components: Record<string, ComponentInfoView>): R
 /** What the app's settings change in the page: its language, the avatars' size and look. */
 export interface PageLook { lang?: string | null; chatAvatarSize?: number | null; look?: Look }
 
+/** The app's / commands (`SlashCommands.all`); the bots' rules say what each means. */
+export const SLASH_COMMANDS = [{ name: "design", about: "Make a Claude Design and get its claude.ai link" }];
+
+/** A bot's own components first in the / menu; a chat without a list (a group) has them all. */
+export function slashLists(bot: BotView, names: string[]): { slashComponents: string[]; slashLibrary: string[] } {
+  const list = bot.components;
+  if (!list) return { slashComponents: names, slashLibrary: [] };
+  const own = new Set(list);
+  return { slashComponents: names.filter((name) => own.has(name)), slashLibrary: names.filter((name) => !own.has(name)) };
+}
+
 /** The main bot's and Maintainer's ids: the bots the @ menu offers first (`offeredAfterAt`). */
 const OFFERED = ["6A0B0000-0000-4000-8000-000000000002", "DEC0DE00-0000-4000-8000-00000000DEC0"];
 
@@ -252,7 +263,9 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     pendingFiles: (chat.pendingFiles ?? []).map((file) => ({ id: file.id, name: file.name, kind: file.kind, url: attachmentURL(bot.id, `pending:${file.id}`) })),
     components: componentInfos(components),
     live: running && !runningShown ? chat.live.map(step) : [],
-    slashCommands: [],
+    // The / menu: the app's commands, then the bot's own components, then the rest of the library (`ChatPayload`).
+    slashCommands: SLASH_COMMANDS,
+    ...slashLists(bot, Object.keys(components).sort()),
     ...headsParts(chat.heads),
     pins: (chat.pins ?? []).map(pinView),
     floating: (chat.floating ?? []).map((view) => ({ botID: bot.id, botName: bot.name, pin: pinView(view), global: null, blocked: null })),
