@@ -75,7 +75,7 @@ test("boots to the chat page, starts the plugin host as a utility process, ignor
     BOTLING_DATA_DIR: dataDir,
     // Test-only steering a packaged build must ignore (src/main/packaged.ts).
     BOTLING_AGENT: "fake", BOTLING_TEST_WEB_SITES: JSON.stringify([{ id: "x", name: "X", url: "http://127.0.0.1:9/" }]),
-    BOTLING_SHOT_COMMAND: "touch " + join(base, "pwned"), BOTLING_PLUGIN_HOST: "node",
+    BOTLING_SHOT_COMMAND: "touch " + join(base, "pwned"), BOTLING_PLUGIN_HOST: "node", BOTLING_TEST_UPDATE_FEED: join(base, "no-feed.json"),
   };
   const app = spawn(binary, ["--use-mock-keychain", "--remote-debugging-port=0"], { env, stdio: ["ignore", "pipe", "pipe"] });
   let output = "";
@@ -101,11 +101,15 @@ test("boots to the chat page, starts the plugin host as a utility process, ignor
     expect(answer.result.result).toMatch(/^pong from \d+\.\d+\.\d+$/);
     expect(output).toMatch(/\[core\] plugin host started pid \d+ \(utility process\)/);
     // Test-only variables were dropped; the heads are the real CLIs (here: the stand-ins, never run).
-    expect(output).toContain("[packaged] ignored BOTLING_AGENT, BOTLING_PLUGIN_HOST, BOTLING_SHOT_COMMAND, BOTLING_TEST_WEB_SITES");
+    expect(output).toContain("[packaged] ignored BOTLING_AGENT, BOTLING_PLUGIN_HOST, BOTLING_SHOT_COMMAND, BOTLING_TEST_UPDATE_FEED, BOTLING_TEST_WEB_SITES");
     expect(output).toMatch(/\[core\] started epoch \S+ data .+ agent claude/);
     // The web AIs are the real three, not the test page BOTLING_TEST_WEB_SITES named.
     await expect(page.locator(".web-site-row .web-site-name")).toHaveText(["Gemini", "ChatGPT", "Claude"]);
     expect(existsSync(join(base, "agent-calls.log"))).toBe(false);
+    // The update check is off by default: nothing was looked up.
+    const updates = await post(page, { type: "updates.check", manual: false });
+    expect(updates.result).toMatchObject({ current: expect.stringMatching(/^2\./), enabled: false, newer: null, checkedAt: null });
+    expect(existsSync(join(dataDir, "updates.json"))).toBe(false);
     // Nothing went to the default places: no 1.x import, no Application Support folder in HOME.
     expect(existsSync(join(dataDir, "core", "import.json")) ? JSON.parse(readFileSync(join(dataDir, "core", "import.json"), "utf8")) : null).toBeNull();
     expect(existsSync(join(base, "home", "Library", "Application Support", "Botling 2"))).toBe(false);
