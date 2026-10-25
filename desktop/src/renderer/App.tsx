@@ -6,7 +6,7 @@
 import { inputTrace } from "./input-trace";
 import { TEST_TRACE_QUERY } from "../test-trace";
 import { UpdateBanner } from "./Updates";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { MAINTAINER_BOT_ID, resultLinks, type BotView, type ResultOf, type ResultView, type SubagentRowView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import { WorkspaceStore } from "./store";
@@ -14,7 +14,8 @@ import { chatState, subagentState } from "./payload";
 import { faceURL } from "./avatars";
 import { CHAT_ORIGIN, CHAT_PAGE, type FrameMessage, type ShellMessage } from "./chat-frame/protocol";
 import { PluginsButton } from "./Plugins";
-import { SettingsSheet } from "./Settings";
+import { SettingsSheet, type SettingsSection } from "./Settings";
+import { SidebarSettings } from "./SidebarSettings";
 import { RightPanel, RightToggle } from "./RightPanel";
 import { BotMenu, DeleteGroupDialog, GroupFace, GroupForm, GroupRow, NewBotForm, RemoveDialog, SubagentRows, useMinuteClock } from "./Rail";
 import { Icon } from "./icons";
@@ -25,6 +26,8 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
   const view = useSyncExternalStore(store.subscribe, store.getView);
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
+  const openSettings = useCallback((section: SettingsSection = "general") => { setSettingsSection(section); setSettingsOpen(true); }, []);
   /** The web AI shown in the chat column instead of a chat, if one is. */
   const [webSite, setWebSite] = useState<string | null>(null);
   const site = webSite ? view.web?.sites.find((candidate) => candidate.id === webSite) ?? null : null;
@@ -69,14 +72,14 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
   // ⌘, (Ctrl+, elsewhere) opens Settings, as in 1.x; ⌃⌘I folds or opens the right panel; ⌃⌘S the left column; ⌘K searches it.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "," && (event.metaKey || event.ctrlKey)) { event.preventDefault(); setSettingsOpen(true); }
+      if (event.key === "," && (event.metaKey || event.ctrlKey)) { event.preventDefault(); openSettings(); }
       if ((event.key === "i" || event.key === "I") && event.metaKey && event.ctrlKey) { event.preventDefault(); toggleRight(); }
       if ((event.key === "s" || event.key === "S") && event.metaKey && event.ctrlKey) { event.preventDefault(); toggleRail(); }
       if ((event.key === "k" || event.key === "K") && (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey) { event.preventDefault(); startSearch(); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [toggleRight, toggleRail, startSearch]);
+  }, [openSettings, toggleRight, toggleRail, startSearch]);
   const chat = view.chat;
   const results = useMemo<ResultView[]>(() => (chat ? resultLinks(chat.messages) : []), [chat]);
   // The spec open in the right panel, when it is made from a line of the chat on screen.
@@ -177,7 +180,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
           waiting={(id) => view.waiting.items.some((item) => item.botId === id)}
           onSelect={selectBot} onMenu={(candidate, x, y) => setMenu({ bot: candidate, x, y })}
           onExpand={() => toggleRail(false)} onAddProject={addProject} onNewBot={() => { toggleRail(false); setMakingBot(true); }} onNewGroup={() => setEditingGroup({ group: null })}
-          onSettings={() => setSettingsOpen(true)} />
+          settingsControl={<SidebarSettings compact client={client} settings={view.settings} plugins={view.plugins} settingsOpen={settingsOpen} onOpen={openSettings} />} />
       ) : (
       <aside className="rail">
         <div className="rail-top drag"><RailToggle collapsed={false} onToggle={() => toggleRail(true)} /></div>
@@ -246,7 +249,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
         </div>
         <PluginsButton client={client} plugins={view.plugins} />
         <div className="rail-settings">
-          <button type="button" className={`rail-button${settingsOpen ? " on" : ""}`} onClick={() => setSettingsOpen(true)}>Settings</button>
+          <SidebarSettings client={client} settings={view.settings} plugins={view.plugins} settingsOpen={settingsOpen} onOpen={openSettings} />
         </div>
         {view.imported && (
           <div className="rail-note" title={view.imported.skipped.join("\n")}>
@@ -323,7 +326,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
           onOpenResult={openResult}
           onOpenSubagent={(row) => openSubagent(bot.id, row)}
           onUnsettle={(row) => settleSubagent(bot.id, row, false)}
-          onSettings={() => setSettingsOpen(true)}
+          onSettings={() => openSettings()}
           onExpand={toggleRight}
         />
       )}
@@ -336,7 +339,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
         faceOf={(candidate) => faceURL(candidate, view.settings?.botLook ?? "original", {})} />}
       {deletingGroup && <DeleteGroupDialog group={deletingGroup} onCancel={() => setDeletingGroup(null)} onDelete={() => deleteGroup(deletingGroup)} />}
       {removing && <RemoveDialog bot={removing} onCancel={() => setRemoving(null)} onRemove={() => removeBot(removing)} />}
-      {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} bots={view.bots} plugins={view.plugins} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsSheet client={client} settings={view.settings} bot={bot} bots={view.bots} plugins={view.plugins} initialSection={settingsSection} onClose={() => setSettingsOpen(false)} />}
     </div>
   );
 }
@@ -443,9 +446,9 @@ function RailToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
 }
 
 /** The left column folded (1.x's RailStrip): faces only, the pinned ones first; hover for name and status. */
-function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExpand, onAddProject, onNewBot, onNewGroup, onSettings }: {
+function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExpand, onAddProject, onNewBot, onNewGroup, settingsControl }: {
   bots: BotView[]; pinned: string[]; look: "original" | "cute"; shown: string | null; waiting: (id: string) => boolean;
-  onSelect: (id: string) => void; onMenu: (bot: BotView, x: number, y: number) => void; onExpand: () => void; onAddProject: () => void; onNewBot: () => void; onNewGroup: () => void; onSettings: () => void;
+  onSelect: (id: string) => void; onMenu: (bot: BotView, x: number, y: number) => void; onExpand: () => void; onAddProject: () => void; onNewBot: () => void; onNewGroup: () => void; settingsControl: ReactNode;
 }) {
   const [tip, setTip] = useState<{ bot: BotView; y: number } | null>(null);
   const [adding, setAdding] = useState(false);
@@ -490,7 +493,7 @@ function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExp
           </div>
         )}
       </div>
-      <button type="button" className="strip-gear" title="Settings" aria-label="Settings" onClick={onSettings}><Icon name="gear" size={14} /></button>
+      {settingsControl}
     </aside>
   );
 }

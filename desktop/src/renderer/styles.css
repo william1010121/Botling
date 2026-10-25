@@ -139,6 +139,25 @@ button { font: inherit; color: inherit; }
 
 /* Settings (SettingsWindow.swift): a sheet with the sections on the left, 1.x's 900×640. */
 .rail-settings { padding: 0 10px 8px; }
+.sidebar-settings { display: flex; align-items: center; gap: 6px; }
+.sidebar-settings > .rail-button { flex: 1; }
+.sidebar-settings .strip-gear.on { color: var(--text); background: var(--selected); }
+.sidebar-settings-popover { position: fixed; z-index: 60; width: min(300px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow-y: auto; padding: 14px; box-sizing: border-box; border: 1px solid var(--line); border-radius: 12px; background: var(--bubble); color: var(--text); box-shadow: 0 12px 36px #0008; font-size: 14px; }
+.sidebar-settings-popover header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.sidebar-settings-popover header button { border: 0; background: transparent; color: var(--muted); font-size: 20px; cursor: pointer; }
+.sidebar-settings-switch { display: flex; gap: 12px; align-items: center; justify-content: space-between; min-height: 34px; }
+.sidebar-settings-switch input { appearance: none; position: relative; width: 28px; height: 16px; flex-shrink: 0; margin: 0; border: 1px solid var(--muted); border-radius: 20px; background: var(--chip); cursor: pointer; }
+.sidebar-settings-switch input::before { content: ""; position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+.sidebar-settings-switch input:checked { background: var(--blue); border-color: var(--blue); }
+.sidebar-settings-switch input:checked::before { transform: translateX(12px); background: white; }
+.sidebar-settings-switch input:disabled { opacity: .5; cursor: default; }
+.sidebar-settings-switch input:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.sidebar-settings-note { color: var(--faint); font-size: 12px; line-height: 1.5; margin: 10px 0; }
+.sidebar-settings-links { border-top: 1px solid var(--line); padding-top: 6px; }
+.sidebar-settings-links button { display: flex; justify-content: space-between; align-items: center; width: 100%; min-height: 34px; padding: 6px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.sidebar-settings-links button:hover { background: var(--hover); }
+.sidebar-settings-links button span:last-child { color: var(--faint); }
+.sidebar-settings-links .all-settings { color: var(--blue); }
 .settings-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; }
 .settings { width: min(900px, calc(100vw - 32px)); height: min(640px, calc(100vh - 32px)); display: flex; background: var(--ground); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55); }
 .settings-side { width: 220px; flex-shrink: 0; background: var(--side); border-right: 1px solid var(--line); padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; }

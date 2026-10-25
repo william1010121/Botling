@@ -13,7 +13,8 @@ import { faceURL } from "./avatars";
 
 const why = (failure: unknown) => (failure instanceof RequestFailed ? failure.error.message : String((failure as Error)?.message ?? failure));
 
-type Section = "general" | "appearance" | "engines" | "bot" | "usage" | "permissions" | "plugins" | "updates" | "developer";
+export type SettingsSection = "general" | "appearance" | "engines" | "bot" | "usage" | "permissions" | "plugins" | "updates" | "developer";
+type Section = SettingsSection;
 const SECTIONS: { id: Section; title: string; terms: string }[] = [
   { id: "general", title: "General", terms: "language bot look cute original chat avatars size summaries catch-up unread interval threshold prompt model reminders" },
   { id: "appearance", title: "Appearance", terms: "message column width chat composer size reset" },
@@ -34,8 +35,8 @@ const MODELS = [{ id: "haiku", label: "Haiku" }, { id: "sonnet", label: "Sonnet"
 const EFFORTS = [{ id: "low", label: "Low" }, { id: "medium", label: "Medium" }, { id: "high", label: "High" }, { id: "xhigh", label: "Extra high" }, { id: "max", label: "Max" }] as const;
 const STALL = [5, 10, 15, 30, 60, 0];
 
-export function SettingsSheet({ client, settings, bot, bots = [], plugins, onClose }: { client: Client; settings: SettingsView | null; bot: BotView | null; bots?: BotView[]; plugins: PluginsView | null; onClose: () => void }) {
-  const [section, setSection] = useState<Section>("general");
+export function SettingsSheet({ client, settings, bot, bots = [], plugins, initialSection = "general", onClose }: { client: Client; settings: SettingsView | null; bot: BotView | null; bots?: BotView[]; plugins: PluginsView | null; initialSection?: SettingsSection; onClose: () => void }) {
+  const [section, setSection] = useState<Section>(initialSection);
   const [search, setSearch] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [shown, setShown] = useState<SettingsView | null>(settings);

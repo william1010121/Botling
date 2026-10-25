@@ -16,13 +16,14 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await browser?.close(); });
 
-async function launch(collapsed = false) {
+async function launch(collapsed = false, failSave = false) {
   const file = join(tempDir("sidebar-settings"), "settings.json");
   writeFileSync(file, JSON.stringify({ railCollapsed: collapsed, developerProjectID: "ABCDEF00-0000-4000-8000-000000000001", futureSetting: "keep" }));
   const page = await browser.newPage({ viewport: { width: 1000, height: 720 } });
   const commands: string[] = [];
   await page.exposeFunction("sidebarRequest", async (cmd: any) => {
     commands.push(cmd.type);
+    if (cmd.type === "settings.set" && failSave) throw new Error("Settings could not be saved");
     if (cmd.type === "settings.set") writeSettings(file, applySetting(readSettings(file), SettingsChange.parse(cmd.change)));
     if (cmd.type === "settings.set" || cmd.type === "settings.get") return settingsView(readSettings(file));
     if (cmd.type === "usage.view") return null;
@@ -45,10 +46,12 @@ test("sidebar gear exposes developer control, saves it, and preserves the source
     await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
     await gear(page).click({ timeout: 3000 });
     const toggle = quick(page).getByRole("switch", { name: "Develop Botling itself" });
-    await toggle.check();
+    await toggle.click();
     await expect.poll(() => readSettings(file).developerMode).toBe(true);
-    await toggle.uncheck();
+    await expect(toggle).toBeChecked();
+    await toggle.click();
     await expect.poll(() => readSettings(file).developerMode).toBe(false);
+    await expect(toggle).not.toBeChecked();
     expect(readSettings(file)).toMatchObject({ developerProjectID: "ABCDEF00-0000-4000-8000-000000000001", futureSetting: "keep" });
     await page.reload();
     await gear(page).click();
@@ -91,7 +94,27 @@ test("folded sidebar keeps the gear, dismisses with Escape or outside click, and
     await expect(quick(page)).toHaveCount(0);
     await expect(gear(page)).toBeFocused();
     await gear(page).click();
-    await page.locator(".chat-area").click({ position: { x: 400, y: 20 } });
+    await page.locator(".chat-header").click({ position: { x: 400, y: 20 } });
     await expect(quick(page)).toHaveCount(0);
+    await page.locator("#chat-frame").evaluate((frame) => { (frame as HTMLIFrameElement).srcdoc = '<button style="margin:80px 450px">Chat area</button>'; });
+    await gear(page).click();
+    await page.frameLocator("#chat-frame").getByRole("button", { name: "Chat area" }).click();
+    await expect(quick(page)).toHaveCount(0);
+  } finally { await page.close(); }
+});
+
+test("failed saves show an error and keep the saved state; permission policy has no writable control", async () => {
+  const { page, file, commands } = await launch(false, true);
+  try {
+    await gear(page).click();
+    const toggle = quick(page).getByRole("switch", { name: "Develop Botling itself" });
+    await toggle.click();
+    await expect(quick(page).getByRole("alert")).toContainText("Settings could not be saved");
+    await expect(toggle).not.toBeChecked();
+    expect(readSettings(file).developerMode).toBeUndefined();
+    await expect(quick(page)).toContainText("Auto-approve safe actions follows the current engine's permission rules");
+    await expect(quick(page).getByRole("switch")).toHaveCount(1);
+    expect(commands).toContain("settings.set");
+    await page.screenshot({ path: join(desktop, ".cache/sidebar-settings-error.png") });
   } finally { await page.close(); }
 });
