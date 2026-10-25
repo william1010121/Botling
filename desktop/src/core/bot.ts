@@ -85,6 +85,7 @@ import {
   CronSchedule, DAILY_SUMMARY, RoutineFile, routine, ScheduledRoutineStore, dueTime, fromRoutineRuns, legacyRoutineLines, routineDivider, routinePrompt,
   routineStatus, routineTitle, scheduledRoutine, type Routine, type ScheduledRoutine,
 } from "./routines";
+import { codexWorkerDefaults } from "./settings";
 import { BotStore, StoreError, type HeadState } from "./store/bot-store";
 import type { ProjectLock } from "./store/lock";
 import {
@@ -168,8 +169,8 @@ export interface BotOptions {
   wakeNote?: () => string;
   /** Folders a new claude head may also read and write (`--add-dir`: the main bot's every `.bot/`). */
   addDirs?: () => string[];
-  /** What settings.json says for new heads (the subagents' model and cache, Codex workers). */
-  launch?: () => { subagentModel: string | null; subagentHourCache: boolean; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null };
+  /** What settings.json says for new heads (the subagents' hour cache; the rest is each bot's own). */
+  launch?: () => { subagentHourCache: boolean };
 }
 
 type Origin = "user" | "app" | "background" | "tidy";
@@ -1191,15 +1192,32 @@ export class Bot {
     return { engines: settings.engines };
   }
 
-  /** Its own choices in bot.json (1.x's `model`, `effort`, `subagentModel`). */
-  private choices(): { model: string | null; effort: string | null; subagentModel: string | null } {
+  /** Its own choices in bot.json (1.x's `model`, `effort`, `subagentModel`, `codexWorkers`). */
+  private choices(): { model: string | null; effort: string | null; subagentModel: string | null; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null } {
     const settings = this.store.loadSettings();
     const pick = (value: unknown, list: readonly string[]) => (typeof value === "string" && list.includes(value) ? value : null);
+    const workers = codexWorkerDefaults(settings.codexWorkers);
     return {
       model: pick(settings.model, ["haiku", "sonnet", "opus"]),
       effort: pick(settings.effort, ["low", "medium", "high", "xhigh", "max"]),
       subagentModel: pick(settings.subagentModel, ["haiku", "sonnet", "opus"]),
+      // None set: Codex's own config (~/.codex/config.toml).
+      codexWorkers: workers.model || workers.effort || workers.fast !== null ? workers : null,
     };
+  }
+
+  /**
+   * The app's engine defaults changed (1.x's `setSubagentModelDefault` / `setCodexWorkerDefaults`, which
+   * set every bot): written into its bot.json and its other head's; a head already running keeps its own
+   * until it next wakes, as with its own settings.
+   */
+  applyEngineDefaults(change: { subagentModel?: string | null; codexWorkers?: Record<string, unknown> | undefined }) {
+    const owner = this.owner;
+    if (owner.readOnly) return;
+    for (const store of [owner.store, ...(owner.partner ? [owner.partner.store] : [])]) {
+      if (change.subagentModel !== undefined) store.saveSetting("subagentModel", change.subagentModel ?? undefined);
+      if ("codexWorkers" in change) store.saveSetting("codexWorkers", change.codexWorkers);
+    }
   }
 
   /** What the bot's settings page shows. */
@@ -1637,11 +1655,11 @@ export class Bot {
     const prompts = this.prompts();
     const plugins = this.options.plugins?.() ?? { dirs: [], env: {} };
     const choices = this.owner.choices();
-    const launch = this.options.launch?.() ?? { subagentModel: null, subagentHourCache: false, codexWorkers: null };
+    const launch = this.options.launch?.() ?? { subagentHourCache: false };
     const start: SessionStart = {
       sessionId: this.session.sessionId, resume, systemPrompt: prompts.system, pluginDirs: plugins.dirs, pluginEnv: plugins.env,
-      model: choices.model, effort: choices.effort, subagentModel: choices.subagentModel ?? launch.subagentModel,
-      subagentHourCache: launch.subagentHourCache, codexWorkers: launch.codexWorkers,
+      model: choices.model, effort: choices.effort, subagentModel: choices.subagentModel,
+      subagentHourCache: launch.subagentHourCache, codexWorkers: choices.codexWorkers,
       addDirs: this.owner.options.addDirs?.() ?? [],
     };
     let head: AgentHead;

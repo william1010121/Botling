@@ -113,15 +113,38 @@ export function applySetting(raw: RawSettings, change: SettingsChange): RawSetti
   return next;
 }
 
-/** What a new claude head is started with from the app's settings (AgentProcess.swift's environment). */
-export function launchSettings(raw: RawSettings): { subagentModel: string | null; subagentHourCache: boolean; codexWorkers: { model: string | null; effort: string | null; fast: boolean | null } | null } {
+/**
+ * What a new head is started with from the app's settings (AgentProcess.swift's environment). Since
+ * Phase 4c the subagents' model and the Codex workers' choice are each bot's own (bot.json, seeded from
+ * the app's defaults and changed with them, as 1.x); only the hour cache is the app's.
+ */
+export function launchSettings(raw: RawSettings): { subagentHourCache: boolean } {
+  return { subagentHourCache: settingsView(raw).subagentHourCache };
+}
+
+/** What Codex workers start on with the app's choice applied (`appliedCodexWorkerDefaults`): following
+ * Codex's config, nothing of the app's. */
+export function appliedCodexWorkers(raw: RawSettings): { model: string | null; effort: string | null; fast: boolean | null } {
   const view = settingsView(raw);
-  return {
-    subagentModel: view.subagentModel,
-    subagentHourCache: view.subagentHourCache,
-    // Following ~/.codex/config.toml: the app sets nothing for workers.
-    codexWorkers: view.codexWorkersFollow ? null : view.codexWorkers,
-  };
+  return view.codexWorkersFollow ? { model: null, effort: null, fast: null } : view.codexWorkers;
+}
+
+/** `CodexWorkerDefaults` as bot.json keeps it (`codexWorkers`): nil values left out, none at all: no key. */
+export function codexWorkersJSON(value: { model: string | null; effort: string | null; fast: boolean | null }): Record<string, unknown> | undefined {
+  const json = { ...(value.model ? { model: value.model } : {}), ...(value.effort ? { effort: value.effort } : {}), ...(typeof value.fast === "boolean" ? { fast: value.fast } : {}) };
+  return Object.keys(json).length ? json : undefined;
+}
+
+/**
+ * The app's engine defaults written into a new bot's bot.json before it is made (1.x's
+ * `seedEngineDefaults`): the subagents' model when the app names one, the Codex workers' choice when it
+ * is not "follow Codex's config".
+ */
+export function seedEngineDefaults(raw: RawSettings, setSetting: (key: string, value: unknown) => void) {
+  const model = settingsView(raw).subagentModel;
+  if (model) setSetting("subagentModel", model);
+  const workers = codexWorkersJSON(appliedCodexWorkers(raw));
+  if (workers) setSetting("codexWorkers", workers);
 }
 
 /** A list of strings in settings.json (`ignoredWaiting`). */

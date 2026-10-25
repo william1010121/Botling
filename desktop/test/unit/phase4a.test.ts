@@ -212,7 +212,7 @@ describe("plugins' web parts in the chat page", () => {
 
 describe("settings (AppSettings.swift's keys)", () => {
   it("reads 1.x's keys with their defaults, keeps keys it does not know, and writes changes as 1.x's setters", async () => {
-    const { settingsView, applySetting, launchSettings } = await import("../../src/core/settings");
+    const { settingsView, applySetting, appliedCodexWorkers, seedEngineDefaults } = await import("../../src/core/settings");
     const empty = settingsView({});
     expect(empty).toMatchObject({
       language: null, effectiveLanguage: "en", botLook: "cute", chatAvatarSize: null, catchUpEnabled: true, intervalSummaryEnabled: false,
@@ -235,9 +235,13 @@ describe("settings (AppSettings.swift's keys)", () => {
     expect(raw.summaryPromptChoice).toBeUndefined();
     raw = applySetting(raw, { key: "codexWorkers", value: { model: "gpt-x", effort: "high", fast: null } });
     expect(raw.codexWorkerChoice).toEqual({ model: "gpt-x", effort: "high" });
-    expect(launchSettings(raw).codexWorkers).toBeNull();
+    expect(appliedCodexWorkers(raw)).toEqual({ model: null, effort: null, fast: null });
+    const seeded = (settings: Record<string, unknown>) => { const out: Record<string, unknown> = {}; seedEngineDefaults(settings, (key, value) => { out[key] = value; }); return out; };
+    expect(seeded(raw)).toEqual({});
     raw = applySetting(raw, { key: "codexWorkersFollow", value: false });
-    expect(launchSettings(raw).codexWorkers).toEqual({ model: "gpt-x", effort: "high", fast: null });
+    expect(appliedCodexWorkers(raw)).toEqual({ model: "gpt-x", effort: "high", fast: null });
+    // A new bot starts on the app's defaults (`seedEngineDefaults`), in bot.json's keys.
+    expect(seeded({ ...raw, subagentModelDefault: "haiku" })).toEqual({ subagentModel: "haiku", codexWorkers: { model: "gpt-x", effort: "high" } });
   });
 
   it("through the core: settings.set saves and tells; a bot's model, effort and the subagents' choices reach a new claude head", async () => {
@@ -253,7 +257,7 @@ describe("settings (AppSettings.swift's keys)", () => {
     await c.call({ type: "settings.set", change: { key: "language", value: null } });
     expect(c.of("settings.updated").at(-1)!.event).toMatchObject({ settings: { language: null, effectiveLanguage: "en", subagentHourCache: true } });
     expect(JSON.parse(readFileSync(join(dir, "settings.json"), "utf8"))).toEqual({ someFutureKey: { kept: true }, subagentModelDefault: "haiku", subagentHourCacheChoice: true });
-    expect(await c.call({ type: "bot.configure", botId: MAIN, model: "opus", effort: "high" })).toMatchObject({ botId: MAIN, engines: ["claude"], model: "opus", effort: "high", subagentModel: null, codexModel: null });
+    expect(await c.call({ type: "bot.configure", botId: MAIN, model: "opus", effort: "high" })).toMatchObject({ botId: MAIN, engines: ["claude"], model: "opus", effort: "high", subagentModel: "haiku", codexModel: null });
     expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8"))).toMatchObject({ model: "opus", effort: "high" });
     const { turnId } = await c.call({ type: "chat.send", botId: MAIN, text: "hi" });
     await until(() => c.of("turn.finished").find((e) => (e.event as any).turnId === turnId));
@@ -265,5 +269,35 @@ describe("settings (AppSettings.swift's keys)", () => {
     expect(await c.call({ type: "bot.configure", botId: MAIN, model: null, effort: null })).toMatchObject({ model: null, effort: null });
     expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).model).toBeUndefined();
     await expect(c.call({ type: "settings.set", change: { key: "chatAvatarSize", value: 200 } })).rejects.toThrow("bad_request");
+  });
+
+  it("engine defaults (1.x's Workspace+EngineDefaults): a change goes to every bot; new projects and bots start on them", async () => {
+    const dir = tempDir("engine-defaults");
+    mkdirSync(dir, { recursive: true });
+    const folder = tempDir("engine-defaults-project");
+    mkdirSync(folder, { recursive: true });
+    const c = core(dir);
+    await c.call({ type: "chat.snapshot", botId: MAIN });
+    const botJSON = (id: string | null) => JSON.parse(readFileSync(id ? join(dir, "projects", id, "bot.json") : join(dir, "main", "bot.json"), "utf8"));
+    await c.call({ type: "settings.set", change: { key: "subagentModel", value: "haiku" } });
+    await c.call({ type: "settings.set", change: { key: "codexWorkers", value: { model: "gpt-x", effort: "high", fast: true } } });
+    // Following Codex's config: the choice is kept in settings.json but no bot gets it yet.
+    expect(botJSON(null)).toMatchObject({ subagentModel: "haiku" });
+    expect(botJSON(null).codexWorkers).toBeUndefined();
+    await c.call({ type: "settings.set", change: { key: "codexWorkersFollow", value: false } });
+    expect(botJSON(null)).toMatchObject({ subagentModel: "haiku", codexWorkers: { model: "gpt-x", effort: "high", fast: true } });
+    const project = await c.call({ type: "projects.add", folder });
+    expect(botJSON(project.botId)).toMatchObject({ subagentModel: "haiku", codexWorkers: { model: "gpt-x", effort: "high", fast: true } });
+    const made = await c.call({ type: "bots.create", name: "Scout", job: "Watch the weather." });
+    expect(botJSON(made.botId)).toMatchObject({ subagentModel: "haiku", codexWorkers: { model: "gpt-x", effort: "high", fast: true } });
+    // A bot's own change stays its own; the next app-wide change sets it again (1.x: one batch for all).
+    await c.call({ type: "bot.configure", botId: project.botId, subagentModel: "opus" });
+    expect(botJSON(project.botId).subagentModel).toBe("opus");
+    await c.call({ type: "settings.set", change: { key: "subagentModel", value: null } });
+    await c.call({ type: "settings.set", change: { key: "codexWorkersFollow", value: true } });
+    for (const id of [null, project.botId, made.botId]) {
+      expect(botJSON(id).subagentModel).toBeUndefined();
+      expect(botJSON(id).codexWorkers).toBeUndefined();
+    }
   });
 });

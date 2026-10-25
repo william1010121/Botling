@@ -13,7 +13,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { writeFileAtomic } from "./durable/atomic";
 import { rmSync } from "node:fs";
 import { PendingFiles, servedType, writeIncoming } from "./attachments";
-import { applySetting, launchSettings, readSettings, readSettingsList, settingsView, writeSettings } from "./settings";
+import { appliedCodexWorkers, applySetting, codexWorkersJSON, launchSettings, readSettings, readSettingsList, seedEngineDefaults, settingsView, writeSettings } from "./settings";
 import { HANDED_OUT, botName, childFolders, defaultName, firstLine, folderPath, folderURLText, memoryItemsAt, nextAvatar, prepareNotesFolder, projectBriefingText, projectFolders, removeProjectRow, saveProjectRow, type BriefingRow } from "./projects";
 import { TeamDesk, loadTeams, prepareTeamsPlugin, type TeamSpec } from "./teams";
 import { answerLabel } from "./attachments";
@@ -27,7 +27,7 @@ import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
 import type { Engine, Heads } from "./heads";
 import { botPrompts, isAppLanguage, isResultPublishing, preferredLanguage, type BotPrompts } from "./prompts";
-import { readJSON } from "./store/bot-store";
+import { BotStore, readJSON } from "./store/bot-store";
 import { DEFAULT_ONE_X_PROCESS, ProjectLock, type OneXCheck } from "./store/lock";
 import { ProcessLedger } from "./process/ledger";
 import { importFrom1x, importRecord, looksLike1x, needsImport } from "./store/importer";
@@ -399,6 +399,7 @@ export class Core {
     mkdirSync(folder, { recursive: true });
     const avatar = options.avatar && HANDED_OUT.includes(options.avatar) ? options.avatar : nextAvatar(this.profiles.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID).map((profile) => profile.avatar));
     prepareNotesFolder(folder);
+    this.seedEngineDefaults(id);
     saveProjectRow(this.options.dataDir, { id, name, folder, avatar, job, ...(options.plugin ? { plugin: options.plugin } : {}) });
     const profile = projectProfile(this.options.dataDir, { id, name, folder: folderURLText(folder), avatar, job, ...(options.plugin ? { plugin: options.plugin } : {}) });
     this.attach(profile);
@@ -412,6 +413,12 @@ export class Core {
     }
     this.log(`made the bot ${name} (${folder})`);
     return { kind: "made", botId: id };
+  }
+
+  /** The app's engine defaults saved into a new bot's bot.json before it is made (`seedEngineDefaults`). */
+  private seedEngineDefaults(id: string) {
+    const store = new BotStore(Layout.bot(this.options.dataDir, id));
+    seedEngineDefaults(readSettings(Layout.settings(this.options.dataDir)), (key, value) => store.saveSetting(key, value));
   }
 
   /** A new project's or bot's row in the left column, before Maintainer (who stays last). */
@@ -613,6 +620,7 @@ export class Core {
     const id = randomUUID().toUpperCase();
     const row = { id, name: defaultName(folder), folder, avatar: nextAvatar(this.profiles.filter((profile) => profile.role !== "main" && profile.id !== MAINTAINER_ID).map((profile) => profile.avatar)) };
     prepareNotesFolder(folder);
+    this.seedEngineDefaults(id);
     saveProjectRow(this.options.dataDir, row);
     this.attach(projectProfile(this.options.dataDir, { id, name: row.name, folder: folderURLText(folder), avatar: row.avatar }));
     this.log(`added project ${row.name} (${folder})`);
@@ -1123,8 +1131,18 @@ export class Core {
   /** One change on the Settings page: saved in settings.json (other keys kept), then told to every window. */
   private changeSetting(change: SettingsChange): SettingsView {
     const file = Layout.settings(this.options.dataDir);
-    const next = applySetting(readSettings(file), change);
+    const before = readSettings(file);
+    const next = applySetting(before, change);
     writeSettings(file, next);
+    // The engine defaults go to every bot at once (`setSubagentModelDefault`, `setCodexWorkerDefaults`).
+    const model = settingsView(next).subagentModel;
+    if (change.key === "subagentModel" && model !== settingsView(before).subagentModel) {
+      for (const bot of this.bots.values()) bot.applyEngineDefaults({ subagentModel: model });
+    }
+    const workers = appliedCodexWorkers(next);
+    if ((change.key === "codexWorkers" || change.key === "codexWorkersFollow") && JSON.stringify(workers) !== JSON.stringify(appliedCodexWorkers(before))) {
+      for (const bot of this.bots.values()) bot.applyEngineDefaults({ codexWorkers: codexWorkersJSON(workers) });
+    }
     const view = settingsView(next, this.language());
     this.event({ type: "settings.updated", settings: view });
     return view;
