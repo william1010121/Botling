@@ -38,7 +38,7 @@ update check against GitHub Releases (on by default; signed self-updates describ
 Linux targets are configured only.**
 Not yet a replacement for the Swift app (see "Gaps vs the Swift app").
 
-**Current cumulative review remains incomplete: E3 native input loss and the D3 counter-click failure are unresolved.** Input-worker E7/E8 guards and deterministic tests are integrated, but do not establish native focus/input correctness. All GUI/focus/Electron/packaged relaunch checks and the 20-round composer gate are suspended by the user; no test-window approval is being requested. Existing DMG/ZIP files are stale D-pass artifacts, not validated candidates for the current source.
+**2026-10-26: user-authorized development trial, 2.0.0-dev.20261026.1.** Ship the existing input route with known launch/focus input loss; the dormant native editor host is not activated and later input adapters are deferred. This is not formal 2.0 acceptance. See [dev trial / 安全隔離試用](docs/dev-trial.md) for the manual external-volume shortcut, separate profile, disabled automatic 1.x import and exact limitations. Production update trust remains null; no live self-update. Full GUI/native focus/packaged-update checks remain deferred under the no-interruption restriction; current delivery evidence distinguishes artifact validation from runtime checks. Older D-pass artifacts are not this trial.
 It lives beside it: nothing under `Sources/` or `Web/` changed, and the Swift app does not use
 anything here. Web/src is *bundled from source* into the desktop's chat frame (its packages come
 from `desktop/node_modules`), so `cd Web && npm run build` and its output are untouched;
@@ -113,7 +113,8 @@ Data goes to `$BOTLING_DATA_DIR`, by default `desktop/.data/` in development (ig
 (below); Electron's own profile, partitions and caches are under `<data>/electron/`. Tests use
 throwaway folders in `desktop/.cache/test-data/` (`.tmp/screens/` keeps the screenshots `look.spec.ts` takes).
 
-Import: a **packaged** app imports `~/.claudecodebot` on its first start (read-only). A development
+Import: an ordinary **packaged** app imports `~/.claudecodebot` on its first start (read-only).
+The embedded `botlingDevTrial: true` profile disables that default and uses a separate `Botling 2 Dev Trial` data directory; its supplied shortcut also isolates CLI settings and all temp files on the chosen work volume. A development
 run imports only what `BOTLING_IMPORT_FROM=/path/to/a/1.x/folder` names, so `npm run dev*` and the
 tests never read the real folder. Try it on a copy: `BOTLING_IMPORT_FROM=… BOTLING_DATA_DIR=.tmp/try npm run dev:fake`.
 

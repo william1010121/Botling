@@ -13,6 +13,7 @@
 const { join } = require("node:path");
 
 const env = process.env;
+const devTrial = require("./package.json").botlingDevTrial === true;
 const macCertificate = Boolean(env.CSC_LINK || env.CSC_NAME);
 const notarize = macCertificate && Boolean(
   (env.APPLE_API_KEY && env.APPLE_API_KEY_ID && env.APPLE_API_ISSUER)
@@ -67,7 +68,11 @@ module.exports = {
     sign: macCertificate,
     // Self-updates authenticate the ZIP; there is no DMG update blockmap to publish.
     writeUpdateInfo: false,
-    contents: [{ x: 150, y: 180, type: "file" }, { x: 450, y: 180, type: "link", path: "/Applications" }],
+    contents: devTrial ? [
+      { x: 150, y: 180, type: "file" },
+      { x: 450, y: 180, type: "file", path: join(__dirname,"docs/dev-trial.md"), name: "DEV-TRIAL.md" },
+      { x: 300, y: 330, type: "file", path: join(__dirname,"scripts/launch-dev-trial.command"), name: "Launch Dev Trial.command" },
+    ] : [{ x: 150, y: 180, type: "file" }, { x: 450, y: 180, type: "link", path: "/Applications" }],
   },
   // Windows and Linux: configured, not built or tried here (see the README's Phase 5b gaps).
   win: {

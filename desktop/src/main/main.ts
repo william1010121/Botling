@@ -18,7 +18,7 @@ import {RecoveryWindowHost} from "./recovery-window";
 import {retainedUpdateCopies,deleteRetainedUpdateCopy} from "./update-copies";
 import {InputTraceWriter,syntheticTraceContext,acceptTraceIPC} from "./input-trace";
 import {TEST_TRACE_ARGUMENT,TEST_TRACE_CHANNEL} from "../test-trace";
-import {directoryDefaults} from "./main-environment";
+import {directoryDefaults,packagedDataName} from "./main-environment";
 declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
@@ -33,6 +33,8 @@ import {
 
 configureHiddenApp(app);
 const root = resolve(__dirname, "..", ".."); // desktop/ (packaged: Resources/app.asar)
+// Embedded artifact profile, not a runtime test switch. No new editor host is activated.
+const devTrial = app.isPackaged && JSON.parse(readFileSync(join(root,"package.json"),"utf8")).botlingDevTrial === true;
 // A packaged build ignores the variables tests steer the app with (src/main/packaged.ts), before anything reads them.
 const scrubbed = scrubEnvironment(process.env, app.isPackaged);
 if (scrubbed.length) console.warn(`[packaged] ignored ${scrubbed.join(", ")}`);
@@ -49,7 +51,7 @@ const rendererDir = join(root, "out", "renderer");
 /** `--component-shot` (Phase 5a): draw one component and exit; no core, no data folder of the app's. */
 const shotMode = isShotRequested(process.argv);
 const dataDir = shotMode ? mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "botling-shot-"))
-  : resolve(process.argv.find(arg => arg.startsWith("--botling-update-data="))?.slice("--botling-update-data=".length) || process.env.BOTLING_DATA_DIR || (app.isPackaged ? join(app.getPath("appData"), "Botling 2") : join(root, ".data")));
+  : resolve(process.argv.find(arg => arg.startsWith("--botling-update-data="))?.slice("--botling-update-data=".length) || process.env.BOTLING_DATA_DIR || (app.isPackaged ? join(app.getPath("appData"), packagedDataName(devTrial)) : join(root, ".data")));
 const installedApp = dirname(dirname(dirname(process.execPath)));
 const volumeRecovery = () => {const error=dataVolumeError(dataDir);return error?{...issueFor(dataDir,installedApp,dirname(installedApp),27),blocked:true,message:error}:null;};
 const originalDataIdentity=!dataVolumeError(dataDir)?persistentDataIdentity(dataDir):undefined; // Captured before mkdir/profile/core can create data.
@@ -208,9 +210,9 @@ function coreEnvironment(): Record<string, string> {
     env.BOTLING_FAKE_CLI ??= join(root, "test", "fixtures", "fake-claude.mjs");
     env.BOTLING_FAKE_CODEX ??= join(root, "test", "fixtures", "fake-codex.mjs");
   }
-  // A packaged app imports the user's Botling 1.x folder on its first start (read-only). A
-  // development run imports only what BOTLING_IMPORT_FROM names, so tests never see real data.
-  directoryDefaults(env, process.env.HOME || homedir(), app.isPackaged);
+  // Trial artifacts skip automatic 1.x import. Explicit imports and read-only project-lock
+  // detection remain separate; ordinary packaged behavior is unchanged.
+  directoryDefaults(env, process.env.HOME || homedir(), app.isPackaged, devTrial);
   // Tests show local pages as web AIs; a packaged app lists only the real sites.
   if (app.isPackaged) delete env.BOTLING_TEST_WEB_SITES;
   // The bots reply in the system's language unless settings name one (`AppLanguage.preferred`).
