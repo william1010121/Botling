@@ -135,8 +135,8 @@ test("boots to the chat page, starts the plugin host as a utility process, ignor
       const saved = JSON.parse(readFileSync(join(dataDir, "core", "main", "chat.json"), "utf8")) as { cards?: { id: string; data: string | null }[] }[];
       return saved.flatMap((message) => message.cards ?? []).find((card) => card.id === "c-counter")?.data ?? null;
     }, { timeout: 10_000 }).toBe('{"count":1}');
-    mkdirSync(join(desktop, ".tmp", "screens"), { recursive: true });
-    await page.screenshot({ path: join(desktop, ".tmp", "screens", "phase5b-packaged.png") });
+    mkdirSync(join(desktop, ".cache", "evidence", "review-d"), { recursive: true });
+    await page.screenshot({ path: join(desktop, ".cache", "evidence", "review-d", "packaged-smoke.png") });
     await browser.close().catch(() => {});
     browser = null;
     // Quit as the system asks an app to (SIGTERM → before-quit): the core and the host end with it.

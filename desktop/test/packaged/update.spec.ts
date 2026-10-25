@@ -17,7 +17,7 @@ const current = JSON.parse(readFileSync(join(desktop,'package.json'),'utf8')).ve
 const app = process.env.BOTLING_PACKAGED_APP ?? join(desktop,'.cache/dist/mac-arm64/Botling 2.app');
 const older = process.env.BOTLING_UPDATE_OLD_APP ?? join(desktop,'.cache/update-old/mac-arm64/Botling 2.app');
 const zip = join(dirname(dirname(app)),`Botling-2-${current}-mac-arm64-unsigned-updates.zip`);
-const evidence = join(desktop,'.cache/evidence/review-c');
+const evidence = join(desktop,'.cache/evidence/review-d');
 test.skip(process.platform !== 'darwin','Real macOS transaction');
 
 function alive(pid: number) { try { process.kill(pid,0);return true; } catch {return false;} }
@@ -123,7 +123,7 @@ for(const mode of ['receipt','crash'] as const)test(`A3 real signed ZIP → expl
  }catch(error){
   mkdirSync(evidence,{recursive:true});
   const roots=readdirSync(base).filter(n=>n.startsWith('.botling-update-'));
-  writeFileSync(join(evidence,'packaged-failure-'+mode+'.json'),JSON.stringify({error:String(error),pages:browser?.contexts().flatMap(c=>c.pages()).map(p=>p.url()),pids:pids(target),roots:roots.map(n=>({name:n,names:readdirSync(join(base,n))})),diagnostics:existsSync(join(data,'update-diagnostics'))?readdirSync(join(data,'update-diagnostics')).map(n=>JSON.parse(readFileSync(join(data,'update-diagnostics',n),'utf8'))):[]},null,2));
+  writeFileSync(join(evidence,'packaged-failure-'+mode+'.json'),JSON.stringify({error:String(error),stack:error instanceof Error?error.stack:null,cause:error instanceof Error&&error.cause instanceof Error?{message:error.cause.message,stack:error.cause.stack}:String((error as any)?.cause??''),pages:browser?.contexts().flatMap(c=>c.pages()).map(p=>p.url()),pids:pids(target),roots:roots.map(n=>({name:n,names:readdirSync(join(base,n))})),diagnostics:existsSync(join(data,'update-diagnostics'))?readdirSync(join(data,'update-diagnostics')).map(n=>JSON.parse(readFileSync(join(data,'update-diagnostics',n),'utf8'))):[]},null,2));
   throw error;
  }finally{
   await browser?.close().catch(()=>{});

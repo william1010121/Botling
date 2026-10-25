@@ -6,7 +6,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { payload, verifyManifest } from "../../scripts/release-manifest.mjs";
-import { acknowledgeUpdateBoot, SWAP_SCRIPT, VerifiedInstaller, writableApp } from "../../src/main/update-install";
+import { acknowledgeUpdateBoot, recoverUpdates, SWAP_SCRIPT, VerifiedInstaller, writableApp } from "../../src/main/update-install";
 import { settingsView } from "../../src/core/settings";
 import { tempDir, until } from "../helpers";
 
@@ -151,6 +151,8 @@ describe.skipIf(process.platform !== "darwin")("verified update from a local rel
     expect(acknowledgeUpdateBoot(join(f.base, "data"), f.target, "2.0.1", [`--botling-update-token=${pending.token}`])).toBe(true);
     await until(() => existsSync(join(root, "result")));
     expect(readFileSync(join(root, "result"), "utf8")).toBe("booted\n");
+    // Commit is published before native deletion; join the helper/collector completion barrier.
+    await recoverUpdates(join(f.base,"data"),f.target);
     expect(existsSync(join(root, "previous.app"))).toBe(false);
   });
   it("detects a staged executable modified before the restart click", async () => {

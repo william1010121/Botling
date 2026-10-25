@@ -35,7 +35,7 @@ test("ZIP and read-only DMG contain the intact signed app; the DMG is signed and
     run("/usr/bin/ditto", ["-x", "-k", `${stem}.zip`, unzipped]);
     run("/usr/bin/codesign", ["--verify", "--deep", "--strict", join(unzipped, "Botling 2.app")]);
     expect(digest(join(unzipped, "Botling 2.app"))).toBe(expected);
-    const evidence = join(desktop, ".cache", "evidence");
+    const evidence = join(desktop, ".cache", "evidence", "review-d");
     mkdirSync(evidence, { recursive: true });
     writeFileSync(join(evidence, "delivery-validation.json"), JSON.stringify({ zip: `${stem}.zip`, dmg: `${stem}.dmg`, app, asarSha256: expected, imageVerification: verify.trim(), mountedReadOnly: true, applicationsShortcut: "/Applications", appSignaturesValid: true, containerSignatureValid: true }, null, 2) + "\n");
   } finally {

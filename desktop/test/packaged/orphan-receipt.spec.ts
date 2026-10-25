@@ -43,7 +43,7 @@ test('C7 candidate commits after receipt when helper is killed before its decisi
   expect(JSON.parse(readFileSync(join(data,'update-last-boot.json'),'utf8'))).toMatchObject({token,activated:true,orphan:true});
   await recoverUpdates(data,target);
   expect(readdirSync(base).filter(n=>n.startsWith('.botling-update-'))).toEqual([]);
-  mkdirSync(join(desktop,'.cache/evidence/review-c'),{recursive:true});writeFileSync(join(desktop,'.cache/evidence/review-c/orphan-receipt.json'),JSON.stringify({helperKilledBeforeDecision:true,receipt:token,candidate,manifest,result:'booted',coreMutationAfterOrphan:true},null,2));
+  mkdirSync(join(desktop,'.cache/evidence/review-d'),{recursive:true});writeFileSync(join(desktop,'.cache/evidence/review-d/orphan-receipt.json'),JSON.stringify({helperKilledBeforeDecision:true,receipt:token,candidate,manifest,result:'booted',coreMutationAfterOrphan:true},null,2));
  }finally{
   await browser?.close().catch(()=>{});helper?.kill('SIGKILL');for(const pid of [...pids(),candidate])if(pid)try{process.kill(pid,'SIGTERM');}catch{}
   await until(()=>pids().length===0,{timeout:10000}).catch(()=>{for(const pid of pids())try{process.kill(pid,'SIGKILL');}catch{}});
