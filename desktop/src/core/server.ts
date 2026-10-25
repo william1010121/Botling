@@ -1305,7 +1305,7 @@ First write a test that shows this, then fix it.`;
           const match = [...line.text.matchAll(/\[[^\]\n]+\]\(([^)\s]+)\)/g)].some(value => same(value[1]!));
           const shown = result && line.displays?.some(display => display.name === PAGE_COMPONENT && same(pageInCard(display.data) ?? ""));
           if (result && (match || shown)) return {result:true,linked:true};
-          linked ||= match;
+          linked ||= result && match;
         }
         return {result:false,linked};
       }

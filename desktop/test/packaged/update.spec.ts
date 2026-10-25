@@ -17,7 +17,7 @@ const current = JSON.parse(readFileSync(join(desktop,'package.json'),'utf8')).ve
 const app = process.env.BOTLING_PACKAGED_APP ?? join(desktop,'.cache/dist/mac-arm64/Botling 2.app');
 const older = process.env.BOTLING_UPDATE_OLD_APP ?? join(desktop,'.cache/update-old/mac-arm64/Botling 2.app');
 const zip = join(dirname(dirname(app)),`Botling-2-${current}-mac-arm64-unsigned-updates.zip`);
-const evidence = join(desktop,'.cache/evidence/review');
+const evidence = join(desktop,'.cache/evidence/review-c');
 test.skip(process.platform !== 'darwin','Real macOS transaction');
 
 function alive(pid: number) { try { process.kill(pid,0);return true; } catch {return false;} }
@@ -75,6 +75,7 @@ for(const mode of ['receipt','crash'] as const)test(`A3 real signed ZIP → expl
   // The explicit transaction call alone starts the helper. Only then request normal main SIGTERM.
   await installer.restart(old.pid!);
   await until(()=>existsSync(join(root,'helper.pid')));helperPid=Number(readFileSync(join(root,'helper.pid'),'utf8'));
+  const token=JSON.parse(readFileSync(join(data,'update-pending.json'),'utf8')).token;
   expect(alive(old.pid!)).toBe(true);expect(existsSync(join(root,'previous.app'))).toBe(false);
   await browser.close();browser=null;old.kill('SIGTERM');await until(()=>old.exitCode!==null||old.signalCode!==null,{timeout:30000});expect(old.exitCode).toBe(0);
   await until(()=>existsSync(join(root,'new.pid')));candidatePid=Number(readFileSync(join(root,'new.pid'),'utf8'));
@@ -82,11 +83,15 @@ for(const mode of ['receipt','crash'] as const)test(`A3 real signed ZIP → expl
    expect(existsSync(join(root,'boot.ok'))).toBe(false);
    writeFileSync(join(data,'core/review-schema'),'candidate-incompatible');process.kill(candidatePid,'SIGKILL');
   }
-  await until(()=>existsSync(join(root,'result')),{timeout:30000});const result=readFileSync(join(root,'result'),'utf8').trim();expect(result).toBe(mode==='receipt'?'booted':'failed:13');
-  const token=JSON.parse(readFileSync(join(data,'update-pending.json'),'utf8')).token;
+  let result:string;
   if(mode==='receipt'){
-   expect(readFileSync(join(root,'boot.ok'),'utf8')).toBe(token);await until(()=>existsSync(join(root,'activated.ok')),{timeout:30000});
-   expect(readFileSync(join(root,'activated.ok'),'utf8')).toBe(token);
+   await until(()=>existsSync(join(data,'update-last-boot.json')),{timeout:30000});
+   expect(JSON.parse(readFileSync(join(data,'update-last-boot.json'),'utf8'))).toMatchObject({token,receipt:token,activated:true,orphan:false});
+   result='booted';
+  }else{
+   await until(()=>existsSync(join(root,'result'))||existsSync(join(data,'update-recovery.json')),{timeout:30000});
+   result=existsSync(join(root,'result'))?readFileSync(join(root,'result'),'utf8').trim():'failed:'+JSON.parse(readFileSync(join(data,'update-recovery.json'),'utf8')).code;
+   expect(result).toBe('failed:13');
   }
   browser=await connect(port);page=await pageOf(browser);
   const after=await post(page,{type:'updates.check',manual:false});expect(after.result.current).toBe(mode==='receipt'?current:'2.0.0-dev');
@@ -104,7 +109,10 @@ for(const mode of ['receipt','crash'] as const)test(`A3 real signed ZIP → expl
    mkdirSync(evidence,{recursive:true});writeFileSync(join(evidence,'cleanup-race-observation.json'),JSON.stringify({names:readdirSync(root),pending:existsSync(join(data,'update-pending.json')),metadata:Object.fromEntries(['result','owner.json','helper.pid','new.pid'].map(n=>[n,existsSync(join(root,n))?readFileSync(join(root,n),'utf8'):null]))},null,2));
   }
   mkdirSync(evidence,{recursive:true});writeFileSync(join(evidence,'cleanup-diagnostics-'+mode+'.json'),JSON.stringify(readdirSync(join(data,'update-diagnostics')).map(n=>JSON.parse(readFileSync(join(data,'update-diagnostics',n),'utf8'))),null,2));
-  await until(()=>readdirSync(base).every(n=>!n.startsWith('.botling-update-')) && (!existsSync(join(data,'update-cleanup')) || readdirSync(join(data,'update-cleanup')).length===0),{timeout:10000,what:'completed native garbage collection'});
+  // recoverUpdates joins the actual lease/native-child completion. No filesystem polling retry.
+  expect(readdirSync(join(data,'update-cleanup'))).toEqual([]);
+  const cleanupLogs=readdirSync(join(data,'update-diagnostics')).map(n=>JSON.parse(readFileSync(join(data,'update-diagnostics',n),'utf8')));
+  expect(cleanupLogs.some(log=>log.phase==='complete'&&log.nativePid>0&&log.completedAt>=log.startedAt)).toBe(true);
   expect(readdirSync(base).filter(n=>n.startsWith('.botling-update-'))).toEqual([]);expect(existsSync(join(data,'update-pending.json'))).toBe(false);
   execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',target]);
   const survivors=pids(target);expect(survivors.length).toBeGreaterThan(0);

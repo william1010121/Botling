@@ -15,8 +15,8 @@ export function UpdateBanner({ client, enabled }: { client: Client; enabled: boo
     return () => { live = false; clearInterval(timer); };
   }, [client, enabled]);
   const newer = state?.enabled ? state.newer : null;
-  if (state?.recoveryError && dismissed !== state.recoveryError) return <div className="update-bar" role="alert" aria-label="Update recovery">
-    <span>{state.recoveryError}</span><button type="button" onClick={() => setDismissed(state.recoveryError!)}>Dismiss</button>
+  if (state?.recoveryError && dismissed !== state.recoveryId) return <div className="update-bar" role="alert" aria-label="Update recovery">
+    <span>{state.recoveryError}</span><button type="button" onClick={() => {if(state.recoveryId)void client.request({type:"updates.dismiss",id:state.recoveryId}).then(()=>setDismissed(state.recoveryId!));}}>Dismiss</button>
   </div>;
   if (!newer || dismissed === newer.version) return null;
   return (

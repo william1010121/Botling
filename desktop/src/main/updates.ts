@@ -89,7 +89,7 @@ export interface UpdaterOptions {
   load: () => { checkedAt: number; newer: ReleaseView | null } | null;
   save: (state: { checkedAt: number; newer: ReleaseView | null }) => void;
   now?: () => number;
-  installStatus?: () => { installError: string | null; readyVersion: string | null; recoveryError?: string | null };
+  installStatus?: () => { installError: string | null; readyVersion: string | null; recoveryError?: string | null; recoveryId?:string|null };
 }
 
 export class Updater {

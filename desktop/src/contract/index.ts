@@ -620,7 +620,8 @@ export const UpdateView = z.strictObject({
   error: z.string().max(2_000).nullable(),
   installError: z.string().max(2_000).nullable().optional(),
   readyVersion: z.string().max(100).nullable().optional(),
-  recoveryError: z.string().max(2_000).nullable().optional(),
+  recoveryError: z.string().max(8_000).nullable().optional(),
+  recoveryId: z.string().max(200).nullable().optional(),
 });
 export type UpdateView = z.infer<typeof UpdateView>;
 
@@ -777,7 +778,7 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("results.list"), botId }),
   /** Main only: opens one of a bot's results (a web link in the browser, a local page with its app). */
   z.strictObject({ type: z.literal("result.open"), botId, url: z.string().min(1).max(4_000) }),
-  z.strictObject({ type: z.literal("link.open"), botId, url: z.string().min(1).max(4_000) }),
+  z.strictObject({ type: z.literal("link.open"), source: z.enum(["user", "component"]).default("component"), botId, url: z.string().min(1).max(4_000) }),
   /** Core-only membership lookup: no chat payload or component rendering. */
   z.strictObject({ type: z.literal("link.authorize"), botId, url: z.string().min(1).max(4_000) }),
   z.strictObject({ type: z.literal("chat.read"), botId }),
@@ -897,6 +898,7 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("updates.open") }),
   z.strictObject({ type: z.literal("updates.stage") }),
   z.strictObject({ type: z.literal("updates.restart") }),
+  z.strictObject({ type: z.literal("updates.dismiss"), id:z.string().min(1).max(200) }),
   /** A bot's own choices (bot.json). */
   z.strictObject({ type: z.literal("bot.settings"), botId }),
   /** Changes a bot's model, effort, subagents' model or Codex model (null: the default); a running head keeps its own until it next wakes. */
@@ -959,10 +961,10 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
-  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "usage.view",
+  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.dismiss", "usage.view",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "link.open", "component.report", "chat.feedback", "updates.check", "updates.open", "updates.stage", "updates.restart"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "link.open", "component.report", "chat.feedback", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.dismiss"]);
 
 /** A temporary team at work (1.x's `TeamRun`): its title, the task, when it started (ms since 1970). */
 export const TeamRunView = z.strictObject({ id, name: z.string().max(200), title: z.string().max(200), task: z.string().max(4_000), startedAt: z.number() });
@@ -1082,6 +1084,7 @@ export interface Results {
   "updates.open": { opened: boolean };
   "updates.stage": UpdateView;
   "updates.restart": { restarting: boolean };
+  "updates.dismiss": {dismissed:boolean};
   "boot.commit": Record<string, never>;
   "bot.settings": BotSettingsView;
   "bot.configure": BotSettingsView;

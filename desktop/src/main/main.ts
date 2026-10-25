@@ -4,13 +4,15 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, protocol, safeStorage
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { isRequested as isShotRequested, withProbe } from "../core/component-shot";
 import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { scrubEnvironment } from "./packaged";
 import { FEED, Updater } from "./updates";
 import { previewResponse } from "./preview-response";
 import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates } from "./update-install";
+import {blockingRecovery,commitUpdateReceipt,dismissRecovery,recoveryHTML,visibleRecovery,writeRecord} from "./update-state";
+import {directoryDefaults} from "./main-environment";
 declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
@@ -42,11 +44,13 @@ const shotMode = isShotRequested(process.argv);
 const dataDir = shotMode ? mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "botling-shot-"))
   : resolve(process.argv.find(arg => arg.startsWith("--botling-update-data="))?.slice("--botling-update-data=".length) || process.env.BOTLING_DATA_DIR || (app.isPackaged ? join(app.getPath("appData"), "Botling 2") : join(root, ".data")));
 mkdirSync(dataDir, { recursive: true });
+const startupRecovery = shotMode ? null : blockingRecovery(dataDir);
+const profileDir = startupRecovery ? mkdtempSync(join(process.env.TMPDIR || tmpdir(), "botling-recovery-ui-")) : join(dataDir,"electron");
 // Everything Electron keeps (partitions, caches, logs) lives under the data dir, never the default.
-app.setPath("userData", join(dataDir, "electron"));
-app.setPath("sessionData", join(dataDir, "electron"));
-app.setPath("crashDumps", join(dataDir, "electron", "crashes"));
-app.setPath("logs", join(dataDir, "electron", "logs"));
+app.setPath("userData", profileDir);
+app.setPath("sessionData", profileDir);
+app.setPath("crashDumps", join(profileDir, "crashes"));
+app.setPath("logs", join(profileDir, "logs"));
 // Tests: safeStorage seals with Chromium's mock keychain instead of the user's login keychain.
 if (process.env.BOTLING_MOCK_KEYCHAIN === "1") app.commandLine.appendSwitch("use-mock-keychain");
 
@@ -130,7 +134,6 @@ let lastEpoch: string | null = null;
  */
 const updatesFile = join(dataDir, "updates.json");
 const installedApp = dirname(dirname(dirname(process.execPath)));
-let recoveryError: string | null = null;
 const installer = new VerifiedInstaller({
   current: app.getVersion(), appPath: installedApp, dataDir,
   publicKey: __UPDATE_PUBLIC_KEY__, platform: app.isPackaged ? process.platform : "development", arch: process.arch,
@@ -141,7 +144,7 @@ const updater = new Updater({
   current: app.getVersion(),
   platform: process.platform,
   arch: process.arch,
-  installStatus: () => ({ installError: installer.unavailable(), readyVersion: installer.ready, recoveryError }),
+  installStatus: () => ({ installError: installer.unavailable(), readyVersion: installer.ready, ...visibleRecovery(dataDir) }),
   enabled: async () => ((await core.call({ type: "settings.get" })) as { updateCheck?: boolean }).updateCheck === true,
   fetchFeed: async () => {
     const test = !app.isPackaged ? process.env.BOTLING_TEST_UPDATE_FEED : undefined;
@@ -195,9 +198,7 @@ function coreEnvironment(): Record<string, string> {
   }
   // A packaged app imports the user's Botling 1.x folder on its first start (read-only). A
   // development run imports only what BOTLING_IMPORT_FROM names, so tests never see real data.
-  if (env.BOTLING_IMPORT_FROM === undefined && app.isPackaged) env.BOTLING_IMPORT_FROM = join(app.getPath("home"), ".claudecodebot");
-  // Where 1.x keeps its projects, to tell whether it has a project open (read-only; same rule).
-  if (env.BOTLING_1X_DIR === undefined && app.isPackaged) env.BOTLING_1X_DIR = join(app.getPath("home"), ".claudecodebot");
+  directoryDefaults(env, process.env.HOME || homedir(), app.isPackaged);
   // Tests show local pages as web AIs; a packaged app lists only the real sites.
   if (app.isPackaged) delete env.BOTLING_TEST_WEB_SITES;
   // The bots reply in the system's language unless settings name one (`AppLanguage.preferred`).
@@ -376,10 +377,10 @@ async function openResult(botId: string, url: string): Promise<{ opened: boolean
   if (!access.result) throw Object.assign(new Error("That link is not one of this bot's results."), { code: "not_found" });
   return openLink(url);
 }
-async function openOrdinaryLink(botId: string, url: string): Promise<{opened:boolean}> {
+async function openOrdinaryLink(botId: string, url: string, source: "user" | "component"): Promise<{opened:boolean}> {
   const access = await core.call({type:"link.authorize",botId,url});
   if (access.result) return openLink(url);
-  if (!/^(https?|mailto):/i.test(url) && !access.linked) throw Object.assign(new Error("That link is not in this chat."),{code:"not_found"});
+  if (!(source === "user" && /^(https?|mailto):/i.test(url)) && !access.linked) throw Object.assign(new Error("That link is not in this chat."),{code:"not_found"});
   return openLink(url);
 }
 async function openLink(url: string): Promise<{opened:boolean}> {
@@ -440,7 +441,8 @@ async function withScreenshot(cmd: Extract<Command, { type: "chat.feedback" }>, 
 async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown> {
   switch (cmd.type) {
     case "result.open": return openResult(cmd.botId, cmd.url);
-    case "link.open": return openOrdinaryLink(cmd.botId, cmd.url);
+    case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source);
+    case "updates.dismiss": { await dismissRecovery(dataDir,cmd.id); return {dismissed:true}; }
     case "updates.check": return updater.check(cmd.manual);
     case "updates.stage": {
       const state = await updater.check(true);
@@ -670,12 +672,19 @@ app.whenReady().then(async () => {
       });
     return;
   }
-  recoveryError = await recoverUpdates(dataDir, installedApp, false);
-  const sweep = setInterval(() => { void recoverUpdates(dataDir, installedApp).then(error => { recoveryError = error; }); }, 30_000);
-  sweep.unref();
+  const showRecovery = (issue: NonNullable<ReturnType<typeof blockingRecovery>>) => {
+    if(mainWindow&&!mainWindow.isDestroyed())mainWindow.destroy();
+    mainWindow=new BrowserWindow({width:900,height:620,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
+    void mainWindow.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(recoveryHTML(issue)));
+  };
+  await recoverUpdates(dataDir, installedApp, false);
+  const blocked=startupRecovery||blockingRecovery(dataDir);
+  if(blocked){showRecovery(blocked);return;}
+  const collect=()=>void recoverUpdates(dataDir,installedApp).catch(error=>note('Update cleanup: '+String(error)));
+  const sweep=setInterval(collect,30_000);sweep.unref();
   core.start();
   createWindow();
-  void recoverUpdates(dataDir, installedApp).then(error => { recoveryError = error; });
+  collect();
   mainWindow?.webContents.once("did-finish-load", () => {
     if (!process.argv.some((arg) => arg.startsWith("--botling-update-token="))) return;
     // A loaded HTML file alone is not a healthy boot: React must receive the core's first state.
@@ -686,10 +695,15 @@ app.whenReady().then(async () => {
         if (ready && acknowledgeUpdateBoot(dataDir, installedApp, app.getVersion(), process.argv)) {
           const pending = JSON.parse(readFileSync(join(dataDir, "update-pending.json"), "utf8"));
           while (mainWindow && !mainWindow.isDestroyed()) {
-            if (existsSync(join(pending.root, "result")) && readFileSync(join(pending.root, "result"), "utf8").trim() === "booted") {
+            const decision=await commitUpdateReceipt(dataDir,installedApp,app.getVersion(),process.argv);
+            if(decision==='committed'){
               await core.commitUpdateBoot();
-              writeFileSync(join(pending.root, "activated.ok"), pending.token, {mode:0o600});
-              return;
+              await writeRecord(join(dataDir,'update-last-boot.json'),{token:pending.token,receipt:readFileSync(join(pending.root,'boot.ok'),'utf8'),version:app.getVersion(),activated:true,orphan:existsSync(join(dataDir,'update-orphan-commit.json'))});
+              writeFileSync(join(pending.root,"activated.ok"),pending.token,{mode:0o600});
+              collect();return;
+            }
+            if(decision==='blocked'){
+              await core.stop();const issue=blockingRecovery(dataDir);if(issue)showRecovery(issue);return;
             }
             await new Promise(resolve => setTimeout(resolve, 100));
           }
@@ -697,7 +711,7 @@ app.whenReady().then(async () => {
         }
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
-    })().catch(() => {});
+    })().catch(error => note("Update boot handoff: "+String(error)));
   });
   app.on("activate", () => { if (!mainWindow) createWindow(); });
 });
@@ -719,7 +733,7 @@ app.on("before-quit", (event) => {
   // Cookies are written to disk lazily; make sure each account's are there before exiting.
   const flushes = [...openedSessions].map((opened) => opened.cookies.flushStore().catch(() => {}));
   web.closeAll();
-  void Promise.all([core.stop(), installer.discard(), ...flushes]).finally(() => app.exit(0));
+  void Promise.all([core.stop(), installer.discard(), ...flushes]).finally(() => {if(startupRecovery)rmSync(profileDir,{recursive:true,force:true});app.exit(0);});
 });
 
 // For tests: which pid the core has.

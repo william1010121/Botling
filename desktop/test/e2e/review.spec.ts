@@ -85,8 +85,9 @@ test('B3 slider previews locally, commits once on release, Escape cancels and ex
 
 test('B6 ordinary user and Web-viewer web links open without result authorization',async()=>{
   const run=await launch({chat:[swiftLine({id:'ABCD0000-0000-4000-8000-000000000077',role:'user',text:'[Ordinary](https://example.org/ordinary)'})]});try{
-    // The viewer and reused chat bridge emit this same ordinary openURL action.
-    const f=await chatFrame(run.page);await f.evaluate(()=>{(window as any).webkit.messageHandlers.ccb.postMessage({type:'openURL',url:'https://example.org/ordinary'});});
+    // A trusted click in the viewer/chat chip DOM, independent of result authorization.
+    const frame=await chatFrame(run.page);await frame.evaluate(()=>{const a=document.createElement('a');a.href='#';a.dataset.url='https://example.org/ordinary';a.textContent='Ordinary';document.querySelector('.user-body')!.append(a);});
+    await run.chat.getByRole('link',{name:'Ordinary',exact:true}).click();
     await expect.poll(()=>run.app.evaluate(()=>(globalThis as any).__botlingOpenedResults)).toContain('https://example.org/ordinary');
     const denied=await post(run.page,{v:10,id:'unshown-local',cmd:{type:'result.open',botId:MAIN,url:'file:///unshown/private.html'}});expect(denied.ok).toBe(false);
   }finally{await run.app.close();}

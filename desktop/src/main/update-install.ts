@@ -10,6 +10,7 @@ import { basename, dirname, join, sep } from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { compareVersions, parseVersion, RELEASE_PAGE } from "./updates";
 import { trustKey, verifyManifest, type Manifest } from "../../scripts/release-manifest.mjs";
+import {readSmallJSON,validRoot,processAlive,issueFor,recordIssue,visibleRecovery,writeRecord} from "./update-state";
 import type { ReleaseView } from "../contract";
 
 export interface InstallOptions {
@@ -97,14 +98,69 @@ root="\${staged%/*}"
 data="\${10-}"; parent_attempts="\${11-1200}"; grace="\${12-50}"
 if [ "$#" -ge 12 ]; then shift 12; else shift "$#"; fi
 new_pid=''; moved=0; snapshot=0
+restore="$data.update-restore-$token"; after="$data.update-after-$token"
+result() { printf '%s\n' "$1" > "$root/result.tmp" && /bin/mv "$root/result.tmp" "$root/result"; }
+decide() {
+  printf '%s:%s\n' "$1" "$token" > "$root/decision.$$" || return 1
+  /bin/ln "$root/decision.$$" "$root/decision" 2>/dev/null || true
+  /bin/rm -f "$root/decision.$$" || true
+  [ -f "$root/decision" ] && [ "$(/bin/cat "$root/decision")" = "$1:$token" ]
+}
+space_for() {
+  need=$(/usr/bin/du -sk "$1" 2>/dev/null | /usr/bin/awk '{print $1}') || return 1
+  free=$(/bin/df -Pk "$2" 2>/dev/null | /usr/bin/awk 'NR==2 {print $4}') || return 1
+  case "$need:$free" in *[!0-9:]*|:*|*:) return 1;; esac
+  [ "$free" -gt "$((need + 65536))" ]
+}
+copy_one() { space_for "$1" "$root" && /usr/bin/ditto "$1" "$2"; }
+copy_profile() {
+  local entry name profile
+  /bin/mkdir -p "$2" || return 1
+  for entry in "$1"/* "$1"/.[!.]* "$1"/..?*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    name="\${entry##*/}"
+    case "$name" in Cache|'Code Cache'|GPUCache|ShaderCache|GrShaderCache|DawnGraphiteCache|DawnWebGPUCache|SingletonLock|SingletonSocket|SingletonCookie) continue;; esac
+    if [ "$name" = Partitions ] && [ "$1" = "$data/electron" ]; then
+      /bin/mkdir -p "$2/Partitions" || return 1
+      for profile in "$entry"/* "$entry"/.[!.]* "$entry"/..?*; do
+        [ -e "$profile" ] || [ -L "$profile" ] || continue
+        if [ -d "$profile" ] && [ ! -L "$profile" ]; then copy_profile "$profile" "$2/Partitions/\${profile##*/}" || return 1
+        else copy_one "$profile" "$2/Partitions/\${profile##*/}" || return 1; fi
+      done
+    else copy_one "$entry" "$2/$name" || return 1; fi
+  done
+}
+snapshot_data() {
+  local entry name
+  /bin/mkdir -p "$root/data-before" || return 1
+  for entry in "$data"/* "$data"/.[!.]* "$data"/..?*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    name="\${entry##*/}"
+    if [ "$name" = electron ] && [ -d "$entry" ] && [ ! -L "$entry" ]; then copy_profile "$entry" "$root/data-before/electron" || return 1
+    else copy_one "$entry" "$root/data-before/$name" || return 1; fi
+  done
+  printf complete > "$root/snapshot.complete" || return 1
+}
+reopen() {
+  # Only variables actually present in the launch environment are forwarded.
+  [ "\${HOME+x}" != x ] || set -- --env "HOME=$HOME" "$@"
+  [ "\${TMPDIR+x}" != x ] || set -- --env "TMPDIR=$TMPDIR" "$@"
+  [ "\${BOTLING_IMPORT_FROM+x}" != x ] || set -- --env "BOTLING_IMPORT_FROM=$BOTLING_IMPORT_FROM" "$@"
+  [ "\${BOTLING_1X_DIR+x}" != x ] || set -- --env "BOTLING_1X_DIR=$BOTLING_1X_DIR" "$@"
+  [ "\${CODEX_HOME+x}" != x ] || set -- --env "CODEX_HOME=$CODEX_HOME" "$@"
+  [ "\${CLAUDE_CONFIG_DIR+x}" != x ] || set -- --env "CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR" "$@"
+  /usr/bin/open -n "$available" --env "BOTLING_DATA_DIR=$data" "$@" >/dev/null 2>&1
+}
 finish() {
   code=$?
   trap - EXIT HUP INT TERM
   [ "$code" -ne 0 ] || exit 0
+  if [ -f "$root/decision" ] && [ "$(/bin/cat "$root/decision")" = "commit:$token" ]; then result booted || true; exit 0; fi
+  decide rollback || { result failed:22 || true; exit 22; }
   if [ -n "$new_pid" ]; then
     kill -TERM "$new_pid" 2>/dev/null || true
     n=0
-    while kill -0 "$new_pid" 2>/dev/null && [ "$n" -lt "$grace" ]; do n=$((n+1)); /bin/sleep 0.1; done
+    while kill -0 "$new_pid" 2>/dev/null && [ "$n" -lt "$grace" ]; do n=$((n+1)); /bin/sleep 0.1 || true; done
     kill -KILL "$new_pid" 2>/dev/null || true
     wait "$new_pid" 2>/dev/null || true
   fi
@@ -114,48 +170,83 @@ finish() {
     if [ ! -e "$target" ]; then /bin/mv "$previous" "$target" || code=15; fi
     if [ -d "$previous" ]; then available="$previous"; code=15; fi
   fi
-  if [ "$snapshot" -eq 1 ]; then
-    /bin/rm -rf "$data"
-    /usr/bin/ditto "$root/data-before" "$data" || code=16
+  # Prepare a complete sibling before any live data rename. Every failure remains fail-closed.
+  if [ "$snapshot" -eq 1 ] && [ -n "$new_pid" ]; then
+    if [ -e "$restore" ] || [ -e "$after" ]; then code=19
+    elif ! space_for "$root/data-before" "\${data%/*}"; then code=19
+    elif ! /usr/bin/ditto "$root/data-before" "$restore"; then
+      /bin/rm -rf "$restore" || { printf 'partial restore cleanup failed\n' > "$root/cleanup-error" || true; }
+      code=19
+    elif [ -e "$data" ] && ! /bin/mv "$data" "$after"; then code=20
+    elif ! /bin/mv "$restore" "$data"; then
+      if [ -e "$after" ]; then /bin/mv "$after" "$data" || true; fi
+      code=21
+    else printf restored > "$root/data-restored" || true; fi
   fi
-  printf 'failed:%s\n' "$code" > "$root/result"
-  # A timeout must not reopen into the old single-instance lock and then disappear on late exit.
-  if [ "$code" -eq 10 ]; then while kill -0 "$parent" 2>/dev/null; do /bin/sleep 0.1; done; fi
-  if ! kill -0 "$parent" 2>/dev/null && [ -d "$available" ]; then
-    /usr/bin/open -n "$available" --env "HOME=$HOME" --env "TMPDIR=\${TMPDIR-}" --env "BOTLING_DATA_DIR=$data" --env "BOTLING_IMPORT_FROM=\${BOTLING_IMPORT_FROM-}" --env "BOTLING_1X_DIR=\${BOTLING_1X_DIR-}" --env "CODEX_HOME=\${CODEX_HOME-}" --env "CLAUDE_CONFIG_DIR=\${CLAUDE_CONFIG_DIR-}" --args "$@" >/dev/null 2>&1 || true
-  fi
+  result "failed:$code" || true
+  case "$code" in 19|20|21|22) exit "$code";; esac
+  if [ "$code" -eq 10 ]; then while kill -0 "$parent" 2>/dev/null; do /bin/sleep 0.1 || true; done; fi
+  if ! kill -0 "$parent" 2>/dev/null && [ -d "$available" ]; then reopen --args "$@" || true; fi
   exit "$code"
 }
 trap 'finish "$@"' EXIT
 trap 'exit 17' HUP INT TERM
-printf '%s' "$$" > "$root/helper.pid"
-n=0
-while kill -0 "$parent" 2>/dev/null; do
-  n=$((n+1)); [ "$n" -lt "$parent_attempts" ] || exit 10
-  /bin/sleep 0.1
+printf '%s' "$$" > "$root/helper.pid" || exit 18
+# Complete path metadata is written before a snapshot or restore can be attempted.
+/usr/bin/plutil -create xml1 "$root/recovery.plist" || exit 18
+for key in dataDir before restore after token; do
+  case "$key" in dataDir) value="$data";; before) value="$root/data-before";; restore) value="$restore";; after) value="$after";; token) value="$token";; esac
+  /usr/bin/plutil -insert "$key" -string "$value" "$root/recovery.plist" || exit 18
 done
+/usr/bin/plutil -convert json -o "$root/recovery.json" "$root/recovery.plist" || exit 18
+/bin/rm -f "$root/recovery.plist" || exit 18
+n=0
+while kill -0 "$parent" 2>/dev/null; do n=$((n+1)); [ "$n" -lt "$parent_attempts" ] || exit 10; /bin/sleep 0.1; done
 [ ! -e "$previous" ] || exit 11
-# Old main has flushed core/cookies and exited. Every startup write is now recoverable.
-if [ -n "$data" ] && [ -d "$data" ]; then /usr/bin/ditto "$data" "$root/data-before" || exit 16; snapshot=1; fi
+if [ -n "$data" ] && [ -d "$data" ]; then snapshot_data || exit 18; snapshot=1; fi
 /bin/mv "$target" "$previous" || exit 14
 moved=1
 /bin/mv "$staged" "$target" || exit 12
 "$target/Contents/MacOS/$executable" "--botling-update-token=$token" "--botling-update-data=$data" "$@" >/dev/null 2>&1 &
 new_pid=$!
-printf '%s' "$new_pid" > "$root/new.pid"
+printf '%s' "$new_pid" > "$root/new.pid" || exit 13
 while :; do
   if [ -f "$receipt" ] && [ "$(/bin/cat "$receipt")" = "$token" ] && kill -0 "$new_pid" 2>/dev/null; then
     # Commit marker precedes starting external work. After this, rollback is forbidden.
-    printf 'booted\n' > "$root/result"
+    decide commit || exit 22
+    result booted || exit 22
     trap - EXIT HUP INT TERM
-    /bin/rm -rf "$previous" "$root/data-before"
-    /bin/rm -f "$root/download.zip"
+    /bin/rm -rf "$previous" "$root/data-before" "$root/download.zip" &
+    cleanup_pid=$!
+    printf '%s' "$cleanup_pid" > "$root/cleanup.pid" || true
+    wait "$cleanup_pid" || true
     exit 0
   fi
   kill -0 "$new_pid" 2>/dev/null || exit 13
   /bin/sleep "$delay"
 done
 `;
+
+const RESERVE_BYTES=64*1024*1024,MAX_EXPANDED_BYTES=2*1024*1024*1024;
+const PROFILE_CACHE=new Set(['Cache','Code Cache','GPUCache','ShaderCache','GrShaderCache','DawnGraphiteCache','DawnWebGPUCache','SingletonLock','SingletonSocket','SingletonCookie']);
+/** Mirror the helper's exclusions only at Chromium profile roots. Core stores are never filtered. */
+async function persistentBytes(path:string,profile=false,partitions=false):Promise<number>{
+ const stat=await fs.lstat(path).catch(()=>null);if(!stat)return 0;if(!stat.isDirectory())return stat.size;
+ let bytes=0;
+ for(const entry of await fs.readdir(path)){
+  if(profile&&PROFILE_CACHE.has(entry))continue;
+  const next=join(path,entry);
+  if(profile&&entry==='Partitions')bytes+=await persistentBytes(next,false,true);
+  else bytes+=await persistentBytes(next,partitions);
+ }
+ return bytes;
+}
+async function dataBytes(dataDir:string):Promise<number>{
+ let bytes=0;for(const entry of await fs.readdir(dataDir).catch(()=>[] as string[]))bytes+=await persistentBytes(join(dataDir,entry),entry==='electron');return bytes;
+}
+async function requireSpace(path:string,bytes:number):Promise<void>{
+ const stat=await fs.statfs(path);if(stat.bavail*stat.bsize<bytes+RESERVE_BYTES)throw new Error('Insufficient free space for a bounded update and complete data snapshot');
+}
 
 export class VerifiedInstaller {
   private staged: { pending: Pending; manifest: Manifest; zip: string; app: string; digest: string } | null = null;
@@ -191,14 +282,22 @@ export class VerifiedInstaller {
       const manifest = verifyManifest(JSON.parse((await readBounded(await this.options.fetch(`${url}.manifest.json`), 16_384)).toString("utf8")), this.options.publicKey);
       if (manifest.version !== release.version) throw new Error("Signed version does not match release");
       newer(manifest.version, this.options.current);
+      await requireSpace(dirname(this.options.appPath),manifest.size);
+      const token=randomUUID();
       root = mkdtempSync(join(dirname(this.options.appPath), ".botling-update-"));
       chmodSync(root, 0o700);
-      writeFileSync(join(root, "owner.json"), JSON.stringify({ pid: process.pid, target: this.options.appPath, dataDir: this.options.dataDir }), { mode: 0o600 });
+      writeFileSync(join(root, "owner.json"), JSON.stringify({ pid: process.pid, target: this.options.appPath, dataDir: this.options.dataDir, token }), { mode: 0o600 });
       const zip = join(root, "download.zip");
       await readBounded(await this.options.fetch(url), manifest.size, zip);
       await verifyArchive(zip, manifest);
       const entries = (await run("/usr/bin/unzip", ["-Z1", zip], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 })).stdout.trim().split("\n");
       if (entries.some((entry) => !entry.startsWith("Botling 2.app/") || entry.split("/").some((part) => part === "..") || entry.includes("\\") || entry.includes("\r"))) throw new Error("Unsafe update archive paths");
+      const summary=(await run("/usr/bin/unzip",["-Z","-t",zip],{encoding:"utf8",maxBuffer:16384})).stdout;
+      const expanded=Number(/(\d+) bytes uncompressed/.exec(summary)?.[1]);
+      if(!Number.isSafeInteger(expanded)||expanded<1||expanded>MAX_EXPANDED_BYTES)throw new Error("Update archive exceeds the 2 GiB expanded-size limit");
+      const snapshot=await dataBytes(this.options.dataDir);
+      await requireSpace(root,expanded+snapshot*2);
+      await fs.mkdir(this.options.dataDir,{recursive:true});await requireSpace(this.options.dataDir,snapshot);
       await run("/usr/bin/ditto", ["-x", "-k", zip, root]);
       const app = join(root, "Botling 2.app");
       const plist = join(app, "Contents", "Info.plist");
@@ -213,7 +312,7 @@ export class VerifiedInstaller {
       // Probe actual staged-bundle rename, never move the live application for preflight.
       const probe = join(root, "rename-probe.app");
       await fs.rename(app, probe); await fs.rename(probe, app);
-      this.staged = { app, zip, manifest, digest, pending: { root, token: randomUUID(), target: this.options.appPath, version: manifest.version, executable } };
+      this.staged = { app, zip, manifest, digest, pending: { root, token, target: this.options.appPath, version: manifest.version, executable } };
     } catch (error) {
       if (root) await removeTree(root);
       throw error;
@@ -232,14 +331,22 @@ export class VerifiedInstaller {
     const installedVersion = (await run("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleShortVersionString", join(this.options.appPath, "Contents", "Info.plist")], { encoding: "utf8" })).stdout.trim();
     newer(this.staged.manifest.version, installedVersion);
     const { pending, app } = this.staged;
+    const snapshot=await dataBytes(this.options.dataDir);await requireSpace(pending.root,snapshot*2);await requireSpace(this.options.dataDir,snapshot);
     const script = join(pending.root, "swap.sh");
     writeFileSync(script, SWAP_SCRIPT, { mode: 0o700 });
     mkdirSync(this.options.dataDir, { recursive: true });
     writeFileSync(join(this.options.dataDir, "update-pending.json"), JSON.stringify(pending), { mode: 0o600 });
-    const child = spawn("/bin/sh", [script, String(parentPid), pending.target, app, join(pending.root, "previous.app"), join(pending.root, "boot.ok"), pending.token, pending.executable, "0", "0.1", this.options.dataDir, "1200", "50", ...(this.options.launchArgs ?? [])], { detached: true, stdio: "ignore" });
-    // Synchronous spawn failure must not cause the running app to quit.
-    if (!child.pid) throw new Error("Could not start update helper");
-    child.on("error", () => {});
+    let child:ReturnType<typeof spawn>;
+    try {
+      child = spawn("/bin/sh", [script, String(parentPid), pending.target, app, join(pending.root, "previous.app"), join(pending.root, "boot.ok"), pending.token, pending.executable, "0", "0.1", this.options.dataDir, "1200", "50", ...(this.options.launchArgs ?? [])], { detached: true, stdio: "ignore" });
+      await new Promise<void>((resolve,reject)=>{child.once('spawn',resolve);child.once('error',reject);});
+      if(!child.pid)throw new Error("Could not start update helper");
+    }catch(error){
+      const file=join(this.options.dataDir,"update-pending.json");
+      try{if(readSmallJSON(file).token===pending.token)await fs.rm(file,{force:true});}catch{}
+      throw new Error("Could not start update helper",{cause:error});
+    }
+    child.on('error',()=>{});
     child.unref();
     this.staged = null;
     } finally { this.busy = false; this.availability = null; }
@@ -258,100 +365,105 @@ export function acknowledgeUpdateBoot(dataDir: string, target: string, version: 
     const pending = JSON.parse(readFileSync(join(dataDir, "update-pending.json"), "utf8")) as Pending;
     if (pending.token !== token || pending.target !== target || pending.version !== version
       || dirname(pending.root) !== dirname(target) || !basename(pending.root).startsWith(".botling-update-")) return false;
+    if (existsSync(join(pending.root,"boot.ok"))) return readFileSync(join(pending.root,"boot.ok"),"utf8") === token;
     writeFileSync(join(pending.root, "boot.ok"), token, { flag: "wx", mode: 0o600 });
     return true;
   } catch { return false; }
 }
 
-function alive(pid: unknown): boolean {
-  if (!Number.isSafeInteger(Number(pid)) || Number(pid) < 2) return false;
-  try { process.kill(Number(pid), 0); return true; } catch { return false; }
+// All callers join one collection in-process. Cross-process leases are published before a root
+// is renamed, and callers await their owner's completion rather than treating a live lease as done.
+const collections = new Map<string, Promise<string | null>>();
+async function smallJSON(file:string):Promise<any>{return readSmallJSON(file);}
+const readText = (file:string) => fs.readFile(file,'utf8').then(s=>s.trim()).catch(()=>'');
+async function waitForOwner(pid:unknown,what:string):Promise<void>{
+ const end=Date.now()+130_000;
+ while(processAlive(pid)){if(Date.now()>end)throw new Error(`Update cleanup still active: ${what} (pid ${pid})`);await new Promise(r=>setTimeout(r,50));}
 }
-async function smallJSON(file: string): Promise<any> {
-  if ((await fs.lstat(file)).isSymbolicLink() || (await fs.stat(file)).size > 8192) throw new Error('Invalid update metadata');
-  return JSON.parse(await fs.readFile(file, 'utf8'));
+async function sweepUpdates(dataDir:string,target:string,collect:boolean):Promise<string|null>{
+ const claims=join(dataDir,'update-cleanup'),diagnostics=join(dataDir,'update-diagnostics');
+ const pendingFile=join(dataDir,'update-pending.json');let pending:Pending|null=null;
+ try{pending=await smallJSON(pendingFile);}catch{}
+ const clearPending=async(root:string)=>{try{if((await smallJSON(pendingFile)).root===root)await fs.rm(pendingFile,{force:true});}catch{}};
+ if(pending&&pending.target!==target&&validRoot(pending.root,pending.target)){
+  let owner;try{owner=await smallJSON(join(pending.root,'owner.json'));}catch{}
+  if(owner?.target===pending.target&&owner.dataDir===dataDir)await sweepUpdates(dataDir,pending.target,collect);
+ }
+ if(pending&&!existsSync(pending.root)){
+  await recordIssue(issueFor(dataDir,target,pending.root,24,pending.token));
+  if(collect)await clearPending(pending.root);
+ }
+ const validClaim=(c:any)=>c.dataDir===dataDir&&c.target===target&&/^\.botling-update-gc-[a-z0-9-]+$/.test(c.root)&&(!c.source||/^\.botling-update-[a-zA-Z0-9-]+$/.test(c.source));
+ async function collectClaim(c:any,file:string):Promise<void>{
+  if(!collect)return;
+  if(c.collectorPid!==process.pid&&processAlive(c.collectorPid)){
+   // The foreign owner can delete its lease before exiting; synchronize on that durable completion.
+   const end=Date.now()+130_000;
+   while(existsSync(file)&&processAlive(c.collectorPid)){if(Date.now()>end)throw new Error(`Update collector did not complete: ${file}`);await new Promise(r=>setTimeout(r,50));}
+   if(!existsSync(file))return;
+   c=await smallJSON(file);if(!validClaim(c))return;
+  }
+  await waitForOwner(c.helper,'helper finalization');await waitForOwner(c.cleanupPid,'helper native deletion');
+  c.collectorPid=process.pid;await writeRecord(file,c);
+  const source=join(dirname(target),c.source||c.root),garbage=join(dirname(target),c.root);
+  if(source!==garbage&&existsSync(source)&&!existsSync(garbage))await fs.rename(source,garbage);
+  await fs.mkdir(diagnostics,{recursive:true});
+  const diagnostic=typeof c.diagnostic==='string'&&dirname(c.diagnostic)===diagnostics?c.diagnostic:join(diagnostics,`${Date.now()}-${randomUUID()}.json`);
+  c.diagnostic=diagnostic;await writeRecord(file,c);
+  const report={...c,phase:'deleting',startedAt:Date.now(),completedAt:0,nativePid:0,cleanupError:null as string|null};
+  try{
+   for(const path of [garbage,...(c.cleanupPaths??[]).filter((path:unknown)=>typeof c.token==='string'&&/^[a-zA-Z0-9-]+$/.test(c.token)&&(path===`${dataDir}.update-after-${c.token}`||path===`${dataDir}.update-restore-${c.token}`))]){
+    // Native ASAR-unaware removal, exactly one attempt; its exit is the completion barrier.
+    await new Promise<void>((resolve,reject)=>{const child=execFile('/bin/rm',['-rf',path],{timeout:120_000},error=>error?reject(error):resolve());report.nativePid=child.pid??0;});
+   }
+   report.phase='complete';report.completedAt=Date.now();await writeRecord(diagnostic,report);
+   if(c.source)await clearPending(join(dirname(target),c.source));
+   await fs.rm(file,{force:true});
+  }catch(error){
+   report.phase='failed';report.cleanupError=String(error).slice(0,500);await writeRecord(diagnostic,report);
+   c.collectorPid=0;await writeRecord(file,c);throw error;
+  }
+ }
+ // Resume interrupted removals and join existing collectors even when their root is already gone.
+ for(const name of await fs.readdir(claims).catch(()=>[] as string[])){
+  if(!/^\.botling-update-gc-[a-z0-9-]+\.json$/.test(name))continue;
+  const file=join(claims,name);let c;try{c=await smallJSON(file);}catch{continue;}
+  if(validClaim(c))await collectClaim(c,file);
+ }
+ for(const name of await fs.readdir(dirname(target)).catch(()=>[] as string[])){
+  if(!name.startsWith('.botling-update-')||name.startsWith('.botling-update-gc-'))continue;
+  const root=join(dirname(target),name);if(!validRoot(root,target))continue;
+  let owner:any=null;try{owner=await smallJSON(join(root,'owner.json'));}catch{}
+  const isPending=pending?.root===root&&(pending.target===target||owner?.target===pending.target);
+  if(!(owner?.target===target&&owner.dataDir===dataDir)&&!isPending)continue;
+  let result=await readText(join(root,'result'));const helper=await readText(join(root,'helper.pid')),candidate=await readText(join(root,'new.pid'));
+  if(!result&&(await readText(join(root,'decision'))).startsWith('rollback:')&&!processAlive(helper))result='failed:22';
+  const code=Number(/^failed:(\d+)$/.exec(result)?.[1]);const token=isPending?pending!.token:owner?.token;
+  if(code){const at=(await fs.stat(join(root,'result')).catch(()=>null))?.mtimeMs??Date.now();await recordIssue(issueFor(dataDir,target,root,code,token,at));}
+  if(!collect||[15,16,19,20,21,22].includes(code))continue;
+  if(processAlive(helper)){if(!result)continue;await waitForOwner(helper,'helper final result');}
+  if(result==='booted'&&processAlive(candidate)&&!existsSync(join(root,'activated.ok')))continue;
+  if(!result&&(processAlive(owner?.pid)||processAlive(candidate)))continue;
+  const cleanupPaths:string[]=[];
+  try{
+   const metadata=await smallJSON(join(root,'recovery.json'));
+   if(metadata.dataDir===dataDir&&metadata.token===token&&/^[a-zA-Z0-9-]+$/.test(token??'')&&(result==='booted'||existsSync(join(root,'data-restored')))){
+    for(const kind of ['after','restore']){const expected=`${dataDir}.update-${kind}-${token}`;if(metadata[kind]===expected)cleanupPaths.push(expected);}
+   }
+  }catch{}
+  let tail='';try{const f=await fs.open(join(root,'boot.log'),constants.O_RDONLY|constants.O_NOFOLLOW);try{const stat=await f.stat(),bytes=Buffer.alloc(Math.min(8192,stat.size));await f.read(bytes,0,bytes.length,Math.max(0,stat.size-bytes.length));tail=bytes.toString('base64');}finally{await f.close();}}catch{}
+  const garbageName='.botling-update-gc-'+createHash('sha256').update(root).digest('hex').slice(0,32),file=join(claims,garbageName+'.json');
+  const claim={root:garbageName,source:name,target,dataDir,result:result||'orphan',helper,cleanupPid:Number(await readText(join(root,'cleanup.pid'))),collectorPid:process.pid,token,cleanupPaths,tailBase64:tail,failure:code?issueFor(dataDir,target,root,code,token).message:null};
+  await fs.mkdir(claims,{recursive:true});const temp=file+'.'+randomUUID()+'.tmp';let won=false;
+  try{await fs.writeFile(temp,JSON.stringify(claim),{flag:'wx',mode:0o600});try{await fs.link(temp,file);won=true;}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}}finally{await fs.rm(temp,{force:true});}
+  await collectClaim(won?claim:await smallJSON(file),file);
+ }
+ const logs=(await fs.readdir(diagnostics).catch(()=>[] as string[])).filter(n=>/^\d+-[a-f0-9-]+\.json$/.test(n)).sort().reverse();
+ for(const name of logs.slice(5))await fs.rm(join(diagnostics,name),{force:true});
+ return visibleRecovery(dataDir).recoveryError;
 }
-/** Only reclaim roots owned by this app/data pair, and never while their helper is running.
- * Unknown sibling folders and live downloads are deliberately left alone. Diagnostics: last five,
- * each at most a 16 KiB tail (legacy boot.log) plus fixed metadata; failed bundles are then removed.
- */
-export async function recoverUpdates(dataDir: string, target: string, collect = true): Promise<string | null> {
-  const diagnostics = join(dataDir, 'update-diagnostics');
-  const prior: any[] = [];
-  const claims = join(dataDir, 'update-cleanup');
-  const owned: any[] = [];
-  for (const name of await fs.readdir(claims).catch(() => [] as string[])) {
-    if (!/^\.botling-update-gc-[a-f0-9-]+\.json$/.test(name)) continue;
-    try {
-      const claim = {...await smallJSON(join(claims,name)), claimFile:join(claims,name)};
-      if (claim.target === target && claim.dataDir === dataDir && claim.root === name.slice(0,-5)
-        && !existsSync(join(dirname(target),claim.root)) && !alive(claim.collectorPid)) await fs.rm(claim.claimFile,{force:true});
-      else owned.push(claim);
-    } catch {}
-  }
-  const names = (await fs.readdir(diagnostics).catch(() => [] as string[])).filter(n => /^\d+-[a-f0-9-]+\.json$/.test(n)).sort().reverse();
-  for (const name of names.slice(0, 5)) try {
-    const file = join(diagnostics, name);
-    if ((await fs.lstat(file)).size <= 18000) prior.push(JSON.parse(await fs.readFile(file,'utf8')));
-  } catch {}
-  let failure: string | null = null;
-  let pending: Pending | null = null;
-  try { pending = await smallJSON(join(dataDir, 'update-pending.json')); } catch {}
-  for (const name of await fs.readdir(dirname(target)).catch(() => [] as string[])) {
-    if (!name.startsWith('.botling-update-')) continue;
-    const root = join(dirname(target), name);
-    try {
-      const stat = await fs.lstat(root);
-      if (!stat.isDirectory() || stat.isSymbolicLink() || await fs.realpath(root) !== root) continue;
-      const owner = await smallJSON(join(root, 'owner.json')).catch(() => null);
-      const claim = owned.find(log => log.root === name && log.target === target && log.dataDir === dataDir);
-      const record = claim ?? prior.find(log => log.root === name && log.target === target && log.dataDir === dataDir);
-      if (claim && alive(claim.collectorPid)) continue;
-      const ours = owner ? owner.target === target && owner.dataDir === dataDir : !!record;
-      const isPending = pending?.root === root && pending?.target === target;
-      if (!ours && !isPending) continue;
-      const result = (await fs.readFile(join(root, 'result'), 'utf8').catch(() => record?.result ?? '')).slice(0, 100).trim();
-      if (result.startsWith('failed:')) failure = `The update did not finish (${result}). The available app was reopened.`;
-      if (!collect) continue;
-      const helper = await fs.readFile(join(root, 'helper.pid'), 'utf8').catch(() => record?.helper ?? '');
-      const candidate = await fs.readFile(join(root, 'new.pid'), 'utf8').catch(() => '');
-      if (alive(helper)) continue;
-      if (result === 'booted' && alive(candidate) && !existsSync(join(root, 'activated.ok'))) continue;
-      if (!result && (alive(owner?.pid) || alive(candidate))) continue;
-      // Never erase the only recovery copy after a failed restore.
-      if (result === 'failed:15' || result === 'failed:16') continue;
-      let tail = '';
-      try {
-        const log = await fs.open(join(root, 'boot.log'), constants.O_RDONLY | constants.O_NOFOLLOW);
-        try { const stat = await log.stat(); const bytes = Buffer.alloc(Math.min(8192, stat.size)); await log.read(bytes, 0, bytes.length, Math.max(0, stat.size - bytes.length)); tail = bytes.toString('base64'); } finally { await log.close(); }
-      } catch {}
-      // Atomic claim prevents two app/test sweepers from partially deleting one another's metadata.
-      const garbage = join(dirname(root), `.botling-update-gc-${randomUUID()}`);
-      await fs.rename(root, garbage);
-      await fs.mkdir(claims, {recursive:true});
-      const claimFile = join(claims, basename(garbage) + '.json');
-      const ownership = {result: result || 'orphan', failure, target, dataDir, root: basename(garbage), helper, collectorPid:process.pid};
-      await fs.writeFile(claimFile, JSON.stringify(ownership), {mode:0o600,flag:'wx'});
-      if (claim?.claimFile) await fs.rm(claim.claimFile,{force:true});
-      await fs.mkdir(diagnostics, {recursive:true});
-      const diagnostic = join(diagnostics, `${Date.now()}-${randomUUID()}.json`);
-      await fs.writeFile(diagnostic, JSON.stringify({result: result || 'orphan', failure, target, dataDir, root: basename(garbage), helper, tailBase64: tail}), {mode:0o600});
-      // Use the native filesystem namespace, with a bounded child lifetime. Keep the external
-      // ownership record if deletion is interrupted, so the next start can finish it.
-      try { await removeTree(garbage); await fs.rm(claimFile,{force:true}); }
-      catch(error) {
-        ownership.collectorPid=0;
-        await fs.writeFile(claimFile,JSON.stringify(ownership),{mode:0o600});
-        const log=JSON.parse(await fs.readFile(diagnostic,'utf8')); log.cleanupError=(error as NodeJS.ErrnoException).code;
-        await fs.writeFile(diagnostic,JSON.stringify(log),{mode:0o600});
-      }
-      if (isPending) await fs.rm(join(dataDir, 'update-pending.json'), {force:true});
-    } catch { /* A concurrent collector may already have claimed this root. */ }
-  }
-  const logs = (await fs.readdir(diagnostics).catch(() => [] as string[])).filter(n => /^\d+-[a-f0-9-]+\.json$/.test(n)).sort().reverse();
-  for (const name of logs.slice(5)) await fs.rm(join(diagnostics,name), {force:true});
-  if (!failure) for (const name of logs.slice(0,5)) {
-    try { const record = JSON.parse(await fs.readFile(join(diagnostics,name),'utf8')); if (record.result === 'booted') break; if (record.failure) {failure=record.failure;break;} } catch {}
-  }
-  return failure;
+export function recoverUpdates(dataDir:string,target:string,collect=true):Promise<string|null>{
+ if(!collect)return sweepUpdates(dataDir,target,false);
+ const key=dataDir+'\0'+target,previous=collections.get(key);if(previous)return previous;
+ const work=sweepUpdates(dataDir,target,true).finally(()=>{collections.delete(key);});collections.set(key,work);return work;
 }
