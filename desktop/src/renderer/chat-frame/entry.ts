@@ -7,6 +7,7 @@ import "./component-frames";
 import "../../../../Web/src/main";
 import { installMessageWidth } from "./message-width";
 import { EditorView } from "@codemirror/view";
+import { isComposingEnter, isComposingKey } from "../../../../Web/src/ime";
 import { CardBroker, type CardTarget } from "../broker";
 import type { FrameExtras } from "../payload";
 import { APP_ORIGIN, type FrameMessage, type ShellMessage } from "./protocol";
@@ -160,11 +161,7 @@ window.addEventListener("message", (event: MessageEvent) => {
     void setPlugins(message.specs);
   } else if (message.botling === "hostReply") {
     window.ccb.hostReply(message.callID, message.ok, message.value);
-  } else if (message.botling === "key") {
-    typeStrayKey(message);
-    toShell({ botling: "keyHandled", id: message.id });
   } else if (message.botling === "focus") {
-    handoffKeys=false;
     window.ccb.focus();
   } else if (message.botling === "spec") {
     window.ccb.setSpec(message.spec);
@@ -203,72 +200,70 @@ function keepTyped(early: { text: string; cursor: number }) {
   view.dispatch({ changes: { from: 0, insert: early.text }, selection: { anchor: Math.min(early.cursor, early.text.length) }, userEvent: "input.type" });
 }
 
-/**
- * Focus taken from the input box by nothing you did: as the window finishes opening (a card's frame
- * loading in the chat seen doing it), Chromium moves focus out of the chat page and back, and the
- * box is left without it, so the next keys would go nowhere. Within a few seconds of that, and with no
- * click or Tab in between, the box takes focus back (when the page gets focus again, or at the next
- * key, which then lands in the box).
- */
-const REFOCUS_MS = 3_000;
-let lostAt = 0;
-let handoffKeys = false;
-let userMovedAt = 0;
+// Recover only an involuntary loss during this page's launch. Ordinary app switches keep the
+// browser's focused editor; they do not open a synthetic keyboard handoff. Explicit navigation
+// cancels recovery, including Tab to another control and programmatic focus into feedback.
+const launchUntil = Date.now() + 3_000;
+let composerIntended = true;
+let lostComposer = true;
 const inBox = (target: EventTarget | null) => !!(target as HTMLElement | null)?.closest?.(".composer .cm-content");
-// A click elsewhere in the page moves focus on purpose (a click into the box does not count).
-document.addEventListener("pointerdown", (event) => { handoffKeys=false; if (!inBox(event.target)) { userMovedAt = Date.now(); lostAt = 0; } }, true);
-document.addEventListener("keydown", (event) => { if (event.key === "Tab" || event.key === "Escape") {userMovedAt = Date.now();handoffKeys=false;} }, true);
-document.addEventListener("focusout", (event) => {
-  if (!inBox(event.target) || event.relatedTarget) return;
-  if (Date.now() - userMovedAt < 300) return;
-  lostAt = Date.now();handoffKeys=true;
+function intendComposer(value: boolean) {
+  composerIntended = value;
+  if (!value) lostComposer = false;
+  toShell({ botling: "composerIntent", value });
+}
+document.addEventListener("pointerdown", event => { if (!inBox(event.target)) intendComposer(false); }, true);
+document.addEventListener("keydown", event => {
+  if (event.key === "Tab" || event.key === "Escape") intendComposer(false);
 }, true);
-document.addEventListener("focusin", (event) => {
-  if (!inBox(event.target)) lostAt = 0;
+document.addEventListener("focusout", event => {
+  if (inBox(event.target) && !event.relatedTarget && composerIntended && Date.now() < launchUntil) lostComposer = true;
+}, true);
+document.addEventListener("focusin", event => {
+  if (event.target === document.body || event.target === document.documentElement) return;
+  intendComposer(inBox(event.target));
+  if (inBox(event.target)) lostComposer = false;
 }, true);
 function takeFocusBack(): boolean {
-  if (handoffKeys || !lostAt || Date.now() - lostAt > REFOCUS_MS) return false;
+  if (!composerIntended || !lostComposer || Date.now() >= launchUntil) return false;
   const active = document.activeElement;
-  if (active && active !== document.body && active !== document.documentElement) { lostAt = 0; return false; }
-  lostAt = 0;
+  if (active && active !== document.body && active !== document.documentElement) return false;
+  lostComposer = false;
   composerView()?.focus();
   return true;
 }
-window.addEventListener("blur",()=>{if(inBox(document.activeElement)&&Date.now()-userMovedAt>=300)handoffKeys=true;});
-window.addEventListener("focus", () => { setTimeout(takeFocusBack, 0); });
-// A card/browser can restore focus without waiting for the shell's outstanding edit. Route native
-// keys through that same sender until its idle acknowledgement, preserving FIFO across origins.
-document.addEventListener("keydown",event=>{
- if(!handoffKeys||!event.isTrusted||event.isComposing||event.metaKey||event.ctrlKey||(event.key.length!==1&&event.key!=="Enter"&&event.key!=="Backspace"))return;
- event.preventDefault();event.stopImmediatePropagation();
- toShell({botling:"handoffKey",key:event.key,code:event.code,shiftKey:event.shiftKey,altKey:event.altKey});
-},true);
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Tab" || event.key === "Escape" || event.metaKey || event.ctrlKey) return;
-  // A letter's text goes to whatever has focus once this returns: the box, now. A key the box acts on
-  // itself (Return sends, Backspace…) went to the page already, so the box is handed it again.
-  if (!takeFocusBack() || event.key.length === 1 || event.isComposing) return;
+// Synchronous restoration lets the original trusted input reach the editor. There is no delayed
+// key/ack queue, so arrows, paste, undo and composition cannot overtake forwarded text.
+window.addEventListener("focus", takeFocusBack);
+document.addEventListener("keydown", event => {
+  if (event.key === "Tab" || event.key === "Escape" || isComposingKey(event) || isComposingEnter(event) || composerView()?.composing) return;
+  if (!takeFocusBack()) return;
   const view = composerView();
   if (!view) return;
-  event.preventDefault();
-  event.stopImmediatePropagation();
-  view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
-    key: event.key, code: event.code, shiftKey: event.shiftKey, altKey: event.altKey, bubbles: true, cancelable: true,
-  }));
+  // The keydown started on this document's body, before recovery. Give CodeMirror its keymap
+  // opportunity now; otherwise retain the original trusted default (text, paste, native editing).
+  const key = new KeyboardEvent("keydown", {
+    key: event.key, code: event.code, shiftKey: event.shiftKey, altKey: event.altKey,
+    metaKey: event.metaKey, ctrlKey: event.ctrlKey, bubbles: true, cancelable: true,
+  });
+  view.contentDOM.dispatchEvent(key);
+  if (key.defaultPrevented) { event.preventDefault(); event.stopImmediatePropagation(); }
 }, true);
-
-/** A key that reached the app page while focus passed between it and this page: it goes to the input box. */
-function typeStrayKey(key: { key: string; code: string; shiftKey: boolean; altKey: boolean }) {
-  const view = composerView();
-  if (!view) return;
-  // The shell retains focus until every forwarded edit is acknowledged. Focusing here lets
-  // a later native key overtake an earlier postMessage still queued for this frame.
-  if (key.key.length === 1) {
-    view.dispatch(view.state.replaceSelection(key.key), { userEvent: "input.type" });
-    return;
-  }
-  view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", { key: key.key, code: key.code, shiftKey: key.shiftKey, altKey: key.altKey, bubbles: true, cancelable: true }));
-}
+// If launch focus moved to the shell before Return's keydown, Chromium delivers its original
+// keypress here after synchronous recovery. Let the same keymap handle it before its native
+// newline default. The window IME guard sees this trusted keypress first, too.
+let composerEnterDown = false;
+document.addEventListener("keydown", event => { composerEnterDown = event.key === "Enter" && inBox(event.target); }, true);
+document.addEventListener("keyup", event => { if (event.key === "Enter") composerEnterDown = false; }, true);
+document.addEventListener("keypress", event => {
+  if (event.key !== "Enter" || composerEnterDown || Date.now() >= launchUntil || !composerIntended || !inBox(event.target)
+      || isComposingKey(event) || isComposingEnter(event) || composerView()?.composing) return;
+  const key = new KeyboardEvent("keydown", { key: event.key, code: event.code, shiftKey: event.shiftKey, altKey: event.altKey,
+    metaKey: event.metaKey, ctrlKey: event.ctrlKey, bubbles: true, cancelable: true });
+  composerView()?.contentDOM.dispatchEvent(key);
+  if (key.defaultPrevented) { event.preventDefault(); event.stopImmediatePropagation(); }
+}, true);
+intendComposer(true);
 
 // Escape stops a reply being written, as in a terminal.
 document.addEventListener("keydown", (event) => {

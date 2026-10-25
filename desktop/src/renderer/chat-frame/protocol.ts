@@ -23,10 +23,8 @@ export type FrameMessage =
   /** Global message column setting, committed after a drag or reset. */
   | { botling: "messageWidth"; value: number | null }
   | { botling: "messageWidthDrag"; active: boolean }
-  /** The forwarded edit is applied; focus can return once all edits have arrived. */
-  | { botling: "keyHandled"; id: number }
-  /** Native input after an involuntary refocus joins the shell queue until its idle barrier. */
-  | { botling:"handoffKey"; key:string; code:string; shiftKey:boolean; altKey:boolean }
+  /** Launch focus recovery belongs only to the composer until the user chooses another control. */
+  | { botling: "composerIntent"; value: boolean }
   /** A component frame's page, to be served from botling-card://page/ (component-frames.ts). */
   | { botling: "page"; id: number; html: string };
 
@@ -46,8 +44,6 @@ export type ShellMessage =
   | { botling: "hostReply"; callID: number; ok: boolean; value: unknown }
   /** A component's `ccb.runDetail` answer (`ccb.detailReply`). */
   | { botling: "detailReply"; requestID: number; ok: boolean; value: string }
-  /** A key that reached the app page while focus was passing between it and the chat frame, for the input box. */
-  | { botling: "key"; id: number; key: string; code: string; shiftKey: boolean; altKey: boolean }
   /** The cursor back in the input box (after the left column's search; `ccb.focus`). */
   | { botling: "focus" }
   /** Pointer events over the shell after a width drag leaves the chat iframe. */

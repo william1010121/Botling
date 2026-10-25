@@ -568,87 +568,49 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
   }, [client]);
   useEffect(() => { if (ready.current) pushPlugins(); }, [pushPlugins, view.plugins]);
 
-  // As the window finishes opening, Chromium may move focus from the chat frame to this page and
-  // leave it here: someone already typing in the chat's input box would type into nothing. When this
-  // page takes focus from the chat frame without anything you did here (no click, no key), focus goes
-  // back to the frame, whose page puts it back in the input box (chat-frame/entry.ts).
+  // Restore launch focus before native input, rather than forwarding a partial keyboard across
+  // origins. Recovery expires after launch and stops immediately when the user chooses a control.
   useEffect(() => {
-    let chatHadFocus = false;
-    let lastInput = 0;
-    let lastPointer = 0;
-    let chatLostAt = 0;
-    const pendingKeys = new Set<number>();
-    let nextKey = 0;
-    let ackTimer: ReturnType<typeof setTimeout> | undefined;
-    let idleTimer: ReturnType<typeof setTimeout> | undefined;
-    const resetKeys = () => { pendingKeys.clear(); clearTimeout(ackTimer); clearTimeout(idleTimer); };
-    const recoverFocus = () => {
-      if (lastPointer <= chatLostAt && (document.activeElement === frame.current || document.activeElement === document.body || document.activeElement === document.documentElement)) {
-        frame.current?.contentWindow?.focus();
-        frame.current?.contentWindow?.postMessage({botling:"focus"}, CHAT_ORIGIN);
-      }
-    };
-    const loaded = () => { resetKeys(); recoverFocus(); };
+    let launchUntil = Date.now() + 3_000;
+    let composerIntended = true;
+    let shellTargetChosen = false;
     const element = frame.current;
-    element?.addEventListener("load", loaded);
-    const settleKeys = () => {
-      clearTimeout(idleTimer);
-      idleTimer=setTimeout(()=>{if(pendingKeys.size===0)recoverFocus();},500);
-    };
-    const forwardKey = (key:{key:string;code:string;shiftKey:boolean;altKey:boolean}) => {
-      const target=frame.current?.contentWindow;if(!target)return;
-      lastInput=Date.now();chatLostAt=lastInput;
-      const message:ShellMessage={botling:"key",id:++nextKey,...key};
-      pendingKeys.add(message.id);clearTimeout(idleTimer);clearTimeout(ackTimer);
-      ackTimer=setTimeout(()=>{resetKeys();recoverFocus();},2000);
-      target.postMessage(message,CHAT_ORIGIN);
-    };
-    const keyHandled = (event: MessageEvent) => {
-      const target = frame.current;
-      if (!target?.contentWindow || event.source !== target.contentWindow || event.origin !== CHAT_ORIGIN) return;
-      if(event.data?.botling==='handoffKey'){
-        const key=event.data;
-        if(typeof key.key==='string'&&typeof key.code==='string'&&(key.key.length===1||key.key==='Enter'||key.key==='Backspace'))forwardKey({key:key.key,code:key.code,shiftKey:key.shiftKey===true,altKey:key.altKey===true});
-        return;
-      }
-      if(event.data?.botling!=="keyHandled"||!pendingKeys.delete(event.data.id))return;
-      if(pendingKeys.size===0){clearTimeout(ackTimer);settleKeys();}
-    };
-    const input = () => { lastInput = Date.now(); };
-    const pointer = () => { lastInput = Date.now(); lastPointer = Date.now(); };
-    // All edits in a focus handoff share this FIFO, even if Chromium focuses the composer early.
-    const strayKey = (event: KeyboardEvent) => {
-      if (!frame.current?.contentWindow || (event.target !== document.body && event.target !== document.documentElement)) return;
-      if (!chatLostAt || Date.now() - chatLostAt > 3_000 || lastPointer > chatLostAt) return;
-      if (event.metaKey || event.ctrlKey || event.isComposing || (event.key.length !== 1 && event.key !== "Enter" && event.key !== "Backspace")) return;
-      event.preventDefault();event.stopImmediatePropagation();
-      forwardKey({key:event.key,code:event.code,shiftKey:event.shiftKey,altKey:event.altKey});
-    };
-    const onBlur = () => { chatHadFocus = document.activeElement === frame.current; };
-    const onFocusIn = () => { if (chatHadFocus || document.activeElement === document.body) chatLostAt = Date.now(); };
-    const onFocus = () => {
-      const target = frame.current;
-      if (!target || !chatHadFocus || pendingKeys.size > 0 || Date.now() - lastInput < 500) return;
+    const recoverFocus = () => {
+      if (!composerIntended || shellTargetChosen || Date.now() >= launchUntil || !document.hasFocus()) return;
       const active = document.activeElement;
-      if (active && active !== document.body && active !== target) return;
-      setTimeout(() => { if (pendingKeys.size === 0 && Date.now() - lastInput >= 500 && document.hasFocus()) target.contentWindow?.focus(); }, 0);
+      if (active !== document.body && active !== document.documentElement && active !== element) return;
+      element?.contentWindow?.focus();
     };
+    const loaded = () => { launchUntil = Date.now() + 3_000; recoverFocus(); };
+    const intent = (event: MessageEvent) => {
+      if (event.source !== element?.contentWindow || event.origin !== CHAT_ORIGIN || event.data?.botling !== "composerIntent") return;
+      composerIntended = event.data.value === true;
+    };
+    const pointer = () => { shellTargetChosen = true; };
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Tab" || event.key === "Escape") { shellTargetChosen = true; return; }
+      // Chromium can drop iframe focus without a parent focus event during launch. Restoring it
+      // here redirects the original trusted default; no key is serialized or replayed.
+      if (!event.isComposing && event.keyCode !== 229) recoverFocus();
+    };
+    element?.addEventListener("load", loaded);
+    window.addEventListener("message", intent);
     window.addEventListener("pointerdown", pointer, true);
-    window.addEventListener("message", keyHandled);
-    window.addEventListener("keydown", strayKey, true);
-    window.addEventListener("keydown", input, true);
-    window.addEventListener("blur", onBlur);
-    window.addEventListener("focus", onFocus);
-    window.addEventListener("focus", onFocusIn);
+    window.addEventListener("keydown", key, true);
+    // Chromium ignores a nested cross-frame focus() while its native focus transition is still
+    // running. Restore on the next task, checking current intent again so Tab/click always win.
+    let focusTimer: ReturnType<typeof setTimeout> | undefined;
+    const focusChanged = () => { clearTimeout(focusTimer); focusTimer = setTimeout(recoverFocus, 0); };
+    window.addEventListener("focus", focusChanged);
+    window.addEventListener("focusin", focusChanged);
     return () => {
+      clearTimeout(focusTimer);
+      element?.removeEventListener("load", loaded);
+      window.removeEventListener("message", intent);
       window.removeEventListener("pointerdown", pointer, true);
-      resetKeys(); element?.removeEventListener("load", loaded);
-      window.removeEventListener("message", keyHandled);
-      window.removeEventListener("keydown", strayKey, true);
-      window.removeEventListener("keydown", input, true);
-      window.removeEventListener("blur", onBlur);
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener("focus", onFocusIn);
+      window.removeEventListener("keydown", key, true);
+      window.removeEventListener("focus", focusChanged);
+      window.removeEventListener("focusin", focusChanged);
     };
   }, []);
 
