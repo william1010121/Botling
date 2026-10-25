@@ -93,20 +93,17 @@ test('B6 ordinary user and Web-viewer web links open without result authorizatio
   }finally{await run.app.close();}
 });
 
-test('B5 a chat reload and an ack timeout recover focus without reordering or replaying lost keys',async()=>{
+test('B5 reload ignores stale key/ack messages without changing the draft or stealing chosen shell focus',async()=>{
  const run=await launch();try{
-  await run.app.context().addInitScript(()=>{if(location.origin==='app://botling'){(window as any).__dropAcks=true;window.addEventListener('message',event=>{if((window as any).__dropAcks&&event.data?.botling==='keyHandled')event.stopImmediatePropagation();});}});
   await run.page.reload();await run.chat.locator('html[data-chat]').waitFor({state:'attached'});
-  const forward=async()=>{
-   await run.chat.getByRole('textbox',{name:'Message'}).click();
-   await run.page.evaluate(()=>{document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Shift',bubbles:true}));document.body.tabIndex=-1;window.focus();document.body.focus();window.dispatchEvent(new Event('focus'));});
-   await run.page.keyboard.type('k');
-  };
-  await forward();await expect.poll(()=>run.page.evaluate(()=>document.activeElement?.id),{timeout:3500}).toBe('chat-frame');
-  // Repeat the lost acknowledgement, but navigate the iframe before its watchdog fires.
-  await forward();await run.page.evaluate(()=>{const f=document.getElementById('chat-frame') as HTMLIFrameElement;f.src=f.src;(window as any).__dropAcks=false;});
-  await run.chat.locator('html[data-chat]').waitFor({state:'attached'});await forward();
-  await expect.poll(()=>run.page.evaluate(()=>document.activeElement?.id)).toBe('chat-frame');
+  const box=run.chat.getByRole('textbox',{name:'Message'});await box.fill('kept draft');
+  const search=run.page.getByRole('searchbox',{name:'Search bots'});await search.click();await search.fill('Main');
+  const frame=await chatFrame(run.page);
+  await frame.evaluate(()=>{for(const key of ['x','Enter'])parent.postMessage({botling:'handoffKey',key,code:key==='Enter'?'Enter':'KeyX',shiftKey:false,altKey:false},'app://botling');parent.postMessage({botling:'keyHandled',id:1},'app://botling');});
+  await run.page.evaluate(()=>{const frame=document.getElementById('chat-frame') as HTMLIFrameElement;for(const key of ['x','Enter'])frame.contentWindow!.postMessage({botling:'key',id:7,key,code:key==='Enter'?'Enter':'KeyX',shiftKey:false,altKey:false},'botling-chat://chat');});
+  // Exceeds the removed 2s acknowledgement + 500ms idle watchdog; chosen focus must survive.
+  await run.page.waitForTimeout(2600);
+  await expect(search).toBeFocused();await expect(search).toHaveValue('Main');await expect(box).toHaveText('kept draft');await expect(run.chat.locator('.row.user')).toHaveCount(0);
  }finally{await run.app.close();}
 });
 
