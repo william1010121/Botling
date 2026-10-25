@@ -45,6 +45,8 @@ const node = { bundle: true, platform: "node", format: "cjs", target: "node22", 
 await Promise.all([
   build({ ...node, entryPoints: [join(here, "src/main/main.ts")], outfile: join(out, "main/main.cjs"), external: ["electron"], define: { __UPDATE_PUBLIC_KEY__: JSON.stringify(updatePublicKey) } }),
   build({ ...node, entryPoints: [join(here, "src/preload/preload.ts")], outfile: join(out, "preload/preload.cjs"), external: ["electron"] }),
+  // Dormant unprivileged native-editor boundary. No window uses it until coordinated integration.
+  build({ ...node, entryPoints: [join(here, "src/preload/editor-host.ts")], outfile: join(out, "preload/editor-host.cjs"), external: ["electron"] }),
   build({ ...node, entryPoints: [join(here, "src/core/main.ts")], outfile: join(out, "core/main.cjs") }),
   // The plugin host: Web/host/src/host.ts unchanged, bundled as Web/build.mjs bundles it for 1.x
   // (its own process, started by the core; see src/core/plugins/host-client.ts).

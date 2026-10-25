@@ -9,6 +9,7 @@ import { isRequested as isShotRequested, withProbe } from "../core/component-sho
 import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { scrubEnvironment } from "./packaged";
 import {configureHiddenApp,hidden} from "./hidden-mode";
+import {nativeEditorNavigation,hasNativeEditorHost} from "./editor-host";
 import { FEED, Updater } from "./updates";
 import { previewResponse } from "./preview-response";
 import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates, runningAppBundles } from "./update-install";
@@ -518,6 +519,8 @@ app.on("web-contents-created", (_, contents: WebContents) => {
   });
   contents.on("will-attach-webview", (event) => { event.preventDefault(); note("blocked a <webview>"); });
   contents.on("will-frame-navigate", (details) => {
+    const nativeRule=nativeEditorNavigation(contents,details);
+    if(nativeRule!==null){if(!nativeRule){details.preventDefault();note("blocked native editor navigation");}return;}
     const isApp = appContents.has(contents.id);
     if (details.isMainFrame) {
       if(recoveryContents.has(contents.id))return; // The recovery window refuses every navigation in will-navigate.
@@ -541,7 +544,7 @@ app.on("web-contents-created", (_, contents: WebContents) => {
     const parent = details.frame?.parent ?? null;
     let allowed = false;
     if (details.url === CHAT_URL || details.url.startsWith(`${CHAT_URL}?`)) {
-      allowed = parent === mainFrame && (!initiator || initiator === mainFrame);
+      allowed = (!hasNativeEditorHost(contents)||details.url===`${CHAT_URL}?spec=1`) && parent === mainFrame && (!initiator || initiator === mainFrame);
     } else if (details.url.startsWith(CARD_PREFIX) || details.url.startsWith(PAGE_PREFIX)) {
       allowed = (!initiator || initiator === mainFrame || chatFrame(initiator)) && (parent === mainFrame || chatFrame(parent));
     } else if (details.url.startsWith(PREVIEW_PREFIX)) {
