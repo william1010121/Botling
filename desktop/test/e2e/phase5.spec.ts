@@ -87,3 +87,20 @@ test("a group's question waits on you in the group's right panel", async () => {
     await app.close();
   }
 });
+
+test("completion verification: the judge's verdict under a reply, and a suggested component's chip", async () => {
+  const dataDir = tempDir("e2e-5a-judge");
+  mkdirSync(join(dataDir, "core"), { recursive: true });
+  writeFileSync(join(dataDir, "core", "settings.json"), JSON.stringify({ completionVerificationOn: true }));
+  const { app, page, chat } = await launch({ dataDir, env: { FAKE_CODEX_JUDGE: "COMPLETE:The tests were run and all 12 pass." } });
+  try {
+    await page.setViewportSize({ width: 1280, height: 820 });
+    await say(chat, `/say All 12 tests pass. <suggest-component name="test-status">the test results at a glance, from npm test</suggest-component>`);
+    const row = chat.locator(".row.bot[data-id]", { hasText: "All 12 tests pass." });
+    await expect(row.locator(".completion-verification")).toHaveAttribute("data-verdict", "COMPLETE", { timeout: 15_000 });
+    await expect(row.locator(".spec-chip.suggested")).toContainText("test-status");
+    await shot(page, "phase5a-verified-suggested");
+  } finally {
+    await app.close();
+  }
+});
