@@ -205,10 +205,9 @@ export class ComponentLibrary {
     if (this.working.delete(safeName(name))) this.stamp++;
   }
 
-  /** Maintainer finished its turn (`finishWorking`). */
+  /** Maintainer finished its turn (`finishWorking`; the caller has looked at the library first, as 1.x's rescan does). */
   finishWorking() {
     if (!this.working.size) return;
-    this.rescan();
     this.working.clear();
     this.stamp++;
   }

@@ -601,13 +601,13 @@ export class MaintainerDesk {
   settle(record: { role: string; choices?: unknown[]; chosen?: number; answer?: string }) {
     const maintainer = this.maintainer;
     if (!maintainer || (record.role !== "bot" && record.role !== "error")) return;
+    // A component it just committed may not have been seen yet.
+    if (this.deps.rescan) this.deps.rescan();
+    else this.deps.library.rescan();
     // Its turn ended: the components it was asked to change are no longer worked on (`finishWorking`).
     this.deps.library.finishWorking();
     if (record.choices?.length && record.chosen === undefined && record.answer === undefined) return;
     if (maintainer.subagentsAtWork) return;
-    // A component it just committed may not have been seen yet.
-    if (this.deps.rescan) this.deps.rescan();
-    else this.deps.library.rescan();
     for (const ask of [...this.asks]) {
       if (!ask.changing || this.deps.library.stampOf(ask.name) === ask.stamp) continue;
       this.asks = this.asks.filter((other) => other !== ask);
