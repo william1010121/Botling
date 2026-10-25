@@ -87,7 +87,10 @@ describe("attachments (Models.swift Attachment, Bot.keep)", () => {
     const { turnId } = await c.call({ type: "chat.send", botId: MAIN, text: "see" });
     await until(() => c.of("turn.finished").find((e) => (e.event as any).turnId === turnId));
     const folder = join(dir, "main", "attachments");
-    const kept = readdirSync(folder).sort();
+    // Copies can cross a timestamp boundary; compare logical names without reordering the
+    // actual attachment input, which is checked independently below.
+    const logicalName=(name:string)=>name.replace(/^\d{8}-\d{6}-/, "");
+    const kept = readdirSync(folder).sort((a,b)=>logicalName(a).localeCompare(logicalName(b)));
     expect(kept.map((name) => name.replace(/^\d{8}-\d{6}-/, ""))).toEqual(["notes.md", "shot.png"]);
     const input = logged(join(dir, "claude-input.log")).at(-1);
     expect(input.text.endsWith(`see\n\n(Attachments:\n- ${join(folder, kept[1]!)}\n- ${join(folder, kept[0]!)})`)).toBe(true);
