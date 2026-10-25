@@ -35,8 +35,8 @@ test('F0 hidden recovery stays invisible and preserves the frontmost app',async(
  let monitor:Promise<void>|undefined;
  try{
   const initial=await frontmost(),initialAt=Date.now();proof.sample(initial,'before',initialAt,initialAt);
-  monitor=(async()=>{while(!stop&&!failure){const at=Date.now();
-   try{proof.sample(await frontmost(),phase,at,Date.now());}catch(error){fail(error);break;}
+  monitor=(async()=>{while(!stop&&!failure){const at=Date.now(),samplePhase=phase;
+   try{proof.sample(await frontmost(),samplePhase,at,Date.now());}catch(error){fail(error);break;}
    if(app&&!closing){try{const snapshot=await app.evaluate(({BrowserWindow})=>({states:BrowserWindow.getAllWindows().map(w=>({id:w.id,visible:w.isVisible(),focused:w.isFocused()})),journal:(globalThis as any).__f0NativeJournal??[]}));journal=snapshot.journal;proof.window(Date.now(),snapshot.states,journal);}catch(error){if(!closing)fail(error);}}
    if(Date.now()-startedAt>15000){fail(new Error('Bounded F0 observation deadline exceeded'));break;}
    await pause(100);
@@ -60,7 +60,7 @@ test('F0 hidden recovery stays invisible and preserves the frontmost app',async(
   expect(runtime.userData.startsWith(join(desktop,'.cache/tmp')+'/')).toBe(true);
   await guarded(pause(900));check();
   expect(await run.app.evaluate(()=>(globalThis as any).__botlingCorePid())).toBeUndefined();
-  phase='shutdown';await closeOwn();check();phase='after';await guarded(pause(350));check();
+  phase='shutdown';await closeOwn();check();phase='after';const afterDeadline=Date.now()+1800;while(proof.samples.filter(sample=>sample.phase==='after').length<2&&Date.now()<afterDeadline){await guarded(pause(50));check();}
   stop=true;await monitor;check();proof.complete();expect(await matchingPids()).toEqual([]);
  }catch(error){fail(error);throw error;}
  finally{
