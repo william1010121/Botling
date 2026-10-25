@@ -52,7 +52,32 @@ test("lists what is wrong and exits 1; a bad folder is a usage error (2); Mainta
     await page.waitForTimeout(300);
     const command = await app.evaluate(() => (globalThis as unknown as { __botlingShotCommand?: string }).__botlingShotCommand ?? null);
     expect(command).toContain("--component-shot");
+    // And the plugin check (Phase 5b): the app's own `--check-plugin`, which a packaged build can run (no Electron as Node).
+    const check = await app.evaluate(() => (globalThis as unknown as { __botlingCheckCommand?: string }).__botlingCheckCommand ?? null);
+    expect(check).toMatch(/^env -u ELECTRON_RUN_AS_NODE '.+' '.+' --check-plugin$/);
   } finally {
     await app.close();
   }
+});
+
+test("--check-plugin checks a plugin folder and exits without a window or a data folder (1.x's flag)", () => {
+  const base = tempDir("e2e-check");
+  const plugin = join(base, "ccb-good");
+  mkdirSync(join(plugin, "dist"), { recursive: true });
+  writeFileSync(join(plugin, "dist", "web.js"), "export function activate() {}\n");
+  writeFileSync(join(plugin, "package.json"), JSON.stringify({ name: "ccb-good", version: "1.0.0", engines: { ccb: "^2.0.0" }, ccb: { permissions: [], web: "dist/web.js" } }));
+  const env: NodeJS.ProcessEnv = { ...process.env, BOTLING_DATA_DIR: join(base, "data") };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const good = spawnSync(electron, [desktop, "--check-plugin", plugin], { encoding: "utf8", env, timeout: 60_000 });
+  expect(good.status, good.stderr).toBe(0);
+  expect(good.stdout).toBe(`✓ ${plugin} passes the checks.\n`);
+  writeFileSync(join(plugin, "package.json"), JSON.stringify({ name: "Bad Name", version: "x", engines: { ccb: "^2.0.0" }, ccb: { web: "dist/missing.js" } }));
+  const bad = spawnSync(electron, [desktop, "--check-plugin", plugin], { encoding: "utf8", env, timeout: 60_000 });
+  expect(bad.status).toBe(1);
+  expect(bad.stdout).toContain('✗ name "Bad Name" may only use lowercase letters, digits, - . _.');
+  expect(bad.stdout).toContain('✗ web points to "dist/missing.js", which does not exist.');
+  const usage = spawnSync(electron, [desktop, "--check-plugin"], { encoding: "utf8", env, timeout: 60_000 });
+  expect(usage.status).toBe(2);
+  expect(usage.stderr).toContain("usage: check-plugin <plugin folder>");
+  expect(existsSync(join(base, "data"))).toBe(false);
 });

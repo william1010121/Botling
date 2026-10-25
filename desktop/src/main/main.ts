@@ -3,10 +3,12 @@
 import { app, BrowserWindow, dialog, ipcMain, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
 import { join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isRequested as isShotRequested, withProbe } from "../core/component-shot";
 import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
+import { scrubEnvironment } from "./packaged";
+import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
 import { WebPages } from "./web";
 import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP } from "./card-page";
@@ -16,7 +18,19 @@ import {
   type Command, type EventEnvelope, type ResponseEnvelope,
 } from "../contract";
 
-const root = resolve(__dirname, "..", ".."); // desktop/
+const root = resolve(__dirname, "..", ".."); // desktop/ (packaged: Resources/app.asar)
+// A packaged build ignores the variables tests steer the app with (src/main/packaged.ts), before anything reads them.
+const scrubbed = scrubEnvironment(process.env, app.isPackaged);
+if (scrubbed.length) console.warn(`[packaged] ignored ${scrubbed.join(", ")}`);
+// `--check-plugin <folder>` (1.x's flag): the plugin check Maintainer runs, then exit; no window, no data folder.
+const checkAt = process.argv.indexOf("--check-plugin");
+if (checkAt >= 0) {
+  const report = checkReport(process.argv[checkAt + 1]);
+  // Written synchronously, then exit at once: nothing below (data folder, single-instance lock) runs.
+  if (report.stdout) writeSync(1, report.stdout);
+  if (report.stderr) writeSync(2, report.stderr);
+  process.exit(report.code);
+}
 const rendererDir = join(root, "out", "renderer");
 /** `--component-shot` (Phase 5a): draw one component and exit; no core, no data folder of the app's. */
 const shotMode = isShotRequested(process.argv);
@@ -120,9 +134,15 @@ function coreEnvironment(): Record<string, string> {
   env.BOTLING_DATA_DIR = join(dataDir, "core");
   // Maintainer's component-shot command: this build in shot mode (1.x: "'<botling>' --component-shot").
   const quoted = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
-  env.BOTLING_SHOT_COMMAND ??= `env -u ELECTRON_RUN_AS_NODE ${quoted(process.execPath)}${app.isPackaged ? "" : ` ${quoted(root)}`} --component-shot`;
-  env.BOTLING_FAKE_CLI ??= join(root, "test", "fixtures", "fake-claude.mjs");
-  env.BOTLING_FAKE_CODEX ??= join(root, "test", "fixtures", "fake-codex.mjs");
+  const self = `env -u ELECTRON_RUN_AS_NODE ${quoted(process.execPath)}${app.isPackaged ? "" : ` ${quoted(root)}`}`;
+  env.BOTLING_SHOT_COMMAND ??= `${self} --component-shot`;
+  // And its plugin check (1.x: "'<botling>' --check-plugin"); a packaged build cannot run Electron as Node.
+  env.BOTLING_CHECK_COMMAND ??= `${self} --check-plugin`;
+  // The fake CLIs are development's (a packaged build ships neither and always runs the real ones).
+  if (!app.isPackaged) {
+    env.BOTLING_FAKE_CLI ??= join(root, "test", "fixtures", "fake-claude.mjs");
+    env.BOTLING_FAKE_CODEX ??= join(root, "test", "fixtures", "fake-codex.mjs");
+  }
   // A packaged app imports the user's Botling 1.x folder on its first start (read-only). A
   // development run imports only what BOTLING_IMPORT_FROM names, so tests never see real data.
   if (env.BOTLING_IMPORT_FROM === undefined && app.isPackaged) env.BOTLING_IMPORT_FROM = join(app.getPath("home"), ".claudecodebot");
@@ -580,5 +600,6 @@ app.on("before-quit", (event) => {
 // For tests: which pid the core has.
 (globalThis as unknown as { __botlingCorePid: () => number | undefined }).__botlingCorePid = () => core.pid;
 (globalThis as unknown as { __botlingShotCommand: string | undefined }).__botlingShotCommand = shotMode ? undefined : coreEnvironment().BOTLING_SHOT_COMMAND;
+(globalThis as unknown as { __botlingCheckCommand: string | undefined }).__botlingCheckCommand = shotMode ? undefined : coreEnvironment().BOTLING_CHECK_COMMAND;
 (globalThis as unknown as { __botlingHostPids: () => number[] }).__botlingHostPids = () => core.hostPids;
 void PROTOCOL_VERSION;
