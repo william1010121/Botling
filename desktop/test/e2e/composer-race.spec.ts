@@ -33,3 +33,18 @@ for (const [name, env] of [
     }
   });
 }
+
+// Focus taken from the box by nothing you did (as when the window finishes opening): Return still sends.
+test("Return sends even right after focus left the box by itself", async () => {
+  const { app, page, chat } = await launch();
+  try {
+    const box = chat.getByRole("textbox", { name: "Message" });
+    await box.click();
+    await box.fill("still sent");
+    await box.evaluate((element) => (element as HTMLElement).blur());
+    await page.keyboard.press("Enter");
+    await expect(chat.locator(".row.user").last()).toContainText("still sent");
+  } finally {
+    await app.close();
+  }
+});

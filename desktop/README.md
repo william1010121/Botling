@@ -16,10 +16,10 @@ safeStorage, the existing Node plugin host as its own untrusted process with hoo
 routines, plugin panels in sandboxed frames, the import of 1.x's library), Maintainer (component and
 plugin requests, `<install>` asking first, its instructions and the component editor checked against
 the Swift strings), pausing handed-over work for your message as 1.x, and a deterministic hand-off e2e.
-Phase 4a mostly done: the chat page on its own origin with plugins' web parts in it, attachments,
-Settings in React, and the main bot's world (Add project, `<new-project>`, the project list it wakes
-with, inbox delivery, "Waiting on you" and the right panel); the built-in browser / web chats are not
-started.**
+Phase 4a done: the chat page on its own origin with plugins' web parts in it, attachments,
+Settings in React, the main bot's world (Add project, `<new-project>`, the project list it wakes
+with, inbox delivery, "Waiting on you" and the right panel), and the web AIs (Gemini, ChatGPT,
+Claude in the app's own browser, their conversations saved for the main bot, its `webBriefing`).**
 Not yet a replacement for the Swift app (see "Gaps vs the Swift app").
 It lives beside it: nothing under `Sources/` or `Web/` changed, and the Swift app does not use
 anything here. Web/src is *bundled from source* into the desktop's chat frame (its packages come
@@ -612,9 +612,40 @@ the window opened never left — Playwright's `fill` landed in the input box and
 Return (seen in Phase 4a's earlier commit too, so not new). The chat frame now marks the chat it shows
 (`<html data-chat>`), `launch()` waits for it, and `say()` fills again until the box holds the words.
 Why the words go (the page taking its first states while CodeMirror reads the typed text) is not
-pinned down; whether a person typing in the first second can lose words is unverified.
+pinned down; whether a person typing in the first second can lose words is unverified. *(Later: it
+could; found and fixed in the app in item 5 below, and the test-side refill removed.)*
+
+### Phase 4a item 5: web AIs and the first second of typing
+
+| Piece | What it does | Evidence |
+| --- | --- | --- |
+| Web AIs (`core/web.ts`, `main/web.ts`, `renderer/Web.tsx`) | 1.x's WebSites.swift / WebSiteViews.swift: Gemini, ChatGPT and Claude under "Web" in the left column, each conversation a row (a live dot while it waits, ✓ settles it); the site in the chat column under a strip ("Saved for Main bot · N messages", "Waiting for …'s answer…", "Couldn't read this page"); the right panel's This question, **Ask Main bot about this**, Questions, New question. Each site is a `WebContentsView` in its own persistent session `persist:web-<site>`: sandboxed, context isolation, no Node, **no preload, no IPC**; permissions denied except sanitized clipboard writes, downloads blocked, a page to another site (link or pop-up) opens in the browser. Main watches the page's DOM from an isolated world (world 1001, invisible to the page) and, once it is quiet 1.5 s, runs the plugin `ccb-web-extractors`' `<site>.js` there (1.x's scripts shipped as the fallback, installed as 1.x does); the core keeps `web/<site>/conversations.json` and one Markdown file per conversation in 1.x's formats: a question is a row from the moment it is sent, a page left with its answer still coming stays open behind until the answer is saved, waiting rows are read again after a restart | `unit/web.test.ts` (21 cases, most ported from 1.x's WebSiteTests / WebSiteListTests; the core over the contract), `e2e/web.spec.ts` (a local stand-in site: its own session, no bridge/Node/reader in reach, cookies only in its partition, row at once, saved file, links outside noted, Ask Main bot, restart, settle; Settings is never covered by the page) |
+| The main bot's `webBriefing` | Its wake note is 1.x's: the project list, then where the saved web conversations are and how to search them (with "Saved now: …") | `unit/web.test.ts`, `unit/head.test.ts` |
+| 1.x import | `web/<site>/conversations.json` and the `.md` files come over (read-only); sign-ins do not | `unit/web.test.ts`, `unit/importer.test.ts` |
+| Words typed in the first second (`chat-frame/entry.ts`, `App.tsx`) | Two real causes, both reproduced by `e2e/composer-race.spec.ts` (typed once, no refill): words typed before the page's first state were replaced by that chat's empty draft (now put back), and as the window finished opening a card's frame loading moved focus out of the chat page and back, leaving the input box without it about one start in fifteen (the chat page and the app page now give focus back when nothing you did moved it) | `e2e/composer-race.spec.ts` (4 cases, one holding the first state 1.5 s with `BOTLING_TEST_FIRST_SNAPSHOT_MS`); 90 back-to-back starts green while fixing; `say()`'s refill workaround removed |
+
+Tests after item 5: unit 283, e2e 37, typecheck, all green (the full e2e suite several times in a row).
 
 ### Decisions (Phase 4a)
+
+- **Web AIs keep the contract at v8**: only new commands (`web.*`), a new event (`web.updated`) and an
+  optional snapshot field. `web.page`, `web.read`, `web.front`, `web.closed`, `web.handled`,
+  `web.reader` and `web.state` are main's only (not renderer commands); `web.place` is main's own.
+- **The core owns the web state, main owns the pages**: 1.x's `WebShelf` is in the core (list, files,
+  statuses, which page follows which row); main follows `web.updated` to load requested pages and hands
+  back what each page shows. The app page only reserves a box; main lays the site's view over it and
+  takes it away when a bot is shown or Settings / a plugin panel would be covered.
+- **No preload in web pages**: the page is watched by polling an isolated world (every 0.4 s) instead of
+  a preload posting to main, so a site has no channel to Botling at all.
+- **Only the page reader (`extract(document)`) is ported**; 1.x's traffic reading (`net-tap.js`,
+  `extractNetwork`), captures and "Send to Maintainer", and web-laas (LaTeX snippets in the site's box)
+  are not.
+- **Clipboard writes allowed** for web AI sessions (a site's copy button), everything else denied.
+- **A user agent without Electron's and the app's tokens** for web AI sessions (sign-in pages refuse it).
+- **Tests use a local stand-in site** named by `BOTLING_TEST_WEB_SITES` (main drops it in a packaged
+  app); links outside are only noted when `BOTLING_NO_EXTERNAL=1` (set by every e2e launch).
+- **Words typed before the first state are kept** in the desktop's chat frame, not in Web/src (which
+  stays unchanged); focus is given back only within 3 s of losing it with no click or Tab in between.
 
 - **Plugins' web parts run in the chat page again** (as 1.x), now that the page has an origin of its
   own; the Phase 3b decision (panels only) is superseded. The chat origin serves a plugin's files only
@@ -625,8 +656,8 @@ pinned down; whether a person typing in the first second can lose words is unver
   command); "Add project" goes through main's picker, `<new-project>` through a card you answer.
 - **An inbox is emptied only after its bot took the text** (1.x empties it first): a bot that cannot
   take it now (read-only, locked) keeps it for the next reply.
-- **2.0 has no teams or web AIs**, so the project list leaves out their lines and the
-  `<open-question>` note; the briefing is otherwise 1.x's string.
+- **2.0 has no teams**, so the project list leaves out their lines and the `<open-question>` note; the
+  briefing is otherwise 1.x's string (the web AIs' part came with item 5).
 - **The right panel is always shown** beside the chat (hidden below 860 px); 1.x's collapsed strip
   and its Results / Settled sections are not built.
 
@@ -643,7 +674,7 @@ Not in 2.0 yet, roughly in order of how much they matter:
   (a notice says it cannot).
 - **Subagents**: rows in the left column and the right panel's list, SendMessage resumes, background
   commands/Monitors (`backgroundTasks` chips), the interrupted-work note on wake, token speed.
-- **Prompts**: the main bot's wake note has no teams or web AIs (2.0 has neither); the handoff/resume
+- **Prompts**: the main bot's wake note has no teams (2.0 has none); the handoff/resume
   prompts are ported but unused (no model switch yet). Codex-only prompts are not ported.
 - **Requests**: teams, new bots (projects: done in Phase 4a), `<open-question>`, `<need-folder>`, component specs and suggestions, open
   questions, @ call-ins (a notice says so). (Components, plugins and installs: done in Phase 3b.)
@@ -660,18 +691,20 @@ Not in 2.0 yet, roughly in order of how much they matter:
   `ccb.open` of pages (pictures open in the page's lightbox),
   the plugin library's revert/remove and version history in the app, installs from npm or archives,
   `claude plugin validate` before a Claude part is used, plugins' MCP tools on the allowed list,
-  browser tools (no browser yet), the component editor's model setting (sonnet unless settings.json
+  browser tools for bots, the component editor's model setting (sonnet unless settings.json
   says), Maintainer reading other folders, component shots, the Codex Maintainer's editor role, and a
   packaged build's Node for the plugin host (development uses Electron run as Node).
-- **Composer**: drafts across restarts, @ mentions; words typed in the first second after the window
-  opens may be lost (an e2e race, see Phase 4a). (Attachments, steering, replies to a message and
-  reactions are in.)
+- **Composer**: drafts across restarts, @ mentions. (Attachments, steering, replies to a message,
+  reactions and words typed in the first second are in.)
 - **Settings**: auto mode, spending and rate limits, Doctor; the React chrome's own words are English
   (the chat page follows the language setting).
 - **Packaging and updates** (electron-builder, fuses, signing, notarization, an updater).
 - **Windows** (nothing has run there; see spike 4).
-- **Browser / web AIs** (Phase 4a item 5, not started), community share, release planner, screenshots
-  of components.
+- **Web AIs, still missing**: reading the page's traffic and the "Page reader may be out of date"
+  check, captures and "Send to Maintainer", web-laas, a bot's `file://` link to a saved conversation
+  opening it where it was, the "Couldn't read" → Maintainer hand-off, the folded right strip, "Show in
+  Finder", 1.x's sign-ins (each site is signed into again), downloads; the React words are English.
+  Community share, release planner, screenshots of components.
 
 ## Decisions made in Phase 0 (and why)
 
@@ -709,8 +742,7 @@ Not in 2.0 yet, roughly in order of how much they matter:
 
 ## What's next (proposed, after Phase 4a)
 
-1. **Built-in browser / web chats** (1.x's web AIs, Phase 4a's last item) in account partitions
-   (spike 3's sessions), and the main bot's `webBriefing`.
+1. ~~Built-in browser / web chats and `webBriefing`~~ — done (Phase 4a item 5).
 2. **Teams and bots of their own** ("New bot", `<team>`, removing), the right panel's Results and
    Settled, subagent rows in the left column.
 3. **Maintainer, rest** and **packaging / Windows** as below.

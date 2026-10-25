@@ -217,8 +217,16 @@ function takeFocusBack(): boolean {
 window.addEventListener("focus", () => { setTimeout(takeFocusBack, 0); });
 document.addEventListener("keydown", (event) => {
   if (event.key === "Tab" || event.key === "Escape" || event.metaKey || event.ctrlKey) return;
-  // The key's text goes to whatever has focus once this returns: the box, now.
-  takeFocusBack();
+  // A letter's text goes to whatever has focus once this returns: the box, now. A key the box acts on
+  // itself (Return sends, Backspace…) went to the page already, so the box is handed it again.
+  if (!takeFocusBack() || event.key.length === 1 || event.isComposing) return;
+  const view = composerView();
+  if (!view) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  view.contentDOM.dispatchEvent(new KeyboardEvent("keydown", {
+    key: event.key, code: event.code, shiftKey: event.shiftKey, altKey: event.altKey, bubbles: true, cancelable: true,
+  }));
 }, true);
 
 // Escape stops a reply being written, as in a terminal.
