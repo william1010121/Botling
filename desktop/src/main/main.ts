@@ -11,7 +11,7 @@ import { scrubEnvironment } from "./packaged";
 import { FEED, Updater } from "./updates";
 import { previewResponse } from "./preview-response";
 import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates } from "./update-install";
-import {blockingRecovery,commitUpdateReceipt,dismissRecovery,recoveryHTML,visibleRecovery,writeRecord} from "./update-state";
+import {blockingRecovery,commitUpdateReceipt,completeRecovery,dismissRecovery,issueFor,recoveryHTML,visibleRecovery,writeRecord} from "./update-state";
 import {directoryDefaults} from "./main-environment";
 declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
@@ -43,8 +43,9 @@ const rendererDir = join(root, "out", "renderer");
 const shotMode = isShotRequested(process.argv);
 const dataDir = shotMode ? mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "botling-shot-"))
   : resolve(process.argv.find(arg => arg.startsWith("--botling-update-data="))?.slice("--botling-update-data=".length) || process.env.BOTLING_DATA_DIR || (app.isPackaged ? join(app.getPath("appData"), "Botling 2") : join(root, ".data")));
-mkdirSync(dataDir, { recursive: true });
-const startupRecovery = shotMode ? null : blockingRecovery(dataDir);
+const installedApp = dirname(dirname(dirname(process.execPath)));
+const startupRecovery = shotMode ? null : blockingRecovery(dataDir,installedApp);
+if(!startupRecovery)mkdirSync(dataDir, { recursive: true });
 const profileDir = startupRecovery ? mkdtempSync(join(process.env.TMPDIR || tmpdir(), "botling-recovery-ui-")) : join(dataDir,"electron");
 // Everything Electron keeps (partitions, caches, logs) lives under the data dir, never the default.
 app.setPath("userData", profileDir);
@@ -103,6 +104,7 @@ if (!shotMode && !app.requestSingleInstanceLock({ dataDir })) {
 
 let mainWindow: BrowserWindow | null = null;
 const appContents = new Set<number>();
+const recoveryContents = new Set<number>();
 
 const core = new CoreClient({
   script: join(root, "out", "core", "main.cjs"),
@@ -133,7 +135,6 @@ let lastEpoch: string | null = null;
  * Tests (unpackaged only) point it at a JSON file with BOTLING_TEST_UPDATE_FEED.
  */
 const updatesFile = join(dataDir, "updates.json");
-const installedApp = dirname(dirname(dirname(process.execPath)));
 const installer = new VerifiedInstaller({
   current: app.getVersion(), appPath: installedApp, dataDir,
   publicKey: __UPDATE_PUBLIC_KEY__, platform: app.isPackaged ? process.platform : "development", arch: process.arch,
@@ -377,9 +378,8 @@ async function openResult(botId: string, url: string): Promise<{ opened: boolean
   if (!access.result) throw Object.assign(new Error("That link is not one of this bot's results."), { code: "not_found" });
   return openLink(url);
 }
-async function openOrdinaryLink(botId: string, url: string, source: "user" | "component"): Promise<{opened:boolean}> {
-  const access = await core.call({type:"link.authorize",botId,url});
-  if (access.result) return openLink(url);
+async function openOrdinaryLink(botId: string, url: string, source: "user" | "component", messageId?:string): Promise<{opened:boolean}> {
+  const access = await core.call({type:"link.authorize",botId,url,...(messageId?{messageId}:{})});
   if (!(source === "user" && /^(https?|mailto):/i.test(url)) && !access.linked) throw Object.assign(new Error("That link is not in this chat."),{code:"not_found"});
   return openLink(url);
 }
@@ -441,7 +441,7 @@ async function withScreenshot(cmd: Extract<Command, { type: "chat.feedback" }>, 
 async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown> {
   switch (cmd.type) {
     case "result.open": return openResult(cmd.botId, cmd.url);
-    case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source);
+    case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId);
     case "updates.dismiss": { await dismissRecovery(dataDir,cmd.id); return {dismissed:true}; }
     case "updates.check": return updater.check(cmd.manual);
     case "updates.stage": {
@@ -491,6 +491,7 @@ app.on("web-contents-created", (_, contents: WebContents) => {
   contents.on("will-frame-navigate", (details) => {
     const isApp = appContents.has(contents.id);
     if (details.isMainFrame) {
+      if(recoveryContents.has(contents.id))return; // The recovery window refuses every navigation in will-navigate.
       if (isApp && !details.url.startsWith(`${APP_ORIGIN}/`)) {
         details.preventDefault();
         note(`blocked top-frame navigation of the app to ${details.url}`);
@@ -672,13 +673,40 @@ app.whenReady().then(async () => {
       });
     return;
   }
-  const showRecovery = (issue: NonNullable<ReturnType<typeof blockingRecovery>>) => {
-    if(mainWindow&&!mainWindow.isDestroyed())mainWindow.destroy();
-    mainWindow=new BrowserWindow({width:900,height:620,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
-    void mainWindow.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(recoveryHTML(issue)));
+  const showRecovery = (issue: NonNullable<ReturnType<typeof blockingRecovery>>,error?:string) => {
+    const previousWindow=mainWindow;
+    const window=new BrowserWindow({width:900,height:700,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false}});
+    mainWindow=window;let acting=false;
+    // Keep a window alive while replacing the gated candidate UI (also with quit-on-close).
+    if(previousWindow&&!previousWindow.isDestroyed())previousWindow.destroy();
+    recoveryContents.add(window.webContents.id);const recoveryID=window.webContents.id;
+    window.on("closed",()=>{recoveryContents.delete(recoveryID);if(mainWindow===window)mainWindow=null;});
+    window.webContents.setWindowOpenHandler(()=>({action:'deny'}));
+    window.webContents.on('will-navigate',(event,url)=>{
+      event.preventDefault();if(acting)return;
+      let action:URL;try{action=new URL(url);}catch{return;}
+      if(action.protocol!=='botling-recovery:'||action.hostname!=='action'||action.searchParams.get('id')!==issue.id)return;
+      if(action.pathname==='/open'){
+        const path=issue.paths?.find(p=>existsSync(p.path))?.path;
+        if(path)void shell.openPath(path).catch(()=>{});return;
+      }
+      if(action.pathname!=='/continue')return;
+      acting=true;
+      const current=blockingRecovery(dataDir,installedApp);
+      // The helper may have completed a safe rollback while this read-only page was open.
+      const completion=!current&&existsSync(dataDir)?Promise.resolve():completeRecovery(dataDir,installedApp,issue.id);
+      void completion.then(()=>{
+        // Relaunch the available bundle without candidate identity; a manual restore must start a
+        // normal core rather than reviving the failed updater's gated candidate session.
+        app.relaunch({args:[...process.argv.slice(1).filter(arg=>!arg.startsWith('--botling-update-token=')&&!arg.startsWith('--botling-update-data=')),'--botling-update-data='+dataDir]});app.quit();
+      }).catch(error=>{showRecovery(blockingRecovery(dataDir,installedApp)||issue,String(error.message||error));});
+    });
+    void window.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(recoveryHTML(issue,error)));
   };
+  app.on("activate", () => { if (!mainWindow) {const blocked=blockingRecovery(dataDir,installedApp);if(blocked)showRecovery(blocked);else createWindow();} });
+  if(startupRecovery){showRecovery(startupRecovery);return;}
   await recoverUpdates(dataDir, installedApp, false);
-  const blocked=startupRecovery||blockingRecovery(dataDir);
+  const blocked=blockingRecovery(dataDir,installedApp);
   if(blocked){showRecovery(blocked);return;}
   const collect=()=>void recoverUpdates(dataDir,installedApp).catch(error=>note('Update cleanup: '+String(error)));
   const sweep=setInterval(collect,30_000);sweep.unref();
@@ -703,7 +731,7 @@ app.whenReady().then(async () => {
               collect();return;
             }
             if(decision==='blocked'){
-              await core.stop();const issue=blockingRecovery(dataDir);if(issue)showRecovery(issue);return;
+              await core.stop();const issue=blockingRecovery(dataDir,installedApp)||issueFor(dataDir,installedApp,dirname(installedApp),25);showRecovery(issue);return;
             }
             await new Promise(resolve => setTimeout(resolve, 100));
           }
@@ -713,7 +741,6 @@ app.whenReady().then(async () => {
       }
     })().catch(error => note("Update boot handoff: "+String(error)));
   });
-  app.on("activate", () => { if (!mainWindow) createWindow(); });
 });
 
 app.on("second-instance", () => { mainWindow?.show(); mainWindow?.focus(); });

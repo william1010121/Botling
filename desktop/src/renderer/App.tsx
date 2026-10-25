@@ -844,7 +844,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
         // A link or a component's ccb.open(url): opened as the results list opens it, main checks it is one of this chat's (Phase 5c).
         case "openExternal":
         case "openURL":
-          if (chat && typeof action.url === "string" && action.url) void client.request({ type: "link.open", source: message.linkSource === "user" ? "user" : "component", botId: chat.botId, url: action.url.slice(0, 8_000) }).catch(onError);
+          if (chat && typeof action.url === "string" && action.url) void client.request({ type: "link.open", source: message.linkSource === "user" ? "user" : "component", ...(typeof message.linkMessageId === "string" ? {messageId:message.linkMessageId} : {}), botId: chat.botId, url: action.url.slice(0, 8_000) }).catch(onError);
           return;
         // A reply made into a component, and its spec's chip and card (Phase 5a).
         case "makeComponent":

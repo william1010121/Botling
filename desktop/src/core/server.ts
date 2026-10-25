@@ -1298,16 +1298,22 @@ First write a test that shows this, then fix it.`;
         return {};
       case "subagent.settle": return this.bot(cmd.botId).settleSubagent(cmd.subagentId, cmd.settled);
       case "link.authorize": {
-        const same = (url: string) => url === cmd.url || (filePath(url) !== null && filePath(url) === filePath(cmd.url));
-        let linked = false;
-        for (const line of this.bot(cmd.botId).lines()) {
-          const result = line.role === "bot" || line.role === "notice";
-          const match = [...line.text.matchAll(/\[[^\]\n]+\]\(([^)\s]+)\)/g)].some(value => same(value[1]!));
-          const shown = result && line.displays?.some(display => display.name === PAGE_COMPONENT && same(pageInCard(display.data) ?? ""));
-          if (result && (match || shown)) return {result:true,linked:true};
-          linked ||= result && match;
+        const lines=this.bot(cmd.botId).lines();
+        const context=cmd.messageId?lines.find(line=>line.id===cmd.messageId):null;
+        // A component inherits its own reply's author, never a guest's links merely because they
+        // appear in the same host/group chat. Notices can echo user text and grant no authority.
+        if(cmd.messageId&&(!context||context.role!=="bot"||(!context.displays?.length&&!context.cards?.length)))return {result:false,linked:false};
+        const author=(line:typeof lines[number])=>typeof line.sourceID==='string'?line.sourceID.toUpperCase():cmd.botId;
+        const owner=context?author(context):cmd.botId;
+        const same=(url:string)=>url===cmd.url||(filePath(url)!==null&&filePath(url)===filePath(cmd.url));
+        let result=false,linked=false;
+        for(const line of lines){
+          if(line.role!=="bot")continue;
+          const match=[...line.text.matchAll(/\[[^\]\n]+\]\(([^)\s]+)\)/g)].some(value=>same(value[1]!));
+          const shown=line.displays?.some(display=>display.name===PAGE_COMPONENT&&same(pageInCard(display.data)??""));
+          if(match||shown){result=true;if(author(line)===owner)linked=true;}
         }
-        return {result:false,linked};
+        return {result,linked};
       }
       case "results.list": return { results: this.bot(cmd.botId).results().slice(0, 200) };
       case "waiting.list": return this.waiting();

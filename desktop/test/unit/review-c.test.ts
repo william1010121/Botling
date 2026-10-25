@@ -82,7 +82,7 @@ it('C3 empty and absent directory overrides default to the synthetic HOME',()=>{
  }
 });
 it('C2 a missing result after a rollback decision blocks normal startup',()=>{
- const f=fixture();writeFileSync(join(f.root,'decision'),'rollback:c-token');writeFileSync(join(f.root,'helper.pid'),'99999999');
+ const f=fixture();mkdirSync(join(f.root,'data-before'));writeFileSync(join(f.root,'decision'),'rollback:c-token');writeFileSync(join(f.root,'helper.pid'),'99999999');
  expect(blockingRecovery(f.data)?.message).toContain(join(f.root,'data-before'));
 });
 it('C7 active helper and rollback decisions forbid candidate self-commit',async()=>{

@@ -15,7 +15,7 @@ export const CHAT_PAGE = `${CHAT_ORIGIN}/chat.html`;
 /** Frame → shell. */
 export type FrameMessage =
   /** Something the chat page posted for "the app" (`Action` in Web/src/types.ts). */
-  | { botling: "action"; linkSource?: "user" | "component"; action: { type: string; [key: string]: unknown } }
+  | { botling: "action"; linkSource?: "user" | "component"; linkMessageId?:string; action: { type: string; [key: string]: unknown } }
   /** A card's save or action, for the core (only these two kinds are accepted). */
   | { botling: "request"; id: number; cmd: Extract<Command, { type: "card.save" | "card.action" }> }
   /** The Stop button the desktop adds to the input box. */

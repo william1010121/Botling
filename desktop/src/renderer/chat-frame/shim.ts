@@ -17,7 +17,10 @@ function userLink(url:unknown):boolean {
       postMessage(action: unknown) {
         const value = action as {type?:unknown;url?:unknown} | null;
         const linkSource = value?.type === "openURL" && userLink(value.url) ? "user" : "component";
-        window.parent.postMessage({ botling: "action", action, linkSource }, origin);
+        const event=window.event;
+        const component=event instanceof MessageEvent?[...document.querySelectorAll<HTMLIFrameElement>('iframe.component-frame')].find(frame=>frame.contentWindow===event.source):null;
+        const linkMessageId=component?(component.closest<HTMLElement>('.row[data-id]')?.dataset.id||'unattributed-component'):undefined;
+        window.parent.postMessage({ botling: "action", action, linkSource, ...(linkMessageId?{linkMessageId}:{}) }, origin);
       },
     }),
   }),

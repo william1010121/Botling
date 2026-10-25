@@ -9,7 +9,7 @@ export interface Launched { app: ElectronApplication; page: Page; chat: FrameLoc
 /** The main bot's id (the Swift app's `Workspace.mainBotID`). */
 export const MAIN = "6A0B0000-0000-4000-8000-000000000002";
 
-export async function launch(options: { dataDir?: string; env?: Record<string, string>; chat?: unknown[]; importFrom?: string; waitForState?: boolean } = {}): Promise<Launched> {
+export async function launch(options: { dataDir?: string; env?: Record<string, string>; chat?: unknown[]; importFrom?: string; waitForState?: boolean; args?: string[] } = {}): Promise<Launched> {
   const dataDir = options.dataDir ?? tempDir("e2e");
   if (options.chat) {
     // The main bot's chat, in the Swift app's chat.json format.
@@ -29,7 +29,7 @@ export async function launch(options: { dataDir?: string; env?: Record<string, s
   });
   delete env.ELECTRON_RUN_AS_NODE;
   if (!options.importFrom) delete env.BOTLING_IMPORT_FROM;
-  const app = await electron.launch({ executablePath:electronExecutable(), args: [desktop], env, cwd: desktop });
+  const app = await electron.launch({ executablePath:electronExecutable(), args: [desktop,...(options.args??[])], env, cwd: desktop });
   const page = await app.firstWindow();
   const chat = page.frameLocator("#chat-frame");
   // A test of the first second types as soon as the input box is there (before any state).

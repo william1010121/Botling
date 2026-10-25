@@ -10,7 +10,7 @@ import { basename, dirname, join, sep } from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { compareVersions, parseVersion, RELEASE_PAGE } from "./updates";
 import { trustKey, verifyManifest, type Manifest } from "../../scripts/release-manifest.mjs";
-import {readSmallJSON,validRoot,processAlive,issueFor,recordIssue,visibleRecovery,writeRecord} from "./update-state";
+import {readSmallJSON,validRoot,processAlive,issueFor,recordIssue,visibleRecovery,writeRecord,recoveryAccepted,recoveryCode,UPDATE_RECORDS} from "./update-state";
 import type { ReleaseView } from "../contract";
 
 export interface InstallOptions {
@@ -136,6 +136,7 @@ snapshot_data() {
   for entry in "$data"/* "$data"/.[!.]* "$data"/..?*; do
     [ -e "$entry" ] || [ -L "$entry" ] || continue
     name="\${entry##*/}"
+    case "$name" in update-pending.json|update-recovery.json|update-dismissed.json|update-recovered.json|update-last-boot.json|update-orphan-commit.json|update-cleanup|update-diagnostics) continue;; esac
     if [ "$name" = electron ] && [ -d "$entry" ] && [ ! -L "$entry" ]; then copy_profile "$entry" "$root/data-before/electron" || return 1
     else copy_one "$entry" "$root/data-before/$name" || return 1; fi
   done
@@ -153,7 +154,8 @@ reopen() {
 }
 finish() {
   code=$?
-  trap - EXIT HUP INT TERM
+  trap - EXIT
+  trap '' HUP INT TERM
   [ "$code" -ne 0 ] || exit 0
   if [ -f "$root/decision" ] && [ "$(/bin/cat "$root/decision")" = "commit:$token" ]; then result booted || true; exit 0; fi
   # A never-completed snapshot cannot be a recovery copy. Free its bytes before any journal
@@ -182,6 +184,7 @@ finish() {
     elif ! /usr/bin/ditto "$root/data-before" "$restore"; then
       /bin/rm -rf "$restore" || { printf 'partial restore cleanup failed\n' > "$root/cleanup-error" || true; }
       code=19
+    elif ! /bin/rm -rf "$restore/update-pending.json" "$restore/update-recovery.json" "$restore/update-dismissed.json" "$restore/update-recovered.json" "$restore/update-last-boot.json" "$restore/update-orphan-commit.json" "$restore/update-cleanup" "$restore/update-diagnostics"; then code=19
     elif [ -e "$data" ] && ! /bin/mv "$data" "$after"; then code=20
     elif ! /bin/mv "$restore" "$data"; then
       if [ -e "$after" ]; then /bin/mv "$after" "$data" || true; fi
@@ -247,7 +250,7 @@ async function persistentBytes(path:string,profile=false,partitions=false):Promi
  return bytes;
 }
 async function dataBytes(dataDir:string):Promise<number>{
- let bytes=0;for(const entry of await fs.readdir(dataDir).catch(()=>[] as string[]))bytes+=await persistentBytes(join(dataDir,entry),entry==='electron');return bytes;
+ let bytes=0;for(const entry of await fs.readdir(dataDir).catch(()=>[] as string[])){if(UPDATE_RECORDS.includes(entry))continue;bytes+=await persistentBytes(join(dataDir,entry),entry==='electron');}return bytes;
 }
 async function requireSpace(path:string,bytes:number):Promise<void>{
  const stat=await fs.statfs(path);if(stat.bavail*stat.bsize<bytes+RESERVE_BYTES)throw new Error('Insufficient free space for a bounded update and complete data snapshot');
@@ -452,16 +455,18 @@ async function sweepUpdates(dataDir:string,target:string,collect:boolean):Promis
   if(!(owner?.target===target&&owner.dataDir===dataDir)&&!isPending)continue;
   let result=await readText(join(root,'result'));const helper=await readText(join(root,'helper.pid')),candidate=await readText(join(root,'new.pid'));
   if(!result&&(await readText(join(root,'decision'))).startsWith('rollback:')&&!processAlive(helper))result='failed:22';
-  const code=Number(/^failed:(\d+)$/.exec(result)?.[1]);const token=isPending?pending!.token:owner?.token;
+  const token=isPending?pending!.token:owner?.token;
+  const code=recoveryCode(dataDir,target,root,Number(/^failed:(\d+)$/.exec(result)?.[1]),token);
+  const accepted=code&&recoveryAccepted(issueFor(dataDir,target,root,code,token));
   if(code){const at=(await fs.stat(join(root,'result')).catch(()=>null))?.mtimeMs??Date.now();await recordIssue(issueFor(dataDir,target,root,code,token,at));}
-  if(!collect||[15,16,19,20,21,22].includes(code))continue;
+  if(!collect||([15,16,19,20,21,22,25,26].includes(code)&&!accepted))continue;
   if(processAlive(helper)){if(!result)continue;await waitForOwner(helper,'helper final result');}
   if(result==='booted'&&processAlive(candidate)&&!existsSync(join(root,'activated.ok')))continue;
   if(!result&&(processAlive(owner?.pid)||processAlive(candidate)))continue;
   const cleanupPaths:string[]=[];
   try{
    const metadata=await smallJSON(join(root,'recovery.json'));
-   if(metadata.dataDir===dataDir&&metadata.token===token&&/^[a-zA-Z0-9-]+$/.test(token??'')&&(result==='booted'||existsSync(join(root,'data-restored')))){
+   if(metadata.dataDir===dataDir&&metadata.token===token&&/^[a-zA-Z0-9-]+$/.test(token??'')&&(accepted||result==='booted'||existsSync(join(root,'data-restored')))){
     for(const kind of ['after','restore']){const expected=`${dataDir}.update-${kind}-${token}`;if(metadata[kind]===expected)cleanupPaths.push(expected);}
    }
   }catch{}
