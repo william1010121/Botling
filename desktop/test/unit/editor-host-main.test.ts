@@ -5,14 +5,14 @@ import {prepareNativeEditorHost,nativeEditorNavigation} from '../../src/main/edi
 import {EDITOR_CHANNEL,EDITOR_URL} from '../../src/editor-host-wire';
 vi.mock('electron',async()=>{
  const {EventEmitter}=await import('node:events');
- class Contents extends EventEmitter {id=2;mainFrame:any={url:EDITOR_URL,parent:null};dead=false;send=vi.fn();loadURL=vi.fn(async()=>{});setWindowOpenHandler=vi.fn();isDestroyed(){return this.dead;}close(){this.dead=true;this.emit('destroyed');}}
+ class Contents extends EventEmitter {id=2;mainFrame:any={url:EDITOR_URL,parent:null};dead=false;send=vi.fn();focus=vi.fn();isFocused=vi.fn(()=>false);loadURL=vi.fn(async()=>{});setWindowOpenHandler=vi.fn();isDestroyed(){return this.dead;}close(){this.dead=true;this.emit('destroyed');}}
  class View {webContents=new Contents();setBounds=vi.fn();constructor(readonly options:unknown){}}
  return{ipcMain:new EventEmitter(),WebContentsView:View};
 });
 const disposers:(()=>void)[]=[];afterEach(()=>{for(const dispose of disposers.splice(0))dispose();});
 function fixture(){
- const contents=Object.assign(new EventEmitter(),{id:1,mainFrame:{url:'app://botling/index.html',parent:null},isDestroyed:()=>false,send:vi.fn()});
- const owner=Object.assign(new EventEmitter(),{webContents:contents,isVisible:()=>false,isDestroyed:()=>false,getContentBounds:()=>({x:0,y:0,width:1120,height:820}),contentView:{addChildView:vi.fn(),removeChildView:vi.fn()},focus:vi.fn(),show:vi.fn()});
+ const contents=Object.assign(new EventEmitter(),{id:1,mainFrame:{url:'app://botling/index.html',parent:null},isDestroyed:()=>false,send:vi.fn(),focus:vi.fn()});
+ const owner=Object.assign(new EventEmitter(),{webContents:contents,isVisible:():boolean=>false,isDestroyed:()=>false,getContentBounds:()=>({x:0,y:0,width:1120,height:820}),contentView:{addChildView:vi.fn(),removeChildView:vi.fn()},focus:vi.fn(),show:vi.fn()});
  const result=prepareNativeEditorHost(owner as any,'/Volumes/My-SSD/synthetic/desktop',Promise.resolve());disposers.push(result.dispose);return{owner,...result};
 }
 it('creates only a sandboxed separate native root with narrow preload, no focus/reveal, and rejects navigation escapes',async()=>{
@@ -34,9 +34,67 @@ it('main relay and layout authenticate the exact shell/editor roots; plugin mess
 });
 it('shell document reload rotates authentication while retaining the native editor view and load',async()=>{
  const f=fixture(),first=await f.ready,contents=f.view.webContents;
+ (contents as any).isFocused.mockReturnValue(true);
  f.owner.webContents.emit('did-start-navigation',{isMainFrame:true});f.owner.webContents.mainFrame={url:'app://botling/index.html',parent:null};f.owner.webContents.emit('did-finish-load');
+ expect(f.owner.webContents.focus).toHaveBeenCalledTimes(1);
  const bound=f.owner.webContents.send.mock.calls.filter(c=>c[0]===EDITOR_CHANNEL.bound).at(-1)![1];expect(bound.surfaceId).toBe(first.surfaceId);expect(bound.documentGeneration).not.toBe(first.documentGeneration);expect(f.owner.contentView.addChildView).toHaveBeenCalledTimes(1);expect(contents.loadURL).toHaveBeenCalledTimes(1);
  f.owner.webContents.send.mockClear();ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp:first,message:{botling:'stop'}});expect(f.owner.webContents.send).not.toHaveBeenCalled();
  ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp:bound,message:{botling:'stop'}});expect(f.owner.webContents.send).toHaveBeenCalledTimes(1);
  f.dispose();expect(f.owner.webContents.send).toHaveBeenLastCalledWith(EDITOR_CHANNEL.unbound,bound);expect(f.owner.contentView.removeChildView).toHaveBeenCalledTimes(1);expect(contents.isDestroyed()).toBe(true);expect(nativeEditorNavigation(contents,{isMainFrame:true,url:EDITOR_URL})).toBeNull();
+});
+
+it('keeps the opening window hidden until both the native editor state and its layout are ready', async () => {
+ const f=fixture(),stamp=await f.ready,contents=f.view.webContents;
+ const order:string[]=[];
+ (contents as any).focus=vi.fn(()=>order.push('editor.focus'));
+ f.owner.show.mockImplementation(()=>order.push('window.show'));
+ const reveal=(f as any).revealWhenReady(false);
+ await Promise.resolve();
+ expect(order).toEqual([]);
+ ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'hostObservation',chatId:'main',revision:1,intentEpoch:0}});
+ await Promise.resolve();
+ expect(order).toEqual([]);
+ ipcMain.emit(EDITOR_CHANNEL.layout,{sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame},{stamp,bounds:{x:200,y:60,width:600,height:600}});
+ await reveal;
+ expect(order).toEqual(['editor.focus','window.show','editor.focus']);
+ ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'hostObservation',chatId:'main',revision:2,intentEpoch:0}});
+ expect(order).toHaveLength(3);
+});
+
+
+it.each(['hidden','closed'])('never reveals or focuses an opening owner that is %s',async mode=>{
+ const f=fixture(),stamp=await f.ready,contents=f.view.webContents;
+ const reveal=f.revealWhenReady(mode==='hidden');
+ if(mode==='closed')f.dispose();
+ else{
+  ipcMain.emit(EDITOR_CHANNEL.layout,{sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame},{stamp,bounds:{x:200,y:60,width:600,height:600}});
+  ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'hostObservation',chatId:'main',revision:1,intentEpoch:0}});
+ }
+ await reveal;
+ expect(f.owner.show).not.toHaveBeenCalled();expect((contents as any).focus).not.toHaveBeenCalled();
+});
+
+it('does not accept forged readiness; hiding moves native focus to the shell without recreating the editor',async()=>{
+ const f=fixture(),stamp=await f.ready,contents=f.view.webContents;
+ const reveal=f.revealWhenReady(false);
+ const shellEvent={sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame};
+ ipcMain.emit(EDITOR_CHANNEL.layout,shellEvent,{stamp,bounds:{x:200,y:60,width:600,height:600}});
+ ipcMain.emit(EDITOR_CHANNEL.up,shellEvent,{stamp,message:{botling:'hostObservation',chatId:'main',revision:1,intentEpoch:0}});
+ await Promise.resolve();expect(f.owner.show).not.toHaveBeenCalled();
+ ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'hostObservation',chatId:'main',revision:1,intentEpoch:0}});
+ await reveal;
+ (contents as any).isFocused.mockReturnValue(true);
+ ipcMain.emit(EDITOR_CHANNEL.layout,shellEvent,{stamp,bounds:null});
+ expect(f.owner.webContents.focus).toHaveBeenCalledTimes(1);
+ expect((f.view as any).setBounds).toHaveBeenLastCalledWith({x:0,y:0,width:0,height:0});
+ ipcMain.emit(EDITOR_CHANNEL.down,shellEvent,{stamp,message:{botling:'focus'}});
+ expect((contents as any).focus).toHaveBeenCalledTimes(2); // Hidden view refuses explicit focus too.
+ expect(contents.loadURL).toHaveBeenCalledTimes(1);
+ f.owner.isVisible=()=>true;
+ ipcMain.emit(EDITOR_CHANNEL.layout,shellEvent,{stamp,bounds:{x:200,y:60,width:600,height:600}});
+ ipcMain.emit(EDITOR_CHANNEL.down,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'focus'}});
+ expect((contents as any).focus).toHaveBeenCalledTimes(2);
+ ipcMain.emit(EDITOR_CHANNEL.down,shellEvent,{stamp,message:{botling:'focus'}});
+ expect((contents as any).focus).toHaveBeenCalledTimes(3);
+ expect(contents.send).toHaveBeenLastCalledWith(EDITOR_CHANNEL.down,{stamp,message:{botling:'focus'}});
 });

@@ -8,9 +8,9 @@
 // what it posts goes through the app page and the core, which decide what it may do.
 //
 // Frames without scripts (`sandbox=""`, the Catch-up source snapshots) keep their srcdoc.
-import { APP_ORIGIN, type FrameMessage, type ShellMessage } from "./protocol";
+import { type FrameMessage } from "./protocol";
+import { toShell, fromShell, nativeChat } from "./transport";
 
-const origin = APP_ORIGIN;
 const native = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, "srcdoc")!;
 let next = 0;
 const waiting = new Map<number, (url: string | null) => void>();
@@ -24,18 +24,20 @@ function page(html: string): Promise<string | null> {
   return new Promise((resolve) => {
     waiting.set(id, resolve);
     const message: FrameMessage = { botling: "page", id, html };
-    window.parent.postMessage(message, origin);
+    if (!toShell(message)) { waiting.delete(id); resolve(null); }
   });
 }
 
-window.addEventListener("message", (event: MessageEvent) => {
-  if (event.source !== window.parent || event.origin !== origin) return;
-  const message = event.data as ShellMessage | null;
+fromShell(message => {
   if (message?.botling !== "page") return;
   const resolve = waiting.get(message.id);
   if (!resolve) return;
   waiting.delete(message.id);
   resolve(message.url);
+});
+
+nativeChat?.subscribe(packet => {
+  if ("unbound" in packet) { for (const resolve of waiting.values()) resolve(null); waiting.clear(); }
 });
 
 Object.defineProperty(HTMLIFrameElement.prototype, "srcdoc", {

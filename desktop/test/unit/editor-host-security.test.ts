@@ -30,7 +30,8 @@ it.each(['settings.set','accounts.list','updates.restart','plugins.install'])('e
 });
 it('contains no key/composition/recovery replay route, rejects malformed and oversized values',()=>{
  for(const botling of ['keydown','keyup','keypress','insertText','recoverFocus','focus','state','plugins'])expect(editorMessageAllowed('up',{botling})).toBe(false);
- for(const botling of ['recoverFocus','keydown','insertText','focus'])expect(editorMessageAllowed('down',{botling})).toBe(false);
+ for(const botling of ['recoverFocus','keydown','insertText'])expect(editorMessageAllowed('down',{botling})).toBe(false);
+ expect(editorMessageAllowed('down',{botling:'focus'})).toBe(true);
  const cyclic:any={botling:'action',action:{type:'send'}};cyclic.self=cyclic;expect(editorMessageAllowed('up',cyclic)).toBe(false);expect(editorMessageAllowed('up',{botling:'page',id:1,html:'x'.repeat(1024*1024+1)})).toBe(false);
 });
 it('keeps existing action/link provenance as data for the unchanged shell/core authorization',()=>{

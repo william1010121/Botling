@@ -1,4 +1,5 @@
 import { DoctorSection } from "./Doctor";
+import { postToChat } from "./editor-surface";
 import { UpdateActions,RecoveryCopies } from "./Updates";
 // The Settings window (1.x's SettingsWindow.swift) as a sheet over the app: its sections in 1.x's order
 // and words, for what 2.0's core does. Everything here is global (settings.json); the shown bot's own
@@ -278,7 +279,7 @@ function TextSetting({ label, value, placeholder, onSave, disabled }: { label: s
 }
 
 function previewWidth(value: number | null | undefined) {
-  (document.getElementById("chat-frame") as HTMLIFrameElement | null)?.contentWindow?.postMessage({botling:"widthPreview",value}, "botling-chat://chat");
+  postToChat({botling:"widthPreview",value});
 }
 function Appearance({ settings, change }: { settings: SettingsView; change: (next: SettingsChange) => Promise<boolean> }) {
   const input = useRef<HTMLInputElement>(null);

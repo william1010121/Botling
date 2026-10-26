@@ -14,7 +14,8 @@ import { installMessageWidth } from "./message-width";
 import { EditorView } from "@codemirror/view";
 import { CardBroker, type CardTarget } from "../broker";
 import type { FrameExtras } from "../payload";
-import { APP_ORIGIN, type FrameMessage, type ShellMessage } from "./protocol";
+import { type FrameMessage } from "./protocol";
+import { toShell, fromShell, nativeChat, installNativeShellCommands } from "./transport";
 import { setMediaSource } from "../../../../Web/src/markdown";
 import { localMediaSource } from "../../contract/attachment-url";
 
@@ -22,12 +23,10 @@ declare const __LATEX_SOURCE__: string;
 
 setSummaryCountable(isSummaryReply);
 observeTraceEditor();
-// Pictures and videos a reply shows by their local path: this page cannot load file://, so they come
-// from the chat origin, which serves those the chat shown names (1.x's file:// page loads them as they are).
+// Local media comes from the currently shown chat's authenticated origin.
 let shownChat: string | undefined;
 setMediaSource((url) => localMediaSource(shownChat, url));
-const origin = APP_ORIGIN;
-const toShell = (message: FrameMessage) => window.parent.postMessage(message, origin);
+installNativeShellCommands();
 const column = installMessageWidth((value) => toShell({ botling: "messageWidth", value }), (active) => toShell({ botling: "messageWidthDrag", active }));
 
 // ---------------------------------------------------------------------------------------------
@@ -39,7 +38,7 @@ function request(cmd: Extract<FrameMessage, { botling: "request" }>["cmd"]): Pro
   const id = ++nextRequest;
   return new Promise((resolve, reject) => {
     waiting.set(id, { resolve, reject });
-    toShell({ botling: "request", id, cmd });
+    if (!toShell({ botling: "request", id, cmd })) { waiting.delete(id); reject(new Error("Editor disconnected")); }
   });
 }
 
@@ -129,16 +128,15 @@ function decorate(extras: FrameExtras) {
 
 // ---------------------------------------------------------------------------------------------
 
-window.addEventListener("message", (event: MessageEvent) => {
-  if (event.source !== window.parent || event.origin !== origin) return;
-  const message = event.data as ShellMessage | null;
+let stateRevision = 0;
+fromShell(message => {
   if (!message || typeof message !== "object") return;
   if (message.botling === "state") {
     // Words typed before the first state (the first second after the window opens) would be replaced
     // by that chat's draft (empty) when the box switches to it: they are put back.
     inputTrace()?.mark("frame.state.receive", () => ({ traceId: message.traceId, chat: message.state.botID,
       previousChat: document.documentElement.dataset.chat, ...inputTrace()!.snapshot() }));
-    const early = document.documentElement.dataset.chat === undefined ? typedSoFar() : null;
+    const early = !nativeChat && document.documentElement.dataset.chat === undefined ? typedSoFar() : null;
     inputTrace()?.mark("frame.early.snapshot", () => ({ early, ...inputTrace()!.snapshot() }));
     column.set(message.messageColumnWidth ?? null, message.state.botID);
     // The chat the page draws, before it draws it (its local pictures are asked for as this bot's).
@@ -151,6 +149,11 @@ window.addEventListener("message", (event: MessageEvent) => {
     document.documentElement.dataset.chat = message.state.botID;
     inputTrace()?.mark("frame.state.complete", () => inputTrace()!.snapshot());
     decorate(message.extras);
+    if (nativeChat) {
+      // Initial focus is set in this root document before main reveals its native surface.
+      if (stateRevision === 0) window.ccb.focus();
+      toShell({ botling: "hostObservation", chatId: message.state.botID, intentEpoch: 0, revision: ++stateRevision });
+    }
   } else if (message.botling === "widthRejected") {
     column.rejected(message.value, message.actual);
   } else if (message.botling === "widthPreview") {
@@ -209,7 +212,18 @@ function keepTyped(early: { text: string; cursor: number }) {
   inputTrace()?.mark("frame.keepTyped.after", () => inputTrace()!.snapshot());
 }
 
-const takeFocusBack = installInputRecovery(composerView, toShell);
+const takeFocusBack = nativeChat ? () => false : installInputRecovery(composerView, toShell);
+
+nativeChat?.subscribe(packet => {
+  if ("unbound" in packet) {
+    for (const entry of waiting.values()) entry.reject(new Error("Editor disconnected"));
+    waiting.clear();
+  } else if ("bound" in packet) {
+    // Web/src may have announced ready before main could authenticate the two loaded roots.
+    // Rebind only refreshes business state; the live editor, history and composition stay intact.
+    toShell({ botling: "action", action: { type: "ready" } });
+  }
+});
 
 // Escape stops a reply being written, as in a terminal. (There is no Stop button: a message sent while
 // it writes never stops it, the bot hears it and carries on.)
