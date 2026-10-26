@@ -11,7 +11,7 @@ export function editorPreloadAllowed(mainFrame:boolean,url:string,argv:string[])
 function bounded(value:unknown,limit:number):boolean {try{const text=JSON.stringify(value);return typeof text==='string'&&new TextEncoder().encode(text).length<=limit;}catch{return false;}}
 export function editorMessageAllowed(direction:'up'|'down',value:unknown):boolean {
  if(!object(value)||!bounded(value,direction==='up'?1024*1024:16*1024*1024))return false;
- if(direction==='down')return ['widthRejected','widthPreview','state','response','answerWithSaved','page','plugins','hostReply','detailReply','messageWidthPointer','jumpToTask','spec'].includes(value.botling);
+ if(direction==='down')return ['widthRejected','widthPreview','state','response','answerWithSaved','page','plugins','hostReply','taskOutput','detailReply','messageWidthPointer','jumpToTask','spec'].includes(value.botling);
  switch(value.botling){
   case 'action':return object(value.action)&&typeof value.action.type==='string'&&value.action.type.length<=80&&!['keydown','keyup','keypress','insertText','editReplay'].includes(value.action.type);
   case 'request':{const parsed=Command.safeParse(value.cmd);return Number.isSafeInteger(value.id)&&value.id>=0&&parsed.success&&['card.save','card.action'].includes(parsed.data.type);}

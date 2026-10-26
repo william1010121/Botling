@@ -51,6 +51,7 @@
 //     budgets per user message (heads.ts), and its reply goes back; a question can be handed over
 //     with decision=…, and a pick on any copy of it is applied once, by the head that asked.
 import { randomUUID } from "node:crypto";
+import { backgroundTaskOutput, backgroundTaskView, backgroundOutputFile } from "./background-work";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePathOf } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,6 +69,7 @@ import {
   Conductor, displayName, fitted, forOtherNote, hasTwo, headsFor, headsJSON, isActive, otherHead, parseHeadTags, readHeads, roundsText,
   saidNote, wordsNote, type AnswerTarget, type CardPick, type ConductorAction, type Engine, type Handoff, type Heads, type RoundsProgress,
 } from "./heads";
+import { scheduleCall, scheduledTask, scheduleCancellation, matchesCancellation, settleSchedules, scheduleDue, isScheduled, holdsScheduleAwake, type ScheduleCall } from "./session-schedules";
 import { ReplyText, type StreamItem } from "./agent/stream";
 import {
   applyingReaction, archiveAll, archiveLine, characterCount, characterPrefix, compareReactions, reactionIntro, reactionUpdate, recentChat,
@@ -413,6 +415,9 @@ export class Bot {
   private sessionRules: string[] = [];
   /** Rules given to claude while it runs, with the last call it had made then: a block of a call up to that one is no news. */
   private rulesGivenAfter = new Map<string, string | null>();
+  /** Session schedule calls waiting for their structured results, and the next due clock. */
+  private scheduleCalls = new Map<string, ScheduleCall>();
+  private scheduleDueAt: number | null = null;
   /** Recent tool calls by id, oldest first: to show and allow a blocked one. */
   private toolCalls = new Map<string, { tool: string; detail: string; parent: string | null }>();
   /** `permission_denied` frames waiting for their tool result; blocked calls already shown. */
@@ -1205,6 +1210,14 @@ export class Bot {
   /** What its summaries are made from (catchup.ts). */
   catchUpChat(): CatchUpChat {
     return { id: this.id, name: this.profile.name, records: this.records, unread: this.unread, tasks: this.tasks.tasks };
+  }
+
+  async taskOutput(messageId: string, taskId: string): Promise<ResultOf<"task.output">> {
+    const record = this.records.find((message) => message.id === messageId);
+    const task = Array.isArray(record?.backgroundTasks) ? (record.backgroundTasks as (BackgroundTask | null)[]).find((task) => task?.id === taskId) : undefined;
+    if (!task) return { text: "" };
+    const subagent = this.subagents.get(taskId) ?? this.partner?.subagents.get(taskId);
+    return { text: await backgroundTaskOutput(task, subagent) };
   }
 
   subagentView(id: string): ResultOf<"subagent.view"> {
@@ -2298,6 +2311,7 @@ export class Bot {
 
   private onItem(head: AgentHead, item: CodexItem) {
     if (head !== this.head || this.ending.has(head)) return;
+    this.settleSessionSchedules();
     // claude retrying the API is no step (1.x's `noteProgress(of:)` skips it).
     if (item.kind === "connectionTrouble") return;
     if (item.kind === "connectionLost") {
@@ -2398,6 +2412,27 @@ export class Bot {
       turn = this.backgroundTurn(head);
     }
     if (item.kind === "permission") return this.ask(head, item, turn);
+    if (item.kind === "scheduleResult") {
+      const call = this.scheduleCalls.get(item.id);
+      this.scheduleCalls.delete(item.id);
+      const task = call ? scheduledTask(item.id, call, item.result) : null;
+      if (task && !turn.tasks?.some((candidate) => candidate.id === task.id)) (turn.tasks ??= []).push(task);
+      const tool = this.toolCalls.get(item.id)?.tool;
+      const cancellation = tool ? scheduleCancellation(tool, item.result) : null;
+      if (cancellation) {
+        if (turn.tasks) turn.tasks = turn.tasks.filter((task) => !matchesCancellation(task, cancellation));
+        for (const record of this.records) {
+          const tasks = record.backgroundTasks as BackgroundTask[] | undefined;
+          if (!Array.isArray(tasks) || !tasks.some((task) => matchesCancellation(task, cancellation))) continue;
+          const kept = tasks.filter((task) => !matchesCancellation(task, cancellation));
+          if (kept.length) record.backgroundTasks = kept;
+          else delete record.backgroundTasks;
+          this.changed(record);
+        }
+      }
+      this.refreshScheduleDue();
+      return;
+    }
     switch (item.kind) {
       case "stepText":
         // Codex's commentary: a step, and what the other head hears it say.
@@ -2407,6 +2442,8 @@ export class Bot {
         this.emitSteps(turn);
         return;
       case "toolUse": {
+        const call = scheduleCall(item.tool, item.input);
+        if (call) this.scheduleCalls.set(item.id, call);
         // The words claude said before this call: the other head hears them now.
         const said = turn.reply.text.slice(turn.told).trim();
         if (said && turn.origin !== "tidy") { turn.told = turn.reply.text.length; this.headWords(streamingText(said)); }
@@ -2418,12 +2455,15 @@ export class Bot {
         return;
       }
       case "toolResult": {
+        this.scheduleCalls.delete(item.id);
         const step = turn.steps.find((candidate) => candidate.id === item.id);
         if (!step) return;
         // A subagent's step is done when the subagent is, not when its call returns.
         if (step.kind !== "subagent" || this.subagents.get(item.id)?.status !== "running") step.done = true;
         step.failed = item.failed;
         if (item.output) step.output = item.output;
+        const task = turn.tasks?.find((task) => task.id === item.id);
+        if (task) task.outputFile = item.launch?.outputFile ?? backgroundOutputFile(item.output) ?? task.outputFile;
         this.emitSteps(turn);
         return;
       }
@@ -2821,12 +2861,17 @@ export class Bot {
   /** The scheduler as it stands (routines and the app's own schedules), never a reason to wait by itself. */
   private completionWakeups(): ScheduledWakeup[] {
     let view: ResultOf<"routines.list">;
-    try { view = this.owner.routinesView(); } catch { return []; }
-    if (view.error) return [];
-    return view.routines.flatMap((routine): ScheduledWakeup[] => {
+    try { view = this.owner.routinesView(); } catch { view = { routines: [], error: null }; }
+    const routines = view.error ? [] : view.routines;
+    const session: ScheduledWakeup[] = this.records.flatMap((record) => Array.isArray(record.backgroundTasks) ? record.backgroundTasks as BackgroundTask[] : []).flatMap((task) => {
+      if (!isScheduled(task) || !holdsScheduleAwake(task, Date.now())) return [];
+      const fire = task.kind === "cron" && task.recurring !== false ? (task.schedule ? CronSchedule.parse(task.schedule)?.nextTime(Date.now(), null) : null) : task.fireAt === undefined ? null : fromSwiftDateMs(task.fireAt);
+      return fire == null ? [] : [{ id: wakeupId("session:" + task.id), task: task.title + "\n" + (task.detail ?? ""), fireAt: new Date(fire).toISOString().replace(/\.\d{3}Z$/, "Z"), callback: "session_wakeup", taskTruncated: false }];
+    });
+    return [...session, ...routines.flatMap((routine): ScheduledWakeup[] => {
       if (!routine.next || !["pending", "enabled", "due"].includes(routine.status)) return [];
       return [{ id: routine.kind === "legacy" ? wakeupId("routine:" + routine.id) : routine.id, task: routine.title, fireAt: routine.next.replace(/\.\d{3}Z$/, "Z"), callback: "app_routine", taskTruncated: false }];
-    }).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    })].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
   /** Judges a finished normal turn (`checkPromise`): continue the same task, ask for terminal evidence, or say what it found. */
@@ -3214,6 +3259,22 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // Background work (1.x's BackgroundTask: a chip in the reply, and what a wake is told was cut off)
 
+  private refreshScheduleDue() {
+    const due = [...this.records.flatMap((record) => Array.isArray(record.backgroundTasks) ? record.backgroundTasks as BackgroundTask[] : []), ...(this.turn?.tasks ?? [])]
+      .flatMap((task) => { const time = scheduleDue(task); return time === null ? [] : [time]; });
+    this.scheduleDueAt = due.length ? Math.min(...due) : null;
+  }
+
+  private settleSessionSchedules() {
+    const now = Date.now();
+    if (this.scheduleDueAt === null || now < this.scheduleDueAt) return;
+    if (this.turn?.tasks) settleSchedules(this.turn.tasks, now);
+    for (const record of this.records) {
+      if (Array.isArray(record.backgroundTasks) && settleSchedules(record.backgroundTasks as BackgroundTask[], now)) this.changed(record);
+    }
+    this.refreshScheduleDue();
+  }
+
   /** Background work the bot itself started in the turn under way (not one of its subagents'), once (`addTask`). */
   private addBackgroundTask(id: string, kind: BackgroundKind, title: string) {
     const turn = this.turn;
@@ -3244,6 +3305,8 @@ export class Bot {
 
   /** Its process went away: whatever had not reported never will (`stopBackgroundTasks(as: .stopped)`). */
   private stopTasks() {
+    this.scheduleCalls.clear();
+    this.scheduleDueAt = null;
     const changed = stopBackgroundTasks(this.records, "stopped");
     for (const record of changed) this.changed(record);
   }
@@ -4781,6 +4844,13 @@ export function messageView(record: ChatRecord, approval?: { expires: number }, 
   }
   if (record.permissionTool) view.approval = { tool: record.permissionTool.slice(0, 200), expires: approval ? new Date(approval.expires).toISOString() : null };
   if (record.steps?.length) view.steps = record.steps.slice(-500).map((step) => stepView(step, subagents));
+  if (Array.isArray(record.backgroundTasks) && record.backgroundTasks.length) {
+    // Persisted tasks can come from older/newer builds: drop one unrecognized task, never the message.
+    view.backgroundTasks = record.backgroundTasks.flatMap((value: unknown) => {
+      const task = backgroundTaskView(value);
+      return task ? [task] : [];
+    });
+  }
   if (record.interrupted) view.interrupted = true;
   if (record.attachments?.length) {
     view.attachments = record.attachments.slice(0, 50).filter((file) => typeof file?.url === "string").map((file) => ({

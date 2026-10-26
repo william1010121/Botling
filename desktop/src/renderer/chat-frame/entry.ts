@@ -169,6 +169,8 @@ window.addEventListener("message", (event: MessageEvent) => {
     window.ccb.setSpec(message.spec);
   } else if (message.botling === "jumpToTask") {
     window.ccb.jumpToTask(message.messageID, message.taskID);
+  } else if (message.botling === "taskOutput") {
+    if (document.documentElement.dataset.chat === message.botID) window.ccb.taskOutput(message.messageID, message.taskID, message.text);
   } else if (message.botling === "detailReply") {
     window.ccb.detailReply(message.requestID, message.ok, message.value);
   } else if (message.botling === "response") {

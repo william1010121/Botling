@@ -30,6 +30,7 @@ export type FrameMessage =
 
 /** Shell → frame. */
 export type ShellMessage =
+  | { botling: "taskOutput"; botID: string; messageID: string; taskID: string; text: string }
   | { botling: "widthRejected"; value: number | null; actual: number | null }
   | { botling: "widthPreview"; value: number | null | undefined }
   | { botling: "state"; state: ChatState; extras: FrameExtras; messageColumnWidth?: number | null; traceId?: string }

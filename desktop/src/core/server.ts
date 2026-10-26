@@ -1581,6 +1581,7 @@ First write a test that shows this, then fix it.`;
         try { return this.calledInAnswer(cmd.botId, cmd.messageId, cmd.text, files.length) ?? this.bot(cmd.botId).answer(cmd.messageId, cmd.text, files); } finally { for (const file of files) rmSync(file, { force: true }); }
       }
       case "chat.react": return this.bot(cmd.botId).react(cmd.messageId, cmd.emoji, cmd.present);
+      case "task.output": return this.bot(cmd.botId).taskOutput(cmd.messageId, cmd.taskId);
       case "subagent.view": return this.bot(cmd.botId).subagentView(cmd.subagentId);
       case "chat.read": {
         // You came back to it: many unread replies fold into a summary first (`arrive(at:)`).
