@@ -35,8 +35,8 @@
 //   user's answer, <task> lines move the task cards, <reaction> lines set the bot's reaction,
 //   <no-reply/> leaves a turn claude started itself (a background subagent reporting) unshown.
 //   Other requests (<team>, <component>, …) are taken out and a notice says 2.0 cannot do them yet.
-// - A project bot shares its project's .bot/ with 1.x: while another Botling has the project
-//   (store/lock.ts), the bot is read-only here.
+// - A project bot shares its project's .bot/ with 1.x. As in 1.x, nothing stops it working while
+//   another Botling has the project open too (store/lock.ts): the chat only gets a notice.
 // - A bot's head is Claude (agent/head.ts) or Codex (agent/codex.ts). A bot with two heads is, as
 //   in 1.x, this Bot (the primary, whose chat it is) and a partner Bot for the other head (its own
 //   process, turns, approvals and files under partner-<engine>/), whose lines show in this chat:
@@ -297,8 +297,8 @@ export class Bot {
   /** Set when its chat file could not be read: nothing is written over it then. */
   private problem: string | null = null;
   private readOnly = false;
-  /** Set while another Botling has this bot's project: nothing is sent. */
-  private lockProblem: string | null = null;
+  /** Who else has this bot's project open, when someone does: shown once as a notice, never a block. */
+  private lockNotice: string | null = null;
   private saveTimer: NodeJS.Timeout | null = null;
   private head: AgentHead | null = null;
   /** Which CLI this bot's head is. */
@@ -553,19 +553,21 @@ export class Bot {
   // ------------------------------------------------------------------------------------------
   // The project lock
 
-  /** Takes the project (or says who has it). True when this bot may work. */
-  private checkLock(): boolean {
+  /**
+   * Takes the project when it can. 1.x has no lock, so another Botling having it open never stops
+   * this bot: the chat gets a notice (once per change) and the bot keeps working.
+   */
+  private checkLock(): void {
     const lock = this.options.lock;
-    if (!lock) return true;
+    if (!lock) return;
     const result = lock.acquire();
-    const problem = result.held ? null
-      : `${result.by[0]!.toUpperCase()}${result.by.slice(1)}. To keep its notes (.bot/memory.md) safe, this bot is read-only here until that one closes it.`;
-    if (problem !== this.lockProblem) {
-      this.lockProblem = problem;
-      this.log(problem ?? "has its project again");
-      this.updated();
+    const notice = result.held ? null
+      : `${result.by[0]!.toUpperCase()}${result.by.slice(1)}. Both may write this project's notes (.bot/memory.md); this bot keeps working here.`;
+    if (notice !== this.lockNotice) {
+      this.lockNotice = notice;
+      this.log(notice ?? "has its project to itself again");
+      if (notice && !this.problem) this.notice(notice);
     }
-    return result.held;
   }
 
   // ------------------------------------------------------------------------------------------
@@ -752,7 +754,8 @@ export class Bot {
   appMessage(text: string): void {
     if (this.options.primary) return this.options.primary.appMessage(text);
     const words = text.trim();
-    if (!words || this.problem || this.profile.problem || this.shuttingDown || !this.checkLock()) return;
+    if (!words || this.problem || this.profile.problem || this.shuttingDown) return;
+    this.checkLock();
     this.deliverTo(this.engine, words, null, { origin: "app" });
   }
 
@@ -775,7 +778,8 @@ export class Bot {
       await sleep(300);
     }
     if (this.shuttingDown) return { kind: "failed", why: "It was removed." };
-    const problem = this.problem ?? this.profile.problem ?? (this.checkLock() ? null : this.lockProblem);
+    const problem = this.problem ?? this.profile.problem;
+    this.checkLock();
     if (problem) return { kind: "failed", why: problem };
     this.guestTurn = true;
     const engine = this.engine;
@@ -981,7 +985,7 @@ export class Bot {
     if (this.options.primary) return this.options.primary.addRoutine(cron, task);
     const words = task.trim();
     const schedule = CronSchedule.parse(cron);
-    if (!schedule || !words || !this.routineFile || this.readOnly || this.lockProblem || this.profile.problem) return false;
+    if (!schedule || !words || !this.routineFile || this.readOnly || this.profile.problem) return false;
     if (!this.routineFile.load().some((job) => job.schedule.text === schedule.text && job.task === words)) this.routineFile.add(routine(schedule, words));
     this.routinesChanged();
     return true;
@@ -1050,7 +1054,7 @@ export class Bot {
       approvals: this.approvals.size + (partner?.approvals.size ?? 0),
       unread: this.unread,
       subagents: this.subagents.running.length + (partner?.subagents.running.length ?? 0),
-      problem: (this.problem ?? this.profile.problem ?? this.lockProblem)?.slice(0, 2_000) ?? null,
+      problem: (this.problem ?? this.profile.problem)?.slice(0, 2_000) ?? null,
       heads: this.headsSettings.engines,
       job: this.profile.job?.slice(0, 4_000) ?? null,
       subagentRows: this.subagentRows(),
@@ -1109,7 +1113,6 @@ export class Bot {
   }
 
   snapshot(): ChatSnapshot {
-    if (this.options.lock && this.lockProblem) this.checkLock();
     const turns = [this.shownTurn, this.partner?.shownTurn].filter((turn): turn is Turn => !!turn);
     const shown = turns[0];
     const owner = (turn: Turn) => (turn === this.shownTurn ? this : this.partner!);
@@ -1158,7 +1161,7 @@ export class Bot {
     if (this.problem) throw new ContractError("conflict", this.problem);
     if (this.profile.problem) throw new ContractError("conflict", this.profile.problem);
     if (this.shuttingDown) throw new ContractError("core_unavailable", "The core is shutting down.");
-    if (!this.checkLock()) throw new ContractError("conflict", this.lockProblem ?? "Another Botling has this project.");
+    this.checkLock();
   }
 
   /**
@@ -3017,7 +3020,7 @@ export class Bot {
         this.log(`starting it again in ${delay} ms`);
         this.restartTimer = setTimeout(() => {
           this.restartTimer = null;
-          if (!this.head && !this.shuttingDown && !this.problem && !this.profile.problem && !this.lockProblem) {
+          if (!this.head && !this.shuttingDown && !this.problem && !this.profile.problem) {
             try { this.ensureHead(); this.scheduleIdle(); } catch (error) { this.log(`restart failed: ${(error as Error).message}`); }
           }
         }, delay);
@@ -3125,8 +3128,7 @@ export class Bot {
     this.scheduledStore = new ScheduledRoutineStore(join(dirname(file), "scheduled-routines.json"));
     const settings = this.store.loadSettings();
     this.routineRuns = fromRoutineRuns(settings.routineRuns);
-    // Only where this bot may write: a project another Botling has stays as it is.
-    if (!this.readOnly && !this.lockProblem && !this.profile.problem) {
+    if (!this.readOnly && !this.profile.problem) {
       try {
         this.routineFile.create(legacyRoutineLines(settings.routines) ?? (this.profile.role === "main" ? [DAILY_SUMMARY] : []));
       } catch (error) {
@@ -3184,7 +3186,7 @@ export class Bot {
   /** The app's own change to a routine (`app_routines`' operations); errors are the store's, as Codex sees them. */
   changeRoutine(args: Record<string, unknown>): ResultOf<"routines.change"> {
     if (this.options.primary) return this.options.primary.changeRoutine(args);
-    if (!this.scheduledStore || this.readOnly || this.lockProblem) throw new ContractError("conflict", this.lockProblem ?? this.problem ?? "This bot's routines cannot be changed here.");
+    if (!this.scheduledStore || this.readOnly) throw new ContractError("conflict", this.problem ?? "This bot's routines cannot be changed here.");
     try {
       this.scheduledStore.perform(args);
     } catch (error) {
@@ -3223,7 +3225,7 @@ export class Bot {
    */
   checkRoutines(now = Date.now()) {
     if (this.options.primary || this.shuttingDown || this.readOnly || this.problem || this.profile.problem || !this.routineFile) return;
-    if (this.options.lock && !this.checkLock()) return;
+    if (this.options.lock) this.checkLock();
     const before = this.routineError;
     const { jobs, scheduled } = this.loadRoutines();
     let ran = false;

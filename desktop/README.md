@@ -517,7 +517,7 @@ nothing from it is committed.
 | Sleep/wake/tidy | After `idleMs` with nothing under way (no turn, approval, waiting message, running subagent) the tidy turn runs (hidden, approvals refused), then stdin is closed; the next message starts a **new session** whose first message is wake line + recent lines + reactions intro + the words (1.x's order). The app starting is a wake; quitting tidies awake idle bots (bounded) | `unit/head.test.ts` (tidy text sent, memory file written, new session, exact briefing), `e2e/phase2a.spec.ts` (header "Tidying its notes…", screenshot `tidying.png`) |
 | Steering | A message during a user's reply with no approval open and no subagent at work: the reply so far stays as a cut-off bubble, the two parts go as one (`(I sent this in parts…)`), then `interrupt` (message first, as 1.x); otherwise it waits and goes when the turn ends | `unit/lifecycle.test.ts`, `unit/core.test.ts`, `e2e/phase2a.spec.ts` (`steering.png`), **live**: real claude cut the counting turn and answered both parts in one reply |
 | Subagents (`core/subagents.ts`, `agent/stream.ts`) | TraceBook's rules: Agent/Task calls, `task_started`, lines with `parent_tool_use_id`, structured launch results, `task_notification` (hand-back report, "still waiting"); subagents.json in 1.x's format (40 ended kept); steps carry status and tool count; `subagent.view` + the page's own subagent view (back button); a background one keeps the bot awake; claude's own reporting turn is shown | `unit/stream.test.ts`, `unit/lifecycle.test.ts`, `e2e/phase2a.spec.ts`, screenshots `subagent-running.png`, `subagent-view.png` |
-| Project lock (`core/store/lock.ts`) | A manager takes `<project>/.bot/botling.lock` (pid, start time, host); a live holder elsewhere — or a running 1.x whose projects.json lists the folder — leaves the bot read-only with a banner; a dead holder's lock is taken over; tried again on each send | `unit/lifecycle.test.ts` (two cores, stale lock, a 1.x stand-in process), `e2e/phase2a.spec.ts` (`locked-project.png`) |
+| Project lock (`core/store/lock.ts`) | A manager takes `<project>/.bot/botling.lock` (pid, start time, host); a live holder elsewhere — or a running 1.x whose projects.json lists the folder — only puts a notice in the chat (1.x has no lock, so the bot keeps working); a dead holder's lock is taken over; tried again on each send | `unit/lifecycle.test.ts` (two cores, stale lock, a 1.x stand-in process), `e2e/phase2a.spec.ts` (`locked-project.png`) |
 | Contract v3 | `chat.answer`, `chat.react`, `subagent.view`, `chat.send.replyTo`, `chat.choose.text`; events `message.removed`, `tasks.updated`, `subagent.updated`; `tidying` phase; step status/count; message reactions/replyTo | `unit/contract.test.ts`, the rest |
 
 Tests: unit 109 (vitest), e2e 19 (Playwright/Electron), all green. Live (real `claude` 2.1.310,
@@ -627,8 +627,8 @@ only, deleted afterwards.
   your message (`pauseNote`), 2.0 still queues it.~~ (Paused as 1.x since Phase 3b.) The steered reply moves below your new line (1.x
   shows the reply at the end too); your two messages' task cards join (1.x leaves the first as it was).
 - **Routines run only while the app runs** (decided earlier). 2.0 locks scheduled-routines.json with
-  its own lock file (`…botling2.lock`), not 1.x's `flock`: the project lock keeps the two apps off one
-  bot. The main bot's routine prompt has 1.x's project list without inboxes, Maintainer and teams
+  its own lock file (`…botling2.lock`), not 1.x's `flock`; as in 1.x, nothing keeps the two apps off one
+  bot (the project lock only adds a notice). The main bot's routine prompt has 1.x's project list without inboxes, Maintainer and teams
   (2.0 has none of them yet).
 - **No auto mode yet**, so a monitored command always asks (Allow once), as 1.x does without it.
 - **Component commands**: 1.x's approvals model (per folder and command, remembered), but 2.0 starts

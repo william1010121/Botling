@@ -221,7 +221,7 @@ describe("the chat archive", () => {
 });
 
 describe("the project lock", () => {
-  it("a second 2.0 on the same project is read-only for that bot until the first lets go", async () => {
+  it("a second 2.0 on the same project keeps working and only gets a notice (1.x has no lock)", async () => {
     const root = tempDir("lock");
     const folder = join(root, "garden");
     const a = join(root, "a");
@@ -234,8 +234,9 @@ describe("the project lock", () => {
     const second = core(b);
     const snapshot = await second.call({ type: "chat.snapshot", botId: PROJECT });
     const bot = snapshot.bots.find((candidate: { id: string }) => candidate.id === PROJECT);
-    expect(bot.problem).toMatch(/^Another Botling \(Botling 2\.0, pid \d+\) has this project open\. To keep its notes \(\.bot\/memory\.md\) safe, this bot is read-only here/);
-    await expect(second.call({ type: "chat.send", botId: PROJECT, text: "me too" })).rejects.toThrow(/conflict/);
+    expect(bot.problem).toBeNull();
+    expect((await turn(second, "me too", PROJECT)).event.status).toBe("done");
+    expect(JSON.stringify(await second.call({ type: "chat.snapshot", botId: PROJECT }))).toMatch(/Another Botling \(Botling 2\.0, pid \d+\) has this project open\. Both may write/);
     // The main bot is not affected.
     expect((await turn(second, "hi")).event.status).toBe("done");
     await first.kill("SIGTERM");
@@ -255,7 +256,7 @@ describe("the project lock", () => {
     expect((await turn(c, "hello", PROJECT)).event.status).toBe("done");
   });
 
-  it("a running 1.x that has the project keeps the 2.0 bot read-only", async () => {
+  it("a running 1.x that has the project does not stop the 2.0 bot (notice only)", async () => {
     const root = tempDir("lock");
     const folder = join(root, "garden");
     const data = join(root, "a");
@@ -268,8 +269,9 @@ describe("the project lock", () => {
     others.push(standIn);
     const c = core(data, { BOTLING_1X_DIR: oneX, BOTLING_1X_PROCESS: "botling-1x-stand-in" });
     const bot = (await c.call({ type: "chat.snapshot", botId: PROJECT })).bots.find((x: { id: string }) => x.id === PROJECT);
-    expect(bot.problem).toMatch(/^Botling 1\.x is running and has this project open\./);
-    await expect(c.call({ type: "chat.send", botId: PROJECT, text: "hi" })).rejects.toThrow(/conflict/);
+    expect(bot.problem).toBeNull();
+    expect((await turn(c, "hi", PROJECT)).event.status).toBe("done");
+    expect(JSON.stringify(await c.call({ type: "chat.snapshot", botId: PROJECT }))).toMatch(/Botling 1\.x is running and has this project open\. Both may write/);
     standIn.kill("SIGKILL");
     await until(() => standIn.exitCode !== null || standIn.signalCode !== null);
     expect((await turn(c, "1.x quit", PROJECT)).event.status).toBe("done");

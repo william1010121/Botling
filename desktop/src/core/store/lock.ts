@@ -2,11 +2,12 @@
 // (`.bot/memory.md`), as in 1.x. Two apps writing that file at once would interleave edits, so a
 // project is used by one Botling at a time:
 // - 2.0 takes `<project>/.bot/botling.lock` (who: pid, its start time, host, app, data folder);
-//   another 2.0 sees a live holder and leaves the bot read-only; a holder that is gone (pid dead
+//   another 2.0 sees a live holder and says so; a holder that is gone (pid dead
 //   or reused) is taken over;
 // - 1.x writes no lock (its code is not changed), so 2.0 looks for it instead: a running 1.x app
 //   (`…/Contents/MacOS/botling`) whose projects.json lists this folder holds it too.
-// The bot shows why it is read-only and tries again when the user sends something.
+// 1.x never blocks on this, so neither does 2.0: a lock someone else holds only puts a notice in
+// the bot's chat (Bot.checkLock); the bot keeps working.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
