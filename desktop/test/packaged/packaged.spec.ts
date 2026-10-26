@@ -91,6 +91,8 @@ test("boots to the chat page, starts the plugin host as a utility process, ignor
     browser = await chromium.connectOverCDP(endpoint);
     const page = await until(() => browser!.contexts().flatMap((context) => context.pages()).find((candidate) => candidate.url() === "app://botling/index.html"), { timeout: 30_000, what: "the app page" });
     await page.waitForSelector('.shell[data-ready="1"]', { timeout: 30_000 });
+    // The main bot opens on its whiteboard: this check is about its chat.
+    if (await page.locator(".chat-column.whiteboard-on").count()) await page.locator(".board-switch").getByRole("button", { name: "Chat", exact: true }).click();
     const chat = page.frameLocator("#chat-frame");
     await chat.locator(".composer").waitFor({ timeout: 30_000 });
     await chat.locator(`html[data-chat="${MAIN}"]`).waitFor({ state: "attached", timeout: 30_000 });

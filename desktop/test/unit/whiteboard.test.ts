@@ -120,7 +120,7 @@ describe("whiteboard page", () => {
     expect(commands.find((cmd) => cmd.type === "chat.send")).toEqual({ type: "chat.send", botId: MAIN, text: "How is everyone?" });
   });
 
-  it("is the main bot's third view beside Chat and Board, hiding the chat page while shown", async () => {
+  it("is the main bot's default view beside Chat and Board, hiding the chat page while shown; Chat, once picked, is kept", async () => {
     globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as unknown as typeof ResizeObserver;
     try { localStorage.removeItem("botling.mainWhiteboard"); } catch { /* none */ }
     const { Bot } = await import("../../src/core/bot");
@@ -135,18 +135,25 @@ describe("whiteboard page", () => {
     const snapshot = (): ResultOf<"chat.snapshot"> => ({ epoch: "test", seq: 0, bots: [owner.view(), site], imported: null, chat: owner.snapshot(), components: {}, plugins: { plugins: [], broken: [], host: { running: false, problem: null }, secretsProblem: null } });
     const store = new WorkspaceStore(async () => snapshot());
     await store.resync();
+    const switchButton = (name: string) => [...host.querySelectorAll<HTMLButtonElement>(".board-switch button")].find((candidate) => candidate.textContent === name)!;
+    // Nothing picked yet: the whiteboard.
     await act(async () => root.render(createElement(App, { client: client(), store })));
-    const button = [...host.querySelectorAll<HTMLButtonElement>(".board-switch button")].find((candidate) => candidate.textContent === "Whiteboard")!;
-    expect(button.getAttribute("aria-pressed")).toBe("false");
-    expect(host.querySelector(".whiteboard")).toBeNull();
-    await act(async () => button.click());
+    expect(switchButton("Whiteboard").getAttribute("aria-pressed")).toBe("true");
+    expect(switchButton("Chat").getAttribute("aria-pressed")).toBe("false");
     expect(host.querySelector(".chat-column")?.className).toContain("whiteboard-on");
     expect(host.querySelector(`.wb-card[data-bot="${site.id}"]`)).not.toBeNull();
-    expect(localStorage.getItem("botling.mainWhiteboard")).toBe("1");
-    const chat = [...host.querySelectorAll<HTMLButtonElement>(".board-switch button")].find((candidate) => candidate.textContent === "Chat")!;
-    await act(async () => chat.click());
+    await act(async () => switchButton("Chat").click());
     expect(host.querySelector(".whiteboard")).toBeNull();
     expect(host.querySelector(".chat-column")?.className).not.toContain("whiteboard-on");
     expect(host.querySelector("#chat-frame")).not.toBeNull();
+    expect(localStorage.getItem("botling.mainWhiteboard")).toBe("0");
+    // Drawn again (the next start): Chat, as picked.
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await act(async () => root.render(createElement(App, { client: client(), store })));
+    expect(host.querySelector(".whiteboard")).toBeNull();
+    await act(async () => switchButton("Whiteboard").click());
+    expect(host.querySelector(".chat-column")?.className).toContain("whiteboard-on");
+    expect(localStorage.getItem("botling.mainWhiteboard")).toBe("1");
   });
 });

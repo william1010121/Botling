@@ -15,10 +15,10 @@ import { activeTasks, finishedTasks } from "./RightPanel";
 
 type Look = "original" | "cute";
 
-/** The main view of the main bot, Chat or Whiteboard, kept for the next start (this window only). */
-const CHOICE_KEY = "botling.mainWhiteboard";
+/** The main view of the main bot: the whiteboard unless you last picked Chat or Board (kept for the next start). */
+export const CHOICE_KEY = "botling.mainWhiteboard";
 export function useWhiteboardChoice(): [boolean, (on: boolean) => void] {
-  const [on, setOn] = useState(() => { try { return localStorage.getItem(CHOICE_KEY) === "1"; } catch { return false; } });
+  const [on, setOn] = useState(() => { try { return localStorage.getItem(CHOICE_KEY) !== "0"; } catch { return true; } });
   const choose = useCallback((next: boolean) => {
     setOn(next);
     try { localStorage.setItem(CHOICE_KEY, next ? "1" : "0"); } catch { /* no storage: this session only */ }

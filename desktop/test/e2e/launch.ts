@@ -12,7 +12,17 @@ export interface Launched { app: ElectronApplication; page: Page; chat: FrameLoc
 /** The main bot's id (the Swift app's `Workspace.mainBotID`). */
 export const MAIN = "6A0B0000-0000-4000-8000-000000000002";
 
-export async function launch(options: { dataDir?: string; env?: Record<string, string>; chat?: unknown[]; importFrom?: string; waitForState?: boolean; args?: string[]; trace?:TraceFixture; onLaunched?:(app:ElectronApplication)=>Promise<void> } = {}): Promise<Launched> {
+/** Before the app's page runs: Chat as the main bot's view, unless one was picked already. */
+function startOnChat() {
+  try { if (localStorage.getItem("botling.mainWhiteboard") === null) localStorage.setItem("botling.mainWhiteboard", "0"); } catch { /* a sandboxed card frame: no storage */ }
+}
+
+/** The main bot's whiteboard is its default view: switches to its chat when the whiteboard shows. */
+export async function showChat(page: Page) {
+  if (await page.locator(".chat-column.whiteboard-on").count()) await page.locator(".board-switch").getByRole("button", { name: "Chat", exact: true }).click();
+}
+
+export async function launch(options: { whiteboard?: boolean; dataDir?: string; env?: Record<string, string>; chat?: unknown[]; importFrom?: string; waitForState?: boolean; args?: string[]; trace?:TraceFixture; onLaunched?:(app:ElectronApplication)=>Promise<void> } = {}): Promise<Launched> {
   const dataDir = options.dataDir ?? tempDir("e2e");
   if (options.chat) {
     // The main bot's chat, in the Swift app's chat.json format.
@@ -36,6 +46,9 @@ export async function launch(options: { dataDir?: string; env?: Record<string, s
   prepareTraceFixture(dataDir,env,options.trace);
   const app = await electron.launch({ executablePath:electronExecutable(), args: [desktop,...(options.args??[])], env, cwd: desktop });
   try {
+  // The main bot opens on its whiteboard; these tests are about its chat, so they start on Chat
+  // (a choice already made in this data folder is kept). `showChat` below covers a page loaded first.
+  if (!options.whiteboard) await app.context().addInitScript(startOnChat);
   await options.onLaunched?.(app);
   const page = await app.firstWindow();
   if(env.BOTLING_HIDDEN==="1")await backgroundPages(app,page,options.trace?.focusEmulation!==false);
@@ -43,6 +56,7 @@ export async function launch(options: { dataDir?: string; env?: Record<string, s
   // A test of the first second types as soon as the input box is there (before any state).
   if (options.waitForState === false) return { app, page, chat, dataDir };
   await page.waitForSelector('.shell[data-ready="1"]');
+  if (!options.whiteboard) await showChat(page);
   await chat.locator(".composer").waitFor();
   // The page has its first state (the chat a test means is the one shown).
   await chat.locator("html[data-chat]").waitFor({ state: "attached" });
