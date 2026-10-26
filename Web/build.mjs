@@ -7,13 +7,15 @@ import { build } from "esbuild";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { inlineTokens } from "./kit/build.mjs";
+import { buildKit, inlineTokens } from "./kit/build.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const resources = join(here, "../Sources/ClaudeCodeBot/Resources");
 const out = join(resources, "web");
 const pluginsOut = join(resources, "plugins");
 
+// The component kit first (kit/dist, committed): chat.js puts its text into component pages.
+await buildKit({ write: true });
 rmSync(out, { recursive: true, force: true });
 rmSync(pluginsOut, { recursive: true, force: true });
 rmSync(join(resources, "host"), { recursive: true, force: true });
