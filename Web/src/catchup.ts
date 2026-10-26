@@ -1,4 +1,6 @@
 import { post } from "./bridge";
+import { summaryCountable } from "./summary-countable";
+export { setSummaryCountable } from "./summary-countable";
 import { t } from "./i18n";
 import type { CatchUpView, ChatState, MessageView } from "./types";
 import { sourceLinks, clickableSourceURL, type SourceLink } from "./catchup-links";
@@ -61,7 +63,7 @@ export class CatchUpGroup {
     const source = summaryMessages(view,state.messages);
     // Interval payloads carry reply counts but omit the unread group's display metadata.
     if (this.interval) {
-      const latest = source.filter(message => message.role === "bot").at(-1);
+      const latest = source.filter(summaryCountable).at(-1);
       view = { ...view, since: view.since ?? source[0]?.sourceTime, until: view.until ?? source.at(-1)?.sourceTime,
         latest: view.latest ?? (latest ? `${sourceAuthor(latest)}: ${latest.text.replace(/\s+/g, " ").slice(0, 160)}` : null) };
     }
@@ -250,22 +252,15 @@ export class IntervalSummaries {
       if (user.role !== "user") continue;
       let end = i + 1;
       while (end < state.messages.length && state.messages[end].role !== "user") end++;
-      const replies = state.messages.slice(i + 1, end).filter(m => m.role === "bot");
+      const replies = state.messages.slice(i + 1, end).filter(summaryCountable);
       const last = replies.at(-1);
       if (!last || covered.has(last.id)) continue;
       const row = element(last.id);
       if (!row) continue;
       let footer = row.querySelector<HTMLElement>(".message-footer");
       if (!footer) {
-        let holder = row.querySelector<HTMLElement>(".speaker-column, .bot-column, .reaction-message-column");
-        if (!holder) {
-          const bubble = row.querySelector<HTMLElement>(".bot-bubble");
-          if (!bubble) continue;
-          holder = document.createElement("div");
-          holder.className = "reaction-message-column";
-          bubble.replaceWith(holder);
-          holder.append(bubble);
-        }
+        const holder = row.querySelector<HTMLElement>(".speaker-column, .bot-column, .reaction-message-column");
+        if (!holder) continue;
         footer = document.createElement("div");
         footer.className = "message-footer";
         holder.append(footer);

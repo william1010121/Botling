@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
-import "../../src/renderer/chat-frame/notification-summary";
-import { IntervalSummaries } from "../../../Web/src/catchup";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { isSummaryReply } from "../../src/contract/summary";
+import { IntervalSummaries, setSummaryCountable } from "../../../Web/src/catchup";
 import { messageElement } from "../../../Web/src/messages";
 import { sent } from "../../../Web/src/bridge";
 import type { ChatState, MessageView } from "../../../Web/src/types";
@@ -18,9 +18,25 @@ const find = (id: string) => document.querySelector<HTMLElement>(`[data-id="${id
 function draw(messages: MessageView[]) {
   document.body.replaceChildren(...messages.map(message => messageElement(message, {})));
 }
-afterEach(() => { document.body.replaceChildren(); sent.splice(0); });
+afterEach(() => {
+  setSummaryCountable(message => message.role === "bot");
+  document.body.replaceChildren();
+  sent.splice(0);
+});
+
+it("keeps the shared 1.x default bot-only until desktop explicitly opts in", () => {
+  const messages = [line("u1", "user"), line("b", "bot"), line("n1", "notice"), line("u2", "user"), line("n2", "notice")];
+  draw(messages);
+  new IntervalSummaries().update(state(messages), find);
+  const buttons = [...document.querySelectorAll<HTMLButtonElement>(".interval-summary-trigger")];
+  expect(buttons).toHaveLength(1);
+  expect(buttons[0]!.closest<HTMLElement>(".row")?.dataset.id).toBe("b");
+  expect(buttons[0]!.textContent).toContain("1");
+  expect(find("n1")?.querySelector(".bot-column")).toBeNull();
+});
 
 describe("notification summary footer", () => {
+  beforeEach(() => setSummaryCountable(isSummaryReply));
   it("keeps bot-only footers and excludes error, relay and divider metadata from eligibility", () => {
     const messages = [line("u1", "user"), line("b1", "bot"), line("u2", "user"), line("e", "error"), line("r", "relay"), line("d", "divider")];
     draw(messages);
@@ -35,8 +51,11 @@ describe("notification summary footer", () => {
   it("offers notice-only intervals and preserves the notice role and original interval id", () => {
     const messages = [line("u1", "user"), line("n1", "notice"), line("n2", "notice"), line("u2", "user"), line("n3", "notice")];
     draw(messages);
+    const bubble = find("n2")?.querySelector(".bot-column > .notice-bubble");
+    expect(bubble).toBeTruthy();
     const summaries = new IntervalSummaries();
     summaries.update(state(messages), find);
+    expect(find("n2")?.querySelector(".bot-column > .notice-bubble")).toBe(bubble);
     const buttons = [...document.querySelectorAll<HTMLButtonElement>(".interval-summary-trigger")];
     expect(buttons).toHaveLength(2);
     expect(buttons[0]!.closest<HTMLElement>(".row")?.dataset.id).toBe("n2");
@@ -62,8 +81,16 @@ describe("notification summary footer", () => {
     expect(document.querySelectorAll(".interval-summary-trigger")).toHaveLength(1);
     expect(trigger?.closest<HTMLElement>(".row")?.dataset.id).toBe("n");
     expect(trigger?.textContent).toContain("2");
+    const next = line("next", "bot");
+    messages.push(next);
+    document.body.append(messageElement(next, {}));
+    summaries.update(state(messages), find);
+    expect(document.querySelectorAll(".interval-summary-trigger")).toHaveLength(1);
+    expect(document.querySelector(".interval-summary-trigger")).toBe(trigger);
+    expect(trigger?.closest<HTMLElement>(".row")?.dataset.id).toBe("next");
+    expect(trigger?.textContent).toContain("3");
     summaries.update({ ...state(messages), intervalSummaries: [{
-      key: "k", ids: ["b", "n", "metadata"], count: 2, heads: null, state: "ready", bullets: ["Done"],
+      key: "k", ids: ["b", "n", "metadata", "next"], count: 3, heads: null, state: "ready", bullets: ["Done"],
       error: null, model: "test", since: null, until: null, latest: null, manual: true,
     }] }, find);
     expect(document.querySelector(".interval-summary-trigger")).toBeNull();

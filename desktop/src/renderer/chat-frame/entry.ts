@@ -7,7 +7,8 @@ import { inputTrace } from "../input-trace";
 import "./shim";
 import "./component-frames";
 import { installInputRecovery } from "./input-focus";
-import "./notification-summary";
+import { setSummaryCountable } from "../../../../Web/src/catchup";
+import { isSummaryReply } from "../../contract/summary";
 import "../../../../Web/src/main";
 import { installMessageWidth } from "./message-width";
 import { EditorView } from "@codemirror/view";
@@ -17,6 +18,7 @@ import { APP_ORIGIN, type FrameMessage, type ShellMessage } from "./protocol";
 
 declare const __LATEX_SOURCE__: string;
 
+setSummaryCountable(isSummaryReply);
 observeTraceEditor();
 const origin = APP_ORIGIN;
 const toShell = (message: FrameMessage) => window.parent.postMessage(message, origin);
