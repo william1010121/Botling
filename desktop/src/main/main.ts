@@ -1,6 +1,6 @@
 // Electron main: thin. It owns windows, sessions and protocols, checks every IPC message (who sent
 // it and what it is), and relays the rest to the core process. It runs no agents and keeps no chat.
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
+import { app, BrowserWindow, Menu, clipboard, dialog, ipcMain, nativeTheme, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync, existsSync } from "node:fs";
@@ -10,6 +10,7 @@ import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { scrubEnvironment } from "./packaged";
 import {configureHiddenApp,hidden} from "./hidden-mode";
 import {nativeEditorNavigation,hasNativeEditorHost,prepareNativeEditorHost} from "./editor-host";
+import {appMenuTemplate} from "./app-menu";
 import { CHECK_EVERY_MS, FEED, Updater } from "./updates";
 import { previewResponse } from "./preview-response";
 import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates, runningAppBundles } from "./update-install";
@@ -765,6 +766,7 @@ function shotWindow(size: { width: number; height: number }): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate()));
   // The app is dark whatever the system says, as 1.x's windows (`preferredColorScheme(.dark)`): pages and component
   // frames that ask (prefers-color-scheme) draw their dark look (Phase 5c).
   nativeTheme.themeSource = "dark";
