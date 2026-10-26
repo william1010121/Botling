@@ -4395,7 +4395,7 @@ export class Bot {
         }
       } else if (!this.sessionRules.includes(denial.rule)) this.sessionRules.push(denial.rule);
       this.rulesGivenAfter.set(denial.rule, [...this.toolCalls.keys()].at(-1) ?? null);
-      if (this.head instanceof ClaudeHead && this.head.running) this.head.allow(this.allowRules);
+      if (this.head?.running) this.head.allow(this.allowRules);
       this.tellHead(denial.subagent
         ? `(App: The user allowed ${what}, which auto mode blocked for ${denial.subagent}. It is allowed now. It was the subagent's call, not yours: do not run it yourself; tell that subagent (SendMessage) to run it again as it was and carry on.)`
         : `(App: The user allowed ${what}, which auto mode blocked. It is allowed now: run it again as it was, then carry on.)`);
