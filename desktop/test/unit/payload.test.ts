@@ -78,3 +78,12 @@ describe("chat state for the Web/src page", () => {
     expect(one.messages[1]!.seen).toBeNull();
   });
 });
+
+describe("attachments in the chat state", () => {
+  it("are served by the chat origin under their own file name", () => {
+    const messages: MessageView[] = [{ id: "u1", role: "relay", text: "A component report", time: at(0),
+      attachments: [{ name: "x-agent-activity.png", kind: "image", url: "file:///synthetic/attachments/x-agent-activity.png" }] }];
+    const { state } = chatState(bot, { botId: "B", messages, running: null, live: [], tasks: [] });
+    expect(state.messages[0]!.attachments![0]!.url).toMatch(/^botling-chat:\/\/chat\/attachment\/B\/[A-Za-z0-9_-]+\/x-agent-activity\.png$/);
+  });
+});

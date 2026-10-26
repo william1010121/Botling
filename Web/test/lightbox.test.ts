@@ -82,6 +82,17 @@ describe("image lightbox", () => {
     expect(sent).toEqual([]);
   });
 
+  it("marks its buttons with the picture's URL (a click of yours) and offers Finder for Botling 2's chat attachments", () => {
+    const url = "botling-chat://chat/attachment/B/ZmlsZTovLy90bXAvYS5wbmc/a.png";
+    const row = messageElement(message({ role: "relay", text: "report", attachments: [{ name: "a.png", kind: "image", url }] }), {});
+    document.body.append(row);
+    row.querySelector<HTMLImageElement>(".thumb")!.click();
+    const box = document.querySelector<HTMLElement>(".lightbox")!;
+    expect(box.querySelector<HTMLElement>(".lightbox-open")!.dataset.url).toBe(url);
+    box.querySelector<HTMLButtonElement>(".lightbox-reveal")!.click();
+    expect(sent).toEqual([{ type: "revealFile", url }]);
+  });
+
   it("still sends HTML pages and other files to their window", () => {
     const row = messageElement(message({ role: "user", text: "x", attachments: [{ name: "r.html", kind: "file", url: "file:///p/r.html" }] }), {});
     document.body.append(row);

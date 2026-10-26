@@ -14,7 +14,7 @@ import { CardBroker, type CardTarget } from "../broker";
 import type { FrameExtras } from "../payload";
 import { APP_ORIGIN, type FrameMessage, type ShellMessage } from "./protocol";
 import { setMediaSource } from "../../../../Web/src/markdown";
-import { localMediaSource } from "../attachment-url";
+import { localMediaSource } from "../../contract/attachment-url";
 
 declare const __LATEX_SOURCE__: string;
 

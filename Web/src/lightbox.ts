@@ -28,10 +28,12 @@ export function openLightbox(url: string, label: string): void {
   box.setAttribute("aria-label", label || t("lightbox.picture"));
   const openWords = escapeHTML(t("lightbox.openInPreview"));
   const revealWords = escapeHTML(t("lightbox.showInFinder"));
+  // A file on disk: 1.x's file:// URL, or Botling 2's chat-origin attachment (`botling-chat://chat/attachment/…`).
+  const local = url.startsWith("file:") || url.startsWith("botling-chat://chat/attachment/");
   box.innerHTML = `
     <div class="lightbox-bar">
-      <button class="lightbox-open" type="button" title="${openWords}">${openWords}</button>
-      ${url.startsWith("file:") ? `<button class="lightbox-reveal" type="button" title="${revealWords}">${revealWords}</button>` : ""}
+      <button class="lightbox-open" type="button" title="${openWords}" data-url="${escapeHTML(url)}">${openWords}</button>
+      ${local ? `<button class="lightbox-reveal" type="button" title="${revealWords}" data-url="${escapeHTML(url)}">${revealWords}</button>` : ""}
       <button class="lightbox-close" type="button" aria-label="${escapeHTML(t("common.close"))}" title="${escapeHTML(t("lightbox.closeEsc"))}">✕</button>
     </div>
     <div class="lightbox-stage"><img class="lightbox-image" alt=""></div>

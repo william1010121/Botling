@@ -2,7 +2,7 @@
 // and how the chat frame asks for them.
 import { describe, expect, it } from "vitest";
 import { namesPath } from "../../src/core/attachments";
-import { attachmentURL, localMediaSource } from "../../src/renderer/attachment-url";
+import { attachmentURL, localMediaSource } from "../../src/contract/attachment-url";
 
 describe("namesPath", () => {
   it("finds a path written as a file:// URL, encoded or not, or bare", () => {
