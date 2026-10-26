@@ -30,7 +30,7 @@ async function open(page: Page, options: { failure?: boolean; pending?: boolean;
     window.usageFixture = usage; window.usageFailure = !!failure; window.usagePending = !!pending; window.usageRequests = 0;
   }, { usage: options.usage ?? fixture(), failure: options.failure, pending: options.pending });
   await page.addScriptTag({ content: script });
-  const sheet = page.getByRole("dialog", { name: "Settings" });
+  const sheet = page.getByRole("dialog", { name: "Settings", exact: true });
   await sheet.getByRole("button", { name: "Usage", exact: true }).click();
   return sheet;
 }

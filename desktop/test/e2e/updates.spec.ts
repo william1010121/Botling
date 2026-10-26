@@ -24,8 +24,8 @@ test("on by default; a newer release is an update notice in the main bot's chat,
     await expect(chat.getByText("It can't be installed from here: Update trust is not configured", { exact: false })).toBeVisible();
     await expect(chat.getByRole("button", { name: "Install and restart" })).toHaveCount(0);
     await expect(page.locator(".update-bar")).toHaveCount(0);
-    await page.getByRole("button", { name: "Settings" }).click();
-    const sheet = page.getByRole("dialog", { name: "Settings" });
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const sheet = page.getByRole("dialog", { name: "Settings", exact: true });
     await sheet.getByRole("button", { name: "Updates" }).click();
     await expect(sheet.getByRole("switch", { name: "Check for updates" })).toBeChecked();
     await expect(sheet.getByText("Botling 2.0.1 is available (Botling-2-2.0.1-mac-arm64.zip).")).toBeVisible();

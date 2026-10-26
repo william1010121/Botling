@@ -24,8 +24,8 @@ test("Settings → Usage: today's cost and tokens, by bot, the earlier days, Cla
     await page.setViewportSize({ width: 1120, height: 820 });
     await say(chat, "hello");
     await expect(chat.locator(".row.bot[data-id]", { hasText: "hello" })).toBeVisible();
-    await page.getByRole("button", { name: "Settings" }).click();
-    const sheet = page.getByRole("dialog", { name: "Settings" });
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const sheet = page.getByRole("dialog", { name: "Settings", exact: true });
     await sheet.getByRole("button", { name: "Usage" }).click();
     const today = sheet.getByRole("region", { name: "Usage today" });
     await expect(today).toContainText("$0.01");

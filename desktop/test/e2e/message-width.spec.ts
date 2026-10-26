@@ -83,7 +83,7 @@ test("Appearance slider applies to main, another bot and group chats, and surviv
     let { page, chat } = run;
     await page.setViewportSize({ width: 1900, height: 900 });
     await page.getByRole("button", { name: "Settings", exact: true }).click();
-    const sheet = page.getByRole("dialog", { name: "Settings" });
+    const sheet = page.getByRole("dialog", { name: "Settings", exact: true });
     await sheet.getByRole("button", { name: "Appearance", exact: true }).click();
     await sheet.getByRole("slider", { name: "Message column width" }).fill("900");
     await expect.poll(() => saved(dataDir)).toBe(900);
@@ -106,7 +106,7 @@ test("Appearance slider applies to main, another bot and group chats, and surviv
     await page.setViewportSize({ width: 1900, height: 900 });
     await aligned(chat, 900);
     await page.getByRole("button", { name: "Settings", exact: true }).click();
-    const again = page.getByRole("dialog", { name: "Settings" });
+    const again = page.getByRole("dialog", { name: "Settings", exact: true });
     await again.getByRole("button", { name: "Appearance", exact: true }).click();
     await expect(again.getByRole("slider", { name: "Message column width" })).toHaveValue("900");
     await again.getByRole("button", { name: "Use default width" }).click();

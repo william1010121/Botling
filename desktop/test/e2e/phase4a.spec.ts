@@ -144,8 +144,8 @@ test("Settings: language, bot look and avatar size reach the chat page; a summar
   const { app, page, chat } = await launch({ dataDir });
   try {
     await page.setViewportSize({ width: 1120, height: 820 });
-    await page.getByRole("button", { name: "Settings" }).click();
-    const sheet = page.getByRole("dialog", { name: "Settings" });
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const sheet = page.getByRole("dialog", { name: "Settings", exact: true });
     await expect(sheet.getByRole("heading", { name: "General" })).toBeVisible();
     // 1.x's default look is Cute: the rail shows characters; Original brings the shapes back.
     const avatar = page.locator(".bot-row").first().locator("img");

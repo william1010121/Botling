@@ -290,6 +290,14 @@ function TaskGroups(props: TaskListProps) {
     }, HOVER_MS);
   };
   const leave = () => { cancel(); setHover(null); };
+  // A drag folds the timeline away: it floats over the chat column, above the chat frame, where
+  // the frame's file-drop outline (frame.css, inside the frame) could not show over it.
+  useEffect(() => {
+    const fold = () => { cancel(); setHover(null); };
+    window.addEventListener("dragstart", fold, true);
+    window.addEventListener("dragenter", fold, true);
+    return () => { window.removeEventListener("dragstart", fold, true); window.removeEventListener("dragenter", fold, true); };
+  }, []);
   const lists: Record<GroupKey, TaskView[]> = {
     waiting: activeTasks(tasks).filter((task) => task.state === "waiting"),
     running: activeTasks(tasks).filter((task) => task.state !== "waiting"),
