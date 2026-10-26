@@ -5,7 +5,7 @@
 import type { BotView, CardView, CatchUpView, ComponentInfoView, DisplayView, HeadsView, MessageView, PinView, SpecStateView, SubagentView, TaskView } from "../contract";
 import type { SpecState, ComponentInfo, DisplayView as WebDisplay, PinSize, PinView as WebPin, CatchUpView as WebCatchUp, ChatState, ChoiceView as WebChoice, FileView, HandoffView, MessageView as WebMessage, StepView as WebStep, TaskCardView } from "../../../Web/src/types";
 import type { ChatView } from "./store";
-import { avatarURL, faceURL, type Look } from "./avatars";
+import { avatarURL, characterURL, faceURL, type Look } from "./avatars";
 
 /** What the chat frame needs besides the page's own state: Phase 0 cards and turn states. */
 export interface FrameExtras {
@@ -286,6 +286,8 @@ export function chatState(bot: BotView, chat: ChatView, now = new Date(), replyi
     slashCommands: share ? [...SLASH_COMMANDS, SHARE_COMMAND] : SLASH_COMMANDS,
     ...slashLists(bot, Object.keys(components).sort()),
     ...headsParts(chat.heads),
+    // Look Cute with two heads: the seen marks show each head's tiny character, not its letter (1.x `seenHeads`).
+    seenHeads: look === "cute" && two ? Object.fromEntries(engines.map((engine) => [markLetter(engine), characterURL(engine)])) : null,
     pins: (chat.pins ?? []).map(pinView),
     floating: (chat.floating ?? []).map((view) => ({ botID: bot.id, botName: bot.name, pin: pinView(view), global: null, blocked: null })),
     pinChoices: chat.pinChoices ?? [],
