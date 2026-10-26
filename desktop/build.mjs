@@ -6,10 +6,11 @@
 // from desktop/node_modules at the versions Web/package.json pins, so Web/ needs no install and its
 // own build output (Sources/ClaudeCodeBot/Resources) is never touched.
 import { build } from "esbuild";
-import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createPublicKey } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inlineTokens } from "../Web/kit/build.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, "out");
@@ -67,10 +68,12 @@ await Promise.all([
   }),
 ]);
 cpSync(join(here, "src/renderer/index.html"), join(out, "renderer/index.html"));
-cpSync(join(here, "src/renderer/styles.css"), join(out, "renderer/styles.css"));
+// The shell's and the chat's stylesheets, each with the design tokens (Web/src/tokens.css) in place of its import.
+const withTokens = (from, to) => writeFileSync(to, inlineTokens(readFileSync(from, "utf8"), from));
+withTokens(join(here, "src/renderer/styles.css"), join(out, "renderer/styles.css"));
 cpSync(join(here, "src/renderer/chat-frame/chat.html"), join(out, "renderer/chat.html"));
 cpSync(join(here, "src/renderer/chat-frame/frame.css"), join(out, "renderer/frame.css"));
-cpSync(join(web, "src/chat.css"), join(out, "renderer/chat.css"));
+withTokens(join(web, "src/chat.css"), join(out, "renderer/chat.css"));
 // KaTeX's stylesheet and fonts, as the plugin's build.json copies them for the Swift app.
 const katex = join(here, "node_modules/katex/dist");
 mkdirSync(join(out, "renderer/plugins/ccb-latex/fonts"), { recursive: true });

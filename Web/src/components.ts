@@ -8,6 +8,7 @@ import { acceptPictures } from "./pictures";
 import { LiveSchedule, liveTick, type LiveCard } from "./refresh";
 import { onScreen, whenShownAgain } from "./visible";
 import { escapeHTML } from "./util";
+import { kitV1 } from "../kit/generated/kit-v1";
 import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./types";
 
 /**
@@ -68,10 +69,15 @@ import type { Action, ChoiceView, ComponentInfo, DisplayView, PinSize } from "./
  * Before the template runs, the frame gets the input-method guard (`ime.ts`): a Return that commits
  * a Zhuyin or Pinyin candidate never reaches the template's keydown/keypress handlers or submits
  * its form, so a template's "send on Enter" is safe without checking anything itself.
+ *
+ * A template with `<meta name="ccb-kit" content="1">` also gets the component kit (Web/kit,
+ * README.md there): its text right after the ccb runtime, in <head>, and `<html data-theme="dark">`
+ * for its tokens. A template without that meta gets exactly the page it got before the kit.
  */
 export function componentPage(template: string, data: string, images: Record<string, string> = {}, size: PinSize = "2x2", surface: Surface = "chat", fill = surface === "board", saving = false): string {
   const safe = (json: string) => json.replace(/</g, "\\u003c");
-  return `<!doctype html><html data-size="${size}" data-surface="${surface}"${fill ? " data-fill" : ""}><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
+  const kit = kitScript(template);
+  return `<!doctype html><html${kit ? ` data-theme="${kitTheme}"` : ""} data-size="${size}" data-surface="${surface}"${fill ? " data-fill" : ""}><head><meta charset="utf-8"><meta name="color-scheme" content="dark">
 <style>:root{color-scheme:dark}html,body{margin:0;padding:0;background:transparent;color:#EDEDF0;font:14px -apple-system,"PingFang TC",sans-serif;overflow:hidden}
 #ccb-root{container-type:inline-size;container-name:ccb}
 html[data-surface="board"] #ccb-root{height:100%}
@@ -262,7 +268,7 @@ ${imeGuardScript}
   // Templates written while the app was called Deck call deck.answer(...).
   window.deck = window.ccb;
 })();
-</script></head><body><div id="ccb-root">
+</script>${kit}</head><body><div id="ccb-root">
 ${template}
 </div><script>
 const ccbRoot = document.getElementById('ccb-root');
@@ -273,6 +279,23 @@ window.addEventListener('load', ccbSize);
 document.documentElement.addEventListener('mouseenter', () => parent.postMessage({ccb: 'hover', on: true}, '*'));
 document.documentElement.addEventListener('mouseleave', () => parent.postMessage({ccb: 'hover', on: false}, '*'));
 </script></body></html>`;
+}
+
+/** The kits a template can ask for, by major version: a new major version is added beside the old ones. */
+const kits: Record<string, string> = { "1": kitV1 };
+/** The theme a kit page is drawn in (the chat is dark; tokens.css has the light set too). */
+const kitTheme = "dark";
+const kitMeta = /<meta\s+(?:name\s*=\s*["']ccb-kit["']\s+content\s*=\s*["']([^"']*)["']|content\s*=\s*["']([^"']*)["']\s+name\s*=\s*["']ccb-kit["'])\s*\/?>/i;
+
+/** The <script> that puts the kit a template's `<meta name="ccb-kit" content="N">` asks for into its page ("" without one). */
+function kitScript(template: string): string {
+  const match = template.match(kitMeta);
+  if (!match) return "";
+  const version = (match[1] ?? match[2] ?? "").trim();
+  const kit = kits[version];
+  if (kit) return `<script>\n${kit}\n</script>`;
+  const message = JSON.stringify(`This app has no component kit version ${version || "(empty)"}: <meta name="ccb-kit" content="…"> takes ${Object.keys(kits).join(", ")}.`).replace(/</g, "\\u003c");
+  return `<script>addEventListener('DOMContentLoaded',()=>{const d=document.createElement('pre');d.className='ccb-kit-missing';d.style.cssText='margin:8px;padding:10px 12px;border:1px solid #FF8A80;border-radius:10px;color:#FF8A80;white-space:pre-wrap;font:12px ui-monospace,Menlo,monospace';d.textContent=${message};document.getElementById('ccb-root').prepend(d);try{ccb.setStatus({text:'Error',tone:'bad'})}catch(e){}});</script>`;
 }
 
 /** The most `ccb.save` keeps, as JSON characters (UTF-16 code units; Swift's `ComponentState.limit`). */

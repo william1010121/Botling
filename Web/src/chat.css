@@ -1,33 +1,14 @@
+@import "./tokens.css";
+/* Colours are in tokens.css (shared with the app shell and the component kit). */
 :root {
   --chat-avatar-size: 48px;
-  --ground: #0E0E10;
-  --bubble: #1B1B1F;
-  --user-bubble: #2B2B31;
-  --notice: #16161A;
-  --line: #232327;
-  --text: #EDEDF0;
-  --muted: #A0A0A8;
-  --faint: #8E8E96;
-  --chip: #2A2A31;
-  --blue: #4C8DFF;
-  --link: #8DB5FF;
-  --green: #4CC38A;
-  --orange-line: #6B4A1F;
-  --orange-text: #F7C27F;
-  --error: #FF8A80;
-  --code: #111114;
   /* The controls over and in the input box (pinned strip, hand-off chip, toolbar): one height,
      radius, border and muted color; status is a 7px dot and its color. */
   --control-h: 32px;
   --control-radius: 10px;
-  --border: #2E2E35;
-  --raised: #2C2C33;
-  --claude: #D97757;
-  --codex: #6E9BFF;
   color-scheme: dark;
 }
-/* The chat is always dark; should it ever get a light theme, the controls read on white. */
-:root[data-theme="light"] { --border: #DADADF; --raised: #FFFFFF; --claude: #C2603F; --codex: #3D6FE0; }
+/* The chat is always dark; should it ever get a light theme, tokens.css has its colours. */
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--ground); color: var(--text); }
