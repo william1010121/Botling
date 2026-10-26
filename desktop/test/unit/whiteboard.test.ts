@@ -9,7 +9,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { PROTOCOL_VERSION, type BotView, type ResultOf, type TaskView, type WaitingView, type WhiteboardView } from "../../src/contract";
 import { Client } from "../../src/renderer/client";
-import { Whiteboard, doneByDay, highlight, nextSteps, taskCounts, waitingCount, whiteboardSections } from "../../src/renderer/Whiteboard";
+import { INACTIVE_AFTER_MS, Whiteboard, doneByDay, highlight, isInactive, lastActive, nextSteps, shownSections, taskCounts, waitingCount, whiteboardSections } from "../../src/renderer/Whiteboard";
 import { tempDir } from "../helpers";
 
 const id = (n: number) => `6A0B0000-0000-4000-8000-0000000000${String(n).padStart(2, "0")}`;
@@ -24,8 +24,8 @@ const task = (taskId: string, name: string, state: TaskView["state"], updatedAt:
 
 const main = bot(2, "Main bot", "main");
 const site = bot(11, "Site", "manager", { lastActivity: new Date().toISOString() });
-const paper = bot(12, "Paper", "manager");
-const news = bot(13, "News", "bot", { job: "Morning news" });
+const paper = bot(12, "Paper", "manager", { lastActivity: new Date().toISOString() });
+const news = bot(13, "News", "bot", { job: "Morning news", lastActivity: new Date().toISOString() });
 const group = bot(20, "Writing", "group", { members: [paper.id] });
 const bots = [main, site, paper, news, group];
 const today = new Date().toISOString();
@@ -54,6 +54,105 @@ describe("whiteboard data", () => {
     const days = doneByDay(data.bots[0]!.tasks, Date.now());
     expect(days).toHaveLength(7);
     expect(days[6]).toMatchObject({ day: "Today", count: 1 });
+  });
+});
+
+describe("whiteboard: bots gone quiet", () => {
+  const now = Date.parse("2026-10-26T12:00:00Z");
+  const old = "2026-10-23T09:00:00Z";
+  const recent = new Date(now - 3 * 3_600_000).toISOString();
+  const none: WaitingView = { items: [], doing: {} };
+  const empty = (botId: string, tasks: TaskView[] = []) => ({ botId, currentStatus: [], inProgress: [], decided: [], tasks, results: [], picture: null });
+  const stale = bot(31, "Stale", "bot", { lastActivity: old });
+  const fresh = bot(32, "Fresh", "bot", { lastActivity: recent });
+  const asking = bot(33, "Asking", "bot", { lastActivity: old });
+  const busy = bot(34, "Busy", "bot", { lastActivity: old, working: true });
+  const helped = bot(35, "Helped", "bot", { lastActivity: old, subagents: 1 });
+  const approving = bot(36, "Approving", "bot", { lastActivity: old, approvals: 1 });
+  const pinnedBot = bot(37, "Pinned", "bot", { lastActivity: old });
+  const taskNews = bot(38, "TaskNews", "bot", { lastActivity: old });
+  const silent = bot(39, "Silent", "bot", { lastActivity: null });
+  const asks: WaitingView = { items: [{ botId: asking.id, text: "Which one?", messageId: null }], doing: {} };
+
+  it("waits 48 hours, counting a task card's change as activity", () => {
+    expect(INACTIVE_AFTER_MS).toBe(48 * 3_600_000);
+    expect(lastActive(stale, undefined)).toBe(Date.parse(old));
+    expect(lastActive(taskNews, empty(taskNews.id, [task("t", "Draft", "done", recent)]))).toBe(Date.parse(recent));
+    expect(lastActive(silent, undefined)).toBeNull();
+  });
+
+  it("hides a bot quiet for 48 hours with nothing waiting and nothing running; keeps waiting, working, recent and pinned ones", () => {
+    const pins = new Set([pinnedBot.id]);
+    const hidden = (entry: BotView, waitingView = none, data = empty(entry.id)) => isInactive(entry, data, waitingView, now, pins);
+    expect(hidden(stale)).toBe(true);
+    expect(hidden(silent)).toBe(true);
+    expect(hidden(fresh)).toBe(false);
+    expect(hidden(asking, asks)).toBe(false);
+    expect(hidden(busy)).toBe(false);
+    expect(hidden(helped)).toBe(false);
+    expect(hidden(approving)).toBe(false);
+    expect(hidden(pinnedBot)).toBe(false);
+    expect(hidden(taskNews, none, empty(taskNews.id, [task("t", "Draft", "done", recent)]))).toBe(false);
+    expect(hidden(stale, none, empty(stale.id, [task("w", "Pick", "waiting", old)]))).toBe(false);
+    expect(hidden(stale, none, empty(stale.id, [task("r", "Build", "running", old, { atWork: true })]))).toBe(false);
+    // Exactly at the line: still shown.
+    expect(isInactive(bot(40, "Edge", "bot", { lastActivity: new Date(now - INACTIVE_AFTER_MS).toISOString() }), undefined, none, now, new Set())).toBe(false);
+  });
+
+  it("leaves out sections with no card shown and counts what it hid", () => {
+    const sections = whiteboardSections([main, stale, fresh, bot(41, "Old project", "manager", { lastActivity: old })]);
+    const result = shownSections(sections, (entry) => entry.lastActivity === old);
+    expect(result.hidden).toBe(2);
+    expect(result.sections.map((section) => [section.title, section.bots.map((entry) => entry.name)])).toEqual([["Bots", ["Fresh"]]]);
+  });
+
+  describe("on the page", () => {
+    let host: HTMLDivElement;
+    let root: ReturnType<typeof createRoot>;
+    beforeEach(() => { host = document.createElement("div"); document.body.append(host); root = createRoot(host); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true; });
+    afterEach(async () => { await act(async () => root.unmount()); host.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false; });
+    const quietClient = () => {
+      let receive: (value: unknown) => void = () => {};
+      return new Client({ protocol: PROTOCOL_VERSION, subscribe(listener) { receive = listener; return () => {}; }, post(envelope: any) {
+        const result = envelope.cmd.type === "whiteboard.view" ? { bots: [] } : {};
+        queueMicrotask(() => receive({ v: PROTOCOL_VERSION, id: envelope.id, ok: true, result }));
+      } });
+    };
+    const render = (lang?: string) => act(async () => root.render(createElement(Whiteboard, {
+      client: quietClient(), bots: [main, stale, fresh, asking, busy, pinnedBot, silent], waiting: asks, components: {}, look: "original", now, mainMessages: [], mainBotId: MAIN, refreshMs: 0,
+      pinned: [pinnedBot.id], lang: lang as any, statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: () => {}, onError: () => {},
+    })));
+    const shownNames = () => [...host.querySelectorAll(".wb-card .wb-card-name")].map((name) => name.textContent);
+
+    it("shows only the active bots, counts only them, and the toggle at the end reveals the rest", async () => {
+      await render();
+      expect(shownNames()).toEqual(["Fresh", "Asking", "Busy", "Pinned"]);
+      expect(host.querySelector(".wb-bar-count")?.textContent).toBe("4 bots · 0 tasks · 1 waiting on you");
+      const toggle = host.querySelector<HTMLButtonElement>(".wb-inactive-toggle")!;
+      expect(toggle.textContent).toBe("Show 2 inactive");
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      expect(host.querySelector(".wb-sections")!.lastElementChild).toBe(toggle.parentElement);
+      await act(async () => toggle.click());
+      expect(shownNames()).toEqual(["Stale", "Fresh", "Asking", "Busy", "Pinned", "Silent"]);
+      expect(host.querySelector(".wb-bar-count")?.textContent).toBe("6 bots · 0 tasks · 1 waiting on you");
+      expect(toggle.textContent).toBe("Hide inactive");
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      await act(async () => toggle.click());
+      expect(shownNames()).toHaveLength(4);
+    });
+
+    it("says the toggle in the app's language", async () => {
+      await render("zh-Hant");
+      expect(host.querySelector(".wb-inactive-toggle")?.textContent).toBe("顯示 2 個不活躍的");
+    });
+
+    it("has no toggle when nothing is hidden", async () => {
+      await act(async () => root.render(createElement(Whiteboard, {
+        client: quietClient(), bots: [main, fresh], waiting: none, components: {}, look: "original", now, mainMessages: [], mainBotId: MAIN, refreshMs: 0,
+        statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: () => {}, onError: () => {},
+      })));
+      expect(host.querySelector(".wb-inactive-toggle")).toBeNull();
+    });
   });
 });
 

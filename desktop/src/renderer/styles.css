@@ -672,6 +672,10 @@ button { font: inherit; color: inherit; }
 .wb-main-line { font-size: 13px; line-height: 1.55; }
 .wb-main-reply { font-size: 13px; line-height: 1.55; color: var(--muted); white-space: pre-wrap; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
 .wb-empty { color: var(--faint); font-size: 13px; padding: 20px; }
+.wb-inactive { flex-basis: 100%; display: flex; justify-content: center; }
+.wb-inactive-toggle { border: 0; background: none; padding: 4px 8px; font: inherit; font-size: 12px; color: var(--faint); cursor: pointer; border-radius: 6px; }
+.wb-inactive-toggle:hover { color: var(--muted); }
+.wb-inactive-toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
 
 .wb-scrim { position: absolute; inset: 0; background: rgba(14, 14, 16, 0.62); padding: 18px 20px; display: flex; justify-content: center; align-items: flex-start; z-index: 5; }
 .wb-report { width: min(820px, 100%); height: 100%; display: flex; flex-direction: column; overflow: hidden; background: var(--bubble); border: 1px solid #2E2E35; border-radius: 20px;

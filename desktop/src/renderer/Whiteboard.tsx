@@ -10,12 +10,23 @@
 // component frame as the chat's (Web/src's `componentPage`, served by main as `card.page`). That
 // module is loaded only when a picture is drawn: it also listens for the chat page's own component
 // frames (`iframe.component-frame`, of which this page has none), so it is inert here.
+// A bot gone quiet (nothing waiting on you, nothing at work, no line or task change for
+// INACTIVE_AFTER_MS) is left off the board unless pinned; a quiet toggle at the end shows them.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { type BotView, type ComponentInfoView, type MessageView, type ResultView, type TaskView, type WaitingItemView, type WaitingView, type WhiteboardBotView, type WhiteboardPictureView, type WhiteboardView } from "../contract";
 import type { Client } from "./client";
 import { faceURL } from "./avatars";
 import { Icon } from "./icons";
 import { activeTasks, finishedTasks } from "./RightPanel";
+import { dictionaries, type Lang } from "../../../Web/src/i18n";
+import { en, type Key } from "../../../Web/src/locales/en";
+
+/** The board's own words in `lang` (the chat page's dictionaries; English for anything missing). */
+function say(lang: Lang | null | undefined, key: Key, values: Record<string, string | number> = {}): string {
+  const word = dictionaries[lang ?? "en"]?.[key] ?? en[key];
+  const text = typeof word === "string" ? word : values.n === 1 ? word[0] : word[1];
+  return text.replace(/\{(\w+)\}/g, (mark, name: string) => (name in values ? String(values[name]) : mark));
+}
 
 type Look = "original" | "cute";
 
@@ -52,6 +63,35 @@ export function whiteboardSections(bots: BotView[]): WhiteboardSection[] {
   if (projects.length) out.push({ id: "projects", title: "Projects", bots: projects, group: null });
   if (own.length) out.push({ id: "bots", title: "Bots", bots: own, group: null });
   return out;
+}
+
+/** A bot with no line said and no task changed for this long (and nothing waiting or at work) is left off the board. */
+export const INACTIVE_AFTER_MS = 48 * 3_600_000;
+
+/** When the bot last did something: its chat's newest line or its newest task change (ms; null: never). */
+export function lastActive(bot: BotView, data: WhiteboardBotView | undefined): number | null {
+  const times = [bot.lastActivity, ...(data?.tasks ?? []).map((task) => task.updatedAt)].map((iso) => (iso ? Date.parse(iso) : NaN)).filter((at) => !Number.isNaN(at));
+  return times.length ? Math.max(...times) : null;
+}
+
+/** Gone quiet: not pinned, nothing waiting on you, nothing at work, and nothing done for INACTIVE_AFTER_MS. */
+export function isInactive(bot: BotView, data: WhiteboardBotView | undefined, waiting: WaitingView, now: number, pinned: ReadonlySet<string>): boolean {
+  if (pinned.has(bot.id) || waitingCount(bot, waiting, data) > 0) return false;
+  if (bot.working || bot.subagents > 0 || bot.guest || (data?.tasks ?? []).some((task) => task.state === "running" && task.atWork)) return false;
+  const at = lastActive(bot, data);
+  return at === null || now - at > INACTIVE_AFTER_MS;
+}
+
+/** The sections with the hidden bots taken out (a section left empty goes), and how many were hidden. */
+export function shownSections(sections: WhiteboardSection[], hide: (bot: BotView) => boolean): { sections: WhiteboardSection[]; hidden: number } {
+  let hidden = 0;
+  const out: WhiteboardSection[] = [];
+  for (const section of sections) {
+    const bots = section.bots.filter((bot) => !hide(bot));
+    hidden += section.bots.length - bots.length;
+    if (bots.length) out.push({ ...section, bots });
+  }
+  return { sections: out, hidden };
 }
 
 /** What waits on you from one bot: its open questions or its memory's "Waiting on you" (as the right panel lists them). */
@@ -158,12 +198,23 @@ export interface WhiteboardProps {
   onError: (failure: unknown) => void;
   /** How often the board asks again (ms); 0: only once (tests). */
   refreshMs?: number;
+  /** Bots pinned to the top of the left column: always on the board. */
+  pinned?: string[];
+  /** The app's language, for the board's own words. */
+  lang?: Lang | null;
 }
 
-export function Whiteboard({ client, bots, waiting, components, look, now, mainMessages, mainBotId, statusOf, onOpenChat, onError, refreshMs = 5_000 }: WhiteboardProps) {
+export function Whiteboard({ client, bots, waiting, components, look, now, mainMessages, mainBotId, statusOf, onOpenChat, onError, refreshMs = 5_000, pinned, lang }: WhiteboardProps) {
   const data = useWhiteboardData(client, refreshMs);
   const byBot = useMemo(() => new Map((data?.bots ?? []).map((entry) => [entry.botId, entry])), [data]);
-  const sections = useMemo(() => whiteboardSections(bots), [bots]);
+  const allSections = useMemo(() => whiteboardSections(bots), [bots]);
+  const [showInactive, setShowInactive] = useState(false);
+  const pins = useMemo(() => new Set(pinned ?? []), [pinned]);
+  // A group chat with its own question to you keeps its members on the board.
+  const groupAsks = new Set(waiting.items.filter((item) => item.groupId && item.botId === item.groupId).map((item) => item.groupId!));
+  const quiet = shownSections(allSections, (bot) => !allSections.some((section) => section.group && groupAsks.has(section.group.id) && section.bots.includes(bot))
+    && isInactive(bot, byBot.get(bot.id), waiting, now, pins));
+  const sections = showInactive ? allSections : quiet.sections;
   const [open, setOpen] = useState<{ botId: string; origin: string } | null>(null);
   const canvas = useRef<HTMLDivElement>(null);
   const cards = sections.flatMap((section) => section.bots);
@@ -216,7 +267,14 @@ export function Whiteboard({ client, bots, waiting, components, look, now, mainM
             );
           })}
           <MainSummary bots={bots} waiting={waiting} data={byBot} look={look} messages={mainMessages} mainBotId={mainBotId} sections={sections} />
-          {sections.length === 0 && <div className="wb-empty">No bots yet. Add a project or a bot of your own, and its card shows here.</div>}
+          {allSections.length === 0 && <div className="wb-empty">No bots yet. Add a project or a bot of your own, and its card shows here.</div>}
+          {quiet.hidden > 0 && (
+            <div className="wb-inactive">
+              <button type="button" className="wb-inactive-toggle" aria-expanded={showInactive} onClick={() => setShowInactive((on) => !on)}>
+                {showInactive ? say(lang, "whiteboard.hideInactive") : say(lang, "whiteboard.showInactive", { n: quiet.hidden })}
+              </button>
+            </div>
+          )}
         </div>
         {open && openBot && (
           <div className="wb-scrim" onPointerDown={(event) => { if (event.target === event.currentTarget) setOpen(null); }}>
