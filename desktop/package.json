@@ -10,6 +10,7 @@
     "dev:fake": "node build.mjs && BOTLING_AGENT=fake electron .",
     "start": "electron .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:changed": "node scripts/test-changed.mjs",
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "node build.mjs && vitest run test/unit",
     "test:e2e": "node build.mjs && playwright test",
