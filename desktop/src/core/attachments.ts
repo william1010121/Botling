@@ -34,6 +34,26 @@ export function imageMediaType(path: string): string | null {
   }
 }
 
+/** Whether `text` holds `path` whole: not as the start of a longer name (`/a.png` in `/a.png.bak`). */
+function holds(text: string, path: string): boolean {
+  for (let at = text.indexOf(path); at !== -1; at = text.indexOf(path, at + 1)) {
+    const next = text[at + path.length];
+    if (next === undefined || !/[\p{L}\p{N}._~%/-]/u.test(next)) return true;
+  }
+  return false;
+}
+
+/** Whether a line's text names this absolute path: as written, or percent-encoded in a file:// URL. */
+export function namesPath(text: string, path: string): boolean {
+  if (!text || !path.startsWith("/")) return false;
+  if (holds(text, path)) return true;
+  if (!text.includes("%")) return false;
+  try { return holds(decodeURIComponent(text), path); } catch {
+    // A stray "%" in the text: decode its file:// URLs one by one.
+    return (text.match(/file:\/\/[^\s)\]>"']+/g) ?? []).some((url) => { try { return holds(decodeURIComponent(url), path); } catch { return false; } });
+  }
+}
+
 /** What the chat origin serves a file as (anything unknown: a download-only type, never HTML). */
 export function servedType(path: string): string {
   const media = imageMediaType(path);

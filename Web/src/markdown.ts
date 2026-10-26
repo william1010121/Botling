@@ -57,13 +57,30 @@ export function resetMarkdown(): MarkdownIt {
   return md;
 }
 
+let mediaSource: (url: string) => string = (url) => url;
+
+/**
+ * Where a picture or video is loaded from. The Swift app loads the page from file://, so a file://
+ * URL (or a bare absolute path) loads as it is; a host whose page has an origin of its own (the
+ * desktop app's botling-chat://chat) maps local ones to a URL it serves. The element's `data-url`
+ * keeps the URL the bot wrote.
+ */
+export function setMediaSource(source: (url: string) => string): void {
+  mediaSource = source;
+}
+
+export function mediaSrc(url: string): string {
+  return mediaSource(url);
+}
+
 export function mediaHTML(src: string, label: string): string {
   const url = escapeHTML(src);
+  const shown = escapeHTML(mediaSrc(src));
   const name = escapeHTML(label);
   if (videoExtensions.test(src.split("?")[0])) {
-    return `<video class="media" src="${url}" controls preload="metadata" aria-label="${name || escapeHTML(t("markdown.video"))}"></video>`;
+    return `<video class="media" src="${shown}" controls preload="metadata" aria-label="${name || escapeHTML(t("markdown.video"))}"></video>`;
   }
-  return `<img class="media" src="${url}" alt="${name}" data-url="${url}" data-label="${name}" loading="lazy">`;
+  return `<img class="media" src="${shown}" alt="${name}" data-url="${url}" data-label="${name}" loading="lazy">`;
 }
 
 /** About how many Latin letters fit across a bot bubble at the table's 14px. */

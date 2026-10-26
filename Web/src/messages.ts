@@ -4,7 +4,7 @@ import { t } from "./i18n";
 import { pinBar, specPinButton } from "./pins";
 import { answerAction, answerImages, choicesData, commandCard, componentElement, detailTarget, fallbackChoices } from "./components";
 import type { ComponentAnswer } from "./components";
-import { mediaHTML, renderMarkdown } from "./markdown";
+import { mediaHTML, mediaSrc, renderMarkdown } from "./markdown";
 import { acceptPictures } from "./pictures";
 import type { ComponentRender } from "./plugins";
 import { liveElement, stepsElement } from "./steps";
@@ -743,7 +743,7 @@ export function attachmentStrip(files: FileView[]): HTMLElement {
   strip.className = "attachments";
   for (const file of files) {
     if (file.kind === "image") {
-      strip.insertAdjacentHTML("beforeend", `<img class="thumb" src="${escapeHTML(file.url)}" alt="${escapeHTML(file.name)}" data-url="${escapeHTML(file.url)}" data-label="${escapeHTML(file.name)}">`);
+      strip.insertAdjacentHTML("beforeend", `<img class="thumb" src="${escapeHTML(mediaSrc(file.url))}" alt="${escapeHTML(file.name)}" data-url="${escapeHTML(file.url)}" data-label="${escapeHTML(file.name)}">`);
     } else if (file.kind === "video") {
       strip.insertAdjacentHTML("beforeend", mediaHTML(file.url, file.name));
     } else {

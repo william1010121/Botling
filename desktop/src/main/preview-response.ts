@@ -3,21 +3,24 @@ import { open } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { PREVIEW_CSP, PREVIEW_TYPES } from './card-page';
 
+/** How a file is served when it is not a preview card's: its type, its page policy, and whether a symlink is followed. */
+export interface ServeOptions { type?: string; csp?: string; follow?: boolean }
+
 /** Streaming local preview response. Sniff at most 64 KiB of text, tolerating only a cut-off trailing code point. */
-export async function previewResponse(file: string, request: Request): Promise<Response> {
-  const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+export async function previewResponse(file: string, request: Request, options: ServeOptions = {}): Promise<Response> {
+  const handle = await open(file, options.follow ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW);
   let streamed = false;
   try {
     const stat = await handle.stat();
     if (!stat.isFile()) return new Response('Not found', { status: 404 });
     const size = stat.size;
-    const type = PREVIEW_TYPES[file.slice(file.lastIndexOf('.') + 1).toLowerCase()] ?? 'application/octet-stream';
+    const type = options.type ?? PREVIEW_TYPES[file.slice(file.lastIndexOf('.') + 1).toLowerCase()] ?? 'application/octet-stream';
     let contentType = type;
     if ((/^text\//.test(type) || ['application/javascript','application/json','image/svg+xml'].includes(type))) {
       const bytes = Buffer.alloc(Math.min(size, 65536)); const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
       try { new TextDecoder('utf-8', {fatal:true}).decode(bytes.subarray(0, bytesRead), {stream:bytesRead < size}); contentType += '; charset=utf-8'; } catch { /* use the page's own encoding */ }
     }
-    const headers = new Headers({'Content-Type':contentType,'Content-Security-Policy':PREVIEW_CSP,'X-Content-Type-Options':'nosniff','Cache-Control':'no-store','Accept-Ranges':'bytes'});
+    const headers = new Headers({'Content-Type':contentType,'Content-Security-Policy':options.csp ?? PREVIEW_CSP,'X-Content-Type-Options':'nosniff','Cache-Control':'no-store','Accept-Ranges':'bytes'});
     let start=0,end=size-1,status=200;
     const range=request.headers.get('range');
     if (range) {
