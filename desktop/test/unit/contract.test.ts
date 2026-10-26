@@ -78,3 +78,11 @@ describe("contract", () => {
     expect(EventEnvelope.safeParse({ v: PROTOCOL_VERSION, epoch: "e", seq: 1, event: { ...event, botId: undefined } }).success).toBe(false);
   });
 });
+
+it("the shell can ask main to reload its native chat page (a main command, never the core's)", async () => {
+  const { MAIN_COMMANDS } = await import("../../src/contract");
+  expect(RENDERER_COMMANDS.has("chat.reloadPage")).toBe(true);
+  expect(MAIN_COMMANDS.has("chat.reloadPage")).toBe(true);
+  expect(parseInbound({ v: PROTOCOL_VERSION, id: "r1", cmd: { type: "chat.reloadPage" } }).ok).toBe(true);
+  expect(parseInbound({ v: PROTOCOL_VERSION, id: "r2", cmd: { type: "chat.reloadPage", url: "file:///x" } }).ok).toBe(false);
+});

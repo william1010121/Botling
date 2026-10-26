@@ -1,7 +1,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {EventEmitter} from 'node:events';
 import {ipcMain} from 'electron';
-import {prepareNativeEditorHost,nativeEditorNavigation,editorBounds} from '../../src/main/editor-host';
+import {prepareNativeEditorHost,nativeEditorNavigation,editorBounds,reloadNativeEditor} from '../../src/main/editor-host';
 import {EDITOR_CHANNEL,EDITOR_URL} from '../../src/editor-host-wire';
 vi.mock('electron',async()=>{
  const {EventEmitter}=await import('node:events');
@@ -252,4 +252,53 @@ it('scales layout from a zoomed-out shell into window coordinates',async()=>{
  expect(layout).toHaveBeenCalledExactlyOnceWith({x:207,y:71,width:1197,height:838});
  expect(editorBounds({x:0,y:0,width:1740,height:1091},{width:1450,height:909},1450/1740)).toEqual({x:0,y:0,width:1450,height:909});
  expect(editorBounds({x:0,y:0,width:1740,height:1091},{width:1450,height:909})).toBeNull();
+});
+
+it('reloads only the chat page: same view and layout, fresh authenticated document, old stamp refused',async()=>{
+ const f=fixture(),first=await f.ready,contents=f.view.webContents;
+ const shellEvent={sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame},bounds={x:200,y:60,width:600,height:600};
+ ipcMain.emit(EDITOR_CHANNEL.layout,shellEvent,{stamp:first,bounds});
+ const setBounds=(f.view as any).setBounds;setBounds.mockClear();f.owner.webContents.send.mockClear();
+ const reloading=reloadNativeEditor(f.owner.webContents as any);
+ // The shell learns at once that the old document is gone, so it stops posting to it.
+ expect(f.owner.webContents.send).toHaveBeenCalledWith(EDITOR_CHANNEL.unbound,first);
+ // The reload's own navigation is allowed and does not dispose the view.
+ expect(nativeEditorNavigation(contents,{isMainFrame:true,url:EDITOR_URL})).toBe(true);
+ expect(nativeEditorNavigation(contents,{isMainFrame:true,url:'https://example.invalid'})).toBe(false);
+ contents.emit('did-start-navigation',{isMainFrame:true});
+ expect(await reloading).toBe(true);
+ expect(contents.loadURL).toHaveBeenCalledTimes(2);expect(contents.loadURL).toHaveBeenLastCalledWith(EDITOR_URL);
+ expect(contents.isDestroyed()).toBe(false);expect(f.owner.contentView.removeChildView).not.toHaveBeenCalled();expect(f.owner.contentView.addChildView).toHaveBeenCalledTimes(1);
+ expect(setBounds).not.toHaveBeenCalledWith({x:0,y:0,width:0,height:0});
+ const bound=f.owner.webContents.send.mock.calls.filter(c=>c[0]===EDITOR_CHANNEL.bound).at(-1)![1];
+ expect(bound.surfaceId).toBe(first.surfaceId);expect(bound.documentGeneration).not.toBe(first.documentGeneration);
+ expect(contents.send).toHaveBeenLastCalledWith(EDITOR_CHANNEL.bound,bound);
+ f.owner.webContents.send.mockClear();
+ ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp:first,message:{botling:'stop'}});expect(f.owner.webContents.send).not.toHaveBeenCalled();
+ ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp:bound,message:{botling:'stop'}});expect(f.owner.webContents.send).toHaveBeenCalledTimes(1);
+ // After the reload, an unrequested navigation still disposes the editor as before.
+ expect(nativeEditorNavigation(contents,{isMainFrame:true,url:EDITOR_URL})).toBe(false);
+});
+
+it('a chat page reload of an unknown, closed or mid-reload owner is refused or shared, never a second view',async()=>{
+ const stranger=new EventEmitter() as any;expect(await reloadNativeEditor(stranger)).toBe(false);
+ const f=fixture();await f.ready;
+ const one=reloadNativeEditor(f.owner.webContents as any),two=reloadNativeEditor(f.owner.webContents as any);
+ expect(await one).toBe(true);expect(await two).toBe(true);expect(f.view.webContents.loadURL).toHaveBeenCalledTimes(2);
+ f.dispose();expect(await reloadNativeEditor(f.owner.webContents as any)).toBe(false);
+});
+
+it('a failed chat page load disposes the editor instead of leaving a dead view bound',async()=>{
+ const f=fixture();await f.ready;const contents=f.view.webContents as any;
+ contents.loadURL.mockRejectedValueOnce(new Error('ERR_FILE_NOT_FOUND'));
+ expect(await reloadNativeEditor(f.owner.webContents as any)).toBe(false);
+ expect(contents.isDestroyed()).toBe(true);expect(f.owner.contentView.removeChildView).toHaveBeenCalledTimes(1);
+});
+
+it('loads the editor preload from a chosen developer preload directory',async()=>{
+ const contents=Object.assign(new EventEmitter(),{id:1,mainFrame:{url:'app://botling/index.html',parent:null},isDestroyed:()=>false,send:vi.fn(),focus:vi.fn(),getZoomFactor:()=>1});
+ const owner=Object.assign(new EventEmitter(),{webContents:contents,isVisible:()=>false,isDestroyed:()=>false,getContentBounds:()=>({x:0,y:0,width:1120,height:820}),contentView:{addChildView:vi.fn(),removeChildView:vi.fn()},focus:vi.fn(),show:vi.fn()});
+ const result=prepareNativeEditorHost(owner as any,'/Volumes/My-SSD/synthetic/desktop',Promise.resolve(),'/Volumes/My-SSD/synthetic/dev-preload');disposers.push(result.dispose);
+ expect((result.view as any).options.webPreferences.preload).toBe('/Volumes/My-SSD/synthetic/dev-preload/editor-host.cjs');
+ await result.ready;
 });
