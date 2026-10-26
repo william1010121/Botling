@@ -13,3 +13,13 @@ it('Cmd+R reloads the window shell, never the focused native chat editor',()=>{
  expect(editor.reload).not.toHaveBeenCalled();
  expect(items.some(i=>i.role==='editMenu')).toBe(true);
 });
+it('Reload Chat Page reloads only that window\'s native chat page, through main', () => {
+ const reloadChat=vi.fn(async()=>true),items=flat(appMenuTemplate('darwin',{reloadChat})),win=new (BrowserWindow as any)();
+ const item=items.find(i=>i.label==='Reload Chat Page');
+ expect(item.accelerator).toBe('Alt+CmdOrCtrl+R');
+ item.click(item,win,{});item.click(item,undefined,{});
+ expect(reloadChat).toHaveBeenCalledExactlyOnceWith(win.webContents);
+ expect(win.webContents.reload).not.toHaveBeenCalled();
+ // Without a handler (older callers) the item is absent rather than dead.
+ expect(flat(appMenuTemplate('darwin')).some(i=>i.label==='Reload Chat Page')).toBe(false);
+});

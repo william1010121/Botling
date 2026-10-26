@@ -11,6 +11,7 @@ import { createPublicKey } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildRenderer } from "./build-renderer.mjs";
+import { buildPreloads } from "./build-preloads.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const out = join(here, "out");
@@ -27,9 +28,8 @@ const web = join(here, "..", "Web");
 const node = { bundle: true, platform: "node", format: "cjs", target: "node22", sourcemap: "linked", legalComments: "eof" };
 await Promise.all([
   build({ ...node, entryPoints: [join(here, "src/main/main.ts")], outfile: join(out, "main/main.cjs"), external: ["electron"], define: { __UPDATE_PUBLIC_KEY__: JSON.stringify(updatePublicKey) } }),
-  build({ ...node, entryPoints: [join(here, "src/preload/preload.ts")], outfile: join(out, "preload/preload.cjs"), external: ["electron"] }),
-  // Dormant unprivileged native-editor boundary. No window uses it until coordinated integration.
-  build({ ...node, entryPoints: [join(here, "src/preload/editor-host.ts")], outfile: join(out, "preload/editor-host.cjs"), external: ["electron"] }),
+  // The shell's preload and the native chat editor's (build-preloads.mjs; also `npm run preload:build`).
+  buildPreloads({ root: here, outdir: join(out, "preload") }),
   build({ ...node, entryPoints: [join(here, "src/core/main.ts")], outfile: join(out, "core/main.cjs") }),
   // The plugin host: Web/host/src/host.ts unchanged, bundled as Web/build.mjs bundles it for 1.x
   // (its own process, started by the core; see src/core/plugins/host-client.ts).

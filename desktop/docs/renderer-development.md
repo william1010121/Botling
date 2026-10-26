@@ -34,6 +34,46 @@ webContents, never the focused native editor. Core processes and active agent wo
 Shell-local transient state can reset on reload. Source development data continues to use that worktree's
 `.data`; do not point an independent source instance at a running installed app's data directory.
 
+## Reloading the native chat page and the preloads
+
+The chat page and composer (Web/src's page plus `src/renderer/chat-frame`, served as
+`botling-chat://chat/chat.html`, `chat.js`, `chat.css`, `frame.css` from the same renderer directory)
+now reload on their own, without restarting the app:
+
+- **View → Reload Chat Page** (Alt+Cmd+R / Alt+Ctrl+R) reloads the focused window's native chat page.
+- **IPC:** the shell (or an install/update card) sends the main-only contract command
+  `{ type: "chat.reloadPage" }` and gets `{ reloaded: boolean }` (`false` when that window has no
+  native chat host, it was closed, or the new page failed to load).
+
+Main reloads the existing native `WebContentsView` in place (`reloadNativeEditor` in
+`src/main/editor-host.ts`): the view, its bounds and the window layout stay; the shell receives
+`unbound` and then `bound` with a fresh document generation, so messages to or from the old document
+are refused. On `bound` the shell pushes the current chat state and plugins again, so the page
+rehydrates from the core (chat state never lived in the page). Only main can start this navigation;
+any other main-frame navigation of the editor still disposes it, and a page that fails to load
+disposes the view instead of leaving a dead one bound. Shell Cmd+R (`553eeb8`) is unchanged: it
+still reloads only the shell and keeps the chat page.
+
+What survives a chat page reload:
+
+- The chat, its rows, cards, tasks and running agent work (core utility process; untouched).
+- **Unsent drafts**, per chat: the page mirrors the composer's `draft` actions into its own tab's
+  `sessionStorage` and saves the box being typed in on `pagehide` (so the composer's 500 ms save
+  delay cannot lose the last words), then hands them to `Composer.setDrafts` in the new document
+  (`src/renderer/chat-frame/draft-keep.ts`). This storage lives only as long as that web contents:
+  drafts are still not kept across an app restart.
+- Not kept: page-local UI state such as scroll position, an open popover/menu in the chat page, the
+  composer's undo history and an IME composition in progress.
+
+**Preloads** run again whenever their page reloads. `npm run preload:build` rebuilds only
+`out/preload/preload.cjs` and `out/preload/editor-host.cjs` (atomic publish; a failed build keeps the
+last good files; never clears `out/`). Then Cmd+R picks up the shell preload and Reload Chat Page the
+chat page's. A source run reads them from `desktop/out/preload`; a dev-trial artifact can take them
+from a developer build with `--botling-preload-dir=/absolute/dir` (built with
+`npm run preload:build -- --outdir=/absolute/dir`), gated exactly like `--botling-renderer-dir`
+(source runs and `botlingDevTrial` artifacts only; absolute; both files present; ordinary packaged
+builds ignore it). A preload change that also changes main's side of a channel still needs a restart.
+
 For occasional source-instance updates, `npm run renderer:build -- --outdir="$PWD/out/renderer"` builds just the renderer once. For a separate asset
 directory, either renderer command accepts `-- --outdir=/absolute/path/to/renderer-output`.
 `node build.mjs --watch` now directs callers to `renderer:watch` instead of implying the full build
@@ -130,8 +170,9 @@ separate user/manual check. The worker has not launched Electron, installed `.10
 | Change | How it takes effect |
 | --- | --- |
 | React shell components, layout, shell CSS/tokens/HTML, embedded shell avatars | Renderer build/watch, then Cmd+R; no app restart |
-| Native chat renderer, chat CSS, composer, attachment UI or Web/src chat logic | Outside this shell-only change. Cmd+R preserves the existing chat document; chat reload behavior belongs to Claude’s separately owned integration |
-| Main process, preload, native editor host, core, agent runtime, plugin host, IPC contracts | Outside this shell-only change; use the separately coordinated runtime/deployment workflow |
+| Native chat renderer, chat CSS, composer, attachment UI or Web/src chat logic | Renderer build/watch, then View → Reload Chat Page (Alt+Cmd+R) or the `chat.reloadPage` command; chat state rehydrates from the core and unsent drafts are kept. Cmd+R still reloads only the shell |
+| Shell preload (`src/preload/preload.ts`) or chat page preload (`src/preload/editor-host.ts`, `editor-bridge.ts`) | `npm run preload:build`, then Cmd+R (shell) or Reload Chat Page (chat); dev trial: `--botling-preload-dir` at launch |
+| Main process, native editor host (main side), core, agent runtime, plugin host, IPC contracts | Full development build and app restart (or approved deployment for an installed trial) |
 | New npm dependency/version, packaging, signing or Electron version | Relink/reinstall matching dependencies and rebuild/restart or package as appropriate |
 
 This is manual shell refresh, not React Fast Refresh: it does not preserve arbitrary shell hook state.
@@ -144,7 +185,10 @@ Do not run the full `npm run build` alongside renderer watch: the full build int
 npm run renderer:build -- --outdir=/absolute/disposable/output
 npm run typecheck
 ./node_modules/.bin/vitest run test/unit/renderer-refresh.test.ts \
-  test/unit/renderer-loading.test.ts test/unit/renderer-configuration.test.ts test/unit/app-menu.test.ts test/unit/editor-host-main.test.ts
+  test/unit/renderer-loading.test.ts test/unit/renderer-configuration.test.ts test/unit/app-menu.test.ts test/unit/editor-host-main.test.ts \
+  test/unit/chat-draft-keep.test.ts test/unit/preload-build.test.ts test/unit/contract.test.ts
+# Hidden Electron check (never shows or focuses a window): reload, rehydrate, draft kept.
+./node_modules/.bin/playwright test test/e2e/chat-reload-hidden.spec.ts
 ```
 
 These use Node/esbuild, disposable renderer fixtures, protocol-response helpers and mocked native

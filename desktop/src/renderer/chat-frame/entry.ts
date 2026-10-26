@@ -18,6 +18,7 @@ import { type FrameMessage } from "./protocol";
 import { toShell, fromShell, nativeChat, installNativeShellCommands } from "./transport";
 import { setMediaSource } from "../../../../Web/src/markdown";
 import { localMediaSource } from "../../contract/attachment-url";
+import { keepDraft, keptDrafts, pageDraftStore } from "./draft-keep";
 
 declare const __LATEX_SOURCE__: string;
 
@@ -27,6 +28,18 @@ observeTraceEditor();
 let shownChat: string | undefined;
 setMediaSource((url) => localMediaSource(shownChat, url));
 installNativeShellCommands();
+// Reload Chat Page: the drafts this tab kept come back (the chat itself comes back from the core
+// through the shell's next state). The one being typed is kept as the old document goes away, so the
+// composer's half-second save delay cannot lose the last words.
+if (nativeChat) {
+  const store = pageDraftStore();
+  const kept = keptDrafts(store);
+  if (Object.keys(kept).length) window.ccb.setDrafts(kept);
+  window.addEventListener("pagehide", () => {
+    const chat = document.documentElement.dataset.chat, view = composerView();
+    if (chat && view && !view.composing) keepDraft(store, chat, { text: view.state.doc.toString(), cursor: view.state.selection.main.head });
+  });
+}
 const column = installMessageWidth((value) => toShell({ botling: "messageWidth", value }), (active) => toShell({ botling: "messageWidthDrag", active }));
 
 // ---------------------------------------------------------------------------------------------
