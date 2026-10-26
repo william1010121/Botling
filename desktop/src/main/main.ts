@@ -51,7 +51,7 @@ if (checkAt >= 0) {
   if (report.stderr) writeSync(2, report.stderr);
   process.exit(report.code);
 }
-const renderer = rendererFiles(root, app.isPackaged, devTrial, process.argv);
+const renderer = rendererFiles(root, app.isPackaged, devTrial, process.argv, { appData: app.getPath("appData") });
 const rendererDir = renderer.directory;
 if (renderer.development) console.log(`[renderer] loading ${rendererDir}; Cmd+R reloads the shell only`);
 /** `--component-shot` (Phase 5a): draw one component and exit; no core, no data folder of the app's. */

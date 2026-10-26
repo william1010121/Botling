@@ -11,6 +11,7 @@
     "start": "electron .",
     "renderer:build": "node scripts/renderer-dev.mjs",
     "renderer:watch": "node scripts/renderer-dev.mjs --watch",
+    "renderer:configure": "node scripts/renderer-configure.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test:changed": "node scripts/test-changed.mjs",
     "link-deps": "sh scripts/link-deps.sh",
