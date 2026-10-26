@@ -1,6 +1,6 @@
 // Electron main: thin. It owns windows, sessions and protocols, checks every IPC message (who sent
 // it and what it is), and relays the rest to the core process. It runs no agents and keeps no chat.
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, protocol, safeStorage, session, shell, net, type WebContents, type Session, type IpcMainEvent } from "electron";
 import { dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync, existsSync } from "node:fs";
@@ -22,6 +22,7 @@ import {directoryDefaults,packagedDataName} from "./main-environment";
 declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
+import { copyDoctorFix } from "./doctor-copy";
 import { WebPages } from "./web";
 import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES } from "./card-page";
 import { PAGE_COMPONENT, previewFile } from "../core/preview-url";
@@ -514,6 +515,7 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
   switch (cmd.type) {
     case "result.open": return openResult(cmd.botId, cmd.url);
     case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId,cmd.pinId);
+    case "doctor.copy": return copyDoctorFix(cmd.tool, await core.call({ type: "doctor.view" }), text => clipboard.writeText(text));
     case "updates.dismiss": { await dismissRecovery(dataDir,cmd.id); return {dismissed:true}; }
     case "updates.check": return announce(await updater.check(cmd.manual));
     case "updates.copies": return retainedUpdateCopies(dataDir,installedApp,await runningAppBundles());

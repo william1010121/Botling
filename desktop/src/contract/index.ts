@@ -11,6 +11,8 @@
 // with the schemas below: the renderer is not trusted by main, and main does not let anything but
 // these shapes reach the core.
 import { z } from "zod";
+import { DoctorView } from "./doctor";
+export { DoctorCheck, DoctorView } from "./doctor";
 import shared from "../../../Web/src/contract.json";
 
 /**
@@ -930,6 +932,9 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("updates.check"), manual: z.boolean() }),
   /** What the bots used today and before, and the subscriptions' limits (Settings → Usage). */
   z.strictObject({ type: z.literal("usage.view") }),
+  z.strictObject({ type: z.literal("doctor.view") }),
+  z.strictObject({ type: z.literal("doctor.copy"), tool: z.enum(["claude", "codex"]) }),
+  z.strictObject({ type: z.literal("doctor.run"), includeLatest: z.boolean() }),
   /** Main: open the newer release's page in the browser (only a release page of the app's own repository). */
   z.strictObject({ type: z.literal("updates.open") }),
   z.strictObject({ type: z.literal("updates.stage") }),
@@ -999,10 +1004,10 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
-  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss", "usage.view",
+  "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss", "usage.view", "doctor.view", "doctor.run", "doctor.copy",
 ]);
 /** Commands main answers itself; everything else is forwarded to the core. */
-export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "link.open", "component.report", "chat.feedback", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss"]);
+export const MAIN_COMMANDS = new Set<CommandType>(["accounts.list", "site.open", "card.page", "files.pick", "projects.pick", "web.place", "result.open", "link.open", "component.report", "chat.feedback", "doctor.copy", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss"]);
 
 /** A temporary team at work (1.x's `TeamRun`): its title, the task, when it started (ms since 1970). */
 export const TeamRunView = z.strictObject({ id, name: z.string().max(200), title: z.string().max(200), task: z.string().max(4_000), startedAt: z.number() });
@@ -1056,7 +1061,7 @@ export interface ChatSnapshot {
 }
 
 export interface Results {
-  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView; waiting?: WaitingView; web?: WebStateView; teams?: TeamRunView[]; spec?: SpecStateView | null };
+  "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView; doctor?: DoctorView; waiting?: WaitingView; web?: WebStateView; teams?: TeamRunView[]; spec?: SpecStateView | null };
   "subagent.settle": { changed: boolean };
   "task.complete": { changed: boolean };
   "bots.create": { botId: string; created: boolean };
@@ -1120,6 +1125,9 @@ export interface Results {
   "settings.set": SettingsView;
   "updates.check": UpdateView;
   "usage.view": UsageView;
+  "doctor.view": DoctorView;
+  "doctor.run": DoctorView;
+  "doctor.copy": { copied: boolean };
   "updates.open": { opened: boolean };
   "updates.stage": UpdateView;
   "updates.restart": { restarting: boolean };
@@ -1195,6 +1203,7 @@ export const Event = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("plugins.updated"), plugins: PluginsView }),
   /** The app's settings changed. */
   z.strictObject({ type: z.literal("settings.updated"), settings: SettingsView }),
+  z.strictObject({ type: z.literal("doctor.updated"), doctor: DoctorView }),
   /** What waits on you across the bots (or a manager's "In progress") changed. */
   z.strictObject({ type: z.literal("waiting.updated"), waiting: WaitingView }),
   /** The open spec changed, opened or closed (Phase 5a). */

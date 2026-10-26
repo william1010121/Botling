@@ -1,3 +1,4 @@
+import { Doctor } from "./doctor";
 // The core process entry. Under Electron it runs as a utility process and talks over
 // `process.parentPort`; under plain Node (tests, a headless core) it talks JSON lines on stdio,
 // like the existing plugin host.
@@ -197,6 +198,7 @@ function groupTiming(text: string | undefined) {
 }
 
 const core = new Core({
+  ...(process.env.BOTLING_AGENT === "claude" ? { doctor: new Doctor() } : {}),
   dataDir,
   deferStartup: process.env.BOTLING_UPDATE_PENDING === "1",
   headConfig,
