@@ -219,7 +219,11 @@ button { font: inherit; color: inherit; }
 /* A bot and its subagent rows (SubagentRows / SubagentRow: 30 pt rows, 26 pt in, 13 pt titles). */
 .bot-entry { display: flex; flex-direction: column; gap: 2px; }
 .subagent-rows { display: flex; flex-direction: column; }
-.task-agents { margin: 10px 0; display: flex; flex-direction: column; gap: 5px; }
+.task-agents { margin: 4px 0; display: flex; flex-direction: column; gap: 5px; }
+.task-agents > summary { cursor: pointer; font-size: 12px; list-style: none; }
+.task-agents > summary::-webkit-details-marker { display: none; }
+.task-agents > summary::before { content: "›"; display: inline-block; width: 10px; transition: transform .15s; }
+.task-agents[open] > summary::before { transform: rotate(90deg); }
 .task-agent { position: relative; display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left; color: var(--text); background: var(--hover); border: 1px solid transparent; border-radius: 8px; padding: 8px 24px 8px 8px; font: inherit; cursor: pointer; }
 .task-agent:hover, .task-agent:focus-visible { border-color: var(--muted); }
 .task-agent[data-status="running"] { border-left-color: var(--green); }
@@ -527,7 +531,8 @@ button { font: inherit; color: inherit; }
 .task-card[data-active="1"][data-state="waiting"] { border-color: #F7C27F; }
 .task-card[data-state="stale"] { border-color: #FF8A80; }
 .task-card[data-active="1"][data-state="pending"] { border-color: #8E8E96; }
-.task-card-head { background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
+.task-card-top { display: flex; align-items: flex-start; gap: 8px; }
+.task-card-head { flex: 1; min-width: 0; background: none; border: 0; padding: 0; cursor: pointer; text-align: left; }
 .task-field { display: grid; grid-template-columns: 48px 1fr; gap: 8px; font-size: 12.5px; }
 .task-field-label { color: var(--faint); }
 .task-field-value { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
@@ -539,7 +544,7 @@ button { font: inherit; color: inherit; }
 .task-report { background: var(--chip); border: 0; border-radius: 8px; height: 28px; padding: 0 10px; font-size: 12.5px; color: var(--text); cursor: pointer; }
 .task-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .task-jump { background: none; border: 0; padding: 0; color: #8DB5FF; font-size: 12px; cursor: pointer; white-space: nowrap; }
-.task-complete { align-self: flex-start; background: var(--chip); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; font-size: 12px; color: var(--text); cursor: pointer; }
+.task-complete { margin-left: auto; flex-shrink: 0; white-space: nowrap; background: var(--chip); border: 1px solid var(--line); border-radius: 8px; padding: 2px 8px; font-size: 11.5px; color: var(--text); cursor: pointer; }
 .task-complete:hover { color: #8DB5FF; }
 .task-manual-completion { font-size: 12px; color: var(--muted); }
 .waiting-tasks { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
