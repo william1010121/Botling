@@ -30,7 +30,10 @@
 // The other head's words ("(App: …, working on this too, says:" / "…, replied in this chat:") that arrive
 // while a turn runs are read into that turn, as claude reads messages queued mid-turn; they are logged
 // with `midTurn: true` (FAKE_CLAUDE_NO_ABSORB=1: never; each waits for a turn of its own, answered
-// <no-reply/> after FAKE_CLAUDE_NOTE_MS). A message sent with a `uuid` gets `command_lifecycle` lines: "queued" when read,
+// <no-reply/> after FAKE_CLAUDE_NOTE_MS). The user's words that arrive while a slow turn ("slow", "/slow …"
+// handed over) runs are read into it as well: it stops streaming and answers "You said: <words>" in that
+// turn. While any other turn runs they wait for a turn of their own. FAKE_CLAUDE_INTERRUPTS: a file it appends
+// a line to for each interrupt it is sent. A message sent with a `uuid` gets `command_lifecycle` lines: "queued" when read,
 // "started" when it gets a turn of its own.
 // Work the other head hands over ("(App: Codex, this bot's other head, hands you this …") is answered
 // "Did it: <task>" ("/say …" as the task: exactly that; "/handoff:claude <task>": it hands <task> on); a hand-back ("… finished what you handed
@@ -218,10 +221,18 @@ lines.on("line", (line) => {
       if (inputLog) appendFileSync(inputLog, JSON.stringify({ session, text, midTurn: true }) + "\n");
       return;
     }
+    if (busy && current?.absorbs && !current.steered && process.env.FAKE_CLAUDE_NO_ABSORB !== "1" && words(text.trim()).all.trim()) {
+      // The user's words while a long turn runs are read into it too (claude's queued message, taken in at
+      // its next step): that turn goes on and answers them. A turn that ends first leaves them queued.
+      current.steered = text.trim();
+      if (inputLog) appendFileSync(inputLog, JSON.stringify({ session, text, midTurn: true, ...(images.length ? { images } : {}) }) + "\n");
+      return;
+    }
     if (inputLog) appendFileSync(inputLog, JSON.stringify({ session, text, ...(images.length ? { images } : {}) }) + "\n");
     queue.push({ text: text.trim(), uuid });
     wake?.();
   } else if (message.type === "control_request" && message.request?.subtype === "interrupt") {
+    if (process.env.FAKE_CLAUDE_INTERRUPTS) appendFileSync(process.env.FAKE_CLAUDE_INTERRUPTS, `${session}\n`);
     out({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: {} } });
     if (current && !current.ignoreInterrupt) {
       current.interrupted = true;
@@ -358,12 +369,15 @@ async function turn(job) {
   }
   const conducted = conductedReply(prompt);
   if (conducted === SLOW_HANDED) {
-    current = { interrupted: false, helper: null, ignoreInterrupt: false };
+    current = { interrupted: false, helper: null, ignoreInterrupt: false, absorbs: true, steered: null };
     out({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
-    for (let i = 0; !current.interrupted; i++) {
+    let soFar = "";
+    for (let i = 0; !current.interrupted && !current.steered; i++) {
       delta(`step${i} `);
+      soFar += `step${i} `;
       await sleep(30);
     }
+    if (current.steered) return result(soFar + await stream(`You said: ${words(current.steered).last}`));
     result("", false);
     return;
   }
@@ -418,15 +432,21 @@ async function turn(job) {
   }
   const { mode, tool } = directive(said.last);
   const rest = said.last === said.all ? directive(said.all).rest : said.all;
-  current = { interrupted: false, helper: null, ignoreInterrupt: mode === "stubborn" };
+  current = { interrupted: false, helper: null, ignoreInterrupt: mode === "stubborn", absorbs: mode === "slow", steered: null };
   out({ type: "stream_event", parent_tool_use_id: null, event: { type: "message_start" } });
   out({ type: "stream_event", parent_tool_use_id: null, event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } });
   if (mode === "slow" || mode === "stubborn") {
     if (mode === "stubborn") process.on("SIGTERM", () => {});
     current.helper = helper(mode === "stubborn");
-    for (let i = 0; !current.interrupted; i++) {
+    let soFar = "";
+    for (let i = 0; !current.interrupted && !current.steered; i++) {
       delta(`word${i} `);
+      soFar += `word${i} `;
       await sleep(30);
+    }
+    if (current.steered) {
+      current.helper?.kill("SIGKILL");
+      return result(soFar + await stream(`You said: ${words(current.steered).last}`));
     }
     result("", false);
     return;

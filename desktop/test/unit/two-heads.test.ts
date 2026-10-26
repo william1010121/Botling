@@ -332,27 +332,39 @@ describe("two heads in one chat", () => {
     expect((await c.chat()).messages.filter((m: any) => m.engine === "claude" && m.text.startsWith("Done:"))).toHaveLength(1);
   });
 
+  it("a second line to the Claude head while it answers you joins its turn: no interrupt, one reply after your line", async () => {
+    const dir = tempDir("heads");
+    const c = await twoHeads(dir, { FAKE_CLAUDE_INTERRUPTS: join(dir, "interrupts.log") });
+    const first = await c.call({ type: "chat.send", botId: MAIN, text: "/slow", to: "claude" });
+    await until(async () => (await c.chat()).messages.some((m: any) => m.engine === "claude" && m.text.includes("word2")), { timeout: 10_000 });
+    const second = await c.call({ type: "chat.send", botId: MAIN, text: "and this", to: "claude" });
+    expect(second.turnId).toBe(first.turnId);
+    expect((await finishedFor(c, first.turnId)).event).toMatchObject({ status: "done", text: expect.stringMatching(/You said: and this$/) });
+    expect(existsSync(join(dir, "interrupts.log"))).toBe(false);
+    const shown = (await c.chat()).messages.filter((m: any) => m.role === "user" || m.role === "bot").map((m: any) => [m.role, m.text.replace(/word\d+ /g, "")]);
+    expect(shown.slice(-3)).toEqual([["user", "/slow"], ["user", "and this"], ["bot", "You said: and this"]]);
+  });
+
   it("your message pauses claude's handed-over work (1.x's pausing): answered first, then it carries on and the hand-back goes on", async () => {
     const dir = tempDir("heads");
-    const c = await twoHeads(dir);
+    const c = await twoHeads(dir, { FAKE_CLAUDE_INTERRUPTS: join(dir, "interrupts.log") });
     await c.call({ type: "heads.answerWith", botId: MAIN, to: "codex" });
     await c.call({ type: "chat.send", botId: MAIN, text: `/say On it. <handoff to="claude">/slow build the parser</handoff>` });
     // Claude is at work on the handed-over task (it streams until interrupted).
     await until(async () => (await c.chat()).messages.some((m: any) => m.engine === "claude" && m.text.includes("step1")), { timeout: 10_000 });
     const { turnId } = await c.call({ type: "chat.send", botId: MAIN, text: "what is the time?", to: "claude" });
-    expect((await finishedFor(c, turnId)).event).toMatchObject({ status: "done", text: "You said: what is the time?" });
-    // It heard the pause note with your words; the handed work's words so far stay, cut off.
-    expect(claudeInputs(dir).find((text) => text.includes("what is the time?"))).toMatch(/^\(App: I stopped what you were doing to ask you this\. Answer me first; you will be told to carry on with it after\.\)\n\nwhat is the time\?/);
-    const cut = (await c.chat()).messages.find((m: any) => m.engine === "claude" && m.text.includes("step1"));
-    expect(cut).toMatchObject({ state: "stopped", interrupted: true });
+    expect((await finishedFor(c, turnId)).event).toMatchObject({ status: "done", text: expect.stringMatching(/You said: what is the time\?$/) });
+    // It heard the pause note with your words in the turn under way (no interrupt): nothing is cut off.
+    expect(lines(join(dir, "claude-input.log")).find((entry) => entry.text?.includes("what is the time?"))).toMatchObject({ midTurn: true, text: expect.stringMatching(/^\(App: I stopped what you were doing to ask you this\. Answer me first; you will be told to carry on with it after\.\)\n\nwhat is the time\?/) });
+    expect(existsSync(join(dir, "interrupts.log"))).toBe(false);
+    expect((await c.chat()).messages.some((m: any) => m.state === "stopped" || m.interrupted)).toBe(false);
     // Then it carries on (1.x's resume note); its reply is the hand-back, which Codex answers.
     const back = await until(async () => (await c.chat()).messages.find((m: any) => m.engine === "codex" && m.state === "done" && m.text.startsWith("Done: Carried on")), { timeout: 10_000 });
     expect(back.text).toBe("Done: Carried on: finished the handed work.");
     expect(claudeInputs(dir).at(-1)).toBe("(App: Now carry on with what you were doing before the user's message, where you left off.)");
     expect((await c.chat()).heads.handoffs).toMatchObject([{ from: "codex", to: "claude", state: "done" }]);
     const order = (await c.chat()).messages.filter((m: any) => m.role !== "divider").map((m: any) => [m.role, m.engine ?? null, m.text.replace(/step\d+\s*/g, "").trim()]);
-    expect(order.slice(-5)).toEqual([
-      ["bot", "claude", ""],
+    expect(order.slice(-4)).toEqual([
       ["user", null, "what is the time?"],
       ["bot", "claude", "You said: what is the time?"],
       ["bot", "claude", "Carried on: finished the handed work."],

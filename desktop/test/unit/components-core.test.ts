@@ -75,6 +75,8 @@ describe("components", () => {
     expect(await c.call({ type: "chat.answer", botId: MAIN, messageId: id, text: "All done: milk, eggs" })).toEqual({ accepted: true });
     await until(() => inputs(dir).at(-1)?.includes("All done: milk, eggs"));
     expect((await c.chat()).messages.filter((m: any) => m.role === "user").at(-1).text).toBe("All done: milk, eggs");
+    // Its reply ends before the next line (a line sent while it writes would join that turn).
+    await until(async () => (await c.chat()).messages.at(-1).text === "You said: All done: milk, eggs" && !(await c.call({ type: "chat.snapshot" })).bots[0].working);
     // Shown with no data and nothing to fill it: drawn as nothing, and the bot is told once.
     const empty = await turn(c, `/say <show name="status"></show>`);
     expect((await line(c, empty)).displays[0]).toMatchObject({ status: "empty", command: null });

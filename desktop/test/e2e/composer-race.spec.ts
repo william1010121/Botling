@@ -309,9 +309,8 @@ test("iframe reload has no stale key or ack that can replay text or steal Tab fo
     await box.fill("after reload");
     await page.keyboard.press("Enter");
     await expect(chat.locator(".row.user .user-bubble")).toHaveText(["after reload"]);
-    // Let the fake reply settle before choosing a Tab target: Stop disappears on completion.
+    // Let the fake reply settle before choosing a Tab target.
     await expect(chat.locator(".row.bot[data-id]").last()).toHaveAttribute("data-state", "done");
-    await expect(chat.getByRole("button", { name: "Stop", exact: true })).toBeHidden();
     await box.focus();
     await page.keyboard.press("Tab");
     const frame = await chatFrame(page);

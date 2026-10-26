@@ -119,22 +119,6 @@ function decorate(extras: FrameExtras) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Stop: a button beside Send while a reply is being written.
-
-function addStop() {
-  const tools = document.querySelector(".composer .composer-tools");
-  if (!tools || tools.querySelector(".send.stop")) return;
-  const stop = document.createElement("button");
-  stop.className = "send stop";
-  stop.type = "button";
-  stop.setAttribute("aria-label", "Stop");
-  stop.title = "Stop";
-  stop.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>`;
-  stop.addEventListener("click", () => toShell({ botling: "stop" }));
-  tools.append(stop);
-}
-
-// ---------------------------------------------------------------------------------------------
 
 window.addEventListener("message", (event: MessageEvent) => {
   if (event.source !== window.parent || event.origin !== origin) return;
@@ -155,7 +139,6 @@ window.addEventListener("message", (event: MessageEvent) => {
     // state would be replaced by that chat's draft); tests wait for it.
     document.documentElement.dataset.chat = message.state.botID;
     inputTrace()?.mark("frame.state.complete", () => inputTrace()!.snapshot());
-    addStop();
     decorate(message.extras);
   } else if (message.botling === "widthRejected") {
     column.rejected(message.value, message.actual);
@@ -215,7 +198,8 @@ function keepTyped(early: { text: string; cursor: number }) {
 
 const takeFocusBack = installInputRecovery(composerView, toShell);
 
-// Escape stops a reply being written, as in a terminal.
+// Escape stops a reply being written, as in a terminal. (There is no Stop button: a message sent while
+// it writes never stops it, the bot hears it and carries on.)
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && document.body.classList.contains("botling-running") && !event.isComposing) toShell({ botling: "stop" });
 });

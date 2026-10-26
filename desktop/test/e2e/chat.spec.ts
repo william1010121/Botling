@@ -24,7 +24,7 @@ test("sends a message and streams the reply into the chat", async () => {
   }
 });
 
-test("Stop ends the reply; a head that ignores it has its process tree ended; nothing arrives after", async () => {
+test("no Stop button while it writes (Send stays); Escape ends the reply; a head that ignores it has its process tree ended; nothing arrives after", async () => {
   const dataDir = tempDir("e2e");
   const pidsFile = join(dataDir, "pids");
   const second = await launch({ dataDir, env: { FAKE_CLAUDE_MODE: "stubborn", FAKE_CLAUDE_PIDS: pidsFile } });
@@ -35,9 +35,13 @@ test("Stop ends the reply; a head that ignores it has its process tree ended; no
     await expect(reply.locator(".markdown")).toContainText("word5");
     await expect(page.locator(".chat-status")).toHaveText("Writing…");
     const pids = await until(() => (pidsIn(pidsFile).length >= 2 ? pidsIn(pidsFile) : null));
-    await chat.getByRole("button", { name: "Stop" }).click();
+    // Sending while it writes never stops it, so there is no Stop button: Send stays where it is.
+    await expect(chat.locator(".composer .send.stop")).toHaveCount(0);
+    await expect(chat.getByRole("button", { name: "Send" })).toBeVisible();
+    await chat.locator("body").press("Escape");
     await expect(reply).toHaveAttribute("data-state", "stopped");
-    await expect(reply.locator(".interrupted-note")).toBeVisible();
+    // Its words so far stay, with no "Interrupted" under them.
+    await expect(reply.locator(".interrupted-note")).toBeHidden();
     const textAtStop = await reply.locator(".markdown").textContent();
     await sleep(800);
     expect(await reply.locator(".markdown").textContent()).toBe(textAtStop);
@@ -67,7 +71,7 @@ for(const startup of [0,5500])test(`reloading the window preserves the running t
     await expect(chat.locator(".row.bot[data-id]")).toHaveCount(before); // No second turn was started.
     const length = (await reply.locator(".markdown").textContent())!.length;
     await expect.poll(async () => (await reply.locator(".markdown").textContent())!.length).toBeGreaterThan(length);
-    await chat.getByRole("button", { name: "Stop" }).click();
+    await chat.locator("body").press("Escape");
     await expect(reply).toHaveAttribute("data-state", "stopped");
   } catch(error){
     const folder=join(desktop,'.cache/evidence/review-d');mkdirSync(folder,{recursive:true});

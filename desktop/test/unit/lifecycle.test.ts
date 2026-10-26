@@ -127,22 +127,43 @@ describe("reply tags", () => {
 });
 
 describe("a message while a reply is written", () => {
-  it("joins it: the turn so far stays cut off, and claude gets both parts as one message", async () => {
+  it("never stops it: claude hears your new line mid-turn and the same turn answers it, after your line", async () => {
     const dir = tempDir("steer");
-    const c = core(dir);
+    const c = core(dir, { FAKE_CLAUDE_INTERRUPTS: join(dir, "interrupts.log") });
     const first = await c.call({ type: "chat.send", botId: MAIN, text: "/slow" });
     await until(() => c.of("turn.delta").length >= 3);
-    const second = await turn(c, "and also this");
-    expect(second.event).toMatchObject({ status: "done", text: "You said: /slow\n\nand also this" });
-    expect(inputs(dir).at(-1)).toMatch(/^\(I sent this in parts before you answered; here is all of it:\)\n\n\/slow\n\nand also this\n\n\(App: message_id/);
+    const second = await c.call({ type: "chat.send", botId: MAIN, text: "and also this" });
+    // The turn under way takes it in: no new turn, nothing cut off, no interrupt.
+    expect(second.turnId).toBe(first.turnId);
+    const done = await until(() => c.of("turn.finished").find((e) => (e.event as { turnId: string }).turnId === first.turnId));
+    expect(done.event).toMatchObject({ status: "done" });
+    expect((done.event as { text: string }).text).toMatch(/^word0 word1 .*You said: and also this$/);
+    expect(existsSync(join(dir, "interrupts.log"))).toBe(false);
+    // claude got your words as they are, while its turn ran (1.x steering), not merged into a new message.
+    const log = readFileSync(join(dir, "input.log"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    expect(log.at(-1)).toMatchObject({ midTurn: true, text: expect.stringMatching(/^and also this\n\n\(App: message_id/) });
+    expect(log.some((entry) => /I sent this in parts/.test(entry.text))).toBe(false);
     const chat = await c.chat();
-    const cut = chat.messages.find((m: { id: string }) => m.id === first.messageId);
-    expect(cut).toMatchObject({ state: "stopped", interrupted: true });
-    expect(cut.text).toMatch(/^word0 word1/);
-    // The order: first message, its cut-off words, the second message, the one reply.
-    expect(chat.messages.slice(-4).map((m: { role: string }) => m.role)).toEqual(["user", "bot", "user", "bot"]);
-    // One card for both parts.
+    expect(chat.messages.some((m: { state?: string; interrupted?: boolean }) => m.state === "stopped" || m.interrupted)).toBe(false);
+    // The order: your two lines, then the one reply.
+    expect(chat.messages.slice(-3).map((m: { role: string; text: string }) => [m.role, m.role === "bot" ? m.text.replace(/word\d+ /g, "") : m.text]))
+      .toEqual([["user", "/slow"], ["user", "and also this"], ["bot", "You said: and also this"]]);
     expect(JSON.parse(readFileSync(join(dir, "main", "tasks.json"), "utf8")).length).toBeLessThanOrEqual(1);
+  });
+
+  it("a line claude reads only after its turn ended gets a turn of its own, shown as the answer to you", async () => {
+    const dir = tempDir("steer");
+    const c = core(dir, { FAKE_CLAUDE_INTERRUPTS: join(dir, "interrupts.log"), FAKE_CLAUDE_LINGER_MS: "400" });
+    const first = await c.call({ type: "chat.send", botId: MAIN, text: "/linger first" });
+    await until(() => c.of("turn.delta").length >= 1);
+    await c.call({ type: "chat.send", botId: MAIN, text: "second" });
+    await until(() => c.of("turn.finished").find((e) => (e.event as { turnId: string }).turnId === first.turnId));
+    const reply = await until(async () => (await c.chat()).messages.find((m: { role: string; text: string; state?: string }) => m.role === "bot" && m.text === "You said: second" && m.state === "done"), { what: "the answer to the second line" });
+    expect(reply).toBeTruthy();
+    expect(existsSync(join(dir, "interrupts.log"))).toBe(false);
+    const chat = await c.chat();
+    expect(chat.messages.some((m: { state?: string; interrupted?: boolean }) => m.state === "stopped" || m.interrupted)).toBe(false);
+    await until(async () => (await c.call({ type: "chat.snapshot" })).bots[0].working === false, { what: "the bot free again" });
   });
 
   it("waits while an approval is open, and goes once the turn ends", async () => {
