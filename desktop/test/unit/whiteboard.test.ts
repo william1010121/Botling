@@ -9,7 +9,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { PROTOCOL_VERSION, type BotView, type ResultOf, type TaskView, type WaitingView, type WhiteboardView } from "../../src/contract";
 import { Client } from "../../src/renderer/client";
-import { INACTIVE_AFTER_MS, Whiteboard, doneByDay, highlight, isInactive, lastActive, nextSteps, shownSections, taskCounts, waitingCount, whiteboardSections } from "../../src/renderer/Whiteboard";
+import { CARD_LINE_WIDTH, INACTIVE_AFTER_MS, Whiteboard, doneByDay, highlight, lineWidth, shortLine, isInactive, lastActive, nextSteps, shownSections, taskCounts, waitingCount, whiteboardSections } from "../../src/renderer/Whiteboard";
 import { tempDir } from "../helpers";
 
 const id = (n: number) => `6A0B0000-0000-4000-8000-0000000000${String(n).padStart(2, "0")}`;
@@ -54,6 +54,51 @@ describe("whiteboard data", () => {
     const days = doneByDay(data.bots[0]!.tasks, Date.now());
     expect(days).toHaveLength(7);
     expect(days[6]).toMatchObject({ day: "Today", count: 1 });
+  });
+});
+
+describe("whiteboard: terse cards (one short line, as the approved design)", () => {
+  const status = "token-speed 是 Rust CLI / Ratatui TUI，讀取本機 Claude Code 與 Codex 的 session 紀錄，算出每秒 token 速度。下一步是加上每個模型的分開統計，再把結果畫成圖表給使用者看，最後打包成 Homebrew formula。";
+  it("keeps only the first sentence, clamped to one line's width", () => {
+    expect(shortLine("The theme is live. Next: dark mode and phones.")).toBe("The theme is live.");
+    expect(shortLine("- **Done**: shipped `v2`.")).toBe("Done: shipped v2.");
+    const line = shortLine(status)!;
+    expect(line.endsWith("…")).toBe(true);
+    expect(line).not.toContain("下一步");
+    expect(lineWidth(line)).toBeLessThanOrEqual(CARD_LINE_WIDTH + 1);
+    expect(shortLine("   ")).toBeNull();
+  });
+  it("gives the card's highlight as that one short line, not the memory paragraph", () => {
+    const long = { ...data.bots[0]!, currentStatus: [status, "second line"] };
+    const line = highlight(site, long, waiting)!;
+    expect(lineWidth(line)).toBeLessThanOrEqual(CARD_LINE_WIDTH + 1);
+    expect(line.startsWith("token-speed 是 Rust CLI")).toBe(true);
+  });
+  it("draws no empty task bar on a card with no tasks, and keeps the main bot's reply to a short excerpt", async () => {
+    const host = document.createElement("div"); document.body.append(host);
+    const root = createRoot(host); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+    let receive: (value: unknown) => void = () => {};
+    const view: WhiteboardView = { bots: [{ ...data.bots[0]!, currentStatus: [status] }, data.bots[1]!, data.bots[2]!] };
+    const quiet = new Client({ protocol: PROTOCOL_VERSION, subscribe(listener) { receive = listener; return () => {}; }, post(envelope: any) {
+      queueMicrotask(() => receive({ v: PROTOCOL_VERSION, id: envelope.id, ok: true, result: envelope.cmd.type === "whiteboard.view" ? view : {} }));
+    } });
+    const reply = `${status}\n\n第二段：很長的說明。`;
+    try {
+      await act(async () => root.render(createElement(Whiteboard, {
+        client: quiet, bots, waiting, components, look: "original", now: Date.now(), mainBotId: MAIN, refreshMs: 0,
+        mainMessages: [{ id: "m1", role: "bot", text: reply } as any],
+        statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: () => {}, onError: () => {},
+      })));
+      const card = host.querySelector(`.wb-card[data-bot="${site.id}"]`)!;
+      expect(lineWidth(card.querySelector(".wb-highlight")!.textContent!)).toBeLessThanOrEqual(CARD_LINE_WIDTH + 1);
+      expect(card.querySelector(".wb-statebar")).not.toBeNull();
+      expect(host.querySelector(`.wb-card[data-bot="${paper.id}"] .wb-statebar`)).toBeNull();
+      const excerpt = host.querySelector(".wb-main-reply")!.textContent!;
+      expect(excerpt).not.toContain("第二段");
+      expect(lineWidth(excerpt)).toBeLessThanOrEqual(2 * CARD_LINE_WIDTH + 1);
+    } finally {
+      await act(async () => root.unmount()); host.remove(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = false;
+    }
   });
 });
 

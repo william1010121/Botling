@@ -1,7 +1,7 @@
 // The main bot's whiteboard: every bot as a card, grouped (a group chat's members together, then the
-// projects, then the bots of their own). A card shows the bot's one-line highlight (its memory.md's
-// first "Current status" line, else its first "In progress" line, else what its running task does
-// now), how many things wait on you, a ring of its tasks done and a bar of its tasks by state.
+// projects, then the bots of their own). A card shows the bot's one short line (the first sentence of
+// its memory.md's first "Current status" line, else of its first "In progress" line, else what its
+// running task does now, cut to one line), how many things wait on you, a ring of its tasks done and a bar of its tasks by state.
 // Pressed, the card grows in place into the bot's report, read by scrolling: Summary, Your call,
 // Results, Progress (tasks finished per day), What I did, My calls ("Decided"), Next. Everything is
 // what the bots keep themselves (memory.md, task cards, links handed over in their chats); a part
@@ -102,10 +102,45 @@ export function waitingCount(bot: BotView, waiting: WaitingView, data: Whiteboar
   return waitingFor(bot, waiting).length + (data?.tasks.filter((task) => task.state === "waiting" && task.name.trim()).length ?? 0) + bot.approvals;
 }
 
-/** The card's one line: "Current status", else "In progress", else what the running task does now, else the bot's job. */
+/** How wide a card's line may be, in half-width columns (a CJK character is two): one short sentence, as the approved design's cards. */
+export const CARD_LINE_WIDTH = 44;
+
+const wideChar = (char: string) => (char.codePointAt(0) ?? 0) >= 0x2e80;
+/** A text's width in half-width columns (a CJK or full-width character counts two). */
+export const lineWidth = (text: string) => [...text].reduce((sum, char) => sum + (wideChar(char) ? 2 : 1), 0);
+
+/**
+ * One short line from what a bot wrote: markdown marks taken off, its first sentence only, cut to
+ * `width` columns with "…". A memory paragraph never goes on a card whole; the report has it all.
+ */
+export function shortLine(text: string | null | undefined, width = CARD_LINE_WIDTH): string | null {
+  const plain = (text ?? "").replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\*\*|__|`/g, "").replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").replace(/\s+/g, " ").trim();
+  if (!plain) return null;
+  const end = plain.search(/[。！？]|[.!?](?=\s|$)/);
+  const sentence = end >= 0 ? plain.slice(0, end + 1).trim() : plain;
+  if (lineWidth(sentence) <= width) return sentence;
+  let out = "";
+  let used = 0;
+  for (const char of sentence) {
+    const step = wideChar(char) ? 2 : 1;
+    if (used + step > width - 1) break;
+    out += char;
+    used += step;
+  }
+  return `${out.trimEnd().replace(/[，、,;；:：]$/, "")}…`;
+}
+
+/**
+ * The card's one short line: the first sentence of "Current status", else of "In progress", else
+ * what the bot or its running task does now, else the bot's job (each cut to CARD_LINE_WIDTH).
+ */
 export function highlight(bot: BotView, data: WhiteboardBotView | undefined, waiting: WaitingView): string | null {
   const task = data ? activeTasks(named(data.tasks)).find((candidate) => candidate.state === "running" && candidate.now?.trim()) : undefined;
-  return data?.currentStatus[0] ?? data?.inProgress[0] ?? waiting.doing[bot.id] ?? task?.now ?? bot.job ?? null;
+  for (const text of [data?.currentStatus[0], data?.inProgress[0], waiting.doing[bot.id], task?.now, bot.job]) {
+    const line = shortLine(text);
+    if (line) return line;
+  }
+  return null;
 }
 
 /** The picture to draw on the card: one with data to show and its component at hand; else none (the ring). */
@@ -367,7 +402,7 @@ function BotCard({ client, bot, data, waiting, look, now, status, picture, compo
         <span className="wb-status"><span className="now-dot" data-status={status.key} aria-hidden="true" />{status.text}</span>
         {counts.total > 0 && <span className="wb-foot-count">{counts.active > 0 ? `${counts.active} under way` : `${counts.done} done`}</span>}
       </span>
-      <StateBar counts={counts} />
+      {counts.total > 0 && <StateBar counts={counts} />}
     </button>
   );
 }
@@ -386,7 +421,7 @@ function MainSummary({ bots, waiting, data, look, messages, mainBotId, sections 
     <section className="wb-main" aria-label="Main bot summary">
       <span className="wb-main-head"><img className="wb-face" src={faceURL(main, look, {})} alt="" />{main.name}{reply ? " · latest reply" : ""}</span>
       {total > 0 && <span className="wb-main-line">{total} waiting on you: {from.map((entry) => `${entry.count} from ${entry.bot.name}`).join(", ")}.</span>}
-      {reply && <span className="wb-main-reply">{reply.text.trim().split(/\n\s*\n/)[0]!.slice(0, 600)}</span>}
+      {reply && <span className="wb-main-reply">{shortLine(reply.text, 2 * CARD_LINE_WIDTH)}</span>}
     </section>
   );
 }
