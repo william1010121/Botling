@@ -172,7 +172,8 @@ separate user/manual check. The worker has not launched Electron, installed `.10
 | React shell components, layout, shell CSS/tokens/HTML, embedded shell avatars | Renderer build/watch, then Cmd+R; no app restart |
 | Native chat renderer, chat CSS, composer, attachment UI or Web/src chat logic | Renderer build/watch, then View → Reload Chat Page (Alt+Cmd+R) or the `chat.reloadPage` command; chat state rehydrates from the core and unsent drafts are kept. Cmd+R still reloads only the shell |
 | Shell preload (`src/preload/preload.ts`) or chat page preload (`src/preload/editor-host.ts`, `editor-bridge.ts`) | `npm run preload:build`, then Cmd+R (shell) or Reload Chat Page (chat); dev trial: `--botling-preload-dir` at launch |
-| Main process, native editor host (main side), core, agent runtime, plugin host, IPC contracts | Full development build and app restart (or approved deployment for an installed trial) |
+| Core, agent runtime (Claude/Codex heads), bot engine, settings, components, plugin host program | `npm run core:build`, then Develop → Swap Core from Build (or `kill -USR2 <main pid>`); conversations resume in the same sessions. See [core-hot-swap.md](core-hot-swap.md) |
+| Main process, native editor host (main side), IPC contracts (protocol version), the plugin host's utility wrapper | Full development build and app restart (or approved deployment for an installed trial) |
 | New npm dependency/version, packaging, signing or Electron version | Relink/reinstall matching dependencies and rebuild/restart or package as appropriate |
 
 This is manual shell refresh, not React Fast Refresh: it does not preserve arbitrary shell hook state.
