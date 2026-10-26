@@ -24,6 +24,18 @@ afterEach(() => {
   sent.splice(0);
 });
 
+it.each(["shared default", "desktop injected"])("keeps plain bot DOM identical to base with %s eligibility", mode => {
+  const message = line("plain", "bot");
+  // Disabling the extra eligibility clause follows the original base renderer's branch.
+  setSummaryCountable(() => false);
+  const base = messageElement(message, {});
+  expect([...base.children].map(child => child.className)).toEqual(["avatar", "bubble bot-bubble", "reply-button"]);
+  setSummaryCountable(mode === "desktop injected" ? isSummaryReply : message => message.role === "bot");
+  const row = messageElement(message, {});
+  expect(row.outerHTML).toBe(base.outerHTML);
+  expect(row.querySelector(".bot-column, .reaction-message-column")).toBeNull();
+});
+
 it("keeps the shared 1.x default bot-only until desktop explicitly opts in", () => {
   const messages = [line("u1", "user"), line("b", "bot"), line("n1", "notice"), line("u2", "user"), line("n2", "notice")];
   draw(messages);

@@ -259,8 +259,15 @@ export class IntervalSummaries {
       if (!row) continue;
       let footer = row.querySelector<HTMLElement>(".message-footer");
       if (!footer) {
-        const holder = row.querySelector<HTMLElement>(".speaker-column, .bot-column, .reaction-message-column");
-        if (!holder) continue;
+        let holder = row.querySelector<HTMLElement>(".speaker-column, .bot-column, .reaction-message-column");
+        if (!holder) {
+          const bubble = row.querySelector<HTMLElement>(".bot-bubble");
+          if (!bubble) continue;
+          holder = document.createElement("div");
+          holder.className = "reaction-message-column";
+          bubble.replaceWith(holder);
+          holder.append(bubble);
+        }
         footer = document.createElement("div");
         footer.className = "message-footer";
         holder.append(footer);

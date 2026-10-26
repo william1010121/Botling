@@ -234,7 +234,7 @@ function drawRole(row: HTMLElement, message: MessageView, components: Record<str
       const actions = message.role === "bot" && (feedback.enabled || makeComponents.enabled) ? actionColumn(message) : replyButton(message);
       const chips = message.specs?.length ? specChips(message, components) : null;
       const tasks = message.tasks?.length ? taskChips(message.id, message.tasks) : null;
-      if (message.speaker || chips || tasks || message.completionVerification || summaryCountable(message)) {
+      if (message.speaker || chips || tasks || message.completionVerification || (message.role === "notice" && summaryCountable(message))) {
         // The group chat: who said it, above what they said. A spec's chip goes under it.
         const column = document.createElement("div");
         column.className = message.speaker ? "speaker-column" : "bot-column";
