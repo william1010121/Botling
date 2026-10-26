@@ -702,3 +702,14 @@ button { font: inherit; color: inherit; }
 .wb-composer-input::placeholder { color: var(--faint); }
 .wb-composer-send { width: 32px; height: 32px; flex-shrink: 0; border: 0; border-radius: 9px; background: #2C2C33; color: var(--text); cursor: pointer; }
 .wb-composer-send:disabled { opacity: 0.45; cursor: default; }
+/* A bot's own picture (<whiteboard>): its component as a Board tile, 1×1 beside the line, 2×1 above it; read only on the card. */
+.wb-card.wide { grid-column: span 2; }
+.wb-card-body.stacked { flex-direction: column; align-items: stretch; }
+.wb-picture { flex-shrink: 0; display: block; border-radius: 10px; background: #16161A; overflow: hidden; }
+.wb-picture-1x1 { width: 96px; height: 96px; }
+.wb-picture-2x1 { width: 100%; height: 96px; }
+.wb-picture-2x2 { width: 100%; height: 240px; }
+.wb-picture-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; }
+.wb-card .wb-picture-frame { pointer-events: none; }
+.wb-picture-ask { padding: 12px; background: #16161A; border: 1px solid #2E2E35; border-radius: 12px; display: flex; align-items: center; gap: 12px; }
+.wb-picture-ask code { font-size: 12.5px; color: var(--text); background: var(--chip); padding: 1px 5px; border-radius: 5px; }

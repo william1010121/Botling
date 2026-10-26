@@ -59,7 +59,7 @@ import { parseFeedback } from "./feedback";
 import { FOLLOW_UP, SUBAGENT_CALLBACK, TERMINAL_FOLLOW_UP, review, turnEnd, wakeupId, type Check, type ScheduledWakeup, type Signal, type TurnEnd, type WorkerDependency } from "./promise-check";
 import {
   ContractError, type RoutineView, type BotView, type CardView, type ChatSnapshot, type ChoiceView, type Event, type HeadsView, type MessageView, type ResultOf,
-  type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks, type SpecChipView,
+  type StepView, type SubagentView, type TaskView, type BotSettingsView, type ResultView, resultLinks, type SpecChipView, type WhiteboardPictureView,
 } from "../contract";
 import { ClaudeHead, type HeadConfig, type HeadExit } from "./agent/head";
 import { CodexHead, type CodexHeadConfig, type CodexItem } from "./agent/codex";
@@ -75,7 +75,7 @@ import {
 import { extractCards, welcomeMessages } from "./cards";
 import type { ProcessLedger } from "./process/ledger";
 import { isPlainOK, PARTS_NOTE, PAUSE_NOTE, RELAY_PREFIX, RESUME_NOTE, profilePaths, withoutPartsNote, type BotPrompts } from "./prompts";
-import { masked, parseReply, saysNoReply, saysNothing, unsupportedRequest, type BotRequest } from "./reply";
+import { masked, parseReply, saysNoReply, saysNothing, unsupportedRequest, type BotRequest, type WhiteboardTag } from "./reply";
 import { SubagentBook, readSubagent, SUBAGENT_TOOLS, toolCount, reportedOutputTokens, type SubagentRecord, type SubagentExecution } from "./subagents";
 import { relatedTaskAgents, taskAgentIds } from "./task-agents";
 import { readTaskCard, shownTasks, TaskBook, type TaskCard } from "./tasks";
@@ -444,6 +444,8 @@ export class Bot {
   private routineError: string | null = null;
   /** Its pinned components (pins.json, 1.x's format; the primary's). */
   private pins: PinRecord[] = [];
+  /** Its own picture on the main bot's whiteboard (whiteboard.json; the primary's). */
+  private whiteboard: WhiteboardRecord | null = null;
   /** Its own components (bot.json `components`, at most 20); null: not given yet. */
   private componentList: string[] | null = null;
   /** What this head's session has been told about components (null: tell it in full). */
@@ -462,6 +464,7 @@ export class Bot {
     this.subagents = new SubagentBook(this.readList("subagents.json", readSubagent), () => new Set(this.tasks.tasks.flatMap((card) => taskAgentIds(card, this.records, [{ engine: this.engine, list: this.subagents?.list ?? [] }]))));
     if (!primary) {
       this.pins = this.readList("pins.json", readPin);
+      this.whiteboard = readWhiteboard(this.store.loadWhiteboard());
       this.specList = this.readList("specs.json", readSpec);
       const list = this.store.loadSettings().components;
       this.componentList = Array.isArray(list) ? list.filter((name): name is string => typeof name === "string") : null;
@@ -1754,6 +1757,7 @@ export class Bot {
   /** An app-only reply that is more than OK, read like any reply (its choices, components and requests). */
   private showAppReply(raw: string) {
     const parsed = parseReply(raw);
+    if (parsed.whiteboard) this.owner.setWhiteboard(parsed.whiteboard);
     const record: ChatRecord = { id: newId(), role: "bot", text: "", date: toSwiftDate(), state: "done", engine: this.engine };
     let text = parsed.body;
     const extracted = extractCards(text);
@@ -2654,12 +2658,13 @@ export class Bot {
     const tags = status === "done" ? parseHeadTags(parsed.body) : { body: parsed.body, handoff: null };
     const ended = turn.origin === "background" ? [...this.pendingEnded.splice(0), ...turn.ended] : turn.ended;
     if (status === "done") this.applyReactions(parsed.reactions);
+    if (status === "done" && parsed.whiteboard) this.owner.setWhiteboard(parsed.whiteboard);
     // Nothing for the user (`Bot.show`'s silent cases): a reply that only reacts; a turn claude
     // started itself that says <no-reply/> or nothing; the app's own note answered with <no-reply/>;
     // with two heads, the head with nothing to add to your message says only <no-reply/>.
     const nothing = saysNothing(raw);
     const silent = status === "done" && !tags.handoff && (
-      (nothing && parsed.reactions.length > 0)
+      (nothing && (parsed.reactions.length > 0 || !!parsed.whiteboard))
       || (turn.origin === "background" && (saysNoReply(raw) || nothing))
       || ((turn.origin === "app" || this.sharesChat) && nothing && saysNoReply(raw)));
     if (silent) {
@@ -3754,6 +3759,7 @@ export class Bot {
   /** A card's run started or ended: the line (or pin) that shows it is drawn again. */
   cardChanged(card: string) {
     if (this.options.primary) return;
+    if (card === this.whiteboardCard) { this.keepWhiteboardOutput(); return; }
     if (card.startsWith("pin/")) {
       const id = card.slice(4);
       const pin = this.pins.find((candidate) => candidate.id === id);
@@ -3829,6 +3835,96 @@ export class Bot {
       if (pin) { this.keepOutput(pin); this.pinsChanged(); }
     }
     return outcome.data !== undefined ? { ok: true, value: outcome.data } : { ok: false, value: outcome.error ?? "The Detail command failed." };
+  }
+
+  // Its whiteboard picture (2.0 only): one component, as a Board tile of 1×1 or 2×1, that the main
+  // bot's whiteboard draws on its card. Its command runs as a pin's does: only once allowed, in its
+  // own folder, again when the whiteboard is shown (at most every 30 s).
+
+  /** The run key of its picture's command (each bot its own). */
+  private get whiteboardCard(): string {
+    return `whiteboard/${this.id}`;
+  }
+
+  /** <whiteboard …> in its reply: kept (a component in the library only) or, <whiteboard clear/>, taken away. */
+  setWhiteboard(tag: WhiteboardTag): void {
+    if (this.options.primary) return this.options.primary.setWhiteboard(tag);
+    if (this.readOnly) return;
+    if ("clear" in tag) {
+      this.whiteboard = null;
+    } else {
+      const context = this.context;
+      if (!context || !context.library.names.includes(tag.name)) { this.log(`whiteboard picture ${tag.name} is not in the component library; kept the one before`); return; }
+      // Its command: the tag's, else (no JSON given) its component's "Command:" line; kept, as the output becomes its data.
+      const command = displayCommand({ name: tag.name, data: tag.data, ...(tag.command ? { command: tag.command } : {}) }, "bot", context.library);
+      this.whiteboard = { name: tag.name, data: tag.data.length > WHITEBOARD_DATA_LIMIT ? "null" : tag.data, ...(command ? { command } : {}), size: tag.size, savedAt: Date.now() };
+    }
+    this.store.saveWhiteboard(this.whiteboard);
+  }
+
+  /** The picture as the whiteboard draws it; null: none, or its component is gone from the library. */
+  whiteboardPicture(): WhiteboardPictureView | null {
+    if (this.options.primary) return this.options.primary.whiteboardPicture();
+    const context = this.context;
+    const picture = this.whiteboard;
+    if (!context || !picture || !context.library.names.includes(picture.name)) return null;
+    // A picture is drawn, never asked for more: no Detail command on the whiteboard, so none to allow.
+    const urls = context.images.urls(picture.data);
+    const view: WhiteboardPictureView = {
+      name: picture.name, data: picture.data, at: null, command: null, folder: null, detail: null, card: null, status: null, error: null, ranAt: null,
+      images: Object.keys(urls).length ? urls : null, pinned: null, every: null, size: picture.size,
+    };
+    const command = this.whiteboardCommand();
+    if (command) {
+      const state = context.commands.state(this.whiteboardCard, command, null, this.commandFolder);
+      Object.assign(view, { command, folder: this.commandFolder, card: this.whiteboardCard, error: state.error, ranAt: state.ranAt === null ? null : new Date(state.ranAt).toISOString(),
+        status: state.status === "idle" && picture.data !== "null" ? "done" : state.status });
+      if (state.data !== null) {
+        const shown = context.images.urls(state.data);
+        Object.assign(view, { data: state.data, images: Object.keys(shown).length ? shown : null });
+      }
+    }
+    return view;
+  }
+
+  /** The whiteboard is on screen: its picture's command runs again if allowed and not run in the last 30 s. */
+  whiteboardShown(now = Date.now()): boolean {
+    if (this.options.primary) return this.options.primary.whiteboardShown(now);
+    const context = this.context;
+    const command = this.whiteboardCommand();
+    if (!context || !command || !context.commands.isApproved(command, this.commandFolder)) return false;
+    const last = context.commands.lastRan(this.whiteboardCard);
+    if (last !== null && now - last < SHOWN_COOLDOWN_MS) return false;
+    void context.commands.run(this.whiteboardCard, command, this.commandFolder, true);
+    return true;
+  }
+
+  /** Allow on the whiteboard: the picture's command as the card showed it (that command, in this bot's folder), then it runs. */
+  whiteboardAllow(shown: { command: string; folder: string }): ResultOf<"whiteboard.allow"> {
+    if (this.options.primary) return this.options.primary.whiteboardAllow(shown);
+    const context = this.context;
+    const command = this.whiteboardCommand();
+    if (!context || !command || shown.command !== command || resolvePath(shown.folder) !== resolvePath(this.commandFolder)) return { accepted: false };
+    context.commands.approve(command, this.commandFolder);
+    void context.commands.run(this.whiteboardCard, command, this.commandFolder, true);
+    return { accepted: true };
+  }
+
+  /** The command its picture's data comes from (kept with it when it was set). */
+  private whiteboardCommand(): string | null {
+    return this.whiteboard?.command ?? null;
+  }
+
+  /** A finished run's output kept with the picture, so it shows after a restart too. */
+  private keepWhiteboardOutput() {
+    const context = this.context;
+    const command = this.whiteboardCommand();
+    const picture = this.whiteboard;
+    if (!context || !command || !picture) return;
+    const state = context.commands.runOf(this.whiteboardCard, command, this.commandFolder);
+    if (!state || state.status !== "done" || state.data === null || state.data === picture.data || state.data.length > WHITEBOARD_DATA_LIMIT) return;
+    picture.data = state.data;
+    if (!this.readOnly) this.store.saveWhiteboard(picture);
   }
 
   // Pins
@@ -4739,4 +4835,20 @@ export function messageView(record: ChatRecord, approval?: { expires: number }, 
       .map((r) => ({ emoji: r.emoji.slice(0, 16), actor: r.actor.slice(0, 200) }));
   }
   return view;
+}
+
+/** The most a whiteboard picture's data may be (as `ccb.save`'s), as JSON characters. */
+const WHITEBOARD_DATA_LIMIT = 256_000;
+
+/** A bot's whiteboard picture as whiteboard.json keeps it. */
+interface WhiteboardRecord { name: string; data: string; command?: string; size: "1x1" | "2x1"; savedAt: number }
+
+function readWhiteboard(value: unknown): WhiteboardRecord | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.name !== "string" || !raw.name || typeof raw.data !== "string") return null;
+  return {
+    name: raw.name, data: raw.data, ...(typeof raw.command === "string" && raw.command ? { command: raw.command } : {}),
+    size: raw.size === "2x1" ? "2x1" : "1x1", savedAt: typeof raw.savedAt === "number" ? raw.savedAt : 0,
+  };
 }

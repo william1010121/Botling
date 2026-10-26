@@ -5,7 +5,7 @@
 //   head.json        2.0 only: the claude session its head resumes
 // Every write is atomic. A file that exists but cannot be read is never replaced: the bot is
 // reported as broken instead, and the file stays for the user (or 1.x) to look at.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "../durable/atomic";
 import { HISTORY_LIMIT, isChatRecord, type ChatRecord } from "./records";
@@ -106,6 +106,17 @@ export class BotStore {
   /** Writes a list file (tasks.json, subagents.json) whole, in 1.x's format. */
   saveList(name: (typeof CHAT_FILES)[number], list: unknown[]) {
     writeFileAtomic(this.path(name), JSON.stringify(list));
+  }
+
+  /** The bot's picture on the main bot's whiteboard (whiteboard.json, 2.0 only), as kept; null: none. */
+  loadWhiteboard(): unknown {
+    return readJSON(this.path("whiteboard.json")) ?? null;
+  }
+
+  /** Keeps the whiteboard picture (null: takes the file away). */
+  saveWhiteboard(value: unknown) {
+    if (value === null) rmSync(this.path("whiteboard.json"), { force: true });
+    else writeFileAtomic(this.path("whiteboard.json"), JSON.stringify(value));
   }
 
   loadHead(): HeadState | null {

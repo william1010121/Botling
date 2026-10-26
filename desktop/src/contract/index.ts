@@ -168,21 +168,6 @@ export const WaitingView = z.strictObject({
   doing: z.record(BotId, z.string().max(400)),
 });
 export type WaitingView = z.infer<typeof WaitingView>;
-/**
- * One bot on the main bot's whiteboard: its memory.md's "Current status", "In progress" and "Decided" as written (`memoryItems`; its "Waiting on you" comes with `waiting.list`), its
- * task cards and the links handed over in its chat (newest first). Only what the bot keeps itself.
- */
-export const WhiteboardBotView = z.strictObject({
-  botId: BotId,
-  currentStatus: z.array(z.string().max(400)).max(20),
-  inProgress: z.array(z.string().max(400)).max(20),
-  decided: z.array(z.string().max(400)).max(20),
-  tasks: z.array(TaskView).max(100),
-  results: z.array(z.strictObject({ label: z.string().max(400), url: z.string().max(4_000) })).max(12),
-});
-export type WhiteboardBotView = z.infer<typeof WhiteboardBotView>;
-export const WhiteboardView = z.strictObject({ bots: z.array(WhiteboardBotView).max(500) });
-export type WhiteboardView = z.infer<typeof WhiteboardView>;
 export type PendingFileView = z.infer<typeof PendingFileView>;
 /** The most a pasted or dropped file may be, as base64 text (about 30 MB of file). */
 export const FILE_DATA_LIMIT = 40_000_000;
@@ -211,6 +196,27 @@ export const DisplayView = z.strictObject({
   every: z.number().positive().nullable(),
 });
 export type DisplayView = z.infer<typeof DisplayView>;
+
+/** A bot's own picture for its whiteboard card: a component drawn as its Board tile would be, 1×1 or 2×1. */
+export const WhiteboardPictureView = DisplayView.extend({ size: z.enum(["1x1", "2x1"]) });
+export type WhiteboardPictureView = z.infer<typeof WhiteboardPictureView>;
+/**
+ * One bot on the main bot's whiteboard: its memory.md's "Current status", "In progress" and "Decided" as written (`memoryItems`; its "Waiting on you" comes with `waiting.list`), its
+ * task cards and the links handed over in its chat (newest first). Only what the bot keeps itself.
+ */
+export const WhiteboardBotView = z.strictObject({
+  botId: BotId,
+  currentStatus: z.array(z.string().max(400)).max(20),
+  inProgress: z.array(z.string().max(400)).max(20),
+  decided: z.array(z.string().max(400)).max(20),
+  tasks: z.array(TaskView).max(100),
+  results: z.array(z.strictObject({ label: z.string().max(400), url: z.string().max(4_000) })).max(12),
+  /** The picture it gave its card (<whiteboard>), drawn as a Board tile of that size; null: none (the card shows its tasks ring). */
+  picture: WhiteboardPictureView.nullable(),
+});
+export type WhiteboardBotView = z.infer<typeof WhiteboardBotView>;
+export const WhiteboardView = z.strictObject({ bots: z.array(WhiteboardBotView).max(500) });
+export type WhiteboardView = z.infer<typeof WhiteboardView>;
 
 /** A library component as the page needs it to draw one (`ChatPayload.Component`). */
 export const ComponentInfoView = z.strictObject({
@@ -967,6 +973,8 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("waiting.list") }),
   /** Every bot's memory sections, tasks and results, for the main bot's whiteboard. */
   z.strictObject({ type: z.literal("whiteboard.view") }),
+  /** Allows the command of a bot's whiteboard picture, as its card showed it (that command, in that folder), and runs it. */
+  z.strictObject({ type: z.literal("whiteboard.allow"), botId, command: z.string().min(1).max(20_000), folder: z.string().min(1).max(4_000) }),
   /** Takes one off that list without answering it. */
   z.strictObject({ type: z.literal("waiting.ignore"), botId, text: z.string().min(1).max(400) }),
   /** Every enabled plugin's web part, for the chat page. */
@@ -1013,7 +1021,7 @@ export const RENDERER_COMMANDS = new Set<CommandType>([
   "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
   "plugins.list", "plugins.enable", "plugins.setting", "plugins.secret", "plugins.command", "plugins.panel", "plugins.call",
   "plugins.web", "plugins.loaded", "plugins.failed", "plugins.notice", "files.pick", "files.data", "files.remove",
-  "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view",
+  "settings.get", "settings.set", "bot.settings", "bot.configure", "projects.pick", "waiting.list", "waiting.ignore", "whiteboard.view", "whiteboard.allow",
   "web.open", "web.new", "web.settle", "web.ask", "web.leave", "web.place",
   "subagent.settle", "bots.create", "bots.remove", "results.list", "result.open", "link.open",
   "groups.create", "groups.edit", "groups.delete", "updates.check", "updates.open", "updates.stage", "updates.restart", "updates.copies", "updates.deleteCopy", "updates.dismiss", "usage.view",
@@ -1135,6 +1143,7 @@ export interface Results {
   "waiting.list": WaitingView;
   "waiting.ignore": WaitingView;
   "whiteboard.view": WhiteboardView;
+  "whiteboard.allow": { accepted: boolean };
   "settings.set": SettingsView;
   "updates.check": UpdateView;
   "usage.view": UsageView;

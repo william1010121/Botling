@@ -5,9 +5,13 @@
 // Pressed, the card grows in place into the bot's report, read by scrolling: Summary, Your call,
 // Results, Progress (tasks finished per day), What I did, My calls ("Decided"), Next. Everything is
 // what the bots keep themselves (memory.md, task cards, links handed over in their chats); a part
-// with nothing in it is left out.
+// with nothing in it is left out. A bot may give its card a picture of its own (<whiteboard>): one
+// of its components, drawn as a 1×1 or 2×1 Board tile in place of the ring, in the same sandboxed
+// component frame as the chat's (Web/src's `componentPage`, served by main as `card.page`). That
+// module is loaded only when a picture is drawn: it also listens for the chat page's own component
+// frames (`iframe.component-frame`, of which this page has none), so it is inert here.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { type BotView, type MessageView, type ResultView, type TaskView, type WaitingItemView, type WaitingView, type WhiteboardBotView, type WhiteboardView } from "../contract";
+import { type BotView, type ComponentInfoView, type MessageView, type ResultView, type TaskView, type WaitingItemView, type WaitingView, type WhiteboardBotView, type WhiteboardPictureView, type WhiteboardView } from "../contract";
 import type { Client } from "./client";
 import { faceURL } from "./avatars";
 import { Icon } from "./icons";
@@ -63,6 +67,17 @@ export function highlight(bot: BotView, data: WhiteboardBotView | undefined, wai
   const task = data ? activeTasks(named(data.tasks)).find((candidate) => candidate.state === "running" && candidate.now?.trim()) : undefined;
   return data?.currentStatus[0] ?? data?.inProgress[0] ?? waiting.doing[bot.id] ?? task?.now ?? bot.job ?? null;
 }
+
+/** The picture to draw on the card: one with data to show and its component at hand; else none (the ring). */
+export function drawnPicture(data: WhiteboardBotView | undefined, components: Record<string, ComponentInfoView>): WhiteboardPictureView | null {
+  const picture = data?.picture;
+  if (!picture || !components[picture.name]) return null;
+  if (picture.status === "approve" || picture.status === "failed" || picture.status === "empty") return null;
+  return picture.data === "null" ? null : picture;
+}
+
+/** At most this many pictures are drawn at once (each is a frame of its own); the rest show their ring. */
+export const MOST_PICTURES = 12;
 
 const named = (tasks: TaskView[]) => tasks.filter((task) => task.name.trim().length > 0);
 
@@ -131,6 +146,8 @@ export interface WhiteboardProps {
   client: Client;
   bots: BotView[];
   waiting: WaitingView;
+  /** The component library (for the bots' pictures). */
+  components: Record<string, ComponentInfoView>;
   look: Look;
   now: number;
   /** The main bot's chat lines, for its latest reply on the board. */
@@ -143,7 +160,7 @@ export interface WhiteboardProps {
   refreshMs?: number;
 }
 
-export function Whiteboard({ client, bots, waiting, look, now, mainMessages, mainBotId, statusOf, onOpenChat, onError, refreshMs = 5_000 }: WhiteboardProps) {
+export function Whiteboard({ client, bots, waiting, components, look, now, mainMessages, mainBotId, statusOf, onOpenChat, onError, refreshMs = 5_000 }: WhiteboardProps) {
   const data = useWhiteboardData(client, refreshMs);
   const byBot = useMemo(() => new Map((data?.bots ?? []).map((entry) => [entry.botId, entry])), [data]);
   const sections = useMemo(() => whiteboardSections(bots), [bots]);
@@ -153,6 +170,8 @@ export function Whiteboard({ client, bots, waiting, look, now, mainMessages, mai
   const totalTasks = cards.reduce((sum, bot) => sum + taskCounts(byBot.get(bot.id)?.tasks ?? []).total, 0);
   const totalWaiting = cards.reduce((sum, bot) => sum + waitingCount(bot, waiting, byBot.get(bot.id)), 0);
   const openBot = open ? bots.find((bot) => bot.id === open.botId) ?? null : null;
+  // The first pictures in the board's order are drawn; past MOST_PICTURES a card keeps its ring.
+  const pictured = new Set(cards.filter((bot) => drawnPicture(byBot.get(bot.id), components)).slice(0, MOST_PICTURES).map((bot) => bot.id));
 
   const press = (bot: BotView, element: HTMLElement) => {
     // The report grows out of the card: its scale starts at the card's place on the canvas.
@@ -188,7 +207,8 @@ export function Whiteboard({ client, bots, waiting, look, now, mainMessages, mai
                 </h3>
                 <div className="wb-grid">
                   {section.bots.map((bot) => (
-                    <BotCard key={bot.id} bot={bot} data={byBot.get(bot.id)} waiting={waiting} look={look} now={now} status={statusOf(bot)}
+                    <BotCard key={bot.id} client={client} bot={bot} data={byBot.get(bot.id)} waiting={waiting} look={look} now={now} status={statusOf(bot)}
+                      picture={pictured.has(bot.id) ? drawnPicture(byBot.get(bot.id), components) : null} components={components}
                       onPress={(element) => press(bot, element)} />
                   ))}
                 </div>
@@ -200,7 +220,8 @@ export function Whiteboard({ client, bots, waiting, look, now, mainMessages, mai
         </div>
         {open && openBot && (
           <div className="wb-scrim" onPointerDown={(event) => { if (event.target === event.currentTarget) setOpen(null); }}>
-            <Report bot={openBot} data={byBot.get(openBot.id)} waiting={waiting} look={look} now={now} origin={open.origin} status={statusOf(openBot)}
+            <Report client={client} components={components} bot={openBot} data={byBot.get(openBot.id)} waiting={waiting} look={look} now={now} origin={open.origin} status={statusOf(openBot)}
+              onAllow={(picture) => void client.request({ type: "whiteboard.allow", botId: openBot.id, command: picture.command!, folder: picture.folder! }).catch(onError)}
               onClose={() => setOpen(null)} onOpenChat={(id) => { setOpen(null); onOpenChat(id); }}
               onOpenResult={(result) => void client.request({ type: "result.open", botId: openBot.id, url: result.url }).catch(onError)} />
           </div>
@@ -236,8 +257,32 @@ function StateBar({ counts }: { counts: ReturnType<typeof taskCounts> }) {
   );
 }
 
-function BotCard({ bot, data, waiting, look, now, status, onPress }: {
-  bot: BotView; data: WhiteboardBotView | undefined; waiting: WaitingView; look: Look; now: number; status: { key: string; text: string }; onPress: (element: HTMLElement) => void;
+/**
+ * A bot's picture: its component as a Board tile (`componentPage`, surface "board", filling the
+ * frame, read only), in a sandboxed frame main serves the page to (`card.page`). The chat page's
+ * component broker is not here, so what the component posts (answers, saves) goes nowhere.
+ */
+function PictureFrame({ client, picture, info, size, title }: { client: Client; picture: WhiteboardPictureView; info: ComponentInfoView; size: string; title: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const images = JSON.stringify(picture.images ?? {});
+  useEffect(() => {
+    let live = true;
+    void import("../../../Web/src/components").then(({ componentPage }) => {
+      const page = componentPage(info.template, picture.data, JSON.parse(images) as Record<string, string>, size as `${number}x${number}`, "board", true, false);
+      return client.request({ type: "card.page", html: page });
+    }).then((result) => { if (live) setUrl(result.url); }, () => {});
+    return () => { live = false; };
+  }, [client, info.template, picture.data, images, size]);
+  return (
+    <span className={`wb-picture wb-picture-${size}`} aria-hidden={url ? undefined : true}>
+      {url && <iframe className="wb-picture-frame" sandbox="allow-scripts" src={url} title={title} tabIndex={-1} />}
+    </span>
+  );
+}
+
+function BotCard({ client, bot, data, waiting, look, now, status, picture, components, onPress }: {
+  client: Client; bot: BotView; data: WhiteboardBotView | undefined; waiting: WaitingView; look: Look; now: number; status: { key: string; text: string };
+  picture: WhiteboardPictureView | null; components: Record<string, ComponentInfoView>; onPress: (element: HTMLElement) => void;
 }) {
   const count = waitingCount(bot, waiting, data);
   const counts = taskCounts(data?.tasks ?? []);
@@ -245,7 +290,7 @@ function BotCard({ bot, data, waiting, look, now, status, onPress }: {
   const when = shortTime(bot.lastActivity, now);
   const asleep = bot.phase === "asleep" && !bot.working;
   return (
-    <button type="button" className={`wb-card${count > 0 ? " waiting" : ""}`} data-bot={bot.id} onClick={(event) => onPress(event.currentTarget)}
+    <button type="button" className={`wb-card${count > 0 ? " waiting" : ""}${picture?.size === "2x1" ? " wide" : ""}`} data-bot={bot.id} onClick={(event) => onPress(event.currentTarget)}
       aria-label={[`${bot.name}'s report`, status.text, count ? `${count} waiting on you` : null, line].filter(Boolean).join(", ")}>
       <span className="wb-card-head">
         <img className="wb-face" src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />
@@ -253,8 +298,9 @@ function BotCard({ bot, data, waiting, look, now, status, onPress }: {
         {count > 0 && <span className="wb-pill">{count} waiting</span>}
         {when && <span className="wb-card-time">{when}</span>}
       </span>
-      <span className="wb-card-body">
-        {counts.total > 0 && <TaskRing done={counts.done} total={counts.total} />}
+      <span className={`wb-card-body${picture?.size === "2x1" ? " stacked" : ""}`}>
+        {picture ? <PictureFrame client={client} picture={picture} info={components[picture.name]!} size={picture.size} title={`${bot.name}'s picture`} />
+          : counts.total > 0 && <TaskRing done={counts.done} total={counts.total} />}
         <span className="wb-card-text">
           {line ? <span className="wb-highlight">{line}</span> : <span className="wb-highlight none">Nothing written yet</span>}
         </span>
@@ -290,10 +336,14 @@ function MainSummary({ bots, waiting, data, look, messages, mainBotId, sections 
 const SECTIONS = [["sum", "Summary"], ["ask", "Your call"], ["made", "Results"], ["trend", "Progress"], ["log", "What I did"], ["decided", "My calls"], ["next", "Next"]] as const;
 type ReportSection = (typeof SECTIONS)[number][0];
 
-function Report({ bot, data, waiting, look, now, origin, status, onClose, onOpenChat, onOpenResult }: {
+function Report({ client, components, bot, data, waiting, look, now, origin, status, onClose, onOpenChat, onOpenResult, onAllow }: {
+  client: Client; components: Record<string, ComponentInfoView>;
   bot: BotView; data: WhiteboardBotView | undefined; waiting: WaitingView; look: Look; now: number; origin: string; status: { key: string; text: string };
-  onClose: () => void; onOpenChat: (botId: string) => void; onOpenResult: (result: ResultView) => void;
+  onClose: () => void; onOpenChat: (botId: string) => void; onOpenResult: (result: ResultView) => void; onAllow: (picture: WhiteboardPictureView) => void;
 }) {
+  const picture = drawnPicture(data, components);
+  // Its picture's command waits for your OK: what would run where, and Allow.
+  const asking = data?.picture?.status === "approve" && data.picture.command && data.picture.folder ? data.picture : null;
   const body = useRef<HTMLDivElement>(null);
   const article = useRef<HTMLElement>(null);
   const tasks = named(data?.tasks ?? []);
@@ -306,7 +356,7 @@ function Report({ bot, data, waiting, look, now, origin, status, onClose, onOpen
   const next = data ? nextSteps(data) : [];
   const status0 = data?.currentStatus ?? [];
   const has: Record<ReportSection, boolean> = {
-    sum: status0.length > 0 || counts.total > 0 || asks.length > 0,
+    sum: status0.length > 0 || counts.total > 0 || asks.length > 0 || !!picture || !!asking,
     ask: asks.length + waitingTasks.length + bot.approvals > 0,
     made: (data?.results.length ?? 0) > 0,
     trend: days.some((day) => day.count > 0),
@@ -350,6 +400,13 @@ function Report({ bot, data, waiting, look, now, origin, status, onClose, onOpen
         {shown.length === 0 && <p className="wb-report-empty">{bot.name} has not written a status, tasks or results yet.</p>}
         {has.sum && (
           <section data-part="sum" className="wb-part">
+            {picture && <PictureFrame client={client} picture={picture} info={components[picture.name]!} size="2x2" title={`${bot.name}'s picture`} />}
+            {asking && (
+              <div className="wb-picture-ask">
+                <span className="wb-ask-text">Its picture comes from <code>{asking.command}</code>, run in {asking.folder}. It runs once you allow it.</span>
+                <button type="button" className="wb-ask-open" onClick={() => onAllow(asking)}>Allow and run</button>
+              </div>
+            )}
             {status0.map((line, index) => <p key={index} className="wb-sum-line">{line}</p>)}
             <div className="wb-stats">
               <span className="wb-stat"><span className="wb-stat-n done">{counts.done}</span><span className="wb-stat-l">done</span></span>

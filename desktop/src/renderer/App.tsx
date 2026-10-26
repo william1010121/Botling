@@ -298,7 +298,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
           </div>
         )}
         {whiteboard && bot && (
-          <Whiteboard client={client} bots={view.bots} waiting={view.waiting} look={view.settings?.botLook ?? "original"} now={now}
+          <Whiteboard client={client} bots={view.bots} waiting={view.waiting} components={view.components} look={view.settings?.botLook ?? "original"} now={now}
             mainMessages={chat?.botId === bot.id ? chat.messages : []} mainBotId={bot.id}
             statusOf={(candidate) => ({ key: status(candidate), text: statusText(candidate) })}
             onOpenChat={(botId) => { setWhiteboardOn(false); selectBot(botId); }} onError={fail} />

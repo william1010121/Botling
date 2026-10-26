@@ -35,7 +35,7 @@ import { Bot, NO_LONGER_NEEDED, type SessionStart, type SessionStartCodex } from
 import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
 import type { Engine, Heads } from "./heads";
-import { botPrompts, isAppLanguage, isResultPublishing, preferredLanguage, type BotPrompts } from "./prompts";
+import { botPrompts, desktopPrompts, isAppLanguage, isResultPublishing, preferredLanguage, type BotPrompts } from "./prompts";
 import { BotStore, readJSON } from "./store/bot-store";
 import { DEFAULT_ONE_X_PROCESS, ProjectLock, type OneXCheck } from "./store/lock";
 import { ProcessLedger } from "./process/ledger";
@@ -1024,7 +1024,10 @@ First write a test that shows this, then fix it.`;
       out.push({
         botId: profile.id, currentStatus: items("currentStatus"), inProgress: items("inProgress"), decided: items("decided"),
         tasks: bot.taskViews().slice(-100), results: bot.results().slice(0, 12).map((result) => ({ label: result.label.slice(0, 400), url: result.url.slice(0, 4_000) })),
+        picture: bot.whiteboardPicture(),
       });
+      // Shown now: a picture whose command the user allowed runs again (at most every 30 s), as a pin "when shown".
+      bot.whiteboardShown();
     }
     return { bots: out.slice(0, 500) };
   }
@@ -1346,13 +1349,13 @@ First write a test that shows this, then fix it.`;
   prompts(profile: BotProfile, engine: Engine = "claude", heads: Heads | null = null): BotPrompts {
     const settings = this.settings();
     const languages = this.options.languages ?? [Intl.DateTimeFormat().resolvedOptions().locale];
-    return botPrompts({
+    return desktopPrompts(botPrompts({
       profile: { ...profile, instructions: profile.instructions ?? null },
       language: isAppLanguage(settings.language) ? settings.language : preferredLanguage(languages),
       results: isResultPublishing(settings.results) ? settings.results : "artifactUnlessSensitive",
       engine,
       heads: heads && heads.engines.length > 1 ? { handoffs: heads.handoffs, limits: heads.limits } : null,
-    });
+    }), profile);
   }
 
   private event(event: Event) {
@@ -1547,6 +1550,7 @@ First write a test that shows this, then fix it.`;
       case "results.list": return { results: this.bot(cmd.botId).results().slice(0, 200) };
       case "waiting.list": return this.waiting();
       case "whiteboard.view": return this.whiteboard();
+      case "whiteboard.allow": return this.bot(cmd.botId).whiteboardAllow({ command: cmd.command, folder: cmd.folder });
       case "waiting.ignore": return this.ignoreWaiting(cmd.botId, cmd.text);
       case "settings.set": return this.changeSetting(cmd.change);
       case "bot.settings": return this.bot(cmd.botId).settingsView();

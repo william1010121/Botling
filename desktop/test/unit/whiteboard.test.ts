@@ -32,10 +32,12 @@ const today = new Date().toISOString();
 const data: WhiteboardView = { bots: [
   { botId: site.id, currentStatus: ["The theme is live."], inProgress: ["Dark mode"], decided: ["Kept the old URLs"],
     tasks: [task("a", "Ship the theme", "done", today), task("b", "Dark mode", "running", today, { now: "Colours", next: "Test on phones" }), task("c", "Pick a domain", "waiting", today, { blocked: "Which domain?" })],
-    results: [{ label: "Theme preview", url: "https://example.com/theme" }] },
-  { botId: paper.id, currentStatus: [], inProgress: [], decided: [], tasks: [], results: [] },
-  { botId: news.id, currentStatus: [], inProgress: [], decided: [], tasks: [], results: [] },
+    results: [{ label: "Theme preview", url: "https://example.com/theme" }], picture: null },
+  { botId: paper.id, currentStatus: [], inProgress: [], decided: [], tasks: [], results: [], picture: null },
+  { botId: news.id, currentStatus: [], inProgress: [], decided: [], tasks: [], results: [], picture: null },
 ] };
+const display = (extra: Record<string, unknown>) => ({ name: "status", data: '{"ok":true}', at: null, command: null, folder: null, detail: null, card: "whiteboard", status: null, error: null, ranAt: null, images: null, pinned: null, every: null, size: "1x1", ...extra }) as any;
+const components = { status: { template: '<div class="card" id="s"></div>', version: 1, updated: false, sizes: ["2x1"], icon: null, title: "Status card" } };
 const waiting: WaitingView = { items: [{ botId: site.id, text: "Publish now?", messageId: null }], doing: {} };
 
 describe("whiteboard data", () => {
@@ -63,7 +65,7 @@ describe("whiteboard page", () => {
     let receive: (value: unknown) => void = () => {};
     return new Client({ protocol: PROTOCOL_VERSION, subscribe(listener) { receive = listener; return () => {}; }, post(envelope: any) {
       commands.push(envelope.cmd);
-      const result = envelope.cmd.type === "whiteboard.view" ? data : {};
+      const result = envelope.cmd.type === "whiteboard.view" ? data : envelope.cmd.type === "card.page" ? { url: `botling-card://page/${commands.length}` } : envelope.cmd.type === "whiteboard.allow" ? { accepted: true } : {};
       queueMicrotask(() => receive({ v: PROTOCOL_VERSION, id: envelope.id, ok: true, result }));
     } });
   };
@@ -73,7 +75,7 @@ describe("whiteboard page", () => {
   it("shows each bot's card and, pressed, its report with only the parts it has", async () => {
     const opened: string[] = [];
     await act(async () => root.render(createElement(Whiteboard, {
-      client: client(), bots, waiting, look: "original", now: Date.now(), mainMessages: [], mainBotId: MAIN, refreshMs: 0,
+      client: client(), bots, waiting, components, look: "original", now: Date.now(), mainMessages: [], mainBotId: MAIN, refreshMs: 0,
       statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: (botId: string) => opened.push(botId), onError: () => {},
     })));
     expect(commands[0]).toEqual({ type: "whiteboard.view" });
@@ -106,9 +108,41 @@ describe("whiteboard page", () => {
     expect(host.querySelector(".wb-report")).toBeNull();
   });
 
+  it("draws a bot's own picture in its card (wide for 2x1) instead of the ring; one waiting for your OK keeps the ring and asks in the report", async () => {
+    const saved = data.bots.map((entry) => entry.picture);
+    data.bots[0]!.picture = display({ size: "2x1" });
+    data.bots[1]!.picture = display({ name: "gitlog", data: "null", command: "printf x", folder: "/tmp/paper", status: "approve" });
+    try {
+      await act(async () => root.render(createElement(Whiteboard, {
+        client: client(), bots, waiting, components: { ...components, gitlog: components.status }, look: "original", now: Date.now(), mainMessages: [], mainBotId: MAIN, refreshMs: 0,
+        statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: () => {}, onError: () => {},
+      })));
+      const card = host.querySelector(`.wb-card[data-bot="${site.id}"]`)!;
+      for (let i = 0; i < 50 && !card.querySelector("iframe"); i++) await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+      expect(card.className).toContain("wide");
+      expect(card.querySelector(".wb-ring")).toBeNull();
+      const frame = card.querySelector<HTMLIFrameElement>("iframe.wb-picture-frame")!;
+      expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+      expect(frame.getAttribute("src")).toMatch(/^botling-card:\/\/page\//);
+      const page = commands.find((cmd) => cmd.type === "card.page");
+      expect(page.html).toContain('data-size="2x1" data-surface="board" data-fill');
+      expect(page.html).toContain('"ok":true');
+      // Waiting for your OK: no frame, and the report says what would run where, with Allow.
+      const paperCard = host.querySelector<HTMLButtonElement>(`.wb-card[data-bot="${paper.id}"]`)!;
+      expect(paperCard.querySelector("iframe")).toBeNull();
+      await act(async () => paperCard.click());
+      const ask = host.querySelector(".wb-picture-ask")!;
+      expect(ask.textContent).toContain("printf x");
+      await act(async () => ask.querySelector<HTMLButtonElement>("button")!.click());
+      expect(commands.find((cmd) => cmd.type === "whiteboard.allow")).toEqual({ type: "whiteboard.allow", botId: paper.id, command: "printf x", folder: "/tmp/paper" });
+    } finally {
+      data.bots.forEach((entry, index) => { entry.picture = saved[index]!; });
+    }
+  });
+
   it("sends the board's input to the main bot", async () => {
     await act(async () => root.render(createElement(Whiteboard, {
-      client: client(), bots, waiting, look: "original", now: Date.now(), mainMessages: [], mainBotId: MAIN, refreshMs: 0,
+      client: client(), bots, waiting, components, look: "original", now: Date.now(), mainMessages: [], mainBotId: MAIN, refreshMs: 0,
       statusOf: () => ({ key: "asleep", text: "Asleep" }), onOpenChat: () => {}, onError: () => {},
     })));
     const input = host.querySelector<HTMLTextAreaElement>(".wb-composer-input")!;

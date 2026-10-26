@@ -6,6 +6,7 @@
 // - <task …/> lines update the chat's task cards (tasks.ts);
 // - <reaction …/> on a line of its own sets the bot's own reaction;
 // - <show> becomes a component display (kept in 1.x's `displays` format; 2.0 does not draw them yet);
+// - <whiteboard> (2.0 only) sets the bot's picture on the main bot's whiteboard, drawn nowhere in the chat;
 // - the other requests (<team>, <component>, <plugin>, <install>, <new-bot>, <new-project>, …) are
 //   parsed and taken out of the text, so the chat never shows raw tags; 2.0 acts on none of them yet
 //   and says so (bot.ts).
@@ -38,7 +39,12 @@ export type TaskState = "pending" | "running" | "waiting" | "done" | "stopped";
 export interface TaskTag { name?: string; continues?: string; now?: string; next?: string; blocked?: string; state?: TaskState }
 export interface CompletionSignal { kind: "end" | "block"; evidence: string }
 
+/** The bot's picture on the main bot's whiteboard (`<whiteboard name="x" size="2x1">JSON</whiteboard>`, or `<whiteboard clear/>`). */
+export type WhiteboardTag = { clear: true } | { name: string; data: string; command?: string; size: "1x1" | "2x1" };
+
 export interface Parsed {
+  /** The last <whiteboard> tag outside code, if any. */
+  whiteboard?: WhiteboardTag;
   body: string;
   choices: Choice[] | null;
   requests: BotRequest[];
@@ -67,6 +73,7 @@ const noReplyTag = () => /<no-reply\s*\/>|<no-reply>\s*<\/no-reply>/g;
 const openQuestionTag = () => /<open-question\s+from\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:\/>|>\s*<\/open-question>)/g;
 const projectTag = () => /<new-project\s+folder\s*=\s*"([^"]+)"\s*(?:\/>|>\s*([\s\S]*?)\s*<\/new-project>)/g;
 const showTag = () => /<show((?:\s+[A-Za-z-]+\s*=\s*(?:"[^"]*"|'[^']*'))+)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/show>)/g;
+const whiteboardTag = () => /<whiteboard((?:\s+[A-Za-z-]+(?:\s*=\s*(?:"[^"]*"|'[^']*'))?)*)\s*(?:\/>|>\s*([\s\S]*?)\s*<\/whiteboard>)/g;
 const attributeTag = () => /([A-Za-z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 const codeRegion = () => /(`{3,}|~{3,})[\s\S]*?(?:\1|$(?![\s\S]))|`[^`\n]+`/g;
 const reactionTag = () => /^ {0,3}<reaction message="([0-9A-Fa-f-]{36})" emoji="([^"]+)" present="(true|false)"\/>[ \t]*$/gm;
@@ -191,6 +198,23 @@ export function parseReply(reply: string): Parsed {
     replace(hit.index, hit.length, marker);
   }
 
+  // <whiteboard>: the last good one counts; every one leaves the text.
+  let whiteboard: WhiteboardTag | undefined;
+  for (const hit of hits(whiteboardTag(), mask).reverse()) {
+    const attrs = group(text, hit, 0);
+    const body = group(text, hit, 1);
+    replace(hit.index, hit.length, "");
+    if (whiteboard) continue;
+    const found = attributes(attrs);
+    if (/(?:^|\s)clear(?:\s|$|=)/i.test(attrs) && !found.name) { whiteboard = { clear: true }; continue; }
+    const name = trimAll(found.name ?? "");
+    const data = body ? body : "null";
+    if (!name) continue;
+    if (body) { try { JSON.parse(body); } catch { continue; } }
+    const command = found.command?.trim();
+    whiteboard = { name, data, ...(command ? { command } : {}), size: found.size?.trim() === "2x1" ? "2x1" : "1x1" };
+  }
+
   const reactions: ReactionAction[] = [];
   const quoted = hits(quotedHTMLRegion(), mask);
   const overlapsQuoted = (hit: Hit) => quoted.some((q) => q.index < hit.index + hit.length && hit.index < q.index + q.length);
@@ -267,7 +291,7 @@ export function parseReply(reply: string): Parsed {
 
   const { body, places } = placing(text, displays.length);
   displays.forEach((display, i) => { if (places[i] != null) display.at = places[i]!; });
-  return { body, choices, requests, reactions, displays, completionSignals, decisionReference, tasks };
+  return { body, choices, requests, reactions, displays, completionSignals, decisionReference, tasks, ...(whiteboard ? { whiteboard } : {}) };
 }
 
 /** The text without its markers, trimmed, and where each marker was (UTF-16 offsets). */
