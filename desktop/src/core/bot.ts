@@ -2037,7 +2037,11 @@ export class Bot {
     if (restarted) {
       // Said in the chat, and told with this message (1.x's `resume(_:reason:)`).
       this.owner.add({ id: newId(), role: "divider", text: `Restarted → ${restarted.shown}`, date: toSwiftDate() });
-      turn.words = `(App: Botling restarted you in this same conversation (${restarted.told}); carry on as before.)\n\n${turn.words}`;
+      // claude keeps the session's first system prompt on --resume, so what may have changed since (the
+      // briefing) goes with the note, and a Codex head gets its saved memory too, as in 1.x.
+      const briefing = [this.wakeNote(), this.componentNote()].filter(Boolean).join("\n\n");
+      const note = `(App: Botling restarted you in this same conversation (${restarted.told}); carry on as before.` + (briefing ? ` What the app tells you at a wake, as it is now:)\n${briefing}` : ")");
+      turn.words = `${this.withSavedMemory(note)}\n\n${turn.words}`;
     }
     const brief = waking && this.briefing;
     if (brief) this.briefing = false;
