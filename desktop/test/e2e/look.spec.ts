@@ -25,7 +25,7 @@ test("screenshots: streaming, an approval, a stopped reply", async () => {
     await say(chat, "/slow");
     await expect(chat.locator(".row.bot[data-id]").last()).toContainText("word12");
     await page.screenshot({ path: join(dir, "streaming.png") });
-    await chat.getByRole("button", { name: "Stop" }).click();
+    await chat.locator("body").press("Escape");
     await expect(chat.locator(".row.bot[data-id]").last()).toHaveAttribute("data-state", "stopped");
     await page.waitForTimeout(300);
     await page.screenshot({ path: join(dir, "stopped.png") });

@@ -42,7 +42,7 @@ describe("core process", () => {
     expect(saved.at(-1).date).toBeLessThan(2e9);
   });
 
-  it("refuses bad input with an error response; a second send while busy joins the first (1.x steering)", async () => {
+  it("refuses bad input with an error response; a second send while busy joins the turn under way (1.x steering)", async () => {
     const c = core(tempDir("core"), { FAKE_CLAUDE_MODE: "slow" });
     c.post({ v: 10, id: "bad", cmd: { type: "shell.run", command: "ls" } });
     c.post({ v: 11, id: "old", cmd: { type: "chat.snapshot" } });
@@ -53,12 +53,11 @@ describe("core process", () => {
     const first = await c.call({ type: "chat.send", botId: MAIN, text: "one" });
     await until(() => c.of("turn.delta").length >= 2);
     const second = await c.call({ type: "chat.send", botId: MAIN, text: "two" });
-    expect(second.turnId).not.toBe(first.turnId);
-    // The first turn is cut off (its words so far stay), the second runs.
+    // The turn under way hears it and answers it: nothing is cut off.
+    expect(second.turnId).toBe(first.turnId);
     await until(() => c.of("turn.finished").find((e) => (e.event as { turnId: string }).turnId === first.turnId));
-    expect(c.of("turn.finished")[0]!.event).toMatchObject({ status: "stopped" });
+    expect(c.of("turn.finished")[0]!.event).toMatchObject({ status: "done", text: expect.stringMatching(/You said: two$/) });
     await expect(c.call({ type: "chat.send", botId: "NO-SUCH-BOT", text: "x" })).rejects.toThrow(/not_found/);
-    await c.call({ type: "turn.stop", botId: MAIN, turnId: second.turnId });
   });
 
   it("stop ends the whole tree (even one ignoring SIGTERM) and no event for the turn follows", async () => {
