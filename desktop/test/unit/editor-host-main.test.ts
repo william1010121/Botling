@@ -1,7 +1,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {EventEmitter} from 'node:events';
 import {ipcMain} from 'electron';
-import {prepareNativeEditorHost,nativeEditorNavigation} from '../../src/main/editor-host';
+import {prepareNativeEditorHost,nativeEditorNavigation,editorBounds} from '../../src/main/editor-host';
 import {EDITOR_CHANNEL,EDITOR_URL} from '../../src/editor-host-wire';
 vi.mock('electron',async()=>{
  const {EventEmitter}=await import('node:events');
@@ -11,7 +11,7 @@ vi.mock('electron',async()=>{
 });
 const disposers:(()=>void)[]=[];afterEach(()=>{for(const dispose of disposers.splice(0))dispose();});
 function fixture(ownerReady:Promise<void>=Promise.resolve()){
- const contents=Object.assign(new EventEmitter(),{id:1,mainFrame:{url:'app://botling/index.html',parent:null},isDestroyed:()=>false,send:vi.fn(),focus:vi.fn()});
+ const contents=Object.assign(new EventEmitter(),{id:1,mainFrame:{url:'app://botling/index.html',parent:null},isDestroyed:()=>false,send:vi.fn(),focus:vi.fn(),getZoomFactor:()=>1});
  const owner=Object.assign(new EventEmitter(),{webContents:contents,isVisible:():boolean=>false,isDestroyed:():boolean=>false,getContentBounds:()=>({x:0,y:0,width:1120,height:820}),contentView:{addChildView:vi.fn(),removeChildView:vi.fn()},focus:vi.fn(),show:vi.fn()});
  const result=prepareNativeEditorHost(owner as any,'/Volumes/My-SSD/synthetic/desktop',ownerReady);disposers.push(result.dispose);return{owner,...result};
 }
@@ -244,4 +244,12 @@ it('disposes without touching a destroyed owner window when it closes',async()=>
  const f=fixture(),stamp=await f.ready,ownerContents=f.owner.webContents;
  f.owner.isDestroyed=()=>true;Object.defineProperty(f.owner,'webContents',{get(){throw new TypeError('Object has been destroyed');}});
  expect(()=>f.owner.emit('closed')).not.toThrow();expect(ownerContents.send).toHaveBeenLastCalledWith(EDITOR_CHANNEL.unbound,stamp);expect(ownerContents.listenerCount('did-start-navigation')).toBe(0);expect(f.view.webContents.isDestroyed()).toBe(true);
+});
+it('scales layout from a zoomed-out shell into window coordinates',async()=>{
+ const f=fixture(),stamp=await f.ready,layout=(f.view as any).setBounds;layout.mockClear();
+ (f.owner.webContents as any).getZoomFactor=()=>1450/1740;(f.owner as any).getContentBounds=()=>({x:10,y:37,width:1450,height:909});
+ ipcMain.emit(EDITOR_CHANNEL.layout,{sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame},{stamp,bounds:{x:248,y:85,width:1436,height:1005}});
+ expect(layout).toHaveBeenCalledExactlyOnceWith({x:207,y:71,width:1197,height:838});
+ expect(editorBounds({x:0,y:0,width:1740,height:1091},{width:1450,height:909},1450/1740)).toEqual({x:0,y:0,width:1450,height:909});
+ expect(editorBounds({x:0,y:0,width:1740,height:1091},{width:1450,height:909})).toBeNull();
 });

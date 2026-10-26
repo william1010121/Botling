@@ -14,10 +14,14 @@ export function nativeEditorNavigation(contents:WebContents,details:{isMainFrame
  if(card(details.url,'preview'))return !!parent&&parent.parent===root&&card(parent.url,'page')&&(!initiator||initiator===parent);
  return false;
 }
-export function editorBounds(value:unknown,size:{width:number;height:number}):Electron.Rectangle|null {
+/** The shell measures in CSS pixels; a zoomed shell (Cmd-minus) scales them to window DIPs. */
+export function editorBounds(value:unknown,size:{width:number;height:number},zoom=1):Electron.Rectangle|null {
  if(!value||typeof value!=='object')return null;const v=value as Record<string,unknown>,keys=['x','y','width','height'];
  if(Object.keys(v).length!==4||keys.some(k=>typeof v[k]!=='number'||!Number.isFinite(v[k])))return null;
- const r=Object.fromEntries(keys.map(k=>[k,Math.round(v[k] as number)])) as unknown as Electron.Rectangle;
+ if(!Number.isFinite(zoom)||zoom<=0)return null;
+ const r=Object.fromEntries(keys.map(k=>[k,Math.round((v[k] as number)*zoom)])) as unknown as Electron.Rectangle;
+ // Rounding a zoomed rect may overshoot the window edge by a pixel; anything more is refused below.
+ if(r.x+r.width===size.width+1)r.width--;if(r.y+r.height===size.height+1)r.height--;
  return r.x>=0&&r.y>=0&&r.width>0&&r.height>0&&r.x+r.width<=size.width&&r.y+r.height<=size.height?r:null;
 }
 /** One unprivileged root editor, bound to its shell. No renderer-callable mount or key replay.
@@ -81,7 +85,7 @@ export function prepareNativeEditorHost(owner:BrowserWindow,desktopRoot:string,o
    stopSnapshots();occluded=false;laidOut=false;view.setVisible(false);view.setBounds({x:0,y:0,width:0,height:0});snapshot(null);
    if(owner.isVisible()&&contents.isFocused())owner.webContents.focus();return;
   }
-  const bounds=editorBounds(value.bounds,owner.getContentBounds());if(!bounds)return;
+  const bounds=editorBounds(value.bounds,owner.getContentBounds(),ownerContents.getZoomFactor());if(!bounds)return;
   const boundsChanged=!lastBounds||(['x','y','width','height'] as const).some(key=>lastBounds![key]!==bounds[key]);
   lastBounds=bounds;view.setBounds(bounds);
   if(value.occluded===true){
