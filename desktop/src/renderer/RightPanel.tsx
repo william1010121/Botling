@@ -39,6 +39,7 @@ export interface RightPanelProps {
   onSelectTask: (id: string) => void;
   onJumpToTask: (messageId: string, taskId: string) => void;
   onAskForReport: (task: TaskView, replyTo: string | null) => void;
+  onCompleteTask: (id: string) => void;
   /** A group's "Rename, add or take out members". */
   onEditGroup: () => void;
   collapsed: boolean;
@@ -112,7 +113,7 @@ function GroupMembers({ group, members, look, onSelect }: { group: BotView; memb
   );
 }
 
-function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching, tasks, messages, summarized, selectedTask, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSelectTask, onJumpToTask, onAskForReport }: RightPanelProps) {
+function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching, tasks, messages, summarized, selectedTask, onSelect, onIgnore, onOpenResult, onOpenSubagent, onUnsettle, onSelectTask, onJumpToTask, onAskForReport, onCompleteTask }: RightPanelProps) {
   const doing = bot.role === "manager" ? waiting.doing[bot.id] : undefined;
   const items = panelWaiting(bot, waiting);
   const settled = settledRows(bot.subagentRows);
@@ -123,7 +124,7 @@ function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching,
   const finished = finishedTasks(tasks);
   const card = (task: TaskView) => (
     <TaskCard key={task.id} task={task} now={now} stale={isStale(task, bot.working, now)} messages={messages} folded={isFoldedIntoSummary(task, messages, summarized)}
-      onSelect={onSelectTask} onJump={onJumpToTask} onReport={onAskForReport} />
+      onSelect={onSelectTask} onJump={onJumpToTask} onReport={onAskForReport} onComplete={onCompleteTask} />
   );
   return (
     <aside className="detail-panel" aria-label="Details">
@@ -173,7 +174,7 @@ function OpenPanel({ bot, bots, waiting, look, status, results, teams, watching,
           <h3>Just done</h3>
           <div className="done-tasks">
             {finished.map((task) => (
-              <button key={task.id} type="button" className="done-task" data-task={task.id} onClick={() => onSelectTask(task.id)}>
+              <button key={task.id} type="button" className="done-task" data-task={task.id} title={task.manuallyCompletedAt ? "Marked complete by you" : undefined} onClick={() => onSelectTask(task.id)}>
                 <span className={`done-mark ${task.state}`} aria-hidden="true">{task.state === "done" ? "✓" : "■"}</span>
                 <span className="done-name">{task.name}</span>
                 <span className="done-time">{taskTime(task.updatedAt, now)}</span>
@@ -242,7 +243,7 @@ function taskLine(task: TaskView, stale: boolean, now: number): string {
     case "pending": return "New message · waiting for a head";
     case "waiting": return `Waiting on you: ${task.blocked ?? task.now ?? "your reply"}`;
     case "running": return task.now ? `Now: ${task.now}` : "Running";
-    case "done": return "Done";
+    case "done": return task.manuallyCompletedAt ? "Marked complete by you" : "Done";
     case "stopped": return "Stopped";
   }
 }
@@ -281,9 +282,10 @@ export function isFoldedIntoSummary(task: TaskView, messages: MessageView[], sum
 }
 
 /** The open task: what it does now, what comes next and what blocks it, when it started, the way to its latest line (`TaskCardView`). */
-function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onReport }: {
+function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onReport, onComplete }: {
   task: TaskView; now: number; stale: boolean; folded: boolean; messages: MessageView[];
   onSelect: (id: string) => void; onJump: (messageId: string, taskId: string) => void; onReport: (task: TaskView, replyTo: string | null) => void;
+  onComplete: (id: string) => void;
 }) {
   const mine = new Set(task.messageIds);
   const latest = messages.findLast((message) => mine.has(message.id) && message.role !== "user")?.id ?? messages.findLast((message) => mine.has(message.id))?.id ?? null;
@@ -295,6 +297,7 @@ function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onRepo
   return (
     <div className="task-card" data-task={task.id} data-state={stale ? "stale" : task.state} data-active={active ? "1" : "0"}>
       <button type="button" className="task-card-head" title="Close" onClick={() => onSelect(task.id)}><TaskHeader task={task} stale={stale} bold /></button>
+      {task.manuallyCompletedAt && <div className="task-manual-completion">Marked complete by you · background work may still be running.</div>}
       {field("Now", task.now ?? (task.state === "pending" ? "New message · waiting for a head" : null))}
       {field("Next", task.next)}
       {field("Blocked", task.blocked, task.state === "waiting")}
@@ -310,6 +313,7 @@ function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onRepo
         <span>Started {taskTime(started, now)} · updated {taskTime(task.updatedAt, now)}</span>
         {latest && <button type="button" className="task-jump" onClick={() => onJump(latest, task.id)}>Jump to chat ↗</button>}
       </div>
+      {active && <button type="button" className="task-complete" title="Close this task card. Background work continues." onClick={() => onComplete(task.id)}>Mark complete</button>}
     </div>
   );
 }

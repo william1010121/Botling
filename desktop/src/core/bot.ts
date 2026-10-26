@@ -1001,6 +1001,21 @@ export class Bot {
   }
   private lastOpenTasks = 0;
 
+  /** A user closes a card, independently of whether its owner has finished executing. */
+  completeTask(id: string): ResultOf<"task.complete"> {
+    if (this.options.primary) return this.options.primary.completeTask(id);
+    this.refuseIfClosed();
+    if (!this.tasks.task(id)) throw new ContractError("not_found", "No such task.");
+    const before = structuredClone(this.tasks.tasks);
+    const changed = this.tasks.complete(id, toSwiftDate());
+    if (changed) {
+      // Commit before publishing. A failed write must not leave an unpersisted closure in memory.
+      try { this.saveTasks(); }
+      catch (error) { this.tasks.tasks = before; throw error; }
+    }
+    return { changed };
+  }
+
   private saveSubagents() {
     if (!this.readOnly) this.store.saveList("subagents.json", this.subagents.list);
   }
@@ -4094,6 +4109,7 @@ export function taskView(card: TaskCard, running: Set<string>): TaskView {
     messageIds: card.messageIDs.filter((id) => /^[A-Za-z0-9_.:-]{1,64}$/.test(id)).slice(-1_000),
     updatedAt: iso(card.updatedAt),
     atWork: (card.subagentIDs ?? []).some((id) => running.has(id)),
+    ...(card.manuallyCompletedAt !== undefined ? { manuallyCompletedAt: iso(card.manuallyCompletedAt) } : {}),
     ...(card.helps?.length ? { helps: card.helps.slice(-20).map((help) => ({ head: help.head, text: clip(help.text, 400) ?? "" })) } : {}),
   };
 }

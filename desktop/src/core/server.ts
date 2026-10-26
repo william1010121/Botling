@@ -1297,6 +1297,7 @@ First write a test that shows this, then fix it.`;
         if (!(await this.groups.delete(cmd.groupId))) throw new ContractError("not_found", "No such group.");
         return {};
       case "subagent.settle": return this.bot(cmd.botId).settleSubagent(cmd.subagentId, cmd.settled);
+      case "task.complete": return this.bot(cmd.botId).completeTask(cmd.taskId);
       case "link.authorize": {
         const lines=this.bot(cmd.botId).lines();
         const context=cmd.messageId?lines.find(line=>line.id===cmd.messageId):null;

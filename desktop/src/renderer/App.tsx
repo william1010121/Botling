@@ -315,6 +315,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
           tasks={chat?.botId === bot.id ? chat.tasks ?? [] : []} messages={chat?.botId === bot.id ? chat.messages : []}
           summarized={chat?.botId === bot.id ? new Set([...(chat.catchUp?.ids ?? []), ...(chat.intervalSummaries ?? []).flatMap((summary) => summary.ids)]) : undefined}
           selectedTask={selectedTask} onSelectTask={selectTask}
+          onCompleteTask={(taskId) => void client.request({ type: "task.complete", botId: bot.id, taskId }).catch(fail)}
           onJumpToTask={(messageId, taskId) => {
             const target = (document.getElementById("chat-frame") as HTMLIFrameElement | null)?.contentWindow;
             const message: ShellMessage = { botling: "jumpToTask", messageID: messageId, taskID: taskId };

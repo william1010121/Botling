@@ -98,6 +98,8 @@ export const TaskView = z.strictObject({
   updatedAt: z.string(),
   /** A subagent started for it is still at work. */
   atWork: z.boolean(),
+  /** The user closed this card; this does not assert execution succeeded. ISO-8601. */
+  manuallyCompletedAt: z.string().optional(),
   /** The other head's hand-offs for it: "Codex helping: …" lines (`TaskCard.helps`). Phase 5a. */
   helps: z.array(z.strictObject({ head: z.enum(["claude", "codex"]), text: z.string().max(400) })).max(20).optional(),
 });
@@ -774,6 +776,8 @@ export const Command = z.discriminatedUnion("type", [
   z.strictObject({ type: z.literal("chat.answer"), botId, messageId: id, text: z.string().max(MESSAGE_TEXT_LIMIT), images: z.array(z.strictObject({ name: z.string().min(1).max(255), base64: z.string().min(1).max(FILE_DATA_LIMIT) })).max(10).optional() }),
   /** The user's own reaction on a line (one of 👍 ❤️ 😂 🎉 🤔 👀). */
   z.strictObject({ type: z.literal("chat.react"), botId, messageId: id, emoji: z.string().min(1).max(16), present: z.boolean() }),
+  /** Marks one task card complete. Its workers keep running. */
+  z.strictObject({ type: z.literal("task.complete"), botId, taskId: id }),
   /** A subagent's own conversation (the Agent call's id). */
   z.strictObject({ type: z.literal("subagent.view"), botId, subagentId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_.:-]+$/) }),
   /** Settles a subagent's row out of the left column into the right panel's "Settled" (false: back). It keeps working. */
@@ -966,7 +970,7 @@ export type CommandType = Command["type"];
 
 /** Commands the renderer may send. `card.html` is for main's protocol handler only. */
 export const RENDERER_COMMANDS = new Set<CommandType>([
-  "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.react", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
+  "chat.snapshot", "chat.send", "chat.choose", "chat.answer", "chat.react", "task.complete", "subagent.view", "chat.read", "turn.stop", "turn.await", "card.save", "card.action", "accounts.list", "site.open",
   "heads.set", "heads.answerWith", "handoff.stop", "rounds.stop", "routines.list", "routines.change",
   "catchup.retry", "catchup.interval",
   "component.command", "component.detail", "component.save", "component.report", "component.revert", "chat.feedback", "spec.make", "spec.act", "spec.close", "spec.wide", "codex.models", "pin.add", "pin.change", "pin.arrange", "pin.command", "pin.shown", "card.page",
@@ -1034,6 +1038,7 @@ export interface ChatSnapshot {
 export interface Results {
   "chat.snapshot": { epoch: string; seq: number; bots: BotView[]; imported: ImportView | null; chat: ChatSnapshot | null; components: Record<string, ComponentInfoView>; plugins: PluginsView; settings?: SettingsView; waiting?: WaitingView; web?: WebStateView; teams?: TeamRunView[]; spec?: SpecStateView | null };
   "subagent.settle": { changed: boolean };
+  "task.complete": { changed: boolean };
   "bots.create": { botId: string; created: boolean };
   "groups.create": { groupId: string };
   "groups.edit": Record<string, never>;

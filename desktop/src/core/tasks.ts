@@ -30,6 +30,8 @@ export interface TaskCard {
   helps?: TaskHelp[];
   subagentIDs?: string[];
   stateFromTag?: TaskState;
+  /** The user's card closure, independent of the owner's execution outcome (Swift date). */
+  manuallyCompletedAt?: number;
   [key: string]: unknown;
 }
 
@@ -60,6 +62,8 @@ export function readTaskCard(value: unknown): TaskCard | null {
   };
   if (raw.owner !== "claude" && raw.owner !== "codex") delete card.owner;
   if (raw.stateFromTag !== undefined && !STATES.has(raw.stateFromTag as TaskState)) delete card.stateFromTag;
+  if (typeof raw.manuallyCompletedAt !== "number" || !Number.isFinite(raw.manuallyCompletedAt)) delete card.manuallyCompletedAt;
+  else { card.state = "done"; card.kept = true; }
   return card;
 }
 
@@ -104,7 +108,7 @@ export class TaskBook {
   begin(message: string, text: string, owner: Head | null, at: number, replyingTo?: string | null): string {
     if (replyingTo) {
       const existing = this.containing(replyingTo);
-      if (existing) {
+      if (existing && existing.manuallyCompletedAt === undefined) {
         existing.messageIDs.push(message);
         if (existing.state !== "done" && existing.state !== "stopped") existing.state = existing.owner ? "running" : "pending";
         existing.updatedAt = at;
@@ -121,7 +125,7 @@ export class TaskBook {
   /** `head` started on the user's message: it owns the card unless another head does, and the card runs. */
   claim(message: string, head: Head, at: number): boolean {
     const card = this.containing(message);
-    if (!card) return false;
+    if (!card || card.manuallyCompletedAt !== undefined) return false;
     let changed = false;
     if (!card.owner) { card.owner = head; changed = true; }
     if (card.state === "pending" && card.owner === head) { card.state = "running"; card.updatedAt = at; changed = true; }
@@ -143,6 +147,7 @@ export class TaskBook {
     const first = this.containing(earlier);
     const second = this.containing(later);
     if (!first || !second || first.id === second.id || second.startedByMessageID !== later) return;
+    if (first.manuallyCompletedAt !== undefined || second.manuallyCompletedAt !== undefined) return;
     const from = this.index(second.id);
     if (from !== null) this.merge(from, first.id);
   }
@@ -196,10 +201,13 @@ export class TaskBook {
     const touched: string[] = [];
     tags.forEach((tag, number) => {
       let target: TaskCard | undefined;
-      const earlier = tag.continues ? this.named(tag.continues) : undefined;
+      const continued = tag.continues ? this.named(tag.continues) : undefined;
+      // A new user request gets its own card after manual closure; delayed reports still find
+      // the closed card by name and cannot resurrect it (or create a duplicate).
+      const earlier = continued?.manuallyCompletedAt !== undefined && base && base.manuallyCompletedAt === undefined ? undefined : continued;
       if (tag.continues && earlier && earlier.id !== base?.id) {
         // It carries on an earlier task: this message, and what its own card had, join it.
-        if (number === 0 && turn.userMessage && base && base.startedByMessageID === turn.userMessage) {
+        if (number === 0 && turn.userMessage && base && base.manuallyCompletedAt === undefined && base.startedByMessageID === turn.userMessage) {
           const from = this.index(base.id);
           if (from !== null) this.merge(from, earlier.id);
           base = undefined;
@@ -229,6 +237,7 @@ export class TaskBook {
 
   private touch(card: TaskCard, message: string, head: Head, asks: boolean, at: number) {
     if (!card.messageIDs.includes(message)) card.messageIDs.push(message);
+    if (card.manuallyCompletedAt !== undefined) return;
     if (!card.owner) card.owner = head;
     if (card.owner !== head) return;
     if (asks && isActive(card.state)) card.state = "waiting";
@@ -238,6 +247,7 @@ export class TaskBook {
 
   private apply(tag: TaskTag, card: TaskCard, head: Head, message: string, asks: boolean, at: number) {
     if (!card.messageIDs.includes(message)) card.messageIDs.push(message);
+    if (card.manuallyCompletedAt !== undefined) return;
     card.kept = true;
     if (!card.owner) card.owner = head;
     if (card.owner !== head) return;
@@ -276,9 +286,20 @@ export class TaskBook {
 
   set(id: string, state: TaskState, at: number) {
     const card = this.task(id);
-    if (!card) return;
+    if (!card || card.manuallyCompletedAt !== undefined) return;
     card.state = state;
     card.updatedAt = at;
+  }
+
+  /** Close the card, without changing its head, hand-offs or subagents. Repeated clicks are safe. */
+  complete(id: string, at: number): boolean {
+    const card = this.task(id);
+    if (!card || !isActive(card.state)) return false;
+    card.state = "done";
+    card.manuallyCompletedAt = at;
+    card.updatedAt = at;
+    card.kept = true;
+    return true;
   }
 
   /** Lines gone from the chat leave their cards; cards with none of their lines left go. */
