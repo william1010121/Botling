@@ -10,6 +10,8 @@ import { Core } from "./server";
 import { claudeSessionExists } from "./claude-files";
 import type { SessionStart, SessionStartCodex } from "./bot";
 import { DEFAULT_ONE_X_PROCESS } from "./store/lock";
+import { Layout } from "./store/workspace";
+import { readSettings } from "./settings";
 import type { HeadConfig } from "./agent/head";
 import type { CodexHeadConfig, CodexThreads } from "./agent/codex";
 import type { BotProfile } from "./store/workspace";
@@ -29,8 +31,13 @@ function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
   const env: Record<string, string> = { ...(session.pluginEnv ?? {}) };
   if (session.subagentModel) env.CLAUDE_CODE_SUBAGENT_MODEL = session.subagentModel;
   if (session.subagentHourCache && !process.env.CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL) env.CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL = "1h";
+  // Claude Code leaves the Artifact tool out of `-p` sessions unless asked (`launchEnvironment`); one the
+  // app's own environment sets is left as it is. When results stay local it is not offered (`launchTools`).
+  if (!process.env.CLAUDE_CODE_ARTIFACT) env.CLAUDE_CODE_ARTIFACT = "1";
+  const localOnly = readSettings(Layout.settings(dataDir)).resultPublishingChoice === "localOnly";
   const common = {
-    cwd: profile.folder, sessionId: session.sessionId, resume: session.resume, allowedTools: profile.tools,
+    cwd: profile.folder, sessionId: session.sessionId, resume: session.resume,
+    allowedTools: localOnly ? profile.tools.filter((tool) => tool !== "Artifact") : profile.tools,
     // Plugins' Claude parts (Maintainer's component editor among them) and their MCP servers' secrets.
     pluginDirs: session.pluginDirs ?? [], ...(Object.keys(env).length ? { env } : {}),
     model: process.env.BOTLING_MODEL ?? session.model ?? null,

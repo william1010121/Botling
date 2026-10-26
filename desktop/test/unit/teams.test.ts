@@ -137,6 +137,8 @@ describe("teams, bots and settling through the core", () => {
     expect(team).toBeTruthy();
     expect(team.args).not.toContain("--permission-prompt-tool");
     expect(team.args[team.args.indexOf("--allowedTools") + 1]).toBe("Read,Write,Edit,WebSearch,WebFetch,Artifact");
+    // Claude Code offers Artifact in -p sessions only when asked (1.x's `launchEnvironment`).
+    expect(team.artifact).toBe("1");
     expect(team.args[team.args.indexOf("--model") + 1]).toBe("sonnet");
     expect(team.args[team.args.indexOf("--append-system-prompt") + 1]).toMatch(/^You are a research team started for one job\./);
     const input = logged(join(dir, "claude-input.log")).find((line) => line.text.startsWith("(App: A task from the main bot)\n"));
