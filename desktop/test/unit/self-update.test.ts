@@ -186,6 +186,91 @@ describe("<install-build>", () => {
   });
 });
 
+describe("<install-build> without a restart", () => {
+  const hotPlan = { mode: "hot" as const, parts: ["core" as const, "chat" as const] };
+  const restartPlan = { mode: "restart" as const, reasons: ["kernel changed: main process"] };
+
+  function hotDesk(plans: unknown[]) {
+    const root = tempDir("self-update");
+    const asked: unknown[] = [];
+    const queue = [...plans];
+    const desk_ = desk(root, {
+      planBuild: async () => queue.shift() as never,
+      hotInstall: async (request) => { asked.push(request); return { ok: true }; },
+    });
+    const built = fakeApp(join(root, "dist"), "Botling 2", { BotlingGitCommit: "bbbbbbb2222" });
+    return { ...desk_, root, asked, built };
+  }
+
+  it("the card says the expected mode before you confirm: hot-apply and which parts, or restart and why", async () => {
+    const hot = hotDesk([hotPlan]);
+    await hot.builds.propose(hot.built, "Faster startup.", hot.dev);
+    const card = hot.main.notices.at(-1)!;
+    expect(card.text).toContain("**botling** wants to install a new Botling build without restarting.");
+    expect(card.text).toContain("- Expected: hot-apply: core, chat page");
+    expect(card.text).toMatch(/If the new core fails its self-check, the running one stays and the app on disk is put back\./);
+    expect(card.choices!.map((choice) => choice.label)).toEqual(["Install and hot-apply", "Not now"]);
+    expect(hot.dev.notes.at(-1)).toMatch(/\(hot-apply: core, chat page\)\. Nothing happens until they pick\.\)$/);
+
+    const restart = hotDesk([restartPlan]);
+    await restart.builds.propose(restart.built, "", restart.dev);
+    const restartCard = restart.main.notices.at(-1)!;
+    expect(restartCard.text).toContain("wants to install a new Botling build and restart.");
+    expect(restartCard.text).toContain("- Expected: restart (kernel changed: main process)");
+    expect(restartCard.choices!.map((choice) => choice.label)).toEqual(["Install and restart", "Not now"]);
+  });
+
+  it("Install on a hot card asks main to install in place; nothing is launched and the app does not quit", async () => {
+    const hot = hotDesk([hotPlan, hotPlan]);
+    await hot.builds.propose(hot.built, "Faster startup.", hot.dev);
+    await hot.main.notices.at(-1)!.onPick!(0);
+    expect(hot.asked).toEqual([{ path: join(hot.root, "dist", "Botling 2.app"), requester: "DEV", note: "Faster startup.", from: "2.0.1 (aaaaaaa)", to: "2.0.1 (bbbbbbb)" }]);
+    expect(hot.launched).toHaveLength(0);
+  });
+
+  it("Install on a restart card restarts as before and the report afterwards says why", async () => {
+    vi.useFakeTimers();
+    const restart = hotDesk([restartPlan, restartPlan]);
+    await restart.builds.propose(restart.built, "", restart.dev);
+    await restart.main.notices.at(-1)!.onPick!(0);
+    expect(restart.asked).toHaveLength(0);
+    expect(restart.launched).toHaveLength(1);
+    expect(installOutcome(join(restart.root, "core"))).toMatchObject({ kind: "installed", state: { mode: "restart (kernel changed: main process)" } });
+    restart.builds.check(8_000);
+    vi.advanceTimersByTime(8_000);
+    expect(restart.main.notices.at(-1)!.text).toBe("Botling restarted on 2.0.1 (bbbbbbb) (was 2.0.1 (aaaaaaa)), installed for botling — restarted (kernel changed: main process).");
+    expect(restart.dev.relays.at(-1)!.text).toMatch(/the build you asked to install — restarted \(kernel changed: main process\)\. Read your memory file/);
+  });
+
+  it("a build that changed since the card (now needs a restart) is not installed; the bot is told to ask again", async () => {
+    const hot = hotDesk([hotPlan, restartPlan]);
+    await hot.builds.propose(hot.built, "", hot.dev);
+    await hot.main.notices.at(-1)!.onPick!(0);
+    expect(hot.asked).toHaveLength(0);
+    expect(hot.launched).toHaveLength(0);
+    expect(hot.main.notices.at(-1)!.text).toBe("2.0.1 (bbbbbbb) changed since the card was shown (it now means restart (kernel changed: main process)), so nothing was installed. Ask again to see it.");
+    expect(hot.dev.notes.at(-1)).toMatch(/Ask again with <install-build>/);
+  });
+
+  it("main's report: hot-applied parts, or a failure with the old build kept and the disk put back (or a restart required)", () => {
+    const { builds, main, dev, root } = hotDesk([]);
+    setFailures(join(root, "core"), 1);
+    const base = { requester: "DEV", note: "Faster startup.", from: "2.0.1 (aaaaaaa)", to: "2.0.1 (bbbbbbb)" };
+    builds.hotOutcome({ ...base, ok: true, applied: ["core", "chat"], disk: "installed" });
+    expect(main.notices.at(-1)!.text).toBe("Botling installed 2.0.1 (bbbbbbb) (was 2.0.1 (aaaaaaa)) for botling without restarting — hot-applied: core, chat page. The kernel is unchanged; the next launch starts this build too.");
+    expect(dev.relays.at(-1)!.text).toBe("(App) Botling installed 2.0.1 (bbbbbbb), the build you asked to install (Faster startup.), without restarting — hot-applied: core, chat page. Check that your change works (<app-screenshot/> shows the window), then say in one sentence whether it does.");
+    expect(failures(join(root, "core"))).toBe(0);
+
+    builds.hotOutcome({ ...base, ok: false, applied: [], disk: "restored", error: "the new core failed its self-check (it exited (1))" });
+    expect(main.notices.at(-1)!.text).toBe("The new build 2.0.1 (bbbbbbb) could not be hot-applied: the new core failed its self-check (it exited (1)). 2.0.1 (aaaaaaa) keeps running. The app on disk was put back to 2.0.1 (aaaaaaa).");
+    expect(dev.relays.at(-1)!.text).toMatch(/^\(App\) The build you asked to install, 2\.0\.1 \(bbbbbbb\), could not be hot-applied: the new core failed its self-check/);
+    expect(failures(join(root, "core"))).toBe(1);
+
+    builds.hotOutcome({ ...base, ok: false, applied: ["core"], disk: "stuck", error: "the new shell did not come up" });
+    expect(main.notices.at(-1)!.text).toMatch(/Still running from the new build: core\. The app on disk could not be put back, so it is now the new build while the old one runs: restart required \(the next launch starts 2\.0\.1 \(bbbbbbb\)\)\. That is 2 in a row: installing is paused/);
+  });
+});
+
 describe("a newer release", () => {
   const release = { version: "2.0.2", name: "Botling 2.0.2", url: "https://github.com/william1010121/Botling/releases/tag/v2.0.2", current: "2.0.1", unavailable: null };
 

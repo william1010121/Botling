@@ -7,7 +7,8 @@ import { CLASSIFIER_TIMEOUT_MS, codexClassifier } from "./promise-check";
 import { askModels, cachedModels } from "./agent/codex-models";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { Core } from "./server";
+import { Core, type AppAnswer, type AppOp } from "./server";
+import { parseReport } from "../hot-install-plan";
 import { Doctor } from "./doctor";
 import { claudeSessionExists } from "./claude-files";
 import type { SessionStart, SessionStartCodex } from "./bot";
@@ -172,13 +173,13 @@ const appBridge = parentPort ? {
   pid: Number(process.env.BOTLING_MAIN_PID) || null,
   dataDir: process.env.BOTLING_APP_DATA_DIR || null,
   bundle: process.env.BOTLING_APP_BUNDLE || null,
-  request: (op: "screenshot" | "quit" | "installRelease") => new Promise<{ ok: boolean; file?: string; error?: string }>((resolve) => {
+  request: (op: AppOp, args?: Record<string, string>) => new Promise<AppAnswer>((resolve) => {
     const id = ++appAsks;
     // Installing a release downloads and verifies it first (main/update-install.ts), which can take minutes.
-    const timer = setTimeout(() => { appAnswers.delete(id); resolve({ ok: false, error: "Main did not answer." }); }, op === "installRelease" ? 20 * 60_000 : 30_000);
+    const timer = setTimeout(() => { appAnswers.delete(id); resolve({ ok: false, error: "Main did not answer." }); }, op === "installRelease" ? 20 * 60_000 : op === "planBuild" || op === "installBuild" ? 5 * 60_000 : 30_000);
     timer.unref?.();
     appAnswers.set(id, (answer) => { clearTimeout(timer); appAnswers.delete(id); resolve(answer); });
-    parentPort.postMessage({ botling: "app", id, op });
+    parentPort.postMessage({ botling: "app", id, op, ...(args ? { args } : {}) });
   }),
 } : null;
 const sealer: Sealer | null = portSealer ?? (process.env.BOTLING_TEST_SEAL_KEY ? testSealer(process.env.BOTLING_TEST_SEAL_KEY) : null);
@@ -275,8 +276,13 @@ if (parentPort) {
     if (data && typeof data === "object" && swapControl(data, (message) => parentPort.postMessage(message))) return;
     if (data && typeof data === "object" && data.botling === "sealed") portSealer?.answer(data as Parameters<PortSealer["answer"]>[0]);
     else if (data && typeof data === "object" && data.botling === "appDone") {
-      const answer = data as { id?: unknown; ok?: unknown; file?: unknown; error?: unknown };
-      if (typeof answer.id === "number") appAnswers.get(answer.id)?.({ ok: answer.ok === true, ...(typeof answer.file === "string" ? { file: answer.file } : {}), ...(typeof answer.error === "string" ? { error: answer.error } : {}) });
+      const answer = data as { id?: unknown; ok?: unknown; file?: unknown; error?: unknown; plan?: unknown };
+      if (typeof answer.id === "number") appAnswers.get(answer.id)?.({ ok: answer.ok === true, ...(typeof answer.file === "string" ? { file: answer.file } : {}), ...(typeof answer.error === "string" ? { error: answer.error } : {}), ...(answer.plan !== undefined ? { plan: answer.plan } : {}) });
+    }
+    else if (data && typeof data === "object" && data.botling === "buildInstalled") {
+      // Main's report of a hot install of a developer build (main/hot-install.ts), to whichever core runs at its end.
+      const report = parseReport((data as { report?: unknown }).report);
+      if (report) { try { core.devBuilds.hotOutcome(report); } catch (error) { process.stderr.write(`hot install report: ${(error as Error).message}\n`); } }
     }
     else if (data && typeof data === "object" && data.botling === "release") {
       // Main found a newer release (main/updates.ts): an update notice in the main bot's chat (self-update.ts).

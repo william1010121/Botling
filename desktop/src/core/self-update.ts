@@ -14,6 +14,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { writeFileAtomic } from "./durable/atomic";
+import { planText, PART_NAMES, type HotReport, type InstallPlan } from "../hot-install-plan";
 
 /** Seconds the new build has to come up. */
 export const HEALTH_WAIT_S = 90;
@@ -81,6 +82,8 @@ export interface InstallState {
   startedAt: string;
   /** Where the running build was moved. */
   backup: string;
+  /** Why this install restarts (main's comparison: "restart (kernel changed: main process)"); absent before hot installs existed. */
+  mode?: string;
 }
 
 export const updateFolder = (root: string) => join(root, "self-update");
@@ -150,13 +153,13 @@ exit 1
 `;
 
 /** Writes the state and the script; returns the command that runs the script (detached; the app quits right after). */
-export function prepareInstall(root: string, from: BuildInfo, to: BuildInfo, requester: string, note: string, pid: number, dataDir: string, now = new Date()): string[] {
+export function prepareInstall(root: string, from: BuildInfo, to: BuildInfo, requester: string, note: string, pid: number, dataDir: string, now = new Date(), mode?: string): string[] {
   const folder = updateFolder(root);
   mkdirSync(join(folder, "backups"), { recursive: true });
   for (const marker of [healthyFile(root), rolledBackFile(root)]) rmSync(marker, { force: true });
   const stamp = `${now.toISOString().slice(0, 10)}-${Math.floor(now.getTime() / 1000)}`;
   const backup = join(folder, "backups", `Botling-2-${from.version.replace(/[^0-9A-Za-z.-]/g, "_")}-${stamp}.app`);
-  const state: InstallState = { from, to, requesterID: requester, note, startedAt: now.toISOString(), backup };
+  const state: InstallState = { from, to, requesterID: requester, note, startedAt: now.toISOString(), backup, ...(mode ? { mode } : {}) };
   writeFileAtomic(stateFile(root), JSON.stringify(state, null, 2));
   writeFileSync(scriptFile(root), INSTALL_SCRIPT, { mode: 0o700 });
   return ["/usr/bin/nohup", "/bin/bash", scriptFile(root), String(pid), from.path, to.path, backup, healthyFile(root), rolledBackFile(root), String(HEALTH_WAIT_S), dataDir];
@@ -243,6 +246,13 @@ export interface DevBuildDeps {
   launchInstaller: (command: string[], log: string) => void;
   /** A PNG of the app's window, or null. */
   captureWindow: () => Promise<string | null>;
+  /**
+   * Main compares a build with the running one (main/hot-install.ts): hot when only the core, chat page or
+   * shell changed. Absent: every install restarts, as before.
+   */
+  planBuild?: (path: string) => Promise<InstallPlan>;
+  /** Main installs a build in place (hot); it answers at once and reports to the core running at the end (`hotOutcome`). */
+  hotInstall?: (request: { path: string; requester: string; note: string; from: string; to: string }) => Promise<{ ok: boolean; error?: string }>;
   /** Main downloads and verifies the newer release, then quits for its install (`update-install.ts`). */
   installRelease?: () => Promise<{ ok: boolean; error?: string }>;
   log: (line: string) => void;
@@ -307,7 +317,20 @@ export class DevBuilds {
     if (!build) return refuse(`there is no app bundle at ${path}.`);
     if (build.bundleID !== running.bundleID) return refuse(`${path} is not Botling 2 (${build.bundleID}).`);
     if (build.path === running.path) return refuse("that is the build running now; build into desktop/dist/ and point at that.");
-    const lines = [`**${from.profile.name}** wants to install a new Botling build and restart.`, "", `- New: ${buildLabel(build)}`, `- Running: ${buildLabel(running)}`];
+    if (!this.deps.planBuild) return this.card(build, running, note, from, null);
+    // Main compares the builds first, so the card can say whether the app restarts.
+    return this.deps.planBuild(build.path).then(
+      (plan) => this.card(build, running, note, from, plan),
+      (error) => this.card(build, running, note, from, { mode: "restart", reasons: [`could not compare the builds: ${(error as Error).message}`] }),
+    );
+  }
+
+  /** The confirm card; `plan` null: not compared (always a restart, as in 1.x). */
+  private card(build: BuildInfo, running: BuildInfo, note: string, from: DeskBot, plan: InstallPlan | null) {
+    const main = this.deps.mainBot();
+    const hot = plan?.mode === "hot";
+    const lines = [hot ? `**${from.profile.name}** wants to install a new Botling build without restarting.` : `**${from.profile.name}** wants to install a new Botling build and restart.`, "", `- New: ${buildLabel(build)}`, `- Running: ${buildLabel(running)}`];
+    if (plan) lines.push(`- Expected: ${planText(plan)}`);
     const what = note.trim();
     if (what) lines.push("", what);
     if (build.dirty) lines.push("", "It was built from uncommitted changes.");
@@ -322,16 +345,24 @@ export class DevBuilds {
     } else {
       lines.push("", "Which commits these are is not known, so changes to what bots may do cannot be shown.");
     }
-    lines.push("", `Bots write down where they are before the restart. If the new build does not come up within ${HEALTH_WAIT_S} seconds, the running one comes back by itself.`);
+    if (hot) {
+      lines.push("", "The app keeps running: the new build is installed for the next launch, and its changed parts are applied in place. Bots finish their turns (or pause between tool calls) and go on in the same conversations. If the new core fails its self-check, the running one stays and the app on disk is put back.");
+    } else {
+      lines.push("", `Bots write down where they are before the restart. If the new build does not come up within ${HEALTH_WAIT_S} seconds, the running one comes back by itself.`);
+    }
+    const install = hot ? "Install and hot-apply" : "Install and restart";
     main.appNotice(lines.join("\n"), [
-      { label: sensitive ? "Install anyway and restart" : "Install and restart", recommended: !sensitive },
+      { label: sensitive ? `${install} anyway` : install, recommended: !sensitive },
       { label: "Not now", recommended: sensitive },
-    ], (index) => this.answer(build, from.id, what, index === 0), { sourceID: from.id });
-    from.queueNote(`(App: The user sees a card asking to install ${buildLabel(build)}. Nothing happens until they pick.)`);
+    ], (index) => this.answer(build, from.id, what, index === 0, plan), { sourceID: from.id });
+    from.queueNote(`(App: The user sees a card asking to install ${buildLabel(build)}${plan ? ` (${planText(plan)})` : ""}. Nothing happens until they pick.)`);
   }
 
-  /** Your pick on a build card (`answerBuild`). */
-  answer(build: BuildInfo, requester: string, note: string, install: boolean) {
+  /**
+   * Your pick on a build card (`answerBuild`). The builds are compared again: if the way it installs is no
+   * longer what the card said (it was rebuilt meanwhile), nothing is installed and the bot is told to ask again.
+   */
+  answer(build: BuildInfo, requester: string, note: string, install: boolean, shown: InstallPlan | null = null): Promise<void> | void {
     const asker = this.deps.bot(requester);
     if (!install) {
       asker?.queueNote(`(App: The user chose not to install ${buildLabel(build)} now.)`);
@@ -339,13 +370,59 @@ export class DevBuilds {
     }
     const running = this.deps.runningBuild();
     if (!running || !this.deps.appPid) return;
+    if (!shown || !this.deps.planBuild) return this.restart(running, build, requester, note, shown);
+    return this.deps.planBuild(build.path).then(async (plan) => {
+      if (plan.mode !== shown.mode) {
+        const why = `${buildLabel(build)} changed since the card was shown (it now means ${planText(plan)}), so nothing was installed.`;
+        this.deps.mainBot().appNotice(`${why} Ask again to see it.`, undefined, undefined, { sourceID: requester });
+        asker?.queueNote(`(App: ${why} Ask again with <install-build> if it should be installed.)`);
+        return;
+      }
+      if (plan.mode === "restart") { this.restart(running, build, requester, note, plan); return; }
+      const answer = await this.deps.hotInstall!({ path: build.path, requester, note, from: buildLabel(running), to: buildLabel(build) })
+        .catch((error) => ({ ok: false, error: (error as Error).message }));
+      if (answer.ok) { this.deps.log(`hot-installing ${buildLabel(build)} for ${requester}`); return; }
+      this.deps.mainBot().appNotice(`Couldn't install ${buildLabel(build)}: ${answer.error ?? "main refused"}. Nothing was installed.`, undefined, undefined, { sourceID: requester });
+      asker?.queueNote(`(App: ${buildLabel(build)} was not installed: ${answer.error ?? "main refused"}.)`);
+    }, (error) => { this.deps.mainBot().appNotice(`Couldn't install ${buildLabel(build)}: ${(error as Error).message}`); });
+  }
+
+  /** The restart path (1.x's): the script outside the app swaps the bundle once the app has quit. */
+  private restart(running: BuildInfo, build: BuildInfo, requester: string, note: string, plan: InstallPlan | null) {
     try {
-      const command = prepareInstall(this.deps.root, running, build, requester, note, this.deps.appPid, this.deps.appDataDir ?? "");
+      const command = prepareInstall(this.deps.root, running, build, requester, note, this.deps.appPid!, this.deps.appDataDir ?? "", new Date(), plan ? planText(plan) : undefined);
       this.deps.log(`installing ${buildLabel(build)} for ${requester}`);
       this.deps.launchInstaller(command, installLog(this.deps.root));
     } catch (error) {
       this.deps.mainBot().appNotice(`Couldn't start installing ${buildLabel(build)}: ${(error as Error).message}`);
     }
+  }
+
+  /** Main's report of a hot install (main/hot-install.ts), to this core whether it is the new one or the one that stayed. */
+  hotOutcome(report: HotReport) {
+    const main = this.deps.mainBot();
+    const asker = this.deps.bot(report.requester);
+    const applied = report.applied.map((part) => PART_NAMES[part]).join(", ");
+    if (report.ok) {
+      setFailures(this.deps.root, 0);
+      const what = applied ? `hot-applied: ${applied}` : "hot-applied: nothing besides the version differed";
+      main.appNotice(`Botling installed ${report.to} (was ${report.from}) for ${asker?.profile.name ?? "a bot"} without restarting — ${what}. The kernel is unchanged; the next launch starts this build too.`, undefined, undefined, { sourceID: report.requester });
+      try {
+        asker?.relay(`(App) Botling installed ${report.to}, the build you asked to install${report.note ? ` (${report.note})` : ""}, without restarting — ${what}. Check that your change works (<app-screenshot/> shows the window), then say in one sentence whether it does.`);
+      } catch (error) { this.deps.log(`could not tell ${report.requester}: ${(error as Error).message}`); }
+      return;
+    }
+    const count = failures(this.deps.root) + 1;
+    setFailures(this.deps.root, count);
+    const paused = count >= FAILURE_LIMIT ? ` That is ${count} in a row: installing is paused until developer mode is turned off and on again.` : "";
+    const still = applied ? ` Still running from the new build: ${applied}.` : "";
+    const disk = report.disk === "stuck"
+      ? ` The app on disk could not be put back, so it is now the new build while the old one runs: restart required (the next launch starts ${report.to}).`
+      : report.disk === "restored" ? ` The app on disk was put back to ${report.from}.` : " The app on disk was not changed.";
+    main.appNotice(`The new build ${report.to} could not be hot-applied: ${report.error ?? "it failed"}. ${report.from} keeps running.${still}${disk}${paused}`, undefined, undefined, { sourceID: report.requester });
+    try {
+      asker?.relay(`(App) The build you asked to install, ${report.to}, could not be hot-applied: ${report.error ?? "it failed"}. ${report.from} keeps running.${still}${disk} Find out why before trying again.${paused}`);
+    } catch (error) { this.deps.log(`could not tell ${report.requester}: ${(error as Error).message}`); }
   }
 
   /**
@@ -362,9 +439,10 @@ export class DevBuilds {
         markHealthy(this.deps.root);
         setFailures(this.deps.root, 0);
         const asker = this.deps.bot(state.requesterID);
-        main.appNotice(`Botling restarted on ${buildLabel(state.to)} (was ${buildLabel(state.from)}), installed for ${asker?.profile.name ?? "a bot"}.`, undefined, undefined, { sourceID: state.requesterID });
+        const how = state.mode ? ` — ${state.mode.replace(/^restart/, "restarted")}` : "";
+        main.appNotice(`Botling restarted on ${buildLabel(state.to)} (was ${buildLabel(state.from)}), installed for ${asker?.profile.name ?? "a bot"}${how}.`, undefined, undefined, { sourceID: state.requesterID });
         try {
-          asker?.relay(`(App) Botling restarted on ${buildLabel(state.to)}, the build you asked to install${state.note ? ` (${state.note})` : ""}. Read your memory file for where you were, check that your change works (<app-screenshot/> shows the window), then say in one sentence whether it does.`);
+          asker?.relay(`(App) Botling restarted on ${buildLabel(state.to)}, the build you asked to install${state.note ? ` (${state.note})` : ""}${how}. Read your memory file for where you were, check that your change works (<app-screenshot/> shows the window), then say in one sentence whether it does.`);
         } catch (error) { this.deps.log(`could not tell ${state.requesterID}: ${(error as Error).message}`); }
       }, healthyAfterMs);
       timer.unref?.();

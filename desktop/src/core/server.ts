@@ -66,6 +66,11 @@ import { EXTRACTORS_PLUGIN, WebShelf, askAboutWebText, decodeReading, extractorC
 import { maintainerInstructions } from "./maintainer-text";
 import type { ChatRecord } from "./store/records";
 import { DevBuilds, readBuild, spawnInstaller } from "./self-update";
+import { parsePlan } from "../hot-install-plan";
+
+/** What the core asks of main (self-update.ts); planBuild and installBuild carry a build's path. */
+export type AppOp = "screenshot" | "quit" | "installRelease" | "planBuild" | "installBuild";
+export interface AppAnswer { ok: boolean; file?: string; error?: string; plan?: unknown }
 import { discardHandover, drainBots, takeHandover, writeHandover } from "./hot-swap";
 
 export interface CoreOptions {
@@ -141,7 +146,7 @@ export interface CoreOptions {
     pid: number | null;
     dataDir: string | null;
     bundle: string | null;
-    request: (op: "screenshot" | "quit" | "installRelease") => Promise<{ ok: boolean; file?: string; error?: string }>;
+    request: (op: AppOp, args?: Record<string, string>) => Promise<AppAnswer>;
   } | null;
 }
 
@@ -460,10 +465,10 @@ export class Core {
     this.lastPlugins = JSON.stringify(this.plugins.view());
     this.loadedClaudeParts = JSON.stringify(this.plugins.registry.claudeStamp());
     const app = options.app ?? null;
-    const running = app?.bundle ? readBuild(app.bundle) : null;
     this.devBuilds = new DevBuilds({
       root: options.dataDir,
-      runningBuild: () => running,
+      // Read each time: a hot install changes the bundle on disk under a running core.
+      runningBuild: () => (app?.bundle ? readBuild(app.bundle) : null),
       developer: () => this.developerProject(),
       mainBot: () => this.bots.get(MAIN_BOT_ID)!,
       bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
@@ -475,6 +480,11 @@ export class Core {
         void app?.request("quit");
       },
       installRelease: app ? () => app.request("installRelease") : undefined,
+      planBuild: app ? async (path) => {
+        const answer = await app.request("planBuild", { path });
+        return (answer.ok ? parsePlan(answer.plan) : null) ?? { mode: "restart", reasons: [answer.error ?? "main could not compare the builds"] };
+      } : undefined,
+      hotInstall: app ? (request) => app.request("installBuild", request) : undefined,
       captureWindow: async () => {
         if (!app) return null;
         try { const answer = await app.request("screenshot"); return answer.ok && answer.file ? answer.file : null; } catch { return null; }

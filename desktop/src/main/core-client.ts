@@ -4,8 +4,20 @@
 import { MessageChannelMain, utilityProcess, type UtilityProcess } from "electron";
 import { PluginChildren } from "./plugin-children";
 import { PASS_WHILE_DRAINING, type HoldMode, type SwapPorts } from "./core-swap";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import type { HotReport } from "../hot-install-plan";
+
+export type AppOp = "screenshot" | "quit" | "installRelease" | "planBuild" | "installBuild";
+const APP_OPS = new Set<string>(["screenshot", "quit", "installRelease", "planBuild", "installBuild"]);
+/** Which strings each op may carry (anything else is dropped). */
+const APP_ARGS: Record<string, string[]> = { planBuild: ["path"], installBuild: ["path", "requester", "note", "from", "to"] };
+
+/** The plugin host that goes with a core build: `<build>/host/host-utility.mjs` beside `<build>/core/main.cjs`, when it is there. */
+export function hostScriptFor(script: string): string | null {
+  const host = join(dirname(dirname(script)), "host", "host-utility.mjs");
+  return existsSync(host) ? host : null;
+}
 import {
   EventEnvelope, PROTOCOL_VERSION, ResponseEnvelope, describeIssues,
   type Command, type EventEnvelope as EventEnvelopeT, type ResponseEnvelope as ResponseEnvelopeT, type ResultOf, type CommandType,
@@ -22,8 +34,11 @@ export interface CoreClientOptions {
   hostScript?: string;
   /** The core's process ledger (`<data>/core/children.json`): plugins' process groups are kept there too. */
   ledgerFile?: string;
-  /** Developer mode's asks (core/self-update.ts): a picture of the main window, or quitting for an install. */
-  app?: (op: "screenshot" | "quit" | "installRelease") => Promise<{ ok: boolean; file?: string; error?: string }>;
+  /**
+   * Developer mode's asks (core/self-update.ts): a picture of the main window, quitting for an install, the
+   * newer release, or comparing / hot-installing a build (`args`: its path, and for installBuild who asked).
+   */
+  app?: (op: AppOp, args: Record<string, string>) => Promise<{ ok: boolean; file?: string; error?: string; plan?: unknown }>;
 }
 
 interface Pending { resolve: (response: ResponseEnvelopeT) => void }
@@ -63,10 +78,18 @@ export class CoreClient {
     this.child?.postMessage({ botling: "release", ...release });
   }
 
+  /** How a hot install went (main/hot-install.ts), to the core running now: it tells the main chat and the bot that asked. */
+  reportInstall(report: HotReport) {
+    this.child?.postMessage({ botling: "buildInstalled", report });
+  }
+
   async commitUpdateBoot(): Promise<void> {
     this.options.env.BOTLING_UPDATE_PENDING = "0";
     await this.call({ type: "boot.commit" });
   }
+
+  /** The core build running (or starting) now. */
+  get script(): string { return this.options.script; }
 
   /** Pids of the plugin hosts running now (for tests). */
   get hostPids(): number[] { return [...this.hosts.values()].map((host) => host.pid ?? -1); }
@@ -174,9 +197,15 @@ export class CoreClient {
     }
     if (raw && typeof raw === "object" && raw.botling === "app") {
       const child = this.child;
-      const reply = (answer: { ok: boolean; file?: string; error?: string }) => child?.postMessage({ botling: "appDone", id: raw.id, ...answer });
-      if (typeof raw.id !== "number" || (raw.op !== "screenshot" && raw.op !== "quit" && raw.op !== "installRelease") || !this.options.app) { reply({ ok: false, error: "Refused." }); return; }
-      this.options.app(raw.op).then(reply, (error) => reply({ ok: false, error: String((error as Error)?.message ?? error).slice(0, 500) }));
+      const reply = (answer: { ok: boolean; file?: string; error?: string; plan?: unknown }) => child?.postMessage({ botling: "appDone", id: raw.id, ...answer });
+      if (typeof raw.id !== "number" || typeof raw.op !== "string" || !APP_OPS.has(raw.op) || !this.options.app) { reply({ ok: false, error: "Refused." }); return; }
+      const given = (raw as { args?: unknown }).args;
+      const args: Record<string, string> = {};
+      for (const key of APP_ARGS[raw.op] ?? []) {
+        const value = given && typeof given === "object" ? (given as Record<string, unknown>)[key] : undefined;
+        if (typeof value === "string") args[key] = value.slice(0, key === "note" ? 4_000 : 1_000);
+      }
+      this.options.app(raw.op as AppOp, args).then(reply, (error) => reply({ ok: false, error: String((error as Error)?.message ?? error).slice(0, 500) }));
       return;
     }
     if (raw && typeof raw === "object" && raw.botling === "seal") {
@@ -276,6 +305,9 @@ export class CoreClient {
       stop: () => this.retire(),
       start: async (script) => {
         this.options.script = script;
+        // Plugin hosts the new core starts come from its own build (the old ones ended with the old core).
+        const host = hostScriptFor(script);
+        if (host) this.options.hostScript = host;
         this.restarts = 0;
         this.start();
         const deadline = Date.now() + 30_000;

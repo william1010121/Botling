@@ -3,6 +3,8 @@
 import { isAbsolute, join, resolve } from "node:path";
 import { statSync } from "node:fs";
 import { readRendererConfiguration, validateRendererDirectory } from "../../renderer-config.mjs";
+/** What the chat origin serves from out/renderer: the page, its script and styles, and KaTeX's files (the rest is the shell's). */
+export const CHAT_FILES = /^\/(?:chat\.html|chat\.js|chat\.js\.map|chat\.css|frame\.css|plugins\/ccb-latex\/(?:katex\.min\.css|fonts\/[A-Za-z0-9_-]+\.woff2))$/;
 export interface RendererFiles { directory: string; development: boolean }
 export interface RendererConfigurationOptions { appData?: string; warn?: (message: string) => void }
 export function rendererFiles(root: string, packaged: boolean, devTrial: boolean, argv: string[],

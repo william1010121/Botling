@@ -11,7 +11,7 @@ import { scrubEnvironment } from "./packaged";
 import {configureHiddenApp,hidden} from "./hidden-mode";
 import {nativeEditorNavigation,hasNativeEditorHost,prepareNativeEditorHost,reloadNativeEditor} from "./editor-host";
 import {appMenuTemplate} from "./app-menu";
-import {preloadFiles,rendererFiles,rendererResponse} from "./renderer-loading";
+import {CHAT_FILES,preloadFiles,rendererFiles,rendererResponse} from "./renderer-loading";
 import { CHECK_EVERY_MS, FEED, Updater } from "./updates";
 import { previewResponse } from "./preview-response";
 import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates, runningAppBundles } from "./update-install";
@@ -25,6 +25,10 @@ declare const __UPDATE_PUBLIC_KEY__: string | null;
 import { checkReport } from "../core/plugins/check-report";
 import { CoreClient } from "./core-client";
 import { installCoreSwap } from "./core-swap-main";
+import { HotInstaller } from "./hot-install";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import * as originalFs from "original-fs";
 import { copyDoctorFix } from "./doctor-copy";
 import { WebPages } from "./web";
 import { cardPage, CARD_CSP, COMPONENT_CSP, PANEL_CSP, PREVIEW_CSP, PREVIEW_TYPES } from "./card-page";
@@ -53,7 +57,10 @@ if (checkAt >= 0) {
   process.exit(report.code);
 }
 const renderer = rendererFiles(root, app.isPackaged, devTrial, process.argv, { appData: app.getPath("appData") });
-const rendererDir = renderer.directory;
+/** Where the shell and chat page come from; a hot install (hot-install.ts) points it at a copy of the new build's. */
+let rendererDir = renderer.directory;
+/** After a hot install pages are served with no-store, so nothing cached from the previous build is reused. */
+let rendererNoStore = renderer.development;
 if (renderer.development) console.log(`[renderer] loading ${rendererDir}; Cmd+R reloads the shell, Alt+Cmd+R the chat page`);
 // Preloads re-run on each page reload; a developer build dir (--botling-preload-dir) can supply them.
 const preloadDir = preloadFiles(root, app.isPackaged, devTrial, process.argv).directory;
@@ -90,8 +97,6 @@ const PREVIEW_PREFIX = "botling-card://preview/";
  */
 const CHAT_ORIGIN = "botling-chat://chat";
 const CHAT_URL = `${CHAT_ORIGIN}/chat.html`;
-/** What the chat origin serves from out/renderer: the page, its script and styles, and KaTeX's files. */
-const CHAT_FILES = /^\/(?:chat\.html|chat\.js|chat\.js\.map|chat\.css|frame\.css|plugins\/ccb-latex\/(?:katex\.min\.css|fonts\/[A-Za-z0-9_-]+\.woff2))$/;
 
 /** Each app page's CSP. The chat page draws agent text as markdown (raw HTML off) and KaTeX, which
  * needs inline styles; it loads the ccb-latex plugin from a blob: module. Neither page can connect
@@ -129,7 +134,7 @@ const openingWindows = new WeakMap<BrowserWindow, Promise<boolean>>();
 const appContents = new Set<number>();
 const recoveryContents = new Set<number>();
 
-const core = new CoreClient({
+const core: CoreClient = new CoreClient({
   script: join(root, "out", "core", "main.cjs"),
   hostScript: join(root, "out", "host", "host-utility.mjs"),
   ledgerFile: join(dataDir, "core", "children.json"),
@@ -144,7 +149,16 @@ const core = new CoreClient({
     broadcast(event);
   },
   audit: note,
-  app: async (op) => {
+  app: async (op, args): Promise<{ ok: boolean; file?: string; error?: string; plan?: unknown }> => {
+    if (op === "planBuild") {
+      // A developer build's card (core/self-update.ts): would it install without a restart?
+      const { plan } = await hotInstaller.plan(args.path ?? "");
+      return { ok: true, plan };
+    }
+    if (op === "installBuild") {
+      // The user confirmed a hot install on the card. Main compares again and only installs in place when the kernel is the same.
+      return hotInstaller.install({ path: args.path ?? "", requester: args.requester ?? "", note: args.note ?? "", from: args.from ?? "", to: args.to ?? "" });
+    }
     if (op === "quit") {
       // An install of a developer build: the script outside the app waits for it to quit.
       note("quitting to install a developer build");
@@ -187,6 +201,51 @@ const core = new CoreClient({
 let lastEpoch: string | null = null;
 // Core hot swap (docs/core-hot-swap.md): a newer core build replaces the running one without an app restart.
 const coreSwap = installCoreSwap({ core, root, dataDir, packaged: app.isPackaged, devTrial, argv: process.argv, note });
+
+/**
+ * Developer builds installed without a restart when the kernel is the same (hot-install.ts, docs/core-hot-swap.md):
+ * only for a packaged app bundle, only the build the core's confirmed card names (never a folder from argv).
+ * Reads bundles with original-fs: app.asar as the file it is, not through Electron's cache of the running one.
+ */
+const run = promisify(execFile);
+const hotInstaller: HotInstaller = new HotInstaller({
+  target: app.isPackaged && process.platform === "darwin" && installedApp.endsWith(".app") ? installedApp : null,
+  dataDir,
+  fs: originalFs as unknown as typeof import("node:fs"),
+  run: (file, args) => run(file, args, { timeout: 10 * 60_000 }),
+  notify: (report) => { note(`hot install: ${JSON.stringify({ ok: report.ok, applied: report.applied, disk: report.disk, error: report.error })}`); core.reportInstall(report); },
+  ports: {
+    coreScript: (): string => core.script,
+    swapCore: (script) => coreSwap.swap({ script }),
+    useRenderer: (dir) => { const before = rendererDir; rendererDir = dir; rendererNoStore = true; return before; },
+    reloadChat: async () => {
+      const window = mainWindow;
+      if (!window || window.isDestroyed()) return true;
+      await session.defaultSession.clearCache().catch(() => {});
+      return reloadNativeEditor(window.webContents);
+    },
+    reloadShell: async () => {
+      const window = mainWindow;
+      if (!window || window.isDestroyed()) return true; // The next window loads the new shell.
+      await session.defaultSession.clearCache().catch(() => {});
+      const contents = window.webContents;
+      const loaded = new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), 30_000);
+        contents.once("did-finish-load", () => { clearTimeout(timer); resolve(true); });
+      });
+      contents.reloadIgnoringCache();
+      if (!(await loaded)) return false;
+      // Up means React has the core's first state, as for an update's boot receipt.
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline && !window.isDestroyed()) {
+        if (await contents.executeJavaScript(`Boolean(document.querySelector('.shell[data-ready="1"]'))`).catch(() => false)) return true;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      return false;
+    },
+    log: note,
+  },
+});
 
 /**
  * GitHub Releases discovery, enabled by default. Installation is verified and requires a click.
@@ -672,7 +731,7 @@ async function chatFile(url: URL, request: Request): Promise<Response | null> {
   const path = url.pathname;
   if (CHAT_FILES.test(path)) {
     const response = await net.fetch(pathToFileURL(join(rendererDir, path)).toString());
-    return rendererResponse(response, renderer.development, path === "/chat.html" ? CHAT_CSP : undefined);
+    return rendererResponse(response, rendererNoStore, path === "/chat.html" ? CHAT_CSP : undefined);
   }
   // A plugin's stylesheet or a font beside it (only files the core says the plugin ships for its web part).
   const style = /^\/plugin-files\/([a-z0-9][a-z0-9._-]*)\/(.+)$/.exec(path);
@@ -708,7 +767,7 @@ function serveApp() {
     // The chat page and its files are the chat origin's, not the app's.
     if (!file.startsWith(rendererDir + sep) || CHAT_FILES.test(url.pathname)) return new Response("Not found", { status: 404 });
     const response = await net.fetch(pathToFileURL(file).toString());
-    return rendererResponse(response, renderer.development, file.endsWith(".html") ? APP_CSP : undefined);
+    return rendererResponse(response, rendererNoStore, file.endsWith(".html") ? APP_CSP : undefined);
   });
   protocol.handle("botling-chat", async (request) => {
     const url = new URL(request.url);

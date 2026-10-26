@@ -3,7 +3,9 @@
 The core (bot engine, Claude/Codex heads, settings, components, plugins) runs in an Electron utility
 process (`src/main/core-client.ts`). A hot swap replaces that process with a newer core build while
 the app, its windows and the user's conversations stay up. Only the kernel (`src/main`, preloads'
-main side, the IPC contract's protocol version) still needs an app restart.
+main side, the IPC contract's protocol version) still needs an app restart. A developer build
+installed from the chat (`<install-build>`) uses it too when only the core or pages changed (see
+"Installing a build without a restart").
 
 ## Using it
 
@@ -80,12 +82,92 @@ Typical idle swap: about a second plus the new core's start.
 - Real `claude --resume` / `codex app-server thread/resume` across a swap is exercised only with the
   fake CLIs in tests; a live check is still to do.
 
+## Installing a build without a restart (`<install-build>`)
+
+When the developer project's bot ends a reply with `<install-build path="…/Botling 2.app">…</install-build>`
+(`src/core/self-update.ts`), main first compares the new bundle with the running one
+(`src/main/hot-install.ts`) and the card says which way it will install, before you confirm:
+
+- **Expected: hot-apply: core, chat page** (button *Install and hot-apply*): the kernel is the same.
+- **Expected: restart (kernel changed: main process)** (button *Install and restart*): as before.
+
+### What counts as kernel
+
+Only an app restart can replace these, so any difference means a restart:
+
+| Kernel piece | Where |
+| --- | --- |
+| main process | `out/main/**` in app.asar (main also carries the IPC contract and `PROTOCOL_VERSION`) |
+| preloads | `out/preload/**`: a window's preload path is fixed when it opens, and main reads it through Electron's archive cache of the app.asar it started from, so a new one never takes effect without new windows |
+| package.json | every field except `version` and `description` (e.g. `main`, `botlingDevTrial`) |
+| native modules | any `*.node` file, in either build |
+| other app files | anything in app.asar outside the known folders |
+| Electron | `Contents/Frameworks/**` hashed in full, except code signatures and the helper apps' Info.plist and executables (they carry the app's version and are re-signed with it; only their presence counts) |
+| executable | `Contents/MacOS/*` (presence only, same reason) |
+| Info.plist | its values minus the per-build ones (`CFBundleShortVersionString`, `CFBundleVersion`, git commit/dirty, copyright, `ElectronAsarIntegrity`) |
+| app resources | the rest of `Contents/Resources` (icons, `.lproj`), outside app.asar |
+
+The swappable parts: **core** (`out/core`, `out/host`, `out/web-extractors`), **chat page**
+(`out/renderer` files the chat origin serves: `chat.html`, `chat.js`, `chat.css`, `frame.css`, KaTeX)
+and **shell** (the rest of `out/renderer`). Source maps are ignored.
+
+Uncertain is a restart too: a bundle that cannot be read completely, another bundle id, the running
+bundle's app.asar or Info.plist changed on disk since this process started (someone copied a build
+over it), a previous hot install that could not put the old bundle back, or a run that is not a
+packaged app bundle. The confirm compares again; if the answer is no longer what the card said (the
+build was rebuilt meanwhile), nothing is installed and the bot is told to ask again.
+
+Bundles are read with Electron's `original-fs` (app.asar parsed as the plain file it is), never
+through Electron's archive cache, which keeps serving the running app.asar.
+
+### The hot path, in order
+
+1. **Copy** the changed parts out of the new bundle to `<data>/hot-builds/<stamp>/` (the layout of
+   `out/`), every file checked against the fingerprints the decision used. The chat page and the
+   shell share `out/renderer`, so either copies the whole renderer. The running process only ever
+   loads these copies, never the path being replaced. Copies from an earlier run are removed at start.
+2. **Install on disk** the verified way: the running bundle is moved to
+   `<data>/core/self-update/backups/Botling-2-<version>-<stamp>.hot.app` (the running process keeps
+   its open files), the new one is copied in with `ditto` and must have the same fingerprints. If
+   not, the old one is moved back. The newest two `.hot.app` backups are kept.
+3. **Core swap** (above) to `<copy>/core/main.cjs`; plugin hosts started afterwards come from the
+   same copy's `host/host-utility.mjs`.
+4. **Chat page**: main serves pages from `<copy>/renderer` (with `no-store`, HTTP cache cleared) and
+   reloads the native chat page.
+5. **Shell**: reloaded; it must show `.shell[data-ready="1"]` within 30 s.
+
+The version the running app reports (`app.getVersion()`) stays the launched one until the next start.
+
+### Rollback
+
+| Failure | Result |
+| --- | --- |
+| Copying fails (or the build changed since it was compared) | Nothing installed |
+| Installing on disk fails | The old bundle is moved back; nothing applied |
+| Core self-check / drain / start fails | The core swap's own rules keep or bring back the old core; the old bundle is put back on disk |
+| Shell does not come up | Renderer folder back and reloaded, core swapped back, old bundle back on disk |
+| The old bundle cannot be put back | Reported as **restart required** (the next launch starts the new build); every later install restarts |
+
+### What the bot and you are told
+
+Main sends its report to whichever core runs at the end; that core posts it in the main chat and to
+the bot that asked:
+
+- `Botling installed <new> (was <old>) for <bot> without restarting — hot-applied: core, chat page. …`
+- `The new build <new> could not be hot-applied: the new core failed its self-check (…). <old> keeps running. The app on disk was put back to <old>.`
+  (or `… restart required …`). Failures count toward the two-in-a-row pause, as restarts do.
+- After a restart install: `Botling restarted on <new> (was <old>), installed for <bot> — restarted (kernel changed: main process).`
+
+This works for ordinary packaged builds, not only dev-trial ones: it takes only the path from the
+card the user confirmed (main validates it again), never a folder from argv.
+
 ## Tests
 
 ```sh
 npm run build
 ./node_modules/.bin/vitest run test/unit/core-swap.test.ts test/unit/core-client-swap.test.ts \
-  test/unit/core-hot-swap.test.ts test/unit/component-editor-core.test.ts
+  test/unit/core-hot-swap.test.ts test/unit/component-editor-core.test.ts \
+  test/unit/hot-install.test.ts test/unit/self-update.test.ts
 ```
 
 Headless: fake utility processes, and the built core over stdio with the fake CLIs. No windows.

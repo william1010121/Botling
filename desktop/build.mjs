@@ -27,7 +27,7 @@ mkdirSync(join(out, "renderer"), { recursive: true });
 const web = join(here, "..", "Web");
 const node = { bundle: true, platform: "node", format: "cjs", target: "node22", sourcemap: "linked", legalComments: "eof" };
 await Promise.all([
-  build({ ...node, entryPoints: [join(here, "src/main/main.ts")], outfile: join(out, "main/main.cjs"), external: ["electron"], define: { __UPDATE_PUBLIC_KEY__: JSON.stringify(updatePublicKey) } }),
+  build({ ...node, entryPoints: [join(here, "src/main/main.ts")], outfile: join(out, "main/main.cjs"), external: ["electron", "original-fs"], define: { __UPDATE_PUBLIC_KEY__: JSON.stringify(updatePublicKey) } }),
   // The shell's preload and the native chat editor's (build-preloads.mjs; also `npm run preload:build`).
   buildPreloads({ root: here, outdir: join(out, "preload") }),
   build({ ...node, entryPoints: [join(here, "src/core/main.ts")], outfile: join(out, "core/main.cjs") }),
