@@ -7,6 +7,8 @@ import { inputTrace } from "../input-trace";
 import "./shim";
 import "./component-frames";
 import { installInputRecovery } from "./input-focus";
+import { setSummaryCountable } from "../../../../Web/src/catchup";
+import { isSummaryReply } from "../../contract/summary";
 import "../../../../Web/src/main";
 import { installMessageWidth } from "./message-width";
 import { EditorView } from "@codemirror/view";
@@ -18,6 +20,7 @@ import { localMediaSource } from "../../contract/attachment-url";
 
 declare const __LATEX_SOURCE__: string;
 
+setSummaryCountable(isSummaryReply);
 observeTraceEditor();
 // Pictures and videos a reply shows by their local path: this page cannot load file://, so they come
 // from the chat origin, which serves those the chat shown names (1.x's file:// page loads them as they are).

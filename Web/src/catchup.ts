@@ -1,4 +1,6 @@
 import { post } from "./bridge";
+import { summaryCountable } from "./summary-countable";
+export { setSummaryCountable } from "./summary-countable";
 import { t } from "./i18n";
 import type { CatchUpView, ChatState, MessageView } from "./types";
 import { sourceLinks, clickableSourceURL, type SourceLink } from "./catchup-links";
@@ -61,7 +63,7 @@ export class CatchUpGroup {
     const source = summaryMessages(view,state.messages);
     // Interval payloads carry reply counts but omit the unread group's display metadata.
     if (this.interval) {
-      const latest = source.filter(message => message.role === "bot").at(-1);
+      const latest = source.filter(summaryCountable).at(-1);
       view = { ...view, since: view.since ?? source[0]?.sourceTime, until: view.until ?? source.at(-1)?.sourceTime,
         latest: view.latest ?? (latest ? `${sourceAuthor(latest)}: ${latest.text.replace(/\s+/g, " ").slice(0, 160)}` : null) };
     }
@@ -250,7 +252,7 @@ export class IntervalSummaries {
       if (user.role !== "user") continue;
       let end = i + 1;
       while (end < state.messages.length && state.messages[end].role !== "user") end++;
-      const replies = state.messages.slice(i + 1, end).filter(m => m.role === "bot");
+      const replies = state.messages.slice(i + 1, end).filter(summaryCountable);
       const last = replies.at(-1);
       if (!last || covered.has(last.id)) continue;
       const row = element(last.id);
