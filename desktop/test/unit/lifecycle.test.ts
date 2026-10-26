@@ -95,14 +95,15 @@ describe("reply tags", () => {
     expect(JSON.parse(readFileSync(join(dir, "main", "tasks.json"), "utf8"))).toHaveLength(1);
   });
 
-  it("requests 2.0 cannot act on are taken out of the reply and a notice says so", async () => {
+  it("the developer project's requests are taken out of the reply; from the main bot they do nothing (as 1.x)", async () => {
     const c = core(tempDir("tags"));
-    // (Teams, new bots and <open-question> are done since Phase 4b, <need-folder> since 4c, <suggest-component> since 5a;
-    // the developer project's <app-screenshot/> is still not.)
+    // (Teams, new bots and <open-question> are done since Phase 4b, <need-folder> since 4c, <suggest-component> since 5a,
+    // <app-screenshot/> and <install-build> (developer mode, core/self-update.ts) since the 1.x match.)
     const { event } = await turn(c, "/say Asked for it.\n<app-screenshot/>");
     expect(event.text).toBe("Asked for it.");
     const chat = await c.chat();
-    expect(chat.messages.at(-1)).toMatchObject({ role: "notice", text: "Botling 2.0 cannot do this yet, so nothing happened: a screenshot of the app." });
+    expect(chat.messages.at(-1)).toMatchObject({ role: "bot", text: "Asked for it." });
+    expect(chat.messages.some((m: { text: string }) => /cannot do this yet/.test(m.text))).toBe(false);
   });
 
   it("a reaction-only reply shows no line and puts the bot's reaction on the line it names; the user can react too", async () => {

@@ -21,6 +21,13 @@ const notarize = macCertificate && Boolean(
   || (env.APPLE_KEYCHAIN && env.APPLE_KEYCHAIN_PROFILE),
 );
 const assets = join(__dirname, "..", "Assets");
+/** Which commit a build was made from, for developer mode's install card (1.x's CCBGitCommit / CCBGitDirty). */
+function gitInfo() {
+  const { execFileSync } = require("node:child_process");
+  const git = (args) => { try { return execFileSync("git", ["-C", __dirname, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return null; } };
+  const commit = git(["rev-parse", "HEAD"]);
+  return commit ? { BotlingGitCommit: commit, BotlingGitDirty: git(["status", "--porcelain"]) ? "1" : "0" } : {};
+}
 
 /** @type {import("electron-builder").Configuration} */
 module.exports = {
@@ -61,7 +68,7 @@ module.exports = {
     entitlementsInherit: macCertificate ? join(__dirname, "build", "entitlements.mac.plist") : undefined,
     gatekeeperAssess: false,
     notarize,
-    extendInfo: { NSHumanReadableCopyright: "Copyright © 2026 william1010121" },
+    extendInfo: { NSHumanReadableCopyright: "Copyright © 2026 william1010121", ...gitInfo() },
   },
   dmg: {
     // package.mjs ad-hoc signs the container when there is no certificate.

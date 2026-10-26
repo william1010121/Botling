@@ -136,6 +136,27 @@ function hostNode(): HostCommand | null {
 
 /** Plugins' secrets are sealed by main (Electron safeStorage); a headless core has none unless a test gives a key. */
 const portSealer = parentPort ? new PortSealer((message) => parentPort.postMessage(message)) : null;
+
+/**
+ * Developer mode's and updates' requests of main (self-update.ts): a picture of the window, quitting for
+ * a build's install, or installing the newer release (main restarts on it).
+ * `{botling: "app"}` out, `{botling: "appDone"}` back. Only under Electron, where main is there to answer.
+ */
+const appAnswers = new Map<number, (answer: { ok: boolean; file?: string; error?: string }) => void>();
+let appAsks = 0;
+const appBridge = parentPort ? {
+  pid: Number(process.env.BOTLING_MAIN_PID) || null,
+  dataDir: process.env.BOTLING_APP_DATA_DIR || null,
+  bundle: process.env.BOTLING_APP_BUNDLE || null,
+  request: (op: "screenshot" | "quit" | "installRelease") => new Promise<{ ok: boolean; file?: string; error?: string }>((resolve) => {
+    const id = ++appAsks;
+    // Installing a release downloads and verifies it first (main/update-install.ts), which can take minutes.
+    const timer = setTimeout(() => { appAnswers.delete(id); resolve({ ok: false, error: "Main did not answer." }); }, op === "installRelease" ? 20 * 60_000 : 30_000);
+    timer.unref?.();
+    appAnswers.set(id, (answer) => { clearTimeout(timer); appAnswers.delete(id); resolve(answer); });
+    parentPort.postMessage({ botling: "app", id, op });
+  }),
+} : null;
 const sealer: Sealer | null = portSealer ?? (process.env.BOTLING_TEST_SEAL_KEY ? testSealer(process.env.BOTLING_TEST_SEAL_KEY) : null);
 const hostScript = join(__dirname, "..", "host", "host.mjs");
 const checkScript = join(__dirname, "..", "host", "check-plugin.cjs");
@@ -187,6 +208,7 @@ const core = new Core({
   webExtractors: join(__dirname, "..", "web-extractors"),
   languages: process.env.BOTLING_LANGUAGES ? process.env.BOTLING_LANGUAGES.split(",").filter(Boolean) : undefined,
   // 1.x's data folder, to tell whether it has a project open; only when named (packaged: ~/.claudecodebot).
+  app: appBridge,
   oneX: {
     folder: process.env.BOTLING_1X_DIR || null,
     process: process.env.BOTLING_1X_PROCESS ? new RegExp(process.env.BOTLING_1X_PROCESS) : DEFAULT_ONE_X_PROCESS,
@@ -199,6 +221,23 @@ if (parentPort) {
     // Main's answer to a seal/open request (safeStorage), never a contract message.
     const data = event.data as { botling?: unknown } | null;
     if (data && typeof data === "object" && data.botling === "sealed") portSealer?.answer(data as Parameters<PortSealer["answer"]>[0]);
+    else if (data && typeof data === "object" && data.botling === "appDone") {
+      const answer = data as { id?: unknown; ok?: unknown; file?: unknown; error?: unknown };
+      if (typeof answer.id === "number") appAnswers.get(answer.id)?.({ ok: answer.ok === true, ...(typeof answer.file === "string" ? { file: answer.file } : {}), ...(typeof answer.error === "string" ? { error: answer.error } : {}) });
+    }
+    else if (data && typeof data === "object" && data.botling === "release") {
+      // Main found a newer release (main/updates.ts): an update notice in the main bot's chat (self-update.ts).
+      const release = data as { version?: unknown; name?: unknown; url?: unknown; current?: unknown; unavailable?: unknown };
+      const text = (value: unknown, max: number) => (typeof value === "string" ? value.slice(0, max) : "");
+      if (typeof release.version === "string" && typeof release.url === "string" && release.url.startsWith("https://github.com/")) {
+        try {
+          core.devBuilds.announceRelease({
+            version: text(release.version, 100), name: text(release.name, 400) || text(release.version, 100), url: text(release.url, 2_000),
+            current: text(release.current, 100), unavailable: typeof release.unavailable === "string" ? release.unavailable.slice(0, 500) : null,
+          });
+        } catch (error) { process.stderr.write(`release notice: ${(error as Error).message}\n`); }
+      }
+    }
     else if (data && typeof data === "object" && typeof data.botling === "string" && data.botling.startsWith("host")) utilityHost?.receive(data, event.ports ?? []);
     else core.receive(event.data);
   });

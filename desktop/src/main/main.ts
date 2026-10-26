@@ -10,7 +10,7 @@ import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { scrubEnvironment } from "./packaged";
 import {configureHiddenApp,hidden} from "./hidden-mode";
 import {nativeEditorNavigation,hasNativeEditorHost} from "./editor-host";
-import { FEED, Updater } from "./updates";
+import { CHECK_EVERY_MS, FEED, Updater } from "./updates";
 import { previewResponse } from "./preview-response";
 import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates, runningAppBundles } from "./update-install";
 import {blockingRecovery,persistentDataIdentity,dataVolumeError,recoveryCopies,deleteRecoveryCopies,commitUpdateReceipt,completeRecovery,dismissRecovery,issueFor,recoveryHTML,visibleRecovery,writeRecord} from "./update-state";
@@ -28,7 +28,7 @@ import { PAGE_COMPONENT, previewFile } from "../core/preview-url";
 import { randomBytes } from "node:crypto";
 import {
   AccountView, MAIN_COMMANDS, PROTOCOL_VERSION, RENDERER_COMMANDS, errorResponse, okResponse, parseInbound,
-  type Command, type EventEnvelope, type ResponseEnvelope,
+  type Command, type EventEnvelope, type ResponseEnvelope, type UpdateView,
 } from "../contract";
 
 configureHiddenApp(app);
@@ -134,6 +134,39 @@ const core = new CoreClient({
     broadcast(event);
   },
   audit: note,
+  app: async (op) => {
+    if (op === "quit") {
+      // An install of a developer build: the script outside the app waits for it to quit.
+      note("quitting to install a developer build");
+      setTimeout(() => app.quit(), 100);
+      return { ok: true };
+    }
+    if (op === "installRelease") {
+      // The user picked Install and restart on the update notice in the main bot's chat (core/self-update.ts):
+      // download and verify the newer release unless it is already, then restart on it.
+      try {
+        const state = await updater.check(true);
+        if (!state.newer) return { ok: false, error: "There is no newer release." };
+        if (installer.ready !== state.newer.version) await installer.stage(state.newer);
+        note(`installing release ${state.newer.version} and restarting`);
+        await installer.restart(process.pid);
+        setImmediate(() => app.quit());
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: String((error as Error)?.message ?? error).slice(0, 500) };
+      }
+    }
+    // A picture of the main window as it is (no focus change, nothing shown).
+    const window = mainWindow;
+    if (!window || window.isDestroyed()) return { ok: false, error: "No window." };
+    const image = await window.webContents.capturePage();
+    if (image.isEmpty()) return { ok: false, error: "The window drew nothing." };
+    const folder = join(dataDir, "core", "self-update", "screenshots");
+    mkdirSync(folder, { recursive: true });
+    const file = join(folder, `window-${Date.now()}.png`);
+    writeFileSync(file, image.toPNG());
+    return { ok: true, file };
+  },
   seal: (op, text) => {
     // Plugins' secrets: sealed with the OS keychain's key (safeStorage); only the core asks, over its own port.
     if (!safeStorage.isEncryptionAvailable()) throw new Error("This computer offers no safe storage for secrets.");
@@ -178,6 +211,18 @@ const updater = new Updater({
   },
   save: (state) => { try { writeFileSync(updatesFile, JSON.stringify(state)); } catch { /* the next check tries again */ } },
 });
+/**
+ * A newer release goes to the main bot's chat as an update notice (core/self-update.ts, once per version and
+ * run); installing it waits for the user's pick there. Checked at start and every 6 hours, as Settings has it.
+ */
+function announce(view: UpdateView): UpdateView {
+  if (view.enabled && view.newer) {
+    const unavailable = installer.unavailable() ?? (view.newer.asset ? null : "this release has no download for this computer.");
+    core.announceRelease({ version: view.newer.version, name: view.newer.name, url: view.newer.url, current: app.getVersion(), unavailable });
+  }
+  return view;
+}
+const checkForRelease = () => { void updater.check(false).then(announce, (error) => note(`update check: ${String(error)}`)); };
 /** Tests: the release pages main opened (BOTLING_NO_EXTERNAL=1 opens nothing for real). */
 const openedReleases: string[] = [];
 (globalThis as unknown as { __botlingOpenedReleases: string[] }).__botlingOpenedReleases = openedReleases;
@@ -198,6 +243,12 @@ function coreEnvironment(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (value !== undefined) env[key] = value;
   env.BOTLING_DATA_DIR = join(dataDir, "core");
+  // Developer mode's builds (core/self-update.ts): main's pid (the install script waits for it to quit), the
+  // data folder the new build opens with, and the bundle this is (macOS app bundles only).
+  env.BOTLING_MAIN_PID = String(process.pid);
+  env.BOTLING_APP_DATA_DIR = dataDir;
+  if (app.isPackaged && process.platform === "darwin" && installedApp.endsWith(".app")) env.BOTLING_APP_BUNDLE = installedApp;
+  else delete env.BOTLING_APP_BUNDLE;
   env.BOTLING_UPDATE_PENDING = process.argv.some(arg => arg.startsWith("--botling-update-token=")) ? "1" : "0";
   // Maintainer's component-shot command: this build in shot mode (1.x: "'<botling>' --component-shot").
   const quoted = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
@@ -464,7 +515,7 @@ async function handleInMain(cmd: Command, sender: WebContents): Promise<unknown>
     case "result.open": return openResult(cmd.botId, cmd.url);
     case "link.open": return openOrdinaryLink(cmd.botId, cmd.url, cmd.source,cmd.messageId,cmd.pinId);
     case "updates.dismiss": { await dismissRecovery(dataDir,cmd.id); return {dismissed:true}; }
-    case "updates.check": return updater.check(cmd.manual);
+    case "updates.check": return announce(await updater.check(cmd.manual));
     case "updates.copies": return retainedUpdateCopies(dataDir,installedApp,await runningAppBundles());
     case "updates.deleteCopy": {
       const copy=(await retainedUpdateCopies(dataDir,installedApp,await runningAppBundles())).find(copy=>copy.id===cmd.id);
@@ -790,6 +841,8 @@ app.whenReady().then(async () => {
   core.start();
   createWindow();
   collect();
+  checkForRelease();
+  setInterval(checkForRelease, CHECK_EVERY_MS).unref();
   mainWindow?.webContents.once("did-finish-load", () => {
     if (!process.argv.some((arg) => arg.startsWith("--botling-update-token="))) return;
     // A loaded HTML file alone is not a healthy boot: React must receive the core's first state.

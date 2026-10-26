@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import type { UpdateView,RetainedUpdateCopy } from "../contract";
 import type { Client } from "./client";
 
-/** The banner: asks main once the settings are known (main checks only when on and due). */
+/**
+ * The banner: only an update recovery that needs you. A newer release is announced in the main bot's chat
+ * (core/self-update.ts), where Install and restart installs it, as in 1.x.
+ */
 export function UpdateBanner({ client, enabled }: { client: Client; enabled: boolean | undefined }) {
   const [state, setState] = useState<UpdateView | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
@@ -14,19 +17,10 @@ export function UpdateBanner({ client, enabled }: { client: Client; enabled: boo
     const timer = setInterval(check, 6 * 60 * 60_000);
     return () => { live = false; clearInterval(timer); };
   }, [client, enabled]);
-  const newer = state?.enabled ? state.newer : null;
   if (state?.recoveryError && dismissed !== state.recoveryId) return <div className="update-bar" role="alert" aria-label="Update recovery">
     <span>{state.recoveryError}</span><button type="button" onClick={() => {if(state.recoveryId)void client.request({type:"updates.dismiss",id:state.recoveryId}).then(()=>setDismissed(state.recoveryId!));}}>Dismiss</button>
   </div>;
-  if (!newer || dismissed === newer.version) return null;
-  return (
-    <div className="update-bar" role="status" aria-label="Update">
-      <span>Botling {newer.version} is available.</span>
-      <button type="button" onClick={() => void client.request({ type: "updates.open" }).catch(() => {})}>Open release page</button>
-      {state && <UpdateActions client={client} state={state} onChange={setState} />}
-      <button type="button" className="quiet" onClick={() => setDismissed(newer.version)}>Later</button>
-    </div>
-  );
+  return null;
 }
 
 /** Two separate actions: staging never quits, and a normal quit never installs. */
