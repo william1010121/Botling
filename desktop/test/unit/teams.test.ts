@@ -150,6 +150,10 @@ describe("teams, bots and settling through the core", () => {
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(c.of("teams.updated").length).toBe(before);
     expect((await c.chat(botId)).messages.some((m: any) => m.text.includes("cannot do this yet"))).toBe(false);
+    // Nor is its <new-project> (only the main bot adds projects): left out silently, as in 1.x.
+    await reply(c, botId, `/say Sure.\n<new-project folder="${project("Other")}">Look at it.</new-project>`);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect((await c.chat(botId)).messages.some((m: any) => m.text.includes("cannot do this yet"))).toBe(false);
   });
 
   it("New bot: a row in projects.json with its job, its own folder, set up at once; the same name again is that bot; the app's names are taken", async () => {

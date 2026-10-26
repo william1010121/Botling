@@ -932,7 +932,9 @@ First write a test that shows this, then fix it.`;
   /** The main bot's <new-project> requests: found, asked about on one card (the rest are passed on). */
   private newProjectRequests(bot: Bot, requests: BotRequest[]): BotRequest[] {
     const asked = requests.filter((request): request is Extract<BotRequest, { kind: "newProject" }> => request.kind === "newProject");
-    if (!asked.length || bot.id !== MAIN_BOT_ID) return requests;
+    if (!asked.length) return requests;
+    // Only the main bot adds projects; anyone else's <new-project> is left out silently, as in 1.x (`Workspace.handle`).
+    if (bot.id !== MAIN_BOT_ID) return requests.filter((request) => request.kind !== "newProject");
     const main = bot;
     const home = homedir();
     const own = resolvePath(this.options.dataDir);
