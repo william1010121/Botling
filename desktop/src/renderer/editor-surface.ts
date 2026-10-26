@@ -1,3 +1,4 @@
+import { shellOverlayActive, subscribeShellOverlays } from "./ShellOverlay";
 import type { editorBridge } from "../preload/editor-bridge";
 import { CHAT_ORIGIN, type ShellMessage } from "./chat-frame/protocol";
 
@@ -14,19 +15,22 @@ export function postToChat(message: ShellMessage): void {
 
 /** The placeholder occupies exactly the former iframe's layout; it never contains an editor. */
 export function observeEditorLayout(element: HTMLElement, bridge: EditorBridge, visible: () => boolean): () => void {
+  let previous = "";
   const update = () => {
     const rect = element.getBoundingClientRect();
-    const overlay = document.querySelector('[role="dialog"]:not([hidden]), [role="menu"]:not([hidden]), .settings-backdrop, .dialog-backdrop, .routines-panel, .bot-menu, .strip-add-menu');
-    bridge.layout(!overlay && visible() && rect.width > 0 && rect.height > 0
-      ? { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.floor(rect.width), height: Math.floor(rect.height) }
-      : null);
+    const bounds = visible() && rect.width > 0 && rect.height > 0
+      ? { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.floor(rect.width), height: Math.floor(rect.height) } : null;
+    const occluded = shellOverlayActive();
+    const key = JSON.stringify({bounds, occluded, stamp: bridge.current()});
+    if (key === previous) return;
+    previous = key;
+    bridge.layout(bounds, occluded);
   };
   const observer = new ResizeObserver(update);
   observer.observe(element);
-  const mutations = new MutationObserver(update);
-  mutations.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden", "class", "style"] });
+  const stopOverlays = subscribeShellOverlays(update);
   window.addEventListener("resize", update);
   const unsubscribe = bridge.subscribe(packet => { if ("bound" in packet) update(); });
   update();
-  return () => { observer.disconnect(); mutations.disconnect(); window.removeEventListener("resize", update); unsubscribe(); bridge.layout(null); };
+  return () => { observer.disconnect(); stopOverlays(); window.removeEventListener("resize", update); unsubscribe(); bridge.layout(null); };
 }

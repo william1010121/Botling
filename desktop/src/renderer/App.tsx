@@ -4,6 +4,7 @@
 // what the user does (send, a pick on an approval, Stop); this page turns that into contract
 // commands. Only this page has the bridge to main.
 import { inputTrace } from "./input-trace";
+import { ShellOverlay } from "./ShellOverlay";
 import { nativeEditor, postToChat, observeEditorLayout } from "./editor-surface";
 import { TEST_TRACE_QUERY } from "../test-trace";
 import { UpdateBanner } from "./Updates";
@@ -527,11 +528,11 @@ function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExp
       <div className="strip-add">
         <button type="button" className="strip-plus" title="Add a project, a bot or a group" aria-label="Add a project, a bot or a group" aria-expanded={adding} onClick={() => setAdding(!adding)}><Icon name="plus" size={13} /></button>
         {adding && (
-          <div className="strip-add-menu" role="menu">
+          <ShellOverlay><div className="strip-add-menu" role="menu">
             <button type="button" role="menuitem" onClick={() => { setAdding(false); onAddProject(); }}>Add project…</button>
             <button type="button" role="menuitem" onClick={() => { setAdding(false); onNewBot(); }}>New bot…</button>
             <button type="button" role="menuitem" onClick={() => { setAdding(false); onNewGroup(); }}>New group…</button>
-          </div>
+          </div></ShellOverlay>
         )}
       </div>
       {settingsControl}
@@ -543,6 +544,7 @@ function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExp
 function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: Client; store: WorkspaceStore; onError: (failure: unknown) => void; onSent: () => void; onSelectTask: (id: string) => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const placeholder = useRef<HTMLDivElement>(null);
+  const [snapshot, setSnapshot] = useState<{image:string;revision:number} | null>(null);
   useEffect(() => {
     const bridge = nativeEditor();
     if (bridge && placeholder.current) return observeEditorLayout(placeholder.current, bridge, () => true);
@@ -1054,6 +1056,7 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     if (bridge) return bridge.subscribe(packet => {
       if ("unbound" in packet) { ready.current = false; lastSpecs.current = ""; }
       else if ("bound" in packet) { ready.current = true; lastSpecs.current = ""; push(); pushPlugins(); }
+      else if ("snapshot" in packet) setSnapshot(packet.snapshot ? {image:packet.snapshot,revision:packet.revision} : null);
       else receive(packet.message as FrameMessage);
     });
     const onMessage = (event: MessageEvent) => {
@@ -1063,7 +1066,9 @@ function ChatFrame({ client, store, onError, onSent, onSelectTask }: { client: C
     return () => window.removeEventListener("message", onMessage);
   }, [client, onError, onSent, onSelectTask, push, pushPlugins, store]);
 
-  if (nativeEditor()) return <div id="chat-frame" ref={placeholder} aria-label="Chat" />;
+  if (nativeEditor()) return <div id="chat-frame" ref={placeholder} aria-label="Chat" style={{ position: "relative", overflow: "hidden" }}>
+    {snapshot && <img data-native-chat-snapshot="" src={snapshot.image} onLoad={() => nativeEditor()?.snapshotReady(snapshot.revision)} alt="" aria-hidden="true" style={{ width: "100%", height: "100%", position: "absolute", inset: 0, pointerEvents: "none" }} />}
+  </div>;
   return <iframe id="chat-frame" ref={frame} src={inputTrace() ? `${CHAT_PAGE}?${TEST_TRACE_QUERY}=1` : CHAT_PAGE} title="Chat" />;
 }
 
@@ -1089,7 +1094,7 @@ function RoutinesButton({ client, botId }: { client: Client; botId: string }) {
     <span className="routines">
       <button type="button" className={`header-button${open ? " on" : ""}`} aria-expanded={open} onClick={() => setOpen(!open)}>Routines</button>
       {open && (
-        <div className="routines-panel" role="dialog" aria-label="Routines">
+        <ShellOverlay><div className="routines-panel" role="dialog" aria-label="Routines">
           {list?.error && <p className="routines-problem">{list.error}</p>}
           {problem && <p className="routines-problem">{problem}</p>}
           {list && !list.routines.length && <p className="routines-empty">No routines yet. Ask the bot to schedule one.</p>}
@@ -1110,7 +1115,7 @@ function RoutinesButton({ client, botId }: { client: Client; botId: string }) {
               </li>
             ))}
           </ul>
-        </div>
+        </div></ShellOverlay>
       )}
     </span>
   );

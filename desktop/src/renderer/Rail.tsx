@@ -1,3 +1,4 @@
+import { ShellOverlay } from "./ShellOverlay";
 // The left column's Phase 4b parts (1.x's SidePanels.swift): a bot's subagent rows under it
 // (SubagentRows / SubagentRow: running ones and ones that ended in the last 10 minutes, at most 4
 // with "Show N more", each with its settle button), the New bot form (NewBotForm), and a row's menu
@@ -100,7 +101,7 @@ export function BotMenu({ bot, at, onRemove, onClose, pinned, onTogglePin, onEdi
     return () => { window.removeEventListener("pointerdown", close, true); window.removeEventListener("keydown", key); window.removeEventListener("blur", onClose); };
   }, [onClose]);
   return (
-    <div className="bot-menu" role="menu" style={{ left: at.x, top: at.y }}>
+    <ShellOverlay><div className="bot-menu" role="menu" style={{ left: at.x, top: at.y }}>
       {bot.role === "group" ? (
         <>
           <button type="button" role="menuitem" className="bot-menu-item" onClick={onEditGroup}>Edit group…</button>
@@ -113,7 +114,7 @@ export function BotMenu({ bot, at, onRemove, onClose, pinned, onTogglePin, onEdi
           <button type="button" role="menuitem" className="bot-menu-item destructive" onClick={onRemove}>{bot.role === "bot" ? "Remove bot…" : "Remove project…"}</button>
         </>
       )}
-    </div>
+    </div></ShellOverlay>
   );
 }
 
@@ -126,7 +127,7 @@ export function RemoveDialog({ bot, onRemove, onCancel }: { bot: BotView; onRemo
   }, [onCancel]);
   const project = bot.role !== "bot";
   return (
-    <div className="dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
+    <ShellOverlay><div className="dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
       <div className="dialog" role="alertdialog" aria-labelledby="remove-title" aria-describedby="remove-message">
         <h2 id="remove-title">Remove "{bot.name}"?</h2>
         <p id="remove-message">It stops at once. Its notes stay in {bot.folder}.</p>
@@ -135,7 +136,7 @@ export function RemoveDialog({ bot, onRemove, onCancel }: { bot: BotView; onRemo
           <button type="button" className="dialog-destructive" onClick={onRemove}>{project ? "Remove project" : "Remove bot"}</button>
         </div>
       </div>
-    </div>
+    </div></ShellOverlay>
   );
 }
 
@@ -192,7 +193,7 @@ export function GroupForm({ group, bots, look, onDone, faceOf }: {
     return () => window.removeEventListener("keydown", key);
   }, [onDone]);
   return (
-    <div className="dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onDone(null); }}>
+    <ShellOverlay><div className="dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onDone(null); }}>
       <form className="dialog group-form" aria-label={group ? "Edit group" : "New group"} onSubmit={(event) => { event.preventDefault(); if (can) onDone({ name, members: [...picked] }); }}>
         <h2>{group ? "Edit group" : "New group"}</h2>
         <input className="group-name-input" placeholder="Group name, e.g. Blog team" value={name} autoFocus onChange={(event) => setName(event.target.value)} aria-label="Group name" />
@@ -212,7 +213,7 @@ export function GroupForm({ group, bots, look, onDone, faceOf }: {
           <button type="submit" className="dialog-primary" disabled={!can}>{group ? "Save" : "Create"}</button>
         </div>
       </form>
-    </div>
+    </div></ShellOverlay>
   );
 }
 
@@ -224,7 +225,7 @@ export function DeleteGroupDialog({ group, onDelete, onCancel }: { group: BotVie
     return () => window.removeEventListener("keydown", key);
   }, [onCancel]);
   return (
-    <div className="dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
+    <ShellOverlay><div className="dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
       <div className="dialog" role="alertdialog" aria-labelledby="delete-group-title" aria-describedby="delete-group-message">
         <h2 id="delete-group-title">Delete the group "{group.name}"?</h2>
         <p id="delete-group-message">Its conversation is deleted. The bots in it keep their own chats and memory.</p>
@@ -233,6 +234,6 @@ export function DeleteGroupDialog({ group, onDelete, onCancel }: { group: BotVie
           <button type="button" className="dialog-destructive" onClick={onDelete}>Delete group</button>
         </div>
       </div>
-    </div>
+    </div></ShellOverlay>
   );
 }

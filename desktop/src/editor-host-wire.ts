@@ -2,7 +2,7 @@
 import {Command} from './contract';
 export const EDITOR_URL='botling-chat://chat/chat.html?nativeHost=1';
 export const EDITOR_ARGUMENT='--botling-editor-host=1';
-export const EDITOR_CHANNEL={up:'botling:editor:up',down:'botling:editor:down',bound:'botling:editor:bound',unbound:'botling:editor:unbound',shell:'botling:editor:shell',layout:'botling:editor:layout'} as const;
+export const EDITOR_CHANNEL={up:'botling:editor:up',down:'botling:editor:down',bound:'botling:editor:bound',unbound:'botling:editor:unbound',shell:'botling:editor:shell',layout:'botling:editor:layout',snapshot:'botling:editor:snapshot'} as const;
 export interface EditorStamp {surfaceId:string;documentGeneration:string}
 export interface EditorPacket {stamp:EditorStamp;message:unknown}
 const object=(v:unknown):v is Record<string,any>=>!!v&&typeof v==='object'&&!Array.isArray(v);

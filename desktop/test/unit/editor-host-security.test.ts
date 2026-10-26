@@ -59,3 +59,23 @@ it('actual native preload exposes only the narrow bridge, never window.botling o
 it('actual native preload exposes nothing if loaded into a card or foreign document',async()=>{
  vi.stubGlobal('process',{...process,isMainFrame:false,argv:[EDITOR_ARGUMENT]});vi.stubGlobal('location',{href:EDITOR_URL});await import('../../src/preload/editor-host');expect(mock.expose).not.toHaveBeenCalled();
 });
+
+it('delivers decoded snapshot metadata only to the authenticated shell bridge, with no event object or editor acknowledgement authority',()=>{
+ const callbacks=new Map<string,Function>(),send=vi.fn(),bridge=editorBridge({on:(channel,fn)=>callbacks.set(channel,fn),send},'shell');
+ const stamp={surfaceId:'surface',documentGeneration:'document'},image='data:image/png;base64,AA==';
+ callbacks.get(EDITOR_CHANNEL.bound)!({},stamp);
+ const receive=vi.fn();bridge.subscribe(receive);receive.mockClear();
+ callbacks.get(EDITOR_CHANNEL.snapshot)!({secretEvent:'never forwarded'},{stamp:{...stamp,documentGeneration:'stale'},image,revision:1});
+ callbacks.get(EDITOR_CHANNEL.snapshot)!({}, {stamp,image:'file:///synthetic.png',revision:1});
+ expect(receive).not.toHaveBeenCalled();
+ callbacks.get(EDITOR_CHANNEL.snapshot)!({secretEvent:'never forwarded'},{stamp,image,revision:1});
+ expect(receive).toHaveBeenCalledExactlyOnceWith({stamp,snapshot:image,revision:1});
+ expect(bridge.snapshotReady(1)).toBe(true);
+ expect(send).toHaveBeenCalledExactlyOnceWith(EDITOR_CHANNEL.layout,{stamp,snapshotReady:1});
+ const editorCallbacks=new Map<string,Function>();
+ const editor=editorBridge({on:(channel,fn)=>editorCallbacks.set(channel,fn),send},'editor');
+ editorCallbacks.get(EDITOR_CHANNEL.bound)!({},stamp);
+ expect(editorCallbacks.has(EDITOR_CHANNEL.snapshot)).toBe(false);
+ expect(editor.snapshotReady(1)).toBe(false);
+ expect(send).toHaveBeenCalledTimes(1);
+});

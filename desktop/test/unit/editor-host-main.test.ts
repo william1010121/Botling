@@ -5,15 +5,15 @@ import {prepareNativeEditorHost,nativeEditorNavigation} from '../../src/main/edi
 import {EDITOR_CHANNEL,EDITOR_URL} from '../../src/editor-host-wire';
 vi.mock('electron',async()=>{
  const {EventEmitter}=await import('node:events');
- class Contents extends EventEmitter {id=2;mainFrame:any={url:EDITOR_URL,parent:null};dead=false;send=vi.fn();focus=vi.fn();isFocused=vi.fn(()=>false);loadURL=vi.fn(async()=>{});setWindowOpenHandler=vi.fn();isDestroyed(){return this.dead;}close(){this.dead=true;this.emit('destroyed');}}
- class View {webContents=new Contents();setBounds=vi.fn();constructor(readonly options:unknown){}}
+ class Contents extends EventEmitter {id=2;mainFrame:any={url:EDITOR_URL,parent:null};dead=false;send=vi.fn();focus=vi.fn();isFocused=vi.fn(()=>false);capturePage=vi.fn(async()=>({isEmpty:()=>false,toDataURL:()=> 'data:image/png;base64,AA=='}));loadURL=vi.fn(async()=>{});setWindowOpenHandler=vi.fn();isDestroyed(){return this.dead;}close(){this.dead=true;this.emit('destroyed');}}
+ class View {webContents=new Contents();setBounds=vi.fn();setVisible=vi.fn();constructor(readonly options:unknown){}}
  return{ipcMain:new EventEmitter(),WebContentsView:View};
 });
 const disposers:(()=>void)[]=[];afterEach(()=>{for(const dispose of disposers.splice(0))dispose();});
-function fixture(){
+function fixture(ownerReady:Promise<void>=Promise.resolve()){
  const contents=Object.assign(new EventEmitter(),{id:1,mainFrame:{url:'app://botling/index.html',parent:null},isDestroyed:()=>false,send:vi.fn(),focus:vi.fn()});
- const owner=Object.assign(new EventEmitter(),{webContents:contents,isVisible:():boolean=>false,isDestroyed:()=>false,getContentBounds:()=>({x:0,y:0,width:1120,height:820}),contentView:{addChildView:vi.fn(),removeChildView:vi.fn()},focus:vi.fn(),show:vi.fn()});
- const result=prepareNativeEditorHost(owner as any,'/Volumes/My-SSD/synthetic/desktop',Promise.resolve());disposers.push(result.dispose);return{owner,...result};
+ const owner=Object.assign(new EventEmitter(),{webContents:contents,isVisible:():boolean=>false,isDestroyed:():boolean=>false,getContentBounds:()=>({x:0,y:0,width:1120,height:820}),contentView:{addChildView:vi.fn(),removeChildView:vi.fn()},focus:vi.fn(),show:vi.fn()});
+ const result=prepareNativeEditorHost(owner as any,'/Volumes/My-SSD/synthetic/desktop',ownerReady);disposers.push(result.dispose);return{owner,...result};
 }
 it('creates only a sandboxed separate native root with narrow preload, no focus/reveal, and rejects navigation escapes',async()=>{
  const f=fixture(),contents=f.view.webContents,root=contents.mainFrame;
@@ -34,6 +34,7 @@ it('main relay and layout authenticate the exact shell/editor roots; plugin mess
 });
 it('shell document reload rotates authentication while retaining the native editor view and load',async()=>{
  const f=fixture(),first=await f.ready,contents=f.view.webContents;
+ f.owner.isVisible=()=>true;
  (contents as any).isFocused.mockReturnValue(true);
  f.owner.webContents.emit('did-start-navigation',{isMainFrame:true});f.owner.webContents.mainFrame={url:'app://botling/index.html',parent:null};f.owner.webContents.emit('did-finish-load');
  expect(f.owner.webContents.focus).toHaveBeenCalledTimes(1);
@@ -65,7 +66,7 @@ it('keeps the opening window hidden until both the native editor state and its l
 it.each(['hidden','closed'])('never reveals or focuses an opening owner that is %s',async mode=>{
  const f=fixture(),stamp=await f.ready,contents=f.view.webContents;
  const reveal=f.revealWhenReady(mode==='hidden');
- if(mode==='closed')f.dispose();
+ if(mode==='closed'){f.owner.isDestroyed=()=>true;f.dispose();}
  else{
   ipcMain.emit(EDITOR_CHANNEL.layout,{sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame},{stamp,bounds:{x:200,y:60,width:600,height:600}});
   ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'hostObservation',chatId:'main',revision:1,intentEpoch:0}});
@@ -83,6 +84,7 @@ it('does not accept forged readiness; hiding moves native focus to the shell wit
  await Promise.resolve();expect(f.owner.show).not.toHaveBeenCalled();
  ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'hostObservation',chatId:'main',revision:1,intentEpoch:0}});
  await reveal;
+ f.owner.isVisible=()=>true;
  (contents as any).isFocused.mockReturnValue(true);
  ipcMain.emit(EDITOR_CHANNEL.layout,shellEvent,{stamp,bounds:null});
  expect(f.owner.webContents.focus).toHaveBeenCalledTimes(1);
@@ -97,4 +99,43 @@ it('does not accept forged readiness; hiding moves native focus to the shell wit
  ipcMain.emit(EDITOR_CHANNEL.down,shellEvent,{stamp,message:{botling:'focus'}});
  expect((contents as any).focus).toHaveBeenCalledTimes(3);
  expect(contents.send).toHaveBeenLastCalledWith(EDITOR_CHANNEL.down,{stamp,message:{botling:'focus'}});
+});
+
+
+it.each(['snapshot','boot','disposed'])('reveals a usable shell within 3s when %s prevents native readiness',async mode=>{
+ vi.useFakeTimers();
+ try{
+  const f=fixture(mode==='boot'?new Promise(()=>{}):Promise.resolve());
+  const shown=f.revealWhenReady(false);
+  if(mode==='disposed')f.dispose();
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(f.owner.show).toHaveBeenCalledTimes(1);
+  expect(await shown).toBe(true);
+  expect((f.view.webContents as any).focus).not.toHaveBeenCalled();
+ }finally{vi.useRealTimers();}
+});
+
+
+it('keeps chat pixels underneath any registered overlay and rejects late or forged decoded-snapshot ACKs',async()=>{
+ const f=fixture(),stamp=await f.ready,contents=f.view.webContents;
+ const event={sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame};
+ const bounds={x:200,y:60,width:600,height:600};
+ ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,bounds});
+ const visibility=(f.view as any).setVisible;visibility.mockClear();
+ ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,bounds,occluded:true});
+ await Promise.resolve();
+ expect((contents as any).capturePage).toHaveBeenCalledWith(undefined,{stayHidden:true,stayAwake:false});
+ expect(visibility).not.toHaveBeenCalled();
+ const captured=f.owner.webContents.send.mock.calls.filter(c=>c[0]===EDITOR_CHANNEL.snapshot).at(-1)![1];
+ expect(captured.image).toBe('data:image/png;base64,AA==');
+ ipcMain.emit(EDITOR_CHANNEL.layout,{sender:contents,senderFrame:contents.mainFrame},{stamp,snapshotReady:captured.revision});
+ expect(visibility).not.toHaveBeenCalled();
+ ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,snapshotReady:captured.revision});
+ expect(visibility).toHaveBeenLastCalledWith(false);
+ ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,bounds});
+ expect(visibility).toHaveBeenLastCalledWith(true);
+ const calls=visibility.mock.calls.length;
+ ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,snapshotReady:captured.revision});
+ expect(visibility).toHaveBeenCalledTimes(calls);
+ expect(contents.loadURL).toHaveBeenCalledTimes(1);
 });
