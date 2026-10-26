@@ -37,12 +37,27 @@ const LANGUAGES: { id: SettingsView["language"]; label: string }[] = [
 const MODELS = [{ id: "haiku", label: "Haiku" }, { id: "sonnet", label: "Sonnet" }, { id: "opus", label: "Opus" }] as const;
 const EFFORTS = [{ id: "low", label: "Low" }, { id: "medium", label: "Medium" }, { id: "high", label: "High" }, { id: "xhigh", label: "Extra high" }, { id: "max", label: "Max" }] as const;
 const STALL = [5, 10, 15, 30, 60, 0];
+type CodexModelOption = { id: string; name: string; isDefault: boolean };
+
+/** The models the local Codex lists (`codex.models`, asked of `codex app-server` once per run); empty until it answers. */
+function useCodexModels(client: Client, wanted = true) {
+  const [models, setModels] = useState<CodexModelOption[]>([]);
+  useEffect(() => {
+    if (!wanted) return;
+    let live = true;
+    void client.request({ type: "codex.models" }).then((result) => { if (live) setModels(Array.isArray(result?.models) ? result.models : []); }, () => { if (live) setModels([]); });
+    return () => { live = false; };
+  }, [client, wanted]);
+  return models;
+}
+const codexOptions = (models: CodexModelOption[]) => models.map((model) => ({ id: model.id, label: `${model.name}${model.isDefault ? " (default)" : ""}` }));
 
 export function SettingsSheet({ client, settings, bot, bots = [], plugins, initialSection = "general", onClose }: { client: Client; settings: SettingsView | null; bot: BotView | null; bots?: BotView[]; plugins: PluginsView | null; initialSection?: SettingsSection; onClose: () => void }) {
   const [section, setSection] = useState<Section>(initialSection);
   const [search, setSearch] = useState("");
   const [problem, setProblem] = useState<string | null>(null);
   const [shown, setShown] = useState<SettingsView | null>(settings);
+  const codexModels = useCodexModels(client);
   useEffect(() => { if (settings) setShown(settings); }, [settings]);
   useEffect(() => { if (!settings) void client.request({ type: "settings.get" }).then(setShown, (failure) => setProblem(why(failure))); }, [client, settings]);
   const change = useCallback((next: SettingsChange) => {
@@ -77,9 +92,9 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
           </header>
           {problem && <p className="settings-problem" role="alert">{problem}</p>}
           <div className="settings-body">
-            {shown && current?.id === "general" && <General settings={shown} change={change} bot={bot} />}
+            {shown && current?.id === "general" && <General settings={shown} change={change} bot={bot} codexModels={codexModels} />}
             {shown && current?.id === "appearance" && <Appearance settings={shown} change={change} />}
-            {shown && current?.id === "engines" && <Engines settings={shown} change={change} />}
+            {shown && current?.id === "engines" && <Engines settings={shown} change={change} codexModels={codexModels} />}
             {current?.id === "usage" && <Usage client={client} />}
             {shown && current?.id === "permissions" && <Results settings={shown} change={change} />}
             {current?.id === "plugins" && <PluginsSection client={client} plugins={plugins} />}
@@ -271,12 +286,19 @@ function Segmented<T extends string>({ label, options, value, onChange, disabled
   );
 }
 
-/** A text field that saves on Enter or when it loses focus (empty: the default). */
-function TextSetting({ label, value, placeholder, onSave, disabled }: { label: string; value: string | null; placeholder?: string; onSave: (value: string | null) => void; disabled?: boolean }) {
-  const [draft, setDraft] = useState(value ?? "");
-  useEffect(() => setDraft(value ?? ""), [value]);
-  const save = () => { const next = draft.trim() || null; if (next !== (value ?? null)) onSave(next); };
-  return <input type="text" aria-label={label} value={draft} placeholder={placeholder} disabled={disabled} onChange={(event) => setDraft(event.target.value)} onBlur={save} onKeyDown={(event) => { if (event.key === "Enter") save(); }} />;
+/**
+ * A dropdown of choices; `blank` is the first option, for no choice (null). A saved value the list does not
+ * have (an older setting, or a model the CLI no longer lists) stays as an extra option, so it is not lost.
+ */
+function SelectSetting({ label, options, value, onChange, blank, disabled }: { label: string; options: readonly { id: string; label: string }[]; value: string | null; onChange: (value: string | null) => void; blank?: string; disabled?: boolean }) {
+  const extra = value !== null && value !== "" && !options.some((option) => option.id === value);
+  return (
+    <select aria-label={label} value={value ?? ""} disabled={disabled} onChange={(event) => onChange(event.target.value || null)}>
+      {blank !== undefined && <option value="">{blank}</option>}
+      {options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+      {extra && <option value={value}>{value}</option>}
+    </select>
+  );
 }
 
 function previewWidth(value: number | null | undefined) {
@@ -312,7 +334,7 @@ function Appearance({ settings, change }: { settings: SettingsView; change: (nex
   </Group>;
 }
 
-function General({ settings, change, bot }: { settings: SettingsView; change: (next: SettingsChange) => void; bot: BotView | null }) {
+function General({ settings, change, bot, codexModels }: { settings: SettingsView; change: (next: SettingsChange) => void; bot: BotView | null; codexModels: CodexModelOption[] }) {
   const [prompt, setPrompt] = useState(settings.summaryPrompt ?? settings.defaultSummaryPrompt);
   useEffect(() => setPrompt(settings.summaryPrompt ?? settings.defaultSummaryPrompt), [settings.summaryPrompt, settings.defaultSummaryPrompt]);
   const size = settings.chatAvatarSize ?? 48;
@@ -357,7 +379,7 @@ function General({ settings, change, bot }: { settings: SettingsView; change: (n
           </Row>
         )}
         <Row label="Summary model" hint={`Current summary model: ${settings.catchUpModel}`}>
-          <TextSetting label="Summary model" value={settings.catchUpModel} placeholder="gpt-6-luna" onSave={(value) => change({ key: "catchUpModel", value })} />
+          <SelectSetting label="Summary model" options={codexOptions(codexModels)} value={settings.catchUpModel} onChange={(value) => change({ key: "catchUpModel", value })} />
         </Row>
         <div className="settings-prompt">
           <div className="settings-label">Summary prompt <span className="settings-tag">{settings.summaryPrompt ? "Custom" : "Default"}</span></div>
@@ -377,15 +399,15 @@ function General({ settings, change, bot }: { settings: SettingsView; change: (n
   );
 }
 
-function Engines({ settings, change }: { settings: SettingsView; change: (next: SettingsChange) => void }) {
+function Engines({ settings, change, codexModels }: { settings: SettingsView; change: (next: SettingsChange) => void; codexModels: CodexModelOption[] }) {
   const workers = settings.codexWorkers;
   const following = settings.codexWorkersFollow;
   return (
     <>
       <Group title="Claude subagents" note="Takes effect when a bot next wakes.">
         <Row label="Model">
-          <Segmented label="Subagents' model" options={[{ id: "same", label: "Same as bot" }, ...MODELS] as const}
-            value={settings.subagentModel ?? "same"} onChange={(value) => change({ key: "subagentModel", value: value === "same" ? null : value })} />
+          <SelectSetting label="Subagents' model" blank="Same as bot" options={MODELS} value={settings.subagentModel}
+            onChange={(value) => change({ key: "subagentModel", value: value as SettingsView["subagentModel"] })} />
         </Row>
         <Toggle label="Keep subagents' prompt cache for 1 hour" checked={settings.subagentHourCache} onChange={(value) => change({ key: "subagentHourCache", value })} />
       </Group>
@@ -393,22 +415,22 @@ function Engines({ settings, change }: { settings: SettingsView; change: (next: 
         <p className="settings-hint">In effect: {following ? "as ~/.codex/config.toml says" : `${workers.model ?? "same as bot"} · ${EFFORTS.find((effort) => effort.id === workers.effort)?.label ?? "default effort"} · ${workers.fast ? "Fast" : "Standard"}`}</p>
         <Toggle label="Follow Codex config file" hint="~/.codex/config.toml" checked={following} onChange={(value) => change({ key: "codexWorkersFollow", value })} />
         <Row label="Model">
-          <TextSetting label="Workers' model" value={workers.model} placeholder="Same as bot" disabled={following} onSave={(value) => change({ key: "codexWorkers", value: { ...workers, model: value } })} />
+          <SelectSetting label="Workers' model" blank="Same as bot" options={codexOptions(codexModels)} value={workers.model} disabled={following} onChange={(value) => change({ key: "codexWorkers", value: { ...workers, model: value } })} />
         </Row>
         <Row label="Reasoning effort">
-          <Segmented label="Workers' reasoning effort" options={EFFORTS} value={workers.effort} disabled={following} onChange={(value) => change({ key: "codexWorkers", value: { ...workers, effort: value } })} />
+          <SelectSetting label="Workers' reasoning effort" blank="Default effort" options={EFFORTS} value={workers.effort} disabled={following} onChange={(value) => change({ key: "codexWorkers", value: { ...workers, effort: value as SettingsView["codexWorkers"]["effort"] } })} />
         </Row>
         <Toggle label="Fast mode" hint="service_tier = priority: faster replies, uses more of your limits" checked={!!workers.fast} disabled={following} onChange={(value) => change({ key: "codexWorkers", value: { ...workers, fast: value } })} />
       </Group>
       <Group title="Completion verification" note="After a reply, an isolated Codex judge checks whether the authorized task is done; unfinished work is continued (twice without progress: paused). Uses your Codex login.">
         <Toggle label="Verify completion automatically" checked={settings.completionVerification} onChange={(value) => change({ key: "completionVerification", value })} />
         <Row label="Verification model" hint={`Current verification model: ${settings.completionVerificationModel}`}>
-          <TextSetting label="Verification model" value={settings.completionVerificationModel} disabled={!settings.completionVerification} onSave={(value) => change({ key: "completionVerificationModel", value })} />
+          <SelectSetting label="Verification model" options={codexOptions(codexModels)} value={settings.completionVerificationModel} disabled={!settings.completionVerification} onChange={(value) => change({ key: "completionVerificationModel", value })} />
         </Row>
       </Group>
       <Group title="Component editor" note="Maintainer's component editor; written into the plugin library when the app next starts.">
         <Row label="Model">
-          <Segmented label="Component editor's model" options={MODELS} value={settings.componentEditorModel} onChange={(value) => change({ key: "componentEditorModel", value })} />
+          <SelectSetting label="Component editor's model" options={MODELS} value={settings.componentEditorModel} onChange={(value) => { if (value) change({ key: "componentEditorModel", value: value as SettingsView["componentEditorModel"] }); }} />
         </Row>
       </Group>
     </>
@@ -428,9 +450,7 @@ export function BotSettings({ client, bot }: { client: Client; bot: BotView }) {
 
 function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onProblem: (problem: string | null) => void }) {
   const [view, setView] = useState<BotSettingsView | null>(null);
-  const [models, setModels] = useState<{ id: string; name: string; isDefault: boolean }[]>([]);
-  const codexHead = bot.heads.includes("codex");
-  useEffect(() => { if (codexHead) void client.request({ type: "codex.models" }).then((result) => setModels(result.models), () => setModels([])); }, [client, codexHead]);
+  const models = useCodexModels(client, bot.heads.includes("codex"));
   useEffect(() => { void client.request({ type: "bot.settings", botId: bot.id }).then(setView, (failure) => onProblem(why(failure))); }, [client, bot.id, bot.heads.length, onProblem]);
   const configure = (change: Omit<Extract<import("../contract").Command, { type: "bot.configure" }>, "type" | "botId">) => {
     onProblem(null);
@@ -460,26 +480,20 @@ function ThisBot({ client, bot, onProblem }: { client: Client; bot: BotView; onP
       <Group title={bot.name} note="A head already awake goes on in the same conversation on the new choice just before its next message.">
         {hasClaude && (
           <Row label="Claude's model">
-            <Segmented label="Claude's model" options={[{ id: "default", label: "Default" }, ...MODELS] as const} value={view.model ?? "default"} onChange={(value) => configure({ model: value === "default" ? null : value })} />
+            <SelectSetting label="Claude's model" blank="Default" options={MODELS} value={view.model} onChange={(value) => configure({ model: value as BotSettingsView["model"] })} />
           </Row>
         )}
         <Row label="Reasoning effort">
-          <Segmented label="Reasoning effort" options={[{ id: "default", label: "Default" }, ...EFFORTS] as const} value={view.effort ?? "default"} onChange={(value) => configure({ effort: value === "default" ? null : value })} />
+          <SelectSetting label="Reasoning effort" blank="Default" options={EFFORTS} value={view.effort} onChange={(value) => configure({ effort: value as BotSettingsView["effort"] })} />
         </Row>
         {hasClaude && (
           <Row label="Subagents' model">
-            <Segmented label="This bot's subagents' model" options={[{ id: "same", label: "As in Settings" }, ...MODELS] as const} value={view.subagentModel ?? "same"} onChange={(value) => configure({ subagentModel: value === "same" ? null : value })} />
+            <SelectSetting label="This bot's subagents' model" blank="As in Settings" options={MODELS} value={view.subagentModel} onChange={(value) => configure({ subagentModel: value as BotSettingsView["subagentModel"] })} />
           </Row>
         )}
         {hasCodex && (
           <Row label="Codex's model">
-            {models.length ? (
-              <select aria-label="Codex's model" value={view.codexModel ?? ""} onChange={(event) => configure({ codexModel: event.target.value || null })}>
-                <option value="">Codex's default model</option>
-                {models.map((model) => <option key={model.id} value={model.id}>{model.name}{model.isDefault ? " (default)" : ""}</option>)}
-                {view.codexModel && !models.some((model) => model.id === view.codexModel) && <option value={view.codexModel}>{view.codexModel}</option>}
-              </select>
-            ) : <TextSetting label="Codex's model" value={view.codexModel} placeholder="Codex's default model" onSave={(value) => configure({ codexModel: value })} />}
+            <SelectSetting label="Codex's model" blank="Codex's default model" options={codexOptions(models)} value={view.codexModel} onChange={(value) => configure({ codexModel: value })} />
           </Row>
         )}
       </Group>
