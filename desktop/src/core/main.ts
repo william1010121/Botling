@@ -204,7 +204,8 @@ const core = new Core({
   log,
   importFrom: process.env.BOTLING_IMPORT_FROM || null,
   approvalTimeoutMs: number(process.env.BOTLING_APPROVAL_TIMEOUT_MS, 10 * 60_000),
-  idleMs: number(process.env.BOTLING_IDLE_MS, 30 * 60_000),
+  // A bot goes to sleep after 50 quiet minutes, as in 1.x (`CCB_IDLE_SECONDS` default).
+  idleMs: number(process.env.BOTLING_IDLE_MS, 50 * 60_000),
   interruptGraceMs: number(process.env.BOTLING_INTERRUPT_GRACE_MS, 2_000),
   tidyTimeoutMs: number(process.env.BOTLING_TIDY_TIMEOUT_MS, 5 * 60_000),
   quitTidyMs: number(process.env.BOTLING_QUIT_TIDY_MS, 15_000),

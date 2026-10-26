@@ -256,7 +256,7 @@ export class Core {
         emit: (event) => this.event(event),
         log: (line) => this.log(line),
         approvalTimeoutMs: options.approvalTimeoutMs ?? 10 * 60_000,
-        idleMs: options.idleMs ?? 30 * 60_000,
+        idleMs: options.idleMs ?? 50 * 60_000,
         interruptGraceMs: options.interruptGraceMs ?? 2_000,
         welcome: profile.id === MAIN_BOT_ID && !this.imported,
         projectBriefing: profile.role === "main" ? () => this.projectBriefing() : undefined,
