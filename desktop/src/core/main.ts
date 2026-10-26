@@ -79,6 +79,8 @@ function codexConfig(profile: BotProfile, session: SessionStartCodex, threads: C
     workerEffort: session.codexWorkers?.effort === "max" ? "xhigh" : session.codexWorkers?.effort ?? null,
     workerFast: session.codexWorkers?.fast ?? null,
     routinesFile: session.routinesFile,
+    // Auto mode: Codex's own reviewer answers escalations (settings.json `autoApprove`, as for Claude).
+    autoMode: session.autoMode !== false,
   };
   if (kind === "claude") return { ...common, command: process.env.BOTLING_CODEX_PATH ?? "codex" };
   const script = process.env.BOTLING_FAKE_CODEX;

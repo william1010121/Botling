@@ -116,7 +116,7 @@ export interface SessionStart {
   subagentHourCache?: boolean;
   /** More folders it may use (`--add-dir`). */
   addDirs?: string[];
-  /** Claude only: Claude Code's auto mode (`--permission-mode auto`), and rules for blocked calls the user allowed (`--settings`). */
+  /** Auto mode: Claude Code's (`--permission-mode auto`) or Codex's reviewer (`auto_review`); Claude only: rules for blocked calls the user allowed (`--settings`). */
   autoMode?: boolean;
   allowRules?: string[];
   /** Codex workers' model, effort and Fast mode when the app sets them (null: ~/.codex/config.toml's). */
@@ -3800,6 +3800,7 @@ export class Bot {
   // Approvals
 
   private ask(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>, turn: Turn | null) {
+    if (isReviewRefusal(item.requestId)) return this.showReviewRefusal(head, item);
     if (item.tool !== "Monitored command" && this.alwaysAllowed.includes(item.tool)) {
       head.answer(item.requestId, true, item.input);
       return;
@@ -3815,10 +3816,45 @@ export class Bot {
     const record: ChatRecord = { id: newId(), role: "bot", text: permissionText(item.tool, item.summary), date: toSwiftDate(), choices, permissionTool: item.tool, engine: this.engine };
     const expires = Date.now() + this.options.approvalTimeoutMs;
     const timer = setTimeout(() => this.expire(record.id), this.options.approvalTimeoutMs);
-    this.approvals.set(record.id, { lasting: !!item.workerId || item.requestId.startsWith("monitor:") || item.requestId.startsWith("codex-review:"), requestId: item.requestId, tool: item.tool, input: item.input, head, timer, expires });
+    this.approvals.set(record.id, { lasting: !!item.workerId || item.requestId.startsWith("monitor:"), requestId: item.requestId, tool: item.tool, input: item.input, head, timer, expires });
     this.add(record);
     this.log(`asks to use ${item.tool}`);
     this.updated();
+  }
+
+  /**
+   * Codex's reviewer (auto mode) refused a call: the same card as a call Claude's auto mode blocked, with the
+   * reviewer's reason. It waits past the turn (the head carries on without it); after the pick the head is told.
+   */
+  private showReviewRefusal(head: AgentHead, item: Extract<StreamItem, { kind: "permission" }>) {
+    const reason = typeof item.input.reason === "string" && item.input.reason ? `\n\nReason: ${item.input.reason.replaceAll("\n", " ")}` : "";
+    const worker = typeof item.input.worker === "string" ? item.input.worker : null;
+    const lead = worker ? `Worker “${worker}”: auto mode blocked` : "Auto mode blocked";
+    const text = permissionText(item.tool, item.summary).replace(/^Wants to use/, lead) + reason;
+    const choices: ChoiceRecord[] = [
+      { label: "Allow once", recommended: true, action: "allowOnce" },
+      { label: "Don't allow", recommended: false, action: "deny" },
+    ];
+    const record: ChatRecord = { id: newId(), role: "bot", text, date: toSwiftDate(), choices, permissionTool: item.tool, engine: this.engine };
+    const expires = Date.now() + this.options.approvalTimeoutMs;
+    const timer = setTimeout(() => this.expire(record.id), this.options.approvalTimeoutMs);
+    this.approvals.set(record.id, { lasting: true, requestId: item.requestId, tool: item.tool, input: { ...item.input, summary: item.summary }, head, timer, expires });
+    this.add(record);
+    this.log(`auto mode blocked ${item.tool}`);
+    this.updated();
+  }
+
+  /** After the pick on a reviewer refusal: the Codex head hears it, so an allowed call is run again (on a turn the app reviews). */
+  private tellReviewOutcome(approval: Approval, allowed: boolean, words?: string) {
+    if (!isReviewRefusal(approval.requestId)) return;
+    const what = `\`${String(approval.input.summary ?? "")}\` (${approval.tool})`;
+    const worker = typeof approval.input.worker === "string" ? approval.input.worker : null;
+    const on = worker ? ` for your worker "${worker}"` : "";
+    this.tellHead(allowed
+      ? worker
+        ? `(App: The user allowed ${what}, which Codex's reviewer refused${on}. It is allowed now. It was the worker's call, not yours: tell that worker (app_send_message) to run it again as it was and carry on.)`
+        : `(App: The user allowed ${what}, which Codex's reviewer refused. It is allowed now: run it again as it was, then carry on.)`
+      : `(App: The user did not allow ${what}, which Codex's reviewer refused${on}.${words ? ` They said: ${words}` : " Do not try it again; carry on without it, or ask the user what to do instead."})`);
   }
 
   // ------------------------------------------------------------------------------------------
@@ -3907,9 +3943,9 @@ export class Bot {
     const what = `\`${denial.summary}\` (${denial.tool})`;
     this.log(`${denial.tool} blocked by auto mode: ${allowed ? (choice.action === "alwaysAllow" ? "always allowed" : "allowed once") : "not allowed"}`);
     if (denial.allowedBefore && index === 0) {
-      this.tellClaude(`(App: Auto mode blocked ${what} again${on}, although the user had allowed it: Claude Code does not apply that allow to this command, so allowing it cannot help. Do not try it again as it was. The user will run it themselves: tell them exactly what to run and what to send back, then wait.)`);
+      this.tellHead(`(App: Auto mode blocked ${what} again${on}, although the user had allowed it: Claude Code does not apply that allow to this command, so allowing it cannot help. Do not try it again as it was. The user will run it themselves: tell them exactly what to run and what to send back, then wait.)`);
     } else if (!allowed) {
-      this.tellClaude(`(App: The user did not allow ${what}, which auto mode blocked${on}. Do not try it again; carry on without it, or ask the user what to do instead.)`);
+      this.tellHead(`(App: The user did not allow ${what}, which auto mode blocked${on}. Do not try it again; carry on without it, or ask the user what to do instead.)`);
     } else {
       if (choice.action === "alwaysAllow") {
         if (!this.alwaysAllowed.includes(denial.rule)) {
@@ -3919,7 +3955,7 @@ export class Bot {
       } else if (!this.sessionRules.includes(denial.rule)) this.sessionRules.push(denial.rule);
       this.rulesGivenAfter.set(denial.rule, [...this.toolCalls.keys()].at(-1) ?? null);
       if (this.head instanceof ClaudeHead && this.head.running) this.head.allow(this.allowRules);
-      this.tellClaude(denial.subagent
+      this.tellHead(denial.subagent
         ? `(App: The user allowed ${what}, which auto mode blocked for ${denial.subagent}. It is allowed now. It was the subagent's call, not yours: do not run it yourself; tell that subagent (SendMessage) to run it again as it was and carry on.)`
         : `(App: The user allowed ${what}, which auto mode blocked. It is allowed now: run it again as it was, then carry on.)`);
     }
@@ -3927,8 +3963,8 @@ export class Bot {
     return true;
   }
 
-  /** Something only the app says, to this (claude) head: wakes it like a message (`Bot.appMessage`). */
-  private tellClaude(text: string) {
+  /** Something only the app says, to this head: wakes it like a message (`Bot.appMessage`). */
+  private tellHead(text: string) {
     this.owner.deliverTo(this.engine, text, null, { origin: "app" });
   }
 
@@ -4018,6 +4054,7 @@ export class Bot {
     record.chosen = index;
     this.changed(record);
     approval.head.answer(approval.requestId, allow, approval.input, allow ? undefined : "The user did not allow it.");
+    this.tellReviewOutcome(approval, allow);
     this.log(`${approval.tool}: ${allow ? (always ? "always allowed" : "allowed once") : "not allowed"}`);
     if (always && !this.alwaysAllowed.includes(approval.tool)) {
       this.alwaysAllowed.push(approval.tool);
@@ -4068,7 +4105,7 @@ export class Bot {
       this.denialAsks.delete(messageId);
       record.answer = words;
       this.changed(record);
-      this.tellClaude(`(App: The user did not allow \`${denial.summary}\` (${denial.tool}), which auto mode blocked${denial.subagent ? ` for ${denial.subagent}` : ""}, and said: ${shown})`);
+      this.tellHead(`(App: The user did not allow \`${denial.summary}\` (${denial.tool}), which auto mode blocked${denial.subagent ? ` for ${denial.subagent}` : ""}, and said: ${shown})`);
       this.updated();
       return { accepted: true };
     }
@@ -4081,6 +4118,7 @@ export class Bot {
       record.answer = words;
       this.changed(record);
       approval.head.answer(approval.requestId, false, approval.input, `The user did not allow it and said: ${words}`);
+      this.tellReviewOutcome(approval, false, words);
       this.updated();
       return { accepted: true };
     }
@@ -4246,6 +4284,11 @@ export function streamingText(raw: string): string {
   const tail = /<[a-z/-]*$/i.exec(outside);
   if (tail && (cut < 0 || tail.index < cut)) cut = tail.index;
   return parseReply(cut >= 0 ? raw.slice(0, cut) : raw).body;
+}
+
+/** A card for a call Codex's reviewer (auto mode) refused (`CodexSession.reviewed`). */
+function isReviewRefusal(requestId: string): boolean {
+  return requestId.startsWith("codex-review:");
 }
 
 /** An always-allowed entry that is a permission rule ("Bash(npm test)"), not a tool name. */

@@ -516,8 +516,9 @@ export class CodexSession {
     const why = typeof review.rationale === "string" ? review.rationale : "";
     const requestId = `codex-review:${randomUUID()}`;
     this.reviews.set(requestId, { command, task: worker?.id ?? null });
-    const summary = `${what}\n\nCodex's reviewer refused this: ${risk}${why}`.trim();
-    return [this.item({ kind: "permission", requestId, tool: action.type === "applyPatch" ? "Edit" : "Bash", summary, input: {}, ...(worker ? { workerId: worker.id } : {}) })];
+    // The bot shows it as auto mode's blocked-call card (the reason apart from the call) and tells the head after the pick.
+    const input = { reviewRefused: true, reason: `${risk}${why}`.trim(), ...(worker ? { worker: worker.name || worker.id } : {}) };
+    return [this.item({ kind: "permission", requestId, tool: action.type === "applyPatch" ? "Edit" : "Bash", summary: what, input, ...(worker ? { workerId: worker.id } : {}) })];
   }
 
   private answerReview(requestId: string, allow: boolean): CodexOutput[] {

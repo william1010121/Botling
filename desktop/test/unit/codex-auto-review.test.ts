@@ -46,8 +46,8 @@ describe("Codex auto mode (auto_review)", () => {
     const card = items(f.denied("coordinator"))[0];
     expect(card).toMatchObject({ kind: "permission", tool: "Bash" });
     expect(card.requestId).toMatch(/^codex-review:/);
-    expect(card.summary).toContain("rm -rf build");
-    expect(card.summary).toContain("[high risk] Deletes files outside the task.");
+    expect(card.summary).toBe("rm -rf build");
+    expect(card.input).toMatchObject({ reviewRefused: true, reason: "[high risk] Deletes files outside the task." });
     expect(card.workerId).toBeUndefined();
   });
 
