@@ -4,6 +4,10 @@
    prefers-color-scheme from the page that holds them, draw their dark look (Phase 5c). */
 :root { color-scheme: dark; }
 
+/* Keep the viewport's file-drop outline above floating cards and column resize handles.
+   Web/src owns the 12px inset and pointer-events:none, so drops still reach their targets. */
+body.dropping::after { z-index: 50; }
+
 /* Phase 0 cards: a sandboxed frame inside the bubble, as wide as the bubble's text. */
 .card { margin-top: 10px; background: var(--bubble); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; width: min(520px, 100%); }
 .card iframe { display: block; width: 100%; border: 0; background: transparent; }
