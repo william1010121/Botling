@@ -25,6 +25,8 @@ export type FrameMessage =
   | { botling: "messageWidthDrag"; active: boolean }
   /** Launch focus recovery belongs only to the composer until the user chooses another control. */
   | { botling: "composerIntent"; value: boolean; recoveryUntil: number; startedAt: number; traceId?: string }
+  /** The native editor has applied state without replacing its EditorView. */
+  | { botling: "hostObservation"; chatId: string | null; intentEpoch: number; revision: number }
   /** A component frame's page, to be served from botling-card://page/ (component-frames.ts). */
   | { botling: "page"; id: number; html: string };
 

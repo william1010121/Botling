@@ -1,9 +1,8 @@
 // Runs before the Web/src chat page: the page talks to "the app" through WebKit's
 // `webkit.messageHandlers.ccb.postMessage` (Web/src/bridge.ts). Here that goes to the app page
 // (the React shell) instead, which owns the contract client.
-import { APP_ORIGIN } from "./protocol";
+import { toShell } from "./transport";
 
-const origin = APP_ORIGIN;
 // Chromium exposes the event currently dispatching this synchronous bridge call. A component's
 // postMessage is a MessageEvent in a separate dispatch, so it cannot inherit a prior click.
 function userLink(url:unknown):boolean {
@@ -21,7 +20,7 @@ function userLink(url:unknown):boolean {
         const component=event instanceof MessageEvent?[...document.querySelectorAll<HTMLIFrameElement>('iframe.component-frame')].find(frame=>frame.contentWindow===event.source):null;
         const linkPinId=component?(component as HTMLIFrameElement & {ccbPin?:string}).ccbPin:undefined;
         const linkMessageId=component&&!linkPinId?(component.closest<HTMLElement>('.row[data-id]')?.dataset.id||'unattributed-component'):undefined;
-        window.parent.postMessage({ botling: "action", action, linkSource, ...(linkMessageId?{linkMessageId}:{}), ...(linkPinId?{linkPinId}:{}) }, origin);
+        toShell({ botling: "action", action: action as {type:string;[key:string]:unknown}, linkSource, ...(linkMessageId?{linkMessageId}:{}), ...(linkPinId?{linkPinId}:{}) });
       },
     }),
   }),

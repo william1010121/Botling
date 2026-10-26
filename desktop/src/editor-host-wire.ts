@@ -1,8 +1,8 @@
-// Dormant native-editor transport. Never a core-command or editing-event bridge.
+// Native-editor transport. Never a core-command or editing-event bridge.
 import {Command} from './contract';
 export const EDITOR_URL='botling-chat://chat/chat.html?nativeHost=1';
 export const EDITOR_ARGUMENT='--botling-editor-host=1';
-export const EDITOR_CHANNEL={up:'botling:editor:up',down:'botling:editor:down',bound:'botling:editor:bound',unbound:'botling:editor:unbound',shell:'botling:editor:shell',layout:'botling:editor:layout'} as const;
+export const EDITOR_CHANNEL={up:'botling:editor:up',down:'botling:editor:down',bound:'botling:editor:bound',unbound:'botling:editor:unbound',shell:'botling:editor:shell',layout:'botling:editor:layout',snapshot:'botling:editor:snapshot'} as const;
 export interface EditorStamp {surfaceId:string;documentGeneration:string}
 export interface EditorPacket {stamp:EditorStamp;message:unknown}
 const object=(v:unknown):v is Record<string,any>=>!!v&&typeof v==='object'&&!Array.isArray(v);
@@ -11,7 +11,7 @@ export function editorPreloadAllowed(mainFrame:boolean,url:string,argv:string[])
 function bounded(value:unknown,limit:number):boolean {try{const text=JSON.stringify(value);return typeof text==='string'&&new TextEncoder().encode(text).length<=limit;}catch{return false;}}
 export function editorMessageAllowed(direction:'up'|'down',value:unknown):boolean {
  if(!object(value)||!bounded(value,direction==='up'?1024*1024:16*1024*1024))return false;
- if(direction==='down')return ['widthRejected','widthPreview','state','response','answerWithSaved','page','plugins','hostReply','taskOutput','detailReply','messageWidthPointer','jumpToTask','spec'].includes(value.botling);
+ if(direction==='down')return ['widthRejected','widthPreview','state','response','answerWithSaved','page','plugins','hostReply','taskOutput','detailReply','messageWidthPointer','jumpToTask','spec','focus'].includes(value.botling);
  switch(value.botling){
   case 'action':return object(value.action)&&typeof value.action.type==='string'&&value.action.type.length<=80&&!['keydown','keyup','keypress','insertText','editReplay'].includes(value.action.type);
   case 'request':{const parsed=Command.safeParse(value.cmd);return Number.isSafeInteger(value.id)&&value.id>=0&&parsed.success&&['card.save','card.action'].includes(parsed.data.type);}

@@ -9,7 +9,7 @@ import { isRequested as isShotRequested, withProbe } from "../core/component-sho
 import { runShot, SHOT_HTML, SHOT_JS } from "./shot";
 import { scrubEnvironment } from "./packaged";
 import {configureHiddenApp,hidden} from "./hidden-mode";
-import {nativeEditorNavigation,hasNativeEditorHost} from "./editor-host";
+import {nativeEditorNavigation,hasNativeEditorHost,prepareNativeEditorHost} from "./editor-host";
 import { CHECK_EVERY_MS, FEED, Updater } from "./updates";
 import { previewResponse } from "./preview-response";
 import { VerifiedInstaller, acknowledgeUpdateBoot, recoverUpdates, runningAppBundles } from "./update-install";
@@ -118,6 +118,7 @@ if (!shotMode && !app.requestSingleInstanceLock({ dataDir })) {
 }
 
 let mainWindow: BrowserWindow | null = null;
+const openingWindows = new WeakMap<BrowserWindow, Promise<boolean>>();
 const appContents = new Set<number>();
 const recoveryContents = new Set<number>();
 
@@ -630,7 +631,7 @@ function createWindow() {
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     webPreferences: {
       preload: join(root, "out", "preload", "preload.cjs"),
-      additionalArguments:traceWriter?[TEST_TRACE_ARGUMENT]:[],
+      additionalArguments:["--botling-editor-shell=1",...(traceWriter?[TEST_TRACE_ARGUMENT]:[])],
       sandbox: true, contextIsolation: true, nodeIntegration: false, nodeIntegrationInSubFrames: false,
       webSecurity: true, allowRunningInsecureContent: false, navigateOnDragDrop: false, spellcheck: false,
     },
@@ -645,8 +646,11 @@ function createWindow() {
   window.webContents.on('did-frame-finish-load',(_event,isMainFrame,processId,routingId)=>traceWriter?.observe('native.frame.loaded',{contentsId:id,isMainFrame,processId,routingId}));
   window.webContents.on('did-finish-load',()=>traceWriter?.observe('native.document.loaded',{contentsId:id}));
   window.on("closed", () => { appContents.delete(id); if (mainWindow === window) mainWindow = null; });
-  window.once("ready-to-show", () => { if (!hidden) window.show(); });
-  void window.loadURL(`${APP_ORIGIN}/index.html`);
+  const ownerReady=window.loadURL(`${APP_ORIGIN}/index.html`);
+  const editor=prepareNativeEditorHost(window,root,ownerReady);
+  const opening=editor.revealWhenReady(hidden);
+  openingWindows.set(window,opening);
+  void opening.catch(error=>note(`native editor initialization failed: ${String(error)}`));
   mainWindow = window;
   return window;
 }
@@ -881,7 +885,13 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("second-instance", () => { if(!hidden){mainWindow?.show(); mainWindow?.focus();} });
+app.on("second-instance", () => {
+  const window=mainWindow;
+  if(hidden||!window)return;
+  void (openingWindows.get(window)??Promise.resolve(true)).then(ready=>{
+    if(ready&&!window.isDestroyed()){window.show();window.focus();}
+  },()=>{});
+});
 
 // Closing the window does not stop work: the core keeps running (macOS convention). Quitting does.
 app.on("window-all-closed", () => {

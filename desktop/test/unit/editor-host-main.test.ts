@@ -5,15 +5,15 @@ import {prepareNativeEditorHost,nativeEditorNavigation} from '../../src/main/edi
 import {EDITOR_CHANNEL,EDITOR_URL} from '../../src/editor-host-wire';
 vi.mock('electron',async()=>{
  const {EventEmitter}=await import('node:events');
- class Contents extends EventEmitter {id=2;mainFrame:any={url:EDITOR_URL,parent:null};dead=false;send=vi.fn();loadURL=vi.fn(async()=>{});setWindowOpenHandler=vi.fn();isDestroyed(){return this.dead;}close(){this.dead=true;this.emit('destroyed');}}
- class View {webContents=new Contents();setBounds=vi.fn();constructor(readonly options:unknown){}}
+ class Contents extends EventEmitter {id=2;mainFrame:any={url:EDITOR_URL,parent:null};dead=false;send=vi.fn();focus=vi.fn();isFocused=vi.fn(()=>false);capturePage=vi.fn(async()=>({isEmpty:()=>false,toDataURL:()=> 'data:image/png;base64,AA=='}));loadURL=vi.fn(async()=>{});setWindowOpenHandler=vi.fn();isDestroyed(){return this.dead;}close(){this.dead=true;this.emit('destroyed');}}
+ class View {webContents=new Contents();setBounds=vi.fn();setVisible=vi.fn();constructor(readonly options:unknown){}}
  return{ipcMain:new EventEmitter(),WebContentsView:View};
 });
 const disposers:(()=>void)[]=[];afterEach(()=>{for(const dispose of disposers.splice(0))dispose();});
-function fixture(){
- const contents=Object.assign(new EventEmitter(),{id:1,mainFrame:{url:'app://botling/index.html',parent:null},isDestroyed:()=>false,send:vi.fn()});
- const owner=Object.assign(new EventEmitter(),{webContents:contents,isVisible:()=>false,isDestroyed:()=>false,getContentBounds:()=>({x:0,y:0,width:1120,height:820}),contentView:{addChildView:vi.fn(),removeChildView:vi.fn()},focus:vi.fn(),show:vi.fn()});
- const result=prepareNativeEditorHost(owner as any,'/Volumes/My-SSD/synthetic/desktop',Promise.resolve());disposers.push(result.dispose);return{owner,...result};
+function fixture(ownerReady:Promise<void>=Promise.resolve()){
+ const contents=Object.assign(new EventEmitter(),{id:1,mainFrame:{url:'app://botling/index.html',parent:null},isDestroyed:()=>false,send:vi.fn(),focus:vi.fn()});
+ const owner=Object.assign(new EventEmitter(),{webContents:contents,isVisible:():boolean=>false,isDestroyed:():boolean=>false,getContentBounds:()=>({x:0,y:0,width:1120,height:820}),contentView:{addChildView:vi.fn(),removeChildView:vi.fn()},focus:vi.fn(),show:vi.fn()});
+ const result=prepareNativeEditorHost(owner as any,'/Volumes/My-SSD/synthetic/desktop',ownerReady);disposers.push(result.dispose);return{owner,...result};
 }
 it('creates only a sandboxed separate native root with narrow preload, no focus/reveal, and rejects navigation escapes',async()=>{
  const f=fixture(),contents=f.view.webContents,root=contents.mainFrame;
@@ -34,9 +34,209 @@ it('main relay and layout authenticate the exact shell/editor roots; plugin mess
 });
 it('shell document reload rotates authentication while retaining the native editor view and load',async()=>{
  const f=fixture(),first=await f.ready,contents=f.view.webContents;
+ f.owner.isVisible=()=>true;
+ (contents as any).isFocused.mockReturnValue(true);
  f.owner.webContents.emit('did-start-navigation',{isMainFrame:true});f.owner.webContents.mainFrame={url:'app://botling/index.html',parent:null};f.owner.webContents.emit('did-finish-load');
+ expect(f.owner.webContents.focus).toHaveBeenCalledTimes(1);
  const bound=f.owner.webContents.send.mock.calls.filter(c=>c[0]===EDITOR_CHANNEL.bound).at(-1)![1];expect(bound.surfaceId).toBe(first.surfaceId);expect(bound.documentGeneration).not.toBe(first.documentGeneration);expect(f.owner.contentView.addChildView).toHaveBeenCalledTimes(1);expect(contents.loadURL).toHaveBeenCalledTimes(1);
  f.owner.webContents.send.mockClear();ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp:first,message:{botling:'stop'}});expect(f.owner.webContents.send).not.toHaveBeenCalled();
  ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp:bound,message:{botling:'stop'}});expect(f.owner.webContents.send).toHaveBeenCalledTimes(1);
  f.dispose();expect(f.owner.webContents.send).toHaveBeenLastCalledWith(EDITOR_CHANNEL.unbound,bound);expect(f.owner.contentView.removeChildView).toHaveBeenCalledTimes(1);expect(contents.isDestroyed()).toBe(true);expect(nativeEditorNavigation(contents,{isMainFrame:true,url:EDITOR_URL})).toBeNull();
+});
+
+it('keeps the opening window hidden until both the native editor state and its layout are ready', async () => {
+ const f=fixture(),stamp=await f.ready,contents=f.view.webContents;
+ const order:string[]=[];
+ (contents as any).focus=vi.fn(()=>order.push('editor.focus'));
+ f.owner.show.mockImplementation(()=>order.push('window.show'));
+ const reveal=(f as any).revealWhenReady(false);
+ await Promise.resolve();
+ expect(order).toEqual([]);
+ ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'hostObservation',chatId:'main',revision:1,intentEpoch:0}});
+ await Promise.resolve();
+ expect(order).toEqual([]);
+ ipcMain.emit(EDITOR_CHANNEL.layout,{sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame},{stamp,bounds:{x:200,y:60,width:600,height:600}});
+ await reveal;
+ expect(order).toEqual(['editor.focus','window.show','editor.focus']);
+ ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'hostObservation',chatId:'main',revision:2,intentEpoch:0}});
+ expect(order).toHaveLength(3);
+});
+
+
+it.each(['hidden','closed'])('never reveals or focuses an opening owner that is %s',async mode=>{
+ const f=fixture(),stamp=await f.ready,contents=f.view.webContents;
+ const reveal=f.revealWhenReady(mode==='hidden');
+ if(mode==='closed'){f.owner.isDestroyed=()=>true;f.dispose();}
+ else{
+  ipcMain.emit(EDITOR_CHANNEL.layout,{sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame},{stamp,bounds:{x:200,y:60,width:600,height:600}});
+  ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'hostObservation',chatId:'main',revision:1,intentEpoch:0}});
+ }
+ await reveal;
+ expect(f.owner.show).not.toHaveBeenCalled();expect((contents as any).focus).not.toHaveBeenCalled();
+});
+
+it('does not accept forged readiness; hiding moves native focus to the shell without recreating the editor',async()=>{
+ const f=fixture(),stamp=await f.ready,contents=f.view.webContents;
+ const reveal=f.revealWhenReady(false);
+ const shellEvent={sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame};
+ ipcMain.emit(EDITOR_CHANNEL.layout,shellEvent,{stamp,bounds:{x:200,y:60,width:600,height:600}});
+ ipcMain.emit(EDITOR_CHANNEL.up,shellEvent,{stamp,message:{botling:'hostObservation',chatId:'main',revision:1,intentEpoch:0}});
+ await Promise.resolve();expect(f.owner.show).not.toHaveBeenCalled();
+ ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'hostObservation',chatId:'main',revision:1,intentEpoch:0}});
+ await reveal;
+ f.owner.isVisible=()=>true;
+ (contents as any).isFocused.mockReturnValue(true);
+ ipcMain.emit(EDITOR_CHANNEL.layout,shellEvent,{stamp,bounds:null});
+ expect(f.owner.webContents.focus).toHaveBeenCalledTimes(1);
+ expect((f.view as any).setBounds).toHaveBeenLastCalledWith({x:0,y:0,width:0,height:0});
+ ipcMain.emit(EDITOR_CHANNEL.down,shellEvent,{stamp,message:{botling:'focus'}});
+ expect((contents as any).focus).toHaveBeenCalledTimes(2); // Hidden view refuses explicit focus too.
+ expect(contents.loadURL).toHaveBeenCalledTimes(1);
+ f.owner.isVisible=()=>true;
+ ipcMain.emit(EDITOR_CHANNEL.layout,shellEvent,{stamp,bounds:{x:200,y:60,width:600,height:600}});
+ ipcMain.emit(EDITOR_CHANNEL.down,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'focus'}});
+ expect((contents as any).focus).toHaveBeenCalledTimes(2);
+ ipcMain.emit(EDITOR_CHANNEL.down,shellEvent,{stamp,message:{botling:'focus'}});
+ expect((contents as any).focus).toHaveBeenCalledTimes(3);
+ expect(contents.send).toHaveBeenLastCalledWith(EDITOR_CHANNEL.down,{stamp,message:{botling:'focus'}});
+});
+
+
+it.each(['snapshot','boot','disposed'])('reveals a usable shell within 3s when %s prevents native readiness',async mode=>{
+ vi.useFakeTimers();
+ try{
+  const f=fixture(mode==='boot'?new Promise(()=>{}):Promise.resolve());
+  const shown=f.revealWhenReady(false);
+  if(mode==='disposed')f.dispose();
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(f.owner.show).toHaveBeenCalledTimes(1);
+  expect(await shown).toBe(true);
+  expect((f.view.webContents as any).focus).not.toHaveBeenCalled();
+ }finally{vi.useRealTimers();}
+});
+
+
+it('keeps chat pixels underneath any registered overlay and rejects late or forged decoded-snapshot ACKs',async()=>{
+ const f=fixture(),stamp=await f.ready,contents=f.view.webContents;
+ const event={sender:f.owner.webContents,senderFrame:f.owner.webContents.mainFrame};
+ const bounds={x:200,y:60,width:600,height:600};
+ ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,bounds});
+ const visibility=(f.view as any).setVisible;visibility.mockClear();
+ ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,bounds,occluded:true});
+ await Promise.resolve();
+ expect((contents as any).capturePage).toHaveBeenCalledWith(undefined,{stayHidden:true,stayAwake:false});
+ expect(visibility).not.toHaveBeenCalled();
+ const captured=f.owner.webContents.send.mock.calls.filter(c=>c[0]===EDITOR_CHANNEL.snapshot).at(-1)![1];
+ expect(captured.image).toBe('data:image/png;base64,AA==');
+ ipcMain.emit(EDITOR_CHANNEL.layout,{sender:contents,senderFrame:contents.mainFrame},{stamp,snapshotReady:captured.revision});
+ expect(visibility).not.toHaveBeenCalled();
+ ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,snapshotReady:captured.revision});
+ expect(visibility).toHaveBeenLastCalledWith(false);
+ ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,bounds});
+ expect(visibility).toHaveBeenLastCalledWith(true);
+ const calls=visibility.mock.calls.length;
+ ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,snapshotReady:captured.revision});
+ expect(visibility).toHaveBeenCalledTimes(calls);
+ expect(contents.loadURL).toHaveBeenCalledTimes(1);
+});
+
+function snapshotFixture(){
+ const pending=fixture();
+ return pending.ready.then(stamp=>{
+  const contents=pending.view.webContents;
+  const event={sender:pending.owner.webContents,senderFrame:pending.owner.webContents.mainFrame};
+  const bounds={x:200,y:60,width:600,height:600};
+  const layout=(extra:object={})=>ipcMain.emit(EDITOR_CHANNEL.layout,event,{stamp,bounds,occluded:true,...extra});
+  const observe=(revision:number)=>ipcMain.emit(EDITOR_CHANNEL.up,{sender:contents,senderFrame:contents.mainFrame},{stamp,message:{botling:'hostObservation',chatId:'main',intentEpoch:0,revision}});
+  return{...pending,stamp,event,bounds,layout,observe,capture:vi.mocked(contents.capturePage),
+   snapshots:()=>pending.owner.webContents.send.mock.calls.filter(c=>c[0]===EDITOR_CHANNEL.snapshot&&c[1].image)};
+ });
+}
+
+it('captures a static covered chat only once, ignoring duplicate layout and unauthenticated invalidations',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=await snapshotFixture();f.layout();await vi.advanceTimersByTimeAsync(10_000);
+  expect(f.capture).toHaveBeenCalledTimes(1);
+  f.layout();
+  ipcMain.emit(EDITOR_CHANNEL.up,f.event,{stamp:f.stamp,message:{botling:'hostObservation',chatId:'main',intentEpoch:0,revision:2}});
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(f.capture).toHaveBeenCalledTimes(1);expect(f.snapshots()).toHaveLength(1);
+ }finally{vi.useRealTimers();}
+});
+
+it('coalesces applied chat state and changed layout at most once per second, including rapid covers',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=await snapshotFixture();f.layout();await vi.advanceTimersByTimeAsync(100);
+  for(let revision=1;revision<=20;revision++)f.observe(revision);
+  const changed={...f.bounds,width:590};f.layout({bounds:changed});
+  await vi.advanceTimersByTimeAsync(899);expect(f.capture).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);expect(f.capture).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(100);f.layout({bounds:changed,occluded:false});f.layout({bounds:changed});
+  await vi.advanceTimersByTimeAsync(899);expect(f.capture).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(1);expect(f.capture).toHaveBeenCalledTimes(3);
+  await vi.advanceTimersByTimeAsync(5000);expect(f.capture).toHaveBeenCalledTimes(3);
+  f.layout({bounds:{...changed,x:210}});await vi.advanceTimersByTimeAsync(0);
+  expect(f.capture).toHaveBeenCalledTimes(4);
+ }finally{vi.useRealTimers();}
+});
+
+it('never overlaps captures and drops stale in-flight pixels before capturing the latest state',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=await snapshotFixture();let finish!:(image:any)=>void;
+  f.capture.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  f.layout();f.observe(1);f.layout({bounds:{...f.bounds,width:590}});
+  f.layout({occluded:false});f.layout(); // A fresh cover must not accept the old capture.
+  await vi.advanceTimersByTimeAsync(1500);expect(f.capture).toHaveBeenCalledTimes(1);
+  finish({isEmpty:()=>false,toDataURL:()=> 'data:image/png;base64,stale'});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.capture).toHaveBeenCalledTimes(2);
+  expect(f.snapshots().map(c=>c[1].image)).toEqual(['data:image/png;base64,AA==']);
+  await vi.advanceTimersByTimeAsync(5000);expect(f.capture).toHaveBeenCalledTimes(2);
+ }finally{vi.useRealTimers();}
+});
+
+it.each(['restore','reload','dispose'])('cancels deferred snapshot work on %s',async mode=>{
+ vi.useFakeTimers();
+ try{
+  const f=await snapshotFixture();f.layout();await vi.advanceTimersByTimeAsync(100);f.observe(1);
+  if(mode==='restore')f.layout({occluded:false});
+  if(mode==='reload')f.owner.webContents.emit('did-start-navigation',{isMainFrame:true});
+  if(mode==='dispose')f.dispose();
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(f.capture).toHaveBeenCalledTimes(1);expect(f.snapshots()).toHaveLength(1);
+ }finally{vi.useRealTimers();}
+});
+
+it('does not poll after capture failure, and retries only on a later state change',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=await snapshotFixture();f.capture.mockRejectedValueOnce(new Error('capture unavailable'));
+  f.layout();await vi.advanceTimersByTimeAsync(5000);
+  expect(f.capture).toHaveBeenCalledTimes(1);expect(f.snapshots()).toHaveLength(0);
+  f.observe(1);await vi.advanceTimersByTimeAsync(0);
+  expect(f.capture).toHaveBeenCalledTimes(2);expect(f.snapshots()).toHaveLength(1);
+ }finally{vi.useRealTimers();}
+});
+
+
+it('shows captured pixels during continuous state updates while scheduling the next bounded refresh',async()=>{
+ vi.useFakeTimers();
+ try{
+  const f=await snapshotFixture();let finish!:(image:any)=>void;
+  f.capture.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+  f.layout();
+  for(let revision=1;revision<=5;revision++){await vi.advanceTimersByTimeAsync(100);f.observe(revision);}
+  finish({isEmpty:()=>false,toDataURL:()=> 'data:image/png;base64,stream'});
+  await vi.advanceTimersByTimeAsync(0);
+  const captured=f.snapshots()[0][1];
+  expect(captured.image).toBe('data:image/png;base64,stream');
+  f.observe(6);
+  ipcMain.emit(EDITOR_CHANNEL.layout,f.event,{stamp:f.stamp,snapshotReady:captured.revision});
+  expect(f.view.setVisible).toHaveBeenLastCalledWith(false);
+  await vi.advanceTimersByTimeAsync(499);expect(f.capture).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);expect(f.capture).toHaveBeenCalledTimes(2);
+ }finally{vi.useRealTimers();}
 });

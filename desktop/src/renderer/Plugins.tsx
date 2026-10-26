@@ -1,3 +1,4 @@
+import { ShellOverlay } from "./ShellOverlay";
 // The plugin library (1.x: Settings → Plugins): each plugin on or off, its settings (a secret is only
 // ever sent, never shown back: the page knows whether it is set), its commands, and its panels, which
 // open in a sandboxed frame (panel-page.ts). A small stand-in until 2.0 has 1.x's Settings window.
@@ -17,8 +18,8 @@ export function PluginsButton({ client, plugins }: { client: Client; plugins: Pl
       <button type="button" className={`rail-button${open ? " on" : ""}`} aria-expanded={open} onClick={() => setOpen(!open)}>
         Plugins{broken && <span className="rail-dot" aria-label="a plugin needs attention" />}
       </button>
-      {open && <PluginsPanel client={client} plugins={plugins} onPanel={(next) => { setPanel(next); setOpen(false); }} onClose={() => setOpen(false)} />}
-      {panel && <PanelFrame client={client} plugin={panel.plugin} panel={panel.id} title={panel.title} onClose={() => setPanel(null)} />}
+      {open && <ShellOverlay><PluginsPanel client={client} plugins={plugins} onPanel={(next) => { setPanel(next); setOpen(false); }} onClose={() => setOpen(false)} /></ShellOverlay>}
+      {panel && <ShellOverlay><PanelFrame client={client} plugin={panel.plugin} panel={panel.id} title={panel.title} onClose={() => setPanel(null)} /></ShellOverlay>}
     </div>
   );
 }

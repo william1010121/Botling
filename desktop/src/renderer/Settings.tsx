@@ -1,4 +1,6 @@
 import { DoctorSection } from "./Doctor";
+import { ShellOverlay } from "./ShellOverlay";
+import { postToChat } from "./editor-surface";
 import { UpdateActions,RecoveryCopies } from "./Updates";
 // The Settings window (1.x's SettingsWindow.swift) as a sheet over the app: its sections in 1.x's order
 // and words, for what 2.0's core does. Everything here is global (settings.json); the shown bot's own
@@ -58,7 +60,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
   }, [search]);
   const current = sections.find((entry) => entry.id === section) ?? sections[0];
   return (
-    <div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <ShellOverlay><div className="settings-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="settings" role="dialog" aria-label="Settings" aria-modal="true">
         <nav className="settings-side">
           <input className="settings-search" type="search" placeholder="Search settings" aria-label="Search settings" value={search} onChange={(event) => setSearch(event.target.value)} />
@@ -87,7 +89,7 @@ export function SettingsSheet({ client, settings, bot, bots = [], plugins, initi
           </div>
         </section>
       </div>
-    </div>
+    </div></ShellOverlay>
   );
 }
 
@@ -278,7 +280,7 @@ function TextSetting({ label, value, placeholder, onSave, disabled }: { label: s
 }
 
 function previewWidth(value: number | null | undefined) {
-  (document.getElementById("chat-frame") as HTMLIFrameElement | null)?.contentWindow?.postMessage({botling:"widthPreview",value}, "botling-chat://chat");
+  postToChat({botling:"widthPreview",value});
 }
 function Appearance({ settings, change }: { settings: SettingsView; change: (next: SettingsChange) => Promise<boolean> }) {
   const input = useRef<HTMLInputElement>(null);

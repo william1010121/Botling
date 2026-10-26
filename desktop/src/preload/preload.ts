@@ -11,7 +11,7 @@ ipcRenderer.on("botling:message", (_event, message: unknown) => {
 
 contextBridge.exposeInMainWorld("botling", Object.freeze({
   protocol: 2,
-  // Dormant until main selects the native-editor shell; current windows do not receive this argument.
+  // Only main selects the native-editor shell; child frames never receive this bridge.
   ...(process.isMainFrame&&process.argv.includes("--botling-editor-shell=1")?{editorHost:editorBridge(ipcRenderer,"shell")} : {}),
   platform: process.platform,
   post(envelope: unknown) {

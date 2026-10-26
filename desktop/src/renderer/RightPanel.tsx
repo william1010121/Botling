@@ -10,7 +10,7 @@
 // live one level in (1.x's DetailPanel `showingSettings`): the slider button on the name row, or the
 // strip's bottom one, shows them in the overview's place, with Back.
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { ShellOverlay, shellPortal } from "./ShellOverlay";
 import { settledRows, type BotView, type MessageView, type ResultView, type SubagentRowView, type TaskView, type TeamRunView, type WaitingItemView, type WaitingView } from "../contract";
 import { avatarURL, faceURL } from "./avatars";
 import { Icon, SubagentMark } from "./icons";
@@ -334,7 +334,7 @@ function TaskGroups(props: TaskListProps) {
           </section>
         );
       })}
-      {hover && hovered && createPortal(<TaskTimeline task={hovered} now={now} top={hover.top} right={hover.right} />, document.body)}
+      {hover && hovered && shellPortal(<TaskTimeline task={hovered} now={now} top={hover.top} right={hover.right} />)}
     </div>
   );
 }
@@ -599,7 +599,7 @@ function RightStrip({ bot, bots, waiting, look, status, results, teams, watching
             <span className={`strip-badge ${section}`}>{badge(count)}</span>
           </button>
           {open === section && (
-            <div className="strip-flyout" role="dialog" aria-label={title(section)}>
+            <ShellOverlay><div className="strip-flyout" role="dialog" aria-label={title(section)}>
               <div className="strip-flyout-head"><span>{title(section)}</span><span className="strip-esc">Esc to close</span></div>
               <div className="strip-flyout-body">
                 {section === "waiting" && <WaitingList items={items} bots={bots} look={look} onSelect={(id) => { setOpen(null); onSelect(id); }} onIgnore={onIgnore} />}
@@ -611,7 +611,7 @@ function RightStrip({ bot, bots, waiting, look, status, results, teams, watching
                 )}
                 {section === "settled" && <SettledList avatar={bot.avatar} look={look} rows={settled} watching={watching} onOpen={onOpenSubagent} onUnsettle={onUnsettle} />}
               </div>
-            </div>
+            </div></ShellOverlay>
           )}
         </div>
       ))}
