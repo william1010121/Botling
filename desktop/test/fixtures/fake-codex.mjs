@@ -12,6 +12,7 @@
 //   /say <text>     — final answer exactly <text> (a hand-off tag, a choices block, …)
 //   /slow           — commentary until interrupted
 //   /tool <command> — asks to run <command>; says whether it was allowed
+//   /component-editor <task> — hands <task> to Maintainer's Claude component editor
 //   /worker <task>  — hands <task> to an app-managed worker (app_handoff) and ends its turn
 //   /choices        — asks with a <choices> block
 //   /monitor <cmd>  — asks the app to run <cmd> as a monitored command (app_monitor_start) and ends its turn;
@@ -200,7 +201,7 @@ async function coordinatorTurn(thread, turn, text) {
     say(thread, turn, peer ? "<no-reply/>" : `I take it: ${said.last.slice(solo[0].length)}`);
     return complete(thread, turn);
   }
-  const match = /^\/(say|slow|tool|worker|choices|monitor|routine|ratelimit)\b\s*/.exec(said.last);
+  const match = /^\/(say|slow|tool|worker|component-editor|editor-message|choices|monitor|routine|ratelimit)\b\s*/.exec(said.last);
   const directive = match?.[1] ?? null;
   const rest = match ? said.last.slice(match[0].length) : said.all;
   if (directive === "slow") {
@@ -253,10 +254,16 @@ async function coordinatorTurn(thread, turn, text) {
     say(thread, turn, `${receipt?.success ? "Routines" : "Routines failed"}: ${receipt?.contentItems?.[0]?.text ?? ""}`);
     return complete(thread, turn);
   }
-  if (directive === "worker") {
-    const receipt = await ask("item/tool/call", { threadId: thread, turnId: turn, callId: `call_${randomUUID().slice(0, 8)}`, tool: "app_handoff", arguments: { instructions: rest || "Do the work", name: (rest || "Do the work").split("\n")[0].slice(0, 30) } });
+  if (directive === "editor-message") {
+    const [task, ...parts] = rest.split(" ");
+    await ask("item/tool/call", { threadId: thread, turnId: turn, tool: "app_send_message", arguments: { task_id: task, message: parts.join(" ") } });
+    say(thread, turn, "Sent to the same editor.");
+    return complete(thread, turn);
+  }
+  if (directive === "worker" || directive === "component-editor") {
+    const receipt = await ask("item/tool/call", { threadId: thread, turnId: turn, callId: `call_${randomUUID().slice(0, 8)}`, tool: "app_handoff", arguments: { ...(directive === "component-editor" ? { role: "component-editor" } : {}), instructions: rest || "Do the work", name: (rest || "Do the work").split("\n")[0].slice(0, 30) } });
     const task = JSON.parse(receipt?.contentItems?.[0]?.text ?? "{}").task_id;
-    say(thread, turn, task ? "A worker has it." : "The hand-off failed.");
+    say(thread, turn, task ? "A worker has it." : `The hand-off failed: ${receipt?.contentItems?.[0]?.text ?? ""}`);
     return complete(thread, turn);
   }
   const reply = directive === "say" ? rest

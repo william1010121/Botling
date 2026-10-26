@@ -34,6 +34,7 @@ import { PAGE_COMPONENT } from "./preview-url";
 import { Bot, NO_LONGER_NEEDED, type SessionStart, type SessionStartCodex } from "./bot";
 import type { HeadConfig } from "./agent/head";
 import { CodexThreads, type CodexHeadConfig } from "./agent/codex";
+import { maintainerEditorBinding } from "./agent/component-editor";
 import type { Engine, Heads } from "./heads";
 import { botPrompts, desktopPrompts, isAppLanguage, isResultPublishing, preferredLanguage, type BotPrompts } from "./prompts";
 import { BotStore, readJSON } from "./store/bot-store";
@@ -252,7 +253,9 @@ export class Core {
     installExtractors(join(options.dataDir, "plugins"), options.webExtractors ?? null, () => builtInManifest(EXTRACTORS_PLUGIN, "Web page readers",
       `Reads the conversation on a web AI's page (${(options.webSites ?? webSites()).map((site) => site.name).join(", ")}) into text for the main bot. One script per site; README.md has the contract.`, []));
     this.web = new WebShelf(join(options.dataDir, "web"), options.webSites ?? webSites(), () => this.webChanged());
-    const profiles = [...loaded.profiles, maintainerProfile(options.dataDir, maintainerInstructions(join(options.dataDir, "plugins"), options.checkCommand ?? null, options.shotCommand ?? null))];
+    const appMaintainer = maintainerProfile(options.dataDir, maintainerInstructions(join(options.dataDir, "plugins"), options.checkCommand ?? null, options.shotCommand ?? null));
+    const profiles = [...loaded.profiles, appMaintainer];
+    const editorBinding = maintainerEditorBinding(appMaintainer, options.dataDir, options.headConfig);
     const oneX: OneXCheck = options.oneX ?? { folder: null, process: DEFAULT_ONE_X_PROCESS };
     const threads = new CodexThreads(join(options.dataDir, "codex-threads"));
     const codexConfig = options.codexConfig;
@@ -267,7 +270,11 @@ export class Core {
         profile,
         deferStartup: options.deferStartup && !this.activated,
         headConfig: options.headConfig,
-        codexConfig: codexConfig ? (p, session) => codexConfig(p, session, threads) : null,
+        codexConfig: codexConfig ? (p, session) => ({
+          ...codexConfig(p, session, threads),
+          componentEditor: group ? null : editorBinding(p, session),
+          editorStarted: (pid) => { if (pid > 0) this.ledger.record(pid); },
+        }) : null,
         claimWaitMs: options.claimWaitMs,
         prompts: (engine, heads) => this.prompts(profile, engine, heads),
         // A project's manager works in the user's own folder, shared with 1.x: one Botling at a time.

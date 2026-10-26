@@ -596,8 +596,8 @@ reads the user's language setting) and real Codex got the message with Claude's 
 - **Stop stops every turn under way** (both heads); Stop of a Codex turn interrupts the coordinator
   only, its workers go on (as 1.x).
 - **The coordinator gets 1.x's 7 tools unchanged** (so the policy text and the tool stamp match);
-  ~~`app_routines` and `app_monitor_*` answer that 2.0 cannot do them yet~~ (done in Phase 3a). The component-editor role is
-  refused (no Maintainer in 2.0).
+  ~~`app_routines` and `app_monitor_*` answer that 2.0 cannot do them yet~~ (done in Phase 3a).
+  The `component-editor` role now uses the existing Claude editor for Core's app-created Maintainer only (see below).
 - **No auto mode yet**: Codex's reviewer is always the user (approvals in the chat).
 - **Each head tidies itself** before it sleeps (1.x lets one head tidy the shared memory file).
 - **The rounds line is drawn by the React chrome**: this checkout's chat page receives `rounds` and
@@ -678,7 +678,19 @@ with no tools it lists no agent types (not repeated, to stay within the budget).
   core without a test key keeps none. 1.x's keychain items are not read (a secret is entered again).
 - ~~**`bots.send` needs the `bots` permission**~~ Any plugin may use `bots.send`, as in 1.x (the user's call).
 - **Maintainer is always there**, as in 1.x; it is a Claude-head bot by default. Its `<need-folder>`
-  requests get a "not yet" note. The Codex Maintainer's component-editor role stays refused.
+  requests get a "not yet" note. The Codex Maintainer can use `app_handoff` with `role: "component-editor"`:
+  Core binds the exact profile it created (fixed ID, library and store); a name, copied ID, ordinary bot,
+  foreign thread or temporary group cannot acquire the route. `agent/component-editor.ts` reads the
+  existing `ccb-core/claude/agents/component-editor.md` without rewriting it: its explicit haiku/sonnet/opus
+  model and nonempty Read/Write/Edit/Bash subset are required. Claude gets that tool inventory, the same
+  approved directories and approval mode/rules, without plugins or delegation tools. No generic worker
+  substitutes for a missing or invalid definition. `agent/codex.ts` owns task/run IDs, child approvals,
+  reports, cancellation and process cleanup; the existing app decision forwards only user-approved
+  classifier rules to its Claude editors. Corrections retain the editor role/session, including after
+  persisted worker recovery. Focused checks: `component-editor.test.ts`, `component-editor-core.test.ts`,
+  `component-editor-transport.test.ts`.
+  This is bundled core code: integration and an approved app install/restart are needed to deploy it;
+  changing the plugin library or reloading renderer code alone cannot activate the route.
 - **Installs ask in the main bot's chat** with 1.x's question; only a folder or a git URL can be
   fetched for now. Its last line points at the rail's Plugins button (2.0 has no Settings window).
 - **A new bot starts with the built-in components only and gets more from Maintainer** (1.x), replacing
@@ -1032,7 +1044,7 @@ Cumulative checks exposed a unit assertion treating the `booted` marker as delet
 Not in 2.0 yet, roughly in order of how much they matter:
 
 - **Codex / two heads, still missing**: Codex's native
-  subagents (off in a coordinator anyway); the component-editor role; auto mode (Codex's reviewer);
+  subagents (off in a coordinator anyway); auto mode (Codex's reviewer);
   rate limits and token use; images in Codex messages; the model list (`model/list`) and model/effort
   (Phase 5a: worker return routes, task cards' helping lines, the model list, model switching, completion
   verification); switching a head's engine through a memory handoff (the handoff/resume prompts are unused); drawing the hand-off panel; a one-head bot's `<handoff to="claude">` for publishing
