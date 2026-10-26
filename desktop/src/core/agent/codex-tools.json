@@ -115,6 +115,46 @@
       "component-editor"
      ],
      "description": "Only for the plugin-library Maintainer: launch its existing Claude ccb-core component editor on its configured model. No new folders, tools, authorization or settings. Omit for ordinary work."
+    },
+    "isolated_git": {
+     "type": "object",
+     "description": "Optional explicit authorization for an implementation task only. Enables single-request automatic approval of creation of a NEW isolated bot/ worktree, staging these exact task-owned files and commits on that branch. repo must equal this bot workspace root; baseCommit is an existing full commit SHA. worktree must be a new direct child /private/tmp/botling-2x-* or /Volumes/My-SSD/botling-work/<name>. Unknown/invalid ownership falls back to manual approval. Never use for research-only tasks. Any app_send_message revokes this grant; push/merge/deletion/shared checkout and shell chains always retain normal approval.",
+     "properties": {
+      "implementationAuthorized": {
+       "type": "boolean",
+       "enum": [
+        true
+       ]
+      },
+      "repo": {
+       "type": "string"
+      },
+      "worktree": {
+       "type": "string"
+      },
+      "branch": {
+       "type": "string"
+      },
+      "baseCommit": {
+       "type": "string"
+      },
+      "files": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       },
+       "minItems": 1
+      }
+     },
+     "required": [
+      "implementationAuthorized",
+      "repo",
+      "worktree",
+      "branch",
+      "baseCommit",
+      "files"
+     ],
+     "additionalProperties": false
     }
    },
    "required": [

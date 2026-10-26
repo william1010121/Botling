@@ -9,7 +9,8 @@
 // As in 1.x:
 // - The thread starts (or resumes) with the approval policy and sandbox said explicitly, so the
 //   user's own ~/.codex/config.toml does not decide what a bot may do: it asks (`on-request`) and
-//   writes only in its folder (`workspace-write`). 2.0 has no auto mode, so the reviewer is the user.
+//   writes only in its folder (`workspace-write`). The reviewer is the user; the app accepts only
+//   validated, explicitly owned isolated-worker Git requests automatically, one request at a time.
 // - The head is a coordinator: shell and native subagents are off, and it hands execution to
 //   app-managed workers with the app's dynamic tools (app_handoff, app_send_message,
 //   app_task_checkpoint). Each worker is an independent Codex thread in the same app-server; its
@@ -25,6 +26,7 @@
 // Not ported (2.0 gaps, see desktop/README.md): the component-editor role, Codex's reviewer (auto mode),
 // Codex's own native subagents (off in a coordinator anyway),
 // images in messages.
+import { approveIsolatedGit, isolatedGitOwnership, type IsolatedGitOwnership } from "./isolated-git";
 import type { WorkerDependency } from "../promise-check";
 import type { SubagentExecution } from "../subagents";
 import { randomUUID } from "node:crypto";
@@ -75,6 +77,7 @@ export interface WorkerRecord {
   report?: string;
   status?: string;
   turn?: string;
+  isolatedGit?: IsolatedGitOwnership;
   ownershipInstructions?: string;
   role?: string;
 }
@@ -124,7 +127,7 @@ interface Approval {
 
 interface Worker {
   runtime?: { engine: "codex"; reasoningEffort: string | null; serviceTier: string | null };
-  id: string; name: string; instructions: string; ownershipInstructions?: string; role?: string;
+  id: string; name: string; instructions: string; ownershipInstructions?: string; role?: string; isolatedGit?: IsolatedGitOwnership;
   thread?: string; turnId: string | null; run: number; active: boolean; loaded: boolean; cancelled: boolean;
   messages: string[]; said: { text: string; phase: string | null }[]; completedTurns: Set<string>;
   /** Its thread's tokens so far, and at the start of the run under way (Phase 5c). */
@@ -147,6 +150,9 @@ const COORDINATOR_CONFIG = { "features.multi_agent": false, "agents.enabled": fa
 export const MANAGED_TOOLS = tools as Record<string, unknown>[];
 /** Changing the tools needs a new coordinator thread (tools are fixed when a thread starts). */
 export const MANAGED_TOOL_SIGNATURE = JSON.stringify(MANAGED_TOOLS);
+// All bot sessions in this app share destination claims. A second session must never adopt
+// another worker's grant just because its branch/worktree names happen to match.
+const isolatedGitOwners = new Map<string, string>();
 
 /** The shell a monitored command runs in (1.x: zsh on macOS). */
 const shell = (command: string): string[] => (process.platform === "win32" ? ["cmd.exe", "/d", "/s", "/c", command] : process.platform === "darwin" ? ["/bin/zsh", "-c", command] : ["/bin/sh", "-c", command]);
@@ -208,7 +214,7 @@ export class CodexSession {
     }
     for (const record of config.restoredWorkers) {
       this.workers.set(record.id, {
-        id: record.id, name: record.name, instructions: record.instructions, ownershipInstructions: record.ownershipInstructions, role: record.role,
+        id: record.id, name: record.name, instructions: record.instructions, ownershipInstructions: record.ownershipInstructions, role: record.role, isolatedGit: record.isolatedGit,
         thread: record.thread, turnId: null, run: record.run, active: false, loaded: false, cancelled: false, messages: [], said: [], completedTurns: new Set(),
       });
       if (record.reportPending && record.report !== undefined && record.status) {
@@ -427,6 +433,19 @@ export class CodexSession {
     const reason = typeof params.reason === "string" && params.reason ? params.reason : "";
     switch (method) {
       case "item/commandExecution/requestApproval": {
+        const thread = typeof params.threadId === "string" ? params.threadId : null;
+        const worker = thread && thread !== this.threadId ? [...this.workers.values()].find((w) => w.thread === thread) : undefined;
+        const ownership = worker?.isolatedGit;
+        const exclusive = ownership && ![...this.workers.values()].some((w) => w !== worker && w.isolatedGit
+          && (w.isolatedGit.worktree === ownership.worktree || w.isolatedGit.branch === ownership.branch));
+        if (!this.stopped && worker?.active && !worker.cancelled && worker.turnId && params.turnId === worker.turnId
+          && params.environmentId === "local" && !params.networkApprovalContext
+          && (!Array.isArray(params.availableDecisions) || params.availableDecisions.includes("accept"))
+          && exclusive && isolatedGitOwners.get(ownership.worktree) === worker.id
+          && approveIsolatedGit(ownership, this.config.cwd, params)) {
+          // One request only: never acceptForSession / execpolicy amendments / wider permissions.
+          return [{ kind: "write", value: { jsonrpc: "2.0", id: rpcId, result: { decision: "accept" } } }];
+        }
         let summary = typeof params.command === "string" ? params.command : "";
         if (reason) summary += (summary ? "\n\n" : "") + reason;
         return this.askApproval(rpcId, "command", params, "Bash", summary);
@@ -678,6 +697,7 @@ export class CodexSession {
       if (result) { record.report = result.report; record.status = result.status; if (result.turn) record.turn = result.turn; }
       if (worker.ownershipInstructions) record.ownershipInstructions = worker.ownershipInstructions;
       if (worker.role) record.role = worker.role;
+      if (worker.isolatedGit) record.isolatedGit = worker.isolatedGit;
       return record;
     }).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
@@ -872,13 +892,21 @@ export class CodexSession {
       }
       const task = randomUUID().toLowerCase();
       const name = typeof args.name === "string" && args.name ? args.name : firstLine(args.instructions);
-      this.workers.set(task, { id: task, name, instructions: args.instructions, turnId: null, run: 1, active: true, loaded: false, cancelled: false, messages: [], said: [], completedTurns: new Set() });
+      let isolatedGit = isolatedGitOwnership(args.isolated_git, this.config.cwd,
+        [...this.workers.values()].flatMap((w) => w.isolatedGit ? [w.isolatedGit] : []));
+      if (isolatedGit) {
+        if (isolatedGitOwners.has(isolatedGit.worktree)) isolatedGit = undefined;
+        else isolatedGitOwners.set(isolatedGit.worktree, task);
+      }
+      // An invalid/missing grant still launches the task, with the existing approval cards.
+      const instructions = isolatedGit ? `${args.instructions}\n\nApp-validated isolated Git ownership (only these exact files): ${JSON.stringify(isolatedGit)}. Use plain git worktree add -b BRANCH WORKTREE BASE, git -C WORKTREE add -- FILES, and git -C WORKTREE commit -m MESSAGE. Other operations still require normal approval.` : args.instructions;
+      this.workers.set(task, { id: task, name, instructions, isolatedGit, turnId: null, run: 1, active: true, loaded: false, cancelled: false, messages: [], said: [], completedTurns: new Set() });
       out.push(
         this.item({ kind: "toolUse", id: task, tool: "Agent", title: `Delegate ${name}`, detail: args.instructions, parent: null, input: { description: name, prompt: args.instructions, subagent_type: "codex-worker", run_in_background: true } }),
         this.item({ kind: "subagentStarted", id: task, description: name, type: "codex-worker", prompt: args.instructions, background: true, execution: this.workerExecution(this.workers.get(task)!) }),
         ...this.startWorkerThread(task),
       );
-      response = reply({ task_id: task, status: "accepted", message: "This task is accepted and owned by its worker. Continue any other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn. app_task_result will arrive when this worker finishes." }, true);
+      response = reply({ task_id: task, status: "accepted", isolated_git_approval: isolatedGit ? "validated" : "manual", message: "This task is accepted and owned by its worker. Continue any other independent, authorized handoffs and required report decisions in the current dispatch phase, then finish the turn. app_task_result will arrive when this worker finishes." }, true);
     } else if (tool === "app_send_message" && typeof args.task_id === "string" && typeof args.message === "string" && args.message && this.workers.has(args.task_id)) {
       const queued = this.workers.get(args.task_id)!.active;
       out.push(...this.messageWorker(args.task_id, args.message));
@@ -978,12 +1006,14 @@ export class CodexSession {
     const worker = this.workers.get(task);
     if (!worker || this.stopped) return [];
     if (worker.active) {
+      delete worker.isolatedGit;
       worker.ownershipInstructions = `${worker.ownershipInstructions ?? worker.instructions}\nFollow-up: ${text}`;
       if (worker.turnId) return [this.workerSteerCall(worker, text, worker.turnId)];
       worker.messages.push(text);
       return [];
     }
     this.results = this.results.filter((result) => result.task !== task);
+    delete worker.isolatedGit;
     worker.run += 1;
     worker.active = true;
     worker.cancelled = false;
