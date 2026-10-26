@@ -143,6 +143,16 @@ describe("Codex single-request app approval path", () => {
     if (!manual || manual.kind !== "permission") throw new Error("Missing manual permission card");
     expect(writes(f.s.answer(manual.requestId, true))[0].result).toEqual({ decision: "accept" });
   });
+  it("auto-accepts only command approvals, never stdin sent to a running process", () => {
+    const f = sessionFixture(); f.checkout(); const w = f.ownership.worktree; writeFileSync(join(w, "own.txt"), "changed\n");
+    const add = `/bin/zsh -lc 'git -C ${w} add -- own.txt'`;
+    for (const kind of ["writeStdin", "unknown", null]) {
+      const out = f.ask(add, { kind });
+      expect(writes(out).some((value) => value.result?.decision === "accept")).toBe(false);
+      expect(items(out)).toMatchObject([{ kind: "permission", tool: "Bash" }]);
+    }
+    expect(writes(f.ask(add, { kind: "command" }))[0].result).toEqual({ decision: "accept" });
+  });
   it("keeps legacy grants manual and refuses automatic approval after stop", () => {
     const f = sessionFixture(false); expect(f.receipt.isolated_git_approval).toBe("manual");
     expect(items(f.ask(f.create))).toMatchObject([{ kind: "permission", tool: "Bash" }]);

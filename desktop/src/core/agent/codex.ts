@@ -442,6 +442,7 @@ export class CodexSession {
           && (w.isolatedGit.worktree === ownership.worktree || w.isolatedGit.branch === ownership.branch));
         if (!this.stopped && worker?.active && !worker.cancelled && worker.turnId && params.turnId === worker.turnId
           && !worker.completedTurns.has(worker.turnId)
+          && (params.kind === undefined || params.kind === "command") // never stdin to a running process
           && params.environmentId === "local" && !params.networkApprovalContext
           && (!Array.isArray(params.availableDecisions) || params.availableDecisions.includes("accept"))
           && exclusive && isolatedGitOwners.get(ownership.worktree) === worker.id
