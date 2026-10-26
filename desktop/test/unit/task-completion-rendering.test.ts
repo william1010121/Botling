@@ -34,8 +34,8 @@ describe("Mark complete in the production task panel", () => {
         expect(host.querySelector(".task-complete")).toBeNull();
         expect(host.querySelector(".waiting-tasks")).toBeNull();
         expect(host.querySelector(".done-name")?.textContent).toBe("helo");
-        expect(host.querySelector(".task-manual-completion")?.textContent).toContain("Marked complete by you");
-        expect(host.querySelector(".task-manual-completion")?.textContent).toContain("background work may still be running");
+        expect(host.querySelector(".done-task")?.getAttribute("title")).toBe("Marked complete by you");
+        expect(host.textContent).not.toContain("background work may still be running");
         expect(host.textContent).not.toContain("Claiming…");
       };
       check();

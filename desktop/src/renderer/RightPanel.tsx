@@ -306,25 +306,25 @@ function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onRepo
       {/* The name, and Mark complete in the card's top-right corner. */}
       <div className="task-card-top">
         <button type="button" className="task-card-head" title="Close" onClick={() => onSelect(task.id)}><TaskHeader task={task} stale={stale} bold /></button>
-        {active && <button type="button" className="task-complete" title="Close this task card. Background work continues." onClick={() => onComplete(task.id)}>Mark complete</button>}
+        {active && <button type="button" className="task-complete" title="Close this task card" onClick={() => onComplete(task.id)}>Mark complete</button>}
       </div>
-      {task.manuallyCompletedAt && <div className="task-manual-completion">Marked complete by you · background work may still be running.</div>}
       {field("Now", task.now)}
       {field("Next", task.next)}
       {field("Blocked", task.blocked, task.state === "waiting")}
       {(task.helps ?? []).map((help, index) => <div key={index} className="task-help">{headName(help.head)} helping: {help.text}</div>)}
-      {/* Folded by default: a line with the count; pressed, the list. */}
-      <details className="task-agents" aria-label="Related subagents">
-        <summary className="task-field-label">Related subagents{task.relatedAgents?.length ? ` (${task.relatedAgents.length})` : ""}{running ? ` · ${running} active` : ""}</summary>
-        {task.agentLinks !== "recorded" && <div className="task-agent-note">Historical subagent links may be incomplete.</div>}
-        {!task.relatedAgents?.length && <div className="task-agent-note">{task.agentLinks === "recorded" ? "No related subagents recorded." : "Subagent relationship data unavailable."}</div>}
-        {(task.relatedAgents ?? []).map((agent) => {
-          const content = <><span className="task-agent-title">{agent.title}</span><span className="task-agent-meta">{agent.engine ? headName(agent.engine) : "Engine unknown"} · {agent.status ?? "Record unavailable"}{agent.run ? ` · run ${agent.run}` : ""}</span><span className="task-agent-id">{agent.id}</span></>;
-          return agent.available
-            ? <button key={agent.id} type="button" className="task-agent" data-status={agent.status} data-agent={agent.id} aria-label={`Open subagent ${agent.title}, ${agent.status}`} onClick={() => onOpenSubagent({ id: agent.id })}>{content}<span className="task-agent-open" aria-hidden="true">↗</span></button>
-            : <div key={agent.id} className="task-agent unavailable" data-agent={agent.id}>{content}</div>;
-        })}
-      </details>
+      {/* Folded: a line with the count; pressed, the list. No related subagents, nothing at all. */}
+      {(task.relatedAgents?.length ?? 0) > 0 && (
+        <details className="task-agents" aria-label="Related subagents">
+          <summary className="task-field-label">Related subagents ({task.relatedAgents!.length}){running ? ` · ${running} active` : ""}</summary>
+          {task.relatedAgents!.map((agent) => {
+            const meta = [agent.engine ? headName(agent.engine) : null, agent.status].filter(Boolean).join(" · ");
+            const content = <><span className="task-agent-title">{agent.title}</span>{meta && <span className="task-agent-meta">{meta}</span>}</>;
+            return agent.available
+              ? <button key={agent.id} type="button" className="task-agent" data-status={agent.status} data-agent={agent.id} title={agent.id} aria-label={`Open subagent ${agent.title}, ${agent.status}`} onClick={() => onOpenSubagent({ id: agent.id })}>{content}<span className="task-agent-open" aria-hidden="true">↗</span></button>
+              : <div key={agent.id} className="task-agent unavailable" data-agent={agent.id} title={agent.id}>{content}</div>;
+          })}
+        </details>
+      )}
       {(stale || folded) && (
         <div className="task-stale">
           {folded && <span className="task-summary-tag">In the summary</span>}

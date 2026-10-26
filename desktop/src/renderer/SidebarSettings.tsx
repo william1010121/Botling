@@ -80,7 +80,6 @@ export function SidebarSettings({ client, settings, plugins, compact = false, se
             onChange={(event) => void developer(event.target.checked)} />
         </label>
         {problem && <p className="settings-problem" role="alert">{problem}</p>}
-        <p className="sidebar-settings-note">Auto-approve safe actions follows the current engine's permission rules. Botling 2 has no separate switch.</p>
         <div className="sidebar-settings-links">
           <button type="button" aria-label="Plugins" onClick={() => openSection("plugins")}><span>Plugins</span><span aria-hidden="true">{plugins ? `${plugins.plugins.filter(plugin => plugin.enabled).length} on` : "›"}</span></button>
           <button type="button" onClick={() => openSection("usage")}>Usage by bot<span aria-hidden="true">›</span></button>

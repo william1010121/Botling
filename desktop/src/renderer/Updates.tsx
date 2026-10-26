@@ -51,9 +51,8 @@ export function RecoveryCopies({client}:{client:Client}){
  useEffect(()=>{let live=true;setBusy(true);void client.request({type:'updates.copies'}).then(value=>{if(live)setCopies(value);},failure=>{if(live)setError(failure.message);}).finally(()=>{if(live)setBusy(false);});return()=>{live=false;};},[client]);
  const remove=async(copy:RetainedUpdateCopy)=>{setBusy(true);setError(null);try{await client.request({type:'updates.deleteCopy',id:copy.id});setCopies(await client.request({type:'updates.copies'}));}catch(error){setError((error as Error).message);}finally{setBusy(false);}};
  const labels={snapshot:'Original data snapshot',newer:'NEWER candidate data (may contain newer messages)',restore:'Prepared restored data','previous-app':'Previous app','failed-app':'Failed candidate app'};
- return <div aria-label="Retained update copies"><p>User-data copies stay until you explicitly delete them. Each deletion requires confirmation of its exact path and size.</p>
- {busy&&<p role="status">Inspecting retained copies…</p>}{error&&<p role="alert">{error}</p>}
- {!busy&&!copies.length&&<p>No retained recovery copies found.</p>}
+ if(!copies.length&&!error)return null;
+ return <div aria-label="Retained update copies">{error&&<p role="alert">{error}</p>}
  {copies.map(copy=><div key={copy.id}><strong>{labels[copy.role]}</strong><p style={{overflowWrap:'anywhere'}}>{copy.path}<br/>{copy.bytes.toLocaleString()} bytes</p><button type="button" disabled={busy||!copy.deletable} onClick={()=>void remove(copy)}>{copy.role==='newer'?'Delete this NEWER data copy…':'Delete this copy…'}</button>{copy.reason&&<p>{copy.reason}</p>}</div>)}
  </div>;
 }

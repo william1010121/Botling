@@ -128,11 +128,7 @@ export function RemoveDialog({ bot, onRemove, onCancel }: { bot: BotView; onRemo
     <div className="dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
       <div className="dialog" role="alertdialog" aria-labelledby="remove-title" aria-describedby="remove-message">
         <h2 id="remove-title">Remove "{bot.name}"?</h2>
-        <p id="remove-message">
-          {project
-            ? `It stops at once and leaves the list. Nothing in ${bot.folder} is deleted; its notes stay in .bot/.`
-            : `It stops at once. Its notes stay in ${bot.folder}.`}
-        </p>
+        <p id="remove-message">It stops at once. Its notes stay in {bot.folder}.</p>
         <div className="dialog-buttons">
           <button type="button" className="dialog-cancel" onClick={onCancel} autoFocus>Cancel</button>
           <button type="button" className="dialog-destructive" onClick={onRemove}>{project ? "Remove project" : "Remove bot"}</button>

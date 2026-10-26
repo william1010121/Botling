@@ -79,9 +79,7 @@ function PluginItem({ plugin, onEnable, onSetting, onSecret, onCommand, onPanel 
       </div>
       {plugin.description && <div className="plugin-description">{plugin.description}</div>}
       {plugin.failure && <div className="plugins-problem">Turned off: {plugin.failure}</div>}
-      <div className="plugin-meta">
-        {[plugin.parts.join(", "), plugin.permissions.length ? `asks for: ${plugin.permissions.join(", ")}` : null, plugin.installedFrom ? `from ${plugin.installedFrom}` : null].filter(Boolean).join(" · ")}
-      </div>
+      {plugin.installedFrom && <div className="plugin-meta">from {plugin.installedFrom}</div>}
       {plugin.settings.map((setting) => (
         <div key={setting.key} className="plugin-setting" data-setting={setting.key}>
           <span className="plugin-setting-title">{setting.title}</span>

@@ -89,7 +89,8 @@ describe("quota readings in the production Quick settings popup", () => {
     await act(async () => host.querySelector<HTMLButtonElement>(".quick-usage-note button")!.click());
     expect(ui.cards()[0].textContent).toContain("42%");
     request.mockRejectedValueOnce(new Error("offline")); await ui.finished();
-    expect(host.textContent).toContain("Showing the last successful reading.");
+    expect(host.textContent).toContain("Quota readings unavailable.");
+    expect(host.textContent).not.toContain("Showing the last successful reading.");
     expect(ui.cards()[0].textContent).toContain("42%");
   });
 

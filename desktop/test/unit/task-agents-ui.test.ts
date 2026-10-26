@@ -58,11 +58,11 @@ describe("task card to actual subagent details", () => {
       expect(card.querySelectorAll("button.task-agent")).toHaveLength(2);
       expect(card.querySelector('[data-agent="unrelated"]')).toBeNull();
       expect(card.querySelector('[data-agent="missing-record"]')?.tagName).toBe("DIV");
-      expect(card.querySelector('[data-agent="worker-id"]')?.textContent).toContain("Codex · running · run 2");
+      expect(card.querySelector('[data-agent="worker-id"]')?.textContent).toBe("Build parserCodex · running↗");
       await act(async () => card.querySelector<HTMLButtonElement>('[data-agent="worker-id"]')!.click());
       expect(commands.find((cmd) => cmd.type === "subagent.view")).toEqual({ type: "subagent.view", botId: bot.id, subagentId: "worker-id" });
       expect(store.getView().subagent).toMatchObject({ id: "worker-id", prompt: "Implement the parser", execution: { threadId: "actual-thread", turnId: "actual-turn" } });
-      expect(subagentState(bot.view(), store.getView().subagent!).state.messages[0].text).toContain("Thread: actual-thread");
+      expect(subagentState(bot.view(), store.getView().subagent!).state.messages[0].text).toBe("Implement the parser"); // No ids or threads, just its task.
       // A real core event updates both the open details and task status; a snapshot retains links.
       const worker = bot.subagents.get("worker-id")!;
       worker.status = "completed"; worker.result = "Parser built"; worker.endedAt = 3;
@@ -82,7 +82,7 @@ describe("task card to actual subagent details", () => {
     }
   });
 
-  it("shows missing historical coverage separately from a recorded empty task", async () => {
+  it("shows nothing at all for a task with no related subagents, recorded or not", async () => {
     const { RightPanel } = await import("../../src/renderer/RightPanel");
     const { renderToStaticMarkup } = await import("react-dom/server");
     const bot = owner();
@@ -91,8 +91,9 @@ describe("task card to actual subagent details", () => {
         bot: bot.view(), bots: [bot.view()], waiting: { items: [], doing: {} }, look: "original", status: { key: "awake", text: "Idle" }, results: [], teams: [], watching: null, tasks: bot.taskViews(), messages: [], selectedTask: id, collapsed: false,
         onSelectTask() {}, onJumpToTask() {}, onAskForReport() {}, onCompleteTask() {}, onEditGroup() {}, onSelect() {}, onIgnore() {}, onOpenResult() {}, onOpenSubagent() {}, onUnsettle() {}, onSettings() {}, onExpand() {},
       }));
-      expect(markup).toContain(id === "legacy-card" ? "Subagent relationship data unavailable." : "No related subagents recorded.");
-      if (id === "legacy-card") expect(markup).not.toContain("No related subagents recorded.");
+      expect(markup).toContain("task-card");
+      expect(markup).not.toContain("task-agents");
+      expect(markup).not.toMatch(/subagent/i);
     }
   });
 });

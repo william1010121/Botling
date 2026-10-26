@@ -62,14 +62,14 @@ test("available usage shows the recorded local day, all four token categories, b
     await expect(today).toContainText("$1.25");
     await expect(today).toContainText("1.0K");
     await expect(today).toContainText("In 100 · out 200 · cache write 300 · cache read 400");
-    await expect(today).toContainText("2026-10-26");
+    await expect(today).not.toContainText("2026-10-26"); // Today's date goes without saying.
     await expect(sheet.getByRole("region", { name: "By bot", exact: true })).toContainText(/Claude\s*800 tokens\s*\$1.25/);
     await expect(sheet.getByRole("region", { name: "Earlier days", exact: true })).toContainText(/2026-10-25[\s\S]*2026-10-24/);
     const limits = sheet.getByRole("region", { name: "Subscription limits", exact: true });
     await expect(limits.getByLabel("Claude limits")).toContainText("5 hours 42% · in 1h 0m");
     await expect(limits.getByLabel("Codex limits")).toContainText("Week – · reset");
     await expect(limits).toContainText("as of 1 h ago");
-    await expect(sheet).toContainText("Claude-reported cost");
+    await expect(sheet).not.toContainText("Claude-reported cost");
     await page.screenshot({ path: join(desktop, ".tmp/screens/settings-usage-available.png") });
   } finally { await page.close(); }
 });
@@ -98,7 +98,7 @@ test("a failed refresh marks retained totals stale and a later local day refresh
     const sheet = await open(page);
     await expect(sheet.getByRole("region", { name: "Usage today", exact: true })).toContainText("$1.25");
     await page.evaluate(() => { window.usageFailure = true; window.usageRefresh?.(); });
-    await expect(sheet.getByRole("alert")).toContainText("Showing the last successful reading.");
+    await expect(sheet.getByRole("alert")).toContainText("Usage is unavailable.");
     await page.evaluate(() => {
       window.usageFailure = false;
       window.usageFixture = { ...(window.usageFixture as object), day: "2026-10-27", spent: 0, tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 }, byBot: [] };

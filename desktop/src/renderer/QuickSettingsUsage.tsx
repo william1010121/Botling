@@ -47,9 +47,8 @@ export function QuickSettingsUsage({ client }: { client: Client }) {
       <QuotaCard engine="Codex" title="Week" window={codex.week} now={now} weekly />
     </div>
     {since({ fiveHour: null, week: codex.week })}
-    {!usage && !failed && <p className="quick-usage-note" role="status">Loading quota readings…</p>}
     {failed && <p className="quick-usage-note" role="alert">
-      Quota readings unavailable.{usage ? " Showing the last successful reading." : ""}{" "}
+      Quota readings unavailable.{" "}
       <button type="button" onClick={() => setRetry(value => value + 1)}>Retry</button>
     </p>}
   </section>;
