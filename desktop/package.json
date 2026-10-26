@@ -1,6 +1,6 @@
 {
   "name": "botling-desktop",
-  "version": "2.0.0-dev.20261026.8",
+  "version": "2.0.0-dev.20261026.9",
   "private": true,
   "description": "Botling 2.0: cross-platform desktop app (React + TypeScript + Electron).",
   "main": "out/main/main.cjs",
