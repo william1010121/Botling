@@ -483,6 +483,9 @@ body.panel-mode #scroller, body.panel-mode #composer-slot { display: none; }
 /* Keep tool traces readable without pushing past the avatar on narrow chats. */
 .bubble.working { min-width: min(280px, calc(100% - var(--chat-avatar-size) - 10px)); }
 .bubble.working .dots { padding: 8px 0 0; }
+/* Codex waiting to try a refused request again (429): why the dots go on so long. */
+.bubble.working .retry-note { font-size: 13px; color: var(--orange-text); }
+.bubble.working > * + .retry-note { padding-top: 6px; }
 
 /* Watching a subagent (read only): "Main › Review PR #7  [Claude subagent]   Sonnet · …", no input box. */
 #subagent-bar {

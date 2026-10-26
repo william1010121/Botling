@@ -38,6 +38,7 @@ import { join } from "node:path";
 import { writeFileAtomic } from "../durable/atomic";
 import { processTreeAdapter, type ManagedProcess, type ProcessTreeAdapter, type TerminateResult } from "../process/tree";
 import { childEnvironment } from "./runner";
+import { codexLogsFile, codexRetryAt } from "./codex-retry-log";
 import { cliStartError, resolveExecutable } from "../process/executable";
 import { activity, type StreamItem } from "./stream";
 import type { HeadExit, HeadHandlers } from "./head";
@@ -59,7 +60,13 @@ export type CodexItem =
   /** A monitored command ended: its step (from an earlier turn) is done. */
   | { kind: "monitorEnded"; id: string; output: string; failed: boolean }
   /** `app_routines` changed the bot's routines. */
-  | { kind: "routinesChanged" };
+  | { kind: "routinesChanged" }
+  /**
+   * The coordinator's request was turned away and Codex will try again (`error` with willRetry:
+   * "Reconnecting... 1/5"): rateLimited for HTTP 429, else connection. `retryAt` (ms) comes from
+   * Codex's own log (codex-retry-log.ts) when the head finds it; null: not known (yet).
+   */
+  | { kind: "apiRetry"; thread: string; attempt: number; max: number; reason: "rateLimited" | "connection"; retryAt: number | null };
 
 export type CodexOutput =
   | { kind: "write"; value: Record<string, unknown> }
@@ -443,12 +450,28 @@ export class CodexSession {
       }
       case "turn/completed":
         return params.turn ? this.turnCompleted(params.turn) : [];
+      case "error":
+        return this.retrying(params);
       case "thread/tokenUsage/updated":
         if (params.tokenUsage?.total && typeof params.tokenUsage.total === "object") this.tokensTotal = codexTokens(params.tokenUsage.total);
         return [];
       default:
         return [];
     }
+  }
+
+  /** An `error` Codex will retry on the coordinator's turn (one it gives up on ends the turn: `turn/completed`). */
+  private retrying(params: any): CodexOutput[] {
+    if (params.willRetry !== true || !this.threadId || params.threadId !== this.threadId) return [];
+    const error = params.error && typeof params.error === "object" ? params.error : {};
+    const count = /(\d+)\s*\/\s*(\d+)/.exec(typeof error.message === "string" ? error.message : "");
+    const info = error.codexErrorInfo;
+    const variant = info && typeof info === "object" ? Object.values(info)[0] as { httpStatusCode?: unknown } | undefined : undefined;
+    const limited = variant?.httpStatusCode === 429 || info === "rateLimitExceeded" || info === "serverOverloaded";
+    return [this.item({
+      kind: "apiRetry", thread: this.threadId, attempt: count ? Number(count[1]) : 1, max: count ? Number(count[2]) : 0,
+      reason: limited ? "rateLimited" : "connection", retryAt: null,
+    })];
   }
 
   private serverRequest(method: string, rpcId: unknown, params: any): CodexOutput[] {
@@ -1395,6 +1418,8 @@ export interface CodexHeadConfig {
   autoMode?: boolean;
   /** More folders it may write (its `--add-dir` folders; 1.x's `writableRoots`). */
   writableRoots?: string[];
+  /** Codex's log, read for when a retry goes (undefined: CODEX_HOME's logs_2.sqlite; null: never read). */
+  retryLog?: string | null;
 }
 
 /** One long-lived `codex app-server` for one bot session: `CodexSession` over its stdio. */
@@ -1410,6 +1435,8 @@ export class CodexHead {
   private savedWorkers = "";
   private savedMonitors = "";
   readonly session: CodexSession;
+  /** Which retry notification the log is being read for (a newer one wins). */
+  private retryLookup: number | null = null;
   private exitedResolve!: () => void;
   readonly exited = new Promise<void>((resolve) => (this.exitedResolve = resolve));
   running = false;
@@ -1470,6 +1497,31 @@ export class CodexHead {
     this.perform(this.session.start());
   }
 
+  /**
+   * When the retry goes, from Codex's log (read-only, codex-retry-log.ts): a few tries over about
+   * 25 s, as codex 0.163.0 writes its log rows in batches (seen about 10 s late). Found: the same
+   * item again with `retryAt` (the bot takes it only while that attempt is still the one it shows).
+   */
+  private findRetryTime(item: Extract<CodexItem, { kind: "apiRetry" }>) {
+    const file = this.config.retryLog === undefined ? codexLogsFile(childEnvironment(this.config.env)) : this.config.retryLog;
+    if (!file) return;
+    const since = Date.now() - 2_000;
+    const lookup = this.retryLookup = (this.retryLookup ?? 0) + 1;
+    const look = (waits: number[]) => {
+      const [wait, ...later] = waits;
+      if (wait === undefined) return;
+      setTimeout(() => {
+        if (this.closed || this.retryLookup !== lookup) return;
+        void codexRetryAt({ file, thread: item.thread, attempt: item.attempt, since }).then((at) => {
+          if (this.closed || this.retryLookup !== lookup) return;
+          if (at === null) return look(later);
+          this.handlers.onItem({ ...item, retryAt: at });
+        });
+      }, wait).unref?.();
+    };
+    look([500, 3_000, 4_000, 4_000, 4_000, 8_000]);
+  }
+
   private read(chunk: string) {
     this.printed = true;
     this.buffer += chunk;
@@ -1507,6 +1559,7 @@ export class CodexHead {
           break;
         case "item":
           this.handlers.onItem(output.item);
+          if (output.item.kind === "apiRetry") this.findRetryTime(output.item);
           break;
         case "thread":
           this.config.threads.save(output.id, this.config.sessionId);

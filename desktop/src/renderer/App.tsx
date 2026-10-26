@@ -366,6 +366,9 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
 }
 
 function status(bot: BotView): string {
+  // An outage first, then Codex waiting to retry, then claude retrying the API (both shown as cut off).
+  if (bot.connection === "disconnected") return "disconnected";
+  if (bot.working && bot.codexRetry && !bot.approvals) return "retrying";
   if (bot.connection) return "disconnected";
   if (bot.working) return "working";
   if (bot.approvals) return "waiting";
@@ -376,6 +379,8 @@ function statusText(bot: BotView): string {
   if (bot.role === "group") return `${bot.members?.length ?? 0} bot${bot.members?.length === 1 ? "" : "s"}`;
   // 1.x Workspace+Components.statusText: an outage wins over work; approvals win over retries.
   if ((bot.phase === "awake" || bot.phase === "asleep") && bot.connection === "disconnected") return "網路中斷";
+  // Codex waiting to try a refused request again (the chat's typing bubble says when).
+  if (bot.working && bot.codexRetry && !bot.approvals) return bot.codexRetry.reason === "rateLimited" ? "Codex rate limited, retrying…" : "Codex reconnecting…";
   if (bot.phase === "awake" && bot.connection === "retrying" && !bot.approvals) return "網路中斷，重試中…";
   if (bot.working && bot.approvals) return "Waiting for your answer";
   if (bot.working) return "Writing…";

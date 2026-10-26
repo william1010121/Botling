@@ -420,6 +420,8 @@ export interface ChatState {
   working: boolean;
   /** No coordinator turn is active; worker cards continue independently. */
   waitingForWorkers?: boolean;
+  /** Codex waits to try a refused request again (rateLimited: HTTP 429): attempt of max, and when it goes (ms; null: not known). */
+  retrying?: { attempt: number; max: number; reason: "rateLimited" | "connection"; retryAt: number | null } | null;
   /** The bot's face for the typing bubble. */
   avatar: string;
   placeholder: string;

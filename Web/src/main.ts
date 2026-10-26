@@ -4,7 +4,7 @@ import { buildNear, detailReply, keepFrames, releaseFrames } from "./components"
 import { startTaskTicks, taskOutput } from "./tasks";
 import { jumpToTask } from "./task-cards";
 import { Composer, sendFile } from "./composer";
-import { extensions, feedback, makeComponents, messageElement, typingElement, updateTypingElement } from "./messages";
+import { extensions, feedback, makeComponents, messageElement, refreshRetryNote, typingElement, updateTypingElement } from "./messages";
 import { SpecPanel } from "./spec";
 import { fillSubagentBar, subagentLiveElement, subagentMessageElement } from "./subagent";
 import { PinArea } from "./pins";
@@ -59,6 +59,7 @@ class Chat {
   /** The components object `componentsText` was made from (a patch hands the same one back). */
   private componentsSeen: unknown = null;
   private typing: HTMLElement | null = null;
+  private retryTimer: ReturnType<typeof setInterval> | null = null;
   private workerWaiting: HTMLElement | null = null;
   private botID: string | null = null;
   private last: ChatState | null = null;
@@ -208,11 +209,21 @@ class Chat {
 
     this.catchUp.update(state, (id) => this.drawn.get(id)?.element ?? null);
 
+    const retry = state.working && !state.subagent ? state.retrying ?? null : null;
     if (state.working && !state.subagent && this.typing?.dataset.avatar === state.avatar) {
-      updateTypingElement(this.typing, state.live ?? []);
+      updateTypingElement(this.typing, state.live ?? [], retry);
     } else {
       this.typing?.remove();
-      this.typing = !state.working ? null : state.subagent ? subagentLiveElement(state.live ?? []) : typingElement(state.avatar, state.live ?? []);
+      this.typing = !state.working ? null : state.subagent ? subagentLiveElement(state.live ?? []) : typingElement(state.avatar, state.live ?? [], retry);
+    }
+    // Its "about 40 s" counts down while it waits.
+    if (this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
+    const retryAt = retry?.retryAt;
+    if (retry && retryAt != null && retryAt > Date.now()) {
+      this.retryTimer = setInterval(() => {
+        refreshRetryNote(this.typing, retry);
+        if (Date.now() >= retryAt && this.retryTimer) { clearInterval(this.retryTimer); this.retryTimer = null; }
+      }, 1000);
     }
     if (this.typing && this.list.lastElementChild !== this.typing) this.list.append(this.typing);
     // Workers have their own live cards. An idle coordinator has no thinking animation.

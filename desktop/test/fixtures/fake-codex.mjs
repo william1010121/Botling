@@ -17,6 +17,11 @@
 //   /monitor <cmd>  — asks the app to run <cmd> as a monitored command (app_monitor_start) and ends its turn;
 //                     the app's app_monitor_result wakes it: "Monitor <status>, exit <code>: <stdout>"
 //   /routine <json> — calls app_routines with <json> as its arguments; says the result
+//   /ratelimit <text> — the API answers 429: as codex 0.163.0 does, it logs its retry to
+//                     $CODEX_HOME/logs_2.sqlite (if that file is there; "1/5 in 40s") and sends an
+//                     `error` with willRetry, then waits for FAKE_CODEX_RETRY_GATE=<file> (or
+//                     FAKE_CODEX_TURN_MS), says "Retried." as commentary, waits for <file>.done
+//                     and answers exactly <text>
 // command/exec runs the command for real (in its cwd, through the shell it names); command/exec/terminate ends it.
 // A report turn (an app_task_result tool output) records a checkpoint and says what the worker
 // reported ("…/nocheckpoint" in the report: it records none). The tidy note hands the memory file
@@ -35,7 +40,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 
 // `codex exec` as Catch-up runs it: reads the selected messages from the prompt and writes 1–3
@@ -195,7 +200,7 @@ async function coordinatorTurn(thread, turn, text) {
     say(thread, turn, peer ? "<no-reply/>" : `I take it: ${said.last.slice(solo[0].length)}`);
     return complete(thread, turn);
   }
-  const match = /^\/(say|slow|tool|worker|choices|monitor|routine)\b\s*/.exec(said.last);
+  const match = /^\/(say|slow|tool|worker|choices|monitor|routine|ratelimit)\b\s*/.exec(said.last);
   const directive = match?.[1] ?? null;
   const rest = match ? said.last.slice(match[0].length) : said.all;
   if (directive === "slow") {
@@ -204,6 +209,24 @@ async function coordinatorTurn(thread, turn, text) {
       await sleep(40);
     }
     return complete(thread, turn, "interrupted");
+  }
+  if (directive === "ratelimit") {
+    const db = process.env.CODEX_HOME ? join(process.env.CODEX_HOME, "logs_2.sqlite") : null;
+    const now = Date.now();
+    const body = `session_loop{thread_id=${thread}}:run_sampling_request{turn_id=${turn}}: stream disconnected - retrying sampling request (1/5 in 40.000123s)... turn_id=${turn} retries=1 max_retries=5 sampling_error=exceeded retry limit, last status: 429 Too Many Requests`;
+    if (db && existsSync(db)) {
+      spawnSync("sqlite3", [db, `INSERT INTO logs (ts, ts_nanos, level, target, feedback_log_body, thread_id) VALUES (${Math.floor(now / 1000)}, ${(now % 1000) * 1_000_000}, 'WARN', 'codex_core::responses_retry', '${body}', '${thread}');`]);
+    }
+    notify("error", { error: { message: "Reconnecting... 1/5", codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } }, additionalDetails: "exceeded retry limit, last status: 429 Too Many Requests", misalignment: null }, willRetry: true, threadId: thread, turnId: turn });
+    const gate = process.env.FAKE_CODEX_RETRY_GATE;
+    if (gate) while (!existsSync(gate) && !state.turn?.interrupted) await sleep(25);
+    else await sleep(Number(process.env.FAKE_CODEX_TURN_MS ?? 30));
+    // The retry went through: a step, then (with a gate) the answer once <gate>.done exists.
+    say(thread, turn, "Retried.", "commentary");
+    if (gate) while (!existsSync(`${gate}.done`) && !state.turn?.interrupted) await sleep(25);
+    if (state.turn?.interrupted) return complete(thread, turn, "interrupted");
+    say(thread, turn, rest);
+    return complete(thread, turn);
   }
   if (directive === "tool") {
     const command = rest || "echo hi";

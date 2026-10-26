@@ -362,6 +362,8 @@ export class Bot {
   /** Cut off by the network (1.x's `outage`): it waits for the network to come back (`networkRestored`) to carry on. */
   outage: Outage | null = null;
   private retryingConnection = false;
+  /** Its Codex head waits to try a refused request again (BotView.codexRetry): until its next item, or the turn's end. */
+  private codexRetry: NonNullable<BotView["codexRetry"]> | null = null;
   /** Subagents whose last line was claude's connection error (1.x's `cutOffByNetwork`). */
   private cutOffByNetwork = new Set<string>();
   /** When the turn under way last showed a step (1.x's `lastProgress`, ms), and each subagent's (`subagentProgress`). */
@@ -1129,6 +1131,7 @@ export class Bot {
       phase,
       working: this.working || !!partner?.working,
       connection: this.outage || partner?.outage ? "disconnected" : this.retryingConnection || partner?.retryingConnection ? "retrying" : null,
+      codexRetry: this.codexRetry ?? partner?.codexRetry ?? null,
       approvals: this.approvals.size + (partner?.approvals.size ?? 0),
       unread: this.unread,
       subagents: this.subagents.running.length + (partner?.subagents.running.length ?? 0),
@@ -2322,6 +2325,9 @@ export class Bot {
       if (!this.retryingConnection) { this.retryingConnection = true; this.updated(); }
       return;
     }
+    // Codex waiting on a retry is no step either; the bot shows it until the turn moves on.
+    if (item.kind === "apiRetry") return this.noteCodexRetry(item);
+    if (!subagentOf(item) && item.kind !== "managedPending" && item.kind !== "rateLimits") this.clearCodexRetry();
     if (item.kind === "connectionLost") {
       if (item.parent) this.cutOffByNetwork.add(item.parent);
       else if (this.turn?.open && this.turn.head === head) this.turn.lostConnection = true;
@@ -2661,6 +2667,7 @@ export class Bot {
     if (!turn.open) return;
     turn.open = false;
     if (this.turn === turn) this.turn = null;
+    this.clearCodexRetry();
     if (turn.origin === "tidy") {
       turn.onReply?.(status === "done" ? turn.reply.text : "");
       this.finished.set(turn.id, status);
@@ -3150,6 +3157,7 @@ export class Bot {
     const lostSession = this.session.started ? this.session.sessionId : null;
     this.head = null;
     this.retryingConnection = false;
+    this.codexRetry = null;
     this.clearIdle();
     this.ignoreResults = 0;
     // Paused work went with the process (1.x drops `pausedWork` when the process exits).
@@ -3339,6 +3347,21 @@ export class Bot {
   // Quiet runs (1.x's `checkStall`, `noteProgress`)
 
   /** Something happened in the turn under way (or one starts). */
+  private noteCodexRetry(item: Extract<CodexItem, { kind: "apiRetry" }>) {
+    const shown = this.codexRetry;
+    // A late time for an attempt no longer shown (the turn moved on, or a newer attempt came) is dropped.
+    if (item.retryAt !== null && (!shown || shown.attempt !== item.attempt || shown.retryAt !== null)) return;
+    if (item.retryAt === null && !this.turn?.open) return;
+    this.codexRetry = { attempt: item.attempt, max: item.max, reason: item.reason, retryAt: item.retryAt };
+    this.updated();
+  }
+
+  private clearCodexRetry() {
+    if (!this.codexRetry) return;
+    this.codexRetry = null;
+    this.updated();
+  }
+
   private noteProgress() {
     this.lastProgress = Date.now();
     this.stallReminded.delete("");
