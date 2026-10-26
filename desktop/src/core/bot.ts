@@ -8,7 +8,7 @@
 //   reactions intro before the user's words. The app starting counts as waking.
 // - Sleeping: after `idleMs` with nothing under way (no turn, approval, waiting message or running
 //   subagent) the bot tidies — the 1.x "tidy" turn, which updates memory.md and is never shown —
-//   then its head's stdin is closed. Quitting the app tidies awake bots too (bounded by `quitTidyMs`).
+//   then its head's stdin is closed. Quitting the app tidies awake bots too, with no time limit (1.x).
 // - One turn at a time. A message while a reply is written (1.x steering):
 //   · the turn answers only the user, with no approval open and no subagent at work: what it said
 //     so far stays as a bubble marked cut off, and the earlier message and the new one go to claude
@@ -159,7 +159,7 @@ export interface BotOptions {
   interruptGraceMs: number;
   /** The most a tidy turn may take before the head is put to sleep anyway. */
   tidyTimeoutMs?: number;
-  /** On quit, how long an awake bot may tidy (0: not at all). */
+  /** On quit, how long an awake bot may tidy (0: not at all; unset or Infinity: as long as it takes, as in 1.x). */
   quitTidyMs?: number;
   /** Give a new, empty chat the welcome lines (the main bot of a fresh install). */
   welcome?: boolean;
@@ -3125,7 +3125,7 @@ export class Bot {
       let reply = await this.internal(text, timeoutMs);
       while (this.engine === "codex" && reply !== null && this.head === head && head.running && (this.managedPending || this.turn) && Date.now() < deadline) {
         reply = await new Promise<string | null>((resolve) => {
-          const timer = setTimeout(() => { this.tidyFollowUp = null; resolve(null); }, Math.max(0, deadline - Date.now()));
+          const timer = Number.isFinite(deadline) ? setTimeout(() => { this.tidyFollowUp = null; resolve(null); }, Math.max(0, deadline - Date.now())) : undefined;
           this.tidyFollowUp = (text) => { clearTimeout(timer); this.tidyFollowUp = null; resolve(text); };
         });
       }
@@ -3141,7 +3141,8 @@ export class Bot {
       const turn = this.newTurn("tidy", text, null);
       let settled = false;
       const settle = (value: string | null) => { if (!settled) { settled = true; clearTimeout(timer); resolve(value); } };
-      const timer = setTimeout(() => {
+      // No limit (quitting, as in 1.x): it takes as long as it takes.
+      const timer = Number.isFinite(timeoutMs) ? setTimeout(() => {
         this.log("the tidy did not end in time");
         if (turn.open) {
           turn.open = false;
@@ -3151,7 +3152,7 @@ export class Bot {
           if (turn.sent && turn.head?.running) { this.ignoreResults += 1; turn.head.interrupt(); }
         }
         settle(null);
-      }, timeoutMs);
+      }, timeoutMs) : undefined;
       turn.onReply = (reply) => settle(reply);
       void turn.done.then(() => settle(""));
       this.begin(turn, this.head ?? undefined);
@@ -4215,7 +4216,8 @@ export class Bot {
 
   /** Ends the turn and the head (with its tree) and writes everything out; for quitting. An idle awake bot tidies first (1.x). */
   async shutdown({ tidy = true }: { tidy?: boolean } = {}) {
-    const tidyMs = tidy ? this.options.quitTidyMs ?? 15_000 : 0;
+    // 1.x waits for each awake bot's tidy at quit with no time limit (`putEveryoneToSleep`).
+    const tidyMs = tidy ? this.options.quitTidyMs ?? Number.POSITIVE_INFINITY : 0;
     if (this.claimHold) { clearTimeout(this.claimHold.timer); this.claimHold.turn.resolve("stopped"); this.claimHold = null; }
     const partner = this.partner ? this.partner.shutdown({ tidy }) : Promise.resolve();
     if (this.restartTimer) clearTimeout(this.restartTimer);

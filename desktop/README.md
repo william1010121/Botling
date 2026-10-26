@@ -121,8 +121,8 @@ tests never read the real folder. Try it on a copy: `BOTLING_IMPORT_FROM=… BOT
 
 Other knobs (all optional): `BOTLING_APPROVAL_TIMEOUT_MS` (default 10 min, as 1.x),
 `BOTLING_IDLE_MS` (a head tidies and sleeps after 30 min idle), `BOTLING_TIDY_TIMEOUT_MS` (the tidy
-turn's limit, 5 min), `BOTLING_QUIT_TIDY_MS` (how long an awake bot may tidy when the app quits, 15 s;
-0: no tidy), `BOTLING_1X_DIR` (1.x's data folder, to see whether 1.x has a project open; packaged
+turn's limit, 5 min), `BOTLING_QUIT_TIDY_MS` (how long an awake bot may tidy when the app quits; unset: no limit, as
+in 1.x; 0: no tidy), `BOTLING_1X_DIR` (1.x's data folder, to see whether 1.x has a project open; packaged
 builds use `~/.claudecodebot`, development runs only what this names), `BOTLING_1X_PROCESS` (a regex
 for 1.x's command line, default `…/Contents/MacOS/botling`), `BOTLING_LANGUAGES` (system languages,
 set by main, for the reply language when settings.json names none), `BOTLING_INTERRUPT_GRACE_MS` (how long Stop
@@ -1278,7 +1278,8 @@ Still open:
   Apple notarization (Ed25519 manifest verification is configured separately, above).
 - One real `claude` call to confirm the approval round trip, and one as a real bot (tools on) to
   see the app prompt's choices/task lines from real claude.
-- Is a 15 s tidy on quit acceptable (1.x waits for it), or should quitting skip it?
+- ~~Is a 15 s tidy on quit acceptable (1.x waits for it), or should quitting skip it?~~ Quitting
+  waits for the tidy with no limit, as 1.x does.
 - A Windows 11 machine or VM for spike 4.
 - ~~Plugins' web parts in the chat itself (composer and markdown hooks) need the chat page on an origin
   of its own (no path to the app's bridge); worth doing before third-party web parts are allowed there.~~ (Done in Phase 4a.)

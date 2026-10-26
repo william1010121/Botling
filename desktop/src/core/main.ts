@@ -214,7 +214,8 @@ const core = new Core({
   idleMs: number(process.env.BOTLING_IDLE_MS, 50 * 60_000),
   interruptGraceMs: number(process.env.BOTLING_INTERRUPT_GRACE_MS, 2_000),
   tidyTimeoutMs: number(process.env.BOTLING_TIDY_TIMEOUT_MS, 5 * 60_000),
-  quitTidyMs: number(process.env.BOTLING_QUIT_TIDY_MS, 15_000),
+  // Quitting waits for awake bots to tidy their notes, with no time limit, as in 1.x (`putEveryoneToSleep`).
+  quitTidyMs: number(process.env.BOTLING_QUIT_TIDY_MS, Number.POSITIVE_INFINITY),
   routineTickMs: number(process.env.BOTLING_ROUTINE_TICK_MS, 30_000),
   summarizer: summarizer(),
   classifier: classifier(),

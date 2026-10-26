@@ -220,8 +220,10 @@ export class CoreClient {
     const child = this.child;
     if (!child) return Promise.resolve();
     return new Promise((resolve) => {
-      // Awake bots tidy their notes before the core exits (BOTLING_QUIT_TIDY_MS, 15 s at most each, in parallel).
-      const timer = setTimeout(() => { void this.endHosts().then(resolve); }, Number(this.options.env.BOTLING_QUIT_TIDY_MS ?? 15_000) + 5_000);
+      // Awake bots tidy their notes before the core exits, in parallel, with no time limit as in 1.x
+      // (`applicationShouldTerminate` waits for `putEveryoneToSleep`); BOTLING_QUIT_TIDY_MS sets one for tests.
+      const limit = Number(this.options.env.BOTLING_QUIT_TIDY_MS);
+      const timer = this.options.env.BOTLING_QUIT_TIDY_MS && Number.isFinite(limit) ? setTimeout(() => { void this.endHosts().then(resolve); }, limit + 5_000) : undefined;
       child.once("exit", () => { clearTimeout(timer); void this.endHosts().then(resolve); });
       child.kill();
     });
