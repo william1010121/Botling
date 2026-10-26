@@ -366,6 +366,7 @@ export function App({ client, store }: { client: Client; store: WorkspaceStore }
 }
 
 function status(bot: BotView): string {
+  if (bot.connection) return "disconnected";
   if (bot.working) return "working";
   if (bot.approvals) return "waiting";
   return bot.phase;
@@ -373,6 +374,9 @@ function status(bot: BotView): string {
 
 function statusText(bot: BotView): string {
   if (bot.role === "group") return `${bot.members?.length ?? 0} bot${bot.members?.length === 1 ? "" : "s"}`;
+  // 1.x Workspace+Components.statusText: an outage wins over work; approvals win over retries.
+  if ((bot.phase === "awake" || bot.phase === "asleep") && bot.connection === "disconnected") return "網路中斷";
+  if (bot.phase === "awake" && bot.connection === "retrying" && !bot.approvals) return "網路中斷，重試中…";
   if (bot.working && bot.approvals) return "Waiting for your answer";
   if (bot.working) return "Writing…";
   if (bot.phase === "tidying") return "Tidying its notes…";
@@ -474,6 +478,7 @@ function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExp
   const [adding, setAdding] = useState(false);
   const order = railOrder(bots, pinned);
   const pinnedCount = pinned.length;
+  const tipBot = tip ? bots.find((bot) => bot.id === tip.bot.id) : null;
   return (
     <aside className="rail-strip" aria-label="Bots (folded)">
       <div className="rail-top drag"><RailToggle collapsed onToggle={onExpand} /></div>
@@ -486,21 +491,22 @@ function RailStrip({ bots, pinned, look, shown, waiting, onSelect, onMenu, onExp
             <div key={bot.id} className="strip-entry">
               {index === 1 && <div className="strip-rule" />}
               {pinnedCount > 0 && index === 1 + pinnedCount && <div className="strip-rule short" />}
-              <button type="button" className={`strip-bot${bot.id === shown ? " selected" : ""}${asleep ? " asleep" : ""}${bot.working ? " working" : ""}`} data-bot={bot.id}
+              <button type="button" className={`strip-bot${bot.id === shown ? " selected" : ""}${asleep ? " asleep" : ""}${bot.working ? " working" : ""}${bot.connection ? " disconnected" : ""}`} data-bot={bot.id}
                 aria-label={[bot.name, ...parts].join(", ")} onClick={() => onSelect(bot.id)}
                 onMouseEnter={(event) => setTip({ bot, y: event.currentTarget.getBoundingClientRect().top + 20 })} onMouseLeave={() => setTip(null)}
                 onContextMenu={bot.role !== "main" && bot.id !== MAINTAINER_BOT_ID ? (event) => { event.preventDefault(); onMenu(bot, event.clientX, event.clientY); } : undefined}>
                 {bot.role === "group" ? <GroupFace size={28} /> : <img src={faceURL(bot, look, { asleep, working: bot.working, waiting: bot.approvals > 0 })} alt="" />}
+                {bot.connection && <span className="strip-disconnected" aria-hidden="true">!</span>}
                 {unread && <span className="strip-unread" aria-hidden="true" />}
               </button>
             </div>
           );
         })}
       </nav>
-      {tip && (
+      {tip && tipBot && (
         <div className="rail-tip" role="tooltip" style={{ top: tip.y }}>
-          <div className="rail-tip-title">{tip.bot.name}</div>
-          <div className="rail-tip-detail">{[statusText(tip.bot), waiting(tip.bot.id) ? "waiting on you" : null, tip.bot.unread > 0 && tip.bot.id !== shown ? `${tip.bot.unread > 99 ? "99+" : tip.bot.unread} unread` : null].filter(Boolean).join(" · ")}</div>
+          <div className="rail-tip-title">{tipBot.name}</div>
+          <div className="rail-tip-detail">{[statusText(tipBot), waiting(tipBot.id) ? "waiting on you" : null, tipBot.unread > 0 && tipBot.id !== shown ? `${tipBot.unread > 99 ? "99+" : tipBot.unread} unread` : null].filter(Boolean).join(" · ")}</div>
         </div>
       )}
       <div className="strip-add">

@@ -361,6 +361,7 @@ export class Bot {
   private managedPending = false;
   /** Cut off by the network (1.x's `outage`): it waits for the network to come back (`networkRestored`) to carry on. */
   outage: Outage | null = null;
+  private retryingConnection = false;
   /** Subagents whose last line was claude's connection error (1.x's `cutOffByNetwork`). */
   private cutOffByNetwork = new Set<string>();
   /** When the turn under way last showed a step (1.x's `lastProgress`, ms), and each subagent's (`subagentProgress`). */
@@ -979,7 +980,10 @@ export class Bot {
   private subagentRows() {
     // 1.x shows the owning head's navigation avatar even for a single-head bot.
     const rows = [...this.subagents.rows(this.engine), ...(this.partner?.subagents.rows(this.partner.engine) ?? [])];
-    return rows.slice(-100);
+    return rows.slice(-100).map((row) => ({
+      ...row,
+      waitingForNetwork: (this.subagents.get(row.id) ? this.outage : this.partner?.outage)?.subagents.includes(row.id) ?? false,
+    }));
   }
 
   /** The rows changed: the windows hear of it once (`force`: always). */
@@ -1124,6 +1128,7 @@ export class Bot {
       folder: this.profile.folder.slice(0, 4_000),
       phase,
       working: this.working || !!partner?.working,
+      connection: this.outage || partner?.outage ? "disconnected" : this.retryingConnection || partner?.retryingConnection ? "retrying" : null,
       approvals: this.approvals.size + (partner?.approvals.size ?? 0),
       unread: this.unread,
       subagents: this.subagents.running.length + (partner?.subagents.running.length ?? 0),
@@ -2313,7 +2318,10 @@ export class Bot {
     if (head !== this.head || this.ending.has(head)) return;
     this.settleSessionSchedules();
     // claude retrying the API is no step (1.x's `noteProgress(of:)` skips it).
-    if (item.kind === "connectionTrouble") return;
+    if (item.kind === "connectionTrouble") {
+      if (!this.retryingConnection) { this.retryingConnection = true; this.updated(); }
+      return;
+    }
     if (item.kind === "connectionLost") {
       if (item.parent) this.cutOffByNetwork.add(item.parent);
       else if (this.turn?.open && this.turn.head === head) this.turn.lostConnection = true;
@@ -3141,6 +3149,7 @@ export class Bot {
     const cutOff = lostToNetwork ? this.subagents.running.map((subagent) => subagent.id) : [];
     const lostSession = this.session.started ? this.session.sessionId : null;
     this.head = null;
+    this.retryingConnection = false;
     this.clearIdle();
     this.ignoreResults = 0;
     // Paused work went with the process (1.x drops `pausedWork` when the process exits).
@@ -3221,6 +3230,7 @@ export class Bot {
     for (const id of subagents) if (!record.subagents.includes(id)) record.subagents.push(id);
     if (lostSession) record.lostSession = lostSession;
     this.outage = record;
+    this.retryingConnection = false;
     this.clearIdle();
     this.updated();
   }
@@ -3235,6 +3245,7 @@ export class Bot {
     const outage = this.outage;
     if (!outage) return;
     this.outage = null;
+    this.retryingConnection = false;
     const elapsed = Math.max(0, now - outage.since);
     const warm = elapsed <= WARM_WINDOW_MS;
     const cut: CutOff[] = outage.subagents.flatMap((id) => {
@@ -3337,6 +3348,7 @@ export class Bot {
     const id = subagentOf(item);
     if (id) { this.subagentProgress.set(id, Date.now()); this.stallReminded.delete(id); }
     this.noteProgress();
+    if (this.retryingConnection) { this.retryingConnection = false; this.updated(); }
   }
 
   /**
