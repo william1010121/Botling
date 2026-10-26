@@ -282,11 +282,7 @@ export class Plugins {
         const parsed = SendParams.safeParse(params);
         const plugin = parsed.success ? this.loaded(parsed.data.plugin) : null;
         if (!parsed.success || !plugin) return;
-        // 2.0: talking to a bot as the user needs the "bots" permission (1.x lets any plugin).
-        if (!plugin.manifest.ccb?.permissions?.includes("bots")) {
-          world.log(`plugin ${plugin.manifest.name}: bots.send refused (no "bots" permission)`);
-          return;
-        }
+        // As 1.x: any loaded plugin may talk to a bot as the user (only bots.create needs "bots").
         world.send(parsed.data.bot, parsed.data.text);
         return;
       }
