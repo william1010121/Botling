@@ -53,7 +53,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve as resolvePathOf } from "node:path";
 import { fileURLToPath } from "node:url";
-import { answerLabel, attachmentList, attachmentsFolder, imageMediaType, keep } from "./attachments";
+import { answerLabel, attachmentKind, attachmentList, attachmentsFolder, imageMediaType, keep, namesPath } from "./attachments";
 import { readSpec, sameSpec, type ComponentSpec } from "./specs";
 import { parseFeedback } from "./feedback";
 import { FOLLOW_UP, SUBAGENT_CALLBACK, TERMINAL_FOLLOW_UP, review, turnEnd, wakeupId, type Check, type ScheduledWakeup, type Signal, type TurnEnd, type WorkerDependency } from "./promise-check";
@@ -2175,8 +2175,13 @@ export class Bot {
     if (this.options.primary) return this.options.primary.attachmentPath(url);
     if (!url.startsWith("file:")) return null;
     const named = this.records.some((record) => record.attachments?.some((file) => file.url === url));
-    if (!named) return null;
-    try { return fileURLToPath(url); } catch { return null; }
+    let path: string;
+    try { path = fileURLToPath(url); } catch { return null; }
+    if (named) return path;
+    // A picture or video a line shows by its local path (`![caption](file:///…/x.png)` or the bare
+    // path), as 1.x's file:// chat page loads it: only image and video files, only ones a line names.
+    if (attachmentKind(path) === "file") return null;
+    return this.records.some((record) => namesPath(record.text, path)) ? path : null;
   }
 
   private compose(turn: Turn, brief: boolean): string {

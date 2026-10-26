@@ -645,8 +645,8 @@ function createWindow() {
 
 const NO_SNIFF = { "X-Content-Type-Options": "nosniff" };
 
-/** A file of the chat origin: the page's own, a plugin's stylesheet (and its fonts), or an attachment the chat names. */
-async function chatFile(url: URL): Promise<Response | null> {
+/** A file of the chat origin: the page's own, a plugin's stylesheet (and its fonts), or an attachment or local picture/video the chat names. */
+async function chatFile(url: URL, request: Request): Promise<Response | null> {
   const path = url.pathname;
   if (CHAT_FILES.test(path)) {
     const response = await net.fetch(pathToFileURL(join(rendererDir, path)).toString());
@@ -662,16 +662,16 @@ async function chatFile(url: URL): Promise<Response | null> {
     const { path: file, type } = answer.result as { path: string; type: string };
     try { return new Response(readFileSync(file), { headers: { "Content-Type": type, ...NO_SNIFF, "Cache-Control": "no-store" } }); } catch { return null; }
   }
-  // A file a message (or the input box) in this bot's chat has attached; never any other path.
+  // A file a message (or the input box) in this bot's chat has attached, or a picture or video a line
+  // shows by its local path; never any other path.
   const attached = /^\/attachment\/([A-Za-z0-9_.:-]{1,64})\/([A-Za-z0-9_-]{1,8000})$/.exec(path);
   if (attached) {
     const answer = await core.request({ type: "attachment.file", botId: attached[1]!, ref: Buffer.from(attached[2]!, "base64url").toString("utf8") });
     if (!answer.ok) return null;
     const { path: file, type } = answer.result as { path: string; type: string };
+    // Streamed, with byte ranges, so a video plays and seeks as in 1.x.
     try {
-      return new Response(readFileSync(file), { headers: {
-        "Content-Type": type, ...NO_SNIFF, "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; media-src 'self'", "Cache-Control": "no-store",
-      } });
+      return await previewResponse(file, request, { type, follow: true, csp: "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; media-src 'self'" });
     } catch { return null; }
   }
   return null;
@@ -695,7 +695,7 @@ function serveApp() {
   protocol.handle("botling-chat", async (request) => {
     const url = new URL(request.url);
     if (url.host !== "chat") return new Response("Not found", { status: 404 });
-    const served = await chatFile(url);
+    const served = await chatFile(url, request);
     if (!served) return new Response("Not found", { status: 404 });
     return served;
   });

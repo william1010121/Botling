@@ -13,10 +13,16 @@ import { EditorView } from "@codemirror/view";
 import { CardBroker, type CardTarget } from "../broker";
 import type { FrameExtras } from "../payload";
 import { APP_ORIGIN, type FrameMessage, type ShellMessage } from "./protocol";
+import { setMediaSource } from "../../../../Web/src/markdown";
+import { localMediaSource } from "../attachment-url";
 
 declare const __LATEX_SOURCE__: string;
 
 observeTraceEditor();
+// Pictures and videos a reply shows by their local path: this page cannot load file://, so they come
+// from the chat origin, which serves those the chat shown names (1.x's file:// page loads them as they are).
+let shownChat: string | undefined;
+setMediaSource((url) => localMediaSource(shownChat, url));
 const origin = APP_ORIGIN;
 const toShell = (message: FrameMessage) => window.parent.postMessage(message, origin);
 const column = installMessageWidth((value) => toShell({ botling: "messageWidth", value }), (active) => toShell({ botling: "messageWidthDrag", active }));
@@ -148,6 +154,8 @@ window.addEventListener("message", (event: MessageEvent) => {
     const early = document.documentElement.dataset.chat === undefined ? typedSoFar() : null;
     inputTrace()?.mark("frame.early.snapshot", () => ({ early, ...inputTrace()!.snapshot() }));
     column.set(message.messageColumnWidth ?? null, message.state.botID);
+    // The chat the page draws, before it draws it (its local pictures are asked for as this bot's).
+    shownChat = message.state.botID;
     window.ccb.setState(message.state);
     inputTrace()?.mark("frame.state.applied", () => inputTrace()!.snapshot());
     if (early) keepTyped(early);

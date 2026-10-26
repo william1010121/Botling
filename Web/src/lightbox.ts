@@ -2,6 +2,7 @@ import { post } from "./bridge";
 import { escapeRegExp, shared } from "./contract";
 import { t } from "./i18n";
 import { escapeHTML } from "./util";
+import { mediaSrc } from "./markdown";
 
 /** Swift's `ImageFile.extensions`: the pictures it lets the lightbox hand to Preview. */
 const imageExtensions = new RegExp(`\\.(${shared.imageExtensions.map(escapeRegExp).join("|")})$`, "i");
@@ -36,7 +37,7 @@ export function openLightbox(url: string, label: string): void {
     <div class="lightbox-stage"><img class="lightbox-image" alt=""></div>
     <div class="lightbox-caption"></div>`;
   const image = box.querySelector<HTMLImageElement>(".lightbox-image")!;
-  image.src = url;
+  image.src = mediaSrc(url);
   image.alt = label;
   const caption = box.querySelector<HTMLElement>(".lightbox-caption")!;
   caption.textContent = label;

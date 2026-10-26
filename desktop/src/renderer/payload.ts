@@ -19,17 +19,8 @@ export interface FrameExtras {
 
 const MINUTE = 60_000;
 
-/**
- * Where the chat origin serves a bot's file: an attachment of one of its lines (its file:// URL) or
- * one waiting in the input box (`pending:<id>`). Main asks the core, which serves only those.
- */
-export function attachmentURL(botId: string, ref: string): string {
-  const bytes = new TextEncoder().encode(ref);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  const encoded = btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
-  return `botling-chat://chat/attachment/${encodeURIComponent(botId)}/${encoded}`;
-}
+export { attachmentURL } from "./attachment-url";
+import { attachmentURL } from "./attachment-url";
 
 function timeOfDay(date: Date): string {
   return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
