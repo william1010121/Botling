@@ -1,6 +1,6 @@
 // A bot's long-lived head, through the built core with the fake CLI in its long-lived mode:
 // one process across turns, approvals (allow once, always, deny, no answer), Stop by interrupt,
-// a crash and its restart, sleeping when idle, and resuming the session after a core restart.
+// a crash (the bot sleeps, as in 1.x), sleeping when idle, and resuming the session after a core restart.
 import { afterEach, describe, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -121,18 +121,20 @@ describe("a bot's head", () => {
     expect(reply).toMatchObject({ state: "stopped", interrupted: true });
   });
 
-  it("a head that crashes fails its turn and is started again, resuming the session", async () => {
+  it("a head that crashes fails its turn and the bot sleeps; the next message wakes a new session (1.x)", async () => {
     const dir = tempDir("head");
     const c = core(dir);
     expect((await turn(c, "first")).event.status).toBe("done");
     const { event } = await turn(c, "/crash");
     expect(event).toMatchObject({ status: "failed" });
     expect(event.text).toBe("partial");
-    await until(() => starts(dir).length === 2, { what: "the restart" });
-    expect(starts(dir)[1]).toMatchObject({ resume: true, session: starts(dir)[0]!.session });
     expect(c.stderr).toMatch(/exited \(3\) unexpectedly/);
-    expect((await turn(c, "/resume")).event.text).toBe(`session ${starts(dir)[0]!.session} resumed=true`);
-    expect(starts(dir)).toHaveLength(2); // The message went to the restarted head.
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    expect(starts(dir)).toHaveLength(1); // Not started again by itself.
+    const next = (await turn(c, "/resume")).event.text;
+    expect(next).toMatch(/resumed=false/);
+    expect(starts(dir)).toHaveLength(2);
+    expect(starts(dir)[1]!.session).not.toBe(starts(dir)[0]!.session);
   });
 
   it("an idle head tidies its notes, then sleeps; the next message wakes a new session, briefed", async () => {
@@ -189,7 +191,7 @@ describe("a bot's head", () => {
     const dir = tempDir("head");
     const c = core(dir, { FAKE_CLAUDE_FORGET: "1" });
     expect((await turn(c, "first")).event.status).toBe("done");
-    // A crash: the restart resumes, which this claude cannot do; the next message gets a new session.
+    // A crash: the bot sleeps; the next message gets a new session.
     expect((await turn(c, "/crash")).event.status).toBe("failed");
     const { event } = await turn(c, "/resume");
     expect(event.text).toMatch(/resumed=false/);

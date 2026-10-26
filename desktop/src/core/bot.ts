@@ -29,8 +29,8 @@
 // - An approval is a chat line with Allow once / Always allow / Don't allow. What a pick means
 //   comes from the button's action, never its words. No answer in time counts as no. Approvals
 //   left open by a restart or a dead head are closed ("No longer needed"), never answered later.
-// - A head that crashes fails the turn it was on and is started again with `--resume` (a few
-//   times, backing off) — 2.0's choice; 1.x lets it sleep and wakes a new session.
+// - A head that crashes fails the turn it was on and the bot is asleep, as in 1.x: the next message
+//   wakes a new session (briefed from memory.md and the chat). A non-zero exit says so in the chat.
 // - A reply's tags are acted on (reply.ts): <choices> become buttons whose pick goes back as the
 //   user's answer, <task> lines move the task cards, <reaction> lines set the bot's reaction,
 //   <no-reply/> leaves a turn claude started itself (a background subagent reporting) unshown.
@@ -284,7 +284,6 @@ export const NO_LONGER_NEEDED = "No longer needed";
 const NO_ANSWER = "No answer in time";
 /** Tools whose "always" would be far broader than it sounds; they are asked every time (`Bot.neverAlways`). */
 const NEVER_ALWAYS = new Set(["Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Monitored command"]);
-const MAX_RESTARTS = 3;
 const NEW_SESSION_DIVIDER = "Couldn't go on in the same session → new session";
 
 export class Bot {
@@ -368,8 +367,6 @@ export class Bot {
   private session: HeadState;
   /** The next head is a new session: its first message carries the wake briefing. */
   private briefing = true;
-  private crashes = 0;
-  private restartTimer: NodeJS.Timeout | null = null;
   /** Its next message starts its process again in the same session (1.x's `restart(_:)`, e.g. "may read …"). */
   private restartPending = false;
   /** Why it starts again before its next message (1.x's `RestartReason`): what it is told, what its divider says. */
@@ -2181,7 +2178,6 @@ export class Bot {
     // It fell asleep before its switch of engine was done: it wakes on the new one.
     if (this.switchTo) { const to = this.switchTo; this.switchTo = null; this.becomeEngine(to); }
     this.restartPending = false;
-    if (this.restartTimer) { clearTimeout(this.restartTimer); this.restartTimer = null; }
     const resume = this.session.started && !this.briefing;
     const prompts = this.prompts();
     const plugins = this.options.plugins?.() ?? { dirs: [], env: {} };
@@ -2647,7 +2643,6 @@ export class Bot {
     this.finished.set(turn.id, status);
     turn.resolve(status);
     if (status === "done") {
-      this.crashes = 0;
       this.bumpUnread();
       const left = parsed.requests.length && this.options.onRequests ? this.options.onRequests(this.owner, parsed.requests) : parsed.requests;
       if (left.length) {
@@ -3028,6 +3023,7 @@ export class Bot {
     if (this.subagents.stopRunning()) { this.saveSubagents(); this.saveTasks(); }
     const why = `${exit.signal ?? exit.code}`;
     const turn = this.turn;
+    let failedTurn = false;
     if (turn?.open && turn.head === head) {
       // A resume of a session claude no longer has: start a new session and send the message again, once.
       if (exit.silent && this.session.started && !turn.retried && !exit.expected && turn.origin !== "tidy" && turn.origin !== "background") {
@@ -3042,6 +3038,7 @@ export class Bot {
         return;
       }
       this.finishTurn(turn, "failed", `The agent exited (${why}) without finishing. ${exit.stderr.slice(-1_000)}`.trim());
+      failedTurn = true;
     }
     const deferred = this.deferred;
     this.deferred = null;
@@ -3054,18 +3051,15 @@ export class Bot {
       // It went to sleep: the next wake is a new session, briefed from memory.md and the chat.
       this.newSession();
     } else if (!this.shuttingDown) {
-      this.crashes += 1;
-      if (this.crashes <= MAX_RESTARTS) {
-        const delay = 1_000 * 2 ** (this.crashes - 1);
-        this.log(`starting it again in ${delay} ms`);
-        this.restartTimer = setTimeout(() => {
-          this.restartTimer = null;
-          if (!this.head && !this.shuttingDown && !this.problem && !this.profile.problem) {
-            try { this.ensureHead(); this.scheduleIdle(); } catch (error) { this.log(`restart failed: ${(error as Error).message}`); }
-          }
-        }, delay);
-      } else {
-        this.log(`it crashed ${this.crashes} times in a row; it starts again with the next message`);
+      // Nobody asked it to exit (1.x's `.exited`): it is asleep, and the next message wakes a new
+      // session, briefed from memory.md and the chat. A non-zero exit is said in the chat (1.x:
+      // its stderr, else "claude exited unexpectedly"); a failed turn already says it.
+      this.newSession();
+      this.store.saveHead(this.session);
+      if (exit.code !== 0 && !failedTurn) {
+        const stderr = exit.stderr.trim();
+        this.add({ id: newId(), role: "error", text: stderr ? stderr.slice(-2_000) : `${this.engine === "codex" ? "codex" : "claude"} exited unexpectedly (${why})`, date: toSwiftDate() });
+        this.bumpUnread();
       }
     }
     this.updated();
@@ -4220,7 +4214,6 @@ export class Bot {
     const tidyMs = tidy ? this.options.quitTidyMs ?? Number.POSITIVE_INFINITY : 0;
     if (this.claimHold) { clearTimeout(this.claimHold.timer); this.claimHold.turn.resolve("stopped"); this.claimHold = null; }
     const partner = this.partner ? this.partner.shutdown({ tidy }) : Promise.resolve();
-    if (this.restartTimer) clearTimeout(this.restartTimer);
     this.clearIdle();
     this.shuttingDown = true;
     // Messages still waiting never reached claude.
