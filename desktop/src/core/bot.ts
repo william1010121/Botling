@@ -504,10 +504,15 @@ export class Bot {
     return null;
   }
 
-  private makePartner() {
-    if (this.options.primary || this.partner) return;
+  /**
+   * The other head (1.x's `makePartner`): for a bot with two heads, or made when a bot with one first hands
+   * work to the other CLI (`onDemand`, a head it was handed to).
+   */
+  private makePartner(onDemand?: Engine): Bot | null {
+    if (this.options.primary) return null;
+    if (this.partner) return onDemand && this.partner.engine !== onDemand ? null : this.partner;
     const other = otherHead(this.engine);
-    if (!this.headsSettings.engines.includes(other)) return;
+    if (onDemand ? onDemand !== other : !this.headsSettings.engines.includes(other)) return null;
     this.partner = new Bot({ ...this.options, primary: this, engine: other, lock: null, welcome: false });
     // The shared chat holds the partner's lines too: the same records, so a change shows in both.
     const mine = new Map(this.records.map((record, index) => [record.id, index]));
@@ -522,6 +527,7 @@ export class Bot {
         this.records[at] = record;
       }
     }
+    return this.partner;
   }
 
   get id() {
@@ -1283,7 +1289,8 @@ export class Bot {
 
   /** A turn for `head` (this bot's or its partner's), routed there now. */
   private deliverTo(head: Engine, words: string, userId: string | null, extra: Partial<Pick<Turn, "conducted" | "handoffId" | "about" | "origin">> = {}): Turn {
-    const bot = this.botFor(head) ?? this;
+    // Work for a head the bot does not have (a hand-off from a bot with one head): made when first needed (1.x's `bot(for:)`).
+    const bot = this.botFor(head) ?? this.owner.makePartner(head) ?? this;
     const turn = bot.newTurn(extra.origin ?? (userId ? "user" : "app"), words, userId);
     if (extra.conducted) turn.conducted = true;
     if (extra.handoffId) turn.handoffId = extra.handoffId;
@@ -1438,7 +1445,7 @@ export class Bot {
     const about = [record.id, ...[...decisions].sort()];
     const other = otherHead(head);
     if (this.claimHold?.lead === head && this.claimHold.held === other) this.releaseClaim(note, about);
-    else if (this.headsSettings.engines.includes(other)) this.tell(other, note, about);
+    else this.tell(other, note, about);
     this.conduct(actions);
   }
 
@@ -2696,9 +2703,10 @@ export class Bot {
     }
     this.afterTurn();
     // The other head hears the reply; a hand-off in it goes on (`headReplied`).
-    if (status === "done" && this.sharesChat) this.owner.headReplied(record, this.engine, tags.handoff, this.takeHandback(turn), turn.handoffId);
+    // A bot with one head may hand work to the other CLI too (1.x: `sharesChat || tags.handoff`): its
+    // other head is made for it (`makePartner`), and the reply comes back.
+    if (status === "done" && (this.sharesChat || tags.handoff)) this.owner.headReplied(record, this.engine, tags.handoff, this.takeHandback(turn), turn.handoffId);
     else if (this.sharesChat) this.headStopped(this.engine);
-    else if (tags.handoff) this.notice(`Botling 2.0 cannot hand work to ${displayName(tags.handoff.to)} for a bot with one head yet, so nothing happened.`);
     if (status === "done") this.checkPromise(record, turn, parsed.completionSignals);
     this.next();
   }

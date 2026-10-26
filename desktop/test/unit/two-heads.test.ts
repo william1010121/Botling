@@ -51,7 +51,9 @@ describe("a Codex head", () => {
     expect((await bots(c))[0]).toMatchObject({ heads: ["codex"], phase: "awake" });
     // The coordinator: workspace-write, asks first, no shell or native subagents, the app's tools.
     const start = JSON.parse(lines(join(dir, "codex-input.log")).find((entry) => entry.kind === "coordinator-start").text);
-    expect(start).toEqual({ sandbox: "workspace-write", approvalPolicy: "on-request", config: { "features.multi_agent": false, "agents.enabled": false, "features.shell_tool": false, web_search: "disabled" },
+    expect(start).toEqual({ sandbox: "workspace-write", approvalPolicy: "on-request", config: { "features.multi_agent": false, "agents.enabled": false, "features.shell_tool": false, web_search: "disabled",
+        // Its other folders are writable roots, as in 1.x: the main bot's are every bot's notes (here Maintainer's).
+        sandbox_workspace_write: { writable_roots: [join(dir, "plugins", ".bot")] } },
       tools: ["app_routines", "app_monitor_start", "app_monitor_status", "app_monitor_cancel", "app_handoff", "app_send_message", "app_task_checkpoint"] });
     // Its first message is the Codex wake briefing: the memory snapshot inlined, then the words.
     const first = codexInputs(dir)[0]!;
@@ -287,6 +289,23 @@ describe("two heads in one chat", () => {
     expect(heads.handoffs).toMatchObject([{ from: "claude", to: "codex", kind: "review", task: "Check the diff", round: 1, limit: 2, state: "done", lines: [{ who: "claude" }, { who: "codex" }, { who: "claude" }] }]);
     expect(c.of("heads.updated").some((e) => (e.event as any).heads?.rounds?.text === "Review round 1 of 2")).toBe(true);
     expect(JSON.parse(readFileSync(join(dir, "main", "bot.json"), "utf8")).heads.answerWith).toBe("claude");
+  });
+
+  it("a bot with one head hands work to the other CLI too: that head is made for it and its reply comes back (1.x)", async () => {
+    const dir = tempDir("heads");
+    const c = core(dir);
+    await c.call({ type: "chat.send", botId: MAIN, text: `/say Made it faster. <handoff to="codex" kind="review">Check the diff</handoff>` });
+    const back = await until(async () => (await c.chat()).messages.find((m: any) => m.engine === "claude" && m.state === "done" && m.text.startsWith("Done:")), { timeout: 10_000 });
+    expect(back.text).toBe("Done: Did it: Check the diff");
+    const shown = (await c.chat()).messages.filter((m: any) => m.role === "bot" || m.role === "divider" || m.role === "notice").map((m: any) => [m.role, m.engine ?? null, m.text]);
+    expect(shown.slice(-4)).toEqual([
+      ["bot", "claude", "Made it faster."],
+      ["divider", null, "Claude → Codex: Check the diff"],
+      ["bot", "codex", "Did it: Check the diff"],
+      ["bot", "claude", "Done: Did it: Check the diff"],
+    ]);
+    // It still has one head: Settings and the composer are as they were.
+    expect((await bots(c))[0]).toMatchObject({ heads: ["claude"] });
   });
 
   it("a hand-off helps the task its head was on: the card says \"Codex helping: …\" (1.x's noteTaskHandoffs)", async () => {
