@@ -7,6 +7,7 @@ import { build } from "esbuild";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inlineTokens } from "./kit/build.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const resources = join(here, "../Sources/ClaudeCodeBot/Resources");
@@ -46,7 +47,8 @@ await build({
   outfile: join(resources, "host/host.mjs"),
 });
 cpSync(join(here, "src/chat.html"), join(out, "chat.html"));
-cpSync(join(here, "src/chat.css"), join(out, "chat.css"));
+// chat.css with the design tokens (src/tokens.css) in place of its import.
+writeFileSync(join(out, "chat.css"), inlineTokens(readFileSync(join(here, "src/chat.css"), "utf8"), join(here, "src/chat.css")));
 // The viewer draws LaTeX with ccb-latex's code (bundled into viewer.js), so it links the
 // stylesheets that plugin's manifest names, where the plugin is built below.
 const latex = JSON.parse(readFileSync(join(here, "plugins/ccb-latex/package.json"), "utf8"));

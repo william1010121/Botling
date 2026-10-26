@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SettingsChange } from "../../src/contract";
 import { applySetting, readSettings, settingsView, writeSettings } from "../../src/core/settings";
+import { inlineTokens } from "../../../Web/kit/build.mjs";
 import { desktop, tempDir } from "../helpers";
 
 let browser: Browser;
@@ -30,7 +31,7 @@ async function launch(collapsed = false, failSave = false) {
     throw new Error(`Unexpected command: ${cmd.type}`);
   });
   await page.route("**/*", (route) => {
-    if (route.request().url() === "http://sidebar.test/") return route.fulfill({ contentType: "text/html", body: `<html><head><style>${readFileSync(join(desktop, "src/renderer/styles.css"), "utf8")}</style></head><body><div id="root"></div><script>${script.replace(/<\/script/gi, "<\\/script")}</script></body></html>` });
+    if (route.request().url() === "http://sidebar.test/") return route.fulfill({ contentType: "text/html", body: `<html><head><style>${inlineTokens(readFileSync(join(desktop, "src/renderer/styles.css"), "utf8"), join(desktop, "src/renderer/styles.css"))}</style></head><body><div id="root"></div><script>${script.replace(/<\/script/gi, "<\\/script")}</script></body></html>` });
     return route.abort();
   });
   await page.goto("http://sidebar.test/");

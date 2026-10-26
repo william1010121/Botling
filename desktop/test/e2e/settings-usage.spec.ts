@@ -1,7 +1,9 @@
 // Headless Chromium only. Bundles the Settings component, never builds/launches the shared app.
 import { test, expect, chromium, type Browser, type Page } from "@playwright/test";
 import { build } from "esbuild";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { inlineTokens } from "../../../Web/kit/build.mjs";
 import { desktop } from "../helpers";
 
 let browser: Browser, script: string;
@@ -23,7 +25,7 @@ async function open(page: Page, options: { failure?: boolean; pending?: boolean;
   await page.clock.install({ time: now });
   await page.setViewportSize({ width: 1120, height: 820 });
   await page.setContent('<div id="root"></div>');
-  await page.addStyleTag({ path: join(desktop, "src/renderer/styles.css") });
+  await page.addStyleTag({ content: inlineTokens(readFileSync(join(desktop, "src/renderer/styles.css"), "utf8"), join(desktop, "src/renderer/styles.css")) });
   await page.evaluate(({ usage, failure, pending }) => {
     window.usageFixture = usage; window.usageFailure = !!failure; window.usagePending = !!pending; window.usageRequests = 0;
   }, { usage: options.usage ?? fixture(), failure: options.failure, pending: options.pending });

@@ -1,21 +1,9 @@
+@import "../../../Web/src/tokens.css";
 /* Botling 2.0's app chrome (the left column, the chat area's header). The chat itself is the
-   Web/src chat page with its own chat.css. Colours are the Swift app's (Theme.swift / chat.css);
-   change them there first. */
+   Web/src chat page with its own chat.css. Colours are Web/src/tokens.css (the Swift app's,
+   Theme.swift), shared with the chat page and the component kit; desktop/build.mjs puts them in
+   place of the import. */
 :root {
-  --ground: #0E0E10;
-  --side: #141417;
-  --bubble: #1B1B1F;
-  --selected: #26262C;
-  --hover: #1F1F24;
-  --line: #232327;
-  --text: #EDEDF0;
-  --muted: #A0A0A8;
-  --faint: #8E8E96;
-  --chip: #2A2A31;
-  --blue: #4C8DFF;
-  --green: #4CC38A;
-  --orange: #F2A64A;
-  --error: #FF8A80;
   color-scheme: dark;
 }
 
