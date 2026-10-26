@@ -14,6 +14,13 @@ export type Head = "claude" | "codex";
 
 export interface TaskHelp { handoffID: string; head: Head; text: string }
 
+/** One update on a card's timeline (2.x): what the panel's hover card lists from start to now. */
+export type TaskEventKind = "start" | "now" | "waiting" | "you" | "subagent" | "done" | "stopped" | "complete";
+export interface TaskEvent { kind: TaskEventKind; at: number; text?: string }
+const EVENT_KINDS = new Set<TaskEventKind>(["start", "now", "waiting", "you", "subagent", "done", "stopped", "complete"]);
+/** Events a card keeps: its start and the latest ones. */
+export const HISTORY_LIMIT = 40;
+
 export interface TaskCard {
   id: string;
   name: string;
@@ -34,6 +41,8 @@ export interface TaskCard {
   manuallyCompletedAt?: number;
   /** A head named it with a `<task>` line: real work, shown in the panel (2.x; 1.x cards infer it). */
   declared?: boolean;
+  /** Its timeline (2.x; cards saved before have none). */
+  history?: TaskEvent[];
   [key: string]: unknown;
 }
 
@@ -71,9 +80,33 @@ export function readTaskCard(value: unknown): TaskCard | null {
   else delete card.subagentIDs;
   if (raw.stateFromTag !== undefined && !STATES.has(raw.stateFromTag as TaskState)) delete card.stateFromTag;
   if (typeof raw.declared !== "boolean") delete card.declared;
+  if (Array.isArray(raw.history)) card.history = raw.history.filter(isTaskEvent);
+  else delete card.history;
   if (typeof raw.manuallyCompletedAt !== "number" || !Number.isFinite(raw.manuallyCompletedAt)) delete card.manuallyCompletedAt;
   else { card.state = "done"; card.kept = true; }
   return card;
+}
+
+function isTaskEvent(value: unknown): value is TaskEvent {
+  if (!value || typeof value !== "object") return false;
+  const event = value as Record<string, unknown>;
+  return EVENT_KINDS.has(event.kind as TaskEventKind) && typeof event.at === "number" && Number.isFinite(event.at)
+    && (event.text === undefined || typeof event.text === "string");
+}
+
+/** Adds an update to the card's timeline; the same update said again is not a new one. */
+export function note(card: TaskCard, kind: TaskEventKind, at: number, text?: string) {
+  const history = card.history ?? (card.history = []);
+  const last = history.at(-1);
+  if (last && last.kind === kind && last.text === text) return;
+  history.push(text === undefined ? { kind, at } : { kind, at, text });
+  if (history.length > HISTORY_LIMIT) history.splice(history[0]!.kind === "start" ? 1 : 0, history.length - HISTORY_LIMIT);
+}
+
+/** A state the card reached, on its timeline. */
+function noteState(card: TaskCard, at: number) {
+  if (card.state === "done" || card.state === "stopped") note(card, card.state, at);
+  else if (card.state === "waiting") note(card, "waiting", at, card.blocked);
 }
 
 /**
@@ -141,10 +174,11 @@ export class TaskBook {
         existing.messageIDs.push(message);
         if (existing.state !== "done" && existing.state !== "stopped") existing.state = existing.owner ? "running" : "pending";
         existing.updatedAt = at;
+        note(existing, "you", at, provisionalName(text));
         return existing.id;
       }
     }
-    const card: TaskCard = { id: newId(), name: provisionalName(text), state: "pending", createdAt: at, updatedAt: at, messageIDs: [message], startedByMessageID: message, kept: false, subagentIDs: [] };
+    const card: TaskCard = { id: newId(), name: provisionalName(text), state: "pending", createdAt: at, updatedAt: at, messageIDs: [message], startedByMessageID: message, kept: false, subagentIDs: [], history: [{ kind: "start", at }] };
     if (owner) card.owner = owner;
     this.tasks.push(card);
     this.trim();
@@ -188,12 +222,14 @@ export class TaskBook {
     card.helps = [...(card.helps ?? []), help];
   }
 
-  link(subagent: string, taskId: string) {
+  /** A subagent started for the task; `at`, when given, puts it on the card's timeline. */
+  link(subagent: string, taskId: string, at?: number) {
     const card = this.task(taskId);
     if (!card || card.subagentIDs?.includes(subagent)) return;
     if (!Array.isArray(card.subagentIDs)) card.agentLinkHistoryIncomplete = true;
     card.subagentIDs = [...(card.subagentIDs ?? []), subagent];
     card.kept = true;
+    if (at !== undefined) note(card, "subagent", at, subagent);
   }
 
   /** The card a turn works on: the user's message's, its hand-off's, or the reported subagents'. */
@@ -260,7 +296,7 @@ export class TaskBook {
       }
       if (!target) {
         const name = tag.name ?? tag.continues ?? (turn.userText != null ? provisionalName(turn.userText) : "New task");
-        const card: TaskCard = { id: newId(), name, owner: turn.head, state: "running", createdAt: at, updatedAt: at, messageIDs: [], kept: false, subagentIDs: [] };
+        const card: TaskCard = { id: newId(), name, owner: turn.head, state: "running", createdAt: at, updatedAt: at, messageIDs: [], kept: false, subagentIDs: [], history: [{ kind: "start", at }] };
         if (turn.userMessage) card.startedByMessageID = turn.userMessage;
         if (number === 0 && turn.userMessage) card.messageIDs = [turn.userMessage];
         this.tasks.push(card);
@@ -279,7 +315,7 @@ export class TaskBook {
     if (card.manuallyCompletedAt !== undefined) return;
     if (!card.owner) card.owner = head;
     if (card.owner !== head) return;
-    if (asks && isActive(card.state)) card.state = "waiting";
+    if (asks && isActive(card.state)) { card.state = "waiting"; noteState(card, at); }
     else if (card.state === "pending" || card.state === "waiting") card.state = "running";
     card.updatedAt = at;
   }
@@ -292,6 +328,7 @@ export class TaskBook {
     if (!card.owner) card.owner = head;
     if (card.owner !== head) return;
     if (tag.name) card.name = tag.name;
+    const before = { now: card.now, state: card.state, blocked: card.blocked };
     for (const field of ["now", "next", "blocked"] as const) {
       const value = tag[field];
       if (value === undefined) continue;
@@ -301,6 +338,8 @@ export class TaskBook {
     card.state = tag.state ?? (asks ? "waiting" : "running");
     if (tag.state) card.stateFromTag = tag.state;
     card.updatedAt = at;
+    if (card.now && card.now !== before.now) note(card, "now", at, card.now);
+    if (card.state !== before.state || (card.state === "waiting" && card.blocked !== before.blocked)) noteState(card, at);
   }
 
   /** The owner's turn is over: a card it left running without saying so, with nothing of it at work, is done. */
@@ -311,6 +350,7 @@ export class TaskBook {
     if (card.helps?.some((help) => turn.runningHandoffs?.has(help.handoffID))) return;
     card.state = "done";
     card.updatedAt = at;
+    note(card, "done", at);
   }
 
   /** Removes a provisional card `head` may settle (not declared, nothing at work, not closed by you). */
@@ -338,6 +378,7 @@ export class TaskBook {
     if (card.state !== "pending") return false;
     card.state = "stopped";
     card.updatedAt = at;
+    note(card, "stopped", at);
     return true;
   }
 
@@ -357,8 +398,10 @@ export class TaskBook {
   set(id: string, state: TaskState, at: number) {
     const card = this.task(id);
     if (!card || card.manuallyCompletedAt !== undefined) return;
+    const was = card.state;
     card.state = state;
     card.updatedAt = at;
+    if (state !== was) noteState(card, at);
   }
 
   /** Close the card, without changing its head, hand-offs or subagents. Repeated clicks are safe. */
@@ -369,6 +412,7 @@ export class TaskBook {
     card.manuallyCompletedAt = at;
     card.updatedAt = at;
     card.kept = true;
+    note(card, "complete", at);
     return true;
   }
 

@@ -1,5 +1,6 @@
 // The right panel (1.x's DetailPanel): the bot on screen, its Now card (status; a manager's first
-// "In progress" line from its memory.md; the main bot's temporary teams at work) and, for the main
+// "In progress" line from its memory.md; the main bot's temporary teams at work), its tasks grouped
+// into Needs you / Running / Done (design R2-3: a row each, opened in place, a timeline on hover) and, for the main
 // bot, "Waiting on you" — every bot's open question or its memory's "Waiting on you", each opening
 // that bot's chat, with × to ignore it (1.x's WaitingList). Then Results ("Just done" for the main
 // bot: the links handed over in the chat, the newest three) and Settled (the subagents you settled
@@ -8,7 +9,8 @@
 // opening that section beside the strip, and the bot's settings at the bottom. The bot's settings
 // live one level in (1.x's DetailPanel `showingSettings`): the slider button on the name row, or the
 // strip's bottom one, shows them in the overview's place, with Back.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { settledRows, type BotView, type MessageView, type ResultView, type SubagentRowView, type TaskView, type TeamRunView, type WaitingItemView, type WaitingView } from "../contract";
 import { avatarURL, faceURL } from "./avatars";
 import { Icon, SubagentMark } from "./icons";
@@ -148,13 +150,7 @@ function Overview({ bot, bots, waiting, look, status, results, teams, watching, 
   const active = activeTasks(tasks);
   // While a task is under way its card says what the bot does; the bot's own line would be a bare "Writing…" card.
   const showNow = active.length === 0 || (bot.role === "main" && teams.length > 0);
-  const open = openTask(tasks, selectedTask);
-  const waitingTasks = tasks.filter((task) => task.state === "waiting");
   const finished = finishedTasks(tasks);
-  const card = (task: TaskView) => (
-    <TaskCard key={task.id} task={task} now={now} stale={isStale(task, bot.working, now)} messages={messages} folded={isFoldedIntoSummary(task, messages, summarized)}
-      onSelect={onSelectTask} onJump={onJumpToTask} onReport={onAskForReport} onComplete={onCompleteTask} onOpenSubagent={onOpenSubagent} />
-  );
   return (
     <aside className="detail-panel" aria-label="Details">
       <div className="detail-head">
@@ -164,7 +160,7 @@ function Overview({ bot, bots, waiting, look, status, results, teams, watching, 
         <button type="button" className="detail-settings" title={`${bot.name}'s settings`} aria-label="Bot settings" onClick={onSettings}><Icon name="sliders" size={15} /></button>
       </div>
       <section className="detail-section tasks-section">
-        <h3>Tasks</h3>
+        {tasks.length === 0 && <h3>Tasks</h3>}
         {showNow && <div className="now-card">
           <div className="now-line"><span className="now-dot" data-status={status.key} aria-hidden="true" />{status.text}</div>
           {bot.role === "main" && teams.map((run) => (
@@ -175,43 +171,14 @@ function Overview({ bot, bots, waiting, look, status, results, teams, watching, 
             </div>
           ))}
         </div>}
-        <div className="task-list">
-          {/* A finished task pressed (in Just done, on a chip) shows open on top. */}
-          {open && !active.some((task) => task.id === open.id) && card(open)}
-          {active.slice(0, 6).map((task) => (task.id === open?.id ? card(task)
-            : <TaskRow key={task.id} task={task} now={now} stale={isStale(task, bot.working, now)} onSelect={onSelectTask} />))}
-          {active.length === 0 && (doing ? <div className="now-doing">{doing}</div> : !bot.working && <div className="task-none">Nothing under way</div>)}
-        </div>
+        {active.length === 0 && (doing ? <div className="now-doing">{doing}</div> : !bot.working && <div className="task-none">Nothing under way</div>)}
+        <TaskGroups key={bot.id} tasks={tasks} now={now} working={bot.working} messages={messages} summarized={summarized} selected={selectedTask}
+          onSelect={onSelectTask} onJump={onJumpToTask} onReport={onAskForReport} onComplete={onCompleteTask} onOpenSubagent={onOpenSubagent} />
       </section>
-      {(items.length > 0 || waitingTasks.length > 0) && (
+      {items.length > 0 && (
         <section className="detail-section">
           <h3>Waiting on you</h3>
-          {waitingTasks.length > 0 && (
-            <div className="waiting-tasks">
-              {waitingTasks.map((task) => (
-                <button key={task.id} type="button" className="waiting-task" data-task={task.id} onClick={() => onSelectTask(task.id)}>
-                  <span className="task-dot" data-state="waiting" aria-hidden="true" />
-                  <span className="waiting-task-text"><span className="waiting-task-name">{task.name}</span><span className="waiting-task-why">{task.blocked ?? task.now ?? "your reply"}</span></span>
-                  <span className="waiting-chevron" aria-hidden="true">›</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {items.length > 0 && <WaitingList items={items} bots={bots} look={look} onSelect={onSelect} onIgnore={onIgnore} />}
-        </section>
-      )}
-      {finished.length > 0 && (
-        <section className="detail-section done-section">
-          <h3>Just done</h3>
-          <div className="done-tasks">
-            {finished.map((task) => (
-              <button key={task.id} type="button" className="done-task" data-task={task.id} title={task.manuallyCompletedAt ? "Marked complete by you" : undefined} onClick={() => onSelectTask(task.id)}>
-                <span className={`done-mark ${task.state}`} aria-hidden="true">{task.state === "done" ? "✓" : "■"}</span>
-                <span className="done-name">{task.name}</span>
-                <span className="done-time">{taskTime(task.updatedAt, now)}</span>
-              </button>
-            ))}
-          </div>
+          <WaitingList items={items} bots={bots} look={look} onSelect={onSelect} onIgnore={onIgnore} />
         </section>
       )}
       {results.length > 0 && (
@@ -245,12 +212,6 @@ export function activeTasks(tasks: TaskView[]): TaskView[] {
     .sort((a, b) => ((a.state === "waiting" ? 1 : 0) - (b.state === "waiting" ? 1 : 0)) || (new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()));
 }
 
-/** The task shown open: the one pressed, else the latest running one (`TaskSection.open`). */
-export function openTask(tasks: TaskView[], selected: string | null): TaskView | null {
-  if (selected) { const task = tasks.find((candidate) => candidate.id === selected); if (task) return task; }
-  return tasks.filter((task) => task.state === "running").reduce<TaskView | null>((latest, task) => (!latest || new Date(task.updatedAt) > new Date(latest.updatedAt) ? task : latest), null);
-}
-
 /** The latest finished tasks (`DoneTaskRows.finished`). */
 export function finishedTasks(tasks: TaskView[], limit = 3): TaskView[] {
   return tasks.filter((task) => task.state === "done" || task.state === "stopped")
@@ -267,40 +228,127 @@ function taskTime(iso: string, now: number): string {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-/** How a task stands, in a line (`TaskRowView.line`). */
+/** How a task stands, in its row's second line (`TaskRowView.line`; design R2-3). */
 function taskLine(task: TaskView, stale: boolean, now: number): string {
   if (stale) return `May be stuck · No news for ${Math.floor((now - new Date(task.updatedAt).getTime()) / 60_000)} min`;
   switch (task.state) {
     case "pending": return "New message · waiting for a head";
-    case "waiting": return `Waiting on you: ${task.blocked ?? task.now ?? "your reply"}`;
-    case "running": return task.now ? `Now: ${task.now}` : "Running";
-    case "done": return task.manuallyCompletedAt ? "Marked complete by you" : "Done";
-    case "stopped": return "Stopped";
+    case "waiting": return task.blocked ?? task.now ?? "Waiting on your reply";
+    case "running": return task.now ?? "Running";
+    case "done": return `Done · ${taskTime(task.updatedAt, now)}`;
+    case "stopped": return `Stopped · ${taskTime(task.updatedAt, now)}`;
   }
 }
 
 const headName = (engine: string) => (engine === "codex" ? "Codex" : "Claude");
+const isActiveTask = (task: TaskView) => task.state === "pending" || task.state === "running" || task.state === "waiting";
+const minutes = (from: string, now: number) => Math.max(1, Math.floor((now - new Date(from).getTime()) / 60_000));
 
-/** Its state dot, its name and the head that owns it (`TaskHeader`). */
-function TaskHeader({ task, stale, bold }: { task: TaskView; stale: boolean; bold: boolean }) {
+/** The design's round check: Mark complete, on a row and at the open card's top right. */
+function CheckButton({ className, onClick }: { className: string; onClick: () => void }) {
   return (
-    <span className="task-header">
-      <span className="task-dot" data-state={stale ? "stale" : task.state} aria-hidden="true" />
-      <span className={`task-name${bold ? " bold" : ""}`}>{task.name}</span>
-      {task.state === "pending" ? <span className="task-claiming">Claiming…</span>
-        : task.owner ? <span className="task-owner"><span className="task-owner-dot" data-head={task.owner} aria-hidden="true" />{headName(task.owner)}</span> : null}
-    </span>
+    <button type="button" className={className} aria-label="Mark complete" title="Mark complete" onClick={onClick}>
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3.5 8.5l3 3 6-7" /></svg>
+    </button>
   );
 }
 
-/** A task not open: one line on how it stands; pressed, it opens (`TaskRowView`). */
-function TaskRow({ task, now, stale, onSelect }: { task: TaskView; now: number; stale: boolean; onSelect: (id: string) => void }) {
-  const line = taskLine(task, stale, now);
+const Chevron = ({ className }: { className?: string }) => (
+  <svg className={className} width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 3l5 5-5 5" /></svg>
+);
+
+type GroupKey = "waiting" | "running" | "done";
+const GROUPS: { key: GroupKey; title: string }[] = [{ key: "waiting", title: "Needs you" }, { key: "running", title: "Running" }, { key: "done", title: "Done" }];
+const groupOf = (task: TaskView): GroupKey => (task.state === "waiting" ? "waiting" : task.state === "pending" || task.state === "running" ? "running" : "done");
+
+interface TaskListProps {
+  tasks: TaskView[]; now: number; working: boolean; messages: MessageView[]; summarized: ReadonlySet<string> | undefined; selected: string | null;
+  onSelect: (id: string) => void; onJump: (messageId: string, taskId: string) => void; onReport: (task: TaskView, replyTo: string | null) => void;
+  onComplete: (id: string) => void; onOpenSubagent: (row: Pick<SubagentRowView, "id">) => void;
+}
+
+/** How long a row is hovered before its timeline floats beside it. */
+const HOVER_MS = 250;
+
+/**
+ * The task list (design R2-3 "Grouped"): Needs you, Running and Done, each with its count and a
+ * fold (Done starts folded), one dense row per task. A row pressed opens in place; hovered, it
+ * floats the task's timeline to the panel's left.
+ */
+function TaskGroups(props: TaskListProps) {
+  const { tasks, now, working, selected } = props;
+  const [folded, setFolded] = useState<Record<GroupKey, boolean>>({ waiting: false, running: false, done: true });
+  const [hover, setHover] = useState<{ id: string; top: number; right: number } | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancel = () => { if (timer.current) clearTimeout(timer.current); timer.current = null; };
+  useEffect(() => cancel, []);
+  const enter = (id: string, row: HTMLElement) => {
+    cancel();
+    timer.current = setTimeout(() => {
+      const box = row.getBoundingClientRect();
+      setHover({ id, top: box.top + box.height / 2, right: window.innerWidth - box.left + 12 });
+    }, HOVER_MS);
+  };
+  const leave = () => { cancel(); setHover(null); };
+  const lists: Record<GroupKey, TaskView[]> = {
+    waiting: activeTasks(tasks).filter((task) => task.state === "waiting"),
+    running: activeTasks(tasks).filter((task) => task.state !== "waiting"),
+    done: finishedTasks(tasks, Infinity),
+  };
+  const selectedGroup = tasks.find((task) => task.id === selected);
+  const hovered = hover ? tasks.find((task) => task.id === hover.id && task.id !== selected) : undefined;
+  if (!tasks.length) return null;
   return (
-    <button type="button" className="task-row" data-task={task.id} data-state={stale ? "stale" : task.state} onClick={() => onSelect(task.id)} aria-label={`Task ${task.name}: ${line}`}>
-      <TaskHeader task={task} stale={stale} bold={false} />
-      <span className="task-line">{line}</span>
-    </button>
+    <div className="task-groups">
+      {GROUPS.filter((group) => lists[group.key].length > 0).map((group) => {
+        // A task opened from elsewhere (a chip, a link) unfolds its group.
+        const open = !folded[group.key] || (!!selectedGroup && groupOf(selectedGroup) === group.key);
+        return (
+          <section key={group.key} className="task-group" data-group={group.key}>
+            <div className="task-group-head">
+              <h3>{group.title}</h3>
+              <span className="task-group-count" data-group={group.key}>{lists[group.key].length}</span>
+              <button type="button" className="task-group-fold" aria-expanded={open} aria-label={`${open ? "Hide" : "Show"} ${group.title.toLowerCase()}`}
+                onClick={() => setFolded((current) => ({ ...current, [group.key]: open }))}>
+                <Chevron className={open ? "open" : undefined} />
+              </button>
+            </div>
+            {open && (
+              <div className="task-list">
+                {lists[group.key].map((task) => {
+                  const stale = isStale(task, working, now);
+                  return task.id === selected
+                    ? <TaskCard key={task.id} {...props} task={task} stale={stale} folded={isFoldedIntoSummary(task, props.messages, props.summarized)} />
+                    : <TaskRow key={task.id} task={task} now={now} stale={stale} hovered={hover?.id === task.id} onSelect={(id) => { leave(); props.onSelect(id); }} onComplete={props.onComplete} onEnter={enter} onLeave={leave} />;
+                })}
+              </div>
+            )}
+          </section>
+        );
+      })}
+      {hover && hovered && createPortal(<TaskTimeline task={hovered} now={now} top={hover.top} right={hover.right} />, document.body)}
+    </div>
+  );
+}
+
+/** A task not open: its state dot, name and a line on how it stands, its head, and Mark complete while under way. */
+function TaskRow({ task, now, stale, hovered, onSelect, onComplete, onEnter, onLeave }: {
+  task: TaskView; now: number; stale: boolean; hovered: boolean; onSelect: (id: string) => void; onComplete: (id: string) => void;
+  onEnter: (id: string, row: HTMLElement) => void; onLeave: () => void;
+}) {
+  const line = taskLine(task, stale, now);
+  const state = stale ? "stale" : task.state;
+  return (
+    <div className={`task-row${hovered ? " hov" : ""}`} data-task={task.id} data-state={state} onMouseEnter={(event) => onEnter(task.id, event.currentTarget)} onMouseLeave={onLeave}>
+      <span className="task-dot" data-state={state} aria-hidden="true" />
+      <button type="button" className="task-row-open" aria-label={`Task ${task.name}: ${line}`} onClick={() => onSelect(task.id)}
+        title={task.manuallyCompletedAt ? "Marked complete by you" : undefined}>
+        <span className="task-row-name">{task.name}</span>
+        <span className="task-line">{line}</span>
+      </button>
+      {task.owner && <span className="task-owner-dot" data-head={task.owner} title={headName(task.owner)} />}
+      {isActiveTask(task) && <CheckButton className="task-check" onClick={() => onComplete(task.id)} />}
+    </div>
   );
 }
 
@@ -312,37 +360,51 @@ export function isFoldedIntoSummary(task: TaskView, messages: MessageView[], sum
   return replies.length > 0 && replies.every((message) => summarized.has(message.id));
 }
 
-/** The open task: what it does now, what comes next and what blocks it, when it started, the way to its latest line (`TaskCardView`). */
-function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onReport, onComplete, onOpenSubagent }: {
-  task: TaskView; now: number; stale: boolean; folded: boolean; messages: MessageView[];
-  onSelect: (id: string) => void; onJump: (messageId: string, taskId: string) => void; onReport: (task: TaskView, replyTo: string | null) => void;
-  onComplete: (id: string) => void;
-  onOpenSubagent: (row: Pick<SubagentRowView, "id">) => void;
-}) {
+/** The open task: its head and age, what blocks it, Now → Next, its subagents, and the way to its latest line (`TaskCardView`). */
+function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onReport, onComplete, onOpenSubagent }: TaskListProps & { task: TaskView; stale: boolean; folded: boolean }) {
   const mine = new Set(task.messageIds);
   const latest = messages.findLast((message) => mine.has(message.id) && message.role !== "user")?.id ?? messages.findLast((message) => mine.has(message.id))?.id ?? null;
-  const started = messages.find((message) => mine.has(message.id))?.time ?? task.updatedAt;
-  const active = task.state === "pending" || task.state === "running" || task.state === "waiting";
+  const started = task.createdAt ?? messages.find((message) => mine.has(message.id))?.time ?? task.updatedAt;
+  const active = isActiveTask(task);
   const running = task.relatedAgents?.filter((agent) => agent.status === "running").length ?? 0;
-  // Only the rows that say something: an empty Now, Next or Blocked is left out.
-  const field = (label: string, value: string | null | undefined, waiting = false) => (value?.trim()
-    ? <div className="task-field"><span className="task-field-label">{label}</span><span className={`task-field-value${waiting ? " waiting" : ""}`}>{value}</span></div>
-    : null);
+  const age = task.state === "waiting" ? `waiting ${minutes(task.updatedAt, now)} min` : active ? `${minutes(started, now)} min` : taskTime(task.updatedAt, now);
+  const word = task.relatedAgents?.every((agent) => agent.engine === "codex") ? "workers" : "subagents";
+  // Only the steps that say something: an empty Now or Next is left out.
+  const steps = ([["now", "Now", task.now], ["next", "Next", task.next]] as const).filter(([, , value]) => !!value?.trim());
   return (
     <div className="task-card" data-task={task.id} data-state={stale ? "stale" : task.state} data-active={active ? "1" : "0"}>
       {/* The name, and Mark complete in the card's top-right corner. */}
       <div className="task-card-top">
-        <button type="button" className="task-card-head" title="Close" onClick={() => onSelect(task.id)}><TaskHeader task={task} stale={stale} bold /></button>
-        {active && <button type="button" className="task-complete" title="Close this task card" onClick={() => onComplete(task.id)}>Mark complete</button>}
+        <button type="button" className="task-card-head" title="Close" onClick={() => onSelect(task.id)}><span className="task-name bold">{task.name}</span></button>
+        {active && <CheckButton className="task-complete" onClick={() => onComplete(task.id)} />}
       </div>
-      {field("Now", task.now)}
-      {field("Next", task.next)}
-      {field("Blocked", task.blocked, task.state === "waiting")}
+      <div className="task-meta">
+        {task.state === "pending" ? <span className="task-claiming">Claiming…</span>
+          : task.owner ? <span className="task-owner"><span className="task-owner-dot" data-head={task.owner} aria-hidden="true" />{headName(task.owner)}</span> : null}
+        <span>· {age}</span>
+      </div>
+      {task.state === "waiting" && task.blocked?.trim() && (
+        <div className="task-blocked">
+          <span>{task.blocked}</span>
+          {latest && <button type="button" className="task-answer" onClick={() => onJump(latest, task.id)}>Answer</button>}
+        </div>
+      )}
+      {task.state !== "waiting" && task.blocked?.trim() && <div className="task-blocked quiet"><span>{task.blocked}</span></div>}
+      {steps.length > 0 && (
+        <div className="task-track">
+          {steps.map(([key, label, value], index) => (
+            <div key={key} className="task-step task-field" data-step={key}>
+              <span className="task-step-mark" aria-hidden="true"><span className={`task-step-dot ${key}`} />{index < steps.length - 1 && <span className="task-step-line" />}</span>
+              <span className="task-step-body"><span className="task-field-label">{label}</span><span className="task-field-value">{value}</span></span>
+            </div>
+          ))}
+        </div>
+      )}
       {(task.helps ?? []).map((help, index) => <div key={index} className="task-help">{headName(help.head)} helping: {help.text}</div>)}
       {/* Folded: a line with the count; pressed, the list. No related subagents, nothing at all. */}
       {(task.relatedAgents?.length ?? 0) > 0 && (
         <details className="task-agents" aria-label="Related subagents">
-          <summary className="task-field-label">Related subagents ({task.relatedAgents!.length}){running ? ` · ${running} active` : ""}</summary>
+          <summary><Chevron className="task-agents-chevron" />Related {word} ({task.relatedAgents!.length}){running ? <> · <span className="task-agents-on">{running} active</span></> : null}</summary>
           {task.relatedAgents!.map((agent) => {
             const meta = [agent.engine ? headName(agent.engine) : null, agent.status].filter(Boolean).join(" · ");
             const content = <><span className="task-agent-title">{agent.title}</span>{meta && <span className="task-agent-meta">{meta}</span>}</>;
@@ -360,8 +422,63 @@ function TaskCard({ task, now, stale, folded, messages, onSelect, onJump, onRepo
         </div>
       )}
       <div className="task-foot">
-        <span>Started {taskTime(started, now)} · updated {taskTime(task.updatedAt, now)}</span>
+        <span title={task.manuallyCompletedAt ? "Marked complete by you" : undefined}>{active ? `Started ${taskTime(started, now)}` : `${task.state === "done" ? "Done" : "Stopped"} ${taskTime(task.updatedAt, now)}`}</span>
         {latest && <button type="button" className="task-jump" onClick={() => onJump(latest, task.id)}>Jump to chat ↗</button>}
+      </div>
+    </div>
+  );
+}
+
+export interface TimelineEvent { kind: NonNullable<TaskView["history"]>[number]["kind"] | "next"; at: string; label: string; text: string | null }
+
+const EVENT_LABELS: Record<TimelineEvent["kind"], string> = { start: "Started", now: "Now", waiting: "Waiting", you: "You", subagent: "Subagent", done: "Done", stopped: "Stopped", complete: "Done", next: "Next" };
+
+/**
+ * A task's timeline from its start to now: its recorded updates (2.x), or for a card saved before
+ * they were kept, what it has (its start, its Now or blocker, how it ended); then its Next.
+ */
+export function taskTimeline(task: TaskView): TimelineEvent[] {
+  const agents = new Map((task.relatedAgents ?? []).map((agent) => [agent.id, agent]));
+  let events: { kind: TimelineEvent["kind"]; at: string; text: string | null }[] = task.history?.length ? [...task.history] : [];
+  if (!events.length) {
+    if (task.state === "waiting") events.push({ kind: "waiting", at: task.updatedAt, text: task.blocked ?? task.now });
+    else if (task.now && isActiveTask(task)) events.push({ kind: "now", at: task.updatedAt, text: task.now });
+    if (task.manuallyCompletedAt) events.push({ kind: "complete", at: task.manuallyCompletedAt, text: null });
+    else if (task.state === "done" || task.state === "stopped") events.push({ kind: task.state, at: task.updatedAt, text: null });
+  }
+  if ((task.createdAt || events.length) && events[0]?.kind !== "start") events = [{ kind: "start", at: task.createdAt ?? events[0]!.at, text: null }, ...events];
+  if (isActiveTask(task) && task.next?.trim()) events.push({ kind: "next", at: events.at(-1)?.at ?? task.updatedAt, text: task.next });
+  return events.map((event) => {
+    const agent = event.kind === "subagent" && event.text ? agents.get(event.text) : undefined;
+    return {
+      kind: event.kind, at: event.at,
+      label: event.kind === "subagent" && agent?.engine === "codex" ? "Worker" : EVENT_LABELS[event.kind],
+      text: event.kind === "subagent" ? (agent?.title ?? event.text) : event.kind === "complete" ? "Marked by you" : event.text,
+    };
+  });
+}
+
+/** The card a hovered row floats to the panel's left: the task's name and head, then its timeline. */
+function TaskTimeline({ task, now, top, right }: { task: TaskView; now: number; top: number; right: number }) {
+  const events = taskTimeline(task);
+  const tall = Math.min(window.innerHeight - 16, 120 + events.length * 28);
+  const y = Math.max(8, Math.min(top - 39, window.innerHeight - tall - 8));
+  return (
+    <div className="task-timeline" role="tooltip" style={{ top: y, right }}>
+      <span className="task-timeline-arrow" aria-hidden="true" style={{ top: Math.max(12, top - y - 5) }} />
+      <div className="task-timeline-head">
+        <span className="task-dot" data-state={task.state} aria-hidden="true" />
+        <span className="task-timeline-name">{task.name}</span>
+        {task.owner && <span className="task-owner"><span className="task-owner-dot" data-head={task.owner} aria-hidden="true" />{headName(task.owner)}</span>}
+      </div>
+      <div className="task-events">
+        {events.map((event, index) => (
+          <div key={index} className="task-event" data-kind={event.kind}>
+            <span className="task-event-time">{taskTime(event.at, now)}</span>
+            <span className="task-event-mark" aria-hidden="true"><span className="task-event-dot" />{index < events.length - 1 && <span className="task-event-line" />}</span>
+            <span className="task-event-text"><span className="task-event-label">{event.label}</span>{event.text}</span>
+          </div>
+        ))}
       </div>
     </div>
   );

@@ -2531,7 +2531,7 @@ export class Bot {
   private linkSubagent(turn: Turn, subagentId: string) {
     const base = this.tasks.base({ head: this.engine, userMessage: turn.origin === "user" ? turn.userId : null, handoffID: turn.handoffId, reporting: turn.ended });
     if (!base) return;
-    this.tasks.link(subagentId, base.id);
+    this.tasks.link(subagentId, base.id, toSwiftDate());
     this.saveTasks();
   }
 
@@ -4658,6 +4658,8 @@ export function taskView(card: TaskCard, running: Set<string>): TaskView {
     blocked: clip(card.blocked, 2_000),
     messageIds: card.messageIDs.filter((id) => /^[A-Za-z0-9_.:-]{1,64}$/.test(id)).slice(-1_000),
     updatedAt: iso(card.updatedAt),
+    createdAt: iso(card.createdAt),
+    ...(card.history?.length ? { history: card.history.slice(-50).map((event) => ({ kind: event.kind, at: iso(event.at), text: clip(event.text, 2_000) ?? null })) } : {}),
     atWork: (card.subagentIDs ?? []).some((id) => running.has(id)),
     ...(card.manuallyCompletedAt !== undefined ? { manuallyCompletedAt: iso(card.manuallyCompletedAt) } : {}),
     ...(card.helps?.length ? { helps: card.helps.slice(-20).map((help) => ({ head: help.head, text: clip(help.text, 400) ?? "" })) } : {}),

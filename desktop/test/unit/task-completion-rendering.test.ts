@@ -26,15 +26,15 @@ describe("Mark complete in the production task panel", () => {
     try {
       await act(async () => render());
       if (state === "pending") expect(host.textContent).toContain("Claiming…");
-      expect(host.querySelector<HTMLButtonElement>(".task-complete")!.textContent).toBe("Mark complete");
+      expect(host.querySelector<HTMLButtonElement>(".task-card-top .task-complete")!.getAttribute("aria-label")).toBe("Mark complete");
       await act(async () => host.querySelector<HTMLButtonElement>(".task-complete")!.click());
       expect(complete).toHaveBeenCalledWith(id);
       const check = () => {
         expect(host.querySelector(".task-card")?.getAttribute("data-state")).toBe("done");
         expect(host.querySelector(".task-complete")).toBeNull();
-        expect(host.querySelector(".waiting-tasks")).toBeNull();
-        expect(host.querySelector(".done-name")?.textContent).toBe("helo");
-        expect(host.querySelector(".done-task")?.getAttribute("title")).toBe("Marked complete by you");
+        expect(host.querySelector('.task-group[data-group="waiting"]')).toBeNull();
+        expect(host.querySelector('.task-group[data-group="done"] .task-card .task-name')?.textContent).toBe("helo");
+        expect(host.querySelector(".task-card .task-foot span")?.getAttribute("title")).toBe("Marked complete by you");
         expect(host.textContent).not.toContain("background work may still be running");
         expect(host.textContent).not.toContain("Claiming…");
       };

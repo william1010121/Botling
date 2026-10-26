@@ -44,7 +44,7 @@ test("@ calls a bot into this chat: its line under its own name and face; a bot'
   }
 });
 
-test("the right panel's Tasks: the open card, waiting on you, just done; the count beside the bot's name", async () => {
+test("the right panel's Tasks: grouped rows (Needs you, Running, Done), one opened in place; the count beside the bot's name", async () => {
   const dataDir = tempDir("e2e-4c-tasks");
   const { app, page, chat } = await launch({ dataDir });
   try {
@@ -52,26 +52,27 @@ test("the right panel's Tasks: the open card, waiting on you, just done; the cou
     const tasks = page.locator(".tasks-section");
     await expect(tasks.locator(".task-none")).toHaveText("Nothing under way");
     await say(chat, "/task");
-    const card = tasks.locator(".task-card");
-    await expect(card.locator(".task-name")).toHaveText("Docs");
-    await expect(card.locator(".task-field")).toHaveText(["Nowwriting the intro", "Nextexamples", "Blocked—"]);
-    await expect(card.locator(".task-owner")).toHaveText("Claude");
+    const running = tasks.locator('.task-group[data-group="running"]');
+    await expect(running.locator(".task-row .task-row-name")).toHaveText("Docs");
+    await expect(running.locator(".task-row .task-line")).toHaveText("writing the intro");
     await expect(page.locator(`.bot-row[data-bot="6A0B0000-0000-4000-8000-000000000002"] .task-count`)).toHaveText("1 task");
     await say(chat, '/say Which colour?\n<task name="Theme" state="waiting" blocked="your pick of colour"/>');
-    const waiting = page.locator(".waiting-task", { hasText: "Theme" });
-    await expect(waiting).toContainText("your pick of colour");
+    const waiting = tasks.locator('.task-group[data-group="waiting"] .task-row', { hasText: "Theme" });
+    await expect(waiting.locator(".task-line")).toHaveText("your pick of colour");
     await expect(page.locator(`.bot-row[data-bot="6A0B0000-0000-4000-8000-000000000002"] .task-count`)).toHaveText("2 tasks");
-    // The running one stays open; the waiting one is a row that opens when pressed.
-    await expect(tasks.locator(".task-row", { hasText: "Theme" })).toContainText("Waiting on you: your pick of colour");
     await say(chat, '/say Shipped.\n<task name="Release" state="done"/>');
-    await expect(page.locator(".done-section .done-task", { hasText: "Release" })).toContainText("✓");
-    await waiting.click();
-    await expect(tasks.locator(".task-card .task-name")).toHaveText("Theme");
-    await expect(tasks.locator(".task-card .task-field-value.waiting")).toHaveText("your pick of colour");
+    const done = tasks.locator('.task-group[data-group="done"]');
+    await expect(done.locator(".task-group-count")).toHaveText("1");
+    await done.locator(".task-group-fold").click();
+    await expect(done.locator(".task-row", { hasText: "Release" })).toContainText("Done · ");
+    await waiting.locator(".task-row-open").click();
+    const card = tasks.locator(".task-card");
+    await expect(card.locator(".task-name")).toHaveText("Theme");
+    await expect(card.locator(".task-blocked")).toContainText("your pick of colour");
     await shot(page, "phase4c-tasks");
-    // Pressed again, it closes (the latest running one is open again).
+    // Pressed again, it closes back into its row.
     await tasks.locator(".task-card-head").click();
-    await expect(tasks.locator(".task-card .task-name")).toHaveText("Docs");
+    await expect(tasks.locator(".task-card")).toHaveCount(0);
   } finally {
     await app.close();
   }
