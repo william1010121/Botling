@@ -77,6 +77,8 @@ function codexConfig(profile: BotProfile, session: SessionStartCodex, threads: C
     workerEffort: session.codexWorkers?.effort === "max" ? "xhigh" : session.codexWorkers?.effort ?? null,
     workerFast: session.codexWorkers?.fast ?? null,
     routinesFile: session.routinesFile,
+    // Its other folders (the main bot: every bot's inbox; Maintainer: folders you let it use) are writable, as in 1.x.
+    writableRoots: session.addDirs ?? [],
   };
   if (kind === "claude") return { ...common, command: process.env.BOTLING_CODEX_PATH ?? "codex" };
   const script = process.env.BOTLING_FAKE_CODEX;
