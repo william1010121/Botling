@@ -223,10 +223,11 @@ export class Core {
     this.componentStamp = this.components.library.stamp;
     this.components.commands.onChange = (card) => { for (const bot of this.bots.values()) bot.cardChanged(card); this.specs?.cardChanged(card); };
     this.ledger = new ProcessLedger(join(options.dataDir, "children.json"));
-    this.usage = new UsageBook(options.dataDir);
     const leftovers = this.ledger.endLeftovers();
     if (leftovers.length) this.log(`ended agent process groups an earlier core left running: ${leftovers.join(", ")}`);
     this.importOnce();
+    // Quota files must be imported before their first in-memory reading.
+    this.usage = new UsageBook(options.dataDir);
     const loaded = loadProfiles(options.dataDir);
     if (loaded.problem) this.log(`projects: ${loaded.problem}`);
     // Maintainer (1.x's built-in project): the plugin library is its folder, with the app's files in it.
