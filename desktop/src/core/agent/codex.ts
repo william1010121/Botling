@@ -9,11 +9,11 @@
 // As in 1.x:
 // - The thread starts (or resumes) with the approval policy and sandbox said explicitly, so the
 //   user's own ~/.codex/config.toml does not decide what a bot may do: it asks (`on-request`) and
-//   writes only in its folder (`workspace-write`). In auto mode (default) Codex's own reviewer
-//   (`auto_review`) answers escalations for the head and its workers; its refusals become a card, and
-//   an Allow lets that call through with the next turn asking the app ("user") once. Without auto
-//   mode the reviewer is the user; the app accepts only validated, explicitly owned isolated-worker
-//   Git requests automatically, one request at a time.
+//   writes in its folder and its other folders (`workspace-write` with `writable_roots`). In auto
+//   mode (default) Codex's own reviewer (`auto_review`) answers escalations for the head and its
+//   workers; its refusals become a card, and an Allow lets that call through with the next turn asking
+//   the app ("user") once. Without auto mode the reviewer is the user; the app accepts only validated,
+//   explicitly owned isolated-worker Git requests automatically, one request at a time.
 // - The head is a coordinator: shell and native subagents are off, and it hands execution to
 //   app-managed workers with the app's dynamic tools (app_handoff, app_send_message,
 //   app_task_checkpoint). Each worker is an independent Codex thread in the same app-server; its
@@ -108,6 +108,13 @@ export interface CodexConfig {
   restoredMonitors?: CommandMonitor[];
   /** Auto mode (default on): Codex's own reviewer (`auto_review`) answers escalations; only its refusals become a card. */
   autoMode?: boolean;
+  /** More folders it may write besides `cwd` (1.x's `writableRoots`: the bot's `--add-dir` folders). */
+  writableRoots?: string[];
+}
+
+/** Codex's `sandbox_workspace_write.writable_roots` for these folders (none: nothing to add). */
+function writableRootsConfig(roots: readonly string[] | undefined): Record<string, unknown> {
+  return roots?.length ? { sandbox_workspace_write: { writable_roots: [...roots] } } : {};
 }
 
 type Call =
@@ -594,6 +601,8 @@ export class CodexSession {
       params.config = COORDINATOR_CONFIG;
     }
     if (this.config.model) params.model = this.config.model;
+    // Its other folders are writable too, as in 1.x (`sandbox_workspace_write.writable_roots`).
+    if (this.config.writableRoots?.length) params.config = { ...(params.config as Record<string, unknown> | undefined), ...writableRootsConfig(this.config.writableRoots) };
     if (this.config.resumeThread) {
       // Tools are fixed when a thread starts; resume cannot change them.
       delete params.dynamicTools;
@@ -827,7 +836,7 @@ export class CodexSession {
     return [
       this.request("command/exec", {
         command: shell(record.command), cwd: record.cwd, processId: id, disableTimeout: true, outputBytesCap: MONITOR_OUTPUT_LIMIT,
-        sandboxPolicy: { type: "workspaceWrite", writableRoots: [this.config.cwd], networkAccess: false },
+        sandboxPolicy: { type: "workspaceWrite", writableRoots: [...new Set([this.config.cwd, ...(this.config.writableRoots ?? [])])].sort(), networkAccess: false },
       }, { kind: "monitorCommand", id }),
       ...this.pendingChanged(),
     ];
@@ -1010,6 +1019,8 @@ export class CodexSession {
       developerInstructions: this.config.workerInstructions ?? "Execute the assigned task yourself and return concrete evidence. Do not delegate.",
       config: { "features.multi_agent": false, "agents.enabled": false },
     };
+    // The workers write where the coordinator may, as in 1.x (`writable_roots`).
+    params.config = { ...(params.config as Record<string, unknown>), ...writableRootsConfig(this.config.writableRoots) };
     const model = this.config.workerModel ?? this.config.model;
     if (model) params.model = model;
     // Fast mode: the priority service tier (`CodexWorkerDefaults.fast`).
@@ -1382,6 +1393,8 @@ export interface CodexHeadConfig {
   routinesFile?: string | null;
   /** Codex's own reviewer answers escalations (default on). */
   autoMode?: boolean;
+  /** More folders it may write (its `--add-dir` folders; 1.x's `writableRoots`). */
+  writableRoots?: string[];
 }
 
 /** One long-lived `codex app-server` for one bot session: `CodexSession` over its stdio. */
@@ -1419,6 +1432,7 @@ export class CodexHead {
       restoredWorkers: config.workerInstructions ? config.threads.workers(config.sessionId) : [],
       routinesFile: config.routinesFile ?? null, ownerSession: config.sessionId, restoredMonitors,
       autoMode: config.autoMode ?? true,
+      writableRoots: config.writableRoots ?? [],
     });
     this.savedWorkers = JSON.stringify(this.session.workerRecords);
     this.savedMonitors = JSON.stringify(restoredMonitors);

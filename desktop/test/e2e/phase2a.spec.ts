@@ -97,7 +97,7 @@ test("an idle bot tidies its notes before it sleeps, and says so in the header",
   }
 });
 
-test("a project another Botling has open is read-only here, with a banner that says why", async () => {
+test("a project another Botling has open still works here (as 1.x), with a notice that says so", async () => {
   const root = tempDir("e2e-lock");
   const folder = join(root, "garden");
   const id = "44444444-4444-4444-8444-444444444444";
@@ -115,12 +115,11 @@ test("a project another Botling has open is read-only here, with a banner that s
     try {
       await page.setViewportSize({ width: 1120, height: 760 });
       await page.locator(".bot-row", { hasText: "garden" }).click();
-      await expect(page.locator(".banner").first()).toContainText("has this project open");
+      await expect(chat.getByText("has this project open").first()).toBeVisible();
       await say(chat, "hello?");
-      // The send is refused; the banner above already says why (no second copy of it).
-      await page.waitForTimeout(300);
-      await expect(page.locator(".banner.bottom")).toHaveCount(0);
-      await expect(chat.locator(".row.user", { hasText: "hello?" })).toHaveCount(0);
+      // Nothing is refused: 1.x has no project lock, so the message goes in as usual.
+      await expect(chat.locator(".row.user", { hasText: "hello?" })).toHaveCount(1);
+      await expect(page.locator(".banner", { hasText: "has this project open" })).toHaveCount(0);
       await shot(page, "locked-project");
     } finally {
       await app.close();

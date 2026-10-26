@@ -41,7 +41,8 @@ describe("a bot's head", () => {
     const log = starts(dir);
     expect(log).toHaveLength(1);
     expect(log[0]!.args).toEqual(expect.arrayContaining(["--input-format", "stream-json", "--permission-prompt-tool", "stdio", "--session-id"]));
-    expect(log[0]!.args.join(" ")).toMatch(/--allowedTools Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Agent,Task,SendMessage(?!,Bash)/);
+    // 1.x's toolbox, Artifact included (switched on with CLAUDE_CODE_ARTIFACT, as `launchEnvironment` does).
+    expect(log[0]!.args.join(" ")).toMatch(/--allowedTools Read,Write,Edit,Glob,Grep,WebSearch,WebFetch,Agent,Task,SendMessage,Artifact(?!,Bash)/);
     expect(log[0]!.cwd).toBe(join(dir, "main"));
     const head = JSON.parse(readFileSync(join(dir, "main", "head.json"), "utf8"));
     expect(head).toEqual({ sessionId: log[0]!.session, started: true });

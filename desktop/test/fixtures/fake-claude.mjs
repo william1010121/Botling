@@ -65,6 +65,7 @@ if (process.env.FAKE_CLAUDE_ARGS) {
     args: process.argv.slice(2),
     subagentModel: process.env.CLAUDE_CODE_SUBAGENT_MODEL ?? null,
     subagentCache: process.env.CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL ?? null,
+    artifact: process.env.CLAUDE_CODE_ARTIFACT ?? null,
   }) + "\n");
 }
 if (process.env.FAKE_CLAUDE_LOG) appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ pid: process.pid, args, resume: !!resumed, session, cwd: process.cwd() }) + "\n");

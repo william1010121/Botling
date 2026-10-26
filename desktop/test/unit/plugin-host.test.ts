@@ -119,7 +119,7 @@ describe("the plugin host", () => {
     await expect(c.call({ type: "plugins.call", name: "slow", method: "whisper", params: null })).rejects.toThrow(/does not handle/);
   });
 
-  it("secrets: sealed on disk, given only to the program part, never shown; bots.create and bots.send need the bots permission", async () => {
+  it("secrets: sealed on disk, given only to the program part, never shown; bots.create needs the bots permission; bots.send is open to any plugin (as 1.x)", async () => {
     const dir = tempDir("plugin-host");
     hostPlugin(dir, "news", `export function activate(ccb) {
       ccb.commands.register("news.token", () => ccb.settings.get("token"));
@@ -156,7 +156,7 @@ describe("the plugin host", () => {
     await c.call({ type: "plugins.command", id: "quiet.say" });
     await c.call({ type: "plugins.command", id: "news.say" });
     await until(async () => (await c.chat()).messages.some((m: any) => m.role === "user" && m.text === "hello from a plugin"));
-    expect((await c.chat()).messages.some((m: any) => m.text === "sneaky message")).toBe(false);
+    await until(async () => (await c.chat()).messages.some((m: any) => m.role === "user" && m.text === "sneaky message"));
     // After a restart the sealed secret is opened again.
     await c.kill("SIGTERM");
     const again = core(dir);

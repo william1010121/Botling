@@ -19,6 +19,8 @@ export interface CoreClientOptions {
   hostScript?: string;
   /** The core's process ledger (`<data>/core/children.json`): plugins' process groups are kept there too. */
   ledgerFile?: string;
+  /** Developer mode's asks (core/self-update.ts): a picture of the main window, or quitting for an install. */
+  app?: (op: "screenshot" | "quit" | "installRelease") => Promise<{ ok: boolean; file?: string; error?: string }>;
 }
 
 interface Pending { resolve: (response: ResponseEnvelopeT) => void }
@@ -42,6 +44,11 @@ export class CoreClient {
       protectedPids: () => [...(this.pid ? [this.pid] : []), ...this.hostPids],
       log: (text) => process.stderr.write(`[plugin host] ${text}\n`),
     });
+  }
+
+  /** A newer release main found: the core posts the update notice in the main bot's chat (core/self-update.ts). */
+  announceRelease(release: { version: string; name: string; url: string; current: string; unavailable: string | null }) {
+    this.child?.postMessage({ botling: "release", ...release });
   }
 
   async commitUpdateBoot(): Promise<void> {
@@ -145,6 +152,13 @@ export class CoreClient {
     const raw = message as { botling?: unknown; id?: unknown; op?: unknown; text?: unknown } | null;
     if (raw && typeof raw === "object" && raw.botling === "host") {
       this.host(raw as Parameters<CoreClient["host"]>[0]);
+      return;
+    }
+    if (raw && typeof raw === "object" && raw.botling === "app") {
+      const child = this.child;
+      const reply = (answer: { ok: boolean; file?: string; error?: string }) => child?.postMessage({ botling: "appDone", id: raw.id, ...answer });
+      if (typeof raw.id !== "number" || (raw.op !== "screenshot" && raw.op !== "quit" && raw.op !== "installRelease") || !this.options.app) { reply({ ok: false, error: "Refused." }); return; }
+      this.options.app(raw.op).then(reply, (error) => reply({ ok: false, error: String((error as Error)?.message ?? error).slice(0, 500) }));
       return;
     }
     if (raw && typeof raw === "object" && raw.botling === "seal") {

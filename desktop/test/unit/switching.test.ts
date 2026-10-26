@@ -31,7 +31,7 @@ describe("switching models", () => {
     expect(second[second.indexOf("--model") + 1]).toBe("opus");
     expect(second).toContain("--resume");
     expect((await c.chat()).messages.some((m: any) => m.role === "divider" && m.text === "Restarted → Opus")).toBe(true);
-    expect(lines(join(dir, "input.log")).some((entry) => String(entry.text).startsWith("(App: Botling restarted you in this same conversation (Opus); carry on as before.)"))).toBe(true);
+    expect(lines(join(dir, "input.log")).some((entry) => String(entry.text).startsWith("(App: Botling restarted you in this same conversation (Opus); carry on as before."))).toBe(true);
   });
 });
 

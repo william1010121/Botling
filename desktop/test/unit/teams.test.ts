@@ -136,7 +136,9 @@ describe("teams, bots and settling through the core", () => {
     const team = logged(join(dir, "args.log")).find((line) => line.args.some((arg: string) => arg.startsWith("You are a research team")));
     expect(team).toBeTruthy();
     expect(team.args).not.toContain("--permission-prompt-tool");
-    expect(team.args[team.args.indexOf("--allowedTools") + 1]).toBe("Read,Write,Edit,WebSearch,WebFetch,Artifact");
+    expect(team.args[team.args.indexOf("--allowedTools") + 1]).toBe("Read,Write,Edit,WebSearch,WebFetch,Artifact,Skill"); // Skill: the plugins' skills (1.x's arguments)
+    // Claude Code offers Artifact in -p sessions only when asked (1.x's `launchEnvironment`).
+    expect(team.artifact).toBe("1");
     expect(team.args[team.args.indexOf("--model") + 1]).toBe("sonnet");
     expect(team.args[team.args.indexOf("--append-system-prompt") + 1]).toMatch(/^You are a research team started for one job\./);
     const input = logged(join(dir, "claude-input.log")).find((line) => line.text.startsWith("(App: A task from the main bot)\n"));
@@ -149,6 +151,10 @@ describe("teams, bots and settling through the core", () => {
     await reply(c, botId, "/team");
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(c.of("teams.updated").length).toBe(before);
+    expect((await c.chat(botId)).messages.some((m: any) => m.text.includes("cannot do this yet"))).toBe(false);
+    // Nor is its <new-project> (only the main bot adds projects): left out silently, as in 1.x.
+    await reply(c, botId, `/say Sure.\n<new-project folder="${project("Other")}">Look at it.</new-project>`);
+    await new Promise((resolve) => setTimeout(resolve, 300));
     expect((await c.chat(botId)).messages.some((m: any) => m.text.includes("cannot do this yet"))).toBe(false);
   });
 

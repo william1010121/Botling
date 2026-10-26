@@ -124,6 +124,27 @@ describe("import from 1.x", () => {
     expect(() => importFrom1x(source, join(source, "inside"))).toThrow(/separate/);
   });
 
+  it("what the user allowed in 1.x comes over: Maintainer's folders, component commands (moved with the bot) and always-allow rules", () => {
+    const dir = tempDir("import");
+    const { source } = writeSwiftFixture(dir);
+    writeFileSync(join(source, "folders.json"), JSON.stringify(["/Users/me/tools", 7, "relative/path"]));
+    writeFileSync(join(source, "approved-commands.json"), JSON.stringify({
+      [join(source, "main")]: ["python3 scripts/cpu-load.py", ""],
+      "/Users/me/garden": ["git status --short"],
+      "relative": ["nope"],
+    }));
+    mkdirSync(join(source, "main"), { recursive: true });
+    writeFileSync(join(source, "main", "bot.json"), JSON.stringify({ unread: 0, alwaysAllowed: ["WebFetch", "Bash(npm test)", "Edit(//Users/me/garden/notes.md)"] }));
+    const target = join(dir, "botling2");
+    importFrom1x(source, target);
+    expect(JSON.parse(readFileSync(join(target, "folders.json"), "utf8"))).toEqual(["/Users/me/tools"]);
+    expect(JSON.parse(readFileSync(join(target, "approved-commands.json"), "utf8"))).toEqual({
+      "/Users/me/garden": ["git status --short"],
+      [join(target, "main")]: ["python3 scripts/cpu-load.py"],
+    });
+    expect(new BotStore(join(target, "main")).loadAlwaysAllowed()).toEqual(["WebFetch", "Bash(npm test)", "Edit(//Users/me/garden/notes.md)"]);
+  });
+
   it("1.x's group chats come over: groups.json and each group's chat (Phase 4c)", async () => {
     const dir = tempDir("import");
     const { source } = writeSwiftFixture(dir);

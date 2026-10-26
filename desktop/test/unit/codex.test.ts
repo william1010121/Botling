@@ -45,6 +45,18 @@ describe("Codex head: one coordinator thread", () => {
     expect(out.params("turn/start")).toMatchObject({ input: [{ type: "text", text: "Reply with the single word: hello" }], effort: "high" });
   });
 
+  it("its other folders are writable roots of the workspace sandbox, as in 1.x; none adds nothing", () => {
+    const session = new CodexSession(config({ writableRoots: ["/tmp/other/.bot", "/tmp/shared"] }));
+    session.start();
+    session.send("hi");
+    const thread = replay(session, recordings.helloAndApproval!.slice(0, 2)).params("thread/start");
+    expect(thread).toMatchObject({ sandbox: "workspace-write", config: { "features.shell_tool": false, sandbox_workspace_write: { writable_roots: ["/tmp/other/.bot", "/tmp/shared"] } } });
+    const plain = new CodexSession(config());
+    plain.start();
+    plain.send("hi");
+    expect(replay(plain, recordings.helloAndApproval!.slice(0, 2)).params("thread/start").config.sandbox_workspace_write).toBeUndefined();
+  });
+
   it("ends a turn with its final answer; a command that needs approval asks, and the answer goes back", () => {
     const session = new CodexSession(config());
     session.start();

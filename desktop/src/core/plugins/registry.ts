@@ -323,6 +323,26 @@ export class PluginRegistry {
     return this.plugins.flatMap((plugin) => (plugin.enabled && !plugin.failure && plugin.manifest.ccb?.claude ? [join(plugin.folder, plugin.manifest.ccb.claude)] : []));
   }
 
+  /**
+   * The MCP tools of the plugins' Claude parts (`claudeTools`): `mcp__plugin_<name>_<server>` for each server in
+   * `<claude>/.mcp.json`, where <name> is its plugin.json name. Bots use them without asking, as in 1.x.
+   */
+  claudeTools(): string[] {
+    return this.plugins.flatMap((plugin) => {
+      const claude = plugin.manifest.ccb?.claude;
+      if (!plugin.enabled || plugin.failure || !claude) return [];
+      const read = (file: string): Record<string, unknown> | null => {
+        try { const value = JSON.parse(readFileSync(join(plugin.folder, claude, file), "utf8")); return value && typeof value === "object" && !Array.isArray(value) ? value : null; } catch { return null; }
+      };
+      const declared = read(join(".claude-plugin", "plugin.json"))?.name;
+      const name = typeof declared === "string" && declared ? declared : plugin.manifest.name;
+      const mcp = read(".mcp.json");
+      if (!mcp) return [];
+      const servers = mcp.mcpServers && typeof mcp.mcpServers === "object" && !Array.isArray(mcp.mcpServers) ? mcp.mcpServers as Record<string, unknown> : mcp;
+      return Object.keys(servers).sort().map((server) => `mcp__plugin_${name}_${server}`);
+    });
+  }
+
   /** Secrets that name an `env`, for bots' processes (their MCP servers read them). */
   secretEnvironment(): Record<string, string> {
     const env: Record<string, string> = {};

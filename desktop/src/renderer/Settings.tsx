@@ -191,7 +191,7 @@ function Updates({ client, settings, change }: { client: Client; settings: Setti
     : state?.checkedAt ? `Botling ${state.current} is the newest (looked ${new Date(state.checkedAt).toLocaleString()}).`
     : `This is Botling ${state?.current ?? "2"}; not looked yet.`;
   return (
-    <Group title="Updates" note="Botling checks GitHub Releases every 6 hours by default. Downloads must match an Ed25519-signed version, SHA-256 and size. The app changes only after Restart to update; the previous app may be removed after the new version commits and activates. User-data copies remain until you explicitly delete them below.">
+    <Group title="Updates" note="Botling checks GitHub Releases every 6 hours by default and announces a newer version in the main bot's chat, where Install and restart installs it. Downloads must match an Ed25519-signed version, SHA-256 and size. The app changes only after Restart to update; the previous app may be removed after the new version commits and activates. User-data copies remain until you explicitly delete them below.">
       <Toggle label="Check for updates" hint="GitHub Releases; installation requires your restart click" checked={settings.updateCheck} onChange={(value) => change({ key: "updateCheck", value })} />
       <Row label="Status" hint={line}>
         <span className="settings-actions">
@@ -207,12 +207,15 @@ function Updates({ client, settings, change }: { client: Client; settings: Setti
 
 /**
  * Developer mode (1.x's Settings → Developer): one project is Botling's own source and gets what you flag as
- * "not right" in any chat, with the chat around it. (1.x's build installs and app screenshots are not in 2.0.)
+ * "not right" in any chat, with the chat around it; its manager may install builds it made (you confirm on a card in
+ * the main bot's chat) and see the app's window (core/self-update.ts).
  */
 function Developer({ settings, change, bots }: { settings: SettingsView; change: (next: SettingsChange) => void; bots: BotView[] }) {
   const projects = bots.filter((candidate) => candidate.role === "manager" && candidate.id !== "DEC0DE00-0000-4000-8000-00000000DEC0");
   return (
-    <Group title="Developer mode" note="Feedback (“not right” on a reply) goes to this project with the chat around it, to become a test and a fix. Every report is also kept in feedback.md.">
+    <Group title="Developer mode" note={settings.developerMode
+      ? `${projects.find((project) => project.id === settings.developerProject)?.name ?? "That project"}'s manager may install new builds (you confirm; one that does not start is rolled back), take screenshots of this window, and gets what you flag as “not right” in any chat. Every report is also kept in feedback.md.`
+      : "Off for everyone who only uses Botling. Turn it on to let one project's manager work on the app itself."}>
       <Toggle label="Developer mode" checked={settings.developerMode} onChange={(value) => change({ key: "developerMode", value })} />
       <Row label="Botling's source" hint={projects.length ? undefined : "Add the project that holds Botling's source first."}>
         <select aria-label="Botling's source" value={settings.developerProject ?? ""} disabled={!settings.developerMode || !projects.length}

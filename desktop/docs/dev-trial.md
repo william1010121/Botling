@@ -6,13 +6,13 @@ This is a local development trial, not a formal release or an installed upgrade.
 ## 開始試用 / First open
 
 1. 在可寫入的外接工作碟建立新的 trial 資料夾。將 DMG 中的 **Botling 2.app**、**Launch Dev Trial.command**、本說明一起複製進去；不要在掛載的唯讀 DMG 內啟動。ZIP 使用者先解壓 app，另將交付的捷徑與說明放在旁邊。不需安裝到 Applications，也不要取代原本的 app。
-2. 確認來源後，由你手動開啟 **Launch Dev Trial.command**。捷徑直接執行這份 app，資料、Electron profile、暫存及獨立 Claude/Codex 設定皆放在同層 **trial-data/**；不複製登入憑證，也不自動匯入 1.x 聊天。首次真模型使用可能需要在這份獨立設定登入。
-3. 先用 **trial-data/projects/** 下的新空資料夾試用。舊專案的寫入仍受原有專案鎖與授權保護；不要為試用改用真實工作資料。1.x 資料位置只保留既有的唯讀專案鎖檢查，沒有關閉保護。
+2. 確認來源後，由你手動開啟 **Launch Dev Trial.command**。捷徑直接執行這份 app，資料、Electron profile 與暫存放在同層 **trial-data/**；Claude/Codex 使用你自己的 `~/.claude`、`~/.codex`（與 1.x 相同），並預設匯入 1.x（`~/.claudecodebot`）的資料。（下一版起；2026-10-26.1 的捷徑仍是獨立設定、不匯入。）
+3. 與 1.x 相同，專案不會因為 1.x 也開著而變成唯讀；聊天裡只會出現一則提示。
 4. 若 macOS 攔下未公證 app，在「系統設定 → 隱私權與安全性」對這份 app 選「仍要打開」。若捷徑被攔，於 Terminal 執行 `/bin/sh "/完整路徑/Launch Dev Trial.command"`。不要全域停用 Gatekeeper。包是 ad-hoc 簽名，沒有 Apple Developer ID 或公證。
 
-Copy all three items into a new writable folder on your work volume, then manually run the shortcut. Do not replace an installed app or launch from the mounted image. The shortcut keeps data, temporary files and CLI settings under its sibling `trial-data/`, with no credential copying or automatic 1.x import. Start with a new empty project. The existing project-lock and approval protections remain. If macOS blocks this trusted local copy, use its app-specific Privacy & Security → Open Anyway flow.
+Copy all three items into a new writable folder on your work volume, then manually run the shortcut. Do not replace an installed app or launch from the mounted image. The shortcut keeps data and temporary files under its sibling `trial-data/`; from the next build it uses your own `~/.claude` and `~/.codex` and imports 1.x (`~/.claudecodebot`) by default, as 1.x would. A project 1.x also has open stays writable (a notice only). If macOS blocks this trusted local copy, use its app-specific Privacy & Security → Open Anyway flow.
 
-If opened directly without the shortcut, this artifact still disables automatic import and uses the separate **Botling 2 Dev Trial** application-data profile. However, the shortcut is required to keep all trial state on the work volume and isolate Claude/Codex configuration. Closing the app keeps trial data; nothing deletes it automatically.
+If opened directly without the shortcut, it uses the separate **Botling 2 Dev Trial** application-data profile and (from the next build) imports 1.x by default. The shortcut keeps the trial's own state on the work volume. Closing the app keeps trial data; nothing deletes it automatically.
 
 ## CLI launch requirements (source fix for the next cumulative build)
 
@@ -54,4 +54,4 @@ being installed in the running app. Cumulative integration and packaging remain 
 - This build is intentionally named **unsigned-updates**; app and DMG have local ad-hoc Apple signatures, not a production update signature or notarization.
 - This trial does not claim a current full GUI/native focus/IME/packaged-update test pass. Its delivery evidence lists the exact non-GUI and artifact checks performed. No focus-stealing test is required for this limited trial.
 
-Import is optional later: leave this shortcut unchanged for isolated trial use. A separate manual launch may explicitly set `BOTLING_IMPORT_FROM` to a chosen **copy** of 1.x data; the importer is read-only and project locking remains enabled. No import, install, shared-app restart, publishing or deletion is performed by this delivery.
+Import: from the next build the trial imports 1.x by default; set `BOTLING_IMPORT_FROM` to a chosen **copy** of 1.x data to import that instead. The importer is read-only. No import, install, shared-app restart, publishing or deletion is performed by this delivery.

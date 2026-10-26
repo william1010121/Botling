@@ -9,6 +9,10 @@
 // - a bot of its own's notes (.bot/memory.md, inbox.md, routines.cron), into 2.0's bots/<ID>/,
 //   with its folder in projects.json pointed there;
 // - settings.json and the three local usage records (spending and each CLI's limits);
+// - what the user allowed in 1.x: folders.json (folders Maintainer may read), approved-commands.json
+//   (component commands, by folder: a folder inside the 1.x data folder — the main bot's, a bot of
+//   its own's — is moved to the same place in 2.0's), and each bot's "always allow" tools and rules
+//   (bot.json's alwaysAllowed, with the chat files);
 // - the web AIs' saved conversations (`web/<site>/`: conversations.json and each conversation's .md);
 // - the plugin library (`plugins/`): every plugin's text files (manifests, bundled code, components,
 //   Claude parts) and Maintainer's notes (.bot/memory.md), into 2.0's own plugins folder; and
@@ -17,8 +21,10 @@
 // What stays where it is: a project manager's working folder (the user's project, with its
 // .bot/memory.md — 2.0 works in the same folder, like 1.x), attachments, chat archives, result
 // pages and screenshots (messages keep pointing at them, read-only), the library's git history,
-// node_modules and binary files (pictures, fonts), web AIs' sign-ins (1.x's WebKit stores), the commands 1.x was allowed to
-// run (2.0 asks again), and claude's own sessions (2.0 starts new ones).
+// node_modules and binary files (pictures, fonts), web AIs' sign-ins (1.x's WebKit stores), and claude's
+// own sessions: as 1.x does after its own restart, each bot starts a new session and wakes from its
+// memory (a 1.x session id is never kept: the main bot works in another folder here, where claude
+// cannot find that session, and 2.0, like 1.x, never resumes a session across app starts).
 import { readLimits, readSpending } from "../usage";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -210,6 +216,35 @@ export function importFrom1x(sourceDir: string, targetDir: string): ImportReport
       write(Layout.settings(target), settings);
     } catch {
       report.skipped.push(`${Layout.settings(source)}: not valid JSON, left out`);
+    }
+  }
+  // What the user allowed: folders Maintainer may read, and component commands by folder.
+  const folders = read(join(source, "folders.json"));
+  if (folders) {
+    try {
+      const value = JSON.parse(folders.toString("utf8"));
+      if (!Array.isArray(value)) throw new Error("not a list");
+      write(join(target, "folders.json"), JSON.stringify(value.filter((path): path is string => typeof path === "string" && isAbsolute(path))));
+    } catch {
+      report.skipped.push(`${join(source, "folders.json")}: not a list of folders, left out`);
+    }
+  }
+  const approved = read(join(source, "approved-commands.json"));
+  if (approved) {
+    try {
+      const value = JSON.parse(approved.toString("utf8")) as unknown;
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("not a map");
+      const kept: Record<string, string[]> = {};
+      for (const [folder, commands] of Object.entries(value as Record<string, unknown>)) {
+        if (!isAbsolute(folder) || !Array.isArray(commands)) continue;
+        const from = resolve(folder);
+        const to = inside(from, source) ? join(target, relative(source, from)) : from;
+        const list = commands.filter((command): command is string => typeof command === "string" && command.length > 0);
+        kept[to] = [...new Set([...(kept[to] ?? []), ...list])].sort();
+      }
+      write(join(target, "approved-commands.json"), JSON.stringify(Object.fromEntries(Object.entries(kept).sort(([a], [b]) => a.localeCompare(b))), null, 2));
+    } catch {
+      report.skipped.push(`${join(source, "approved-commands.json")}: not valid approved commands, left out`);
     }
   }
   // Only the existing accounting files: no CLI logs, sessions or credentials. Import never

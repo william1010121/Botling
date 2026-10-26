@@ -23,8 +23,11 @@ export const Layout = {
   importRecord: (root: string) => join(root, "import.json"),
 };
 
-/** The tools every bot uses without asking (`BotProfile.toolbox`, without claude.ai Artifact). */
-export const TOOLBOX = ["Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch", "Agent", "Task", "SendMessage"];
+/**
+ * The tools every bot uses without asking (`BotProfile.toolbox`). Artifact publishes results to claude.ai
+ * (`ResultPublishing.tool`); it is left out when results stay local (core/main.ts `headConfig`).
+ */
+export const TOOLBOX = ["Read", "Write", "Edit", "Glob", "Grep", "WebSearch", "WebFetch", "Agent", "Task", "SendMessage", "Artifact"];
 
 /** Who a bot is and where it works (`BotProfile`). */
 export interface BotProfile {

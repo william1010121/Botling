@@ -13,10 +13,8 @@ if [ ! -x "$binary" ]; then
   exit 1
 fi
 export BOTLING_DATA_DIR="$base/trial-data"
-export BOTLING_IMPORT_FROM="$BOTLING_DATA_DIR/empty-import"
-export CODEX_HOME="$BOTLING_DATA_DIR/codex"
-export CLAUDE_CONFIG_DIR="$BOTLING_DATA_DIR/claude"
 export TMPDIR="$BOTLING_DATA_DIR/tmp"
-# Keep BOTLING_1X_DIR unchanged: its read-only project lock check must not be bypassed.
-mkdir -p "$BOTLING_IMPORT_FROM" "$CODEX_HOME" "$CLAUDE_CONFIG_DIR" "$TMPDIR" "$BOTLING_DATA_DIR/projects"
+# As 1.x: the user's own ~/.claude and ~/.codex (CLAUDE_CONFIG_DIR / CODEX_HOME are left as they
+# are), and 1.x's data (~/.claudecodebot) is imported unless BOTLING_IMPORT_FROM says otherwise.
+mkdir -p "$TMPDIR" "$BOTLING_DATA_DIR/projects"
 exec "$binary"

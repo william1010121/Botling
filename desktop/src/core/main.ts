@@ -10,6 +10,8 @@ import { Core } from "./server";
 import { claudeSessionExists } from "./claude-files";
 import type { SessionStart, SessionStartCodex } from "./bot";
 import { DEFAULT_ONE_X_PROCESS } from "./store/lock";
+import { Layout } from "./store/workspace";
+import { readSettings } from "./settings";
 import type { HeadConfig } from "./agent/head";
 import type { CodexHeadConfig, CodexThreads } from "./agent/codex";
 import type { BotProfile } from "./store/workspace";
@@ -22,6 +24,12 @@ import { UtilityHostLauncher, type PortLike } from "./plugins/utility-host";
 const dataDir = resolve(process.env.BOTLING_DATA_DIR ?? join(process.cwd(), ".data"));
 const number = (value: string | undefined, fallback: number) => (value && Number.isFinite(Number(value)) ? Number(value) : fallback);
 
+/** `--allowedTools` as 1.x gives it: its tools, Skill when it has plugins (their skills), and the plugins' MCP tools. */
+function allowedTools(tools: string[], session: SessionStart): string[] {
+  const skill = session.pluginDirs?.length && !tools.includes("Skill") ? ["Skill"] : [];
+  return [...new Set([...tools, ...skill, ...(session.pluginTools ?? [])])];
+}
+
 function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
   const kind = process.env.BOTLING_AGENT ?? "fake";
   // The subagents' model and their 1-hour prompt cache (AgentProcess.swift's `launchEnvironment`); one the
@@ -29,8 +37,13 @@ function headConfig(profile: BotProfile, session: SessionStart): HeadConfig {
   const env: Record<string, string> = { ...(session.pluginEnv ?? {}) };
   if (session.subagentModel) env.CLAUDE_CODE_SUBAGENT_MODEL = session.subagentModel;
   if (session.subagentHourCache && !process.env.CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL) env.CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL = "1h";
+  // Claude Code leaves the Artifact tool out of `-p` sessions unless asked (`launchEnvironment`); one the
+  // app's own environment sets is left as it is. When results stay local it is not offered (`launchTools`).
+  if (!process.env.CLAUDE_CODE_ARTIFACT) env.CLAUDE_CODE_ARTIFACT = "1";
+  const localOnly = readSettings(Layout.settings(dataDir)).resultPublishingChoice === "localOnly";
   const common = {
-    cwd: profile.folder, sessionId: session.sessionId, resume: session.resume, allowedTools: profile.tools,
+    cwd: profile.folder, sessionId: session.sessionId, resume: session.resume,
+    allowedTools: allowedTools(localOnly ? profile.tools.filter((tool) => tool !== "Artifact") : profile.tools, session),
     // Plugins' Claude parts (Maintainer's component editor among them) and their MCP servers' secrets.
     pluginDirs: session.pluginDirs ?? [], ...(Object.keys(env).length ? { env } : {}),
     model: process.env.BOTLING_MODEL ?? session.model ?? null,
@@ -81,6 +94,8 @@ function codexConfig(profile: BotProfile, session: SessionStartCodex, threads: C
     routinesFile: session.routinesFile,
     // Auto mode: Codex's own reviewer answers escalations (settings.json `autoApprove`, as for Claude).
     autoMode: session.autoMode !== false,
+    // Its other folders (the main bot: every bot's inbox; Maintainer: folders you let it use) are writable, as in 1.x.
+    writableRoots: session.addDirs ?? [],
   };
   if (kind === "claude") return { ...common, command: process.env.BOTLING_CODEX_PATH ?? "codex" };
   const script = process.env.BOTLING_FAKE_CODEX;
@@ -140,6 +155,27 @@ function hostNode(): HostCommand | null {
 
 /** Plugins' secrets are sealed by main (Electron safeStorage); a headless core has none unless a test gives a key. */
 const portSealer = parentPort ? new PortSealer((message) => parentPort.postMessage(message)) : null;
+
+/**
+ * Developer mode's and updates' requests of main (self-update.ts): a picture of the window, quitting for
+ * a build's install, or installing the newer release (main restarts on it).
+ * `{botling: "app"}` out, `{botling: "appDone"}` back. Only under Electron, where main is there to answer.
+ */
+const appAnswers = new Map<number, (answer: { ok: boolean; file?: string; error?: string }) => void>();
+let appAsks = 0;
+const appBridge = parentPort ? {
+  pid: Number(process.env.BOTLING_MAIN_PID) || null,
+  dataDir: process.env.BOTLING_APP_DATA_DIR || null,
+  bundle: process.env.BOTLING_APP_BUNDLE || null,
+  request: (op: "screenshot" | "quit" | "installRelease") => new Promise<{ ok: boolean; file?: string; error?: string }>((resolve) => {
+    const id = ++appAsks;
+    // Installing a release downloads and verifies it first (main/update-install.ts), which can take minutes.
+    const timer = setTimeout(() => { appAnswers.delete(id); resolve({ ok: false, error: "Main did not answer." }); }, op === "installRelease" ? 20 * 60_000 : 30_000);
+    timer.unref?.();
+    appAnswers.set(id, (answer) => { clearTimeout(timer); appAnswers.delete(id); resolve(answer); });
+    parentPort.postMessage({ botling: "app", id, op });
+  }),
+} : null;
 const sealer: Sealer | null = portSealer ?? (process.env.BOTLING_TEST_SEAL_KEY ? testSealer(process.env.BOTLING_TEST_SEAL_KEY) : null);
 const hostScript = join(__dirname, "..", "host", "host.mjs");
 const checkScript = join(__dirname, "..", "host", "check-plugin.cjs");
@@ -172,7 +208,8 @@ const core = new Core({
   log,
   importFrom: process.env.BOTLING_IMPORT_FROM || null,
   approvalTimeoutMs: number(process.env.BOTLING_APPROVAL_TIMEOUT_MS, 10 * 60_000),
-  idleMs: number(process.env.BOTLING_IDLE_MS, 30 * 60_000),
+  // A bot goes to sleep after 50 quiet minutes, as in 1.x (`CCB_IDLE_SECONDS` default).
+  idleMs: number(process.env.BOTLING_IDLE_MS, 50 * 60_000),
   interruptGraceMs: number(process.env.BOTLING_INTERRUPT_GRACE_MS, 2_000),
   tidyTimeoutMs: number(process.env.BOTLING_TIDY_TIMEOUT_MS, 5 * 60_000),
   quitTidyMs: number(process.env.BOTLING_QUIT_TIDY_MS, 15_000),
@@ -191,6 +228,7 @@ const core = new Core({
   webExtractors: join(__dirname, "..", "web-extractors"),
   languages: process.env.BOTLING_LANGUAGES ? process.env.BOTLING_LANGUAGES.split(",").filter(Boolean) : undefined,
   // 1.x's data folder, to tell whether it has a project open; only when named (packaged: ~/.claudecodebot).
+  app: appBridge,
   oneX: {
     folder: process.env.BOTLING_1X_DIR || null,
     process: process.env.BOTLING_1X_PROCESS ? new RegExp(process.env.BOTLING_1X_PROCESS) : DEFAULT_ONE_X_PROCESS,
@@ -203,6 +241,23 @@ if (parentPort) {
     // Main's answer to a seal/open request (safeStorage), never a contract message.
     const data = event.data as { botling?: unknown } | null;
     if (data && typeof data === "object" && data.botling === "sealed") portSealer?.answer(data as Parameters<PortSealer["answer"]>[0]);
+    else if (data && typeof data === "object" && data.botling === "appDone") {
+      const answer = data as { id?: unknown; ok?: unknown; file?: unknown; error?: unknown };
+      if (typeof answer.id === "number") appAnswers.get(answer.id)?.({ ok: answer.ok === true, ...(typeof answer.file === "string" ? { file: answer.file } : {}), ...(typeof answer.error === "string" ? { error: answer.error } : {}) });
+    }
+    else if (data && typeof data === "object" && data.botling === "release") {
+      // Main found a newer release (main/updates.ts): an update notice in the main bot's chat (self-update.ts).
+      const release = data as { version?: unknown; name?: unknown; url?: unknown; current?: unknown; unavailable?: unknown };
+      const text = (value: unknown, max: number) => (typeof value === "string" ? value.slice(0, max) : "");
+      if (typeof release.version === "string" && typeof release.url === "string" && release.url.startsWith("https://github.com/")) {
+        try {
+          core.devBuilds.announceRelease({
+            version: text(release.version, 100), name: text(release.name, 400) || text(release.version, 100), url: text(release.url, 2_000),
+            current: text(release.current, 100), unavailable: typeof release.unavailable === "string" ? release.unavailable.slice(0, 500) : null,
+          });
+        } catch (error) { process.stderr.write(`release notice: ${(error as Error).message}\n`); }
+      }
+    }
     else if (data && typeof data === "object" && typeof data.botling === "string" && data.botling.startsWith("host")) utilityHost?.receive(data, event.ports ?? []);
     else core.receive(event.data);
   });

@@ -58,6 +58,7 @@ import { MaintainerDesk, builtInManifest, maintainerProfile, prepareLibrary, MAI
 import { EXTRACTORS_PLUGIN, WebShelf, askAboutWebText, decodeReading, extractorCall, extractorFor, installExtractors, webBriefing, webSites, type WebSite } from "./web";
 import { maintainerInstructions } from "./maintainer-text";
 import type { ChatRecord } from "./store/records";
+import { DevBuilds, readBuild, spawnInstaller } from "./self-update";
 
 export interface CoreOptions {
   dataDir: string;
@@ -113,6 +114,17 @@ export interface CoreOptions {
   webExtractors?: string | null;
   /** The web AIs the column lists (1.x's three unless a test names its own). */
   webSites?: WebSite[];
+  /**
+   * The app around the core, for developer mode's <install-build> and <app-screenshot/> (self-update.ts):
+   * main's pid and data folder, the app bundle it runs from (null: not a bundle), and what main does on
+   * request: a picture of its window, or quitting so the install script can swap the build. Null: no app.
+   */
+  app?: {
+    pid: number | null;
+    dataDir: string | null;
+    bundle: string | null;
+    request: (op: "screenshot" | "quit" | "installRelease") => Promise<{ ok: boolean; file?: string; error?: string }>;
+  } | null;
 }
 
 /** What asking for a bot came to (`Workspace.BotMaking`). */
@@ -133,6 +145,8 @@ export class Core {
   private readonly catchUps: CatchUps;
   private readonly components: ComponentsContext;
   private componentStamp = 0;
+  /** Developer mode's builds and screenshots (1.x's Workspace+Developer.swift). */
+  readonly devBuilds: DevBuilds;
   private componentClock: NodeJS.Timeout | null = null;
   private pinClock: NodeJS.Timeout | null = null;
   /** The pins the user can see now, in the chat on screen (`RefreshSight`). */
@@ -242,13 +256,15 @@ export class Core {
         emit: (event) => this.event(event),
         log: (line) => this.log(line),
         approvalTimeoutMs: options.approvalTimeoutMs ?? 10 * 60_000,
-        idleMs: options.idleMs ?? 30 * 60_000,
+        idleMs: options.idleMs ?? 50 * 60_000,
         interruptGraceMs: options.interruptGraceMs ?? 2_000,
         welcome: profile.id === MAIN_BOT_ID && !this.imported,
         projectBriefing: profile.role === "main" ? () => this.projectBriefing() : undefined,
         // The main bot wakes with the project list (`mainBot.wakeNote`) and may write every inbox (`--add-dir`).
         // …and where the web AIs' saved conversations are (`webBriefing`).
-        wakeNote: profile.role === "main" ? () => [this.projectBriefing(), webBriefing(this.web)].filter(Boolean).join("\n\n") : undefined,
+        wakeNote: profile.role === "main" ? () => [this.projectBriefing(), webBriefing(this.web)].filter(Boolean).join("\n\n")
+          // The developer project's manager hears what developer mode lets it do (`developerBriefing`).
+          : profile.role === "manager" && profile.id !== MAINTAINER_ID && !group ? () => this.devBuilds.briefing(bot) : undefined,
         addDirs: profile.role === "main" ? () => this.profiles.filter((other) => other.role !== "main" && !other.problem).map((other) => join(other.folder, ".bot"))
           // Maintainer: the folders you let it read (<need-folder>).
           : profile.id === MAINTAINER_ID ? () => this.maintainer.approvedFolders() : undefined,
@@ -272,7 +288,7 @@ export class Core {
         specsChanged: (bot) => this.specs?.specsChanged(bot),
         replyFilter: (): ((text: string) => Promise<string>) | null => this.plugins.afterReplyFilter(() => this.botInfo(bot)),
         replied: (bot, record) => this.replied(bot, record),
-        plugins: () => ({ dirs: this.plugins.registry.claudeDirectories(), env: this.plugins.registry.secretEnvironment() }),
+        plugins: () => ({ dirs: this.plugins.registry.claudeDirectories(), env: this.plugins.registry.secretEnvironment(), tools: this.plugins.registry.claudeTools() }),
         launch: () => launchSettings(readSettings(Layout.settings(this.options.dataDir))),
         // (Asked while the bots are made, before the conversations exist.)
         guest: () => this.conversations?.speakers.get(profile.id) ?? null,
@@ -398,7 +414,7 @@ export class Core {
       // A team's head runs as bots' heads do (the real CLI, or the fake one), in its own folder, asking nothing.
       config: (folder, spec, tools, session) => options.headConfig(
         { id: "team", name: spec.title, role: "bot", avatar: "cloud", folder, memoryPath: ".bot/memory.md", storeDir: folder, tools, job: null, problem: null },
-        { sessionId: session.sessionId, resume: false, systemPrompt: session.systemPrompt, model: session.model, pluginDirs: this.plugins.registry.claudeDirectories(), pluginEnv: this.plugins.registry.secretEnvironment() },
+        { sessionId: session.sessionId, resume: false, systemPrompt: session.systemPrompt, model: session.model, pluginDirs: this.plugins.registry.claudeDirectories(), pluginEnv: this.plugins.registry.secretEnvironment(), pluginTools: this.plugins.registry.claudeTools() },
       ),
       language: () => this.language(),
       results: () => { const chosen = this.settings().results; return isResultPublishing(chosen) ? chosen : "artifactUnlessSensitive"; },
@@ -410,6 +426,28 @@ export class Core {
     });
     // What the snapshot shows already is no event (an event comes only when something changes).
     this.lastPlugins = JSON.stringify(this.plugins.view());
+    const app = options.app ?? null;
+    const running = app?.bundle ? readBuild(app.bundle) : null;
+    this.devBuilds = new DevBuilds({
+      root: options.dataDir,
+      runningBuild: () => running,
+      developer: () => this.developerProject(),
+      mainBot: () => this.bots.get(MAIN_BOT_ID)!,
+      bot: (id) => (this.removed.has(id) ? null : this.bots.get(id) ?? null),
+      appPid: app?.pid ?? null,
+      appDataDir: app?.dataDir ?? null,
+      launchInstaller: (command, log) => {
+        spawnInstaller(command, log);
+        // Bots write their notes as the app quits; the script waits for that.
+        void app?.request("quit");
+      },
+      installRelease: app ? () => app.request("installRelease") : undefined,
+      captureWindow: async () => {
+        if (!app) return null;
+        try { const answer = await app.request("screenshot"); return answer.ok && answer.file ? answer.file : null; } catch { return null; }
+      },
+      log: (line) => this.log(line),
+    });
     if (!options.deferStartup) this.activate();
   }
 
@@ -418,6 +456,8 @@ export class Core {
     this.activated = true;
     for (const bot of this.bots.values()) bot.activateStartup();
     const options = this.options;
+    // How an install of a developer build went (`checkSelfUpdate`).
+    try { this.devBuilds.check(); } catch (error) { this.log(`self-update: ${(error as Error).message}`); }
     void this.plugins.start().catch((error) => this.log(`plugins: ${(error as Error).message}`));
     // Checking a wall-clock time every 30 s (rather than sleeping until it) survives the computer
     // sleeping; a time missed while the app was closed runs once later that day (1.x).
@@ -879,6 +919,10 @@ First write a test that shows this, then fix it.`;
       // A bot's <suggest-component>: a chip under its reply; Maintainer's <component-spec>: into that spec (`Workspace.handle`).
       else if (request.kind === "suggestComponent") later.push(() => this.specs.suggest(request.name, request.draft, this.bots.get(bot.id) ?? bot));
       else if (request.kind === "componentSpec") { if (bot.id === MAINTAINER_ID) later.push(() => this.specs.applyUpdate(request.id, request.json, bot.lines().findLast((line) => line.role === "bot")?.text ?? "")); }
+      // Developer mode (`proposeBuild`, `sendScreenshot`): a project's manager (the desk checks it is the developer
+      // project); from the main bot or a group they do nothing, as in 1.x.
+      else if (request.kind === "installBuild") { if (bot.profile.role === "manager") later.push(() => this.devBuilds.propose(request.path, request.note, bot)); }
+      else if (request.kind === "appScreenshot") { if (bot.profile.role === "manager") later.push(() => this.devBuilds.screenshot(bot)); }
       else rest.push(request);
     }
     if (later.length) setImmediate(() => { for (const act of later) { try { act(); } catch (error) { this.log(`request: ${(error as Error).message}`); } } });
@@ -888,7 +932,9 @@ First write a test that shows this, then fix it.`;
   /** The main bot's <new-project> requests: found, asked about on one card (the rest are passed on). */
   private newProjectRequests(bot: Bot, requests: BotRequest[]): BotRequest[] {
     const asked = requests.filter((request): request is Extract<BotRequest, { kind: "newProject" }> => request.kind === "newProject");
-    if (!asked.length || bot.id !== MAIN_BOT_ID) return requests;
+    if (!asked.length) return requests;
+    // Only the main bot adds projects; anyone else's <new-project> is left out silently, as in 1.x (`Workspace.handle`).
+    if (bot.id !== MAIN_BOT_ID) return requests.filter((request) => request.kind !== "newProject");
     const main = bot;
     const home = homedir();
     const own = resolvePath(this.options.dataDir);
@@ -1504,8 +1550,17 @@ First write a test that shows this, then fix it.`;
   private changeSetting(change: SettingsChange): SettingsView {
     const file = Layout.settings(this.options.dataDir);
     const before = readSettings(file);
+    const developerBefore = this.developerProject();
     const next = applySetting(before, change);
     writeSettings(file, next);
+    // Turning developer mode on again gives builds a fresh start after failures (`setDeveloperMode`).
+    if (change.key === "developerMode" && change.value === true) this.devBuilds.developerModeOn();
+    // The developer project's manager hears about it at once if awake, else at its next wake (`setDeveloperMode`).
+    const developerNow = this.developerProject();
+    if (developerNow && developerNow.id !== developerBefore?.id) developerNow.queueNote(this.devBuilds.briefing(developerNow));
+    if (developerBefore && developerBefore.id !== developerNow?.id) {
+      developerBefore.queueNote("(App: Developer mode is off for this project now: you can no longer install builds of Botling or take screenshots of it.)");
+    }
     // The engine defaults go to every bot at once (`setSubagentModelDefault`, `setCodexWorkerDefaults`).
     const model = settingsView(next).subagentModel;
     if (change.key === "subagentModel" && model !== settingsView(before).subagentModel) {
