@@ -4,6 +4,7 @@ import type { PluginsView, SettingsView } from "../contract";
 import { Client, RequestFailed } from "./client";
 import type { SettingsSection } from "./Settings";
 import { Icon } from "./icons";
+import { QuickSettingsUsage } from "./QuickSettingsUsage";
 
 export function SidebarSettings({ client, settings, plugins, compact = false, settingsOpen, onOpen }: {
   client: Client; settings: SettingsView | null; plugins: PluginsView | null; compact?: boolean;
@@ -72,6 +73,7 @@ export function SidebarSettings({ client, settings, plugins, compact = false, se
       </button>
       {open && <div ref={panel} id={id} className="sidebar-settings-popover" role="dialog" aria-label="Quick settings" style={position}>
         <header><strong>Quick settings</strong><button type="button" aria-label="Close quick settings" onClick={() => { setOpen(false); trigger.current?.focus(); }}>×</button></header>
+        <QuickSettingsUsage client={client} />
         <label className="sidebar-settings-switch">
           <span>Develop Botling itself</span>
           <input type="checkbox" role="switch" aria-label="Develop Botling itself" checked={shown?.developerMode ?? false} disabled={!shown || saving}
